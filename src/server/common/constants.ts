@@ -352,7 +352,7 @@ export const constants = {
 
 export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
-export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
+export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 

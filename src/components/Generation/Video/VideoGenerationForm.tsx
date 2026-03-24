@@ -52,12 +52,14 @@ import {
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR, urnToModelType } from '~/shared/utils/air';
+import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
 
 /**
  * Keys excluded from whatIf queries — these don't affect cost estimation.
  * All other form values are passed through to the generation graph.
  */
 const WHATIF_EXCLUDE_KEYS = new Set(['prompt', 'negativePrompt', 'seed', 'cfgScale']);
+
 
 /** Build external context for generation graph from status */
 function buildGraphContext(status: {
@@ -300,15 +302,21 @@ function SubmitButton2({
   const isUploadingImage = isUploadingImageValue === 1 || isUploadingMultiple;
 
   // Use whatIfFromGraph instead of legacy whatIf route
-  const { data, isFetching, error } = trpc.orchestrator.whatIfFromGraph.useQuery(query!, {
-    enabled: !!query && !isUploadingImage && canQuery,
-  });
+  const { data: queryData, isFetching, error } = trpc.orchestrator.whatIfFromGraph.useQuery(
+    query!,
+    { enabled: !!query && !isUploadingImage && canQuery }
+  );
+
+  const data = useMemo(
+    () => queryData ?? { cost: defaultWorkflowCost, ready: false, allowMatureContent: false, transactions: undefined },
+    [queryData]
+  );
 
   useEffect(() => {
     setError(error?.message);
   }, [error]);
 
-  const cost = data?.cost?.total ?? 0;
+  const cost = data.cost?.total ?? 0;
   const totalCost = cost;
   const debouncer = useDebouncer(150);
 
@@ -390,7 +398,7 @@ function SubmitButton2({
   }, []);
 
   useEffect(() => {
-    setState({ cost: data?.cost?.base ?? undefined });
+    setState({ cost: data.cost?.base ?? undefined });
   }, [data]);
 
   return (
@@ -398,17 +406,17 @@ function SubmitButton2({
       <GenerateButton
         type="submit"
         className="flex-1"
-        disabled={!data || !query || isUploadingImage}
+        disabled={!query || isUploadingImage}
         loading={isFetching || loading}
         cost={totalCost}
-        transactions={data?.transactions}
-        allowMatureContent={data?.allowMatureContent}
+        transactions={data.transactions}
+        allowMatureContent={data.allowMatureContent}
       >
         Generate
       </GenerateButton>
       <GenerationCostPopover
         width={300}
-        workflowCost={data?.cost ?? {}}
+        workflowCost={data.cost ?? defaultWorkflowCost}
         hideCreatorTip
         hideCivitaiTip
       />

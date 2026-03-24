@@ -6,7 +6,7 @@
  * Supports LoRAs for customization.
  */
 
-import type { HunyuanVdeoGenInput } from '@civitai/client';
+import type { HunyuanVdeoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
@@ -20,7 +20,7 @@ type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
  * Creates videoGen input for Hunyuan ecosystem.
  * Txt2vid only with CFG scale, steps, duration, and LoRA support.
  */
-export const createHunyuanInput = defineHandler<HunyuanCtx, HunyuanVdeoGenInput>((data, ctx) => {
+export const createHunyuanInput = defineHandler<HunyuanCtx, [VideoGenStepTemplate]>((data, ctx) => {
   // Build loras from additional resources
   const loras: { air: string; strength: number }[] = [];
   if ('resources' in data && Array.isArray(data.resources)) {
@@ -32,16 +32,21 @@ export const createHunyuanInput = defineHandler<HunyuanCtx, HunyuanVdeoGenInput>
     }
   }
 
-  return removeEmpty({
-    engine: 'hunyuan',
-    prompt: data.prompt,
-    width: data.aspectRatio?.width,
-    height: data.aspectRatio?.height,
-    cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    steps: 'steps' in data ? data.steps : undefined,
-    duration: 'duration' in data ? data.duration : undefined,
-    quantity: data.quantity ?? 1,
-    seed: data.seed,
-    loras: loras.length > 0 ? loras : undefined,
-  }) as HunyuanVdeoGenInput;
+  return [
+    {
+      $type: 'videoGen',
+      input: removeEmpty({
+        engine: 'hunyuan',
+        prompt: data.prompt,
+        width: data.aspectRatio?.width,
+        height: data.aspectRatio?.height,
+        cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
+        steps: 'steps' in data ? data.steps : undefined,
+        duration: 'duration' in data ? data.duration : undefined,
+        quantity: data.quantity ?? 1,
+        seed: data.seed,
+        loras: loras.length > 0 ? loras : undefined,
+      }) as HunyuanVdeoGenInput,
+    },
+  ];
 });

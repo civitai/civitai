@@ -7,7 +7,7 @@
  * Q3: txt2vid, img2vid, ref2vid with resolution/turbo/audio options
  */
 
-import type { ViduVideoGenInput, ViduQ3VideoGenInput } from '@civitai/client';
+import type { ViduVideoGenInput, ViduQ3VideoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
@@ -21,17 +21,13 @@ type ViduCtx = EcosystemGraphOutput & { ecosystem: 'Vidu' };
  * Creates videoGen input for Vidu ecosystem.
  * Routes to Q1 (engine: 'vidu') or Q3 (engine: 'vidu-q3') based on selected model version.
  */
-export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput | ViduQ3VideoGenInput>(
-  (data, ctx) => {
-    const modelId = data.model?.id;
-    const isQ3 = modelId === viduVersionIds.q3;
+export const createViduInput = defineHandler<ViduCtx, [VideoGenStepTemplate]>((data, ctx) => {
+  const modelId = data.model?.id;
+  const isQ3 = modelId === viduVersionIds.q3;
 
-    if (isQ3) {
-      return createQ3Input(data);
-    }
-    return createQ1Input(data);
-  }
-);
+  const input = isQ3 ? createQ3Input(data) : createQ1Input(data);
+  return [{ $type: 'videoGen', input }];
+});
 
 /** Creates Q1 videoGen input (engine: 'vidu') */
 function createQ1Input(data: ViduCtx): ViduVideoGenInput {
@@ -56,6 +52,7 @@ function createQ1Input(data: ViduCtx): ViduVideoGenInput {
 
   return removeEmpty({
     engine: 'vidu',
+    model: 'q1' as ViduVideoGenInput['model'],
     prompt,
     aspectRatio: data.aspectRatio?.value as ViduVideoGenInput['aspectRatio'],
     style: 'style' in data ? data.style : undefined,

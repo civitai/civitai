@@ -7,19 +7,24 @@
 
 import type {
   Wan21CivitaiVideoGenInput,
+  Wan22ComfyVideoGenInput,
   Wan22FalTextToVideoInput,
   Wan22FalImageToVideoInput,
   Wan225bFalTextToVideoInput,
   Wan225bFalImageToVideoInput,
   Wan25FalTextToVideoInput,
   Wan25FalImageToVideoInput,
+  VideoGenStepTemplate,
+  VideoInterpolationStepTemplate,
 } from '@civitai/client';
+
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { ecosystemToVersionDef } from '~/shared/data-graph/generation/wan-graph';
 import { defineHandler } from './handler-factory';
+import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -39,15 +44,9 @@ type WanBaseModel =
 
 type WanCtx = EcosystemGraphOutput & { ecosystem: WanBaseModel };
 
-// Return type union
-type WanInput =
-  | Wan21CivitaiVideoGenInput
-  | Wan22FalTextToVideoInput
-  | Wan22FalImageToVideoInput
-  | Wan225bFalTextToVideoInput
-  | Wan225bFalImageToVideoInput
-  | Wan25FalTextToVideoInput
-  | Wan25FalImageToVideoInput;
+type WanSteps =
+  | [VideoGenStepTemplate]
+  | [VideoGenStepTemplate & { metadata: { suppressOutput: true } }, VideoInterpolationStepTemplate];
 
 // Wan version type
 type WanVersion = 'v2.1' | 'v2.2' | 'v2.2-5b' | 'v2.5';
@@ -72,7 +71,34 @@ const v21AspectRatiosByResolution: Record<
     { value: '9:16', width: 720, height: 1280 },
   ],
 };
-const v22AspectRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '4:5', '5:4'] as const;
+// Explicit pixel dimensions for v2.2 comfy (resolution + aspect ratio → width/height)
+const v22DimensionsByResolutionAndRatio: Record<
+  string,
+  Record<string, { width: number; height: number }>
+> = {
+  '480p': {
+    '1:1': { width: 480, height: 480 },
+    '16:9': { width: 848, height: 480 },
+    '9:16': { width: 480, height: 848 },
+    '4:3': { width: 640, height: 480 },
+    '3:4': { width: 480, height: 640 },
+    '4:5': { width: 384, height: 480 },
+    '5:4': { width: 608, height: 480 },
+  },
+  '720p': {
+    '1:1': { width: 720, height: 720 },
+    '16:9': { width: 1280, height: 720 },
+    '9:16': { width: 720, height: 1280 },
+    '4:3': { width: 960, height: 720 },
+    '3:4': { width: 720, height: 960 },
+    '4:5': { width: 576, height: 720 },
+    '5:4': { width: 912, height: 720 },
+  },
+};
+const v22AspectRatioEntries = (resolution: string) =>
+  Object.entries(
+    v22DimensionsByResolutionAndRatio[resolution] ?? v22DimensionsByResolutionAndRatio['480p']
+  ).map(([value, dims]) => ({ value, ...dims }));
 const v225bAspectRatios = ['1:1', '16:9', '9:16'] as const;
 const v25AspectRatios = ['16:9', '9:16', '1:1'] as const;
 
@@ -87,10 +113,11 @@ function getImageAspectRatio<T extends `${number}:${number}`>(
 }
 
 /**
- * Creates videoGen input for Wan ecosystem.
- * Handles multiple versions with version-specific parameters.
+ * Creates step(s) for Wan ecosystem.
+ * Returns a single videoGen step for most versions, or [videoGen, videoInterpolation] for v2.2.
+ * v2.2 uses the comfy provider with a hidden 12fps generation followed by frame interpolation.
  */
-export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
+export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) => {
   const hasImages = !!data.images?.length;
   // Derive version from ecosystem key (source of truth) with wanVersion as fallback
   const version: WanVersion =
@@ -112,7 +139,6 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
   const baseInput = {
     engine: 'wan',
     version,
-    provider: 'fal' as const,
     prompt: data.prompt,
     cfgScale: 'cfgScale' in data ? data.cfgScale : undefined,
     duration: 'duration' in data ? data.duration : undefined,
@@ -131,19 +157,67 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
       const dims = hasImages
         ? findClosestAspectRatio(data.images![0], ratioEntries)
         : data.aspectRatio;
-      return removeEmpty({
-        ...baseInput,
-        provider: 'civitai' as const,
-        width: dims?.width,
-        height: dims?.height,
-        images: hasImages ? data.images?.map((x) => x.url) : undefined,
-      }) as Wan21CivitaiVideoGenInput;
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...baseInput,
+            provider: 'civitai' as const,
+            width: dims?.width,
+            height: dims?.height,
+            images: hasImages ? data.images?.map((x) => x.url) : undefined,
+          }) as Wan21CivitaiVideoGenInput,
+        },
+      ];
     }
 
     case 'v2.2': {
+      // Use multi-step if the user toggled it on AND the flipt kill-switch allows it
+      const useMultiStep =
+        'multiStep' in data &&
+        data.multiStep === true &&
+        (await isFlipt(FLIPT_FEATURE_FLAGS.WAN22_MULTI_STEP));
+
+      if (useMultiStep) {
+        // Multi-step comfy workflow: 12fps videoGen + VFIMamba fr
+        // ame interpolation
+        const resolution = 'resolution' in data ? (data.resolution as string) : '480p';
+        const ratioEntries = v22AspectRatioEntries(resolution);
+        const dims = hasImages
+          ? findClosestAspectRatio(data.images![0], ratioEntries)
+          : ratioEntries.find((e) => e.value === data.aspectRatio?.value) ?? ratioEntries[0];
+        const videoGenStep: VideoGenStepTemplate & { metadata: { suppressOutput: true } } = {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...baseInput,
+            provider: 'comfy' as const,
+            frameRate: 12,
+            width: dims?.width,
+            height: dims?.height,
+            duration: 'duration' in data ? data.duration : 5,
+            steps: 'steps' in data ? data.steps : 20,
+            negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+            shift: 'shift' in data ? data.shift : undefined,
+            images: hasImages ? data.images?.map((x) => x.url) : undefined,
+          }) as Wan22ComfyVideoGenInput,
+          metadata: { suppressOutput: true },
+        };
+        const videoInterpolationStep: VideoInterpolationStepTemplate = {
+          $type: 'videoInterpolation',
+          input: {
+            video: { $ref: '$0', path: 'output.video.url' } as unknown as string,
+            interpolationFactor: 2,
+            model: 'VFIMamba',
+          },
+        };
+        return [videoGenStep, videoInterpolationStep];
+      }
+
+      // Legacy single-step fal workflow
       const operation = hasImages ? 'image-to-video' : 'text-to-video';
       const input = {
         ...baseInput,
+        provider: 'fal' as const,
         operation,
         negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
         resolution: 'resolution' in data ? data.resolution : undefined,
@@ -157,18 +231,29 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
       };
 
       if (hasImages) {
-        return removeEmpty({
-          ...input,
-          images: data.images?.map((x) => x.url),
-        }) as Wan22FalImageToVideoInput;
+        return [
+          {
+            $type: 'videoGen',
+            input: removeEmpty({
+              ...input,
+              images: data.images?.map((x) => x.url),
+            }) as Wan22FalImageToVideoInput,
+          },
+        ];
       }
-      return removeEmpty(input) as Wan22FalTextToVideoInput;
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty(input) as Wan22FalTextToVideoInput,
+        },
+      ];
     }
 
     case 'v2.2-5b': {
       const operation = hasImages ? 'image-to-video' : 'text-to-video';
       const input = {
         ...baseInput,
+        provider: 'fal' as const,
         operation,
         negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
         resolution: 'resolution' in data ? data.resolution : undefined,
@@ -180,20 +265,21 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
         numInferenceSteps: 'steps' in data ? data.steps : undefined,
         interpolatorModel: 'interpolatorModel' in data ? data.interpolatorModel : undefined,
       };
-
-      if (hasImages) {
-        return removeEmpty({
-          ...input,
-          images: data.images?.map((x) => x.url),
-        }) as Wan225bFalImageToVideoInput;
-      }
-      return removeEmpty(input) as Wan225bFalTextToVideoInput;
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty(
+            hasImages ? { ...input, images: data.images?.map((x) => x.url) } : input
+          ) as Wan225bFalTextToVideoInput | Wan225bFalImageToVideoInput,
+        },
+      ];
     }
 
     case 'v2.5': {
       const operation = hasImages ? 'image-to-video' : 'text-to-video';
       const input = {
         ...baseInput,
+        provider: 'fal' as const,
         operation,
         negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
         resolution: 'resolution' in data ? data.resolution : undefined,
@@ -202,18 +288,26 @@ export const createWanInput = defineHandler<WanCtx, WanInput>((data, ctx) => {
           : data.aspectRatio?.value) as Wan25FalTextToVideoInput['aspectRatio'],
         enablePromptExpansion: false,
       };
-
-      if (hasImages) {
-        return removeEmpty({
-          ...input,
-          images: data.images?.map((x) => x.url),
-        }) as Wan25FalImageToVideoInput;
-      }
-      return removeEmpty(input) as Wan25FalTextToVideoInput;
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty(
+            hasImages ? { ...input, images: data.images?.map((x) => x.url) } : input
+          ) as Wan25FalTextToVideoInput | Wan25FalImageToVideoInput,
+        },
+      ];
     }
 
     default:
-      return removeEmpty(baseInput) as unknown as WanInput;
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...baseInput,
+            provider: 'civitai' as const,
+          }) as Wan21CivitaiVideoGenInput,
+        },
+      ];
   }
 });
 

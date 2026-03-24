@@ -1,4 +1,10 @@
-import type { ImageBlob, VideoBlob, NsfwLevel, WorkflowStatus } from '@civitai/client';
+import type {
+  ImageBlob,
+  VideoBlob,
+  NsfwLevel,
+  WorkflowCost,
+  WorkflowStatus,
+} from '@civitai/client';
 import type {
   NormalizedWorkflow,
   NormalizedWorkflowMetadata,
@@ -7,6 +13,17 @@ import type {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
+
+// =============================================================================
+// Defaults
+// =============================================================================
+export const defaultWorkflowCost: WorkflowCost = {
+  base: 0,
+  total: 0,
+  factors: { quantity: 1, size: 1, steps: 1, scheduler: 1, popularity: 1 },
+  fixed: { additionalNetworks: 0, priority: 0, format: 0 },
+  tips: { creators: 0, civitai: 0 },
+};
 
 // =============================================================================
 // WorkflowDataOptions
@@ -164,12 +181,23 @@ export class StepData {
     return (this.params as Record<string, unknown>)?.prompt as string | undefined;
   }
 
+  /**
+   * Whether this step's output should be hidden from the user.
+   * Set to true for intermediate steps in multi-step workflows (e.g., Wan 2.2 low-fps videoGen
+   * before frame interpolation).
+   */
+  get suppressOutput(): boolean {
+    return (this.metadata as any)?.suppressOutput === true;
+  }
+
   /** Images that completed successfully, aren't blocked/moderated, and aren't hidden. */
   get succeededImages(): BlobData[] {
+    if (this.suppressOutput) return [];
     return this.images.filter((x) => x.status === 'succeeded' && !x.blockedReason && !x.hidden);
   }
   /** Images suitable for display — not hidden, not hard-blocked (upgradeable images included). */
   get displayImages(): BlobData[] {
+    if (this.suppressOutput) return [];
     return this.images.filter((x) => x.displayable);
   }
   /** Count of images with status 'succeeded'. */

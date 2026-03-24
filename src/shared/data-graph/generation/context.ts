@@ -1,3 +1,5 @@
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
+
 export type GenerationCtx = {
   /** User's generation limits based on their tier */
   limits: {
@@ -9,4 +11,6 @@ export type GenerationCtx = {
     isMember: boolean;
     tier: 'free' | 'founder' | 'bronze' | 'silver' | 'gold';
   };
+  /** Feature flags from FeatureFlagsProvider (client) / getFeatureFlags (server) */
+  flags?: Partial<FeatureAccess>;
 };

@@ -321,7 +321,7 @@ export const orchestratorRouter = router({
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier);
+      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features);
 
       // Check generation status early
       if (!status.available && !ctx.user.isModerator) {
@@ -356,7 +356,7 @@ export const orchestratorRouter = router({
    */
   whatIfFromGraph: orchestratorGuardedProcedure.input(z.any()).query(async ({ ctx, input }) => {
     const userTier = ctx.user.tier ?? 'free';
-    const { externalCtx, status } = await buildGenerationContext(userTier);
+    const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features);
 
     if (!status.available && !ctx.user.isModerator) {
       throw new TRPCError({

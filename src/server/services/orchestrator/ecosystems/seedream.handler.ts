@@ -5,7 +5,7 @@
  * Supports v3, v4, v4.5, and v5.0-lite model versions.
  */
 
-import type { SeedreamImageGenInput, SeedreamVersion } from '@civitai/client';
+import type { SeedreamImageGenInput, SeedreamVersion, ImageGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { seedreamVersionIds } from '~/shared/data-graph/generation/seedream-graph';
@@ -24,7 +24,7 @@ const versionIdToVersion = new Map<number, SeedreamVersion>(
  * Creates imageGen input for Seedream ecosystem.
  * Handles both txt2img and img2img operations.
  */
-export const createSeedreamInput = defineHandler<SeedreamCtx, SeedreamImageGenInput>(
+export const createSeedreamInput = defineHandler<SeedreamCtx, [ImageGenStepTemplate]>(
   (data, ctx) => {
     const quantity = data.quantity ?? 1;
 
@@ -35,17 +35,22 @@ export const createSeedreamInput = defineHandler<SeedreamCtx, SeedreamImageGenIn
       if (match) version = match;
     }
 
-    return removeEmpty({
-      engine: 'seedream',
-      prompt: data.prompt,
-      width: data.aspectRatio?.width,
-      height: data.aspectRatio?.height,
-      version,
-      images: data.images?.map((x) => x.url),
-      guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-      enableSafetyChecker: false,
-      seed: data.seed,
-      quantity,
-    }) as SeedreamImageGenInput;
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          engine: 'seedream',
+          prompt: data.prompt,
+          width: data.aspectRatio?.width,
+          height: data.aspectRatio?.height,
+          version,
+          images: data.images?.map((x) => x.url),
+          guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
+          enableSafetyChecker: false,
+          seed: data.seed,
+          quantity,
+        }) as SeedreamImageGenInput,
+      },
+    ];
   }
 );

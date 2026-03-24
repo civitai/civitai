@@ -22,6 +22,8 @@ export function ToolMultiSelect({
 
   return (
     <MultiSelectWrapper
+      searchable
+      clearable
       {...selectProps}
       value={value}
       onChange={onChange}
@@ -32,8 +34,6 @@ export function ToolMultiSelect({
           ? { value: id, label: name, group: getDisplayName(type) }
           : { value: id, label: name }
       )}
-      searchable
-      clearable
     />
   );
 }

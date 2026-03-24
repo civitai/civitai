@@ -27,6 +27,14 @@ import { trpc } from '~/utils/trpc';
 import type { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
+import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
+
+const defaultWhatIfData: GenerationWhatIfResponse = {
+  cost: defaultWorkflowCost,
+  ready: false,
+  allowMatureContent: false,
+  transactions: undefined,
+};
 import { parseAIR } from '~/utils/string-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { imageGenModelVersionMap } from '~/shared/orchestrator/ImageGen/imageGen.config';
@@ -36,10 +44,12 @@ import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
 import { mapDataToGraphInput } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
 
-const Context = createContext<UseTRPCQueryResult<
-  GenerationWhatIfResponse | undefined,
-  unknown
-> | null>(null);
+const Context = createContext<
+  | (Omit<UseTRPCQueryResult<GenerationWhatIfResponse | undefined, unknown>, 'data'> & {
+      data: GenerationWhatIfResponse;
+    })
+  | null
+>(null);
 
 export function useTextToImageWhatIfContext() {
   const context = useContext(Context);
@@ -168,5 +178,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     enabled: !!currentUser && !loading && !!query,
   });
 
-  return <Context.Provider value={result}>{children}</Context.Provider>;
+  const data = useMemo(() => result.data ?? defaultWhatIfData, [result.data]);
+
+  return <Context.Provider value={{ ...result, data }}>{children}</Context.Provider>;
 }

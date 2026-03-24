@@ -758,7 +758,7 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
       return step.output?.blobs?.map((blob) => ({ ...blob, type: 'image' }));
     case 'imageGen':
     case 'textToImage':
-      return step.output?.images.map((image) => ({ ...image, type: 'image' }));
+      return step.output?.images?.map((image) => ({ ...image, type: 'image' }));
     case 'videoGen':
     case 'videoUpscaler':
     case 'videoEnhancement':

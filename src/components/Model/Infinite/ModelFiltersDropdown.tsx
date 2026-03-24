@@ -6,6 +6,7 @@ import {
   Drawer,
   Group,
   Indicator,
+  MultiSelect,
   Popover,
   ScrollArea,
   Stack,
@@ -20,11 +21,12 @@ import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   Availability,
@@ -34,7 +36,6 @@ import {
   ModelType,
 } from '~/shared/utils/prisma/enums';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
-import { activeBaseModels } from '~/shared/constants/base-model.constants';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
@@ -310,19 +311,15 @@ export function DumbModelFiltersDropdown({
       ) : null}
       <Stack gap={0}>
         <Divider label="Base model" className="text-sm font-bold" mb={4} />
-        <Chip.Group
+        <MultiSelect
+          data={baseModelSelectData}
           value={(mergedFilters.baseModels as string[]) ?? []}
           onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
-          multiple
-        >
-          <Group gap={8} mb={4}>
-            {activeBaseModels.map((baseModel, index) => (
-              <FilterChip key={index} value={baseModel}>
-                <span>{getDisplayName(baseModel, { splitNumbers: false })}</span>
-              </FilterChip>
-            ))}
-          </Group>
-        </Chip.Group>
+          placeholder="All Base Models"
+          searchable={!isMobileDevice()}
+          clearable
+          comboboxProps={{ withinPortal: false }}
+        />
       </Stack>
 
       <Stack gap={0}>

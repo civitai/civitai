@@ -65,7 +65,7 @@ function getFluxMode(modelId?: number): FluxMode {
  * - pro: No user resources, uses pro model
  * - ultra: Special aspect ratios, raw mode option
  */
-export const createFluxInput = defineHandler<FluxCtx, TextToImageStepTemplate>((data, ctx) => {
+export const createFluxInput = defineHandler<FluxCtx, [TextToImageStepTemplate]>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for Flux workflows');
 
   const modelId = data.model?.id;
@@ -87,7 +87,7 @@ export const createFluxInput = defineHandler<FluxCtx, TextToImageStepTemplate>((
 
   // Handle ultra mode - uses different step input structure
   if (fluxMode === 'ultra') {
-    return createFluxUltraInput(data, seed);
+    return [createFluxUltraInput(data, seed)];
   }
 
   // Build additionalNetworks from resources (not for pro mode)
@@ -104,23 +104,25 @@ export const createFluxInput = defineHandler<FluxCtx, TextToImageStepTemplate>((
   // Get scheduler (Flux uses Euler by default)
   const scheduler = samplersToSchedulers['undefined'] as Scheduler;
 
-  return {
-    $type: 'textToImage',
-    input: {
-      model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
-      additionalNetworks,
-      scheduler,
-      prompt: data.prompt,
-      steps,
-      cfgScale,
-      seed,
-      width: data.aspectRatio.width,
-      height: data.aspectRatio.height,
-      quantity,
-      batchSize: 1,
-      outputFormat: data.outputFormat,
-    },
-  } as TextToImageStepTemplate;
+  return [
+    {
+      $type: 'textToImage',
+      input: {
+        model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+        additionalNetworks,
+        scheduler,
+        prompt: data.prompt,
+        steps,
+        cfgScale,
+        seed,
+        width: data.aspectRatio.width,
+        height: data.aspectRatio.height,
+        quantity,
+        batchSize: 1,
+        outputFormat: data.outputFormat,
+      },
+    } as TextToImageStepTemplate,
+  ];
 });
 
 /**
