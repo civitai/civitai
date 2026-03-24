@@ -42,7 +42,7 @@ export async function processFreshdeskAgent(payload: FreshdeskWebhookPayload) {
       userMessage,
       tools,
       executeToolCall,
-      maxTurns: 15,
+      maxTurns: 30,
     });
 
     const durationMs = Date.now() - startTime;

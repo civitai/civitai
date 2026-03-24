@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
+import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
 import { agentLog } from './freshdesk-debug';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
@@ -792,6 +794,178 @@ export async function checkSiteStatus(): Promise<string> {
       }
     }
   }
+
+  return lines.join('\n');
+}
+
+// ─── TOOL: investigate_crypto_payments ────────────────────────────────
+
+type CryptoWalletRow = {
+  chain: string;
+  wallet: string;
+  smartAccount: string | null;
+  payCurrency: string;
+};
+
+type CryptoDepositRow = {
+  paymentId: bigint;
+  status: string;
+  payCurrency: string;
+  payAmount: number | null;
+  outcomeAmount: number | null;
+  buzzCredited: number | null;
+  bonusBuzz: number | null;
+  multiplier: number | null;
+  depositFee: number | null;
+  serviceFee: number | null;
+  feeCurrency: string | null;
+  paidFiat: number | null;
+  chain: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type BuzzTransactionRow = {
+  type: string;
+  description: string;
+  externalTransactionId: string;
+  amount: number;
+  date: string;
+};
+
+async function safeCHQuery<T extends object>(query: string, label: string): Promise<T[]> {
+  if (!clickhouse) return [];
+  try {
+    return await clickhouse.$query<T>(query);
+  } catch (err) {
+    agentLog(`CH QUERY ERROR (${label})`, err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
+
+export async function investigateCryptoPayments(userId: number): Promise<string> {
+  const [wallets, deposits, buzzTxns] = await Promise.all([
+    safeQuery<CryptoWalletRow>(Prisma.sql`
+      SELECT chain, wallet, "smartAccount", "payCurrency"
+      FROM "CryptoWallet"
+      WHERE "userId" = ${userId}
+    `),
+    safeQuery<CryptoDepositRow>(Prisma.sql`
+      SELECT "paymentId", status, "payCurrency", "payAmount", "outcomeAmount",
+             "buzzCredited", "bonusBuzz", multiplier, "depositFee", "serviceFee",
+             "feeCurrency", "paidFiat", chain, "createdAt", "updatedAt"
+      FROM "CryptoDeposit"
+      WHERE "userId" = ${userId}
+      ORDER BY "createdAt" DESC
+      LIMIT 10
+    `),
+    safeCHQuery<BuzzTransactionRow>(
+      `SELECT type, description, externalTransactionId, amount, date
+       FROM buzzTransactions
+       WHERE toAccountId = ${userId}
+         AND type = 'purchase'
+         AND date > now() - INTERVAL 30 DAY
+         AND (description LIKE '%Coinbase%' OR description LIKE '%NOWPayments%')
+       ORDER BY date DESC
+       LIMIT 15`,
+      'buzzTransactions'
+    ),
+  ]);
+
+  const lines: string[] = [`=== CRYPTO PAYMENTS FOR USER ${userId} ===`];
+
+  // --- Wallets section ---
+  if (wallets.length === 0) {
+    lines.push('\nNo crypto wallets found.');
+  } else {
+    lines.push(`\n--- CRYPTO WALLETS (${wallets.length}) ---`);
+    for (const w of wallets) {
+      lines.push(`  Chain: ${w.chain} | Currency: ${w.payCurrency}`);
+      lines.push(`    Deposit address: ${w.wallet}`);
+      if (w.smartAccount) lines.push(`    NowPayments ID: ${w.smartAccount}`);
+    }
+  }
+
+  // --- Confirmed buzz transactions (from ClickHouse) ---
+  if (buzzTxns.length === 0) {
+    lines.push('\nNo confirmed crypto buzz purchases in the last 30 days.');
+  } else {
+    lines.push(`\n--- CONFIRMED BUZZ PURCHASES (last 30 days, ${buzzTxns.length}) ---`);
+    for (const tx of buzzTxns) {
+      const provider = tx.description.includes('Coinbase') ? 'Coinbase' : 'NOWPayments';
+      lines.push(`  [${provider}] ${tx.amount} Buzz - ${formatDate(new Date(tx.date))}`);
+      lines.push(`    ${tx.description}`);
+      lines.push(`    Ref: ${tx.externalTransactionId}`);
+    }
+  }
+
+  // --- NowPayments deposit details (from Postgres) ---
+  if (deposits.length === 0) {
+    lines.push('\nNo NowPayments deposit records found.');
+  } else {
+    lines.push(`\n--- NOWPAYMENTS DEPOSIT DETAILS (${deposits.length}) ---`);
+    for (const d of deposits) {
+      const buzzTotal = (d.buzzCredited ?? 0) + (d.bonusBuzz ?? 0);
+      const multiplierStr = d.multiplier ? ` (${d.multiplier / 100}x multiplier)` : '';
+      const fees =
+        d.depositFee || d.serviceFee
+          ? ` | Fees: ${d.depositFee ?? 0} + ${d.serviceFee ?? 0} ${d.feeCurrency ?? ''}`
+          : '';
+      lines.push(
+        `  Payment #${d.paymentId} [${d.status}] - ${d.payCurrency}${
+          d.chain ? ' on ' + d.chain : ''
+        }`
+      );
+      lines.push(
+        `    Paid: ${d.payAmount ?? 'N/A'} | Outcome: ${d.outcomeAmount ?? 'N/A'} USDC | Fiat: $${
+          d.paidFiat ?? 'N/A'
+        }${fees}`
+      );
+      lines.push(`    Buzz credited: ${buzzTotal}${multiplierStr}`);
+      lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
+    }
+  }
+
+  // --- Live status check for stuck deposits ---
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const stuckDeposits = deposits.filter(
+    (d) =>
+      ['waiting', 'confirming', 'partially_paid'].includes(d.status) &&
+      new Date(d.createdAt) > sevenDaysAgo
+  );
+
+  if (stuckDeposits.length > 0) {
+    const toCheck = stuckDeposits.slice(0, 3);
+    lines.push(`\n--- LIVE STATUS CHECK (${toCheck.length} pending deposits) ---`);
+
+    const results = await Promise.allSettled(
+      toCheck.map(async (d) => {
+        const live = await nowpaymentsCaller.getPaymentStatus(d.paymentId.toString());
+        return { paymentId: d.paymentId, live };
+      })
+    );
+
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        const { paymentId, live } = result.value;
+        if (live) {
+          lines.push(
+            `  Payment #${paymentId}: Live status = "${live.payment_status}" | Actually paid: ${
+              live.actually_paid ?? 'N/A'
+            } | Outcome: ${live.outcome_amount ?? 'N/A'} ${live.outcome_currency ?? ''}`
+          );
+        } else {
+          lines.push(`  Payment #${paymentId}: Not found in NowPayments`);
+        }
+      } else {
+        lines.push(`  Live check failed: ${String(result.reason)}`);
+      }
+    }
+  }
+
+  lines.push(
+    '\nNote: 1 USDC = 1,000 Buzz. Buzz balances are managed by an external service and cannot be queried directly.'
+  );
 
   return lines.join('\n');
 }
