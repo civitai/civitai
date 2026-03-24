@@ -33,8 +33,11 @@ import {
   deleteWorkflow,
   patchWorkflows,
   patchWorkflowTags,
+  queryWorkflows,
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
+import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
@@ -201,6 +204,27 @@ export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
     .input(z.object({ videoUrl: z.string() }))
     .query(({ ctx, input }) => getVideoMetadata(input)),
+
+  // #region [prompt enhancement]
+  enhancePrompt: orchestratorGuardedProcedure
+    .input(promptEnhancementSchema)
+    .mutation(({ ctx, input }) => enhancePrompt({ input, token: ctx.token })),
+  queryPromptEnhancements: orchestratorProcedure
+    .input(workflowQuerySchema)
+    .query(async ({ ctx, input }) => {
+      try {
+        return await queryWorkflows({
+          ...input,
+          token: ctx.token,
+          tags: ['prompt-enhancement', ...input.tags],
+          hideMatureContent: ctx.hideMatureContent,
+        });
+      } catch (error) {
+        console.error('[queryPromptEnhancements] Error:', error);
+        throw error;
+      }
+    }),
+  // #endregion
 
   // #region [requests]
   deleteWorkflow: orchestratorProcedure

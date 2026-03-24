@@ -32,6 +32,7 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 
@@ -98,6 +99,7 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { MetadataExtractionPanel } from './inputs/MetadataExtractionPanel';
 import {
   contentGenerationTour,
@@ -659,13 +661,51 @@ export function GenerationForm() {
               name="prompt"
               render={({ value, onChange, meta, error }) => (
                 <Input.Wrapper
+                  styles={{ label: { width: '100%' } }}
                   label={
-                    <ControllerLabel
-                      label="Prompt"
-                      info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
-                    />
+                    <Group justify="space-between" wrap="nowrap" className="w-full">
+                      <ControllerLabel
+                        label="Prompt"
+                        info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
+                        required={meta.required}
+                      />
+                      {value && (
+                        <Button
+                          variant="subtle"
+                          size="compact-xs"
+                          leftSection={<IconSparkles size={14} />}
+                          onClick={() => {
+                            const snap = graph.getSnapshot() as {
+                              ecosystem?: string;
+                              negativePrompt?: string;
+                              resources?: {
+                                id: number;
+                                model: { type: string };
+                                trainedWords?: string[];
+                                strength?: number;
+                              }[];
+                            };
+                            triggerPromptEnhance({
+                              prompt: value as string,
+                              negativePrompt: snap.negativePrompt,
+                              ecosystem: snap.ecosystem ?? '',
+                              resources: snap.resources,
+                              onApply: (enhancedPrompt, enhancedNegativePrompt) => {
+                                onChange(enhancedPrompt);
+                                if (enhancedNegativePrompt) {
+                                  graph.set({
+                                    negativePrompt: enhancedNegativePrompt,
+                                  } as Parameters<typeof graph.set>[0]);
+                                }
+                              },
+                            });
+                          }}
+                        >
+                          Enhance
+                        </Button>
+                      )}
+                    </Group>
                   }
-                  required={meta.required}
                   error={error?.message}
                 >
                   <Paper
@@ -1433,14 +1473,23 @@ function ImagesInput({
 // Helper Components
 // =============================================================================
 
-function ControllerLabel({ label, info }: { label: React.ReactNode; info?: string }) {
-  if (!info) return <Input.Label>{label}</Input.Label>;
+function ControllerLabel({
+  label,
+  info,
+  required,
+}: {
+  label: React.ReactNode;
+  info?: string;
+  required?: boolean;
+}) {
+  if (!info) return <Input.Label required={required}>{label}</Input.Label>;
   return (
     <div className="flex items-center gap-1">
       <Input.Label>{label}</Input.Label>
       <InfoPopover size="xs" iconProps={{ size: 14 }}>
         {info}
       </InfoPopover>
+      {required && <span className="text-red-5">*</span>}
     </div>
   );
 }
