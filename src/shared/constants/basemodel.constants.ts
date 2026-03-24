@@ -36,7 +36,7 @@ export type EcosystemRecord = {
   description?: string; // Brief description for UI display
   parentEcosystemId?: number;
   familyId?: number; // For UI family grouping
-  sortOrder?: number; // For ordering in UI
+  sortOrder: number; // For ordering in UI
 };
 
 export type EcosystemSupport = {
@@ -706,9 +706,20 @@ const checkpointAndLora = [ModelType.Checkpoint, ModelType.LORA];
 const checkpointOnly = [ModelType.Checkpoint];
 const loraOnly = [ModelType.LORA];
 /** Addon types that cross between SDXL parent ↔ child ecosystems */
-const sdxlCrossAddonTypes = [ModelType.TextualInversion, ModelType.LORA, ModelType.DoRA, ModelType.LoCon, ModelType.VAE];
+const sdxlCrossAddonTypes = [
+  ModelType.TextualInversion,
+  ModelType.LORA,
+  ModelType.DoRA,
+  ModelType.LoCon,
+  ModelType.VAE,
+];
 /** Addon types that cross between SDXL sibling ecosystems (no VAE) */
-const sdxlSiblingAddonTypes = [ModelType.TextualInversion, ModelType.LORA, ModelType.DoRA, ModelType.LoCon];
+const sdxlSiblingAddonTypes = [
+  ModelType.TextualInversion,
+  ModelType.LORA,
+  ModelType.DoRA,
+  ModelType.LoCon,
+];
 
 export const ecosystemSupport: EcosystemSupport[] = [
   // SD1 - full addon support
@@ -2643,6 +2654,23 @@ export const baseModelRecords: BaseModelRecord[] = [
 export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
 export const baseModelByName = new Map(baseModelRecords.map((m) => [m.name, m]));
 
+/** Grouped select data for base model multi-select inputs, grouped by ecosystem family */
+export const baseModelSelectData = (() => {
+  const activeModels = baseModelRecords.filter((m) => !m.hidden);
+  const groupMap = new Map<string, { value: string; label: string }[]>();
+
+  for (const model of activeModels) {
+    const ecosystem = ecosystemById.get(model.ecosystemId);
+    const family = ecosystem?.familyId ? ecosystemFamilyById.get(ecosystem.familyId) : undefined;
+    const groupName = family?.name ?? ecosystem?.displayName ?? model.name;
+
+    if (!groupMap.has(groupName)) groupMap.set(groupName, []);
+    groupMap.get(groupName)!.push({ value: model.name, label: model.name });
+  }
+
+  return Array.from(groupMap.entries()).map(([group, items]) => ({ group, items }));
+})();
+
 export function getEcosystem(baseModel: string) {
   const model = baseModelByName.get(baseModel);
   if (model) return ecosystemById.get(model.ecosystemId);
@@ -2882,16 +2910,22 @@ export function getGenerationSupport(
 
   if (!checkpointEcosystem || !addonEcosystem) return null;
 
-  // Check if model type is supported for generation
-  const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
-  if (!support || support.disabled || !support.modelTypes.includes(addonModelType)) {
-    return null;
-  }
-
-  // Same ecosystem = Full
+  // Same ecosystem = always Full (same-ecosystem resources are inherently compatible)
   if (checkpointEcosystemId === addonEcosystemId) return 'full';
 
-  // Check cross-ecosystem rules
+  // Check if generation is supported at all
+  const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
+  if (!support || support.disabled) return null;
+
+  // For related ecosystems, require the model type to be in the ecosystem's supported types
+  if (support.modelTypes.includes(addonModelType)) {
+    if (areEcosystemsRelated(checkpointEcosystemId, addonEcosystemId)) {
+      return 'partial';
+    }
+  }
+
+  // Check cross-ecosystem rules — these define their own modelTypes so they bypass
+  // the ecosystem's primary modelTypes list (e.g. SD1 TextualInversion → SDXL family)
   const crossRule = crossEcosystemRules.find(
     (r) =>
       r.sourceEcosystemId === addonEcosystemId &&
@@ -2900,9 +2934,11 @@ export function getGenerationSupport(
       (!r.modelTypes || r.modelTypes.includes(addonModelType))
   );
 
+  if (crossRule) return crossRule.support;
+
   // Also check if the target is a child of the rule's target
-  if (!crossRule) {
-    const targetRoot = getRootEcosystem(checkpointEcosystemId);
+  const targetRoot = getRootEcosystem(checkpointEcosystemId);
+  if (targetRoot.id !== checkpointEcosystemId) {
     const matchingRule = crossEcosystemRules.find(
       (r) =>
         r.sourceEcosystemId === addonEcosystemId &&
@@ -2913,9 +2949,60 @@ export function getGenerationSupport(
     if (matchingRule) return matchingRule.support;
   }
 
-  if (crossRule) return crossRule.support;
-
   return null;
+}
+
+/**
+ * Check if a single resource (by baseModel name and model type) is compatible with an ecosystem.
+ * Returns the support level or null if incompatible.
+ */
+export function getResourceEcosystemCompatibility(
+  ecosystemId: number,
+  resourceBaseModel: string,
+  resourceModelType: ModelType
+): SupportLevel | null {
+  const bm = baseModelByName.get(resourceBaseModel);
+  if (!bm) return null;
+  return getGenerationSupport(ecosystemId, bm.ecosystemId, resourceModelType);
+}
+
+/** Minimal shape required for ecosystem compatibility checks */
+interface ResourceLikeForCompat {
+  baseModel?: string;
+  model: { type: string };
+}
+
+/**
+ * Check if ALL resources are compatible with a given ecosystem.
+ */
+export function areResourcesCompatible(
+  ecosystemId: number,
+  resources: ResourceLikeForCompat[]
+): boolean {
+  return resources.every((r) => {
+    if (!r.baseModel) return true;
+    const bm = baseModelByName.get(r.baseModel);
+    if (!bm) return true;
+    return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
+  });
+}
+
+/**
+ * Filter resources to keep only those compatible with a given ecosystem.
+ * Optionally exclude specific resource IDs (e.g. incoming replacements).
+ */
+export function filterCompatibleResources<T extends ResourceLikeForCompat & { id: number }>(
+  ecosystemId: number,
+  resources: T[],
+  excludeIds?: Set<number>
+): T[] {
+  return resources.filter((r) => {
+    if (excludeIds?.has(r.id)) return false;
+    if (!r.baseModel) return true;
+    const bm = baseModelByName.get(r.baseModel);
+    if (!bm) return true;
+    return getGenerationSupport(ecosystemId, bm.ecosystemId, r.model.type as ModelType) !== null;
+  });
 }
 
 /**
@@ -3626,7 +3713,10 @@ export const DEPRECATED_BASE_MODELS: string[] = baseModelRecords
  */
 export const baseModelGroupConfig: Record<string, { name: string; description?: string }> =
   Object.fromEntries(
-    ecosystems.map((eco) => [eco.key, { name: eco.displayName ?? eco.key, description: eco.description }])
+    ecosystems.map((eco) => [
+      eco.key,
+      { name: eco.displayName ?? eco.key, description: eco.description },
+    ])
   );
 
 // -----------------------------------------------------------------------------
@@ -3640,7 +3730,7 @@ export const baseModelGroupConfig: Record<string, { name: string; description?: 
  */
 export function getBaseModelConfig(baseModel: string): BaseModelRecord {
   // Try to find by name first
-  let record = baseModelByName.get(baseModel);
+  const record = baseModelByName.get(baseModel);
   if (record) return record;
 
   // Try to find by ecosystem key
@@ -3774,10 +3864,14 @@ export function getBaseModelByMediaType(type: MediaType): string[] {
  * @returns Array of ecosystem keys
  */
 export function getBaseModelGroupsByMediaType(type: MediaType): string[] {
-  return [...new Set(getBaseModelConfigsByMediaType(type).map((x) => {
-    const ecosystem = ecosystemById.get(x.ecosystemId);
-    return ecosystem?.key ?? 'Other';
-  }))];
+  return [
+    ...new Set(
+      getBaseModelConfigsByMediaType(type).map((x) => {
+        const ecosystem = ecosystemById.get(x.ecosystemId);
+        return ecosystem?.key ?? 'Other';
+      })
+    ),
+  ];
 }
 
 // -----------------------------------------------------------------------------
@@ -3973,7 +4067,10 @@ export function getBaseModelGenerationSupported(baseModel: string, modelType: Mo
  * @param modelType - Model type
  * @returns Array of associated ecosystem keys
  */
-export function getGenerationBaseModelAssociatedGroups(group: string, modelType: ModelType): string[] {
+export function getGenerationBaseModelAssociatedGroups(
+  group: string,
+  modelType: ModelType
+): string[] {
   const baseModelNames = getGenerationBaseModels(group, modelType);
   return [
     ...new Set(

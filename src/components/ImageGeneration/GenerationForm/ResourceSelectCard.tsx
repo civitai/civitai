@@ -102,6 +102,7 @@ export const ResourceSelectCard = (props: Props) => {
 function CheckpointInfo({
   resource,
   onRemove,
+  onUpdate,
   onSwap,
   selectSource,
   hideVersion,
@@ -109,8 +110,8 @@ function CheckpointInfo({
   isPartiallySupported,
   isPreview,
 }: Props) {
-  const features = useFeatureFlags();
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
+  const hasSubstitute = unavailable && resource.substitute?.canGenerate === true;
   const { domain } = useAppContext();
   const showLink = shouldShowModelLink(resource);
 
@@ -214,20 +215,38 @@ function CheckpointInfo({
           )} */}
         </Stack>
       </Group>
-      {onRemove ? (
-        <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
-          <IconX size={20} />
-        </LegacyActionIcon>
-      ) : (
-        <Button variant="light" radius="xl" onClick={onSwap} size="compact-sm">
-          <Group gap={4} wrap="nowrap">
-            <IconReplace size={16} />
-            <Text size="sm" fw={500}>
-              Swap
-            </Text>
-          </Group>
-        </Button>
-      )}
+      <Group gap={4} wrap="nowrap">
+        {hasSubstitute && onUpdate && (
+          <Button
+            variant="light"
+            color="blue"
+            radius="xl"
+            onClick={() => onUpdate({ ...resource, ...resource.substitute! })}
+            size="compact-sm"
+          >
+            <Group gap={4} wrap="nowrap">
+              <IconReplace size={16} />
+              <Text size="sm" fw={500}>
+                Use Substitute
+              </Text>
+            </Group>
+          </Button>
+        )}
+        {onRemove ? (
+          <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
+            <IconX size={20} />
+          </LegacyActionIcon>
+        ) : (
+          <Button variant="light" radius="xl" onClick={onSwap} size="compact-sm">
+            <Group gap={4} wrap="nowrap">
+              <IconReplace size={16} />
+              <Text size="sm" fw={500}>
+                Swap
+              </Text>
+            </Group>
+          </Button>
+        )}
+      </Group>
     </Group>
   );
 }
@@ -242,6 +261,7 @@ function ResourceInfoCard({
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
+  const hasSubstitute = unavailable && resource.substitute?.canGenerate === true;
   const { domain } = useAppContext();
   const showLink = shouldShowModelLink(resource);
 
@@ -382,11 +402,29 @@ function ResourceInfoCard({
           </div>
         )}
       </Stack>
-      {onRemove && (
-        <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
-          <IconX size={20} />
-        </LegacyActionIcon>
-      )}
+      <Group gap={4} wrap="nowrap" className="shrink-0">
+        {hasSubstitute && onUpdate && (
+          <Button
+            variant="light"
+            color="blue"
+            radius="xl"
+            onClick={() => onUpdate({ ...resource, ...resource.substitute! })}
+            size="compact-sm"
+          >
+            <Group gap={4} wrap="nowrap">
+              <IconReplace size={16} />
+              <Text size="sm" fw={500}>
+                Use Substitute
+              </Text>
+            </Group>
+          </Button>
+        )}
+        {onRemove && (
+          <LegacyActionIcon size="sm" variant="subtle" onClick={() => onRemove(resource.id)}>
+            <IconX size={20} />
+          </LegacyActionIcon>
+        )}
+      </Group>
     </Group>
   );
 }

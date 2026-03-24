@@ -60,6 +60,7 @@ const featureFlags = createFeatureFlags({
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
+  wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],

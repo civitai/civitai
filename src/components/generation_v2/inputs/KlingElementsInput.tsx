@@ -23,14 +23,7 @@ import {
 } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
 import { useDisclosure } from '@mantine/hooks';
-import {
-  IconPhoto,
-  IconPlus,
-  IconTrash,
-  IconUpload,
-  IconVideo,
-  IconX,
-} from '@tabler/icons-react';
+import { IconPhoto, IconPlus, IconTrash, IconUpload, IconVideo, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import type z from 'zod';
 import type { klingV3ElementSchema } from '~/shared/data-graph/generation/kling-graph';
@@ -125,9 +118,7 @@ function KlingElementModal({ opened, onClose, onSubmit, hasVideoElement }: Kling
           }
           const dims = await getImageDimensions(blob.url!);
           const newImage: ImageValue = { url: blob.url!, width: dims.width, height: dims.height };
-          setDraft((d) =>
-            d.images.length < 4 ? { ...d, images: [...d.images, newImage] } : d
-          );
+          setDraft((d) => (d.images.length < 4 ? { ...d, images: [...d.images, newImage] } : d));
         }
       }
     } finally {
@@ -154,10 +145,10 @@ function KlingElementModal({ opened, onClose, onSubmit, hasVideoElement }: Kling
             {draft.images.map((img, i) => (
               <div
                 key={img.url}
-                className="relative h-16 w-16 flex-shrink-0 overflow-hidden rounded border border-solid border-gray-3 dark:border-dark-4"
+                className="relative size-16 shrink-0 overflow-hidden rounded border border-solid border-gray-3 dark:border-dark-4"
               >
-                <img src={img.url} alt={`Image ${i + 1}`} className="h-full w-full object-cover" />
-                <div className="absolute bottom-0 left-0 right-0 bg-black/50 py-0.5 text-center text-[9px] text-white">
+                <img src={img.url} alt={`Image ${i + 1}`} className="size-full object-cover" />
+                <div className="absolute inset-x-0 bottom-0 bg-black/50 py-0.5 text-center text-[9px] text-white">
                   {i === 0 ? 'Frontal' : `Ref ${i}`}
                 </div>
                 <ActionIcon
@@ -173,7 +164,7 @@ function KlingElementModal({ opened, onClose, onSubmit, hasVideoElement }: Kling
               </div>
             ))}
             {draft.videoUrl && (
-              <div className="bg-dark-6 relative flex h-16 w-16 flex-shrink-0 flex-col items-center justify-center gap-0.5 overflow-hidden rounded border border-solid border-gray-3 dark:border-dark-4">
+              <div className="relative flex size-16 shrink-0 flex-col items-center justify-center gap-0.5 overflow-hidden rounded border border-solid border-gray-3 bg-dark-6 dark:border-dark-4">
                 <IconVideo size={20} />
                 <Text size="xs" c="dimmed" className="max-w-[56px] truncate text-[9px]">
                   video
@@ -222,7 +213,10 @@ function KlingElementModal({ opened, onClose, onSubmit, hasVideoElement }: Kling
                     Upload images or video
                   </Text>
                   <Text size="xs" c="dimmed" ta="center">
-                    {!imagesMaxed && `Up to ${4 - draft.images.length} image${4 - draft.images.length !== 1 ? 's' : ''}`}
+                    {!imagesMaxed &&
+                      `Up to ${4 - draft.images.length} image${
+                        4 - draft.images.length !== 1 ? 's' : ''
+                      }`}
                     {!imagesMaxed && !videoMaxed && ' · '}
                     {!videoMaxed && 'MP4 video'}
                   </Text>
@@ -282,7 +276,7 @@ function KlingElementCard({ element, index, onPromptChange, onRemove }: KlingEle
     (element.videoUrl ? 1 : 0);
 
   return (
-    <div className="bg-gray-0 dark:bg-dark-6 flex flex-col gap-2 rounded-md border border-solid border-gray-3 p-3 dark:border-dark-4">
+    <div className="flex flex-col gap-2 rounded-md border border-solid border-gray-3 bg-gray-0 p-3 dark:border-dark-4 dark:bg-dark-6">
       <div className="flex items-start justify-between">
         <div>
           <Text size="sm" fw={500}>

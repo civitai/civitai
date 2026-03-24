@@ -1093,7 +1093,7 @@ export async function pickWinnersForChallenge(
 
     let winningEntries: Array<{
       userId: number;
-      imageId: number;
+      imageId: number | null;
       position: number;
       prize: number;
       reason: string | null;
@@ -1190,7 +1190,7 @@ export async function pickWinnersForChallenge(
         await createChallengeWinner({
           challengeId: currentChallenge.challengeId,
           userId: entry.userId,
-          imageId: entry.imageId,
+          imageId: entry.imageId!, // always non-null on fresh winner path
           place: entry.position,
           buzzAwarded: entry.prize,
           pointsAwarded: currentChallenge.prizes[entry.position - 1].points,

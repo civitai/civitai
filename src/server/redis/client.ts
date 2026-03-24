@@ -318,7 +318,11 @@ function getBaseClient(type: 'cache' | 'system') {
     const fliptHostname = getFliptHostname();
     const fliptContext: Record<string, string> = { hostname: fliptHostname };
     if (env.FLIPT_DEPLOYMENT_ID) fliptContext.deploymentId = env.FLIPT_DEPLOYMENT_ID;
-    log(`Flipt context for enhanced failover flag: hostname=${fliptHostname}, deploymentId=${env.FLIPT_DEPLOYMENT_ID ?? 'unset'}`);
+    log(
+      `Flipt context for enhanced failover flag: hostname=${fliptHostname}, deploymentId=${
+        env.FLIPT_DEPLOYMENT_ID ?? 'unset'
+      }`
+    );
 
     // Helper to check feature flag before triggering rediscovery
     const maybeRediscover = async (reason: string) => {
@@ -827,7 +831,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
-    FEATURED_MODELS: 'packed:featured-models',
+    FEATURED_MODELS: 'packed:featured-models-2',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',

@@ -15,11 +15,7 @@ export const custodySweepJob = createJob(
   'custody-sweep',
   '0 4 * * *', // Daily at 04:00 UTC
   async () => {
-    if (
-      !env.NOW_PAYMENTS_EMAIL ||
-      !env.NOW_PAYMENTS_PASSWORD ||
-      !env.NOW_PAYMENTS_PAYOUT_ADDRESS
-    ) {
+    if (!env.NOW_PAYMENTS_EMAIL || !env.NOW_PAYMENTS_PASSWORD || !env.NOW_PAYMENTS_PAYOUT_ADDRESS) {
       return { skipped: true, reason: 'Missing payout env vars' };
     }
 
@@ -93,7 +89,7 @@ export const custodySweepJob = createJob(
       };
     } catch (error) {
       // Clear dedup key on failure so next run can retry
-      await redis.del(SWEEP_DEDUP_KEY).catch(() => {});
+      await redis.del(SWEEP_DEDUP_KEY).catch(() => null);
       throw error;
     }
   },

@@ -362,7 +362,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   >
                     <RoutedDialogLink
                       name="imageDetail"
-                      state={{ imageId: image.id }}
+                      state={{ imageId: image.id, withoutPost: true }}
                       className="block size-full cursor-pointer"
                     >
                       <Center className="size-full">

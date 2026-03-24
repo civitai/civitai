@@ -10,6 +10,7 @@ import type {
   OpenAiGpt1EditImageInput,
   OpenAiGpt15CreateImageInput,
   OpenAiGpt15EditImageInput,
+  ImageGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -38,7 +39,7 @@ const versionIdToModel = new Map<number, OpenAIModel>([
  * Creates imageGen input for OpenAI ecosystem.
  * Handles both createImage and editImage operations.
  */
-export const createOpenAIInput = defineHandler<OpenAICtx, OpenAIInput>((data, ctx) => {
+export const createOpenAIInput = defineHandler<OpenAICtx, [ImageGenStepTemplate]>((data, ctx) => {
   const quantity = Math.min(data.quantity ?? 1, 10);
 
   // Determine model from resources
@@ -67,15 +68,25 @@ export const createOpenAIInput = defineHandler<OpenAICtx, OpenAIInput>((data, ct
 
   const hasImages = !!data.images?.length;
   if (!hasImages) {
-    return removeEmpty({
-      ...baseData,
-      operation: 'createImage',
-    }) as OpenAIInput;
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...baseData,
+          operation: 'createImage',
+        }) as OpenAIInput,
+      },
+    ];
   } else {
-    return removeEmpty({
-      ...baseData,
-      operation: 'editImage',
-      images: data.images?.map((x) => x.url) ?? [],
-    }) as OpenAIInput;
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...baseData,
+          operation: 'editImage',
+          images: data.images?.map((x) => x.url) ?? [],
+        }) as OpenAIInput,
+      },
+    ];
   }
 });

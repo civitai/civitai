@@ -352,7 +352,7 @@ export const constants = {
 
 export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
-export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
+export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 
@@ -571,6 +571,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
   LTXV2: baseLicenses['ltxv2'],
+  'LTXV 2.3': baseLicenses['ltxv2'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],

@@ -18,7 +18,7 @@
  *    - Routes to appropriate step type based on ecosystem
  */
 
-import type { WorkflowStepTemplate } from '@civitai/client';
+import type { WorkflowCost, WorkflowStepTemplate } from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
 import {
   generationGraph,
@@ -52,6 +52,7 @@ import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { maxRandomSeed } from '~/server/common/constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 // Ecosystem handlers - unified router
 import { createEcosystemStepInput } from './ecosystems';
@@ -196,7 +197,8 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
  * @returns GenerationCtx with limits and user info, plus status for availability checks
  */
 export async function buildGenerationContext(
-  userTier: GenerationCtx['user']['tier'] = 'free'
+  userTier: GenerationCtx['user']['tier'] = 'free',
+  flags?: Partial<FeatureAccess>
 ): Promise<GenerationContextResult> {
   const status = await getGenerationStatus();
   const limits = status.limits[userTier];
@@ -211,6 +213,7 @@ export async function buildGenerationContext(
         isMember: userTier !== 'free',
         tier: userTier,
       },
+      flags,
     },
     status: {
       available: status.available,
@@ -629,13 +632,20 @@ async function createStepInputs(
 
     // Standard: build imageMetadata from merged step metadata.
     // Don't store full params/resources on step — they live on workflow.metadata.
+    // Preserve handler-set metadata fields (e.g. suppressOutput for multi-step workflows).
+    const handlerMeta =
+      additionalMetadata && typeof additionalMetadata === 'object'
+        ? Object.fromEntries(
+            Object.entries(additionalMetadata).filter(([k]) => k !== 'params' && k !== 'resources')
+          )
+        : {};
     return {
       ...rest,
       input: {
         ...(rest.input as object),
         imageMetadata: buildImageMetadata(mergedMeta.params, mergedMeta.resources),
       },
-      metadata: {},
+      metadata: handlerMeta,
     };
   });
 }
@@ -785,6 +795,7 @@ export async function createWorkflowStepsFromGraph({
 
   // Wrap with request-level concerns: priority, timeout, outputFormat
   // isPrivateGeneration and remixOfId live on workflow.metadata, not per-step
+  // Intermediate steps (videoInterpolation) don't get outputFormat injected
   const wrappedSteps = steps.map((step) => ({
     $type: step.$type,
     input: {
@@ -1039,6 +1050,11 @@ export interface NormalizedStepMetadata {
       postId?: number;
     }
   >;
+  /**
+   * When true, this step's output should be hidden from the user.
+   * Used for intermediate steps in multi-step workflows (e.g., Wan 2.2 videoGen before interpolation).
+   */
+  suppressOutput?: boolean;
 }
 
 export type StepMetadataTransformation = {
@@ -1081,7 +1097,7 @@ export interface NormalizedWorkflow {
   status: WorkflowStatus;
   createdAt: Date;
   transactions: TransactionInfo[];
-  cost?: { type?: string; currency?: string; total?: number; base?: number };
+  cost: WorkflowCost;
   tags: string[];
   allowMatureContent?: boolean | null;
   duration?: number;
@@ -1461,6 +1477,7 @@ function formatStep(
         params: finalParams,
         remixOfId,
         images: metadata.images as NormalizedStepMetadata['images'],
+        suppressOutput: metadata.suppressOutput as boolean | undefined,
       }),
       ...(resolvedResources?.length ? { resources: resolvedResources } : {}),
     },

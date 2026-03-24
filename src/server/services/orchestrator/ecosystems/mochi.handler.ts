@@ -6,7 +6,7 @@
  * Supports txt2vid workflow only.
  */
 
-import type { MochiVideoGenInput } from '@civitai/client';
+import type { MochiVideoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { defineHandler } from './handler-factory';
@@ -19,12 +19,18 @@ type MochiCtx = EcosystemGraphOutput & { ecosystem: 'Mochi' };
  * Creates videoGen input for Mochi ecosystem.
  * Txt2vid only with minimal configuration.
  */
-export const createMochiInput = defineHandler<MochiCtx, MochiVideoGenInput>((data, ctx) => {
-  return removeEmpty({
-    engine: 'mochi',
-    prompt: data.prompt,
-    quantity: data.quantity ?? 1,
-    seed: data.seed,
-    enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
-  }) as MochiVideoGenInput;
+export const createMochiInput = defineHandler<MochiCtx, [VideoGenStepTemplate]>((data, ctx) => {
+  return [
+    {
+      $type: 'videoGen',
+      input: removeEmpty({
+        engine: 'mochi',
+        prompt: data.prompt,
+        quantity: data.quantity ?? 1,
+        seed: data.seed,
+        enablePromptEnhancer:
+          'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
+      }) as MochiVideoGenInput,
+    },
+  ];
 });

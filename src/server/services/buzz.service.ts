@@ -477,7 +477,7 @@ export async function completeStripeBuzzTransaction({
       toAccountId: userId,
       toAccountType: (metadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
       type: TransactionType.Purchase,
-      description: `Purchase of ${amount} Buzz. ${
+      description: `Purchase of ${amount} Buzz via Stripe. ${
         purchasesMultiplier && purchasesMultiplier > 1
           ? 'Multiplier applied due to membership. '
           : ''
@@ -1160,12 +1160,19 @@ export async function getCounterPartyBuzzTransactions({
   );
 }
 
+const providerDisplayNames: Record<string, string> = {
+  nowpayments: 'NOWPayments',
+  coinbase: 'Coinbase',
+  emerchantpay: 'EmerchantPay',
+};
+
 export const grantBuzzPurchase = async ({
   amount,
   userId,
   externalTransactionId,
   description,
   accountType,
+  provider,
   ...data
 }: {
   amount: number;
@@ -1173,12 +1180,15 @@ export const grantBuzzPurchase = async ({
   externalTransactionId: string;
   description?: string;
   accountType?: BuzzAccountType;
+  provider?: string;
 } & MixedObject) => {
   const { purchasesMultiplier } = await getMultipliersForUser(userId);
   const { blueBuzzAdded, totalCustomBuzz, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
     buzzAmount: amount,
     purchasesMultiplier,
   });
+
+  const displayProvider = provider ? providerDisplayNames[provider] ?? provider : undefined;
 
   // Give user the buzz assuming it hasn't been given
   const { transactionId } = await createBuzzTransaction({
@@ -1190,7 +1200,9 @@ export const grantBuzzPurchase = async ({
     externalTransactionId,
     description:
       description ??
-      `Purchase of ${amount} Buzz. ${
+      `Purchase of ${numberWithCommas(amount)} Buzz${
+        displayProvider ? ` via ${displayProvider}` : ''
+      }. ${
         purchasesMultiplier && purchasesMultiplier > 1
           ? 'Multiplier applied due to membership. '
           : ''

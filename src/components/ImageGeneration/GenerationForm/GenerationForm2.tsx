@@ -2065,7 +2065,7 @@ export function GenerationFormContent() {
 function ReadySection() {
   const { data, isLoading } = useTextToImageWhatIfContext();
 
-  return data?.ready === false && !isLoading ? (
+  return data.ready === false && !isLoading ? (
     <Card.Section m={0}>
       <Alert color="yellow" title="Potentially slow generation" radius={0}>
         <Text size="xs">
@@ -2119,9 +2119,9 @@ function SubmitButton(props: { isLoading?: boolean }) {
     tips.civitai = civitaiTip;
   }
 
-  const base = data?.cost?.base ?? 0;
+  const base = data.cost?.base ?? 0;
   const totalTip = Math.ceil(base * tips.creators) + Math.ceil(base * tips.civitai);
-  total = (data?.cost?.total ?? 0) + totalTip;
+  total = (data.cost?.total ?? 0) + totalTip;
 
   const generateButton = (
     <GenerateButton
@@ -2134,8 +2134,8 @@ function SubmitButton(props: { isLoading?: boolean }) {
       onClick={() => {
         if (running) helpers?.next();
       }}
-      transactions={data?.transactions}
-      allowMatureContent={data?.allowMatureContent}
+      transactions={data.transactions}
+      allowMatureContent={data.allowMatureContent}
     />
   );
 
@@ -2144,11 +2144,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   return (
     <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
       {generateButton}
-      <GenerationCostPopover
-        width={300}
-        workflowCost={data?.cost ?? {}}
-        hideCreatorTip={!hasCreatorTip}
-      />
+      <GenerationCostPopover width={300} workflowCost={data.cost} hideCreatorTip={!hasCreatorTip} />
     </div>
   );
 }

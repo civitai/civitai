@@ -5,7 +5,7 @@
  * Supports txt2vid and img2vid workflows with model version selection (fast/standard).
  */
 
-import type { Veo3VideoGenInput } from '@civitai/client';
+import type { Veo3VideoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
@@ -38,7 +38,7 @@ function getImageAspectRatio(images: { width: number; height: number }[] | undef
  * Creates videoGen input for Veo3 ecosystem.
  * Supports txt2vid and img2vid with model versions, duration, audio generation, and LoRAs.
  */
-export const createVeo3Input = defineHandler<Veo3Ctx, Veo3VideoGenInput>((data, ctx) => {
+export const createVeo3Input = defineHandler<Veo3Ctx, [VideoGenStepTemplate]>((data, ctx) => {
   const images = data.images;
   const isRef2Vid = data.workflow === 'img2vid:ref2vid';
   const hasImages = !!images?.length;
@@ -71,20 +71,26 @@ export const createVeo3Input = defineHandler<Veo3Ctx, Veo3VideoGenInput>((data, 
   const refImages = isRef2Vid && hasImages ? images!.map((x) => x.url) : undefined;
   const sourceImages = !isRef2Vid && hasImages ? images!.map((x) => x.url) : undefined;
 
-  return removeEmpty({
-    engine: 'veo3',
-    fastMode: mode === 'fast',
-    prompt,
-    negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
-    aspectRatio: (data.aspectRatio?.value ??
-      getImageAspectRatio(images)) as Veo3VideoGenInput['aspectRatio'],
-    duration: 'duration' in data ? data.duration : undefined,
-    version: 'version' in data ? data.version : undefined,
-    generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
-    images: refImages ?? sourceImages,
-    quantity: data.quantity ?? 1,
-    seed: data.seed,
-    enablePromptEnhancer: 'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
-    loras: loras.length > 0 ? loras : undefined,
-  }) as Veo3VideoGenInput;
+  return [
+    {
+      $type: 'videoGen',
+      input: removeEmpty({
+        engine: 'veo3',
+        fastMode: mode === 'fast',
+        prompt,
+        negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+        aspectRatio: (data.aspectRatio?.value ??
+          getImageAspectRatio(images)) as Veo3VideoGenInput['aspectRatio'],
+        duration: 'duration' in data ? data.duration : undefined,
+        version: 'version' in data ? data.version : undefined,
+        generateAudio: 'generateAudio' in data ? data.generateAudio : undefined,
+        images: refImages ?? sourceImages,
+        quantity: data.quantity ?? 1,
+        seed: data.seed,
+        enablePromptEnhancer:
+          'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
+        loras: loras.length > 0 ? loras : undefined,
+      }) as Veo3VideoGenInput,
+    },
+  ];
 });

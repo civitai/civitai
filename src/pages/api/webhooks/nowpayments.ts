@@ -13,7 +13,7 @@ export const config = {
 };
 
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data }).catch(() => null);
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -26,11 +26,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const webhookSecret = env.NOW_PAYMENTS_IPN_KEY;
 
   // Track to ClickHouse (fire and forget, never throws)
-  trackWebhookEvent('nowpayments', JSON.stringify(req.body)).catch(() => {});
+  trackWebhookEvent('nowpayments', JSON.stringify(req.body)).catch(() => null);
 
   try {
     if (!sig || !webhookSecret) {
-      await log({
+      log({
         message: 'Invalid request: Missing signature or secret',
       });
       return res.status(400).send({
@@ -41,7 +41,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { isValid, ...data } = client.validateWebhookEvent(sig as string, req.body);
     if (!isValid) {
-      await log({
+      log({
         message: 'Invalid signature',
         sig,
         data,
@@ -56,7 +56,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const paymentStatus = event.payment_status;
 
     if (!paymentStatus || !event.payment_id) {
-      await log({
+      log({
         message: 'Webhook missing payment_status or payment_id',
         event,
       });
@@ -68,9 +68,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await processDeposit(event.payment_id, paymentStatus, event);
     }
   } catch (error: any) {
-    await log({
+    log({
       message: `Webhook error: ${error.message}`,
       error: error.stack,
+      payload: req.body,
     });
     return res.status(400).send(`Webhook Error: ${error.message}`);
   }

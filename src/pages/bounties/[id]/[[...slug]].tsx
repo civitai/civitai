@@ -121,7 +121,7 @@ export const getServerSideProps = createServerSideProps({
       if (bounty) {
         const correctSlug = slugit(bounty.name);
         const currentSlug = result.data.slug?.join('/');
-        if (currentSlug !== correctSlug) {
+        if (correctSlug && currentSlug !== correctSlug) {
           return {
             redirect: {
               destination: `/bounties/${result.data.id}/${correctSlug}`,

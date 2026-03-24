@@ -117,7 +117,7 @@ function getCompatibleEcosystemOptions(
         id: eco.key,
         label: eco.displayName,
         ecosystemKey: eco.key,
-        sortOrder: eco.sortOrder ?? 999,
+        sortOrder: eco.sortOrder,
       });
     }
   }

@@ -12,6 +12,7 @@ import {
   investigateSubscription,
   investigateModeration,
   checkSiteStatus,
+  investigateCryptoPayments,
 } from './freshdesk-investigation-tools';
 
 // --- Tool definitions ---
@@ -342,6 +343,22 @@ const checkSiteStatusTool: ToolDefinitionJson = {
   },
 };
 
+const investigateCryptoPaymentsTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'investigate_crypto_payments',
+    description:
+      "Get a user's crypto payment history including wallet addresses, recent deposits with status/amounts/buzz credited, and live payment status from NowPayments API for stuck transactions. Use for tickets about crypto payments not going through, buzz not received after crypto payment, or payments stuck in confirming status.",
+    parameters: {
+      type: 'object',
+      properties: {
+        user_id: { type: 'number', description: 'The Civitai user ID' },
+      },
+      required: ['user_id'],
+    },
+  },
+};
+
 // --- Tool execution ---
 
 const DB_QUERY_TIMEOUT_MS = 30_000;
@@ -476,7 +493,8 @@ export async function executeToolCall(
       case 'investigate_cosmetics':
       case 'investigate_content':
       case 'investigate_subscription':
-      case 'investigate_moderation': {
+      case 'investigate_moderation':
+      case 'investigate_crypto_payments': {
         const userId = Number(args.user_id);
         if (!Number.isInteger(userId) || userId <= 0) {
           result = JSON.stringify({ error: 'user_id must be a positive integer' });
@@ -488,6 +506,7 @@ export async function executeToolCall(
           investigate_content: investigateContent,
           investigate_subscription: investigateSubscription,
           investigate_moderation: investigateModeration,
+          investigate_crypto_payments: investigateCryptoPayments,
         } as const;
         result = await investigationFns[name](userId);
         break;
@@ -544,6 +563,7 @@ const INVESTIGATION_TOOLS = [
   investigateContentTool,
   investigateSubscriptionTool,
   investigateModerationTool,
+  investigateCryptoPaymentsTool,
   checkSiteStatusTool,
 ];
 
