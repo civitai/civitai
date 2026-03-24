@@ -9,7 +9,6 @@ import {
   baseModelGroupConfig,
   ecosystemByKey,
   ecosystemFamilies,
-  getEcosystemFamily,
   getGenerationBaseModelConfigs,
 } from '~/shared/constants/basemodel.constants';
 import type { MediaType } from '~/shared/utils/prisma/enums';
@@ -125,9 +124,7 @@ function BaseModelSelectModal({ type }: { type: MediaType }) {
             {familyGroup.family ? (
               <Text className="mb-1 font-bold">{familyGroup.family.name}</Text>
             ) : (
-              familyGroup.items.length > 0 && (
-                <Text className="mb-1 font-bold">Other Models</Text>
-              )
+              familyGroup.items.length > 0 && <Text className="mb-1 font-bold">Other Models</Text>
             )}
             {familyGroup.family?.description && (
               <Text size="xs" c="dimmed" className="mb-2">

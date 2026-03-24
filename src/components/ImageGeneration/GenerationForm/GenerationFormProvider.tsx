@@ -55,8 +55,10 @@ import {
 import { zImageSampleMethods, zImageSchedules } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { getIsQwenImageEditModel } from '~/shared/orchestrator/ImageGen/qwen.config';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
-import { getGenerationBaseModelAssociatedGroups } from '~/shared/constants/basemodel.constants';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import {
+  getGenerationBaseModelAssociatedGroups,
+  ecosystemByKey,
+} from '~/shared/constants/basemodel.constants';
 import { imageAnnotationsSchema } from '~/components/Generation/Input/DrawingEditor/drawing.utils';
 import { isNewFormOnly } from '~/shared/data-graph/generation/config/workflows';
 import { openSwitchToNewFormModal } from '~/components/generation_v2/SwitchToNewFormModal';

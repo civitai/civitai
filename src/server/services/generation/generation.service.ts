@@ -54,8 +54,6 @@ import {
   getBaseModelEngine,
   getBaseModelMediaType,
   getBaseModelsByGroup,
-} from '~/shared/constants/basemodel.constants';
-import {
   getEcosystem,
   hasGenerationSupport,
   getResourceGenerationSupport,

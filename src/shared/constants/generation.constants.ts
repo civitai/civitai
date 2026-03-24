@@ -17,8 +17,8 @@ import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelEcosystem,
   getBaseModelGroup,
-  getBaseModelGroupsByMediaType,
   getBaseModelMediaType,
+  getResourceGenerationSupport,
 } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -335,45 +335,42 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
 ): BaseModelGroup | undefined {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelGroup(checkpoint.baseModel);
-  const resourceBaseModels = resources.map((x) => getBaseModelGroup(x.baseModel));
-  // image base models
-  if (resourceBaseModels.some((baseModel) => baseModel === 'Pony')) return 'Pony';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'SDXL')) return 'SDXL';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1')) return 'Flux1';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'FluxKrea')) return 'FluxKrea';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Illustrious'))
-    return 'Illustrious';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'NoobAI')) return 'NoobAI';
-  // else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3')) return 'SD3';
-  // else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3_5M')) return 'SD3_5M';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'OpenAI')) return 'OpenAI';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Imagen4')) return 'Imagen4';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
-    return 'Flux1Kontext';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2')) return 'Flux2';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'NanoBanana')) return 'NanoBanana';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Chroma')) return 'Chroma';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Seedream')) return 'Seedream';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'PonyV7')) return 'PonyV7';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageTurbo'))
-    return 'ZImageTurbo';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageBase')) return 'ZImageBase';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_9B'))
-    return 'Flux2Klein_9B';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_9B_base'))
-    return 'Flux2Klein_9B_base';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_4B'))
-    return 'Flux2Klein_4B';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2Klein_4B_base'))
-    return 'Flux2Klein_4B_base';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
 
-  // video base models
-  for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {
-    if (resources.some((x) => getBaseModelGroup(x.baseModel) === baseModelSet)) return baseModelSet;
+  if (resources.length === 0) return undefined;
+
+  // Get ecosystem groups for each resource, excluding 'Other' (unresolvable)
+  const resourceGroups = resources
+    .map((x) => getBaseModelGroup(x.baseModel))
+    .filter((g): g is string => g !== undefined && g !== 'Other');
+
+  if (resourceGroups.length === 0) return undefined;
+
+  // If all resources map to the same group, use it directly
+  const uniqueGroups = [...new Set(resourceGroups)];
+  if (uniqueGroups.length === 1) return uniqueGroups[0];
+
+  // Multiple groups: score each candidate by how many resources are compatible with it.
+  // On tie, the first group encountered wins (preserves resource order intent).
+  let bestGroup = uniqueGroups[0];
+  let bestScore = 0;
+
+  for (const candidateGroup of uniqueGroups) {
+    let score = 0;
+    for (const resource of resources) {
+      const support = getResourceGenerationSupport(
+        candidateGroup,
+        resource.baseModel,
+        resource.modelType
+      );
+      if (support !== null) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestGroup = candidateGroup;
+    }
   }
+
+  return bestGroup;
 }
 
 export function getBaseModelFromResourcesWithDefault<

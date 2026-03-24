@@ -485,7 +485,7 @@ export const ecosystems: EcosystemRecord[] = [
     name: 'veo3',
     displayName: 'Veo 3',
     familyId: 7,
-    sortOrder: 0,
+    sortOrder: 72,
   },
 
   // OpenAI Family (familyId: 8)
@@ -609,13 +609,13 @@ export const ecosystems: EcosystemRecord[] = [
     familyId: 16,
     sortOrder: 207,
   },
-  { id: ECO.Lumina, key: 'Lumina', name: 'lumina', displayName: 'Lumina', sortOrder: 207 },
+  { id: ECO.Lumina, key: 'Lumina', name: 'lumina', displayName: 'Lumina', sortOrder: 208 },
   {
     id: ECO.Mochi,
     key: 'Mochi',
     name: 'mochi',
     displayName: 'Mochi',
-    sortOrder: 207,
+    sortOrder: 209,
   },
   {
     id: ECO.Vidu,
@@ -2116,7 +2116,7 @@ export const baseModelRecords: BaseModelRecord[] = [
     id: BM.Mochi,
     name: 'Mochi',
     description: "Genmo's video generation model with realistic motion synthesis",
-    type: 'image',
+    type: 'video',
     ecosystemId: ECO.Mochi,
     licenseId: 13,
   },
@@ -3846,7 +3846,9 @@ export function getBaseModelsByGroup(group: string): string[] {
  * @returns Array of base model records
  */
 export function getBaseModelConfigsByMediaType(type: MediaType): BaseModelRecord[] {
-  return baseModelRecords.filter((x) => x.type === type);
+  return baseModelRecords.filter((x) =>
+    Array.isArray(x.type) ? x.type.includes(type) : x.type === type
+  );
 }
 
 /**
