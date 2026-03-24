@@ -22,7 +22,7 @@ export {
 export type GenerationWhatIfResponse = {
   allowMatureContent?: boolean | null;
   transactions?: TransactionInfo[];
-  cost?: WorkflowCost;
+  cost: WorkflowCost;
   ready: boolean;
 };
 
@@ -38,6 +38,4 @@ type Workflow<T extends WorkflowStep> = Omit<GeneratedWorkflow, 'steps'> & {
   steps: Array<T>;
 };
 
-export type TextToImageResponse = Workflow<
-  Omit<TextToImageStep, 'metadata'> & { metadata?: GeneratedImageStepMetadata }
->;
+export type TextToImageResponse = Workflow<TextToImageStep>;

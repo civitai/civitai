@@ -8,7 +8,12 @@
  * V3 uses engine 'kling-v3' with operation-based inputs.
  */
 
-import type { KlingVideoGenInput, KlingV3VideoGenInput, KlingModel } from '@civitai/client';
+import type {
+  KlingVideoGenInput,
+  KlingV3VideoGenInput,
+  KlingModel,
+  VideoGenStepTemplate,
+} from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
@@ -29,15 +34,13 @@ const versionIdToModel = new Map<number, KlingModel>([
  * Creates videoGen input for Kling ecosystem.
  * Routes to legacy or V3 handler based on klingVersion discriminator.
  */
-export const createKlingInput = defineHandler<KlingCtx, KlingVideoGenInput | KlingV3VideoGenInput>(
-  (data, ctx) => {
-    // Route V3 to its own handler
-    if ('klingVersion' in data && data.klingVersion === 'v3') {
-      return createV3Input(data);
-    }
-    return createLegacyInput(data);
-  }
-);
+export const createKlingInput = defineHandler<KlingCtx, [VideoGenStepTemplate]>((data, ctx) => {
+  const input =
+    'klingVersion' in data && data.klingVersion === 'v3'
+      ? createV3Input(data)
+      : createLegacyInput(data);
+  return [{ $type: 'videoGen', input }];
+});
 
 /** Legacy handler for V1.6, V2, V2.5 Turbo */
 function createLegacyInput(data: KlingCtx): KlingVideoGenInput {

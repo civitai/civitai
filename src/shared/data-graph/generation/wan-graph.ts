@@ -114,6 +114,28 @@ const wan22AspectRatios = [
   { label: '4:5', value: '4:5', width: 720, height: 900 },
 ];
 
+/** Wan 2.2 multi-step aspect ratios by resolution (comfy provider uses explicit pixel dims) */
+const wan22MultiStepAspectRatiosByResolution: Record<string, typeof wanAspectRatios> = {
+  '480p': [
+    { label: '16:9', value: '16:9', width: 848, height: 480 },
+    { label: '4:3', value: '4:3', width: 640, height: 480 },
+    { label: '1:1', value: '1:1', width: 480, height: 480 },
+    { label: '3:4', value: '3:4', width: 480, height: 640 },
+    { label: '9:16', value: '9:16', width: 480, height: 848 },
+    { label: '5:4', value: '5:4', width: 608, height: 480 },
+    { label: '4:5', value: '4:5', width: 384, height: 480 },
+  ],
+  '720p': [
+    { label: '16:9', value: '16:9', width: 1280, height: 720 },
+    { label: '4:3', value: '4:3', width: 960, height: 720 },
+    { label: '1:1', value: '1:1', width: 720, height: 720 },
+    { label: '3:4', value: '3:4', width: 720, height: 960 },
+    { label: '9:16', value: '9:16', width: 720, height: 1280 },
+    { label: '5:4', value: '5:4', width: 912, height: 720 },
+    { label: '4:5', value: '4:5', width: 576, height: 720 },
+  ],
+};
+
 /** Wan 2.5 resolution-dependent aspect ratios */
 const wan25AspectRatiosByResolution: Record<string, typeof wanAspectRatios> = {
   '480p': [
@@ -256,9 +278,26 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   );
 
 /**
- * Wan 2.2 subgraph - advanced controls with negative prompt, shift, interpolation
+ * Wan 2.2 subgraph - advanced controls with negative prompt, shift, interpolation.
+ *
+ * Supports two modes controlled by the `multiStep` toggle:
+ * - Multi-step (default when flag enabled): 12fps comfy generation + VFIMamba interpolation.
+ *   Exposes duration, steps, and expanded aspect ratios. Hides interpolatorModel and draft.
+ * - Legacy: Single-step FAL generation. Exposes interpolatorModel and draft.
+ *
+ * The toggle is hidden (and defaults to false) when the wan22MultiStep flipt flag is off.
  */
 const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
+  .node(
+    'multiStep',
+    (_ctx, ext) => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: ext.flags?.wan22MultiStep ?? false,
+      when: ext.flags?.wan22MultiStep ?? false,
+    }),
+    []
+  )
   .node('negativePrompt', negativePromptNode())
   .node('resolution', {
     input: z.enum(['480p', '720p']).optional(),
@@ -270,14 +309,17 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     'aspectRatio',
     (ctx) => {
       const resolution = (ctx as { resolution?: string }).resolution ?? '480p';
-      const options =
-        wan25AspectRatiosByResolution[resolution] ?? wan25AspectRatiosByResolution['480p'];
+      const multiStep = (ctx as { multiStep?: boolean }).multiStep ?? false;
+      const options = multiStep
+        ? wan22MultiStepAspectRatiosByResolution[resolution] ??
+          wan22MultiStepAspectRatiosByResolution['480p']
+        : wan25AspectRatiosByResolution[resolution] ?? wan25AspectRatiosByResolution['480p'];
       return {
         ...aspectRatioNode({ options, defaultValue: '1:1' }),
         when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
       };
     },
-    ['images', 'resolution']
+    ['images', 'resolution', 'multiStep']
   )
   .node('shift', {
     input: z.coerce.number().min(1).max(20).optional(),
@@ -285,17 +327,37 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     defaultValue: 8,
     meta: { min: 1, max: 20, step: 1 },
   })
-  .node('interpolatorModel', {
-    input: z.enum(['none', 'film', 'rife']).optional(),
-    output: z.enum(['none', 'film', 'rife']),
-    defaultValue: 'none' as const,
-    meta: { options: wanInterpolatorModels },
-  })
-  .node('draft', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: false,
-  })
+  // Multi-step only: duration and steps
+  .node(
+    'duration',
+    (ctx) => ({
+      ...enumNode({ options: wanDurations, defaultValue: 5 }),
+      when: (ctx as { multiStep?: boolean }).multiStep === true,
+    }),
+    ['multiStep']
+  )
+  // Legacy only: interpolatorModel and draft
+  .node(
+    'interpolatorModel',
+    (ctx) => ({
+      input: z.enum(['none', 'film', 'rife']).optional(),
+      output: z.enum(['none', 'film', 'rife']),
+      defaultValue: 'none' as const,
+      meta: { options: wanInterpolatorModels },
+      when: (ctx as { multiStep?: boolean }).multiStep !== true,
+    }),
+    ['multiStep']
+  )
+  .node(
+    'draft',
+    (ctx) => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: false,
+      when: (ctx as { multiStep?: boolean }).multiStep !== true,
+    }),
+    ['multiStep']
+  )
   .merge(createResourcesGraph({ limit: 2 }));
 
 /**

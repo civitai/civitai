@@ -160,7 +160,7 @@ function createTextToImageInput(
  */
 export const createStableDiffusionInput = defineHandler<
   SDFamilyCtx,
-  TextToImageStepTemplate | ComfyStepTemplate
+  [TextToImageStepTemplate | ComfyStepTemplate]
 >(async (data, ctx) => {
   if (!data.model) throw new Error('Model is required for SD family workflows');
   if (!data.aspectRatio && !data.images?.length)
@@ -238,36 +238,40 @@ export const createStableDiffusionInput = defineHandler<
       workflowData.upscaleHeight = data.upscaleHeight;
     }
 
-    return createComfyInput(
-      {
-        key: comfyKey,
-        quantity,
-        params: workflowData,
-        resources: [data.model, ...userResources, ...(data.vae ? [data.vae] : [])],
-      },
-      ctx
-    );
+    return [
+      await createComfyInput(
+        {
+          key: comfyKey,
+          quantity,
+          params: workflowData,
+          resources: [data.model, ...userResources, ...(data.vae ? [data.vae] : [])],
+        },
+        ctx
+      ),
+    ];
   }
 
-  return createTextToImageInput(
-    {
-      model: data.model,
-      resources: userResources,
-      vae: data.vae,
-      prompt: data.prompt,
-      negativePrompt: data.negativePrompt,
-      scheduler,
-      steps,
-      cfgScale,
-      clipSkip: data.clipSkip,
-      seed,
-      width: data.aspectRatio?.width,
-      height: data.aspectRatio?.height,
-      quantity,
-      batchSize,
-      outputFormat: data.outputFormat,
-      draftLoraAir,
-    },
-    ctx
-  );
+  return [
+    createTextToImageInput(
+      {
+        model: data.model,
+        resources: userResources,
+        vae: data.vae,
+        prompt: data.prompt,
+        negativePrompt: data.negativePrompt,
+        scheduler,
+        steps,
+        cfgScale,
+        clipSkip: data.clipSkip,
+        seed,
+        width: data.aspectRatio?.width,
+        height: data.aspectRatio?.height,
+        quantity,
+        batchSize,
+        outputFormat: data.outputFormat,
+        draftLoraAir,
+      },
+      ctx
+    ),
+  ];
 });

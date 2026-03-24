@@ -10,7 +10,7 @@
  * - Single place to add middleware (logging, error handling, timing) in the future
  */
 
-import type { GenerationHandlerCtx } from '.';
+import type { GenerationHandlerCtx, StepInput } from '.';
 
 /**
  * Handler function signature.
@@ -23,21 +23,19 @@ export type HandlerFn<TData, TOutput> = (
 
 /**
  * Creates a typed ecosystem handler.
+ * TOutput must be a tuple/array of StepInput — handlers always return an array of steps,
+ * even when producing a single step (return [step]).
  *
  * @example
  * ```typescript
- * export const createViduInput = defineHandler<ViduCtx, ViduVideoGenInput>(
+ * export const createViduInput = defineHandler<ViduCtx, [VideoGenStepTemplate]>(
  *   (data, ctx) => {
- *     return removeEmpty({
- *       engine: 'vidu',
- *       prompt: data.prompt,
- *       // ...
- *     });
+ *     return [{ $type: 'videoGen', input: removeEmpty({ engine: 'vidu', ... }) }];
  *   }
  * );
  * ```
  */
-export function defineHandler<TData, TOutput>(
+export function defineHandler<TData, TOutput extends StepInput[]>(
   fn: HandlerFn<TData, TOutput>
 ): HandlerFn<TData, TOutput> {
   return fn;

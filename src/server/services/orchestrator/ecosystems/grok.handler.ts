@@ -20,6 +20,8 @@ import type {
   GrokTextToVideoInput,
   GrokImageToVideoInput,
   GrokEditVideoInput,
+  ImageGenStepTemplate,
+  VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -31,17 +33,11 @@ import { defineHandler } from './handler-factory';
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 
-// Image input union
-type GrokImageInput = GrokCreateImageGenInput | GrokEditImageGenInput;
-
-// Video input union
-type GrokVideoInput = GrokTextToVideoInput | GrokImageToVideoInput | GrokEditVideoInput;
-
 /**
  * Creates imageGen input for Grok image workflows.
  * Handles both createImage and editImage operations.
  */
-export const createGrokImageInput = defineHandler<GrokCtx, GrokImageInput>((data) => {
+export const createGrokImageInput = defineHandler<GrokCtx, [ImageGenStepTemplate]>((data) => {
   const hasImages = !!data.images?.length;
 
   const baseData = {
@@ -52,24 +48,34 @@ export const createGrokImageInput = defineHandler<GrokCtx, GrokImageInput>((data
   };
 
   if (hasImages) {
-    return removeEmpty({
-      ...baseData,
-      operation: 'editImage',
-      images: data.images!.map((x) => x.url),
-    }) as GrokEditImageGenInput;
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...baseData,
+          operation: 'editImage',
+          images: data.images!.map((x) => x.url),
+        }) as GrokEditImageGenInput,
+      },
+    ];
   }
 
-  return removeEmpty({
-    ...baseData,
-    operation: 'createImage',
-  }) as GrokCreateImageGenInput;
+  return [
+    {
+      $type: 'imageGen',
+      input: removeEmpty({
+        ...baseData,
+        operation: 'createImage',
+      }) as GrokCreateImageGenInput,
+    },
+  ];
 });
 
 /**
  * Creates videoGen input for Grok video workflows.
  * Handles text-to-video, image-to-video, and edit-video operations.
  */
-export const createGrokVideoInput = defineHandler<GrokCtx, GrokVideoInput>((data) => {
+export const createGrokVideoInput = defineHandler<GrokCtx, [VideoGenStepTemplate]>((data) => {
   const hasImages = !!data.images?.length;
   const hasVideo = 'video' in data && !!data.video;
   const resolution = 'resolution' in data ? (data.resolution as string) : '720p';
@@ -84,12 +90,17 @@ export const createGrokVideoInput = defineHandler<GrokCtx, GrokVideoInput>((data
   // Edit video (vid2vid:edit)
   if (hasVideo) {
     const video = data.video as { url: string; metadata?: { duration?: number } };
-    return removeEmpty({
-      ...baseData,
-      operation: 'edit-video',
-      videoUrl: video.url,
-      analyzedDuration: video.metadata?.duration,
-    }) as GrokEditVideoInput;
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty({
+          ...baseData,
+          operation: 'edit-video',
+          videoUrl: video.url,
+          analyzedDuration: video.metadata?.duration,
+        }) as GrokEditVideoInput,
+      },
+    ];
   }
 
   // Image to video (img2vid)
@@ -97,18 +108,28 @@ export const createGrokVideoInput = defineHandler<GrokCtx, GrokVideoInput>((data
     const ratioEntries =
       grokVideoAspectRatiosByResolution[resolution] ?? grokVideoAspectRatiosByResolution['720p'];
     const aspectRatio = findClosestAspectRatio(data.images![0], ratioEntries);
-    return removeEmpty({
-      ...baseData,
-      operation: 'image-to-video',
-      aspectRatio: aspectRatio?.value as GrokImageToVideoInput['aspectRatio'],
-      images: [data.images![0].url] as [string],
-    }) as GrokImageToVideoInput;
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty({
+          ...baseData,
+          operation: 'image-to-video',
+          aspectRatio: aspectRatio?.value as GrokImageToVideoInput['aspectRatio'],
+          images: [data.images![0].url] as [string],
+        }) as GrokImageToVideoInput,
+      },
+    ];
   }
 
   // Text to video (txt2vid)
-  return removeEmpty({
-    ...baseData,
-    operation: 'text-to-video',
-    aspectRatio: data.aspectRatio?.value as GrokTextToVideoInput['aspectRatio'],
-  }) as GrokTextToVideoInput;
+  return [
+    {
+      $type: 'videoGen',
+      input: removeEmpty({
+        ...baseData,
+        operation: 'text-to-video',
+        aspectRatio: data.aspectRatio?.value as GrokTextToVideoInput['aspectRatio'],
+      }) as GrokTextToVideoInput,
+    },
+  ];
 });

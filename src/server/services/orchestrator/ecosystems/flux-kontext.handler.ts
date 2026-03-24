@@ -5,7 +5,11 @@
  * Primarily an img2img model that requires a source image.
  */
 
-import type { Flux1KontextMaxImageGenInput, Flux1KontextProImageGenInput } from '@civitai/client';
+import type {
+  Flux1KontextMaxImageGenInput,
+  Flux1KontextProImageGenInput,
+  ImageGenStepTemplate,
+} from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import {
@@ -30,7 +34,7 @@ const versionIdToMode = new Map<number, FluxKontextMode>(
  * Creates imageGen input for Flux Kontext ecosystem.
  * This is an img2img model that transforms source images based on prompts.
  */
-export const createFluxKontextInput = defineHandler<FluxKontextCtx, FluxKontextInput>(
+export const createFluxKontextInput = defineHandler<FluxKontextCtx, [ImageGenStepTemplate]>(
   (data, ctx) => {
     const quantity = data.quantity ?? 1;
 
@@ -41,15 +45,20 @@ export const createFluxKontextInput = defineHandler<FluxKontextCtx, FluxKontextI
       if (match) model = match;
     }
 
-    return removeEmpty({
-      engine: 'flux1-kontext',
-      model,
-      prompt: data.prompt,
-      images: data.images?.map((x) => x.url),
-      aspectRatio: data.aspectRatio?.value,
-      quantity,
-      guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-      seed: data.seed,
-    }) as FluxKontextInput;
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          engine: 'flux1-kontext',
+          model,
+          prompt: data.prompt,
+          images: data.images?.map((x) => x.url),
+          aspectRatio: data.aspectRatio?.value,
+          quantity,
+          guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
+          seed: data.seed,
+        }) as FluxKontextInput,
+      },
+    ];
   }
 );

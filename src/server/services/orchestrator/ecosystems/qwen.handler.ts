@@ -12,6 +12,7 @@ import type {
   Qwen20bEditImageGenInput,
   Qwen2CreateFalImageGenInput,
   Qwen2EditFalImageGenInput,
+  ImageGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -21,13 +22,6 @@ import { defineHandler } from './handler-factory';
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
 type QwenFamilyCtx = EcosystemGraphOutput & { ecosystem: 'Qwen' | 'Qwen2' };
-
-// Return type union
-type QwenFamilyInput =
-  | Qwen20bCreateImageGenInput
-  | Qwen20bEditImageGenInput
-  | Qwen2CreateFalImageGenInput
-  | Qwen2EditFalImageGenInput;
 
 // =============================================================================
 // Qwen version mapping
@@ -66,7 +60,7 @@ const imageSizeMap: Record<string, Qwen2CreateFalImageGenInput['imageSize']> = {
  * Creates imageGen input for Qwen family ecosystems.
  * Routes to Qwen (sdcpp) or Qwen 2 (fal) based on ecosystem.
  */
-export const createQwenInput = defineHandler<QwenFamilyCtx, QwenFamilyInput>((data, ctx) => {
+export const createQwenInput = defineHandler<QwenFamilyCtx, [ImageGenStepTemplate]>((data, ctx) => {
   const isTxt2Img = data.workflow.startsWith('txt');
   const quantity = data.quantity ?? 1;
 
@@ -85,13 +79,26 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, QwenFamilyInput>((da
     };
 
     if (isTxt2Img) {
-      return removeEmpty({ ...baseInput, operation: 'createImage' }) as Qwen2CreateFalImageGenInput;
+      return [
+        {
+          $type: 'imageGen',
+          input: removeEmpty({
+            ...baseInput,
+            operation: 'createImage',
+          }) as Qwen2CreateFalImageGenInput,
+        },
+      ];
     }
-    return removeEmpty({
-      ...baseInput,
-      operation: 'editImage',
-      images: data.images?.map((x) => x.url) ?? [],
-    }) as Qwen2EditFalImageGenInput;
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...baseInput,
+          operation: 'editImage',
+          images: data.images?.map((x) => x.url) ?? [],
+        }) as Qwen2EditFalImageGenInput,
+      },
+    ];
   }
 
   // Qwen — sdcpp engine
@@ -129,11 +136,24 @@ export const createQwenInput = defineHandler<QwenFamilyCtx, QwenFamilyInput>((da
   };
 
   if (process === 'txt2img') {
-    return removeEmpty({ ...baseInput, operation: 'createImage' }) as Qwen20bCreateImageGenInput;
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          ...baseInput,
+          operation: 'createImage',
+        }) as Qwen20bCreateImageGenInput,
+      },
+    ];
   }
-  return removeEmpty({
-    ...baseInput,
-    operation: 'editImage',
-    images: data.images?.map((x) => x.url) ?? [],
-  }) as Qwen20bEditImageGenInput;
+  return [
+    {
+      $type: 'imageGen',
+      input: removeEmpty({
+        ...baseInput,
+        operation: 'editImage',
+        images: data.images?.map((x) => x.url) ?? [],
+      }) as Qwen20bEditImageGenInput,
+    },
+  ];
 });

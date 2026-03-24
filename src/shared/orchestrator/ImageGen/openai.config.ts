@@ -59,13 +59,13 @@ export const openaiConfig = ImageGenConfig({
       return {
         ...baseData,
         operation: 'createImage',
-      } satisfies OpenAiGpt1CreateImageInput;
+      } as OpenAiGpt1CreateImageInput;
     } else {
       return {
         ...baseData,
         operation: 'editImage',
         images: params.images.map((x) => x.url),
-      } satisfies OpenAiGpt1EditImageInput;
+      } as OpenAiGpt1EditImageInput;
     }
   },
 });

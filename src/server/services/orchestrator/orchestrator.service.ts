@@ -28,6 +28,7 @@ export async function createImageIngestionRequest({
       arguments: {
         mediaUrl: edgeUrl,
       },
+      currencies: [],
       steps:
         type === 'image'
           ? [

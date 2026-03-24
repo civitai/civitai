@@ -114,7 +114,11 @@ export const viduGenerationConfig = VideoGenerationConfig2({
       delete data.endSourceImage;
     }
     // TODO - get Koen to update the api spec so that I don't have to cast the duration type
-    return { ...data, duration: data.duration as (typeof viduDurations)[number], baseModel: 'Vidu' };
+    return {
+      ...data,
+      duration: data.duration as (typeof viduDurations)[number],
+      baseModel: 'Vidu',
+    };
   },
   superRefine: (data, ctx) => {
     if (data.process === 'img2vid' && !data.sourceImage) {
@@ -139,17 +143,18 @@ export const viduGenerationConfig = VideoGenerationConfig2({
       });
     }
   },
-  inputFn: ({ sourceImage, endSourceImage, images, ...args }): ViduVideoGenInput => {
+  inputFn: ({ sourceImage, endSourceImage, images, ...args }) => {
     const prompt =
       !args.prompt.length && images
         ? images.map((_, index) => `[@image${index + 1}]`).join()
         : args.prompt;
     return {
       ...args,
+      model: 'q1' as ViduVideoGenInput['model'],
       prompt,
       images: images?.map((x) => x.url),
       sourceImage: sourceImage?.url,
       endSourceImage: endSourceImage?.url,
-    };
+    } as ViduVideoGenInput;
   },
 });

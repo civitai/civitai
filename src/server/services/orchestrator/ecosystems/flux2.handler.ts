@@ -10,6 +10,7 @@ import type {
   Flux2FlexImageGenInput,
   Flux2MaxImageGenInput,
   Flux2ProImageGenInput,
+  ImageGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -38,7 +39,7 @@ const versionIdToMode = new Map<number, Flux2Mode>(
  * Handles both txt2img and img2img operations.
  * LoRAs are only supported in dev mode.
  */
-export const createFlux2Input = defineHandler<Flux2Ctx, Flux2Input>((data, ctx) => {
+export const createFlux2Input = defineHandler<Flux2Ctx, [ImageGenStepTemplate]>((data, ctx) => {
   const quantity = data.quantity ?? 1;
 
   // Determine model from model version
@@ -62,18 +63,23 @@ export const createFlux2Input = defineHandler<Flux2Ctx, Flux2Input>((data, ctx) 
   const hasImages = !!data.images?.length;
   const operation = hasImages ? 'editImage' : 'createImage';
 
-  return removeEmpty({
-    engine: 'flux2',
-    model,
-    operation,
-    prompt: data.prompt,
-    width: data.aspectRatio?.width,
-    height: data.aspectRatio?.height,
-    guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
-    numInferenceSteps: 'steps' in data ? data.steps : undefined,
-    quantity,
-    seed: data.seed,
-    loras: loras.length > 0 ? loras : undefined,
-    images: hasImages ? data.images?.map((x) => x.url) : undefined,
-  }) as Flux2Input;
+  return [
+    {
+      $type: 'imageGen',
+      input: removeEmpty({
+        engine: 'flux2',
+        model,
+        operation,
+        prompt: data.prompt,
+        width: data.aspectRatio?.width,
+        height: data.aspectRatio?.height,
+        guidanceScale: 'cfgScale' in data ? data.cfgScale : undefined,
+        numInferenceSteps: 'steps' in data ? data.steps : undefined,
+        quantity,
+        seed: data.seed,
+        loras: loras.length > 0 ? loras : undefined,
+        images: hasImages ? data.images?.map((x) => x.url) : undefined,
+      }) as Flux2Input,
+    },
+  ];
 });
