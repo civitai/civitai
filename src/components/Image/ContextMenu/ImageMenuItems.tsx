@@ -25,7 +25,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchableMenuItem';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { NextLink } from '~/components/NextLink/NextLink';

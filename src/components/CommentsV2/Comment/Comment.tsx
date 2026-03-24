@@ -40,7 +40,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { type Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
 import { constants } from '../../../server/common/constants';

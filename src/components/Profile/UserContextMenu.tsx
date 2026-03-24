@@ -31,7 +31,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 import { impersonateEndpoint } from '~/shared/constants/auth.constants';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';

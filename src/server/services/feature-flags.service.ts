@@ -2,23 +2,17 @@ import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from 'next-auth';
-import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
+import { serverDomainMap, type ServerAvailability } from '~/shared/utils/server-domain';
 
 // --------------------------
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
 const regionAvailability = ['restricted', 'nonRestricted'] as const;
-type ServerAvailability = keyof typeof serverDomainMap;
-export const serverDomainMap = {
-  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
-} as const;
 const serverAvailability = Object.keys(serverDomainMap) as ServerAvailability[];
 export const userTiers = ['free', 'founder', 'bronze', 'silver', 'gold'] as const;
 const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTiers] as const;
@@ -35,14 +29,10 @@ const featureFlags = createFeatureFlags({
   canWrite: ['public'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
-  ambientCard: ['public'],
-  gallery: ['public'],
-  posts: ['mod', 'member'],
   articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
-  stripe: ['mod'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
   videoTraining: { availability: ['public'], fliptKey: 'video-training' },
   aiToolkitSd15: { availability: ['mod'], fliptKey: 'ai-toolkit-sd15' },
@@ -61,7 +51,6 @@ const featureFlags = createFeatureFlags({
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
-  sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
@@ -71,7 +60,6 @@ const featureFlags = createFeatureFlags({
     description: `Images displayed in the generator will be larger on small screens`,
     availability: ['public'],
   },
-  enhancedSearch: ['public'],
   alternateHome: ['public'],
   collections: ['public'],
   air: {
@@ -118,7 +106,6 @@ const featureFlags = createFeatureFlags({
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
-  experimentalGen: ['mod'],
   imageIndex: ['public'],
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
@@ -126,7 +113,6 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
-  isRestrictedRegion: ['restricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   // #endregion
@@ -147,7 +133,6 @@ const featureFlags = createFeatureFlags({
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
   coinbasePayments: ['public'],
-  coinbaseOnramp: ['mod'],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],

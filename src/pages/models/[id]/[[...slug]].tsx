@@ -112,7 +112,7 @@ import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';

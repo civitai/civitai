@@ -40,7 +40,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { constants } from '~/server/common/constants';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';

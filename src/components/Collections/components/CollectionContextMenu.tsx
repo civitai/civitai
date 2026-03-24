@@ -9,7 +9,7 @@ import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

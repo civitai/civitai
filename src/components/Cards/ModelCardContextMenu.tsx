@@ -16,7 +16,7 @@ import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuIte
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 

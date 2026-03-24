@@ -47,13 +47,13 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { PaddleProvider } from '~/providers/PaddleProvider';
+// import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getFeatureFlagsAsync, serverDomainMap } from '~/server/services/feature-flags.service';
+import { serverDomainMap } from '~/shared/utils/server-domain';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
@@ -181,29 +181,27 @@ function MyApp(props: CustomAppProps) {
                                 <ReferralsProvider {...cookies.referrals}>
                                   <FiltersProvider>
                                     <AdsProvider>
-                                      <PaddleProvider>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <ToursProvider>
-                                                  <AuctionContextProvider>
-                                                    <BaseLayout>
-                                                      {isProd && <TrackPageView />}
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </BaseLayout>
-                                                  </AuctionContextProvider>
-                                                </ToursProvider>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </PaddleProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <BrowserRouterProvider>
+                                            <IntersectionObserverProvider>
+                                              <ToursProvider>
+                                                <AuctionContextProvider>
+                                                  <BaseLayout>
+                                                    {isProd && <TrackPageView />}
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      {/* <StripeSetupSuccessProvider /> */}
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </BaseLayout>
+                                                </AuctionContextProvider>
+                                              </ToursProvider>
+                                            </IntersectionObserverProvider>
+                                          </BrowserRouterProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
                                     </AdsProvider>
                                   </FiltersProvider>
                                 </ReferralsProvider>
@@ -293,6 +291,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     return data;
   });
   // Pass this via the request so we can use it in SSR
+  const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
   const flags = await getFeatureFlagsAsync({
     user: session?.user,
     host: request?.headers.host,

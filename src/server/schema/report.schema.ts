@@ -4,22 +4,7 @@ import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { ExternalModerationType } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
-
-export enum ReportEntity {
-  Model = 'model',
-  Comment = 'comment',
-  CommentV2 = 'commentV2',
-  Image = 'image',
-  ResourceReview = 'resourceReview',
-  Article = 'article',
-  Post = 'post',
-  User = 'reportedUser',
-  Collection = 'collection',
-  Bounty = 'bounty',
-  BountyEntry = 'bountyEntry',
-  Chat = 'chat',
-  ComicProject = 'comicProject',
-}
+import { ReportEntity } from '~/shared/utils/report-helpers';
 
 // #region [report reason detail schemas]
 const baseDetailSchema = z.object({ comment: z.string().optional() });
