@@ -173,10 +173,25 @@ function HistoryItem({
                 </div>
               )}
 
+              {record.recommendations && record.recommendations.length > 0 && (
+                <div>
+                  <Text size="xs" fw={600} c="dimmed" mb={4}>
+                    Changes
+                  </Text>
+                  <Stack gap={2}>
+                    {record.recommendations.map((rec, i) => (
+                      <Text key={i} size="xs">
+                        {rec}
+                      </Text>
+                    ))}
+                  </Stack>
+                </div>
+              )}
+
               {record.issues && record.issues.length > 0 && (
                 <div>
                   <Text size="xs" fw={600} c="dimmed" mb={4}>
-                    Issues
+                    Issues Addressed
                   </Text>
                   <Stack gap={2}>
                     {record.issues.map((issue, i) => (
@@ -196,21 +211,6 @@ function HistoryItem({
                         </Badge>
                         <Text size="xs">{issue.description}</Text>
                       </Group>
-                    ))}
-                  </Stack>
-                </div>
-              )}
-
-              {record.recommendations && record.recommendations.length > 0 && (
-                <div>
-                  <Text size="xs" fw={600} c="dimmed" mb={4}>
-                    Recommendations
-                  </Text>
-                  <Stack gap={2}>
-                    {record.recommendations.map((rec, i) => (
-                      <Text key={i} size="xs">
-                        {rec}
-                      </Text>
                     ))}
                   </Stack>
                 </div>

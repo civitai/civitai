@@ -279,10 +279,25 @@ export function EnhanceTab({
                 </div>
               )}
 
+              {result.recommendations.length > 0 && (
+                <div>
+                  <Text size="sm" fw={600} mb={4}>
+                    Changes
+                  </Text>
+                  <List size="sm" spacing={4}>
+                    {result.recommendations.map((rec, i) => (
+                      <List.Item key={i}>
+                        <Text size="sm">{rec}</Text>
+                      </List.Item>
+                    ))}
+                  </List>
+                </div>
+              )}
+
               {result.issues.length > 0 && (
                 <div>
                   <Text size="sm" fw={600} mb={4}>
-                    Issues Found
+                    Issues Addressed
                   </Text>
                   <List size="sm" spacing={4}>
                     {result.issues.map((issue, i) => (
@@ -291,21 +306,6 @@ export function EnhanceTab({
                           <IssueBadge severity={issue.severity} />
                           <Text size="sm">{issue.description}</Text>
                         </Group>
-                      </List.Item>
-                    ))}
-                  </List>
-                </div>
-              )}
-
-              {result.recommendations.length > 0 && (
-                <div>
-                  <Text size="sm" fw={600} mb={4}>
-                    Recommendations
-                  </Text>
-                  <List size="sm" spacing={4}>
-                    {result.recommendations.map((rec, i) => (
-                      <List.Item key={i}>
-                        <Text size="sm">{rec}</Text>
                       </List.Item>
                     ))}
                   </List>
