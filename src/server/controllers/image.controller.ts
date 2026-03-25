@@ -278,12 +278,18 @@ export const getInfiniteImagesHandler = async ({
   // - collectionId: requires relational joins through CollectionItem table
   // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
   // - reactions: per-user reaction data isn't in the search index, needs DB subquery on ImageReaction
-  const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.reactions?.length;
-  const bitdexMode = skipBitdex ? null : await getFliptVariant(
-    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    user?.id?.toString() || 'anonymous',
-    buildFliptContext(user)
-  );
+  const skipBitdex =
+    !!input.collectionId ||
+    !!input.prioritizedUserIds?.length ||
+    !!input.reactions?.length ||
+    !!input?.postId;
+  const bitdexMode = skipBitdex
+    ? null
+    : await getFliptVariant(
+        FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+        user?.id?.toString() || 'anonymous',
+        buildFliptContext(user)
+      );
   const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
   // Use getAllImagesIndex when useIndex is true OR BitDex is active.
@@ -349,11 +355,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
     // Check BitDex mode — if active, always route through getAllImagesIndex.
     // Skip BitDex for unsupported query types (collections, prioritized users).
     const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
-    const bitdexMode = skipBitdex ? null : await getFliptVariant(
-      FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-      user?.id?.toString() || 'anonymous',
-      buildFliptContext(user)
-    );
+    const bitdexMode = skipBitdex
+      ? null
+      : await getFliptVariant(
+          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+          user?.id?.toString() || 'anonymous',
+          buildFliptContext(user)
+        );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
     const useIndex = useBitdex || features.imageIndexFeed;
 
