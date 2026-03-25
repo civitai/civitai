@@ -2033,30 +2033,28 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     ];
     if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
 
-    // Content-scoping filters — keep second pass results relevant to the current view.
-    // Must include postId!=0 to match the main query's filter (excludes comic/orphaned images).
+    // Unscoped second pass — fetch ALL of user's excluded content regardless of
+    // which page/view they're on. This means the cache key is just:
+    //   userId × sort × disablePoi
+    // ...which is reused across every page the user visits (model galleries, feed,
+    // profiles, etc). Content-scoping (modelVersionId, postId, tags, etc) is applied
+    // during the merge step below, not in the query. Most users have at most a few
+    // hundred excluded items, so fetching them all is cheap.
     const scopeFilters: FilterClause[] = [
       _eq('userId', _int(input.currentUserId!)),
       _or(...ownExcludedClauses),
       _not(_eq('postId', _int(0))),
     ];
-    if (input.modelVersionId) {
-      scopeFilters.push(_or(
-        _eq('postedToId', _int(input.modelVersionId)),
-        _in('modelVersionIds', [_int(input.modelVersionId)])
-      ));
-    }
-    if (input.postId) scopeFilters.push(_eq('postId', _int(input.postId)));
-    if (input.postIds?.length) scopeFilters.push(_in('postId', input.postIds.map(_int)));
-    if (input.types?.length) scopeFilters.push(_in('type', input.types.map(_str)));
-    if (input.tags?.length) scopeFilters.push(_in('tagIds', input.tags.map(_int)));
-    if (input.baseModels?.length) scopeFilters.push(_in('baseModel', input.baseModels.map(_str)));
-    if (input.remixOfId) scopeFilters.push(_eq('remixOfId', _int(input.remixOfId)));
-    if (input.withMeta) scopeFilters.push(_eq('hasMeta', _bool(true)));
-    if (input.fromPlatform) scopeFilters.push(_eq('onSite', _bool(true)));
+
+    // Map the active sort to a BitDex sort field for consistent ordering
+    const sortField = input.sort === ImageSort.MostReactions ? 'reactionCount'
+      : input.sort === ImageSort.MostComments ? 'commentCount'
+      : input.sort === ImageSort.MostCollected ? 'collectedCount'
+      : 'sortAt';
+    const sortDir = input.sort === ImageSort.Oldest ? 'Asc' as const : 'Desc' as const;
 
     ownExcludedPromise = queryBitdex('civitai', scopeFilters,
-      { field: 'sortAt', direction: 'Desc' }, limit, undefined, undefined, true);
+      { field: sortField, direction: sortDir }, 500, undefined, undefined, true);
   }
 
   // Main loop: fetch pages, post-filter, accumulate until we have enough.
@@ -2087,12 +2085,41 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
   // Merge user's own excluded content, re-sort by the active sort, then limit.
   // This ensures user's own private/blocked/unpublished/nsfw0/poi content appears
   // only when it naturally ranks high enough for the active sort.
+  // Since the second pass is unscoped (for cacheability), we apply content-scoping
+  // filters here to match the current view.
   const ownExcluded = await ownExcludedPromise;
   if (ownExcluded?.documents?.length) {
     const mainIds = new Set(data.map((d) => d.id));
-    const ownDocs = ownExcluded.documents
+    let ownDocs = ownExcluded.documents
       .map((doc) => mapBitdexDoc(doc))
       .filter((d) => !mainIds.has(d.id));
+
+    // Content-scope filtering — narrow unscoped results to the current view
+    if (input.modelVersionId) {
+      ownDocs = ownDocs.filter((d) =>
+        d.postedToId === input.modelVersionId ||
+        d.modelVersionIds.includes(input.modelVersionId!)
+      );
+    }
+    if (input.postId) ownDocs = ownDocs.filter((d) => d.postId === input.postId);
+    if (input.postIds?.length) {
+      const postIdSet = new Set(input.postIds);
+      ownDocs = ownDocs.filter((d) => postIdSet.has(d.postId));
+    }
+    if (input.types?.length) {
+      const typeSet = new Set(input.types);
+      ownDocs = ownDocs.filter((d) => typeSet.has(d.type as any));
+    }
+    if (input.tags?.length) {
+      ownDocs = ownDocs.filter((d) => input.tags!.some((t) => d.tagIds.includes(t)));
+    }
+    if (input.baseModels?.length) {
+      const bmSet = new Set(input.baseModels);
+      ownDocs = ownDocs.filter((d) => bmSet.has(d.baseModel as any));
+    }
+    if (input.remixOfId) ownDocs = ownDocs.filter((d) => d.remixOfId === input.remixOfId);
+    if (input.withMeta) ownDocs = ownDocs.filter((d) => d.hasMeta);
+    if (input.fromPlatform) ownDocs = ownDocs.filter((d) => d.onSite);
     if (ownDocs.length) {
       data = [...data, ...ownDocs];
       const sort = input.sort;
