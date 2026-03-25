@@ -7,6 +7,9 @@ type MetricsBundle = {
   ffRequestsTotal: Counter<string>;
   requestDurationSeconds: Histogram<string>;
   droppedIdsTotal: Counter<string>;
+  postFilterIterations: Histogram<string>;
+  postFilterDocsProcessed: Counter<string>;
+  postFilterFilterRatio: Histogram<string>;
 };
 
 function getOrCreateCounter(
@@ -76,12 +79,41 @@ export function ensureRegisterFeedImageExistenceCheckMetrics(
     ['route', 'hit_type']
   );
 
+  /** Number of loop iterations per PostFilter request */
+  const postFilterIterations = getOrCreateHistogram(
+    reg,
+    'images_search_postfilter_iterations',
+    'Number of Meilisearch getDocuments calls per PostFilter request',
+    ['route'],
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+  );
+
+  /** Total documents fetched from Meilisearch across all PostFilter iterations */
+  const postFilterDocsProcessed = getOrCreateCounter(
+    reg,
+    'images_search_postfilter_docs_processed_total',
+    'Total documents fetched from Meilisearch by PostFilter',
+    ['route']
+  );
+
+  /** Filter ratio (fraction of results rejected) per PostFilter request */
+  const postFilterFilterRatio = getOrCreateHistogram(
+    reg,
+    'images_search_postfilter_filter_ratio',
+    'Fraction of fetched results rejected by PostFilter (0=none filtered, 1=all filtered)',
+    ['route'],
+    [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 1.0]
+  );
+
   const bundle = {
     requestTotal,
     cacheHitRequestsTotal,
     ffRequestsTotal,
     requestDurationSeconds,
     droppedIdsTotal,
+    postFilterIterations,
+    postFilterDocsProcessed,
+    postFilterFilterRatio,
   };
 
   return bundle;
