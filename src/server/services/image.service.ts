@@ -2104,7 +2104,7 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     if (input.postId) ownDocs = ownDocs.filter((d) => d.postId === input.postId);
     if (input.postIds?.length) {
       const postIdSet = new Set(input.postIds);
-      ownDocs = ownDocs.filter((d) => postIdSet.has(d.postId));
+      ownDocs = ownDocs.filter((d) => d.postId != null && postIdSet.has(d.postId));
     }
     if (input.types?.length) {
       const typeSet = new Set(input.types);
