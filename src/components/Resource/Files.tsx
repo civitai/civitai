@@ -199,7 +199,7 @@ export function Files() {
       versionId: resource.id,
       versionName: resource.name,
       isRequired: true,
-    }).catch(() => undefined);
+    }).catch(() => null);
   };
 
   const handleOpenResourceSelect = () => {
