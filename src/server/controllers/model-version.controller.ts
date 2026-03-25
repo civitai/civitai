@@ -112,7 +112,6 @@ export const getModelVersionHandler = async ({
         clipSkip: true,
         status: true,
         createdAt: true,
-        vaeId: true,
         trainingDetails: true,
         trainingStatus: true,
         uploadType: true,
@@ -179,7 +178,9 @@ export const getModelVersionHandler = async ({
 
     // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
     const linkedFileIds = [
-      ...new Set(linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)),
+      ...new Set(
+        linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)
+      ),
     ].filter(Boolean);
     const linkedFileDataMap = new Map<
       number,

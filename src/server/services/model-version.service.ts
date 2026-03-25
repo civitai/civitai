@@ -40,6 +40,7 @@ import type {
   QueryModelVersionSchema,
   RecommendedSettingsSchema,
   AddLinkedComponentInput,
+  LinkedComponentSettings,
   SetLinkedComponentsInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
@@ -1704,6 +1705,31 @@ export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopula
   return await modelVersionResourceCache.fetch(ids);
 };
 
+/**
+ * Resolves VAE version IDs from linked components for a set of model version IDs.
+ * Returns a Map<sourceVersionId, vaeVersionId>.
+ */
+export async function getLinkedVaeIds(sourceVersionIds: number[]): Promise<Map<number, number>> {
+  if (sourceVersionIds.length === 0) return new Map();
+
+  const rows = await dbRead.recommendedResource.findMany({
+    where: {
+      sourceId: { in: sourceVersionIds },
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { sourceId: true, resourceId: true, settings: true },
+  });
+
+  const map = new Map<number, number>();
+  for (const row of rows) {
+    const s = row.settings as LinkedComponentSettings;
+    if (s.componentType === 'VAE' && row.sourceId) {
+      map.set(row.sourceId, row.resourceId);
+    }
+  }
+  return map;
+}
+
 export const setLinkedComponents = async ({ id, components }: SetLinkedComponentsInput) => {
   const existing = await dbWrite.recommendedResource.findMany({
     where: {
@@ -1805,7 +1831,11 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
     sizeKB: primaryFile.sizeKB,
     fileType: primaryFile.type,
     fileMetadata: meta
-      ? { format: meta.format as string | null, size: meta.size as string | null, fp: meta.fp as string | null }
+      ? {
+          format: meta.format as string | null,
+          size: meta.size as string | null,
+          fp: meta.fp as string | null,
+        }
       : undefined,
     isRequired: input.isRequired ?? true,
   };

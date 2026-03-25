@@ -304,7 +304,6 @@ export const modelVersionUpsertSchema2 = z.object({
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),
   clipSkip: z.number().min(1).max(12).nullish(),
-  vaeId: z.number().nullish(),
   trainedWords: z.array(z.string()).optional(),
   trainingStatus: z.enum(TrainingStatus).nullish(),
   trainingDetails: trainingDetailsObj.nullish(),
@@ -395,7 +394,6 @@ export const imageModelVersionDetailSchema = z.object({
   baseModel: z.string(),
   //modelversion recommendations
   clipSkip: z.number().optional(),
-  vaeId: z.number().optional(),
 });
 export const characterModelVersionDetailSchema = z.object({});
 export const textModelVersionDetailSchema = z.object({});
