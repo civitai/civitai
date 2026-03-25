@@ -236,6 +236,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         title={`${article.title} | Civitai`}
         description={truncate(removeTags(article.content), { length: 150 })}
         images={article?.coverImage}
+        ogEndpoint={`/api/og?type=article&id=${article.id}`}
         canonical={`/articles/${article.id}/${slugit(article.title)}`}
         alternate={`/articles/${article.id}`}
         deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
