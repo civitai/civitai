@@ -76,9 +76,14 @@ export const unlockPrepaidTokens = createJob(
       if (tokens.length === 0) continue;
 
       // Idempotency: skip if a token was already unlocked today (prevents double-unlock on retries)
-      const todayStr = now.format('YYYY-MM-DD');
+      const todayStart = now.startOf('day').toISOString();
+      const tomorrowStart = now.add(1, 'day').startOf('day').toISOString();
       const alreadyUnlockedToday = tokens.some(
-        (t) => t.status === 'unlocked' && t.unlockedAt?.startsWith(todayStr)
+        (t) =>
+          t.status === 'unlocked' &&
+          t.unlockedAt != null &&
+          t.unlockedAt >= todayStart &&
+          t.unlockedAt < tomorrowStart
       );
       if (alreadyUnlockedToday) continue;
 

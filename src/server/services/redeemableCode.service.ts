@@ -23,7 +23,7 @@ import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums
 import { generateToken } from '~/utils/string-helpers';
 import { deliverMonthlyCosmetics } from './subscriptions.service';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
-import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
+import { invalidateSubscriptionCaches, getPrepaidTokens } from '~/server/utils/subscription.utils';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
 import { dbRead } from '~/server/db/client';
 
@@ -439,7 +439,8 @@ export async function consumeRedeemableCode({
 
             const subscriptionMeta = (activeUserMembership.metadata ??
               {}) as SubscriptionMetadata;
-            const existingTokens = subscriptionMeta.tokens ?? [];
+            // Use getPrepaidTokens to migrate legacy prepaids → tokens on redemption
+            const existingTokens = getPrepaidTokens({ metadata: subscriptionMeta });
             const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
 
             // At this point, we can safely extend or improve the membership:
