@@ -278,11 +278,14 @@ export const getInfiniteImagesHandler = async ({
   // - collectionId: requires relational joins through CollectionItem table
   // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
   // - reactions: per-user reaction data isn't in the search index, needs DB subquery on ImageReaction
+  // - postId/postIds: specific post queries are ~2ms in Postgres (covered index) and create
+  //   unique cache keys in BitDex that hurt cache hit rate
   const skipBitdex =
     !!input.collectionId ||
     !!input.prioritizedUserIds?.length ||
     !!input.reactions?.length ||
-    !!input?.postId;
+    !!input.postId ||
+    !!input.postIds?.length;
   const bitdexMode = skipBitdex
     ? null
     : await getFliptVariant(
@@ -385,7 +388,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      const { items: pinnedPostsImages } = await fetchFn({
+      // Pinned posts: always use DB path (getAllImages) instead of BitDex.
+      // postId queries are ~2ms in Postgres (covered index) and create unique
+      // cache keys in BitDex that hurt cache hit rate. Model gallery queries
+      // (modelVersionId filter) stay on BitDex where they're needed.
+      const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         limit: limit * 4,
         useCombinedNsfwLevel: !features.canViewNsfw,
