@@ -13,6 +13,8 @@ import type {
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
+  PrepaidToken,
+  ProductTier,
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
@@ -31,6 +33,37 @@ const MEMBERSHIP_BUZZ_VALUES = {
   silver: 25000,
   gold: 50000,
 } as const;
+
+/**
+ * Creates an array of PrepaidToken objects for a redeemed membership code.
+ * The first token can optionally be created as 'unlocked' (for new users / upgrades).
+ */
+function createPrepaidTokens({
+  count,
+  tier,
+  buzzAmount,
+  codeId,
+  firstUnlocked,
+}: {
+  count: number;
+  tier: ProductTier;
+  buzzAmount: number;
+  codeId?: string;
+  firstUnlocked: boolean;
+}): PrepaidToken[] {
+  const tokens: PrepaidToken[] = [];
+  for (let i = 0; i < count; i++) {
+    tokens.push({
+      id: `tok_${generateToken(8)}`,
+      tier,
+      status: i === 0 && firstUnlocked ? 'unlocked' : 'locked',
+      buzzAmount,
+      codeId,
+      ...(i === 0 && firstUnlocked ? { unlockedAt: new Date().toISOString() } : {}),
+    });
+  }
+  return tokens;
+}
 
 /**
  * Converts a redeemed code value to Buzz units for gift notice comparison
@@ -348,18 +381,10 @@ export async function consumeRedeemableCode({
         });
 
         let activeUserMembership = userMembership;
-        // Track whether to grant buzz immediately
-        // Only grant buzz for: new users (no membership) or upgrades (higher tier)
-        // Do NOT grant buzz for: same tier extensions or downgrades
-        let shouldGrantBuzzImmediately = false;
 
         const consumedProductMetadata = consumedCode.price.product
           .metadata as SubscriptionProductMetadata;
         const consumedProductTier = consumedProductMetadata.tier ?? 'free';
-
-        // Calculate external transaction ID for buzz delivery (to be stored in metadata)
-        const date = dayjs().format('YYYY-MM');
-        const externalTransactionId = `civitai-membership:${date}:${userId}:${consumedCode.price.product.id}:${consumedCode.code}`;
 
         if (userMembership) {
           // Check states:
@@ -412,25 +437,28 @@ export async function consumeRedeemableCode({
               consumedProductMetadata.tier
             );
 
-            const subscriptionMetadata = (activeUserMembership.metadata ??
+            const subscriptionMeta = (activeUserMembership.metadata ??
               {}) as SubscriptionMetadata;
+            const existingTokens = subscriptionMeta.tokens ?? [];
+            const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
 
             // At this point, we can safely extend or improve the membership:
             if (consumedTierOrder === membershipTierOrder) {
-              // If it's the same tier, we just extend the current period:
-              // Do NOT grant buzz immediately - all tokens go to prepaids
+              // Same tier extension: all tokens locked, appended to existing tokens
+              const newTokens = createPrepaidTokens({
+                count: consumedCode.unitValue,
+                tier: consumedProductTier as ProductTier,
+                buzzAmount,
+                codeId: consumedCode.code,
+                firstUnlocked: false,
+              });
+
               await tx.customerSubscription.update({
                 where: { id: activeUserMembership.id },
                 data: {
                   metadata: {
-                    ...subscriptionMetadata,
-                    prepaids: {
-                      ...subscriptionMetadata.prepaids,
-                      [consumedProductTier]:
-                        (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
-                        consumedCode.unitValue, // All tokens go to prepaids, no immediate buzz
-                    },
-                    // Do NOT add to buzzTransactionIds since no buzz is granted
+                    ...subscriptionMeta,
+                    tokens: [...existingTokens, ...newTokens],
                   },
                   status: 'active',
                   currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
@@ -441,16 +469,22 @@ export async function consumeRedeemableCode({
                     .toDate(),
                 },
               });
-              // shouldGrantBuzzImmediately remains false for same tier
             } else if (consumedTierOrder > membershipTierOrder) {
-              // Upgrade to higher tier - grant buzz immediately
+              // Upgrade to higher tier: first token unlocked, rest locked
               const now = dayjs();
               const proratedDays =
                 dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
-                Number(
-                  subscriptionMetadata.prepaids?.[membershipProductMetadata.tier ?? 'free'] ?? 0
-                ) *
-                  30;
+                (existingTokens.filter(
+                  (t) => t.tier === membershipProductMetadata.tier && t.status !== 'claimed'
+                ).length) * 30;
+
+              const newTokens = createPrepaidTokens({
+                count: consumedCode.unitValue,
+                tier: consumedProductTier as ProductTier,
+                buzzAmount,
+                codeId: consumedCode.code,
+                firstUnlocked: true, // First token unlocked for upgrades
+              });
 
               await tx.customerSubscription.update({
                 where: { id: activeUserMembership.id },
@@ -466,62 +500,52 @@ export async function consumeRedeemableCode({
                     )
                     .toDate(),
                   metadata: {
-                    ...subscriptionMetadata,
-                    prepaids: {
-                      ...subscriptionMetadata.prepaids,
-                      [consumedProductTier]:
-                        (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
-                        consumedCode.unitValue -
-                        1, //  First one is granted immediately
-                    },
+                    ...subscriptionMeta,
+                    tokens: [...existingTokens, ...newTokens],
                     proratedDays: {
-                      ...subscriptionMetadata.proratedDays,
+                      ...subscriptionMeta.proratedDays,
                       [membershipProductMetadata.tier ?? 'free']:
-                        (subscriptionMetadata?.proratedDays?.[
+                        (subscriptionMeta?.proratedDays?.[
                           membershipProductMetadata.tier ?? 'free'
                         ] ?? 0) + Math.max(0, proratedDays),
                     },
-                    buzzTransactionIds: [
-                      ...(subscriptionMetadata.buzzTransactionIds ?? []),
-                      externalTransactionId,
-                    ],
                   },
                 },
               });
-              shouldGrantBuzzImmediately = true; // Upgrade grants buzz immediately
             } else {
-              // Downgrade (user has higher tier) - do NOT grant buzz immediately
-              // The system will handle the downgrade logic automatically when the time comes.
-              // All tokens go to prepaids for the lower tier
+              // Downgrade: all tokens locked
+              const newTokens = createPrepaidTokens({
+                count: consumedCode.unitValue,
+                tier: consumedProductTier as ProductTier,
+                buzzAmount,
+                codeId: consumedCode.code,
+                firstUnlocked: false,
+              });
+
               await tx.customerSubscription.update({
                 where: { id: activeUserMembership.id },
                 data: {
                   metadata: {
-                    ...subscriptionMetadata,
-                    prepaids: {
-                      ...subscriptionMetadata.prepaids,
-                      [consumedProductTier]:
-                        (subscriptionMetadata.prepaids?.[consumedProductTier] ?? 0) +
-                        consumedCode.unitValue, // All tokens go to prepaids, no immediate buzz
-                    },
-                    // Do NOT add to buzzTransactionIds since no buzz is granted
+                    ...subscriptionMeta,
+                    tokens: [...existingTokens, ...newTokens],
                   },
                 },
               });
-              // shouldGrantBuzzImmediately remains false for downgrade
             }
           }
         }
 
         if (!activeUserMembership) {
-          // Create a new membership - grant buzz immediately for new users
+          // New user: first token unlocked (user must claim manually), rest locked
           const now = dayjs();
-          const metadata = {
-            prepaids: {
-              [consumedProductTier]: consumedCode.unitValue - 1, // -1 because we grant buzz right away
-            },
-            buzzTransactionIds: [externalTransactionId],
-          };
+          const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
+          const newTokens = createPrepaidTokens({
+            count: consumedCode.unitValue,
+            tier: consumedProductTier as ProductTier,
+            buzzAmount,
+            codeId: consumedCode.code,
+            firstUnlocked: true, // First token unlocked — user claims it
+          });
 
           await tx.customerSubscription.create({
             data: {
@@ -537,41 +561,19 @@ export async function consumeRedeemableCode({
                   consumedCode.price.interval as 'day' | 'month' | 'year'
                 )
                 .toDate(),
-              cancelAtPeriodEnd: true, // We assume they want to cancel at the end of the period
-              cancelAt: null, // No cancellation date yet
-              metadata: metadata ?? {},
+              cancelAtPeriodEnd: true,
+              cancelAt: null,
+              metadata: { tokens: newTokens },
               createdAt: now.toDate(),
             },
           });
-          shouldGrantBuzzImmediately = true; // New user gets buzz immediately
         }
 
-        // Only grant buzz immediately for new users and upgrades
-        // Same tier extensions and downgrades do NOT get immediate buzz
-        if (shouldGrantBuzzImmediately) {
-          await withRetries(async () => {
-            // Grant buzz right away:
-            await createBuzzTransaction({
-              fromAccountId: 0,
-              toAccountId: userId,
-              toAccountType: (consumedProductMetadata.buzzType as any) ?? 'yellow', // Default to yellow if not specified
-              type: TransactionType.Purchase,
-              externalTransactionId: externalTransactionId,
-              amount: Number(consumedProductMetadata.monthlyBuzz ?? 5000), // Default to 5000 if not specified
-              description: `Membership bonus`,
-              details: {
-                type: 'membership-purchase',
-                date: date,
-                productId: consumedCode.price!.product.id,
-              },
-            });
-
-            await deliverMonthlyCosmetics({
-              userIds: [userId],
-              tx,
-            });
-          });
-        }
+        // Deliver monthly cosmetics for new users and upgrades (no buzz auto-delivery)
+        await deliverMonthlyCosmetics({
+          userIds: [userId],
+          tx,
+        });
       }
 
       return consumedCode;
