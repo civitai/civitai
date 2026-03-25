@@ -211,8 +211,6 @@ export function Files() {
       ModelType.CLIPVision,
       ModelType.Controlnet,
       ModelType.Poses,
-      ModelType.TextualInversion,
-      ModelType.Hypernetwork,
     ] as const;
 
     const resources = resourceTypes.map((type) => {
