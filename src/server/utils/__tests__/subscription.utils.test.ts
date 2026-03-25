@@ -1,27 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PrepaidToken, SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
-
-// Mock external dependencies that subscription.utils imports at the top level
-vi.mock('~/server/services/buzz.service', () => ({
-  getMultipliersForUser: vi.fn(),
-}));
-vi.mock('~/server/services/creator-program.service', () => ({
-  getUserCapCache: vi.fn(() => ({ bust: vi.fn() })),
-}));
-vi.mock('~/server/services/orchestrator/civitai', () => ({
-  invalidateCivitaiUser: vi.fn(),
-}));
-vi.mock('~/server/services/vault.service', () => ({
-  setVaultFromSubscription: vi.fn(),
-}));
-vi.mock('~/server/auth/session-invalidation', () => ({
-  refreshSession: vi.fn(),
-}));
-
-// Ensure we test the REAL implementation, not a mock from other test files
-vi.unmock('~/server/utils/subscription.utils');
-
-import { getPrepaidTokens, getNextTokenUnlockDate } from '~/server/utils/subscription.utils';
+import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 
 describe('getPrepaidTokens', () => {
   describe('null/empty metadata', () => {

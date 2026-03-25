@@ -400,10 +400,10 @@ export const claimPrepaidToken = async ({
   const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
   const { createBuzzTransaction } = await import('~/server/services/buzz.service');
 
-  // Use a transaction to prevent race conditions on concurrent claims.
-  // Order: mark as claimed FIRST, then deliver buzz.
-  // If buzz delivery fails, we have "claimed but no buzz" (recoverable via retry)
-  // rather than "buzz delivered but still unlocked" (exploitable double-spend).
+  // Mark as claimed in a short DB transaction first, then deliver buzz outside.
+  // This keeps the transaction short (no network calls inside) and prevents double-spend.
+  // If buzz delivery fails, token is "claimed but no buzz" — recoverable via retry
+  // since createBuzzTransaction uses externalTransactionId for idempotency.
   const result = await dbWrite.$transaction(async (tx) => {
     const subscription = await tx.customerSubscription.findFirst({
       where: {
@@ -445,7 +445,6 @@ export const claimPrepaidToken = async ({
     const externalTransactionId = `prepaid-token-claim:${tokenId}`;
     const now = new Date().toISOString();
 
-    // Mark token as claimed in metadata FIRST
     tokens[tokenIndex] = {
       ...token,
       status: 'claimed',
@@ -455,8 +454,9 @@ export const claimPrepaidToken = async ({
 
     const updatedMeta: Record<string, any> = { ...meta, tokens };
 
-    // If legacy token, also decrement the prepaids counter
-    if (tokenId.startsWith('legacy_') && meta.prepaids) {
+    // For legacy tokens: decrement prepaids counter if the metadata didn't already
+    // have a tokens array (meaning the unlock job hasn't migrated this user yet).
+    if (tokenId.startsWith('legacy_') && meta.prepaids && !meta.tokens?.length) {
       const tierKey = token.tier as keyof NonNullable<typeof meta.prepaids>;
       updatedMeta.prepaids = {
         ...meta.prepaids,
@@ -476,24 +476,30 @@ export const claimPrepaidToken = async ({
       },
     });
 
-    // Deliver buzz after DB is updated
-    await createBuzzTransaction({
-      fromAccountId: 0,
-      toAccountId: userId,
-      toAccountType: buzzType as BuzzAccountType,
-      type: TransactionType.Purchase,
+    return {
+      tokenId,
+      buzzAmount: token.buzzAmount,
+      tier: token.tier,
+      buzzType: buzzType as BuzzAccountType,
       externalTransactionId,
-      amount: token.buzzAmount,
-      description: `Claimed prepaid ${token.tier} token`,
-      details: {
-        type: 'prepaid-token-claim',
-        tokenId: token.id,
-        tier: token.tier,
-      },
-    });
+    };
+  });
 
-    return { tokenId, buzzAmount: token.buzzAmount, tier: token.tier };
-  }, { timeout: 15000 });
+  // Deliver buzz OUTSIDE the transaction — idempotent via externalTransactionId
+  await createBuzzTransaction({
+    fromAccountId: 0,
+    toAccountId: userId,
+    toAccountType: result.buzzType,
+    type: TransactionType.Purchase,
+    externalTransactionId: result.externalTransactionId,
+    amount: result.buzzAmount,
+    description: `Claimed prepaid ${result.tier} token`,
+    details: {
+      type: 'prepaid-token-claim',
+      tokenId: result.tokenId,
+      tier: result.tier,
+    },
+  });
 
   const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
   await invalidateSubscriptionCaches(userId);
@@ -505,8 +511,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
   const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
   const { createBuzzTransactionMany } = await import('~/server/services/buzz.service');
 
-  // Use a transaction to prevent race conditions.
-  // Mark all tokens as claimed FIRST, then deliver buzz in batch.
+  // Short DB transaction to mark all tokens as claimed, then deliver buzz outside.
   const result = await dbWrite.$transaction(async (tx) => {
     const subscription = await tx.customerSubscription.findFirst({
       where: {
@@ -539,7 +544,6 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
     const buzzType = productMeta.buzzType ?? 'yellow';
     const now = new Date().toISOString();
 
-    // Mark all unlocked tokens as claimed
     const updatedTokens = tokens.map((t) => {
       if (t.status === 'unlocked') {
         return {
@@ -554,9 +558,9 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
 
     const updatedMeta: Record<string, any> = { ...meta, tokens: updatedTokens };
 
-    // If any legacy tokens were claimed, decrement prepaids counters
+    // For legacy tokens: decrement prepaids if not yet migrated to tokens array
     const legacyClaimed = unlockedTokens.filter((t) => t.id.startsWith('legacy_'));
-    if (legacyClaimed.length > 0 && meta.prepaids) {
+    if (legacyClaimed.length > 0 && meta.prepaids && !meta.tokens?.length) {
       const updatedPrepaids = { ...meta.prepaids };
       const newTxIds = [...(meta.buzzTransactionIds ?? [])];
       for (const t of legacyClaimed) {
@@ -568,7 +572,6 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       updatedMeta.buzzTransactionIds = newTxIds;
     }
 
-    // Update DB FIRST to claim all tokens
     await tx.customerSubscription.update({
       where: { id: subscription.id },
       data: {
@@ -577,39 +580,44 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       },
     });
 
-    // Then deliver buzz in batch
-    const transactions = unlockedTokens.map((token) => ({
-      fromAccountId: 0,
-      toAccountId: userId,
-      toAccountType: buzzType as BuzzAccountType,
-      type: TransactionType.Purchase,
-      externalTransactionId: `prepaid-token-claim:${token.id}`,
-      amount: token.buzzAmount,
-      description: `Claimed prepaid ${token.tier} token`,
-      details: {
-        type: 'prepaid-token-claim',
-        tokenId: token.id,
-        tier: token.tier,
-      },
-    }));
-
-    await createBuzzTransactionMany(transactions);
-
     const totalBuzz = unlockedTokens.reduce((sum, t) => sum + t.buzzAmount, 0);
-    return { claimed: unlockedTokens.length, totalBuzz };
-  }, { timeout: 30000 });
+    return {
+      claimed: unlockedTokens.length,
+      totalBuzz,
+      buzzType: buzzType as BuzzAccountType,
+      unlockedTokens,
+    };
+  });
+
+  // Deliver buzz OUTSIDE the transaction — idempotent via externalTransactionId
+  const transactions = result.unlockedTokens.map((token) => ({
+    fromAccountId: 0,
+    toAccountId: userId,
+    toAccountType: result.buzzType,
+    type: TransactionType.Purchase,
+    externalTransactionId: `prepaid-token-claim:${token.id}`,
+    amount: token.buzzAmount,
+    description: `Claimed prepaid ${token.tier} token`,
+    details: {
+      type: 'prepaid-token-claim',
+      tokenId: token.id,
+      tier: token.tier,
+    },
+  }));
+
+  await createBuzzTransactionMany(transactions);
 
   const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
   await invalidateSubscriptionCaches(userId);
 
-  return result;
+  return { claimed: result.claimed, totalBuzz: result.totalBuzz };
 };
 
 /**
- * Unlock tokens for a specific user. This does the full process:
+ * Unlock tokens for a specific user (admin/mod endpoint). This does the full process:
  * 1. Reads subscription metadata (supports both new tokens and legacy prepaids)
- * 2. Finds locked tokens whose unlock date has passed
- * 3. Flips them to 'unlocked'
+ * 2. When force=false: unlocks one locked token matching the current tier
+ * 3. When force=true: unlocks ALL locked tokens matching the current tier
  * 4. Persists updated metadata (migrating legacy prepaids → tokens if needed)
  * 5. Sends notification email
  */

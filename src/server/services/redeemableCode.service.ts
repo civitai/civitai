@@ -460,6 +460,7 @@ export async function consumeRedeemableCode({
                   metadata: {
                     ...subscriptionMeta,
                     tokens: [...existingTokens, ...newTokens],
+                    prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
                   },
                   status: 'active',
                   currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
@@ -503,6 +504,7 @@ export async function consumeRedeemableCode({
                   metadata: {
                     ...subscriptionMeta,
                     tokens: [...existingTokens, ...newTokens],
+                    prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
                     proratedDays: {
                       ...subscriptionMeta.proratedDays,
                       [membershipProductMetadata.tier ?? 'free']:
@@ -529,6 +531,7 @@ export async function consumeRedeemableCode({
                   metadata: {
                     ...subscriptionMeta,
                     tokens: [...existingTokens, ...newTokens],
+                    prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
                   },
                 },
               });

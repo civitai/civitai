@@ -75,12 +75,11 @@ export const unlockPrepaidTokens = createJob(
       const tokens = getPrepaidTokens({ metadata: meta });
       if (tokens.length === 0) continue;
 
-      // Idempotency: skip if a token was already unlocked today (prevents double-unlock on retries)
+      // Idempotency: skip if ANY token was unlocked today (covers both unlocked and claimed-same-day)
       const todayStart = now.startOf('day').toISOString();
       const tomorrowStart = now.add(1, 'day').startOf('day').toISOString();
       const alreadyUnlockedToday = tokens.some(
         (t) =>
-          t.status === 'unlocked' &&
           t.unlockedAt != null &&
           t.unlockedAt >= todayStart &&
           t.unlockedAt < tomorrowStart
@@ -102,17 +101,13 @@ export const unlockPrepaidTokens = createJob(
         return t;
       });
 
-      // Build updated metadata with the new tokens array
-      const updatedMeta: Record<string, any> = { ...meta, tokens: updatedTokens };
-
-      // If this was a legacy token, also decrement the prepaids counter
-      if (unlockedToken.id.startsWith('legacy_') && meta.prepaids) {
-        const tierKey = unlockedToken.tier as keyof NonNullable<typeof meta.prepaids>;
-        updatedMeta.prepaids = {
-          ...meta.prepaids,
-          [tierKey]: Math.max(0, (meta.prepaids[tierKey] ?? 0) - 1),
-        };
-      }
+      // Build updated metadata — tokens array is now the source of truth.
+      // Clear legacy prepaids since the full token state is captured in the tokens array.
+      const updatedMeta: Record<string, any> = {
+        ...meta,
+        tokens: updatedTokens,
+        prepaids: {},
+      };
 
       totalUnlocked++;
       updates.push({
@@ -250,11 +245,13 @@ export const processPrepaidMembershipTransitions = createJob(
 
         // Use getPrepaidTokens for backwards compat — handles both new tokens and legacy prepaids
         const allTokens = getPrepaidTokens({ metadata: subscriptionMeta });
-        const remainingTokens = allTokens.filter((t) => t.status !== 'claimed');
+        // Only locked tokens count as future months. Unlocked tokens represent already-occurred
+        // months (buzz available to claim) and should NOT extend the new period.
+        const futureTokens = allTokens.filter((t) => t.status === 'locked');
         const proratedDays = subscriptionMeta.proratedDays || {};
         const hasAnyProratedDays = Object.values(proratedDays).some((v) => (v ?? 0) > 0);
 
-        if (remainingTokens.length === 0 && !hasAnyProratedDays) {
+        if (futureTokens.length === 0 && !hasAnyProratedDays) {
           console.log(
             `User ${membership.userId}: No remaining tokens or prorated days, canceling subscription`
           );
@@ -277,7 +274,7 @@ export const processPrepaidMembershipTransitions = createJob(
 
         for (let i = paidTiers.length - 1; i >= 0; i--) {
           const tier = paidTiers[i];
-          const tierTokenCount = remainingTokens.filter((t) => t.tier === tier).length;
+          const tierTokenCount = futureTokens.filter((t) => t.tier === tier).length;
           const tierProratedDays = proratedDays[tier as keyof typeof proratedDays] || 0;
 
           if (tierTokenCount > 0 || tierProratedDays > 0) {

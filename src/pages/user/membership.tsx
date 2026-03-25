@@ -49,7 +49,7 @@ import type {
   SubscriptionProductMetadata,
   SubscriptionMetadata,
 } from '~/server/schema/subscriptions.schema';
-import { getPrepaidTokens, getNextTokenUnlockDate } from '~/server/utils/subscription.utils';
+import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';

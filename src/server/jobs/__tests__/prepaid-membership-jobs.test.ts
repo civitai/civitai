@@ -289,8 +289,8 @@ describe('prepaid-membership-jobs', () => {
       expect(unlocked).toHaveLength(1);
       expect(unlocked[0].id).toMatch(/^legacy_/);
 
-      // Prepaids counter should be decremented from 3 to 2
-      expect(updatedMeta.prepaids.gold).toBe(2);
+      // Legacy prepaids should be cleared — tokens array is now the source of truth
+      expect(updatedMeta.prepaids).toEqual({});
     });
 
     it('should skip tokens that do not match the current tier', async () => {
