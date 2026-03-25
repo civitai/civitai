@@ -277,7 +277,8 @@ export const getInfiniteImagesHandler = async ({
   // Skip BitDex for queries that need features it doesn't support:
   // - collectionId: requires relational joins through CollectionItem table
   // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
-  const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
+  // - reactions: per-user reaction data isn't in the search index, needs DB subquery on ImageReaction
+  const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length || !!input.reactions?.length;
   const bitdexMode = skipBitdex ? null : await getFliptVariant(
     FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
     user?.id?.toString() || 'anonymous',
