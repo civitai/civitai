@@ -75,6 +75,13 @@ export const unlockPrepaidTokens = createJob(
       const tokens = getPrepaidTokens({ metadata: meta });
       if (tokens.length === 0) continue;
 
+      // Idempotency: skip if a token was already unlocked today (prevents double-unlock on retries)
+      const todayStr = now.format('YYYY-MM-DD');
+      const alreadyUnlockedToday = tokens.some(
+        (t) => t.status === 'unlocked' && t.unlockedAt?.startsWith(todayStr)
+      );
+      if (alreadyUnlockedToday) continue;
+
       // Only unlock a token matching the user's CURRENT subscription tier
       const tokenIndex = tokens.findIndex(
         (t) => t.status === 'locked' && t.tier === currentTier
@@ -239,10 +246,12 @@ export const processPrepaidMembershipTransitions = createJob(
         // Use getPrepaidTokens for backwards compat — handles both new tokens and legacy prepaids
         const allTokens = getPrepaidTokens({ metadata: subscriptionMeta });
         const remainingTokens = allTokens.filter((t) => t.status !== 'claimed');
+        const proratedDays = subscriptionMeta.proratedDays || {};
+        const hasAnyProratedDays = Object.values(proratedDays).some((v) => (v ?? 0) > 0);
 
-        if (remainingTokens.length === 0) {
+        if (remainingTokens.length === 0 && !hasAnyProratedDays) {
           console.log(
-            `User ${membership.userId}: No remaining tokens, canceling subscription`
+            `User ${membership.userId}: No remaining tokens or prorated days, canceling subscription`
           );
           membershipUpdates.push({
             id: membership.id,
@@ -257,7 +266,6 @@ export const processPrepaidMembershipTransitions = createJob(
         // Check both tokens AND prorated days per tier — a tier with only prorated days
         // still wins over a lower tier with tokens (e.g., 10 Silver prorated days > 2 Bronze tokens).
         const paidTiers = ['bronze', 'silver', 'gold'];
-        const proratedDays = subscriptionMeta.proratedDays || {};
         let nextTier: string | null = null;
         let nextMonths = 0;
         let nextProratedDays = 0;
@@ -438,9 +446,10 @@ export const cancelExpiredPrepaidMemberships = createJob(
     }
 
     // Split into two groups:
-    // 1. Has unclaimed tokens (locked or unlocked) → set to 'expired_claimable' (lose benefits, keep claiming)
+    // 1. Has unclaimed tokens (locked or unlocked) → set to 'expired_claimable'
+    //    Also unlock all locked tokens since the unlock job won't run for non-active subs.
     // 2. No unclaimed tokens → fully cancel
-    const toExpireClaimable: string[] = [];
+    const toExpireClaimable: Array<{ id: string; userId: number; metadata: SubscriptionMetadata }> = [];
     const toCancel: string[] = [];
     const allUserIds: number[] = [];
 
@@ -454,7 +463,21 @@ export const cancelExpiredPrepaidMemberships = createJob(
       if (hasUnclaimedTokens) {
         // Only transition active → expired_claimable (don't re-process ones already in that state)
         if (m.status !== 'expired_claimable') {
-          toExpireClaimable.push(m.id);
+          // Unlock all locked tokens so the user can claim them — the unlock job
+          // won't run for non-active subscriptions, so we must do it here.
+          const nowIso = now.toISOString();
+          const updatedTokens = tokens.map((t) => {
+            if (t.status === 'locked') {
+              return { ...t, status: 'unlocked' as const, unlockedAt: nowIso };
+            }
+            return t;
+          });
+
+          toExpireClaimable.push({
+            id: m.id,
+            userId: m.userId,
+            metadata: { ...meta, tokens: updatedTokens },
+          });
           allUserIds.push(m.userId);
         }
       } else {
@@ -463,16 +486,21 @@ export const cancelExpiredPrepaidMemberships = createJob(
       }
     }
 
-    // Set expired_claimable for memberships with unclaimed tokens
-    if (toExpireClaimable.length > 0) {
-      console.log(`Setting ${toExpireClaimable.length} memberships to expired_claimable`);
-      await dbWrite.customerSubscription.updateMany({
-        where: { id: { in: toExpireClaimable } },
+    // Set expired_claimable and unlock all locked tokens for each membership
+    for (const m of toExpireClaimable) {
+      await dbWrite.customerSubscription.update({
+        where: { id: m.id },
         data: {
           status: 'expired_claimable',
+          metadata: m.metadata as any,
           updatedAt: now.toDate(),
         },
       });
+    }
+    if (toExpireClaimable.length > 0) {
+      console.log(
+        `Set ${toExpireClaimable.length} memberships to expired_claimable (all locked tokens unlocked)`
+      );
     }
 
     // Fully cancel memberships with no unclaimed tokens
