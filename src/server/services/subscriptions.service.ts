@@ -10,6 +10,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
+import { TransactionType, type BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { upsertContact } from '~/server/integrations/freshdesk';
 
 // const baseUrl = getBaseUrl();
@@ -387,4 +388,356 @@ export const syncFreshdeskMembership = async ({ userId }: { userId: number }) =>
   });
 
   return { success: true, userId, tier };
+};
+
+export const claimPrepaidToken = async ({
+  tokenId,
+  userId,
+}: {
+  tokenId: string;
+  userId: number;
+}) => {
+  const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
+  const { createBuzzTransaction } = await import('~/server/services/buzz.service');
+
+  // Mark as claimed in a short DB transaction first, then deliver buzz outside.
+  // This keeps the transaction short (no network calls inside) and prevents double-spend.
+  // If buzz delivery fails, token is "claimed but no buzz" — recoverable via retry
+  // since createBuzzTransaction uses externalTransactionId for idempotency.
+  const result = await dbWrite.$transaction(async (tx) => {
+    const subscription = await tx.customerSubscription.findFirst({
+      where: {
+        userId,
+        status: { in: ['active', 'expired_claimable'] },
+        product: { provider: 'Civitai' },
+      },
+      select: {
+        id: true,
+        metadata: true,
+        product: {
+          select: { metadata: true },
+        },
+      },
+    });
+
+    if (!subscription) {
+      throw new Error('No active prepaid membership found');
+    }
+
+    const meta = (subscription.metadata ?? {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+    const tokens = getPrepaidTokens({ metadata: meta });
+    const tokenIndex = tokens.findIndex((t) => t.id === tokenId);
+
+    if (tokenIndex === -1) {
+      throw new Error('Token not found');
+    }
+
+    const token = tokens[tokenIndex];
+
+    if (token.status !== 'unlocked') {
+      throw new Error(
+        token.status === 'claimed' ? 'Token already claimed' : 'Token is still locked'
+      );
+    }
+
+    const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+    const buzzType = productMeta.buzzType ?? 'yellow';
+    const externalTransactionId = `prepaid-token-claim:${tokenId}`;
+    const now = new Date().toISOString();
+
+    tokens[tokenIndex] = {
+      ...token,
+      status: 'claimed',
+      claimedAt: now,
+      buzzTransactionId: externalTransactionId,
+    };
+
+    const updatedMeta: Record<string, any> = { ...meta, tokens };
+
+    // For legacy tokens: decrement prepaids counter if the metadata didn't already
+    // have a tokens array (meaning the unlock job hasn't migrated this user yet).
+    if (tokenId.startsWith('legacy_') && meta.prepaids && !meta.tokens?.length) {
+      const tierKey = token.tier as keyof NonNullable<typeof meta.prepaids>;
+      updatedMeta.prepaids = {
+        ...meta.prepaids,
+        [tierKey]: Math.max(0, (meta.prepaids[tierKey] ?? 0) - 1),
+      };
+      updatedMeta.buzzTransactionIds = [
+        ...(meta.buzzTransactionIds ?? []),
+        externalTransactionId,
+      ];
+    }
+
+    await tx.customerSubscription.update({
+      where: { id: subscription.id },
+      data: {
+        metadata: updatedMeta,
+        updatedAt: new Date(),
+      },
+    });
+
+    return {
+      tokenId,
+      buzzAmount: token.buzzAmount,
+      tier: token.tier,
+      buzzType: buzzType as BuzzAccountType,
+      externalTransactionId,
+    };
+  });
+
+  // Deliver buzz OUTSIDE the transaction — idempotent via externalTransactionId
+  await createBuzzTransaction({
+    fromAccountId: 0,
+    toAccountId: userId,
+    toAccountType: result.buzzType,
+    type: TransactionType.Purchase,
+    externalTransactionId: result.externalTransactionId,
+    amount: result.buzzAmount,
+    description: `Claimed prepaid ${result.tier} token`,
+    details: {
+      type: 'prepaid-token-claim',
+      tokenId: result.tokenId,
+      tier: result.tier,
+    },
+  });
+
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  await invalidateSubscriptionCaches(userId);
+
+  return result;
+};
+
+export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
+  const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
+  const { createBuzzTransactionMany } = await import('~/server/services/buzz.service');
+
+  // Short DB transaction to mark all tokens as claimed, then deliver buzz outside.
+  const result = await dbWrite.$transaction(async (tx) => {
+    const subscription = await tx.customerSubscription.findFirst({
+      where: {
+        userId,
+        status: { in: ['active', 'expired_claimable'] },
+        product: { provider: 'Civitai' },
+      },
+      select: {
+        id: true,
+        metadata: true,
+        product: {
+          select: { metadata: true },
+        },
+      },
+    });
+
+    if (!subscription) {
+      throw new Error('No active prepaid membership found');
+    }
+
+    const meta = (subscription.metadata ?? {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+    const tokens = getPrepaidTokens({ metadata: meta });
+    const unlockedTokens = tokens.filter((t) => t.status === 'unlocked');
+
+    if (unlockedTokens.length === 0) {
+      throw new Error('No unlocked tokens to claim');
+    }
+
+    const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+    const buzzType = productMeta.buzzType ?? 'yellow';
+    const now = new Date().toISOString();
+
+    const updatedTokens = tokens.map((t) => {
+      if (t.status === 'unlocked') {
+        return {
+          ...t,
+          status: 'claimed' as const,
+          claimedAt: now,
+          buzzTransactionId: `prepaid-token-claim:${t.id}`,
+        };
+      }
+      return t;
+    });
+
+    const updatedMeta: Record<string, any> = { ...meta, tokens: updatedTokens };
+
+    // For legacy tokens: decrement prepaids if not yet migrated to tokens array
+    const legacyClaimed = unlockedTokens.filter((t) => t.id.startsWith('legacy_'));
+    if (legacyClaimed.length > 0 && meta.prepaids && !meta.tokens?.length) {
+      const updatedPrepaids = { ...meta.prepaids };
+      const newTxIds = [...(meta.buzzTransactionIds ?? [])];
+      for (const t of legacyClaimed) {
+        const tierKey = t.tier as keyof typeof updatedPrepaids;
+        updatedPrepaids[tierKey] = Math.max(0, (updatedPrepaids[tierKey] ?? 0) - 1);
+        newTxIds.push(`prepaid-token-claim:${t.id}`);
+      }
+      updatedMeta.prepaids = updatedPrepaids;
+      updatedMeta.buzzTransactionIds = newTxIds;
+    }
+
+    await tx.customerSubscription.update({
+      where: { id: subscription.id },
+      data: {
+        metadata: updatedMeta,
+        updatedAt: new Date(),
+      },
+    });
+
+    const totalBuzz = unlockedTokens.reduce((sum, t) => sum + t.buzzAmount, 0);
+    return {
+      claimed: unlockedTokens.length,
+      totalBuzz,
+      buzzType: buzzType as BuzzAccountType,
+      unlockedTokens,
+    };
+  });
+
+  // Deliver buzz OUTSIDE the transaction — idempotent via externalTransactionId
+  const transactions = result.unlockedTokens.map((token) => ({
+    fromAccountId: 0,
+    toAccountId: userId,
+    toAccountType: result.buzzType,
+    type: TransactionType.Purchase,
+    externalTransactionId: `prepaid-token-claim:${token.id}`,
+    amount: token.buzzAmount,
+    description: `Claimed prepaid ${token.tier} token`,
+    details: {
+      type: 'prepaid-token-claim',
+      tokenId: token.id,
+      tier: token.tier,
+    },
+  }));
+
+  await createBuzzTransactionMany(transactions);
+
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  await invalidateSubscriptionCaches(userId);
+
+  return { claimed: result.claimed, totalBuzz: result.totalBuzz };
+};
+
+/**
+ * Unlock tokens for a specific user (admin/mod endpoint). This does the full process:
+ * 1. Reads subscription metadata (supports both new tokens and legacy prepaids)
+ * 2. When force=false: unlocks one locked token matching the current tier
+ * 3. When force=true: unlocks ALL locked tokens matching the current tier
+ * 4. Persists updated metadata (migrating legacy prepaids → tokens if needed)
+ * 5. Sends notification email
+ */
+export const unlockTokensForUser = async ({
+  userId,
+  force = false,
+}: {
+  userId: number;
+  /** When true, unlocks ALL locked tokens regardless of unlock date */
+  force?: boolean;
+}) => {
+  const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
+  const { prepaidTokenUnlockedEmail } = await import(
+    '~/server/email/templates/prepaidTokenUnlocked.email'
+  );
+
+  const subscription = await dbWrite.customerSubscription.findFirst({
+    where: {
+      userId,
+      status: 'active',
+      product: { provider: 'Civitai' },
+    },
+    select: {
+      id: true,
+      metadata: true,
+      currentPeriodStart: true,
+      product: {
+        select: { metadata: true },
+      },
+      user: {
+        select: { email: true, username: true },
+      },
+    },
+  });
+
+  if (!subscription) {
+    throw new Error('No active prepaid membership found');
+  }
+
+  const meta = (subscription.metadata ?? {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+  const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+  const currentTier = productMeta.tier;
+
+  if (!currentTier || currentTier === 'free') {
+    return { unlocked: 0, totalBuzz: 0, message: 'Subscription has no paid tier' };
+  }
+
+  const tokens = getPrepaidTokens({ metadata: meta });
+
+  if (tokens.length === 0) {
+    return { unlocked: 0, totalBuzz: 0, message: 'No tokens found' };
+  }
+
+  const now = new Date();
+  const nowIso = now.toISOString();
+  let unlockedCount = 0;
+  let totalBuzz = 0;
+
+  let updatedTokens: typeof tokens;
+  if (force) {
+    // Unlock ALL locked tokens matching the current tier only
+    updatedTokens = tokens.map((token) => {
+      if (token.status === 'locked' && token.tier === currentTier) {
+        unlockedCount++;
+        totalBuzz += token.buzzAmount;
+        return { ...token, status: 'unlocked' as const, unlockedAt: nowIso };
+      }
+      return token;
+    });
+  } else {
+    // Unlock ONE locked token matching the current tier
+    const targetIndex = tokens.findIndex(
+      (t) => t.status === 'locked' && t.tier === currentTier
+    );
+
+    if (targetIndex === -1) {
+      return { unlocked: 0, totalBuzz: 0, message: `No locked ${currentTier} tokens to unlock` };
+    }
+
+    updatedTokens = tokens.map((token, i) => {
+      if (i === targetIndex) {
+        unlockedCount++;
+        totalBuzz += token.buzzAmount;
+        return { ...token, status: 'unlocked' as const, unlockedAt: nowIso };
+      }
+      return token;
+    });
+  }
+
+  if (unlockedCount === 0) {
+    return { unlocked: 0, totalBuzz: 0, message: 'No tokens eligible for unlock yet' };
+  }
+
+  // Persist — write full tokens array (this migrates legacy prepaids to new format)
+  await dbWrite.customerSubscription.update({
+    where: { id: subscription.id },
+    data: {
+      metadata: { ...meta, tokens: updatedTokens },
+      updatedAt: now,
+    },
+  });
+
+  const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+  await invalidateSubscriptionCaches(userId);
+
+  // Send notification email
+  if (subscription.user?.email) {
+    try {
+      await prepaidTokenUnlockedEmail.send({
+        user: {
+          email: subscription.user.email,
+          username: subscription.user.username ?? 'there',
+        },
+        tokensUnlocked: unlockedCount,
+        totalBuzz,
+      });
+    } catch (err) {
+      console.error(`Failed to send token unlock email to user ${userId}:`, err);
+    }
+  }
+
+  return { unlocked: unlockedCount, totalBuzz };
 };
