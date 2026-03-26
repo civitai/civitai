@@ -39,7 +39,7 @@ import type {
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
 import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';

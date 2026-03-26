@@ -25,7 +25,7 @@ import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

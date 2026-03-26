@@ -32,7 +32,7 @@ const logFor = (target: 'write' | 'read') =>
   };
 
 const singleClient = env.DATABASE_REPLICA_URL === env.DATABASE_URL;
-const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
+const createPrismaClient = ({ readonly }: { readonly: boolean }): PrismaClient => {
   const log: Prisma.LogDefinition[] = env.LOGGING.filter((x) => x.startsWith('prisma:')).map(
     (x) => ({
       emit: 'stdout',
@@ -48,7 +48,8 @@ const createPrismaClient = ({ readonly }: { readonly: boolean }) => {
     });
   }
   const dbUrl = readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL;
-  const prisma = new PrismaClient({ log, datasources: { db: { url: dbUrl } } });
+  const options = { log, datasources: { db: { url: dbUrl } } } as Prisma.PrismaClientOptions;
+  const prisma = new PrismaClient(options);
 
   // use with prisma-slow,prisma-showparams
   if (env.LOGGING.some((x) => x === 'prisma-showparams')) {

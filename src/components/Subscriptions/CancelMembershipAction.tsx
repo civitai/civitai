@@ -9,8 +9,6 @@ import { CancelMembershipBenefitsModal } from '~/components/Stripe/MembershipCha
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { usePaddle } from '~/providers/PaddleProvider';
-import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 
 export function CancelMembershipAction({
@@ -22,23 +20,17 @@ export function CancelMembershipAction({
 }: Props) {
   const currentUser = useCurrentUser();
 
-  const { paddle } = usePaddle();
   const { refreshSubscription } = useMutatePaddle();
   const { vault } = useQueryVault();
   const { subscription } = useActiveSubscription();
-
-  const hasUsedVaultStorage = !!vault && vault.usedStorageKb > 0;
 
   const handleRefresh = useCallback(async () => {
     try {
       await refreshSubscription();
       await currentUser?.refresh();
-      // Call onFinish after refreshing session
       onFinish?.();
     } catch {
-      // Call onFinish before reloading page
       onFinish?.();
-      // Reload page if refresh fails
       window.location.reload();
     }
   }, [currentUser, onFinish, refreshSubscription]);
@@ -55,36 +47,8 @@ export function CancelMembershipAction({
           onContinue: handleRefresh,
         },
       });
-
-      // const result = await paddle.Retain.initCancellationFlow({
-      //   subscriptionId: subscription.id,
-      // });
-
-      // if (result.status === 'error') {
-      //   return showErrorNotification({
-      //     title: 'Failed to cancel membership',
-      //     error: new Error(
-      //       'There was an error while trying to cancel your membership. Please try again later.'
-      //     ),
-      //   });
-      // }
-
-      // if (result.status === 'chose_to_cancel') {
-      //   if (hasUsedVaultStorage) {
-      //     dialogStore.trigger({
-      //       component: VaultStorageDowngrade,
-      //       props: {
-      //         onContinue: handleRefresh,
-      //       },
-      //     });
-      //   } else {
-      //     await handleRefresh();
-      //   }
-      // }
     },
-    // No need to add paddle.Retain to dependenciees as suggested by eslint
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [handleRefresh, hasUsedVaultStorage, subscription]
+    [handleRefresh, subscription]
   );
 
   return variant === 'menu-item' ? (

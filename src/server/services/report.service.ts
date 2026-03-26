@@ -18,7 +18,7 @@ import type {
   GetReportsInput,
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
   articlesSearchIndex,
   collectionsSearchIndex,

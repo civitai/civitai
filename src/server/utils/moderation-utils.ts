@@ -1,4 +1,3 @@
-import nlp from 'compromise';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { fromJson } from '~/utils/json-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -12,7 +11,8 @@ const wordReplace = (word: string) => {
     .replace(/a/g, '[a|@]');
 };
 
-function adjustModWordBlocklist(word: string) {
+async function adjustModWordBlocklist(word: string) {
+  const nlp = (await import('compromise')).default;
   const doc = nlp(word);
 
   if (doc.nouns().length > 0) {
@@ -51,7 +51,7 @@ export async function getModWordBlocklist() {
       .then((data) => (data ? fromJson<string[]>(data) : ([] as string[])))
       .catch(() => [] as string[])) ?? ([] as string[]);
 
-  const blocklist = [] as ReturnType<typeof adjustModWordBlocklist>[];
+  const blocklist = [] as Awaited<ReturnType<typeof adjustModWordBlocklist>>[];
   for (const wordlist of wordlists) {
     const words = await sysRedis.packed.hGet<string[]>(
       REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS,
@@ -59,7 +59,7 @@ export async function getModWordBlocklist() {
     );
     if (words) {
       for (const word of words) {
-        blocklist.push(adjustModWordBlocklist(word));
+        blocklist.push(await adjustModWordBlocklist(word));
       }
     } else {
       logToAxiom({
@@ -80,7 +80,7 @@ export async function getModURLBlocklist() {
       .then((data) => (data ? fromJson<string[]>(data) : ([] as string[])))
       .catch(() => [] as string[])) ?? ([] as string[]);
 
-  const blocklist = [] as ReturnType<typeof adjustModWordBlocklist>[];
+  const blocklist = [] as Awaited<ReturnType<typeof adjustModWordBlocklist>>[];
   for (const urllist of urllists) {
     const urls = await sysRedis.packed.hGet<string[]>(
       REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS,

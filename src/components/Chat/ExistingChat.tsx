@@ -65,7 +65,7 @@ import { isDefined } from '~/utils/type-guards';
 import classes from './ExistingChat.module.scss';
 import { BlurText } from '~/components/BlurText/BlurText';
 import { openReportModal } from '~/components/Dialog/triggers/report';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useDomainColor } from '~/hooks/useDomainColor';
 

@@ -59,7 +59,7 @@ import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { ComicChapterStatus, ComicEngagementType } from '~/shared/utils/prisma/enums';
