@@ -1,0 +1,640 @@
+{
+  "version": "2.9",
+  "children": [
+    {
+      "type": "frame",
+      "id": "GDfq3",
+      "x": 0,
+      "y": 0,
+      "name": "Variant 1 — Single Image",
+      "clip": true,
+      "width": 1200,
+      "height": 630,
+      "fill": "$bg-dark-7",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "kAbE6",
+          "x": 0,
+          "y": 0,
+          "name": "Cover Image",
+          "metadata": {
+            "type": "unsplash",
+            "username": "loganvoss",
+            "link": "https://unsplash.com/@loganvoss",
+            "author": "Logan Voss"
+          },
+          "width": 1200,
+          "height": 630,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1768936919103-b3d7015417f6?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzQ5Nzl8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "rectangle",
+          "id": "jYV02",
+          "x": 0,
+          "y": 380,
+          "name": "Bottom Gradient",
+          "fill": {
+            "type": "gradient",
+            "gradientType": "linear",
+            "enabled": true,
+            "rotation": 0,
+            "size": {
+              "height": 1
+            },
+            "colors": [
+              {
+                "color": "#00000000",
+                "position": 0
+              },
+              {
+                "color": "#000000CC",
+                "position": 1
+              }
+            ]
+          },
+          "width": 1200,
+          "height": 250
+        },
+        {
+          "type": "frame",
+          "id": "XNa02",
+          "x": 24,
+          "y": 574,
+          "name": "Logo Badge",
+          "clip": true,
+          "width": 40,
+          "height": 40,
+          "fill": "#000000AA",
+          "cornerRadius": 10,
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "vDt8i",
+              "x": 4,
+              "y": 4,
+              "name": "Logo Icon",
+              "width": 32,
+              "height": 32,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../../public/images/apple-touch-icon.png",
+                "mode": "fit"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "xgBv4",
+      "x": 0,
+      "y": 730,
+      "name": "Variant 2 — Two Images",
+      "clip": true,
+      "width": 1200,
+      "height": 630,
+      "fill": "$bg-dark-7",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "N6wkN",
+          "x": 0,
+          "y": 0,
+          "name": "Image Left",
+          "metadata": {
+            "type": "unsplash",
+            "username": "europeana",
+            "link": "https://unsplash.com/@europeana",
+            "author": "Europeana"
+          },
+          "width": 598,
+          "height": 630,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1751058127317-9f8de0f3ce38?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzQ5ODd8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "frame",
+          "id": "ITHyX",
+          "x": 602,
+          "y": 0,
+          "name": "Image Right",
+          "metadata": {
+            "type": "unsplash",
+            "username": "rubaitulazad",
+            "link": "https://unsplash.com/@rubaitulazad",
+            "author": "Rubaitul Azad"
+          },
+          "width": 598,
+          "height": 630,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1619241805829-34fb64299391?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzQ5ODd8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "rectangle",
+          "id": "f8iTD",
+          "x": 598,
+          "y": 0,
+          "name": "Divider",
+          "fill": "$bg-dark-9",
+          "width": 4,
+          "height": 630
+        },
+        {
+          "type": "frame",
+          "id": "4ixyv",
+          "x": 24,
+          "y": 574,
+          "name": "Logo Badge",
+          "clip": true,
+          "width": 40,
+          "height": 40,
+          "fill": "#000000AA",
+          "cornerRadius": 10,
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "o7duM",
+              "x": 4,
+              "y": 4,
+              "name": "Logo Icon",
+              "width": 32,
+              "height": 32,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../../public/images/apple-touch-icon.png",
+                "mode": "fit"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "sq6x7",
+      "x": 0,
+      "y": 1460,
+      "name": "Variant 3 — Three Images",
+      "clip": true,
+      "width": 1200,
+      "height": 630,
+      "fill": "$bg-dark-7",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "RCEp9",
+          "x": 0,
+          "y": 0,
+          "name": "Main Image",
+          "metadata": {
+            "type": "unsplash",
+            "username": "europeana",
+            "link": "https://unsplash.com/@europeana",
+            "author": "Europeana"
+          },
+          "width": 798,
+          "height": 630,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1751578777421-d5a81e47c2dc?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzUwMzd8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "frame",
+          "id": "E6s0T",
+          "x": 802,
+          "y": 0,
+          "name": "Top Right Image",
+          "metadata": {
+            "type": "unsplash",
+            "username": "rudra2399",
+            "link": "https://unsplash.com/@rudra2399",
+            "author": "Rudra Singh Bhardwaj"
+          },
+          "width": 398,
+          "height": 313,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1688308173201-88bea6333275?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzUwMzh8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "frame",
+          "id": "cSLcC",
+          "x": 802,
+          "y": 317,
+          "name": "Bottom Right Image",
+          "metadata": {
+            "type": "unsplash",
+            "username": "dex21",
+            "link": "https://unsplash.com/@dex21",
+            "author": "zack tullos"
+          },
+          "width": 398,
+          "height": 313,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1626810418459-a92db5e8d724?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzUwMzh8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "rectangle",
+          "id": "8oTxs",
+          "x": 798,
+          "y": 0,
+          "name": "Vertical Divider",
+          "fill": "$bg-dark-9",
+          "width": 4,
+          "height": 630
+        },
+        {
+          "type": "rectangle",
+          "id": "tAjta",
+          "x": 802,
+          "y": 313,
+          "name": "Horizontal Divider",
+          "fill": "$bg-dark-9",
+          "width": 398,
+          "height": 4
+        },
+        {
+          "type": "frame",
+          "id": "BAHIk",
+          "x": 24,
+          "y": 574,
+          "name": "Logo Badge",
+          "clip": true,
+          "width": 40,
+          "height": 40,
+          "fill": "#000000AA",
+          "cornerRadius": 10,
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "36fvu",
+              "x": 4,
+              "y": 4,
+              "name": "Logo Icon",
+              "width": 32,
+              "height": 32,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../../public/images/apple-touch-icon.png",
+                "mode": "fit"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "Gpdmz",
+      "x": 0,
+      "y": 2190,
+      "name": "Variant 4 — Fallback (No Images)",
+      "clip": true,
+      "width": 1200,
+      "height": 630,
+      "fill": "$bg-dark-7",
+      "layout": "none",
+      "children": [
+        {
+          "type": "rectangle",
+          "id": "q7yut",
+          "x": 0,
+          "y": 0,
+          "name": "Background",
+          "fill": {
+            "type": "gradient",
+            "gradientType": "radial",
+            "enabled": true,
+            "rotation": 0,
+            "size": {
+              "width": 1.2,
+              "height": 1.2
+            },
+            "colors": [
+              {
+                "color": "#25262B",
+                "position": 0
+              },
+              {
+                "color": "#101113",
+                "position": 1
+              }
+            ]
+          },
+          "width": 1200,
+          "height": 630
+        },
+        {
+          "type": "frame",
+          "id": "fFOVI",
+          "x": 400,
+          "y": 230,
+          "name": "Center Branding",
+          "width": 400,
+          "height": 170,
+          "layout": "vertical",
+          "gap": 16,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "frame",
+              "id": "fFgB0",
+              "name": "Logo Row",
+              "gap": 12,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon_font",
+                  "id": "4fthL",
+                  "name": "lIcon",
+                  "width": 40,
+                  "height": 40,
+                  "iconFontName": "sparkles",
+                  "iconFontFamily": "lucide",
+                  "fill": "$blue-6"
+                },
+                {
+                  "type": "text",
+                  "id": "WNhuj",
+                  "name": "lText",
+                  "fill": "#FFFFFF",
+                  "content": "civitai",
+                  "fontFamily": "Inter",
+                  "fontSize": 42,
+                  "fontWeight": "700",
+                  "letterSpacing": -1
+                }
+              ]
+            },
+            {
+              "type": "text",
+              "id": "tbTxO",
+              "name": "tagline",
+              "fill": "$text-dark-2",
+              "content": "The Home of Open-Source Generative AI",
+              "textAlign": "center",
+              "fontFamily": "Inter",
+              "fontSize": 16
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "CFL6W",
+      "x": 0,
+      "y": 2920,
+      "name": "Variant 5 — Three Images Side-by-Side",
+      "clip": true,
+      "width": 1200,
+      "height": 630,
+      "fill": "$bg-dark-7",
+      "layout": "none",
+      "children": [
+        {
+          "type": "frame",
+          "id": "FeMIM",
+          "x": 0,
+          "y": 0,
+          "name": "Image Left",
+          "metadata": {
+            "type": "unsplash",
+            "username": "europeana",
+            "link": "https://unsplash.com/@europeana",
+            "author": "Europeana"
+          },
+          "width": 398,
+          "height": 630,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1751058127317-9f8de0f3ce38?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzU5MDV8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "frame",
+          "id": "WoEji",
+          "x": 402,
+          "y": 0,
+          "name": "Image Center",
+          "metadata": {
+            "type": "unsplash",
+            "username": "nationalgallery",
+            "link": "https://unsplash.com/@nationalgallery",
+            "author": "National Gallery of Art"
+          },
+          "width": 396,
+          "height": 630,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1763491905666-0087388b4013?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzU5MDZ8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "frame",
+          "id": "lTYvD",
+          "x": 802,
+          "y": 0,
+          "name": "Image Right",
+          "metadata": {
+            "type": "unsplash",
+            "username": "heijnsbroek_abstract_art",
+            "link": "https://unsplash.com/@heijnsbroek_abstract_art",
+            "author": "Fons Heijnsbroek"
+          },
+          "width": 398,
+          "height": 630,
+          "fill": {
+            "type": "image",
+            "enabled": true,
+            "url": "https://images.unsplash.com/photo-1724142005765-5856e8903a82?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3NzQ0NzU5MDZ8&ixlib=rb-4.1.0&q=80&w=1080",
+            "mode": "fill"
+          }
+        },
+        {
+          "type": "rectangle",
+          "id": "UDVlA",
+          "x": 398,
+          "y": 0,
+          "name": "Divider 1",
+          "fill": "$bg-dark-9",
+          "width": 4,
+          "height": 630
+        },
+        {
+          "type": "rectangle",
+          "id": "bwGyW",
+          "x": 798,
+          "y": 0,
+          "name": "Divider 2",
+          "fill": "$bg-dark-9",
+          "width": 4,
+          "height": 630
+        },
+        {
+          "type": "frame",
+          "id": "bM3Ov",
+          "x": 24,
+          "y": 574,
+          "name": "Logo Badge",
+          "clip": true,
+          "width": 40,
+          "height": 40,
+          "fill": "#000000AA",
+          "cornerRadius": 10,
+          "layout": "none",
+          "children": [
+            {
+              "type": "frame",
+              "id": "ZS5WU",
+              "x": 4,
+              "y": 4,
+              "name": "Logo Icon",
+              "width": 32,
+              "height": 32,
+              "fill": {
+                "type": "image",
+                "enabled": true,
+                "url": "../../public/images/apple-touch-icon.png",
+                "mode": "fit"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variables": {
+    "bg-dark-3": {
+      "type": "color",
+      "value": "#5C5F66"
+    },
+    "bg-dark-4": {
+      "type": "color",
+      "value": "#373A40"
+    },
+    "bg-dark-5": {
+      "type": "color",
+      "value": "#2C2E33"
+    },
+    "bg-dark-6": {
+      "type": "color",
+      "value": "#25262B"
+    },
+    "bg-dark-7": {
+      "type": "color",
+      "value": "#1A1B1E"
+    },
+    "bg-dark-8": {
+      "type": "color",
+      "value": "#141517"
+    },
+    "bg-dark-9": {
+      "type": "color",
+      "value": "#101113"
+    },
+    "blue-5": {
+      "type": "color",
+      "value": "#339AF0"
+    },
+    "blue-6": {
+      "type": "color",
+      "value": "#228BE6"
+    },
+    "blue-8": {
+      "type": "color",
+      "value": "#1971C2"
+    },
+    "blue-9": {
+      "type": "color",
+      "value": "#1864AB"
+    },
+    "buzz": {
+      "type": "color",
+      "value": "#FC9C2D"
+    },
+    "canvas-height": {
+      "type": "number",
+      "value": 630
+    },
+    "canvas-width": {
+      "type": "number",
+      "value": 1200
+    },
+    "font-family": {
+      "type": "string",
+      "value": "-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif"
+    },
+    "gap": {
+      "type": "number",
+      "value": 4
+    },
+    "gray-0": {
+      "type": "color",
+      "value": "#f8f9fa"
+    },
+    "gray-1": {
+      "type": "color",
+      "value": "#f1f3f5"
+    },
+    "gray-2": {
+      "type": "color",
+      "value": "#e9ecef"
+    },
+    "gray-6": {
+      "type": "color",
+      "value": "#868e96"
+    },
+    "text-dark-0": {
+      "type": "color",
+      "value": "#C1C2C5"
+    },
+    "text-dark-1": {
+      "type": "color",
+      "value": "#A6A7AB"
+    },
+    "text-dark-2": {
+      "type": "color",
+      "value": "#8c8fa3"
+    }
+  }
+}
