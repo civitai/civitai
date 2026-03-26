@@ -11,7 +11,7 @@ import type {
   PromptEnhancementOutput,
   PromptEnhancementStep,
 } from '@civitai/client';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { trpc, trpcVanilla } from '~/utils/trpc';
@@ -20,7 +20,7 @@ import {
   addWorkflowToTagCache,
   updateWorkflowInTagCache,
   fetchWorkflowById,
-  useWorkflowSignal,
+  onWorkflowSignal,
 } from '~/components/Orchestrator/workflowHooks';
 
 // =============================================================================
@@ -95,20 +95,23 @@ export function useGetPromptEnhancementHistory() {
     }
   );
 
-  // Register signal handler — when a workflow completes, fetch and update cache
-  useWorkflowSignal(async (event) => {
-    // Only handle workflows that are in our cache
-    const allItems = data?.pages?.flatMap((page) => page.items ?? []) ?? [];
-    const match = allItems.find((item) => item.id === event.workflowId);
-    if (!match) return;
+  // Register signal listener — when a workflow in our cache completes, fetch and update
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  useEffect(() => {
+    return onWorkflowSignal(async (event) => {
+      const allItems = dataRef.current?.pages?.flatMap((page) => page.items ?? []) ?? [];
+      const match = allItems.find((item) => item.id === event.workflowId);
+      if (!match) return;
 
-    try {
-      const workflowItem = await fetchWorkflowById(event.workflowId);
-      updateWorkflowInTagCache(workflowItem, PROMPT_ENHANCEMENT_TAGS);
-    } catch {
-      // Signal fetch failed — will be picked up on next query
-    }
-  });
+      try {
+        const workflowItem = await fetchWorkflowById(event.workflowId);
+        updateWorkflowInTagCache(workflowItem, PROMPT_ENHANCEMENT_TAGS);
+      } catch {
+        // Signal fetch failed — will be picked up on next query
+      }
+    });
+  }, []);
 
   const records = useMemo(() => {
     if (!data?.pages) return [];

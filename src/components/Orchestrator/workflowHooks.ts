@@ -46,16 +46,14 @@ type WorkflowSignalEvent = {
 // Cache helpers (tag-based)
 // =============================================================================
 
-function getQueryKeyForTags(_tags: string[]) {
-  // Use the procedure-level key without input to match all queries for this endpoint.
-  // `exact: false` in setQueriesData ensures it matches regardless of pagination params.
-  return getQueryKey(trpc.orchestrator.queryWorkflowsByTags);
-}
-
 export function addWorkflowToTagCache(workflow: WorkflowItem, tags: string[]) {
-  const queryKey = getQueryKeyForTags(tags);
+  const queryKey = getQueryKey(trpc.orchestrator.queryWorkflowsByTags);
   queryClient.setQueriesData(
-    { queryKey, exact: false },
+    {
+      queryKey,
+      exact: false,
+      predicate: (query) => matchesTagQuery(query.queryKey, tags),
+    },
     (state: InfiniteData<WorkflowPage> | undefined) =>
       produce(state, (old) => {
         if (!old?.pages?.[0]) return;
@@ -65,9 +63,13 @@ export function addWorkflowToTagCache(workflow: WorkflowItem, tags: string[]) {
 }
 
 export function updateWorkflowInTagCache(workflow: WorkflowItem, tags: string[]) {
-  const queryKey = getQueryKeyForTags(tags);
+  const queryKey = getQueryKey(trpc.orchestrator.queryWorkflowsByTags);
   queryClient.setQueriesData(
-    { queryKey, exact: false },
+    {
+      queryKey,
+      exact: false,
+      predicate: (query) => matchesTagQuery(query.queryKey, tags),
+    },
     (state: InfiniteData<WorkflowPage> | undefined) =>
       produce(state, (old) => {
         if (!old?.pages) return;
@@ -82,6 +84,13 @@ export function updateWorkflowInTagCache(workflow: WorkflowItem, tags: string[])
   );
 }
 
+/** Check if a query key's input tags match the target tags */
+function matchesTagQuery(queryKey: readonly unknown[], tags: string[]): boolean {
+  const input = (queryKey[1] as { input?: { tags?: string[] } } | undefined)?.input;
+  if (!input?.tags) return true; // no tags filter — match all
+  return tags.every((t) => input.tags!.includes(t));
+}
+
 // =============================================================================
 // Fetch workflow by ID
 // =============================================================================
@@ -92,15 +101,28 @@ export async function fetchWorkflowById(workflowId: string): Promise<WorkflowIte
 }
 
 // =============================================================================
-// Signal hook
+// Signal listener registry
 // =============================================================================
 
-export type WorkflowSignalHandler = (event: WorkflowSignalEvent) => void;
+type WorkflowSignalListener = (event: WorkflowSignalEvent) => void;
+
+const listeners = new Set<WorkflowSignalListener>();
+
+/** Subscribe to workflow update signals. Returns an unsubscribe function. */
+export function onWorkflowSignal(listener: WorkflowSignalListener): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
 
 /**
- * Hook to listen for generic workflow update signals.
- * Calls the handler when a WorkflowUpdate signal arrives.
+ * Hook that registers the central WorkflowUpdate signal connection.
+ * Mount this once (e.g., in GenerationSignals). Dispatches to all
+ * registered listeners via onWorkflowSignal.
  */
-export function useWorkflowSignal(handler: WorkflowSignalHandler) {
-  useSignalConnection(SignalMessages.WorkflowUpdate, handler);
+export function useWorkflowUpdateSignal() {
+  useSignalConnection(SignalMessages.WorkflowUpdate, (event: WorkflowSignalEvent) => {
+    for (const listener of listeners) {
+      listener(event);
+    }
+  });
 }
