@@ -100,6 +100,8 @@ import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
+import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
+import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { MetadataExtractionPanel } from './inputs/MetadataExtractionPanel';
 import {
   contentGenerationTour,
@@ -360,13 +362,21 @@ export function GenerationForm() {
         {/* img2meta: self-contained panel, no graph controllers */}
         {snapshot.workflow === 'img2meta' && (
           <>
-            <SelectedWorkflowDisplay workflowId="img2meta" />
+            <SelectedWorkflowDisplay workflowId="img2meta" onBack={handleNavigationBack} />
             <MetadataExtractionPanel />
           </>
         )}
 
+        {/* prompt:enhance: self-contained panel, reads captured data from store */}
+        {snapshot.workflow === 'prompt:enhance' && (
+          <>
+            <SelectedWorkflowDisplay workflowId="prompt:enhance" onBack={handleNavigationBack} />
+            <PromptEnhancePanelWrapper graph={graph} onBack={handleNavigationBack} />
+          </>
+        )}
+
         {/* Selected workflow display OR mode selector */}
-        {snapshot.workflow !== 'img2meta' && (
+        {snapshot.workflow !== 'img2meta' && snapshot.workflow !== 'prompt:enhance' && (
           <>
             <Controller
               graph={graph}
@@ -685,20 +695,18 @@ export function GenerationForm() {
                                 strength?: number;
                               }[];
                             };
-                            triggerPromptEnhance({
-                              prompt: value as string,
-                              negativePrompt: snap.negativePrompt,
-                              ecosystem: snap.ecosystem ?? '',
-                              resources: snap.resources,
-                              onApply: (enhancedPrompt, enhancedNegativePrompt) => {
-                                onChange(enhancedPrompt);
-                                if (enhancedNegativePrompt) {
-                                  graph.set({
-                                    negativePrompt: enhancedNegativePrompt,
-                                  } as Parameters<typeof graph.set>[0]);
-                                }
+                            triggerPromptEnhance(
+                              {
+                                prompt: value as string,
+                                negativePrompt: snap.negativePrompt,
+                                ecosystem: snap.ecosystem ?? '',
+                                resources: snap.resources,
                               },
-                            });
+                              (wf) =>
+                                graph.set({
+                                  workflow: wf,
+                                } as Parameters<typeof graph.set>[0])
+                            );
                           }}
                         >
                           Enhance
@@ -1434,6 +1442,45 @@ export function GenerationForm() {
         }
       />
     </div>
+  );
+}
+
+// =============================================================================
+// Prompt Enhancement Panel (reads captured data from store)
+// =============================================================================
+
+function PromptEnhancePanelWrapper({
+  graph,
+  onBack,
+}: {
+  graph: ReturnType<typeof useGraph<GenerationGraphTypes>>;
+  onBack: () => void;
+}) {
+  const data = usePromptEnhanceStore((state) => state.data);
+
+  // If store data is gone (e.g., page reload), navigate back to the previous workflow
+  useEffect(() => {
+    if (!data) onBack();
+  }, [data, onBack]);
+
+  if (!data) return null;
+
+  return (
+    <PromptEnhancePanel
+      prompt={data.prompt}
+      negativePrompt={data.negativePrompt}
+      ecosystem={data.ecosystem}
+      triggerWords={data.triggerWords}
+      onApply={(enhancedPrompt, enhancedNegativePrompt) => {
+        graph.set({ prompt: enhancedPrompt } as Parameters<typeof graph.set>[0]);
+        if (enhancedNegativePrompt) {
+          graph.set({
+            negativePrompt: enhancedNegativePrompt,
+          } as Parameters<typeof graph.set>[0]);
+        }
+        onBack();
+      }}
+    />
   );
 }
 

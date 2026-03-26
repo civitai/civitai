@@ -7,21 +7,74 @@ export type DiffSegment = {
 };
 
 /**
- * Simple word-level diff using longest common subsequence.
- * Splits on whitespace boundaries to produce readable prompt diffs.
+ * Two-level diff for AI prompts.
+ * 1. Splits on comma boundaries to align phrases (prevents cross-phrase matching)
+ * 2. Adjacent removed+added phrases are re-diffed at word level for granular changes
  */
 export function computeWordDiff(oldText: string, newText: string): DiffSegment[] {
-  const oldWords = oldText.split(/(\s+)/);
-  const newWords = newText.split(/(\s+)/);
+  // Level 1: phrase-level diff on comma boundaries
+  const oldPhrases = oldText.split(/(,\s*)/);
+  const newPhrases = newText.split(/(,\s*)/);
+  const phraseDiff = mergeSegments(lcs(oldPhrases, newPhrases));
 
-  // Build LCS table
-  const m = oldWords.length;
-  const n = newWords.length;
+  // Level 2: re-diff adjacent removed+added blocks at word level
+  const segments: DiffSegment[] = [];
+  let i = 0;
+  while (i < phraseDiff.length) {
+    const seg = phraseDiff[i];
+
+    if (seg.type === 'equal') {
+      segments.push(seg);
+      i++;
+      continue;
+    }
+
+    // Collect adjacent removed and added text
+    let removedText = '';
+    let addedText = '';
+    while (i < phraseDiff.length && phraseDiff[i].type !== 'equal') {
+      if (phraseDiff[i].type === 'removed') removedText += phraseDiff[i].value;
+      else addedText += phraseDiff[i].value;
+      i++;
+    }
+
+    // If we have both removed and added, check similarity before word-diffing
+    if (removedText && addedText) {
+      const oldWords = removedText.split(/(\s+)/);
+      const newWords = addedText.split(/(\s+)/);
+      const wordDiff = lcs(oldWords, newWords);
+      const equalCount = wordDiff.filter((s) => s.type === 'equal' && s.value.trim()).length;
+      const maxWords = Math.max(
+        oldWords.filter((w) => w.trim()).length,
+        newWords.filter((w) => w.trim()).length
+      );
+
+      // Only show granular word diff if phrases share >40% of words
+      if (maxWords > 0 && equalCount / maxWords > 0.4) {
+        segments.push(...wordDiff);
+      } else {
+        segments.push({ type: 'removed', value: removedText });
+        segments.push({ type: 'added', value: addedText });
+      }
+    } else if (removedText) {
+      segments.push({ type: 'removed', value: removedText });
+    } else if (addedText) {
+      segments.push({ type: 'added', value: addedText });
+    }
+  }
+
+  return mergeSegments(segments);
+}
+
+/** LCS-based diff on an array of tokens */
+function lcs(oldTokens: string[], newTokens: string[]): DiffSegment[] {
+  const m = oldTokens.length;
+  const n = newTokens.length;
   const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
 
   for (let i = 1; i <= m; i++) {
     for (let j = 1; j <= n; j++) {
-      if (oldWords[i - 1] === newWords[j - 1]) {
+      if (oldTokens[i - 1] === newTokens[j - 1]) {
         dp[i][j] = dp[i - 1][j - 1] + 1;
       } else {
         dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
@@ -29,29 +82,30 @@ export function computeWordDiff(oldText: string, newText: string): DiffSegment[]
     }
   }
 
-  // Backtrack to produce diff segments
-  const segments: DiffSegment[] = [];
+  const raw: DiffSegment[] = [];
   let i = m;
   let j = n;
-
-  const raw: DiffSegment[] = [];
   while (i > 0 || j > 0) {
-    if (i > 0 && j > 0 && oldWords[i - 1] === newWords[j - 1]) {
-      raw.push({ type: 'equal', value: oldWords[i - 1] });
+    if (i > 0 && j > 0 && oldTokens[i - 1] === newTokens[j - 1]) {
+      raw.push({ type: 'equal', value: oldTokens[i - 1] });
       i--;
       j--;
     } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-      raw.push({ type: 'added', value: newWords[j - 1] });
+      raw.push({ type: 'added', value: newTokens[j - 1] });
       j--;
     } else {
-      raw.push({ type: 'removed', value: oldWords[i - 1] });
+      raw.push({ type: 'removed', value: oldTokens[i - 1] });
       i--;
     }
   }
 
   raw.reverse();
+  return raw;
+}
 
-  // Merge consecutive segments of the same type
+/** Merge consecutive segments of the same type */
+function mergeSegments(raw: DiffSegment[]): DiffSegment[] {
+  const segments: DiffSegment[] = [];
   for (const seg of raw) {
     const last = segments[segments.length - 1];
     if (last && last.type === seg.type) {
@@ -60,7 +114,6 @@ export function computeWordDiff(oldText: string, newText: string): DiffSegment[]
       segments.push({ ...seg });
     }
   }
-
   return segments;
 }
 

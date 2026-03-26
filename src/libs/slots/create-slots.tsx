@@ -1,104 +1,105 @@
-import React from 'react';
-import { useForceUpdate } from './use-force-update';
-import useLayoutEffect from './useIsomorphicLayoutEffect';
+import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import useIsomorphicLayoutEffect from './useIsomorphicLayoutEffect';
 
-/** createSlots is a factory that can create a
- *  typesafe Slots + Slot pair to use in a component definition
- *  For example: ActionList.Item uses createSlots to get a Slots wrapper
- *  + Slot component that is used by LeadingVisual, Description
+/**
+ * createSlots — Portal-based slots that work from anywhere in the tree.
+ *
+ * Inspired by .NET MVC @section / @RenderSection:
+ * - `Slot` declares content from anywhere (like @section)
+ * - `RenderSlot` places it in the layout (like @RenderSection)
+ * - Content is portaled into the target DOM node via useLayoutEffect (no flash)
+ *
+ * Usage:
+ *   const { SlotProvider, Slot, RenderSlot } = createSlots(['header', 'footer']);
  */
-const createSlots = <SlotNames extends string>(slotNames: SlotNames[]) => {
-  type Slots = {
-    [key in SlotNames]?: React.ReactNode;
-  };
+function createSlots<T extends string>(slotNames: T[]) {
+  type SlotTargets = { [K in T]?: HTMLElement | null };
 
-  type ContextProps = {
-    registerSlot: (name: SlotNames, contents: React.ReactNode) => void;
-    unregisterSlot: (name: SlotNames) => void;
-    context: Record<string, unknown>;
-  };
-  const SlotsContext = React.createContext<ContextProps>({
-    registerSlot: () => null,
-    unregisterSlot: () => null,
-    context: {},
-  });
+  const TargetContext = createContext<React.MutableRefObject<SlotTargets> | null>(null);
 
-  // maintain a static reference to avoid infinite render loop
-  const defaultContext = Object.freeze({});
+  /** Wrap your layout + content tree in this provider */
+  function SlotProvider({ children }: { children: React.ReactNode }) {
+    const targetsRef = useRef<SlotTargets>({} as SlotTargets);
+    return <TargetContext.Provider value={targetsRef}>{children}</TargetContext.Provider>;
+  }
 
-  /** Slots uses a Double render strategy inspired by [reach-ui/descendants](https://github.com/reach/reach-ui/tree/develop/packages/descendants)
-   *  Slot registers themself with the Slots parent.
-   *  When all the children have mounted = registered themselves in slot,
-   *  we re-render the parent component to render with slots
+  /** Place this in your layout where the slot content should appear.
+   *  Analogous to @RenderSection("name") in .NET MVC.
+   *  `fallback` renders when no Slot has claimed this name (SSR + initial render).
    */
-  const Slots: React.FC<{
-    context?: ContextProps['context'];
-    children: (slots: Slots) => React.ReactNode;
-  }> = ({ context = defaultContext, children }) => {
-    // initialise slots
-    const slotsDefinition: Slots = {};
-    slotNames.map((name) => (slotsDefinition[name] = null));
-    const slotsRef = React.useRef<Slots>(slotsDefinition);
-
-    const rerenderWithSlots = useForceUpdate();
-    const [isMounted, setIsMounted] = React.useState(false);
-
-    // fires after all the effects in children
-    useLayoutEffect(() => {
-      rerenderWithSlots();
-      setIsMounted(true);
-    }, [rerenderWithSlots]);
-
-    const registerSlot = React.useCallback(
-      (name: SlotNames, contents: React.ReactNode) => {
-        slotsRef.current[name] = contents;
-
-        // don't render until the component mounts = all slots are registered
-        if (isMounted) rerenderWithSlots();
+  function RenderSlot({ name, fallback }: { name: T; fallback?: React.ReactNode }) {
+    const targetsRef = useContext(TargetContext);
+    const ref = useCallback(
+      (node: HTMLDivElement | null) => {
+        if (targetsRef) targetsRef.current[name] = node;
       },
-      [isMounted, rerenderWithSlots]
+      [targetsRef, name]
     );
-
-    // Slot can be removed from the tree as well,
-    // we need to unregister them from the slot
-    const unregisterSlot = React.useCallback(
-      (name: SlotNames) => {
-        slotsRef.current[name] = null;
-        rerenderWithSlots();
-      },
-      [rerenderWithSlots]
-    );
-
-    /**
-     * Slots uses a render prop API so abstract the
-     * implementation detail of using a context provider.
-     */
-    const slots = slotsRef.current;
 
     return (
-      <SlotsContext.Provider value={{ registerSlot, unregisterSlot, context }}>
-        {children(slots)}
-      </SlotsContext.Provider>
+      <div ref={ref} data-slot={name}>
+        {fallback}
+      </div>
     );
+  }
+
+  /** Declare slot content from anywhere in the tree.
+   *  Analogous to @section Name { ... } in .NET MVC.
+   *  The children get portaled into the matching RenderSlot target.
+   */
+  function Slot({ name, children }: { name: T; children: React.ReactNode }) {
+    const targetsRef = useContext(TargetContext);
+    const [target, setTarget] = useState<HTMLElement | null>(null);
+
+    useIsomorphicLayoutEffect(() => {
+      const el = targetsRef?.current[name];
+      if (el) {
+        // Clear fallback content once portal takes over
+        el.textContent = '';
+        setTarget(el);
+      }
+      return () => {
+        setTarget(null);
+      };
+    }, [targetsRef, name]);
+
+    if (!target) return null;
+    return createPortal(children, target);
+  }
+
+  // Create convenience sub-components keyed by slot name
+  // e.g. slots.Header = (props) => <Slot name="header" {...props} />
+  const slotComponents = {} as {
+    [K in T as Capitalize<K>]: React.FC<{ children: React.ReactNode }>;
+  };
+  const renderComponents = {} as {
+    [K in T as `Render${Capitalize<K>}`]: React.FC<{ fallback?: React.ReactNode }>;
   };
 
-  const Slot: React.FC<
-    React.PropsWithChildren<{
-      name: SlotNames;
-      children: React.ReactNode | ((args: Record<string, unknown>) => React.ReactNode);
-    }>
-  > = ({ name, children }) => {
-    const { registerSlot, unregisterSlot, context } = React.useContext(SlotsContext);
+  for (const name of slotNames) {
+    const capitalized = (name.charAt(0).toUpperCase() + name.slice(1)) as Capitalize<T>;
 
-    useLayoutEffect(() => {
-      registerSlot(name, typeof children === 'function' ? children(context) : children);
-      return () => unregisterSlot(name);
-    }, [name, children, registerSlot, unregisterSlot, context]);
+    const SlotComponent: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+      <Slot name={name}>{children}</Slot>
+    );
+    SlotComponent.displayName = `Slot(${name})`;
+    (slotComponents as any)[capitalized] = SlotComponent;
 
-    return null;
+    const RenderComponent: React.FC<{ fallback?: React.ReactNode }> = ({ fallback }) => (
+      <RenderSlot name={name} fallback={fallback} />
+    );
+    RenderComponent.displayName = `RenderSlot(${name})`;
+    (renderComponents as any)[`Render${capitalized}`] = RenderComponent;
+  }
+
+  return {
+    SlotProvider,
+    Slot,
+    RenderSlot,
+    ...slotComponents,
+    ...renderComponents,
   };
-
-  return { Slots, Slot };
-};
+}
 
 export default createSlots;

@@ -1,10 +1,7 @@
-import type {
-  PromptEnhancementInput,
-  PromptEnhancementOutput,
-  PromptEnhancementStep,
-} from '@civitai/client';
+import type { PromptEnhancementStep } from '@civitai/client';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { getWorkflowCallbacks } from '~/server/orchestrator/orchestrator.utils';
 
 const PROMPT_ENHANCEMENT_STEP_NAME = 'prompt-enhancement';
 
@@ -38,9 +35,11 @@ function buildInstruction(input: PromptEnhancementSchema): string | undefined {
 
 export async function enhancePrompt({
   token,
+  userId,
   input,
 }: {
   token: string;
+  userId: number;
   input: PromptEnhancementSchema;
 }) {
   const { ecosystem, prompt, negativePrompt, temperature } = input;
@@ -67,17 +66,10 @@ export async function enhancePrompt({
           },
         } as PromptEnhancementStep,
       ],
+      callbacks: getWorkflowCallbacks(userId),
       currencies: ['yellow'],
     },
-    query: { wait: 30 },
   });
 
-  const step = workflow.steps?.find(
-    (s): s is PromptEnhancementStep => s.name === PROMPT_ENHANCEMENT_STEP_NAME
-  );
-
-  return {
-    workflowId: workflow.id,
-    output: step?.output as PromptEnhancementOutput | undefined,
-  };
+  return workflow;
 }

@@ -62,7 +62,11 @@ export default function PromptEnhanceDrawer({
             prompt={prompt}
             negativePrompt={negativePrompt}
             ecosystem={ecosystem}
-            resources={resources}
+            triggerWords={[
+              ...new Set(
+                (resources ?? []).flatMap((r) => r.trainedWords ?? []).filter(Boolean)
+              ),
+            ]}
             onApply={onApply}
           />
         </Tabs.Panel>

@@ -39,7 +39,7 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
-import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
+import { triggerPromptEnhanceDialog } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { InputRequestPriorityCompact } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
@@ -1469,7 +1469,7 @@ export function GenerationFormContent() {
                                   ecosystem = getRootEcosystem(currentBaseModel).key;
                                 } catch {}
                                 const currentResources = form.getValues('resources') ?? [];
-                                triggerPromptEnhance({
+                                triggerPromptEnhanceDialog({
                                   prompt: form.getValues('prompt') ?? '',
                                   negativePrompt: form.getValues('negativePrompt') ?? undefined,
                                   ecosystem,

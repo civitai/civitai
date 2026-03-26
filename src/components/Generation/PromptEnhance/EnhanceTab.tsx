@@ -1,17 +1,16 @@
-import type { PromptEnhancementOutput } from '@civitai/client';
+import { EnhancementDetails } from './EnhancementDetails';
 import {
-  Badge,
   Button,
   Group,
-  List,
   Loader,
   ScrollArea,
   Slider,
   Stack,
+  TagsInput,
   Text,
   Textarea,
 } from '@mantine/core';
-import { IconSparkles, IconX } from '@tabler/icons-react';
+import { IconSparkles } from '@tabler/icons-react';
 import { useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -19,8 +18,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useForm } from '~/libs/form';
 import { showErrorNotification } from '~/utils/notifications';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
-import { submitPromptEnhancement, useEnhancePromptState } from './promptEnhanceHooks';
+import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
 
 const ENHANCE_COST = 1;
 
@@ -35,39 +33,34 @@ type EnhanceTabProps = {
   prompt: string;
   negativePrompt?: string;
   ecosystem: string;
-  resources?: ResourceData[];
+  triggerWords?: string[];
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
 };
 
 function getUsedTriggerWords(
-  resources: ResourceData[] | undefined,
+  triggerWords: string[] | undefined,
   prompt: string,
   negativePrompt?: string
 ): string[] {
-  if (!resources?.length) return [];
-  const allWords = resources.flatMap((r) => r.trainedWords ?? []).filter(Boolean);
-  if (!allWords.length) return [];
+  if (!triggerWords?.length) return [];
   const text = `${prompt} ${negativePrompt ?? ''}`.toLowerCase();
-  return [...new Set(allWords.filter((w) => text.includes(w.toLowerCase())))];
+  return [...new Set(triggerWords.filter((w) => text.includes(w.toLowerCase())))];
 }
 
 export function EnhanceTab({
   prompt,
   negativePrompt,
   ecosystem,
-  resources,
+  triggerWords,
   onApply,
 }: EnhanceTabProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
-  const [result, setResult] = useState<PromptEnhancementOutput | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [pendingWorkflowId, setPendingWorkflowId] = useState<string | null>(null);
   const [preserveTriggerWords, setPreserveTriggerWords] = useState<string[]>(() =>
-    getUsedTriggerWords(resources, prompt, negativePrompt)
+    getUsedTriggerWords(triggerWords, prompt, negativePrompt)
   );
-
-  const removeTriggerWord = (word: string) => {
-    setPreserveTriggerWords((prev) => prev.filter((w) => w !== word));
-  };
 
   const form = useForm({
     schema: enhanceFormSchema,
@@ -79,7 +72,15 @@ export function EnhanceTab({
     },
   });
 
-  const { isLoading } = useEnhancePromptState();
+  // Get history data — the signal handler is registered inside this hook
+  const { data: records } = useGetPromptEnhancementHistory();
+
+  // Find the result for the pending workflow from the history cache
+  const result = pendingWorkflowId
+    ? records.find((r) => r.workflowId === pendingWorkflowId) ?? null
+    : null;
+
+  const isLoading = pendingWorkflowId !== null && (!result || result.status !== 'succeeded');
 
   const buildMutationInput = () => {
     const values = form.getValues();
@@ -95,15 +96,9 @@ export function EnhanceTab({
 
   const handleEnhance = async () => {
     try {
-      const data = await submitPromptEnhancement(buildMutationInput());
-      if (data.output) {
-        setResult(data.output);
-      } else {
-        showErrorNotification({
-          title: 'Enhancement failed',
-          error: new Error('No output returned from prompt enhancement'),
-        });
-      }
+      const workflowId = await submitPromptEnhancement(buildMutationInput());
+      setPendingWorkflowId(workflowId);
+      setEditing(false);
     } catch (error: any) {
       showErrorNotification({
         title: 'Enhancement failed',
@@ -114,16 +109,12 @@ export function EnhanceTab({
 
   const handleEnhanceAgain = async () => {
     if (!result) return;
-    form.setValue('prompt', result.enhancedPrompt);
-    if (result.enhancedNegativePrompt) {
-      form.setValue('negativePrompt', result.enhancedNegativePrompt);
-    }
-    setResult(null);
+    form.setValue('prompt', result.enhancedPrompt ?? '');
+    form.setValue('negativePrompt', result.enhancedNegativePrompt ?? '');
+    setEditing(false);
     try {
-      const data = await submitPromptEnhancement(buildMutationInput());
-      if (data.output) {
-        setResult(data.output);
-      }
+      const workflowId = await submitPromptEnhancement(buildMutationInput());
+      setPendingWorkflowId(workflowId);
     } catch (error: any) {
       showErrorNotification({
         title: 'Enhancement failed',
@@ -132,13 +123,24 @@ export function EnhanceTab({
     }
   };
 
+  const handleEdit = () => {
+    if (!result) return;
+    form.setValue('prompt', result.enhancedPrompt ?? '');
+    form.setValue('negativePrompt', result.enhancedNegativePrompt ?? '');
+    setEditing(true);
+  };
+
+  const handleBackToResult = () => {
+    setEditing(false);
+  };
+
   const handleApply = () => {
     if (!result) return;
-    onApply(result.enhancedPrompt, result.enhancedNegativePrompt ?? undefined);
+    onApply(result.enhancedPrompt ?? '', result.enhancedNegativePrompt);
     dialog.onClose();
   };
 
-  // Register fields managed via setValue (not native inputs) so shouldUnregister doesn't clear them
+  // Register fields managed via setValue
   form.register('temperature');
   form.register('instruction');
   form.register('negativePrompt');
@@ -147,11 +149,14 @@ export function EnhanceTab({
   const currentNegativePrompt = form.watch('negativePrompt');
   const currentTemperature = form.watch('temperature');
 
+  const showInputForm = (!pendingWorkflowId && !isLoading) || editing;
+  const showResult = result && result.status === 'succeeded' && !editing;
+
   return (
     <Stack gap="md" className="flex-1 overflow-y-auto overflow-x-hidden">
-      {/* Input Section */}
-      {!result && !isLoading && (
-        <ScrollArea className="flex-1">
+      {/* Input Form */}
+      {showInputForm && (
+        <ScrollArea className="flex-1" scrollbars="y">
           <Stack gap="md" p="md">
             <Textarea
               label="Prompt"
@@ -162,43 +167,26 @@ export function EnhanceTab({
               minRows={3}
               maxRows={8}
             />
-            {(currentNegativePrompt || negativePrompt) && (
-              <Textarea
-                label="Negative Prompt"
-                value={currentNegativePrompt}
-                onChange={(e) => form.setValue('negativePrompt', e.currentTarget.value)}
-                autosize
-                minRows={2}
-                maxRows={4}
-              />
-            )}
-            {preserveTriggerWords.length > 0 && (
-              <div>
-                <Text size="sm" fw={500} mb={4}>
-                  Preserve Trigger Words
-                </Text>
-                <Group gap={6}>
-                  {preserveTriggerWords.map((word) => (
-                    <Badge
-                      key={word}
-                      variant="light"
-                      rightSection={
-                        <IconX
-                          size={12}
-                          className="cursor-pointer"
-                          onClick={() => removeTriggerWord(word)}
-                        />
-                      }
-                    >
-                      {word}
-                    </Badge>
-                  ))}
-                </Group>
-              </div>
-            )}
+            <Textarea
+              label="Negative Prompt"
+              {...form.register('negativePrompt')}
+              value={currentNegativePrompt}
+              onChange={(e) => form.setValue('negativePrompt', e.currentTarget.value)}
+              autosize
+              minRows={2}
+              maxRows={4}
+            />
+            <TagsInput
+              label="Preserve Trigger Words"
+              description="These words will be preserved during enhancement"
+              placeholder="Add a trigger word..."
+              value={preserveTriggerWords}
+              onChange={setPreserveTriggerWords}
+            />
             <Textarea
               label="Instructions"
-              description='Guide how the prompt is enhanced (e.g., "expand to 77 tokens", "keep it under 20 words")'
+              description='Guide how the prompt is enhanced (e.g., "expand to 77 tokens")'
+              {...form.register('instruction')}
               value={form.watch('instruction')}
               onChange={(e) => form.setValue('instruction', e.currentTarget.value)}
               autosize
@@ -211,6 +199,7 @@ export function EnhanceTab({
                 Creativity ({currentTemperature?.toFixed(1)})
               </Text>
               <Slider
+                {...form.register('temperature')}
                 value={currentTemperature}
                 onChange={(val) => form.setValue('temperature', val)}
                 min={0}
@@ -224,6 +213,11 @@ export function EnhanceTab({
               />
             </div>
             <Group justify="flex-end">
+              {editing && (
+                <Button variant="default" size="md" onClick={handleBackToResult}>
+                  Back to Result
+                </Button>
+              )}
               <BuzzTransactionButton
                 buzzAmount={ENHANCE_COST}
                 label="Enhance"
@@ -239,7 +233,7 @@ export function EnhanceTab({
       )}
 
       {/* Loading State */}
-      {isLoading && (
+      {isLoading && !editing && (
         <Stack align="center" justify="center" className="flex-1" gap="md">
           <Loader size="md" />
           <Text c="dimmed" size="sm">
@@ -249,72 +243,18 @@ export function EnhanceTab({
       )}
 
       {/* Result Section */}
-      {result && !isLoading && (
+      {showResult && (
         <>
-          <ScrollArea className="flex-1">
+          <ScrollArea className="flex-1" scrollbars="y">
             <Stack gap="md" p="md">
-              <div>
-                <Text size="sm" fw={600} mb={4}>
-                  Enhanced Prompt
-                </Text>
-                <Text
-                  size="sm"
-                  className="whitespace-pre-wrap rounded-md bg-gray-1 p-3 dark:bg-dark-6"
-                >
-                  {result.enhancedPrompt}
-                </Text>
-              </div>
-
-              {result.enhancedNegativePrompt && (
-                <div>
-                  <Text size="sm" fw={600} mb={4}>
-                    Enhanced Negative Prompt
-                  </Text>
-                  <Text
-                    size="sm"
-                    className="whitespace-pre-wrap rounded-md bg-gray-1 p-3 dark:bg-dark-6"
-                  >
-                    {result.enhancedNegativePrompt}
-                  </Text>
-                </div>
-              )}
-
-              {result.recommendations.length > 0 && (
-                <div>
-                  <Text size="sm" fw={600} mb={4}>
-                    Changes
-                  </Text>
-                  <List size="sm" spacing={4}>
-                    {result.recommendations.map((rec, i) => (
-                      <List.Item key={i}>
-                        <Text size="sm">{rec}</Text>
-                      </List.Item>
-                    ))}
-                  </List>
-                </div>
-              )}
-
-              {result.issues.length > 0 && (
-                <div>
-                  <Text size="sm" fw={600} mb={4}>
-                    Issues Addressed
-                  </Text>
-                  <List size="sm" spacing={4}>
-                    {result.issues.map((issue, i) => (
-                      <List.Item key={i}>
-                        <Group gap={6} align="center" wrap="nowrap">
-                          <IssueBadge severity={issue.severity} />
-                          <Text size="sm">{issue.description}</Text>
-                        </Group>
-                      </List.Item>
-                    ))}
-                  </List>
-                </div>
-              )}
+              <EnhancementDetails record={result} />
             </Stack>
           </ScrollArea>
 
           <Group justify="flex-end" p="md" pt={0}>
+            <Button variant="default" size="md" onClick={handleEdit}>
+              Edit
+            </Button>
             <BuzzTransactionButton
               buzzAmount={ENHANCE_COST}
               label="Enhance Again"
@@ -331,16 +271,5 @@ export function EnhanceTab({
         </>
       )}
     </Stack>
-  );
-}
-
-function IssueBadge({ severity }: { severity?: string | null }) {
-  const color = severity === 'error' ? 'red' : severity === 'warning' ? 'yellow' : 'blue';
-  const label = severity ?? 'info';
-
-  return (
-    <Badge size="xs" color={color} variant="light">
-      {label}
-    </Badge>
   );
 }

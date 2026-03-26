@@ -1,10 +1,29 @@
-import { Badge, Button, Card, Group, Loader, ScrollArea, Stack, Text } from '@mantine/core';
-import { IconChevronDown, IconChevronUp, IconSparkles } from '@tabler/icons-react';
+import {
+  ActionIcon,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Loader,
+  ScrollArea,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { useClipboard } from '@mantine/hooks';
+import {
+  IconCheck,
+  IconChevronDown,
+  IconChevronUp,
+  IconInfoHexagon,
+  IconSparkles,
+} from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useGetPromptEnhancementHistory, type PromptEnhancementRecord } from './promptEnhanceHooks';
-import { PromptDiff, computeWordDiff } from './PromptDiff';
+import { computeWordDiff } from './PromptDiff';
+import { EnhancementDetails } from './EnhancementDetails';
 
 type HistoryTabProps = {
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
@@ -84,6 +103,8 @@ function HistoryItem({
     return trimmed.length > 60 ? trimmed.slice(0, 60) + '...' : trimmed;
   }, [record.originalPrompt, record.enhancedPrompt]);
 
+  const { copied, copy } = useClipboard();
+
   const handleApply = () => {
     if (record.enhancedPrompt) {
       onApply(record.enhancedPrompt, record.enhancedNegativePrompt);
@@ -105,6 +126,19 @@ function HistoryItem({
             <Text size="xs" c="dimmed">
               {timeStr}
             </Text>
+            <Tooltip label={copied ? 'Copied!' : 'Copy Workflow ID'} position="top">
+              <ActionIcon
+                size="xs"
+                variant="transparent"
+                color={copied ? 'green' : 'gray'}
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  copy(record.workflowId);
+                }}
+              >
+                {copied ? <IconCheck size={12} /> : <IconInfoHexagon size={12} />}
+              </ActionIcon>
+            </Tooltip>
             {record.ecosystem && (
               <Badge size="xs" variant="light">
                 {record.ecosystem}
@@ -132,104 +166,17 @@ function HistoryItem({
       {/* Expanded content */}
       {expanded && (
         <Stack gap="sm" mt="sm">
-          {record.enhancedPrompt ? (
-            <>
-              <div>
-                <Text size="xs" fw={600} c="dimmed" mb={4}>
-                  Prompt Changes
-                </Text>
-                <PromptDiff
-                  oldText={record.originalPrompt}
-                  newText={record.enhancedPrompt}
-                  triggerWords={record.preserveTriggerWords}
-                />
-              </div>
-
-              {record.originalNegativePrompt && record.enhancedNegativePrompt && (
-                <div>
-                  <Text size="xs" fw={600} c="dimmed" mb={4}>
-                    Negative Prompt Changes
-                  </Text>
-                  <PromptDiff
-                    oldText={record.originalNegativePrompt}
-                    newText={record.enhancedNegativePrompt}
-                    triggerWords={record.preserveTriggerWords}
-                  />
-                </div>
-              )}
-
-              {record.preserveTriggerWords && record.preserveTriggerWords.length > 0 && (
-                <div>
-                  <Text size="xs" fw={600} c="dimmed" mb={4}>
-                    Preserved Trigger Words
-                  </Text>
-                  <Group gap={6}>
-                    {record.preserveTriggerWords.map((word) => (
-                      <Badge key={word} size="xs" variant="light">
-                        {word}
-                      </Badge>
-                    ))}
-                  </Group>
-                </div>
-              )}
-
-              {record.recommendations && record.recommendations.length > 0 && (
-                <div>
-                  <Text size="xs" fw={600} c="dimmed" mb={4}>
-                    Changes
-                  </Text>
-                  <Stack gap={2}>
-                    {record.recommendations.map((rec, i) => (
-                      <Text key={i} size="xs">
-                        {rec}
-                      </Text>
-                    ))}
-                  </Stack>
-                </div>
-              )}
-
-              {record.issues && record.issues.length > 0 && (
-                <div>
-                  <Text size="xs" fw={600} c="dimmed" mb={4}>
-                    Issues Addressed
-                  </Text>
-                  <Stack gap={2}>
-                    {record.issues.map((issue, i) => (
-                      <Group key={i} gap={6} wrap="nowrap">
-                        <Badge
-                          size="xs"
-                          color={
-                            issue.severity === 'error'
-                              ? 'red'
-                              : issue.severity === 'warning'
-                              ? 'yellow'
-                              : 'blue'
-                          }
-                          variant="light"
-                        >
-                          {issue.severity ?? 'info'}
-                        </Badge>
-                        <Text size="xs">{issue.description}</Text>
-                      </Group>
-                    ))}
-                  </Stack>
-                </div>
-              )}
-
-              <Group justify="flex-end">
-                <Button
-                  size="compact-sm"
-                  onClick={handleApply}
-                  leftSection={<IconSparkles size={14} />}
-                >
-                  Apply
-                </Button>
-              </Group>
-            </>
-          ) : (
-            <Text size="xs" c="dimmed">
-              Enhancement {record.status === 'failed' ? 'failed' : 'in progress'}
-            </Text>
+          <EnhancementDetails record={record} />
+          {record.enhancedPrompt && (
+            <Group justify="flex-end">
+              <Button
+                size="compact-sm"
+                onClick={handleApply}
+                leftSection={<IconSparkles size={14} />}
+              >
+                Apply
+              </Button>
+            </Group>
           )}
         </Stack>
       )}
