@@ -64,6 +64,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
+import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
@@ -255,6 +256,7 @@ export default function UserTrainingModels() {
   // Reset page when filters change
   const handleFilterChange = () => setPage(1);
 
+  registerSignalGroup('training');
   const { data, isLoading, isFetching } = trpc.model.getMyTrainingModels.useQuery({
     page,
     limit: pageSize,
