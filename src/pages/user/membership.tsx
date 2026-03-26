@@ -39,6 +39,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
+import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -448,13 +449,21 @@ export default function UserMembership() {
                 </Stack>
               </Paper>
 
+              {isCivitaiProvider && (
+                <PrepaidTimelineProgress subscription={subscription} />
+              )}
+
               {isCivitaiProvider && (() => {
                 const prepaidTokens = getPrepaidTokens({
                   metadata: subscription.metadata as SubscriptionMetadata,
                 });
                 const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
                 return prepaidTokens.length > 0 ? (
-                  <PrepaidTokenOverview tokens={prepaidTokens} nextUnlockDate={nextUnlockDate} />
+                  <PrepaidTokenOverview
+                    tokens={prepaidTokens}
+                    nextUnlockDate={nextUnlockDate}
+                    defaultExpanded
+                  />
                 ) : null;
               })()}
 

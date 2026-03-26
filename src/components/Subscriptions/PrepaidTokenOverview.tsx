@@ -100,7 +100,7 @@ function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () =
       <Card p="sm" radius="md" withBorder opacity={0.6}>
         <Group justify="space-between" align="center" wrap="nowrap">
           <Group gap="sm" align="center" wrap="nowrap">
-            <ThemeIcon color="green" variant="light" size="md" radius="xl">
+            <ThemeIcon color="yellow" variant="light" size="md" radius="xl">
               <IconCircleCheck size={16} />
             </ThemeIcon>
             <Stack gap={1}>
@@ -116,8 +116,8 @@ function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () =
           </Group>
           <Stack gap={2} align="flex-end">
             <Group gap={4}>
-              <IconCircleCheck size={14} color="var(--mantine-color-green-5)" />
-              <Text size="xs" c="green">
+              <IconCircleCheck size={14} color="var(--mantine-color-yellow-5)" />
+              <Text size="xs" c="yellow">
                 Claimed
               </Text>
             </Group>
@@ -166,13 +166,16 @@ export function PrepaidTokenOverview({
   tokens,
   nextUnlockDate,
   onTokensClaimed,
+  defaultExpanded = false,
 }: {
   tokens: PrepaidToken[];
   nextUnlockDate?: Date | null;
   onTokensClaimed?: () => void;
+  /** When true, locked and claimed sections start expanded */
+  defaultExpanded?: boolean;
 }) {
-  const [lockedOpen, setLockedOpen] = useState(false);
-  const [claimedOpen, setClaimedOpen] = useState(false);
+  const [lockedOpen, setLockedOpen] = useState(defaultExpanded);
+  const [claimedOpen, setClaimedOpen] = useState(defaultExpanded);
 
   const utils = trpc.useUtils();
 
@@ -314,8 +317,8 @@ export function PrepaidTokenOverview({
               <Group justify="space-between" align="center">
                 <Group gap="sm">
                   {claimedOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
-                  <IconCircleCheck size={14} color="var(--mantine-color-green-5)" />
-                  <Text size="sm" fw={600} c="green">
+                  <IconCircleCheck size={14} color="var(--mantine-color-yellow-5)" />
+                  <Text size="sm" fw={600} c="yellow">
                     {claimed.length} Claimed
                   </Text>
                 </Group>
