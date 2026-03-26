@@ -463,6 +463,7 @@ export default function UserMembership() {
                     tokens={prepaidTokens}
                     nextUnlockDate={nextUnlockDate}
                     defaultExpanded
+                    subscription={subscription}
                   />
                 ) : null;
               })()}

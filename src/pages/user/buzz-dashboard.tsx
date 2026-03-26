@@ -171,6 +171,7 @@ export default function UserBuzzDashboard() {
               <PrepaidTokenOverview
                 tokens={prepaidTokens}
                 nextUnlockDate={nextUnlockDate}
+                subscription={subscription}
               />
             ) : null;
           })()}

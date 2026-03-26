@@ -36,13 +36,12 @@ export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgres
   if (!metadata) return null;
 
   const tokens = getPrepaidTokens({ metadata });
+  const currentTier = (subscription.product?.metadata as SubscriptionProductMetadata)?.tier;
   const proratedDays = metadata.proratedDays || {};
 
   // Need either tokens or legacy prepaids to show anything
   const hasLegacyPrepaids = metadata.prepaids && Object.values(metadata.prepaids).some((v) => (v ?? 0) > 0);
   if (tokens.length === 0 && !hasLegacyPrepaids) return null;
-
-  const currentTier = (subscription.product?.metadata as SubscriptionProductMetadata)?.tier;
   const currentPeriodStart = dayjs(subscription.currentPeriodStart);
   const currentPeriodEnd = dayjs(subscription.currentPeriodEnd);
   const now = dayjs();

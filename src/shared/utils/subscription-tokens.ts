@@ -11,8 +11,9 @@ const TIER_BUZZ_AMOUNTS: Record<string, number> = {
  * Extracts prepaid tokens from subscription metadata.
  * If the new `tokens` array exists, returns it directly.
  * Otherwise, synthesizes locked tokens from legacy `prepaids` counters.
- * We do NOT synthesize claimed tokens from buzzTransactionIds — those were auto-delivered
- * and users had no control over them, so there's no point showing history for those.
+ *
+ * This does NOT include historical claimed tokens — those are fetched on-demand
+ * from the buzz service via the PrepaidBuzzHistory component.
  *
  * This function is safe to use on both client and server.
  */

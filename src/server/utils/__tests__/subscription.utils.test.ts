@@ -151,7 +151,7 @@ describe('getPrepaidTokens', () => {
       expect(result.every((t) => t.tier === 'bronze')).toBe(true);
     });
 
-    it('ignores buzzTransactionIds — does not create claimed tokens from them', () => {
+    it('ignores buzzTransactionIds — historical deliveries are fetched on-demand separately', () => {
       const metadata: SubscriptionMetadata = {
         prepaids: { silver: 1 },
         buzzTransactionIds: [
@@ -162,10 +162,19 @@ describe('getPrepaidTokens', () => {
 
       const result = getPrepaidTokens({ metadata });
 
-      // Only 1 locked token from prepaids — buzzTransactionIds should NOT produce claimed tokens
+      // Only 1 locked token from prepaids — buzzTransactionIds are not synthesized into tokens
       expect(result).toHaveLength(1);
       expect(result[0].status).toBe('locked');
       expect(result.filter((t) => t.status === 'claimed')).toHaveLength(0);
+    });
+
+    it('returns empty when only buzzTransactionIds exist with no prepaids', () => {
+      const metadata: SubscriptionMetadata = {
+        prepaids: {},
+        buzzTransactionIds: ['civitai-membership:2024-03:1:prod_gold:v3'],
+      };
+
+      expect(getPrepaidTokens({ metadata })).toEqual([]);
     });
 
     it('returns empty array when prepaids exists but all tiers are zero', () => {
