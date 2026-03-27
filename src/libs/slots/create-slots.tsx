@@ -13,6 +13,16 @@ import useIsomorphicLayoutEffect from './useIsomorphicLayoutEffect';
  * Usage:
  *   const { SlotProvider, Slot, RenderSlot } = createSlots(['header', 'footer']);
  */
+
+type RenderSlotProps<T extends string> = React.HTMLAttributes<HTMLDivElement> & {
+  name: T;
+  fallback?: React.ReactNode;
+};
+
+type ConvenienceRenderProps = React.HTMLAttributes<HTMLDivElement> & {
+  fallback?: React.ReactNode;
+};
+
 function createSlots<T extends string>(slotNames: T[]) {
   type SlotTargets = { [K in T]?: HTMLElement | null };
 
@@ -24,11 +34,17 @@ function createSlots<T extends string>(slotNames: T[]) {
     return <TargetContext.Provider value={targetsRef}>{children}</TargetContext.Provider>;
   }
 
+  /** Returns true when rendered inside a SlotProvider */
+  function useHasSlots() {
+    return useContext(TargetContext) !== null;
+  }
+
   /** Place this in your layout where the slot content should appear.
    *  Analogous to @RenderSection("name") in .NET MVC.
    *  `fallback` renders when no Slot has claimed this name (SSR + initial render).
+   *  All extra props (className, style, etc.) are forwarded to the wrapper div.
    */
-  function RenderSlot({ name, fallback }: { name: T; fallback?: React.ReactNode }) {
+  function RenderSlot({ name, fallback, ...divProps }: RenderSlotProps<T>) {
     const targetsRef = useContext(TargetContext);
     const ref = useCallback(
       (node: HTMLDivElement | null) => {
@@ -38,7 +54,7 @@ function createSlots<T extends string>(slotNames: T[]) {
     );
 
     return (
-      <div ref={ref} data-slot={name}>
+      <div ref={ref} data-slot={name} {...divProps}>
         {fallback}
       </div>
     );
@@ -74,7 +90,7 @@ function createSlots<T extends string>(slotNames: T[]) {
     [K in T as Capitalize<K>]: React.FC<{ children: React.ReactNode }>;
   };
   const renderComponents = {} as {
-    [K in T as `Render${Capitalize<K>}`]: React.FC<{ fallback?: React.ReactNode }>;
+    [K in T as `Render${Capitalize<K>}`]: React.FC<ConvenienceRenderProps>;
   };
 
   for (const name of slotNames) {
@@ -86,8 +102,8 @@ function createSlots<T extends string>(slotNames: T[]) {
     SlotComponent.displayName = `Slot(${name})`;
     (slotComponents as any)[capitalized] = SlotComponent;
 
-    const RenderComponent: React.FC<{ fallback?: React.ReactNode }> = ({ fallback }) => (
-      <RenderSlot name={name} fallback={fallback} />
+    const RenderComponent: React.FC<ConvenienceRenderProps> = ({ fallback, ...divProps }) => (
+      <RenderSlot name={name} fallback={fallback} {...divProps} />
     );
     RenderComponent.displayName = `RenderSlot(${name})`;
     (renderComponents as any)[`Render${capitalized}`] = RenderComponent;
@@ -97,6 +113,7 @@ function createSlots<T extends string>(slotNames: T[]) {
     SlotProvider,
     Slot,
     RenderSlot,
+    useHasSlots,
     ...slotComponents,
     ...renderComponents,
   };

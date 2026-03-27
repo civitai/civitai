@@ -591,14 +591,13 @@ export class DataGraph<
     const root = this.rootGraph;
     const { errors, data: validated } = root._validate(data);
 
-    // Save error state and update ctx when validating internal data
+    // Save error state when validating internal data.
+    // We intentionally do NOT write output-parsed values back to ctx here.
+    // Output schemas may strip extra fields (e.g., enriched resource data added
+    // by hydration) — writing those stripped values back would cause unnecessary
+    // refetches. The validated (stripped) data is still returned in result.data
+    // for submission, while ctx retains the full enriched values for UI/storage.
     if (!data) {
-      // Write output-parsed values back to ctx
-      for (const [key, value] of Object.entries(validated)) {
-        if (!errors.has(key) && !root.computedNodes.has(key)) {
-          (root._ctx as Record<string, unknown>)[key] = value;
-        }
-      }
       const changed = root._saveErrors(errors);
       this._notifyChanges(changed);
     }

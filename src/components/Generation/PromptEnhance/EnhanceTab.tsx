@@ -17,6 +17,10 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useForm } from '~/libs/form';
+import {
+  GenerationFooter,
+  useHasGenerationSlots,
+} from '~/components/generation_v2/GenerationLayout';
 import { showErrorNotification } from '~/utils/notifications';
 import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
 
@@ -56,7 +60,9 @@ export function EnhanceTab({
 }: EnhanceTabProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
+  const hasSlots = useHasGenerationSlots();
   const [editing, setEditing] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [pendingWorkflowId, setPendingWorkflowId] = useState<string | null>(null);
   const [preserveTriggerWords, setPreserveTriggerWords] = useState<string[]>(() =>
     getUsedTriggerWords(triggerWords, prompt, negativePrompt)
@@ -80,7 +86,8 @@ export function EnhanceTab({
     ? records.find((r) => r.workflowId === pendingWorkflowId) ?? null
     : null;
 
-  const isLoading = pendingWorkflowId !== null && (!result || result.status !== 'succeeded');
+  const isLoading =
+    submitting || (pendingWorkflowId !== null && (!result || result.status !== 'succeeded'));
 
   const buildMutationInput = () => {
     const values = form.getValues();
@@ -95,6 +102,7 @@ export function EnhanceTab({
   };
 
   const handleEnhance = async () => {
+    setSubmitting(true);
     try {
       const workflowId = await submitPromptEnhancement(buildMutationInput());
       setPendingWorkflowId(workflowId);
@@ -104,6 +112,8 @@ export function EnhanceTab({
         title: 'Enhancement failed',
         error: new Error(error.message),
       });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -112,6 +122,7 @@ export function EnhanceTab({
     form.setValue('prompt', result.enhancedPrompt ?? '');
     form.setValue('negativePrompt', result.enhancedNegativePrompt ?? '');
     setEditing(false);
+    setSubmitting(true);
     try {
       const workflowId = await submitPromptEnhancement(buildMutationInput());
       setPendingWorkflowId(workflowId);
@@ -120,6 +131,8 @@ export function EnhanceTab({
         title: 'Enhancement failed',
         error: new Error(error.message),
       });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -152,124 +165,142 @@ export function EnhanceTab({
   const showInputForm = (!pendingWorkflowId && !isLoading) || editing;
   const showResult = result && result.status === 'succeeded' && !editing;
 
+  // Footer buttons for each state
+  const inputFormFooter = showInputForm ? (
+    <Group justify="flex-end">
+      {editing && (
+        <Button variant="default" size="md" onClick={handleBackToResult}>
+          Back to Result
+        </Button>
+      )}
+      <BuzzTransactionButton
+        buzzAmount={ENHANCE_COST}
+        label="Enhance"
+        onPerformTransaction={handleEnhance}
+        disabled={!currentPrompt?.trim() || !currentUser}
+        loading={isLoading}
+        showPurchaseModal
+        size="md"
+      />
+    </Group>
+  ) : null;
+
+  const resultFooter = showResult ? (
+    <Group justify="flex-end">
+      <Button variant="default" size="md" onClick={handleEdit}>
+        Edit
+      </Button>
+      <BuzzTransactionButton
+        buzzAmount={ENHANCE_COST}
+        label="Enhance Again"
+        onPerformTransaction={handleEnhanceAgain}
+        loading={isLoading}
+        showPurchaseModal
+        size="md"
+        variant="light"
+      />
+      <Button onClick={handleApply} leftSection={<IconSparkles size={16} />}>
+        Apply
+      </Button>
+    </Group>
+  ) : null;
+
+  const footerContent = inputFormFooter || resultFooter;
+
   return (
-    <Stack gap="md" className="flex-1 overflow-y-auto overflow-x-hidden">
-      {/* Input Form */}
-      {showInputForm && (
-        <ScrollArea className="flex-1" scrollbars="y">
-          <Stack gap="md" p="md">
-            <Textarea
-              label="Prompt"
-              {...form.register('prompt')}
-              value={currentPrompt}
-              onChange={(e) => form.setValue('prompt', e.currentTarget.value)}
-              autosize
-              minRows={3}
-              maxRows={8}
-            />
-            <Textarea
-              label="Negative Prompt"
-              {...form.register('negativePrompt')}
-              value={currentNegativePrompt}
-              onChange={(e) => form.setValue('negativePrompt', e.currentTarget.value)}
-              autosize
-              minRows={2}
-              maxRows={4}
-            />
-            <TagsInput
-              label="Preserve Trigger Words"
-              description="These words will be preserved during enhancement"
-              placeholder="Add a trigger word..."
-              value={preserveTriggerWords}
-              onChange={setPreserveTriggerWords}
-            />
-            <Textarea
-              label="Instructions"
-              description='Guide how the prompt is enhanced (e.g., "expand to 77 tokens")'
-              {...form.register('instruction')}
-              value={form.watch('instruction')}
-              onChange={(e) => form.setValue('instruction', e.currentTarget.value)}
-              autosize
-              minRows={1}
-              maxRows={3}
-              placeholder="Optional instructions..."
-            />
-            <div className="px-2">
-              <Text size="sm" fw={500} mb={4}>
-                Creativity ({currentTemperature?.toFixed(1)})
-              </Text>
-              <Slider
-                {...form.register('temperature')}
-                value={currentTemperature}
-                onChange={(val) => form.setValue('temperature', val)}
-                min={0}
-                max={1}
-                step={0.1}
-                marks={[
-                  { value: 0, label: 'Precise' },
-                  { value: 1, label: 'Creative' },
-                ]}
-                mb="md"
+    <>
+      <Stack gap="md" className="flex-1 overflow-y-auto overflow-x-hidden">
+        {/* Input Form */}
+        {showInputForm && (
+          <ScrollArea className="flex-1" scrollbars="y">
+            <Stack gap="md" p="md">
+              <Textarea
+                label="Prompt"
+                {...form.register('prompt')}
+                value={currentPrompt}
+                onChange={(e) => form.setValue('prompt', e.currentTarget.value)}
+                autosize
+                minRows={3}
+                maxRows={8}
               />
-            </div>
-            <Group justify="flex-end">
-              {editing && (
-                <Button variant="default" size="md" onClick={handleBackToResult}>
-                  Back to Result
-                </Button>
-              )}
-              <BuzzTransactionButton
-                buzzAmount={ENHANCE_COST}
-                label="Enhance"
-                onPerformTransaction={handleEnhance}
-                disabled={!currentPrompt?.trim() || !currentUser}
-                loading={isLoading}
-                showPurchaseModal
-                size="md"
+              <Textarea
+                label="Negative Prompt"
+                {...form.register('negativePrompt')}
+                value={currentNegativePrompt}
+                onChange={(e) => form.setValue('negativePrompt', e.currentTarget.value)}
+                autosize
+                minRows={2}
+                maxRows={4}
               />
-            </Group>
+              <TagsInput
+                label="Preserve Trigger Words"
+                description="These words will be preserved during enhancement"
+                placeholder="Add a trigger word..."
+                value={preserveTriggerWords}
+                onChange={setPreserveTriggerWords}
+              />
+              <Textarea
+                label="Instructions"
+                description='Guide how the prompt is enhanced (e.g., "expand to 77 tokens")'
+                {...form.register('instruction')}
+                value={form.watch('instruction')}
+                onChange={(e) => form.setValue('instruction', e.currentTarget.value)}
+                autosize
+                minRows={1}
+                maxRows={3}
+                placeholder="Optional instructions..."
+              />
+              <div className="px-2">
+                <Text size="sm" fw={500} mb={4}>
+                  Creativity ({currentTemperature?.toFixed(1)})
+                </Text>
+                <Slider
+                  {...form.register('temperature')}
+                  value={currentTemperature}
+                  onChange={(val) => form.setValue('temperature', val)}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  marks={[
+                    { value: 0, label: 'Precise' },
+                    { value: 1, label: 'Creative' },
+                  ]}
+                  mb="md"
+                />
+              </div>
+              {/* Inline footer for legacy dialog path */}
+              {!hasSlots && inputFormFooter}
+            </Stack>
+          </ScrollArea>
+        )}
+
+        {/* Loading State */}
+        {isLoading && !editing && (
+          <Stack align="center" justify="center" className="flex-1" gap="md">
+            <Loader size="md" />
+            <Text c="dimmed" size="sm">
+              Enhancing your prompt...
+            </Text>
           </Stack>
-        </ScrollArea>
-      )}
+        )}
 
-      {/* Loading State */}
-      {isLoading && !editing && (
-        <Stack align="center" justify="center" className="flex-1" gap="md">
-          <Loader size="md" />
-          <Text c="dimmed" size="sm">
-            Enhancing your prompt...
-          </Text>
-        </Stack>
-      )}
-
-      {/* Result Section */}
-      {showResult && (
-        <>
+        {/* Result Section */}
+        {showResult && (
           <ScrollArea className="flex-1" scrollbars="y">
             <Stack gap="md" p="md">
               <EnhancementDetails record={result} />
             </Stack>
           </ScrollArea>
+        )}
 
+        {/* Inline result footer for legacy dialog path */}
+        {!hasSlots && resultFooter && (
           <Group justify="flex-end" p="md" pt={0}>
-            <Button variant="default" size="md" onClick={handleEdit}>
-              Edit
-            </Button>
-            <BuzzTransactionButton
-              buzzAmount={ENHANCE_COST}
-              label="Enhance Again"
-              onPerformTransaction={handleEnhanceAgain}
-              loading={isLoading}
-              showPurchaseModal
-              size="md"
-              variant="light"
-            />
-            <Button onClick={handleApply} leftSection={<IconSparkles size={16} />}>
-              Apply
-            </Button>
+            {resultFooter}
           </Group>
-        </>
-      )}
-    </Stack>
+        )}
+      </Stack>
+      {footerContent && <GenerationFooter>{footerContent}</GenerationFooter>}
+    </>
   );
 }

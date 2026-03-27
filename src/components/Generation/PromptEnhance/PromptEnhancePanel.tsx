@@ -36,15 +36,17 @@ export function PromptEnhancePanel({
         </Tabs.Tab>
       </Tabs.List>
 
-      <Tabs.Panel value="enhance" className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <EnhanceTab
-          prompt={prompt}
-          negativePrompt={negativePrompt}
-          ecosystem={ecosystem}
-          triggerWords={triggerWords}
-          onApply={onApply}
-        />
-      </Tabs.Panel>
+      {activeTab === 'enhance' && (
+        <Tabs.Panel value="enhance" className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <EnhanceTab
+            prompt={prompt}
+            negativePrompt={negativePrompt}
+            ecosystem={ecosystem}
+            triggerWords={triggerWords}
+            onApply={onApply}
+          />
+        </Tabs.Panel>
+      )}
 
       {activeTab === 'history' && (
         <Tabs.Panel value="history" className="flex min-w-0 flex-1 flex-col overflow-hidden">

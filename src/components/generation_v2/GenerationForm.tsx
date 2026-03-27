@@ -69,7 +69,8 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
-import { FormFooter } from './FormFooter';
+import { FormFooter, MetadataExtractionFooter } from './FormFooter';
+import { GenerationLayout, GenerationFooter } from './GenerationLayout';
 import {
   ResourceAlerts,
   ExperimentalModelAlert,
@@ -321,9 +322,9 @@ export function GenerationForm() {
   );
 
   return (
-    <div className="flex size-full flex-1 flex-col">
-      <div className="flex w-full flex-1 flex-col gap-3 p-2">
-        {/* Workflow and ecosystem selectors - inline */}
+    <GenerationLayout>
+      {/* Workflow and ecosystem selectors — always visible */}
+      <>
         <Group gap="xs" wrap="nowrap" className="w-full justify-between">
           <Controller
             graph={graph}
@@ -358,25 +359,34 @@ export function GenerationForm() {
             )}
           />
         </Group>
+      </>
 
-        {/* img2meta: self-contained panel, no graph controllers */}
-        {snapshot.workflow === 'img2meta' && (
+      {/* img2meta: self-contained panel, no graph controllers */}
+      {snapshot.workflow === 'img2meta' && (
+        <>
           <>
             <SelectedWorkflowDisplay workflowId="img2meta" onBack={handleNavigationBack} />
             <MetadataExtractionPanel />
           </>
-        )}
+          <GenerationFooter>
+            <MetadataExtractionFooter />
+          </GenerationFooter>
+        </>
+      )}
 
-        {/* prompt:enhance: self-contained panel, reads captured data from store */}
-        {snapshot.workflow === 'prompt:enhance' && (
+      {/* prompt:enhance: self-contained panel, reads captured data from store */}
+      {snapshot.workflow === 'prompt:enhance' && (
+        <>
           <>
             <SelectedWorkflowDisplay workflowId="prompt:enhance" onBack={handleNavigationBack} />
             <PromptEnhancePanelWrapper graph={graph} onBack={handleNavigationBack} />
           </>
-        )}
+        </>
+      )}
 
-        {/* Selected workflow display OR mode selector */}
-        {snapshot.workflow !== 'img2meta' && snapshot.workflow !== 'prompt:enhance' && (
+      {/* Standard generation workflows */}
+      {snapshot.workflow !== 'img2meta' && snapshot.workflow !== 'prompt:enhance' && (
+        <>
           <>
             <Controller
               graph={graph}
@@ -1431,17 +1441,19 @@ export function GenerationForm() {
             /> */}
             </AccordionLayout>
           </>
-        )}
-      </div>
-      <FormFooter
-        noSubmit={workflowConfigByKey.get(snapshot.workflow ?? '')?.noSubmit}
-        onSubmitSuccess={
-          snapshot.workflow && isEnhancementWorkflow(snapshot.workflow)
-            ? handleNavigationBack
-            : undefined
-        }
-      />
-    </div>
+          <GenerationFooter>
+            <FormFooter
+              noSubmit={workflowConfigByKey.get(snapshot.workflow ?? '')?.noSubmit}
+              onSubmitSuccess={
+                snapshot.workflow && isEnhancementWorkflow(snapshot.workflow)
+                  ? handleNavigationBack
+                  : undefined
+              }
+            />
+          </GenerationFooter>
+        </>
+      )}
+    </GenerationLayout>
   );
 }
 

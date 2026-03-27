@@ -221,7 +221,7 @@ export function ResourceItemContent({
             {/* <Badge size="xs" variant="outline" color="gray" className="shrink-0">
               {ecosystemName}
             </Badge> */}
-            {resource.name && resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
+            {resource.name && resource.model.name && resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
               <Text size="xs" c="dimmed" className="shrink-0">
                 ({resource.name})
               </Text>

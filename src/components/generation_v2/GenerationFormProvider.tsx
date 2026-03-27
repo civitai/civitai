@@ -313,7 +313,7 @@ function InnerProvider({
 
       // Params are already mapped via mapDataToGraphInput (workflow, ecosystem, aspectRatio, etc.)
       // Just need to split flat resources into model/resources/vae for graph nodes
-      const split = splitResourcesByType(data.resources);
+      const split = splitResourcesByType(data.resources.map(toResourceData));
 
       if (data.runType === 'remix' || data.runType === 'replay') {
         // Exclude output settings from remixed params so they don't override current values
@@ -693,4 +693,16 @@ export function GenerationFormProvider({
       {children}
     </InnerProvider>
   );
+}
+
+/** Convert GenerationResource to ResourceData (matching data-graph resourceSchema) */
+function toResourceData(r: GenerationResource): ResourceData {
+  if (r.epochDetails) return r; // Shouldn't need to get fresh data for resources with epochDetails since they have all necessary info for compatibility checks (type, baseModel, epochNumber) and aren't selectable in the UI
+  return {
+    id: r.id,
+    baseModel: r.baseModel,
+    model: { type: r.model.type },
+    strength: r.strength,
+    trainedWords: r.trainedWords.length > 0 ? r.trainedWords : undefined,
+  };
 }
