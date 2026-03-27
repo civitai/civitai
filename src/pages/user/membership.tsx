@@ -458,14 +458,16 @@ export default function UserMembership() {
                   metadata: subscription.metadata as SubscriptionMetadata,
                 });
                 const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
-                return prepaidTokens.length > 0 ? (
+                // Always render for Civitai members — even with 0 tokens,
+                // the component fetches historical deliveries from the buzz service
+                return (
                   <PrepaidTokenOverview
                     tokens={prepaidTokens}
                     nextUnlockDate={nextUnlockDate}
                     defaultExpanded
                     subscription={subscription}
                   />
-                ) : null;
+                );
               })()}
 
               {benefits && (

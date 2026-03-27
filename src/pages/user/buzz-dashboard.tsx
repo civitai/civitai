@@ -167,13 +167,13 @@ export default function UserBuzzDashboard() {
               metadata: subscription.metadata as SubscriptionMetadata,
             });
             const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
-            return prepaidTokens.length > 0 ? (
+            return (
               <PrepaidTokenOverview
                 tokens={prepaidTokens}
                 nextUnlockDate={nextUnlockDate}
                 subscription={subscription}
               />
-            ) : null;
+            );
           })()}
 
           {/* Ways to Earn Rewards (hidden when empty) */}

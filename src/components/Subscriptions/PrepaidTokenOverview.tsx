@@ -5,6 +5,7 @@ import {
   Card,
   Collapse,
   Group,
+  Loader,
   Stack,
   Text,
   ThemeIcon,
@@ -49,7 +50,7 @@ function useHistoricalPrepaidDeliveries({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   subscription: any;
   existingTokens: PrepaidToken[];
-}): PrepaidToken[] {
+}): { history: PrepaidToken[]; isLoading: boolean } {
   const isCivitai = subscription?.product?.provider === 'Civitai';
   const buzzType = (subscription?.product?.metadata as SubscriptionProductMetadata)?.buzzType ?? 'yellow';
 
@@ -58,7 +59,7 @@ function useHistoricalPrepaidDeliveries({
     end: dayjs().endOf('day').toDate(),
   });
 
-  const { data: txData } = trpc.buzz.getUserTransactions.useQuery(
+  const { data: txData, isLoading } = trpc.buzz.getUserTransactions.useQuery(
     {
       type: TransactionType.Purchase,
       start: datesRef.current.start,
@@ -69,7 +70,7 @@ function useHistoricalPrepaidDeliveries({
     { enabled: isCivitai }
   );
 
-  return useMemo(() => {
+  const history = useMemo(() => {
     if (!txData?.transactions) return [];
 
     // Collect all buzzTransactionIds from existing tokens to deduplicate
@@ -121,6 +122,8 @@ function useHistoricalPrepaidDeliveries({
 
     return historicalTokens;
   }, [txData, existingTokens]);
+
+  return { history, isLoading: isCivitai && isLoading };
 }
 
 function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () => void }) {
@@ -308,10 +311,11 @@ export function PrepaidTokenOverview({
   };
 
   // Fetch historical prepaid deliveries from buzz service (on-demand, deduplicated)
-  const historicalDeliveries = useHistoricalPrepaidDeliveries({
-    subscription,
-    existingTokens: tokens,
-  });
+  const { history: historicalDeliveries, isLoading: historyLoading } =
+    useHistoricalPrepaidDeliveries({
+      subscription,
+      existingTokens: tokens,
+    });
 
   const unlocked = tokens.filter((t) => t.status === 'unlocked');
   const locked = tokens.filter((t) => t.status === 'locked');
@@ -321,6 +325,10 @@ export function PrepaidTokenOverview({
 
   const unlockedBuzz = unlocked.reduce((sum, t) => sum + t.buzzAmount, 0);
   const claimedBuzz = claimed.reduce((sum, t) => sum + t.buzzAmount, 0);
+
+  // Don't render empty shell — wait for history to load or show nothing
+  const hasAnything = unlocked.length > 0 || locked.length > 0 || claimed.length > 0 || historyLoading;
+  if (!hasAnything) return null;
 
   return (
     <Stack gap="md">
@@ -424,7 +432,7 @@ export function PrepaidTokenOverview({
       )}
 
       {/* Claimed Section (Collapsed) */}
-      {claimed.length > 0 && (
+      {(claimed.length > 0 || historyLoading) && (
         <Stack gap="xs">
           <UnstyledButton onClick={() => setClaimedOpen((o) => !o)}>
             <Card p="sm" radius="md" withBorder>
@@ -433,12 +441,15 @@ export function PrepaidTokenOverview({
                   {claimedOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                   <IconCircleCheck size={14} color="var(--mantine-color-yellow-5)" />
                   <Text size="sm" fw={600} c="yellow">
-                    {claimed.length} Claimed
+                    {historyLoading ? 'Loading history...' : `${claimed.length} Claimed`}
                   </Text>
+                  {historyLoading && <Loader size={14} color="yellow" />}
                 </Group>
-                <Text size="xs" c="dimmed">
-                  {claimedBuzz.toLocaleString()} Buzz
-                </Text>
+                {!historyLoading && (
+                  <Text size="xs" c="dimmed">
+                    {claimedBuzz.toLocaleString()} Buzz
+                  </Text>
+                )}
               </Group>
             </Card>
           </UnstyledButton>
