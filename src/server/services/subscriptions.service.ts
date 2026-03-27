@@ -5,6 +5,7 @@ import {
   subscriptionProductMetadataSchema,
   type GetUserSubscriptionInput,
   type SubscriptionMetadata,
+  type PrepaidToken,
 } from '~/server/schema/subscriptions.schema';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -12,6 +13,7 @@ import { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { TransactionType, type BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { upsertContact } from '~/server/integrations/freshdesk';
+import { clickhouse } from '~/server/clickhouse/client';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -740,4 +742,59 @@ export const unlockTokensForUser = async ({
   }
 
   return { unlocked: unlockedCount, totalBuzz };
+};
+
+const BUZZ_TO_TIER: Record<number, string> = {
+  50000: 'gold',
+  25000: 'silver',
+  10000: 'bronze',
+};
+
+export const getHistoricalPrepaidDeliveries = async ({
+  userId,
+  accountType = 'yellow',
+}: {
+  userId: number;
+  accountType?: 'yellow' | 'green';
+}): Promise<PrepaidToken[]> => {
+  if (!clickhouse) return [];
+
+  const results = await clickhouse.$query<{
+    date: string;
+    amount: number;
+    externalTransactionId: string;
+    details: string;
+  }>`
+    SELECT
+      date,
+      amount,
+      externalTransactionId,
+      details
+    FROM buzzTransactions
+    WHERE toAccountId = ${userId}
+      AND toAccountType = '${accountType}'
+      AND type = 'purchase'
+      AND externalTransactionId LIKE 'civitai-membership%'
+      AND date >= now() - INTERVAL 24 MONTH
+    ORDER BY date DESC
+  `;
+
+  return results.map((tx) => {
+    let tier = BUZZ_TO_TIER[tx.amount] ?? 'silver';
+    try {
+      const parsed = JSON.parse(tx.details);
+      if (parsed?.tier) tier = parsed.tier;
+    } catch {
+      // details may not be valid JSON
+    }
+
+    return {
+      id: `history_${tx.externalTransactionId}`,
+      tier: tier as PrepaidToken['tier'],
+      status: 'claimed' as const,
+      buzzAmount: tx.amount,
+      claimedAt: new Date(tx.date).toISOString(),
+      buzzTransactionId: tx.externalTransactionId,
+    };
+  });
 };

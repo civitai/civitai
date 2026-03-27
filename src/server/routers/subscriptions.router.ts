@@ -14,6 +14,7 @@ import {
   claimPrepaidToken,
   claimAllPrepaidTokens,
   unlockTokensForUser,
+  getHistoricalPrepaidDeliveries,
 } from '~/server/services/subscriptions.service';
 
 export const subscriptionsRouter = router({
@@ -30,6 +31,14 @@ export const subscriptionsRouter = router({
   claimAllPrepaidTokens: protectedProcedure.mutation(async ({ ctx }) => {
     return claimAllPrepaidTokens({ userId: ctx.user.id });
   }),
+  getHistoricalPrepaidDeliveries: protectedProcedure
+    .input(z.object({ accountType: z.enum(['yellow', 'green']).default('yellow') }))
+    .query(async ({ input, ctx }) => {
+      return getHistoricalPrepaidDeliveries({
+        userId: ctx.user.id,
+        accountType: input.accountType,
+      });
+    }),
   unlockTokens: moderatorProcedure
     .input(z.object({ userId: z.number(), force: z.boolean().optional() }))
     .mutation(async ({ input }) => {
