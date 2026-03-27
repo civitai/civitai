@@ -97,6 +97,11 @@ export const parseBuzzTransactionDetails = (
       label: 'Model Version',
       notification: '',
     },
+    ComicProject: {
+      url: `/comics/${entityId}`,
+      notification: `${baseNotification} on one of your comics!`,
+      label: 'Comic',
+    },
   };
 
   return map[entityType] ?? map.default;

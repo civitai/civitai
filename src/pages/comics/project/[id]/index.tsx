@@ -5,6 +5,7 @@ import {
   Container,
   Group,
   Loader,
+  Modal,
   ScrollArea,
   Stack,
   Text,
@@ -20,6 +21,7 @@ import {
   IconEye,
   IconEyeOff,
   IconGripVertical,
+  IconInfoCircle,
   IconLock,
   IconPhoto,
   IconPlus,
@@ -35,7 +37,6 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { slugit } from '~/utils/string-helpers';
 
-import type { WorkflowStepEvent } from '@civitai/client';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
@@ -98,9 +99,19 @@ function ProjectWorkspace() {
     useDisclosure(false);
   const [smartModalOpened, { open: openSmartModal, close: closeSmartModal }] = useDisclosure(false);
 
+  // ── Welcome modal (show once per user) ──
+  const [welcomeOpened, setWelcomeOpened] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !localStorage.getItem('comic-creator-welcome-dismissed');
+  });
+
+  const handleDismissWelcome = useCallback(() => {
+    localStorage.setItem('comic-creator-welcome-dismissed', 'true');
+    setWelcomeOpened(false);
+  }, []);
+
   // ── Core shared state ──
   const [prompt, setPrompt] = useState('');
-  const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [useContext, setUseContext] = useState(true);
   const [includePreviousImage, setIncludePreviousImage] = useState(false);
   const [aspectRatio, setAspectRatio] = useState('3:4');
@@ -302,93 +313,25 @@ function ProjectWorkspace() {
     [activeReferences]
   );
 
-  // ── Signal-based panel updates ──
-  const generatingPanels = useMemo(
-    () =>
-      (activeChapter?.panels ?? [])
-        .filter((p) => p.status === 'Generating')
-        .map((p) => ({ id: p.id, workflowId: p.workflowId })),
-    [activeChapter?.panels]
-  );
-  const generatingPanelIds = useMemo(
-    () => generatingPanels.map((p) => p.id),
-    [generatingPanels]
-  );
-
   const utils = trpc.useUtils();
 
-  // Poll server to download image from orchestrator and update panel in DB, then refetch
-  const pollAndUpdatePanels = useCallback(
-    async (panelIds: number[]) => {
-      if (panelIds.length === 0) return;
-      try {
-        const results = await Promise.all(
-          panelIds.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
-        );
-        const failedCount = results.filter((r) => r.status === 'Failed').length;
-        const hasTerminal = results.some(
-          (r) => r.status === 'Ready' || r.status === 'Failed'
-        );
-        if (failedCount > 0) {
-          showErrorNotification({
-            title: 'Panel generation failed',
-            error: new Error('Buzz has been refunded automatically.'),
-          });
-        }
-        if (hasTerminal) {
-          await utils.comics.getProject.invalidate({ id: projectId });
-        }
-      } catch {
-        /* ignore */
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [utils, projectId]
-  );
+  // Stable ref for refetch — used by PanelCard callbacks and signal handlers
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
 
-  // Map workflowId → panelId so signals can target the right panel
-  const workflowToPanelRef = useRef<Map<string, number>>(new Map());
-  useEffect(() => {
-    const map = new Map<string, number>();
-    for (const p of generatingPanels) {
-      if (p.workflowId) map.set(p.workflowId, p.id);
-    }
-    workflowToPanelRef.current = map;
-  }, [generatingPanels]);
-
-  // When a signal arrives, poll the matching panel (or all generating panels if mapping missed)
+  // Listen for ComicPanelUpdate signals for background job transitions (Enqueued → Generating).
+  // Terminal transitions (Ready/Failed) are handled by each PanelCard's own cache patch.
   useSignalConnection(
-    SignalMessages.TextToImageUpdate,
+    SignalMessages.ComicPanelUpdate,
     useCallback(
-      (data: Omit<WorkflowStepEvent, '$type'> & { $type: string }) => {
-        if (data.$type !== 'step') return;
-
-        // Job submitted an enqueued panel — refetch chapter to pick up new workflowId/status
-        if ((data.status as string) === 'submitted') {
-          void refetch();
-          return;
-        }
-
-        if (data.status !== 'succeeded' && data.status !== 'failed') return;
-        const panelId = workflowToPanelRef.current.get(data.workflowId);
-        if (panelId != null) {
-          void pollAndUpdatePanels([panelId]);
-        } else if (generatingPanelIds.length > 0) {
-          // workflowId not in map (race condition) — poll all generating panels
-          void pollAndUpdatePanels(generatingPanelIds);
-        }
+      (data: { panelId: number; projectId: number; status: string }) => {
+        if (data.projectId !== projectId) return;
+        if (data.status === 'Ready' || data.status === 'Failed') return; // PanelCard handles these
+        refetchRef.current();
       },
-      [pollAndUpdatePanels, generatingPanelIds, refetch]
+      [projectId]
     )
   );
-
-  // One-time check on mount for panels that started generating before page load
-  const initialCheckDoneRef = useRef(false);
-  useEffect(() => {
-    if (initialCheckDoneRef.current || generatingPanelIds.length === 0) return;
-    initialCheckDoneRef.current = true;
-    void pollAndUpdatePanels(generatingPanelIds);
-  }, [generatingPanelIds, pollAndUpdatePanels]);
 
   const processingReferenceIds = useMemo(
     () => allReferences.filter((c) => c.status === 'Pending').map((c) => c.id),
@@ -471,6 +414,7 @@ function ProjectWorkspace() {
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
+    onSuccess: () => refetch(),
     onError: (err) => {
       handleMutationError(err);
       refetch();
@@ -589,6 +533,7 @@ function ProjectWorkspace() {
   });
 
   const reorderChaptersMutation = trpc.comics.reorderChapters.useMutation({
+    onSuccess: () => refetch(),
     onError: (err) => {
       handleMutationError(err);
       refetch();
@@ -646,7 +591,6 @@ function ProjectWorkspace() {
         projectId,
         chapterPosition: activeChapter.position,
         prompt: prompt.trim(),
-        enhance: enhancePrompt,
         useContext,
         includePreviousImage,
         aspectRatio,
@@ -689,7 +633,6 @@ function ProjectWorkspace() {
         sourceImageWidth: sourceImage.width,
         sourceImageHeight: sourceImage.height,
         prompt: prompt.trim() || undefined,
-        enhance: enhancePrompt,
         useContext,
         includePreviousImage,
         aspectRatio,
@@ -934,7 +877,6 @@ function ProjectWorkspace() {
     const meta = panel.metadata;
     setRegeneratingPanelId(panel.id);
     setPrompt(panel.prompt);
-    setEnhancePrompt(meta?.enhanceEnabled ?? true);
     setUseContext(meta?.useContext ?? true);
     setIncludePreviousImage(meta?.includePreviousImage ?? false);
     setSelectedImageIds(meta?.selectedImageIds ?? null);
@@ -1017,6 +959,38 @@ function ProjectWorkspace() {
 
   return (
     <>
+      {/* ── Welcome modal ─────────────────────────── */}
+      <Modal
+        opened={welcomeOpened}
+        onClose={handleDismissWelcome}
+        title={
+          <Group gap="xs">
+            <IconInfoCircle size={20} />
+            <Text fw={600}>Welcome to Comic Creator (Beta)!</Text>
+          </Group>
+        }
+        centered
+        size="md"
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            This is an early version with a limited feature set, and you may run into some bumps
+            along the way.
+          </Text>
+          <Text size="sm">
+            We&apos;re already working on a large set of improvements and will be releasing updates
+            rapidly.
+          </Text>
+          <Text size="sm" c="dimmed">
+            As this is an experimental feature, refunds won&apos;t be issued for Beta-related
+            issues.
+          </Text>
+          <Group justify="flex-end" mt="sm">
+            <Button onClick={handleDismissWelcome}>Got it!</Button>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Meta title={`${project.name} - Civitai Comics`} canonical={`/comics/project/${projectId}`} />
 
       <Container size="xl" py="xl">
@@ -1452,6 +1426,7 @@ function ProjectWorkspace() {
                       <SortablePanel key={panel.id} id={panel.id}>
                         <PanelCard
                           panel={panel}
+                          projectId={projectId}
                           position={index + 1}
                           referenceNames={
                             (panel.references ?? [])
@@ -1468,7 +1443,7 @@ function ProjectWorkspace() {
                           }}
                           onClick={() => setDetailPanelId(panel.id)}
                           onIterativeEdit={() => handleOpenIterativeEditor({ ...panel, position: index } as any)}
-                          onRatingChange={() => void utils.comics.getProject.invalidate({ id: projectId })}
+                          onRatingChange={() => refetchRef.current()}
                         />
                       </SortablePanel>
                     ))}
@@ -1526,10 +1501,10 @@ function ProjectWorkspace() {
         onClose={handlePanelModalClose}
         prompt={prompt}
         setPrompt={setPrompt}
-        enhancePrompt={enhancePrompt}
-        setEnhancePrompt={setEnhancePrompt}
         useContext={useContext}
         setUseContext={setUseContext}
+        projectId={projectId}
+        chapterPosition={activeChapter?.position ?? 0}
         includePreviousImage={includePreviousImage}
         setIncludePreviousImage={setIncludePreviousImage}
         aspectRatio={aspectRatio}
@@ -1565,12 +1540,11 @@ function ProjectWorkspace() {
         references={mentionRefs}
         planCost={planCost}
         panelCost={panelCost}
-        enhanceCost={enhanceCost}
         effectiveModel={effectiveModel}
         activeAspectRatios={activeAspectRatios}
         onModelChange={handleModelChange}
-        onPlanPanels={(story) =>
-          planPanelsMutation.mutate({ projectId, storyDescription: story })
+        onPlanPanels={(story, panelCount) =>
+          planPanelsMutation.mutate({ projectId, storyDescription: story, panelCount })
         }
         isPlanningPanels={planPanelsMutation.isPending}
         planError={planPanelsMutation.isError ? (planPanelsMutation.error?.message ?? 'Failed to plan panels') : null}
@@ -1581,7 +1555,6 @@ function ProjectWorkspace() {
             chapterName: data.chapterName,
             storyDescription: data.storyDescription,
             panels: data.panels,
-            enhance: data.enhance,
             aspectRatio: data.aspectRatio,
             baseModel: generationModel,
           })

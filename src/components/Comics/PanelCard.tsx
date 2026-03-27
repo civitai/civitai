@@ -12,10 +12,14 @@ import {
 } from '@tabler/icons-react';
 import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
+import { useCallback, useEffect } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
-import { NsfwLevel } from '~/server/common/enums';
+import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { NsfwLevel, SignalMessages } from '~/server/common/enums';
+import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { trpc } from '~/utils/trpc';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const nsfwBadgeColors: Record<number, string> = {
@@ -45,9 +49,11 @@ export interface PanelCardProps {
     imageUrl: string | null;
     prompt: string;
     status: string;
+    workflowId: string | null;
     errorMessage: string | null;
     image?: { nsfwLevel: number } | null;
   };
+  projectId: number;
   position: number;
   referenceNames: string[];
   onDelete: () => void;
@@ -60,6 +66,7 @@ export interface PanelCardProps {
 
 export function PanelCard({
   panel,
+  projectId,
   position,
   referenceNames,
   onDelete,
@@ -70,6 +77,86 @@ export function PanelCard({
   onRatingChange,
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
+  const utils = trpc.useUtils();
+
+  const isActive = status === 'Generating' || status === 'Pending' || status === 'Enqueued';
+
+  // Patch this panel's data directly in the getProject cache (no full refetch needed)
+  const patchPanel = useCallback(
+    (update: { status: string; imageUrl?: string | null }) => {
+      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          chapters: prev.chapters.map((ch) => ({
+            ...ch,
+            panels: ch.panels.map((p) =>
+              p.id === panel.id
+                ? { ...p, status: update.status as ComicPanelStatus, imageUrl: update.imageUrl ?? p.imageUrl }
+                : p
+            ),
+          })),
+        };
+      });
+    },
+    [utils, projectId, panel.id]
+  );
+
+  // Poll server to check orchestrator status and download image when ready
+  const pollOnce = useCallback(async () => {
+    try {
+      console.log('Start polling panel status for panel', panel.id);
+      const result = await utils.comics.pollPanelStatus.fetch({ panelId: panel.id }, {
+        cacheTime: 0,
+        
+      });
+      console.log('Polled panel status for panel', panel.id, ':', result);
+      if (result.status === 'Ready' || result.status === 'Failed') {
+        patchPanel({ status: result.status, imageUrl: result.imageUrl });
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [utils, panel.id, patchPanel]);
+
+  // Self-contained polling: when this panel is actively generating, poll every 5s
+  useEffect(() => {
+    if (!isActive) return;
+    void pollOnce();
+    const interval = setInterval(pollOnce, 25_000);
+    return () => clearInterval(interval);
+  }, [isActive, pollOnce]);
+
+  // Listen for ComicPanelUpdate signal targeting this specific panel
+  useSignalConnection(
+    SignalMessages.ComicPanelUpdate,
+    useCallback(
+      (data: { panelId: number; projectId: number; status: string; imageUrl?: string }) => {
+        if (data.panelId !== panel.id) return;
+        if (data.status === 'Ready' || data.status === 'Failed') {
+          patchPanel({ status: data.status, imageUrl: data.imageUrl });
+        }
+      },
+      [panel.id, patchPanel]
+    )
+  );
+
+  // Listen for orchestrator TextToImageUpdate matching this panel's workflowId.
+  // Fires instantly when orchestrator completes — triggers poll to download image.
+  useSignalConnection(
+    SignalMessages.TextToImageUpdate,
+    useCallback(
+      (data: { $type: string; workflowId: string; status: string }) => {
+        if (data.$type !== 'step' || !isActive || !panel.workflowId) return;
+        if (data.workflowId !== panel.workflowId) return;
+        if (data.status !== 'succeeded' && data.status !== 'failed') return;
+        console.log('Received TextToImageUpdate signal for panel', panel.id, 'with status', data.status);
+        void pollOnce();
+      },
+      [isActive, panel.workflowId, pollOnce]
+    )
+  );
+
   const nsfwInfo = panel.image?.nsfwLevel ? getNsfwLabel(panel.image.nsfwLevel) : null;
 
   const promptPreview = prompt?.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
@@ -198,10 +285,10 @@ export function PanelCard({
         </>
       ) : (
         <>
-          {status === 'Generating' || status === 'Pending' ? (
+          {status === 'Generating' || status === 'Pending' || status === 'Enqueued' ? (
             <div className={styles.panelEmpty}>
               <div className={styles.spinner} />
-              <Text size="xs">{status === 'Pending' ? 'Queued' : 'Generating...'}</Text>
+              <Text size="xs">{status === 'Pending' || status === 'Enqueued' ? 'Queued' : 'Generating...'}</Text>
             </div>
           ) : status === 'Failed' ? (
             <div className={styles.panelFailed}>

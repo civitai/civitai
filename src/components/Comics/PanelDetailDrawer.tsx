@@ -237,13 +237,12 @@ export function PanelDetailDrawer({
               {/* Generation settings */}
               {(() => {
                 const meta = detailPanel.metadata as Record<string, any> | null;
-                if (!meta) return null;
 
-                // Imported panels have a sourceImageUrl but no prompt and no generation settings
+                // Imported panels: no metadata at all (createPanelFromImage), or
+                // metadata with sourceImageUrl but no generation flags (enhancePanel without prompt)
                 const isImported =
                   !detailPanel.prompt &&
-                  meta.sourceImageUrl &&
-                  meta.enhanceEnabled === undefined;
+                  (!meta || (meta.sourceImageUrl && meta.enhanceEnabled === undefined));
 
                 if (isImported) {
                   return (
@@ -255,6 +254,8 @@ export function PanelDetailDrawer({
                     </div>
                   );
                 }
+
+                if (!meta) return null;
 
                 return (
                   <div>

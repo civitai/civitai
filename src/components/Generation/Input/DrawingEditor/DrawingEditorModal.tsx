@@ -1,4 +1,5 @@
-import { Badge, Button, Modal, Textarea } from '@mantine/core';
+import { Alert, Badge, Button, Modal, Text, Textarea } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useHotkeys } from '@mantine/hooks';
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type Konva from 'konva';
@@ -462,6 +463,13 @@ export function DrawingEditorModal({
             </Button>
           </div>
         </div>
+
+        <Alert variant="light" color="yellow" icon={<IconAlertTriangle size={16} />} mx="md" py="xs">
+          <Text size="xs">
+            Sketch annotations produce varying results depending on the model used. For best results,
+            use <Text span fw={600}>Nano Banana</Text>.
+          </Text>
+        </Alert>
 
         {/* Canvas Area */}
         <div className={styles.canvasArea}>

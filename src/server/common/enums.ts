@@ -142,6 +142,7 @@ export enum SignalMessages {
   MetricUpdate = 'metric:update',
   SessionRefresh = 'session:refresh',
   CryptoDepositUpdate = 'crypto-deposit:update',
+  ComicPanelUpdate = 'comic:panel-update',
 }
 
 export enum BountySort {

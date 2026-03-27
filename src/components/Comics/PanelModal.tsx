@@ -42,6 +42,7 @@ import {
   COMIC_MODEL_OPTIONS,
   type BulkPanelItem,
 } from '~/components/Comics/comic-project-constants';
+import { EnhancePromptInPlace } from '~/components/Comics/EnhancePromptInPlace';
 import { ImageSelectionSection } from '~/components/Comics/ImageSelectionSection';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { SortableBulkItem } from '~/components/Comics/SortableBulkItem';
@@ -64,10 +65,11 @@ interface PanelModalProps {
   // Core state from parent
   prompt: string;
   setPrompt: (val: string) => void;
-  enhancePrompt: boolean;
-  setEnhancePrompt: (val: boolean) => void;
   useContext: boolean;
   setUseContext: (val: boolean) => void;
+  // Project context for enhance-in-place
+  projectId: number;
+  chapterPosition: number;
   includePreviousImage: boolean;
   setIncludePreviousImage: (val: boolean) => void;
   aspectRatio: string;
@@ -121,10 +123,10 @@ export function PanelModal({
   onClose,
   prompt,
   setPrompt,
-  enhancePrompt,
-  setEnhancePrompt,
   useContext,
   setUseContext,
+  projectId,
+  chapterPosition,
   includePreviousImage,
   setIncludePreviousImage,
   aspectRatio,
@@ -162,6 +164,9 @@ export function PanelModal({
   const queueFull = available === 0 && !queueLoading;
   const generationDisabled = !canGenerate && available > 0 && !queueLoading;
 
+  // Track whether the EnhancePromptInPlace component is busy (blocks generate buttons)
+  const [isEnhancing, setIsEnhancing] = useState(false);
+
   // Enhance tab state
   const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
     url: string;
@@ -195,7 +200,6 @@ export function PanelModal({
 
   // Bulk tab state
   const [bulkItems, setBulkItems] = useState<BulkPanelItem[]>([]);
-  const [bulkEnhance, setBulkEnhance] = useState(true);
   const [bulkUploading, setBulkUploading] = useState(false);
   const { uploadToCF: uploadBulkToCF, resetFiles: resetBulkFiles } = useCFImageUpload();
 
@@ -219,7 +223,6 @@ export function PanelModal({
     setAnnotationElements([]);
     setOriginalSourceUrl(null);
     setBulkItems([]);
-    setBulkEnhance(true);
     resetBulkFiles();
     setImportSelected([]);
   };
@@ -467,14 +470,13 @@ export function PanelModal({
 
   const handleBulkSubmit = async () => {
     if (bulkItems.length === 0 || isSubmitting) return;
-    onBulkCreate(bulkItems, bulkEnhance);
+    onBulkCreate(bulkItems, false);
   };
 
   const bulkGenerationCount = bulkItems.filter((item) => item.prompt.trim() !== '').length;
   const costReady = panelCost != null;
   const effectivePanelCost = panelCost ?? 0;
-  const effectiveEnhanceCost = enhanceCost ?? 0;
-  const bulkTotalCost = bulkGenerationCount * (effectivePanelCost + (bulkEnhance ? effectiveEnhanceCost : 0));
+  const bulkTotalCost = bulkGenerationCount * effectivePanelCost;
 
   // ── Import handlers ──
   const handleImportSelect = () => {
@@ -625,31 +627,26 @@ export function PanelModal({
             rows={4}
           />
 
-          <Switch
-            label="Enhance prompt"
-            description="Use AI to add detail and composition to your prompt"
-            checked={enhancePrompt}
-            onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
-            color="yellow"
+          <EnhancePromptInPlace
+            prompt={prompt}
+            setPrompt={setPrompt}
+            enhanceCost={enhanceCost}
+            showContext={activeChapterPanelCount > 0 && insertAtPosition !== 0}
+            useContext={useContext}
+            setUseContext={setUseContext}
+            projectId={projectId}
+            chapterPosition={chapterPosition}
+            insertAtPosition={insertAtPosition}
+            onPendingChange={setIsEnhancing}
           />
+
           {activeChapterPanelCount > 0 && insertAtPosition !== 0 && (
-            <>
-              {enhancePrompt && (
-                <Switch
-                  label="Use previous panel context"
-                  description="Pass the previous panel's prompt to the AI for visual continuity"
-                  checked={useContext}
-                  onChange={(e) => setUseContext(e.currentTarget.checked)}
-                  ml="md"
-                />
-              )}
-              <Switch
-                label="Reference previous panel image"
-                description="Include the previous panel's image as a reference for generation"
-                checked={includePreviousImage}
-                onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
-              />
-            </>
+            <Switch
+              label="Reference previous panel image"
+              description="Include the previous panel's image as a reference for generation"
+              checked={includePreviousImage}
+              onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
+            />
           )}
 
           {needsImageSelection && (
@@ -693,16 +690,16 @@ export function PanelModal({
               Cancel
             </Button>
             <Tooltip
-              label={queueFull ? `Queue full (${used}/${limit})` : generationDisabled ? 'Generation unavailable' : costReady ? `Generation: ${effectivePanelCost} Buzz + Enhance: ${effectiveEnhanceCost} Buzz` : 'Loading cost...'}
-              disabled={!queueFull && !generationDisabled && !enhancePrompt && costReady}
+              label={queueFull ? `Queue full (${used}/${limit})` : generationDisabled ? 'Generation unavailable' : costReady ? `Generation: ${effectivePanelCost} Buzz` : 'Loading cost...'}
+              disabled={!queueFull && !generationDisabled && costReady}
               withArrow
               position="top"
             >
               <BuzzTransactionButton
-                buzzAmount={effectivePanelCost + (enhancePrompt ? effectiveEnhanceCost : 0)}
+                buzzAmount={effectivePanelCost}
                 label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : 'Generate'}
                 loading={isSubmitting || isCreatePending}
-                disabled={!prompt.trim() || !costReady || queueFull || generationDisabled}
+                disabled={!prompt.trim() || !costReady || queueFull || generationDisabled || isEnhancing}
                 onPerformTransaction={onGeneratePanel}
                 showPurchaseModal
               />
@@ -829,24 +826,19 @@ export function PanelModal({
 
           {prompt.trim() && (
             <>
-              <Switch
-                label="Enhance prompt"
-                description="Use AI to add detail and composition to your prompt"
-                checked={enhancePrompt}
-                onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
-                color="yellow"
+              <EnhancePromptInPlace
+                prompt={prompt}
+                setPrompt={setPrompt}
+                enhanceCost={enhanceCost}
+                showContext={activeChapterPanelCount > 0 && insertAtPosition !== 0}
+                useContext={useContext}
+                setUseContext={setUseContext}
+                projectId={projectId}
+                chapterPosition={chapterPosition}
+                insertAtPosition={insertAtPosition}
+                onPendingChange={setIsEnhancing}
               />
-              {activeChapterPanelCount > 0 &&
-                insertAtPosition !== 0 &&
-                enhancePrompt && (
-                  <Switch
-                    label="Use previous panel context"
-                    description="Pass the previous panel's prompt to the AI for visual continuity"
-                    checked={useContext}
-                    onChange={(e) => setUseContext(e.currentTarget.checked)}
-                    ml="md"
-                  />
-                )}
+
               {activeChapterPanelCount > 0 && insertAtPosition !== 0 && (
                 <Switch
                   label="Reference previous panel image"
@@ -855,6 +847,7 @@ export function PanelModal({
                   onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
                 />
               )}
+
               {needsImageSelection && (
                 <ImageSelectionSection
                   mentionedReferences={mentionedReferences}
@@ -912,10 +905,10 @@ export function PanelModal({
               position="top"
             >
               <BuzzTransactionButton
-                buzzAmount={(enhanceGenCost ?? 0) + (prompt.trim() && enhancePrompt ? effectiveEnhanceCost : 0)}
+                buzzAmount={enhanceGenCost ?? 0}
                 label={enhanceGenCost == null ? 'Loading cost...' : regeneratingPanelId ? 'Regenerate' : 'Enhance'}
                 loading={isSubmitting || isEnhancePending}
-                disabled={!enhanceSourceImage || enhanceGenCost == null || (!!prompt.trim() && (queueFull || generationDisabled))}
+                disabled={!enhanceSourceImage || enhanceGenCost == null || (!!prompt.trim() && (queueFull || generationDisabled)) || isEnhancing}
                 onPerformTransaction={handleEnhanceSubmit}
                 showPurchaseModal
               />
@@ -979,13 +972,9 @@ export function PanelModal({
             onChange={onModelChange}
             size="sm"
           />
-          <Switch
-            label="Enhance prompts"
-            description="Use AI to add detail and composition to prompts"
-            checked={bulkEnhance}
-            onChange={(e) => setBulkEnhance(e.currentTarget.checked)}
-            color="yellow"
-          />
+          <Text size="xs" c="dimmed">
+            Tip: Use Enhance Prompt on individual panels before bulk creating for best results.
+          </Text>
 
           {bulkItems.length > 0 && (
             <DndContext
