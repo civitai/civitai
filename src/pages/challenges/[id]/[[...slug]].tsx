@@ -305,6 +305,7 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
           challenge.description || `Participate in the ${challenge.title} challenge on Civitai`
         }
         canonical={`/challenges/${challenge.id}/${slugit(challenge.title)}`}
+        ogEndpoint={`/api/og?type=challenge&id=${challenge.id}`}
       />
       <SensitiveShield contentNsfwLevel={challenge.nsfwLevel}>
         <Container size="xl" mb={{ base: 'md', sm: 32 }}>
