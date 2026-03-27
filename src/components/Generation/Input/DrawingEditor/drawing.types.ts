@@ -175,6 +175,7 @@ export interface DrawingToolbarProps {
   canUndo: boolean;
   onDownload?: () => void;
   onAddImage?: () => void;
+  onAddSpeechBubble?: (imagePath: string) => void;
   isMobile?: boolean;
 }
 

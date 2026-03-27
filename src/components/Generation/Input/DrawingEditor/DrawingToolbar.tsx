@@ -114,6 +114,63 @@ function ActionsOverflowMenu({
   );
 }
 
+const SPEECH_BUBBLE_STAMPS = [
+  { id: 'speech_1', name: 'Speech 1', imagePath: '/images/comics/speech_bubbles/speech_1.png' },
+  { id: 'speech_2', name: 'Speech 2', imagePath: '/images/comics/speech_bubbles/speech_2.png' },
+  { id: 'speech_3', name: 'Speech 3', imagePath: '/images/comics/speech_bubbles/speech_3.png' },
+  { id: 'speech_4', name: 'Speech 4', imagePath: '/images/comics/speech_bubbles/speech_4.png' },
+];
+
+/** Speech Bubbles popover - shows available bubble stamps */
+function SpeechBubblesPopover({
+  onSelect,
+}: {
+  onSelect: (imagePath: string) => void;
+}) {
+  return (
+    <Popover position="top" withArrow shadow="md" radius="md" width={200}>
+      <Popover.Target>
+        <Tooltip label="Speech Bubbles" withArrow>
+          <ActionIcon variant="subtle" size="lg" radius="md">
+            <IconMessageCircle size={20} />
+          </ActionIcon>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="xs">
+          <Text size="xs" fw={600}>Speech Bubbles</Text>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {SPEECH_BUBBLE_STAMPS.map((stamp) => (
+              <Tooltip key={stamp.id} label={stamp.name} withArrow>
+                <button
+                  type="button"
+                  onClick={() => onSelect(stamp.imagePath)}
+                  style={{
+                    background: 'var(--mantine-color-dark-5)',
+                    border: '1px solid var(--mantine-color-dark-4)',
+                    borderRadius: 6,
+                    padding: 4,
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <img
+                    src={stamp.imagePath}
+                    alt={stamp.name}
+                    style={{ width: '100%', height: 60, objectFit: 'contain' }}
+                  />
+                </button>
+              </Tooltip>
+            ))}
+          </div>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
 export function DrawingToolbar({
   tool,
   onToolChange,
@@ -126,6 +183,7 @@ export function DrawingToolbar({
   canUndo,
   onDownload,
   onAddImage,
+  onAddSpeechBubble,
   isMobile = false,
 }: DrawingToolbarProps) {
   // Show colors for all tools except eraser and select
@@ -292,6 +350,9 @@ export function DrawingToolbar({
 
           {/* Actions - Undo visible, rest in overflow menu */}
           <div className={styles.actions}>
+            {onAddSpeechBubble && (
+              <SpeechBubblesPopover onSelect={onAddSpeechBubble} />
+            )}
             {onAddImage && (
               <Tooltip label="Add Image" withArrow>
                 <ActionIcon variant="subtle" size="lg" radius="md" onClick={onAddImage}>
@@ -511,6 +572,9 @@ export function DrawingToolbar({
 
         {/* Actions */}
         <div className={styles.actions}>
+          {onAddSpeechBubble && (
+            <SpeechBubblesPopover onSelect={onAddSpeechBubble} />
+          )}
           {onAddImage && (
             <Tooltip label="Add Image Overlay" withArrow>
               <ActionIcon variant="subtle" size="lg" radius="md" onClick={onAddImage}>

@@ -1,6 +1,7 @@
 import { ActionIcon, Badge, Text, Title } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconCopy,
   IconMessages,
   IconPlus,
   IconRefreshDot,
@@ -42,6 +43,7 @@ interface PanelDetailDrawerProps {
   referenceNameMap: Map<number, string>;
   onRegenerate: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
   onInsertAfter: (index: number) => void;
+  onDuplicate: (panelId: number) => void;
   onDelete: (panelId: number) => void;
   onIterativeEdit?: (panel: NonNullable<PanelDetailDrawerProps['detailPanel']>) => void;
 }
@@ -55,6 +57,7 @@ export function PanelDetailDrawer({
   referenceNameMap,
   onRegenerate,
   onInsertAfter,
+  onDuplicate,
   onDelete,
   onIterativeEdit,
 }: PanelDetailDrawerProps) {
@@ -237,13 +240,12 @@ export function PanelDetailDrawer({
               {/* Generation settings */}
               {(() => {
                 const meta = detailPanel.metadata as Record<string, any> | null;
-                if (!meta) return null;
 
-                // Imported panels have a sourceImageUrl but no prompt and no generation settings
+                // Imported panels: no metadata at all (createPanelFromImage), or
+                // metadata with sourceImageUrl but no generation flags (enhancePanel without prompt)
                 const isImported =
                   !detailPanel.prompt &&
-                  meta.sourceImageUrl &&
-                  meta.enhanceEnabled === undefined;
+                  (!meta || (meta.sourceImageUrl && meta.enhanceEnabled === undefined));
 
                 if (isImported) {
                   return (
@@ -255,6 +257,8 @@ export function PanelDetailDrawer({
                     </div>
                   );
                 }
+
+                if (!meta) return null;
 
                 return (
                   <div>
@@ -272,9 +276,11 @@ export function PanelDetailDrawer({
                             : 'No previous context'}
                         </span>
                       )}
-                      {meta.includePreviousImage && (
+                      {(meta.referencePanelId || meta.includePreviousImage) && (
                         <span className={styles.detailCharacterPill}>
-                          Previous image referenced
+                          {meta.referencePanelId
+                            ? `Panel #${meta.referencePanelId} referenced`
+                            : 'Previous image referenced'}
                         </span>
                       )}
                       {meta.sourceImageUrl && (
@@ -315,6 +321,13 @@ export function PanelDetailDrawer({
                     Insert after
                   </button>
                 )}
+                <button
+                  className={styles.subtleBtn}
+                  onClick={() => onDuplicate(detailPanel.id)}
+                >
+                  <IconCopy size={14} />
+                  Duplicate
+                </button>
                 <button
                   className={styles.dangerBtn}
                   onClick={() => {

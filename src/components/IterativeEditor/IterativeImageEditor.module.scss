@@ -31,9 +31,11 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 16px;
+  padding: 8px 16px;
+  margin: 8px 12px 0;
   background: rgba(250, 176, 5, 0.08);
-  border-bottom: 1px solid rgba(250, 176, 5, 0.2);
+  border: 1px solid rgba(250, 176, 5, 0.15);
+  border-radius: var(--mantine-radius-sm);
   color: #fab005;
   flex-shrink: 0;
 }
@@ -141,8 +143,9 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-height: 200px;
+  max-height: min(200px, 30vh);
   overflow-y: auto;
+  scrollbar-gutter: stable;
 }
 
 .sidebarSectionTitle {

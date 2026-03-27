@@ -5,6 +5,7 @@ import {
   Container,
   Group,
   Loader,
+  Modal,
   ScrollArea,
   Stack,
   Text,
@@ -17,9 +18,12 @@ import {
   IconArrowLeft,
   IconBook,
   IconCalendar,
+  IconCopy,
+  IconDownload,
   IconEye,
   IconEyeOff,
   IconGripVertical,
+  IconInfoCircle,
   IconLock,
   IconPhoto,
   IconPlus,
@@ -35,7 +39,6 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { slugit } from '~/utils/string-helpers';
 
-import type { WorkflowStepEvent } from '@civitai/client';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext } from '@dnd-kit/sortable';
@@ -53,6 +56,7 @@ import { PanelDetailDrawer } from '~/components/Comics/PanelDetailDrawer';
 import { PanelModal } from '~/components/Comics/PanelModal';
 import { ProjectSettingsModal } from '~/components/Comics/ProjectSettingsModal';
 import { PublishModal } from '~/components/Comics/PublishModal';
+import { ImportReferencesModal } from '~/components/Comics/ImportReferencesModal';
 import { ReferenceSidebarItem } from '~/components/Comics/ReferenceSidebarItem';
 import { SmartCreateModal } from '~/components/Comics/SmartCreateModal';
 import { SortableChapter } from '~/components/Comics/SortableChapter';
@@ -97,12 +101,26 @@ function ProjectWorkspace() {
   const [chapterSettingsOpened, { open: openChapterSettings, close: closeChapterSettings }] =
     useDisclosure(false);
   const [smartModalOpened, { open: openSmartModal, close: closeSmartModal }] = useDisclosure(false);
+  const [importRefsOpened, { open: openImportRefs, close: closeImportRefs }] =
+    useDisclosure(false);
+
+  // ── Welcome modal (show once per user) ──
+  const [welcomeOpened, setWelcomeOpened] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return !localStorage.getItem('comic-creator-welcome-dismissed');
+  });
+
+  const handleDismissWelcome = useCallback(() => {
+    localStorage.setItem('comic-creator-welcome-dismissed', 'true');
+    setWelcomeOpened(false);
+  }, []);
 
   // ── Core shared state ──
   const [prompt, setPrompt] = useState('');
-  const [enhancePrompt, setEnhancePrompt] = useState(true);
   const [useContext, setUseContext] = useState(true);
-  const [includePreviousImage, setIncludePreviousImage] = useState(false);
+  const [referencePanelId, setReferencePanelId] = useState<number | null>(null);
+  const [layoutImagePath, setLayoutImagePath] = useState<string | undefined>();
+  const [quantity, setQuantity] = useState(1);
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [generationModel, setGenerationModel] = useState<
     'NanoBanana' | 'Flux2' | 'Seedream' | 'SeedreamLite' | 'OpenAI' | 'Qwen' | 'Grok' | null
@@ -275,7 +293,10 @@ function ProjectWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mentionedIdKey]);
 
-  const reservedSlots = useMemo(() => (includePreviousImage ? 1 : 0), [includePreviousImage]);
+  const reservedSlots = useMemo(
+    () => (referencePanelId ? 1 : 0) + (layoutImagePath ? 1 : 0),
+    [referencePanelId, layoutImagePath]
+  );
   const refImageBudget = maxReferenceImages - reservedSlots;
 
   const needsImageSelection =
@@ -292,6 +313,7 @@ function ProjectWorkspace() {
       baseModel: effectiveModel,
       referenceIds: mentionedReferenceIds,
       selectedImageIds: selectedImageIds ?? undefined,
+      quantity,
     },
     { staleTime: 30_000, retry: 2 }
   );
@@ -302,93 +324,25 @@ function ProjectWorkspace() {
     [activeReferences]
   );
 
-  // ── Signal-based panel updates ──
-  const generatingPanels = useMemo(
-    () =>
-      (activeChapter?.panels ?? [])
-        .filter((p) => p.status === 'Generating')
-        .map((p) => ({ id: p.id, workflowId: p.workflowId })),
-    [activeChapter?.panels]
-  );
-  const generatingPanelIds = useMemo(
-    () => generatingPanels.map((p) => p.id),
-    [generatingPanels]
-  );
-
   const utils = trpc.useUtils();
 
-  // Poll server to download image from orchestrator and update panel in DB, then refetch
-  const pollAndUpdatePanels = useCallback(
-    async (panelIds: number[]) => {
-      if (panelIds.length === 0) return;
-      try {
-        const results = await Promise.all(
-          panelIds.map((panelId) => utils.comics.pollPanelStatus.fetch({ panelId }))
-        );
-        const failedCount = results.filter((r) => r.status === 'Failed').length;
-        const hasTerminal = results.some(
-          (r) => r.status === 'Ready' || r.status === 'Failed'
-        );
-        if (failedCount > 0) {
-          showErrorNotification({
-            title: 'Panel generation failed',
-            error: new Error('Buzz has been refunded automatically.'),
-          });
-        }
-        if (hasTerminal) {
-          await utils.comics.getProject.invalidate({ id: projectId });
-        }
-      } catch {
-        /* ignore */
-      }
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [utils, projectId]
-  );
+  // Stable ref for refetch — used by PanelCard callbacks and signal handlers
+  const refetchRef = useRef(refetch);
+  refetchRef.current = refetch;
 
-  // Map workflowId → panelId so signals can target the right panel
-  const workflowToPanelRef = useRef<Map<string, number>>(new Map());
-  useEffect(() => {
-    const map = new Map<string, number>();
-    for (const p of generatingPanels) {
-      if (p.workflowId) map.set(p.workflowId, p.id);
-    }
-    workflowToPanelRef.current = map;
-  }, [generatingPanels]);
-
-  // When a signal arrives, poll the matching panel (or all generating panels if mapping missed)
+  // Listen for ComicPanelUpdate signals for background job transitions (Enqueued → Generating).
+  // Terminal transitions (Ready/Failed) are handled by each PanelCard's own cache patch.
   useSignalConnection(
-    SignalMessages.TextToImageUpdate,
+    SignalMessages.ComicPanelUpdate,
     useCallback(
-      (data: Omit<WorkflowStepEvent, '$type'> & { $type: string }) => {
-        if (data.$type !== 'step') return;
-
-        // Job submitted an enqueued panel — refetch chapter to pick up new workflowId/status
-        if ((data.status as string) === 'submitted') {
-          void refetch();
-          return;
-        }
-
-        if (data.status !== 'succeeded' && data.status !== 'failed') return;
-        const panelId = workflowToPanelRef.current.get(data.workflowId);
-        if (panelId != null) {
-          void pollAndUpdatePanels([panelId]);
-        } else if (generatingPanelIds.length > 0) {
-          // workflowId not in map (race condition) — poll all generating panels
-          void pollAndUpdatePanels(generatingPanelIds);
-        }
+      (data: { panelId: number; projectId: number; status: string }) => {
+        if (data.projectId !== projectId) return;
+        if (data.status === 'Ready' || data.status === 'Failed') return; // PanelCard handles these
+        refetchRef.current();
       },
-      [pollAndUpdatePanels, generatingPanelIds, refetch]
+      [projectId]
     )
   );
-
-  // One-time check on mount for panels that started generating before page load
-  const initialCheckDoneRef = useRef(false);
-  useEffect(() => {
-    if (initialCheckDoneRef.current || generatingPanelIds.length === 0) return;
-    initialCheckDoneRef.current = true;
-    void pollAndUpdatePanels(generatingPanelIds);
-  }, [generatingPanelIds, pollAndUpdatePanels]);
 
   const processingReferenceIds = useMemo(
     () => allReferences.filter((c) => c.status === 'Pending').map((c) => c.id),
@@ -471,6 +425,7 @@ function ProjectWorkspace() {
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
+    onSuccess: () => refetch(),
     onError: (err) => {
       handleMutationError(err);
       refetch();
@@ -547,6 +502,11 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const removeReferenceFromProjectMutation = trpc.comics.removeReferenceFromProject.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
+
   const deleteProjectMutation = trpc.comics.deleteProject.useMutation({
     onSuccess: () => {
       const username = currentUser?.username;
@@ -589,13 +549,25 @@ function ProjectWorkspace() {
   });
 
   const reorderChaptersMutation = trpc.comics.reorderChapters.useMutation({
+    onSuccess: () => refetch(),
     onError: (err) => {
       handleMutationError(err);
       refetch();
     },
   });
 
+  const duplicatePanelMutation = trpc.comics.duplicatePanel.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
 
+  const duplicateChapterMutation = trpc.comics.duplicateChapter.useMutation({
+    onSuccess: (data) => {
+      setActiveChapterPosition(data.position);
+      refetch();
+    },
+    onError: handleMutationError,
+  });
 
   // ── Handlers ──
   const handleModelChange = (value: string | null) => {
@@ -617,7 +589,8 @@ function ProjectWorkspace() {
     setInsertAtPosition(null);
     setPrompt('');
     setUseContext(true);
-    setIncludePreviousImage(false);
+    setReferencePanelId(null);
+    setQuantity(1);
     setAspectRatio('3:4');
     setGenerationModel(null);
     setSelectedImageIds(null);
@@ -646,9 +619,10 @@ function ProjectWorkspace() {
         projectId,
         chapterPosition: activeChapter.position,
         prompt: prompt.trim(),
-        enhance: enhancePrompt,
         useContext,
-        includePreviousImage,
+        ...(referencePanelId ? { referencePanelId } : {}),
+        ...(layoutImagePath ? { layoutImagePath } : {}),
+        quantity,
         aspectRatio,
         baseModel: generationModel,
         ...(targetPosition != null ? { position: targetPosition } : {}),
@@ -689,9 +663,8 @@ function ProjectWorkspace() {
         sourceImageWidth: sourceImage.width,
         sourceImageHeight: sourceImage.height,
         prompt: prompt.trim() || undefined,
-        enhance: enhancePrompt,
         useContext,
-        includePreviousImage,
+        ...(referencePanelId ? { referencePanelId } : {}),
         aspectRatio,
         baseModel: generationModel,
         forceGenerate: true,
@@ -909,16 +882,20 @@ function ProjectWorkspace() {
     );
   };
 
-  const handleDeleteReference = (referenceId: number, referenceName: string) => {
+  const handleRemoveReferenceFromProject = (referenceId: number, referenceName: string) => {
+    removeReferenceFromProjectMutation.mutate({ projectId, referenceId });
+  };
+
+  const handleDeleteReferencePermanently = (referenceId: number, referenceName: string) => {
     openConfirmModal({
-      title: 'Delete Reference',
+      title: 'Delete Reference Permanently',
       children: (
         <Text size="sm">
-          Are you sure you want to delete &quot;{referenceName}&quot;? Existing panels will be
-          preserved but unlinked.
+          This will permanently delete &quot;{referenceName}&quot; from ALL your projects.
+          This cannot be undone. Existing panels will be preserved but unlinked.
         </Text>
       ),
-      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      labels: { confirm: 'Delete Permanently', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
         deleteReferenceMutation.mutate({ referenceId });
@@ -934,9 +911,9 @@ function ProjectWorkspace() {
     const meta = panel.metadata;
     setRegeneratingPanelId(panel.id);
     setPrompt(panel.prompt);
-    setEnhancePrompt(meta?.enhanceEnabled ?? true);
     setUseContext(meta?.useContext ?? true);
-    setIncludePreviousImage(meta?.includePreviousImage ?? false);
+    setReferencePanelId(meta?.referencePanelId ?? null);
+    setQuantity(meta?.quantity ?? 1);
     setSelectedImageIds(meta?.selectedImageIds ?? null);
     openPanelModal();
   };
@@ -1017,6 +994,38 @@ function ProjectWorkspace() {
 
   return (
     <>
+      {/* ── Welcome modal ─────────────────────────── */}
+      <Modal
+        opened={welcomeOpened}
+        onClose={handleDismissWelcome}
+        title={
+          <Group gap="xs">
+            <IconInfoCircle size={20} />
+            <Text fw={600}>Welcome to Comic Creator (Beta)!</Text>
+          </Group>
+        }
+        centered
+        size="md"
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            This is an early version with a limited feature set, and you may run into some bumps
+            along the way.
+          </Text>
+          <Text size="sm">
+            We&apos;re already working on a large set of improvements and will be releasing updates
+            rapidly.
+          </Text>
+          <Text size="sm" c="dimmed">
+            As this is an experimental feature, refunds won&apos;t be issued for Beta-related
+            issues.
+          </Text>
+          <Group justify="flex-end" mt="sm">
+            <Button onClick={handleDismissWelcome}>Got it!</Button>
+          </Group>
+        </Stack>
+      </Modal>
+
       <Meta title={`${project.name} - Civitai Comics`} canonical={`/comics/project/${projectId}`} />
 
       <Container size="xl" py="xl">
@@ -1099,15 +1108,27 @@ function ProjectWorkspace() {
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarTitle}>
                 <span>References</span>
-                <ActionIcon
-                  variant="subtle"
-                  size="sm"
-                  component={Link}
-                  href={`/comics/project/${projectId}/character`}
-                  color="yellow"
-                >
-                  <IconPlus size={16} />
-                </ActionIcon>
+                <Group gap={4}>
+                  <Tooltip label="Import from other projects" withArrow>
+                    <ActionIcon
+                      variant="subtle"
+                      size="sm"
+                      onClick={openImportRefs}
+                      color="blue"
+                    >
+                      <IconDownload size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <ActionIcon
+                    variant="subtle"
+                    size="sm"
+                    component={Link}
+                    href={`/comics/project/${projectId}/character`}
+                    color="yellow"
+                  >
+                    <IconPlus size={16} />
+                  </ActionIcon>
+                </Group>
               </div>
 
               <ScrollArea.Autosize mah="calc(100vh - 240px)" scrollbarSize={6}>
@@ -1119,13 +1140,22 @@ function ProjectWorkspace() {
                         References help maintain character consistency across panels. Optional — you
                         can generate panels without them.
                       </Text>
-                      <button
-                        className={styles.gradientBtn}
-                        onClick={() => router.push(`/comics/project/${projectId}/character`)}
-                      >
-                        <IconPlus size={14} />
-                        Add Reference
-                      </button>
+                      <Group gap={8} justify="center">
+                        <button
+                          className={styles.gradientBtn}
+                          onClick={() => router.push(`/comics/project/${projectId}/character`)}
+                        >
+                          <IconPlus size={14} />
+                          Add Reference
+                        </button>
+                        <button
+                          className={styles.gradientBtn}
+                          onClick={openImportRefs}
+                        >
+                          <IconDownload size={14} />
+                          Import
+                        </button>
+                      </Group>
                     </div>
                   ) : (
                     allReferences.map((ref) => (
@@ -1134,7 +1164,8 @@ function ProjectWorkspace() {
                         character={ref}
                         projectId={projectId}
                         referenceImageMap={referenceImageMap}
-                        onDelete={handleDeleteReference}
+                        onRemoveFromProject={handleRemoveReferenceFromProject}
+                        onDeletePermanently={handleDeleteReferencePermanently}
                         getStatusDotClass={getStatusDotClass}
                         getStatusLabel={getStatusLabel}
                       />
@@ -1142,6 +1173,12 @@ function ProjectWorkspace() {
                   )}
                 </Stack>
               </ScrollArea.Autosize>
+
+              <ImportReferencesModal
+                projectId={projectId}
+                opened={importRefsOpened}
+                onClose={closeImportRefs}
+              />
             </div>
 
             {/* ── Sidebar: Chapters ───────────────── */}
@@ -1261,6 +1298,52 @@ function ProjectWorkspace() {
                               </div>
                             </div>
                             <span className={styles.chapterItemActions}>
+                              <Tooltip
+                                label={
+                                  chapter.panels.some(
+                                    (p) =>
+                                      p.status !== 'Ready' && p.status !== 'Failed'
+                                  )
+                                    ? 'Wait for all panels to complete before duplicating'
+                                    : 'Duplicate chapter'
+                                }
+                                withArrow
+                                position="top"
+                              >
+                                <ActionIcon
+                                  variant="transparent"
+                                  size="xs"
+                                  c="dimmed"
+                                  disabled={
+                                    chapter.panels.some(
+                                      (p) =>
+                                        p.status !== 'Ready' && p.status !== 'Failed'
+                                    ) ||
+                                    (duplicateChapterMutation.isPending &&
+                                      duplicateChapterMutation.variables?.chapterPosition === chapter.position)
+                                  }
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    openConfirmModal({
+                                      title: 'Duplicate chapter',
+                                      children: `This will create a copy of "${chapter.name}" with all its panels. Continue?`,
+                                      labels: { confirm: 'Duplicate', cancel: 'Cancel' },
+                                      onConfirm: () =>
+                                        duplicateChapterMutation.mutate({
+                                          projectId,
+                                          chapterPosition: chapter.position,
+                                        }),
+                                    });
+                                  }}
+                                >
+                                  {duplicateChapterMutation.isPending &&
+                                  duplicateChapterMutation.variables?.chapterPosition === chapter.position ? (
+                                    <Loader size={12} />
+                                  ) : (
+                                    <IconCopy size={12} />
+                                  )}
+                                </ActionIcon>
+                              </Tooltip>
                               <ActionIcon
                                 variant="transparent"
                                 size="xs"
@@ -1452,6 +1535,7 @@ function ProjectWorkspace() {
                       <SortablePanel key={panel.id} id={panel.id}>
                         <PanelCard
                           panel={panel}
+                          projectId={projectId}
                           position={index + 1}
                           referenceNames={
                             (panel.references ?? [])
@@ -1462,13 +1546,25 @@ function ProjectWorkspace() {
                           }
                           onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
                           onRegenerate={() => handleRegenerate(panel as any)}
+                          onDuplicate={() =>
+                            openConfirmModal({
+                              title: 'Duplicate panel',
+                              children: 'This will create a copy of this panel. Continue?',
+                              labels: { confirm: 'Duplicate', cancel: 'Cancel' },
+                              onConfirm: () => duplicatePanelMutation.mutate({ panelId: panel.id }),
+                            })
+                          }
+                          isDuplicating={
+                            duplicatePanelMutation.isPending &&
+                            duplicatePanelMutation.variables?.panelId === panel.id
+                          }
                           onInsertAfter={() => {
                             setInsertAtPosition(index + 1);
                             openPanelModal();
                           }}
                           onClick={() => setDetailPanelId(panel.id)}
                           onIterativeEdit={() => handleOpenIterativeEditor({ ...panel, position: index } as any)}
-                          onRatingChange={() => void utils.comics.getProject.invalidate({ id: projectId })}
+                          onRatingChange={() => refetchRef.current()}
                         />
                       </SortablePanel>
                     ))}
@@ -1511,6 +1607,14 @@ function ProjectWorkspace() {
         referenceNameMap={referenceNameMap}
         onRegenerate={handleDrawerRegenerate}
         onInsertAfter={handleDrawerInsertAfter}
+        onDuplicate={(panelId) =>
+          openConfirmModal({
+            title: 'Duplicate panel',
+            children: 'This will create a copy of this panel. Continue?',
+            labels: { confirm: 'Duplicate', cancel: 'Cancel' },
+            onConfirm: () => duplicatePanelMutation.mutate({ panelId }),
+          })
+        }
         onDelete={(panelId) => deletePanelMutation.mutate({ panelId })}
         onIterativeEdit={(panel) => {
           setDetailPanelId(null);
@@ -1526,12 +1630,22 @@ function ProjectWorkspace() {
         onClose={handlePanelModalClose}
         prompt={prompt}
         setPrompt={setPrompt}
-        enhancePrompt={enhancePrompt}
-        setEnhancePrompt={setEnhancePrompt}
         useContext={useContext}
         setUseContext={setUseContext}
-        includePreviousImage={includePreviousImage}
-        setIncludePreviousImage={setIncludePreviousImage}
+        projectId={projectId}
+        chapterPosition={activeChapter?.position ?? 0}
+        referencePanelId={referencePanelId}
+        setReferencePanelId={setReferencePanelId}
+        availablePanels={
+          (activeChapter?.panels ?? [])
+            .map((p, idx) => ({ ...p, idx }))
+            .filter((p) => p.status === 'Ready' && p.imageUrl)
+            .map((p) => ({ id: p.id, imageUrl: p.imageUrl!, position: p.idx }))
+        }
+        layoutImagePath={layoutImagePath}
+        setLayoutImagePath={setLayoutImagePath}
+        quantity={quantity}
+        setQuantity={setQuantity}
         aspectRatio={aspectRatio}
         setAspectRatio={setAspectRatio}
         selectedImageIds={selectedImageIds}
@@ -1565,12 +1679,11 @@ function ProjectWorkspace() {
         references={mentionRefs}
         planCost={planCost}
         panelCost={panelCost}
-        enhanceCost={enhanceCost}
         effectiveModel={effectiveModel}
         activeAspectRatios={activeAspectRatios}
         onModelChange={handleModelChange}
-        onPlanPanels={(story) =>
-          planPanelsMutation.mutate({ projectId, storyDescription: story })
+        onPlanPanels={(story, panelCount) =>
+          planPanelsMutation.mutate({ projectId, storyDescription: story, panelCount })
         }
         isPlanningPanels={planPanelsMutation.isPending}
         planError={planPanelsMutation.isError ? (planPanelsMutation.error?.message ?? 'Failed to plan panels') : null}
@@ -1581,7 +1694,6 @@ function ProjectWorkspace() {
             chapterName: data.chapterName,
             storyDescription: data.storyDescription,
             panels: data.panels,
-            enhance: data.enhance,
             aspectRatio: data.aspectRatio,
             baseModel: generationModel,
           })
