@@ -123,7 +123,7 @@ import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -158,6 +158,7 @@ import {
   Availability,
   BlockImageReason,
   CollectionMode,
+  AppealStatus,
   EntityType,
   ImageIngestionStatus,
   MediaType,
@@ -467,6 +468,19 @@ export async function handleUnblockImages({
       });
     }
   });
+
+  // Resolve any pending appeals for images that were in appeal review
+  const appealImageIds = images.filter((img) => img.needsReview === 'appeal').map((img) => img.id);
+
+  if (appealImageIds.length > 0) {
+    await resolveEntityAppeal({
+      ids: appealImageIds,
+      entityType: EntityType.Image,
+      status: AppealStatus.Approved,
+      userId: moderatorId,
+    });
+  }
+
   return images;
 }
 
