@@ -11,7 +11,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { getCanAuctionForGeneration } from '~/shared/constants/base-model.constants';
+import { getCanAuctionForGeneration } from '~/shared/constants/basemodel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { AuctionType, Availability, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';

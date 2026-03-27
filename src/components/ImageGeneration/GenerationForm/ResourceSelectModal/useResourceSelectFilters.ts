@@ -5,7 +5,6 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { GetFeaturedModels } from '~/server/services/model.service';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -131,11 +130,12 @@ export function useResourceSelectMeiliFilters({
 
       // On the featured tab, skip baseModel for all types —
       // the AND filter with featured IDs restricts results instead
-      const _baseModels = featuredByType.size > 0
-        ? []
-        : filters.baseModels.length > 0
-        ? filters.baseModels.filter((baseModel) => baseModels.includes(baseModel))
-        : baseModels;
+      const _baseModels =
+        featuredByType.size > 0
+          ? []
+          : filters.baseModels.length > 0
+          ? filters.baseModels.filter((baseModel) => baseModels.includes(baseModel))
+          : baseModels;
 
       if (_type) {
         if (!_baseModels.length) or.push(`type = ${_type}`);

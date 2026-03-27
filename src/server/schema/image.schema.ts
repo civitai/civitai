@@ -17,8 +17,8 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
+import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
-import { baseModelGroups, baseModels } from '~/shared/constants/base-model.constants';
 import { usernameSchema } from '~/shared/zod/username.schema';
 
 const stringToNumber = z.coerce.number().optional();
@@ -110,7 +110,7 @@ export const civitaiResourceSchema = z.object({
 });
 
 export const imageGenerationSchema = z.object({
-  baseModel: z.enum(baseModelGroups).optional(),
+  baseModel: z.string().optional(),
   prompt: undefinedString,
   negativePrompt: undefinedString,
   cfgScale: stringToNumber,
@@ -317,7 +317,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
     // - from imagesQueryParamSchema
-    baseModels: z.enum(baseModels).array().optional(),
+    baseModels: z.string().array().optional(),
     collectionId: z.number().optional(),
     collectionTagId: z.number().optional(),
     hideAutoResources: z.boolean().optional(),

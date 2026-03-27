@@ -9,7 +9,7 @@ import { trpc } from '~/utils/trpc';
 import { getBaseModelFromResources } from '~/shared/constants/generation.constants';
 import { getVideoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 
 const simpleMetaProps = {
   comfy: 'Workflow',

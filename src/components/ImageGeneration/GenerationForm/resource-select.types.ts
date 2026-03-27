@@ -1,10 +1,10 @@
 import * as z from 'zod';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 
 export type ResourceSelectOptions = {
   canGenerate?: boolean;
