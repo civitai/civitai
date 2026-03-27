@@ -39,8 +39,8 @@ const BUZZ_TO_TIER: Record<number, string> = {
 };
 
 /**
- * Fetches historical prepaid buzz deliveries with manual "load more" pagination.
- * First page loads automatically; subsequent pages require user action.
+ * Fetches historical prepaid buzz deliveries with fully manual pagination.
+ * Nothing fetches until the user clicks "Load history" — every page requires user action.
  */
 function useHistoricalPrepaidDeliveries({
   subscription,
@@ -73,8 +73,9 @@ function useHistoricalPrepaidDeliveries({
   const [allTransactions, setAllTransactions] = useState<RawTx[]>([]);
   const [cursor, setCursor] = useState<Date | undefined>(undefined);
   const [hasMore, setHasMore] = useState(true);
-  // Only the first page fetches automatically; further pages need user trigger
-  const [fetchEnabled, setFetchEnabled] = useState(true);
+  // Nothing fetches until the user explicitly triggers it
+  const [fetchEnabled, setFetchEnabled] = useState(false);
+  const hasStarted = useRef(false);
 
   const { data: txData, isLoading: pageLoading } = trpc.buzz.getUserTransactions.useQuery(
     {
@@ -110,6 +111,7 @@ function useHistoricalPrepaidDeliveries({
   }, [txData]);
 
   const loadMore = useCallback(() => {
+    hasStarted.current = true;
     setFetchEnabled(true);
   }, []);
 
@@ -161,7 +163,8 @@ function useHistoricalPrepaidDeliveries({
   return {
     history,
     isLoading: isCivitai && pageLoading && fetchEnabled,
-    hasMore: isCivitai && hasMore && !fetchEnabled,
+    // Show the button when: user hasn't started yet, OR there are more pages to fetch
+    hasMore: isCivitai && ((!hasStarted.current) || (hasMore && !fetchEnabled)),
     loadMore,
   };
 }
@@ -370,8 +373,8 @@ export function PrepaidTokenOverview({
   const unlockedBuzz = unlocked.reduce((sum, t) => sum + t.buzzAmount, 0);
   const claimedBuzz = claimed.reduce((sum, t) => sum + t.buzzAmount, 0);
 
-  // Don't render empty shell — wait for history to load or show nothing
-  const hasAnything = unlocked.length > 0 || locked.length > 0 || claimed.length > 0 || historyLoading;
+  // Don't render empty shell — but always show if there's a "load history" option available
+  const hasAnything = unlocked.length > 0 || locked.length > 0 || claimed.length > 0 || hasMoreHistory || historyLoading;
   if (!hasAnything) return null;
 
   return (
@@ -476,7 +479,7 @@ export function PrepaidTokenOverview({
       )}
 
       {/* Claimed Section (Collapsed) */}
-      {(claimed.length > 0 || historyLoading) && (
+      {(claimed.length > 0 || hasMoreHistory || historyLoading) && (
         <Stack gap="xs">
           <UnstyledButton onClick={() => setClaimedOpen((o) => !o)}>
             <Card p="sm" radius="md" withBorder>
@@ -485,7 +488,11 @@ export function PrepaidTokenOverview({
                   {claimedOpen ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
                   <IconCircleCheck size={14} color="var(--mantine-color-yellow-5)" />
                   <Text size="sm" fw={600} c="yellow">
-                    {historyLoading ? 'Loading history...' : `${claimed.length} Claimed`}
+                    {historyLoading
+                      ? 'Loading history...'
+                      : claimed.length > 0
+                        ? `${claimed.length} Claimed`
+                        : 'Claim History'}
                   </Text>
                   {historyLoading && <Loader size={14} color="yellow" />}
                 </Group>
@@ -519,7 +526,7 @@ export function PrepaidTokenOverview({
                   loading={historyLoading}
                   disabled={historyLoading}
                 >
-                  Load more history
+                  {historicalDeliveries.length === 0 ? 'Load history' : 'Load more'}
                 </Button>
               </Group>
             )}
