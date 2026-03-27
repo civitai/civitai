@@ -39,6 +39,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
+import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
 import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
@@ -469,6 +470,8 @@ export default function UserMembership() {
                   />
                 );
               })()}
+
+              {isCivitaiProvider && <PurchasedCodesCard defaultFilter="Membership" />}
 
               {benefits && (
                 <div

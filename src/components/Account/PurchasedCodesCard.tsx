@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   Text,
   Stack,
@@ -13,6 +13,7 @@ import {
   Tooltip,
   Pagination,
   Skeleton,
+  SegmentedControl,
   UnstyledButton,
 } from '@mantine/core';
 import buzzClasses from '~/components/Buzz/buzz.module.scss';
@@ -23,6 +24,12 @@ import { showSuccessNotification, showErrorNotification } from '~/utils/notifica
 
 const DEFAULT_PAGE_SIZE = 10;
 const COMPACT_PAGE_SIZE = 3;
+
+const MEMBERSHIP_BUZZ_PER_MONTH: Record<string, number> = {
+  bronze: 10000,
+  silver: 25000,
+  gold: 50000,
+};
 
 type PurchasedCode = {
   code: string;
@@ -140,20 +147,109 @@ function CodeRow({ item, onInvalidate }: CodeRowProps) {
   );
 }
 
-export function PurchasedCodesCard({ compact }: { compact?: boolean } = {}) {
+/** Summarizes membership codes: groups by tier+duration and totals buzz payments. */
+function MembershipSummary({ codes }: { codes: PurchasedCode[] }) {
+  const summary = useMemo(() => {
+    // Group redeemed membership codes by tier+unitValue
+    const groups = new Map<string, { tier: string; months: number; count: number }>();
+    let totalBuzzPayments = 0;
+    let totalBuzz = 0;
+
+    for (const code of codes) {
+      if (code.type !== 'Membership' || !code.redeemedAt) continue;
+      const tier =
+        (code.price?.product?.metadata as { tier?: string })?.tier?.toLowerCase() ?? 'bronze';
+      const key = `${tier}-${code.unitValue}`;
+      const existing = groups.get(key);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        groups.set(key, { tier, months: code.unitValue, count: 1 });
+      }
+      totalBuzzPayments += code.unitValue;
+      totalBuzz += code.unitValue * (MEMBERSHIP_BUZZ_PER_MONTH[tier] ?? 10000);
+    }
+
+    return { groups: Array.from(groups.values()), totalBuzzPayments, totalBuzz };
+  }, [codes]);
+
+  if (summary.groups.length === 0) return null;
+
+  return (
+    <Paper
+      p="sm"
+      radius="sm"
+      withBorder
+      className="bg-blue-50/50 dark:bg-blue-500/[0.06] border-blue-200 dark:border-blue-500/20"
+    >
+      <Stack gap={4}>
+        <Text size="xs" fw={600} c="blue">
+          Membership Summary (Redeemed)
+        </Text>
+        {summary.groups.map(({ tier, months, count }) => (
+          <Text key={`${tier}-${months}`} size="xs">
+            {count} × {months}-Month{' '}
+            <Text span tt="capitalize" fw={600} inherit>
+              {tier}
+            </Text>{' '}
+            Membership = {count * months} Buzz payment{count * months !== 1 ? 's' : ''}
+          </Text>
+        ))}
+        <Text size="xs" fw={600} mt={2}>
+          Total: {summary.totalBuzzPayments} Buzz payment
+          {summary.totalBuzzPayments !== 1 ? 's' : ''} ({summary.totalBuzz.toLocaleString()} Buzz)
+        </Text>
+      </Stack>
+    </Paper>
+  );
+}
+
+type FilterType = 'all' | 'Membership' | 'Buzz';
+
+export function PurchasedCodesCard({
+  compact,
+  defaultFilter = 'all',
+}: { compact?: boolean; defaultFilter?: FilterType } = {}) {
   const utils = trpc.useUtils();
   const [page, setPage] = useState(1);
+  const [filter, setFilter] = useState<FilterType>(defaultFilter);
   const pageSize = compact ? COMPACT_PAGE_SIZE : DEFAULT_PAGE_SIZE;
 
   const { data, isLoading } = trpc.redeemableCode.getMyPurchasedCodes.useQuery();
-  const codes = data ?? [];
+  const allCodes = data ?? [];
+
+  // Check if we have multiple code types to show the filter
+  const hasMembership = allCodes.some((c) => c.type === 'Membership');
+  const hasBuzz = allCodes.some((c) => c.type === 'Buzz');
+  const showFilter = hasMembership && hasBuzz;
+
+  const codes = filter === 'all' ? allCodes : allCodes.filter((c) => c.type === filter);
 
   const totalPages = Math.ceil(codes.length / pageSize);
   const paginatedCodes = codes.slice((page - 1) * pageSize, page * pageSize);
 
+  const handleFilterChange = (value: string) => {
+    setFilter(value as FilterType);
+    setPage(1);
+  };
+
   return (
     <Paper className={buzzClasses.tileCard} id="purchased-codes" h="100%" p="lg" radius="md">
-      <Title order={4}>Purchased Codes</Title>
+      <Group justify="space-between" align="center" wrap="nowrap">
+        <Title order={4}>Purchased Codes</Title>
+        {showFilter && !isLoading && (
+          <SegmentedControl
+            size="xs"
+            value={filter}
+            onChange={handleFilterChange}
+            data={[
+              { label: 'All', value: 'all' },
+              { label: 'Membership', value: 'Membership' },
+              { label: 'Buzz', value: 'Buzz' },
+            ]}
+          />
+        )}
+      </Group>
       <Box mt="md">
         {isLoading ? (
           <Stack gap="xs">
@@ -183,14 +279,17 @@ export function PurchasedCodesCard({ compact }: { compact?: boolean } = {}) {
           <Stack align="center" gap={6} py="xl">
             <IconTicket size={32} stroke={1.5} style={{ opacity: 0.3 }} />
             <Text size="sm" fw={500} c="white">
-              No codes yet
+              {filter === 'all' ? 'No codes yet' : `No ${filter.toLowerCase()} codes`}
             </Text>
             <Text size="xs" c="dimmed">
-              Redeem a code above to see it here
+              {filter === 'all'
+                ? 'Redeem a code above to see it here'
+                : 'Try a different filter'}
             </Text>
           </Stack>
-        ) : paginatedCodes.length > 0 ? (
+        ) : (
           <Stack gap="xs">
+            {filter === 'Membership' && <MembershipSummary codes={allCodes} />}
             {paginatedCodes.map((item) => (
               <CodeRow
                 key={item.code}
@@ -204,7 +303,7 @@ export function PurchasedCodesCard({ compact }: { compact?: boolean } = {}) {
               </Center>
             )}
           </Stack>
-        ) : null}
+        )}
       </Box>
     </Paper>
   );
