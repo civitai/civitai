@@ -1,17 +1,19 @@
 import {
   ActionIcon,
   Alert,
+  Box,
   Button,
   Group,
   Loader,
   Modal,
+  NumberInput,
   ScrollArea,
   Select,
   Stack,
-  Switch,
   Text,
   TextInput,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
@@ -59,6 +61,66 @@ const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageS
   ssr: false,
 });
 
+function ReferencePanelPicker({
+  panels,
+  selectedId,
+  onSelect,
+}: {
+  panels: { id: number; imageUrl: string; position: number }[];
+  selectedId: number | null;
+  onSelect: (id: number | null) => void;
+}) {
+  return (
+    <Box>
+      <Text size="sm" fw={500} mb={4}>
+        Reference a panel image
+      </Text>
+      <Text size="xs" c="dimmed" mb={8}>
+        Click a panel to include its image as a reference for generation. Click again to deselect.
+      </Text>
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {panels.map((p) => (
+          <UnstyledButton
+            key={p.id}
+            onClick={() => onSelect(selectedId === p.id ? null : p.id)}
+            style={{
+              width: 56,
+              height: 56,
+              minWidth: 56,
+              borderRadius: 6,
+              overflow: 'hidden',
+              border: selectedId === p.id ? '2px solid var(--mantine-color-blue-5)' : '2px solid transparent',
+              position: 'relative',
+            }}
+          >
+            <img
+              src={getEdgeUrl(p.imageUrl, { width: 120 })}
+              alt={`Panel #${p.position + 1}`}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+            <span
+              style={{
+                position: 'absolute',
+                bottom: 2,
+                right: 2,
+                fontSize: 10,
+                fontWeight: 700,
+                color: '#fff',
+                background: 'rgba(0,0,0,0.6)',
+                borderRadius: 3,
+                padding: '0 3px',
+                lineHeight: '14px',
+              }}
+            >
+              #{p.position + 1}
+            </span>
+          </UnstyledButton>
+        ))}
+      </div>
+    </Box>
+  );
+}
+
 interface PanelModalProps {
   opened: boolean;
   onClose: () => void;
@@ -70,8 +132,11 @@ interface PanelModalProps {
   // Project context for enhance-in-place
   projectId: number;
   chapterPosition: number;
-  includePreviousImage: boolean;
-  setIncludePreviousImage: (val: boolean) => void;
+  referencePanelId: number | null;
+  setReferencePanelId: (id: number | null) => void;
+  availablePanels: { id: number; imageUrl: string; position: number }[];
+  quantity: number;
+  setQuantity: (val: number) => void;
   aspectRatio: string;
   setAspectRatio: (val: string) => void;
   selectedImageIds: number[] | null;
@@ -127,8 +192,11 @@ export function PanelModal({
   setUseContext,
   projectId,
   chapterPosition,
-  includePreviousImage,
-  setIncludePreviousImage,
+  referencePanelId,
+  setReferencePanelId,
+  availablePanels,
+  quantity,
+  setQuantity,
   aspectRatio,
   setAspectRatio,
   selectedImageIds,
@@ -640,12 +708,11 @@ export function PanelModal({
             onPendingChange={setIsEnhancing}
           />
 
-          {activeChapterPanelCount > 0 && insertAtPosition !== 0 && (
-            <Switch
-              label="Reference previous panel image"
-              description="Include the previous panel's image as a reference for generation"
-              checked={includePreviousImage}
-              onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
+          {availablePanels.length > 0 && (
+            <ReferencePanelPicker
+              panels={availablePanels}
+              selectedId={referencePanelId}
+              onSelect={setReferencePanelId}
             />
           )}
 
@@ -672,6 +739,15 @@ export function PanelModal({
             aspectRatios={activeAspectRatios}
             description="Controls the panel dimensions. Portrait (3:4) works best for most comic panels."
           />
+          <NumberInput
+            label="Images per generation"
+            description="Generate multiple images to pick the best one (1-4)"
+            value={quantity}
+            onChange={(val) => setQuantity(typeof val === 'number' ? val : 1)}
+            min={1}
+            max={4}
+            size="sm"
+          />
 
           {/* Queue full warning */}
           {queueFull && (
@@ -697,7 +773,7 @@ export function PanelModal({
             >
               <BuzzTransactionButton
                 buzzAmount={effectivePanelCost}
-                label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : 'Generate'}
+                label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : quantity > 1 ? `Generate ${quantity} images` : 'Generate'}
                 loading={isSubmitting || isCreatePending}
                 disabled={!prompt.trim() || !costReady || queueFull || generationDisabled || isEnhancing}
                 onPerformTransaction={onGeneratePanel}
@@ -839,12 +915,11 @@ export function PanelModal({
                 onPendingChange={setIsEnhancing}
               />
 
-              {activeChapterPanelCount > 0 && insertAtPosition !== 0 && (
-                <Switch
-                  label="Reference previous panel image"
-                  description="Include the previous panel's image as a reference for generation"
-                  checked={includePreviousImage}
-                  onChange={(e) => setIncludePreviousImage(e.currentTarget.checked)}
+              {availablePanels.length > 0 && (
+                <ReferencePanelPicker
+                  panels={availablePanels}
+                  selectedId={referencePanelId}
+                  onSelect={setReferencePanelId}
                 />
               )}
 

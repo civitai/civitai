@@ -1,10 +1,12 @@
-import { ActionIcon, Badge, Menu, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Loader, Menu, Text, Tooltip } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconCopy,
   IconDotsVertical,
   IconEye,
   IconMessages,
   IconPhoto,
+  IconPhotoSearch,
   IconPlus,
   IconRefreshDot,
   IconTrash,
@@ -12,7 +14,7 @@ import {
 } from '@tabler/icons-react';
 import { CSS } from '@dnd-kit/utilities';
 import { useSortable } from '@dnd-kit/sortable';
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
@@ -20,6 +22,7 @@ import { NsfwLevel, SignalMessages } from '~/server/common/enums';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
+import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const nsfwBadgeColors: Record<number, string> = {
@@ -51,6 +54,7 @@ export interface PanelCardProps {
     status: string;
     workflowId: string | null;
     errorMessage: string | null;
+    metadata?: any;
     image?: { nsfwLevel: number } | null;
   };
   projectId: number;
@@ -58,6 +62,8 @@ export interface PanelCardProps {
   referenceNames: string[];
   onDelete: () => void;
   onRegenerate: () => void;
+  onDuplicate: () => void;
+  isDuplicating?: boolean;
   onInsertAfter: () => void;
   onClick: () => void;
   onIterativeEdit?: () => void;
@@ -71,6 +77,8 @@ export function PanelCard({
   referenceNames,
   onDelete,
   onRegenerate,
+  onDuplicate,
+  isDuplicating,
   onInsertAfter,
   onClick,
   onIterativeEdit,
@@ -80,6 +88,14 @@ export function PanelCard({
   const utils = trpc.useUtils();
 
   const isActive = status === 'Generating' || status === 'Pending' || status === 'Enqueued';
+
+  // Initialize candidates from panel metadata (persists across page loads for Ready panels)
+  const metaCandidates = panel.metadata?.candidateImages;
+  const initialCandidates = Array.isArray(metaCandidates)
+    ? metaCandidates.map((c: any) => (typeof c === 'string' ? c : c.key))
+    : null;
+  const [candidateImages, setCandidateImages] = useState<string[] | null>(initialCandidates);
+  const [candidateModalOpen, setCandidateModalOpen] = useState(false);
 
   // Patch this panel's data directly in the getProject cache (no full refetch needed)
   const patchPanel = useCallback(
@@ -102,30 +118,49 @@ export function PanelCard({
     [utils, projectId, panel.id]
   );
 
+  const selectPanelImageMutation = trpc.comics.selectPanelImage.useMutation({
+    onSuccess: (data) => {
+      setCandidateModalOpen(false);
+      patchPanel({ status: data.status, imageUrl: data.imageUrl });
+    },
+    onError: () => {
+      // Selection failed — modal stays open so user can retry
+    },
+  });
+
   // Poll server to check orchestrator status and download image when ready
+  const isPollingRef = useRef(false);
   const pollOnce = useCallback(async () => {
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
     try {
-      console.log('Start polling panel status for panel', panel.id);
       const result = await utils.comics.pollPanelStatus.fetch({ panelId: panel.id }, {
         cacheTime: 0,
-        
-      });
-      console.log('Polled panel status for panel', panel.id, ':', result);
+      }) as any;
+      if (result.candidateImages && result.candidateImages.length > 1) {
+        setCandidateImages(result.candidateImages);
+        patchPanel({ status: 'AwaitingSelection' });
+        return;
+      }
       if (result.status === 'Ready' || result.status === 'Failed') {
         patchPanel({ status: result.status, imageUrl: result.imageUrl });
       }
     } catch {
       /* ignore */
+    } finally {
+      isPollingRef.current = false;
     }
   }, [utils, panel.id, patchPanel]);
 
-  // Self-contained polling: when this panel is actively generating, poll every 5s
+  // Self-contained polling: when this panel is actively generating, poll periodically.
+  // Stop once candidates are available (user needs to pick) or panel reaches terminal state.
+  const hasCandidates = candidateImages != null && candidateImages.length > 1;
   useEffect(() => {
-    if (!isActive) return;
+    if (!isActive || hasCandidates) return;
     void pollOnce();
     const interval = setInterval(pollOnce, 25_000);
     return () => clearInterval(interval);
-  }, [isActive, pollOnce]);
+  }, [isActive, hasCandidates, pollOnce]);
 
   // Listen for ComicPanelUpdate signal targeting this specific panel
   useSignalConnection(
@@ -133,11 +168,16 @@ export function PanelCard({
     useCallback(
       (data: { panelId: number; projectId: number; status: string; imageUrl?: string }) => {
         if (data.panelId !== panel.id) return;
+        if (data.status === 'AwaitingSelection') {
+          // Candidates are ready — poll once to get the image keys, then stop
+          void pollOnce();
+          return;
+        }
         if (data.status === 'Ready' || data.status === 'Failed') {
           patchPanel({ status: data.status, imageUrl: data.imageUrl });
         }
       },
-      [panel.id, patchPanel]
+      [panel.id, patchPanel, pollOnce]
     )
   );
 
@@ -150,7 +190,6 @@ export function PanelCard({
         if (data.$type !== 'step' || !isActive || !panel.workflowId) return;
         if (data.workflowId !== panel.workflowId) return;
         if (data.status !== 'succeeded' && data.status !== 'failed') return;
-        console.log('Received TextToImageUpdate signal for panel', panel.id, 'with status', data.status);
         void pollOnce();
       },
       [isActive, panel.workflowId, pollOnce]
@@ -162,8 +201,25 @@ export function PanelCard({
   const promptPreview = prompt?.length > 80 ? `${prompt.slice(0, 80)}...` : prompt;
 
   return (
+    <>
     <Tooltip label={promptPreview} disabled={!prompt} withArrow position="top" multiline maw={300} openDelay={400}>
-    <div className={styles.panelCard} onClick={onClick}>
+    <div
+      className={styles.panelCard}
+      onClick={onClick}
+      style={hasCandidates && !imageUrl ? {
+        outline: '2px solid var(--mantine-color-yellow-6)',
+        outlineOffset: -2,
+        animation: 'pulse-outline 2s ease-in-out infinite',
+      } : undefined}
+    >
+      {isDuplicating && (
+        <div
+          className="absolute inset-0 z-10 flex items-center justify-center rounded-lg"
+          style={{ background: 'rgba(0,0,0,0.5)' }}
+        >
+          <Loader size="sm" color="yellow" />
+        </div>
+      )}
       {imageUrl ? (
         <>
           <img
@@ -229,6 +285,17 @@ export function PanelCard({
                         Iterative Edit
                       </Menu.Item>
                     )}
+                    {status === 'Ready' && candidateImages && candidateImages.length > 1 && (
+                      <Menu.Item
+                        leftSection={<IconPhotoSearch size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          setCandidateModalOpen(true);
+                        }}
+                      >
+                        Change Image
+                      </Menu.Item>
+                    )}
                     {(status === 'Ready' || status === 'Failed') && (
                       <Menu.Item
                         leftSection={<IconRefreshDot size={14} />}
@@ -238,6 +305,17 @@ export function PanelCard({
                         }}
                       >
                         Regenerate
+                      </Menu.Item>
+                    )}
+                    {status === 'Ready' && imageUrl && (
+                      <Menu.Item
+                        leftSection={<IconCopy size={14} />}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          onDuplicate();
+                        }}
+                      >
+                        Duplicate
                       </Menu.Item>
                     )}
                     <Menu.Item
@@ -281,6 +359,28 @@ export function PanelCard({
               )}
               <p className={styles.panelPrompt}>{prompt}</p>
             </div>
+          </div>
+        </>
+      ) : candidateImages && candidateImages.length > 1 ? (
+        <>
+          <div
+            className={styles.panelEmpty}
+            style={{ cursor: 'pointer', color: 'var(--mantine-color-yellow-5)' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              setCandidateModalOpen(true);
+            }}
+          >
+            <IconPhotoSearch size={28} />
+            <Text size="xs" fw={600} c="yellow">
+              {candidateImages.length} images ready
+            </Text>
+            <Text size="xs" c="dimmed">
+              Click to choose
+            </Text>
+          </div>
+          <div className="absolute top-2 left-2">
+            <span className={styles.panelNumber}>#{position}</span>
           </div>
         </>
       ) : (
@@ -373,6 +473,19 @@ export function PanelCard({
       )}
     </div>
     </Tooltip>
+    {candidateImages && candidateImages.length > 1 && (
+      <CandidateImageModal
+        opened={candidateModalOpen}
+        onClose={() => setCandidateModalOpen(false)}
+        candidates={candidateImages}
+        currentImageUrl={imageUrl}
+        onConfirm={(key) =>
+          selectPanelImageMutation.mutate({ panelId: panel.id, selectedImageKey: key })
+        }
+        isSelecting={selectPanelImageMutation.isPending}
+      />
+    )}
+    </>
   );
 }
 

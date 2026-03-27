@@ -18,6 +18,7 @@ import {
   IconArrowLeft,
   IconBook,
   IconCalendar,
+  IconCopy,
   IconEye,
   IconEyeOff,
   IconGripVertical,
@@ -113,7 +114,8 @@ function ProjectWorkspace() {
   // ── Core shared state ──
   const [prompt, setPrompt] = useState('');
   const [useContext, setUseContext] = useState(true);
-  const [includePreviousImage, setIncludePreviousImage] = useState(false);
+  const [referencePanelId, setReferencePanelId] = useState<number | null>(null);
+  const [quantity, setQuantity] = useState(1);
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [generationModel, setGenerationModel] = useState<
     'NanoBanana' | 'Flux2' | 'Seedream' | 'SeedreamLite' | 'OpenAI' | 'Qwen' | 'Grok' | null
@@ -286,7 +288,7 @@ function ProjectWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mentionedIdKey]);
 
-  const reservedSlots = useMemo(() => (includePreviousImage ? 1 : 0), [includePreviousImage]);
+  const reservedSlots = useMemo(() => (referencePanelId ? 1 : 0), [referencePanelId]);
   const refImageBudget = maxReferenceImages - reservedSlots;
 
   const needsImageSelection =
@@ -303,6 +305,7 @@ function ProjectWorkspace() {
       baseModel: effectiveModel,
       referenceIds: mentionedReferenceIds,
       selectedImageIds: selectedImageIds ?? undefined,
+      quantity,
     },
     { staleTime: 30_000, retry: 2 }
   );
@@ -540,7 +543,18 @@ function ProjectWorkspace() {
     },
   });
 
+  const duplicatePanelMutation = trpc.comics.duplicatePanel.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
 
+  const duplicateChapterMutation = trpc.comics.duplicateChapter.useMutation({
+    onSuccess: (data) => {
+      setActiveChapterPosition(data.position);
+      refetch();
+    },
+    onError: handleMutationError,
+  });
 
   // ── Handlers ──
   const handleModelChange = (value: string | null) => {
@@ -562,7 +576,8 @@ function ProjectWorkspace() {
     setInsertAtPosition(null);
     setPrompt('');
     setUseContext(true);
-    setIncludePreviousImage(false);
+    setReferencePanelId(null);
+    setQuantity(1);
     setAspectRatio('3:4');
     setGenerationModel(null);
     setSelectedImageIds(null);
@@ -592,7 +607,8 @@ function ProjectWorkspace() {
         chapterPosition: activeChapter.position,
         prompt: prompt.trim(),
         useContext,
-        includePreviousImage,
+        ...(referencePanelId ? { referencePanelId } : {}),
+        quantity,
         aspectRatio,
         baseModel: generationModel,
         ...(targetPosition != null ? { position: targetPosition } : {}),
@@ -634,7 +650,7 @@ function ProjectWorkspace() {
         sourceImageHeight: sourceImage.height,
         prompt: prompt.trim() || undefined,
         useContext,
-        includePreviousImage,
+        ...(referencePanelId ? { referencePanelId } : {}),
         aspectRatio,
         baseModel: generationModel,
         forceGenerate: true,
@@ -878,7 +894,8 @@ function ProjectWorkspace() {
     setRegeneratingPanelId(panel.id);
     setPrompt(panel.prompt);
     setUseContext(meta?.useContext ?? true);
-    setIncludePreviousImage(meta?.includePreviousImage ?? false);
+    setReferencePanelId(meta?.referencePanelId ?? null);
+    setQuantity(meta?.quantity ?? 1);
     setSelectedImageIds(meta?.selectedImageIds ?? null);
     openPanelModal();
   };
@@ -1235,6 +1252,52 @@ function ProjectWorkspace() {
                               </div>
                             </div>
                             <span className={styles.chapterItemActions}>
+                              <Tooltip
+                                label={
+                                  chapter.panels.some(
+                                    (p) =>
+                                      p.status !== 'Ready' && p.status !== 'Failed'
+                                  )
+                                    ? 'Wait for all panels to complete before duplicating'
+                                    : 'Duplicate chapter'
+                                }
+                                withArrow
+                                position="top"
+                              >
+                                <ActionIcon
+                                  variant="transparent"
+                                  size="xs"
+                                  c="dimmed"
+                                  disabled={
+                                    chapter.panels.some(
+                                      (p) =>
+                                        p.status !== 'Ready' && p.status !== 'Failed'
+                                    ) ||
+                                    (duplicateChapterMutation.isPending &&
+                                      duplicateChapterMutation.variables?.chapterPosition === chapter.position)
+                                  }
+                                  onClick={(e: React.MouseEvent) => {
+                                    e.stopPropagation();
+                                    openConfirmModal({
+                                      title: 'Duplicate chapter',
+                                      children: `This will create a copy of "${chapter.name}" with all its panels. Continue?`,
+                                      labels: { confirm: 'Duplicate', cancel: 'Cancel' },
+                                      onConfirm: () =>
+                                        duplicateChapterMutation.mutate({
+                                          projectId,
+                                          chapterPosition: chapter.position,
+                                        }),
+                                    });
+                                  }}
+                                >
+                                  {duplicateChapterMutation.isPending &&
+                                  duplicateChapterMutation.variables?.chapterPosition === chapter.position ? (
+                                    <Loader size={12} />
+                                  ) : (
+                                    <IconCopy size={12} />
+                                  )}
+                                </ActionIcon>
+                              </Tooltip>
                               <ActionIcon
                                 variant="transparent"
                                 size="xs"
@@ -1437,6 +1500,18 @@ function ProjectWorkspace() {
                           }
                           onDelete={() => deletePanelMutation.mutate({ panelId: panel.id })}
                           onRegenerate={() => handleRegenerate(panel as any)}
+                          onDuplicate={() =>
+                            openConfirmModal({
+                              title: 'Duplicate panel',
+                              children: 'This will create a copy of this panel. Continue?',
+                              labels: { confirm: 'Duplicate', cancel: 'Cancel' },
+                              onConfirm: () => duplicatePanelMutation.mutate({ panelId: panel.id }),
+                            })
+                          }
+                          isDuplicating={
+                            duplicatePanelMutation.isPending &&
+                            duplicatePanelMutation.variables?.panelId === panel.id
+                          }
                           onInsertAfter={() => {
                             setInsertAtPosition(index + 1);
                             openPanelModal();
@@ -1486,6 +1561,14 @@ function ProjectWorkspace() {
         referenceNameMap={referenceNameMap}
         onRegenerate={handleDrawerRegenerate}
         onInsertAfter={handleDrawerInsertAfter}
+        onDuplicate={(panelId) =>
+          openConfirmModal({
+            title: 'Duplicate panel',
+            children: 'This will create a copy of this panel. Continue?',
+            labels: { confirm: 'Duplicate', cancel: 'Cancel' },
+            onConfirm: () => duplicatePanelMutation.mutate({ panelId }),
+          })
+        }
         onDelete={(panelId) => deletePanelMutation.mutate({ panelId })}
         onIterativeEdit={(panel) => {
           setDetailPanelId(null);
@@ -1505,8 +1588,16 @@ function ProjectWorkspace() {
         setUseContext={setUseContext}
         projectId={projectId}
         chapterPosition={activeChapter?.position ?? 0}
-        includePreviousImage={includePreviousImage}
-        setIncludePreviousImage={setIncludePreviousImage}
+        referencePanelId={referencePanelId}
+        setReferencePanelId={setReferencePanelId}
+        availablePanels={
+          (activeChapter?.panels ?? [])
+            .map((p, idx) => ({ ...p, idx }))
+            .filter((p) => p.status === 'Ready' && p.imageUrl)
+            .map((p) => ({ id: p.id, imageUrl: p.imageUrl!, position: p.idx }))
+        }
+        quantity={quantity}
+        setQuantity={setQuantity}
         aspectRatio={aspectRatio}
         setAspectRatio={setAspectRatio}
         selectedImageIds={selectedImageIds}

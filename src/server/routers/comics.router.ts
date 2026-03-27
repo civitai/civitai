@@ -300,10 +300,11 @@ const createPanelSchema = z.object({
   selectedImageIds: z.array(z.number().int()).optional(),
   prompt: z.string().min(1).max(2000),
   useContext: z.boolean().default(true),
-  includePreviousImage: z.boolean().default(false),
+  referencePanelId: z.number().int().optional(),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
+  quantity: z.number().int().min(1).max(4).default(1),
 });
 
 const updatePanelSchema = z.object({
@@ -346,6 +347,15 @@ const reorderChaptersSchema = z.object({
   order: z.array(z.number().int()),
 });
 
+const duplicatePanelSchema = z.object({
+  panelId: z.number().int(),
+});
+
+const duplicateChapterSchema = z.object({
+  projectId: z.number().int(),
+  chapterPosition: z.number().int().min(0),
+});
+
 const planChapterPanelsSchema = z.object({
   projectId: z.number().int(),
   storyDescription: z.string().min(1).max(5000),
@@ -379,7 +389,7 @@ const enhancePanelSchema = z.object({
   sourceImageHeight: z.number().int().positive(),
   prompt: z.string().max(2000).optional(),
   useContext: z.boolean().default(true),
-  includePreviousImage: z.boolean().default(false),
+  referencePanelId: z.number().int().optional(),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
@@ -1696,6 +1706,184 @@ export const comicsRouter = router({
       return { success: true };
     }),
 
+  duplicatePanel: comicProtectedProcedure
+    .input(duplicatePanelSchema)
+    .mutation(async ({ ctx, input }) => {
+      const panel = await dbRead.comicPanel.findUnique({
+        where: { id: input.panelId },
+        include: {
+          chapter: { include: { project: { select: { userId: true } } } },
+          references: { select: { referenceId: true } },
+        },
+      });
+
+      if (!panel || panel.chapter.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      if (panel.status !== ComicPanelStatus.Ready || !panel.imageUrl) {
+        throw throwBadRequestError('Only completed panels with an image can be duplicated.');
+      }
+
+      const newPanel = await dbWrite.$transaction(async (tx) => {
+        // Shift subsequent panels positions +1
+        await tx.comicPanel.updateMany({
+          where: {
+            projectId: panel.projectId,
+            chapterPosition: panel.chapterPosition,
+            position: { gt: panel.position },
+          },
+          data: { position: { increment: 1 } },
+        });
+
+        // Create duplicate at position+1
+        const created = await tx.comicPanel.create({
+          data: {
+            projectId: panel.projectId,
+            chapterPosition: panel.chapterPosition,
+            prompt: panel.prompt,
+            enhancedPrompt: panel.enhancedPrompt,
+            imageUrl: panel.imageUrl,
+            imageId: panel.imageId,
+            position: panel.position + 1,
+            status: panel.imageUrl ? ComicPanelStatus.Ready : ComicPanelStatus.Pending,
+            metadata: panel.metadata ?? undefined,
+          },
+        });
+
+        // Copy references
+        if (panel.references.length > 0) {
+          await tx.comicPanelReference.createMany({
+            data: panel.references.map((r) => ({
+              panelId: created.id,
+              referenceId: r.referenceId,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        return created;
+      });
+
+      sendComicPanelSignal(ctx.user!.id, {
+        panelId: newPanel.id,
+        projectId: panel.projectId,
+        status: newPanel.status,
+        imageUrl: newPanel.imageUrl,
+      });
+
+      return newPanel;
+    }),
+
+  duplicateChapter: comicProtectedProcedure
+    .input(duplicateChapterSchema)
+    .use(isChapterOwner)
+    .mutation(async ({ ctx, input }) => {
+      const chapter = await dbRead.comicChapter.findUnique({
+        where: {
+          projectId_position: { projectId: input.projectId, position: input.chapterPosition },
+        },
+        include: {
+          project: { select: { userId: true } },
+          panels: {
+            orderBy: { position: 'asc' },
+            include: { references: { select: { referenceId: true } } },
+          },
+        },
+      });
+
+      if (!chapter || chapter.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      // Don't allow duplicating chapters with incomplete panels
+      const incompletePanels = chapter.panels.filter(
+        (p) => p.status !== ComicPanelStatus.Ready && p.status !== ComicPanelStatus.Failed
+      );
+      if (incompletePanels.length > 0) {
+        throw throwBadRequestError(
+          'Cannot duplicate a chapter with pending or generating panels. Wait for all panels to complete first.'
+        );
+      }
+
+      const TEMP_OFFSET = 10000;
+
+      const newChapter = await dbWrite.$transaction(async (tx) => {
+        // Get all chapters after the source to shift them
+        const chaptersToShift = await tx.comicChapter.findMany({
+          where: {
+            projectId: input.projectId,
+            position: { gt: input.chapterPosition },
+          },
+          orderBy: { position: 'desc' },
+          select: { position: true },
+        });
+
+        // Phase 1: move to temp positions to avoid PK conflicts
+        for (const ch of chaptersToShift) {
+          await tx.comicChapter.update({
+            where: { projectId_position: { projectId: input.projectId, position: ch.position } },
+            data: { position: TEMP_OFFSET + ch.position },
+          });
+        }
+
+        // Phase 2: move from temp to final positions (+1)
+        for (const ch of chaptersToShift) {
+          await tx.comicChapter.update({
+            where: { projectId_position: { projectId: input.projectId, position: TEMP_OFFSET + ch.position } },
+            data: { position: ch.position + 1 },
+          });
+        }
+
+        // Create copy chapter at position+1
+        const created = await tx.comicChapter.create({
+          data: {
+            projectId: input.projectId,
+            name: `${chapter.name} (copy)`,
+            position: input.chapterPosition + 1,
+            status: ComicChapterStatus.Draft,
+          },
+        });
+
+        // Copy all panels with references
+        for (const panel of chapter.panels) {
+          const newPanel = await tx.comicPanel.create({
+            data: {
+              projectId: input.projectId,
+              chapterPosition: created.position,
+              prompt: panel.prompt,
+              enhancedPrompt: panel.enhancedPrompt,
+              imageUrl: panel.imageUrl,
+              imageId: panel.imageId,
+              position: panel.position,
+              status: panel.imageUrl ? ComicPanelStatus.Ready : ComicPanelStatus.Pending,
+              metadata: panel.metadata ?? undefined,
+            },
+          });
+
+          if (panel.references.length > 0) {
+            await tx.comicPanelReference.createMany({
+              data: panel.references.map((r) => ({
+                panelId: newPanel.id,
+                referenceId: r.referenceId,
+              })),
+              skipDuplicates: true,
+            });
+          }
+        }
+
+        // Clear stale readChapters engagement data
+        await tx.comicProjectEngagement.updateMany({
+          where: { projectId: input.projectId, readChapters: { isEmpty: false } },
+          data: { readChapters: [] },
+        });
+
+        return created;
+      });
+
+      return newChapter;
+    }),
+
   reorderChapters: comicProtectedProcedure
     .input(reorderChaptersSchema)
     .use(isProjectOwner)
@@ -1982,15 +2170,27 @@ export const comicsRouter = router({
       // Prompt is used as-is — enhancement happens client-side via enhancePromptText
       const fullPrompt = input.prompt;
 
-      // Optionally include previous panel's image in generation
+      // Optionally include a referenced panel's image in generation
       const allImages = [...combinedRefImages];
-      if (input.includePreviousImage && contextPanel?.imageUrl) {
-        const prevEdgeUrl = getEdgeUrl(contextPanel.imageUrl, { original: true });
-        allImages.push({ url: prevEdgeUrl, width: panelWidth, height: panelHeight });
+      let referencePanelImageUrl: string | null = null;
+      if (input.referencePanelId) {
+        const refPanel = await dbRead.comicPanel.findUnique({
+          where: { id: input.referencePanelId },
+          include: { chapter: { select: { projectId: true } } },
+        });
+        if (!refPanel || refPanel.chapter.projectId !== input.projectId) {
+          throw throwBadRequestError('Reference panel not found or not in this project');
+        }
+        if (refPanel.status !== ComicPanelStatus.Ready || !refPanel.imageUrl) {
+          throw throwBadRequestError('Reference panel must be ready with an image');
+        }
+        referencePanelImageUrl = refPanel.imageUrl;
+        const refEdgeUrl = getEdgeUrl(refPanel.imageUrl, { original: true });
+        allImages.push({ url: refEdgeUrl, width: panelWidth, height: panelHeight });
       }
 
       // Build metadata for debugging and regeneration
-      const metadata = {
+      const metadata: Record<string, any> = {
         previousPanelId: effectiveContext?.id ?? null,
         previousPanelPrompt: effectiveContext
           ? effectiveContext.enhancedPrompt ?? effectiveContext.prompt
@@ -1999,10 +2199,12 @@ export const comicsRouter = router({
         referenceImages: combinedRefImages,
         selectedImageIds: input.selectedImageIds ?? null,
         useContext: input.useContext,
-        includePreviousImage: input.includePreviousImage,
+        referencePanelId: input.referencePanelId ?? null,
+        referencePanelImageUrl,
         enhanceEnabled: false,
         primaryReferenceName,
         allReferenceNames,
+        quantity: input.quantity,
         generationParams: {
           engine: modelConfig.engine,
           baseModel: modelConfig.baseModel,
@@ -2049,7 +2251,7 @@ export const comicsRouter = router({
             workflow: 'txt2img',
             sampler: 'Euler',
             steps: 25,
-            quantity: 1,
+            quantity: input.quantity,
             draft: false,
             disablePoi: false,
             priority: 'low',
@@ -2358,12 +2560,9 @@ export const comicsRouter = router({
       if (
         !panel.workflowId ||
         panel.status === ComicPanelStatus.Ready ||
-        panel.status === ComicPanelStatus.Failed
+        panel.status === ComicPanelStatus.Failed ||
+        panel.status === ComicPanelStatus.AwaitingSelection
       ) {
-        console.log(`Panel ${panel.id} is not actively generating, skipping poll`, {
-          status: panel.status,
-          workflowId: panel.workflowId,
-        });
         return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl };
       }
 
@@ -2411,7 +2610,76 @@ export const comicsRouter = router({
           const imgHeight =
             genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
-          // Download from orchestrator and upload to S3 (standard image storage)
+          // Check if multi-image generation (quantity > 1)
+          const panelQuantity = (panel.metadata as any)?.quantity ?? 1;
+          const outputImages = firstStep?.output?.images ?? firstStep?.output?.blobs ?? [];
+
+          // Multi-image: upload all candidates and let user pick
+          if (panelQuantity > 1 && outputImages.length > 1) {
+            const candidateImages: { key: string }[] = [];
+            const s3Multi = getS3Client('image');
+
+            for (const candidateImg of outputImages) {
+              if (!candidateImg?.url) continue;
+              try {
+                const resp = await fetch(candidateImg.url);
+                if (!resp.ok) continue;
+                const buf = Buffer.from(await resp.arrayBuffer());
+                const s3Key = randomUUID();
+                await s3Multi.send(
+                  new PutObjectCommand({
+                    Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                    Key: s3Key,
+                    Body: buf,
+                    ContentType: resp.headers.get('content-type') || 'image/jpeg',
+                  })
+                );
+                candidateImages.push({ key: s3Key });
+              } catch (e) {
+                console.error(`Failed to upload candidate image for panel ${panel.id}:`, e);
+              }
+            }
+
+            if (candidateImages.length === 0) {
+              // All candidate uploads failed — mark panel as failed
+              const failed = await dbWrite.comicPanel.update({
+                where: { id: panel.id },
+                data: {
+                  status: ComicPanelStatus.Failed,
+                  errorMessage: 'Failed to download generated images. Please regenerate.',
+                },
+              });
+              sendComicPanelSignal(ctx.user!.id, {
+                panelId: failed.id,
+                projectId: panel.projectId,
+                status: failed.status,
+              });
+              return { id: failed.id, status: failed.status, imageUrl: null };
+            }
+
+            if (candidateImages.length > 1) {
+              // Store candidates in metadata and transition to AwaitingSelection
+              const updatedMeta = { ...(panel.metadata as any), candidateImages };
+              const updated = await dbWrite.comicPanel.update({
+                where: { id: panel.id },
+                data: { metadata: updatedMeta, status: ComicPanelStatus.AwaitingSelection },
+              });
+              sendComicPanelSignal(ctx.user!.id, {
+                panelId: updated.id,
+                projectId: panel.projectId,
+                status: updated.status,
+              });
+              return {
+                id: updated.id,
+                status: updated.status,
+                imageUrl: updated.imageUrl,
+                candidateImages: candidateImages.map((c) => c.key),
+              };
+            }
+            // Fall through to single-image handling if only 1 candidate survived
+          }
+
+          // Single-image path (or multi-image with only 1 result)
           let s3ImageKey: string;
           try {
             const imageResponse = await fetch(imageUrl);
@@ -2472,12 +2740,6 @@ export const comicsRouter = router({
             imageUrl: updated.imageUrl,
           });
 
-          console.log('Panel generation succeeded:', {
-            panelId: panel.id,
-            workflowId: panel.workflowId,
-            imageUrl: updated.imageUrl,
-          });
-
           return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
         }
 
@@ -2521,6 +2783,63 @@ export const comicsRouter = router({
 
       // Still processing - return as-is
       return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl };
+    }),
+
+  selectPanelImage: comicProtectedProcedure
+    .input(
+      z.object({
+        panelId: z.number().int(),
+        selectedImageKey: z.string().min(1),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const panel = await dbRead.comicPanel.findUnique({
+        where: { id: input.panelId },
+        include: { chapter: { include: { project: { select: { userId: true } } } } },
+      });
+
+      if (!panel || panel.chapter.project.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      const meta = panel.metadata as any;
+      const candidates: { key: string }[] = meta?.candidateImages ?? [];
+      if (!candidates.some((c) => c.key === input.selectedImageKey)) {
+        throw throwBadRequestError('Selected image is not among candidates');
+      }
+
+      const genParams = meta?.generationParams;
+      const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
+      const imgHeight = genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
+
+      // Create Image record for the selected candidate
+      const image = await createImage({
+        url: input.selectedImageKey,
+        type: 'image',
+        userId: ctx.user!.id,
+        width: imgWidth,
+        height: imgHeight,
+        meta: { prompt: panel.prompt } as any,
+      });
+
+      // Keep candidates in metadata so user can change selection later
+      const updated = await dbWrite.comicPanel.update({
+        where: { id: input.panelId },
+        data: {
+          status: ComicPanelStatus.Ready,
+          imageUrl: input.selectedImageKey,
+          imageId: image.id,
+        },
+      });
+
+      sendComicPanelSignal(ctx.user!.id, {
+        panelId: updated.id,
+        projectId: panel.projectId,
+        status: updated.status,
+        imageUrl: updated.imageUrl,
+      });
+
+      return updated;
     }),
 
   // Iterative panel editor — generate image without creating a panel record
@@ -3551,7 +3870,7 @@ export const comicsRouter = router({
           : allRefImages
       ).map(({ url, width, height }) => ({ url, width, height }));
 
-      // Build images array: source image first, then reference images, then optional previous panel image
+      // Build images array: source image first, then reference images, then optional referenced panel image
       const sourceEdgeUrl = getEdgeUrl(input.sourceImageUrl, { original: true });
       const allImages = [
         {
@@ -3561,9 +3880,17 @@ export const comicsRouter = router({
         },
         ...combinedRefImages,
       ];
-      if (input.includePreviousImage && contextPanel?.imageUrl) {
-        const prevEdgeUrl = getEdgeUrl(contextPanel.imageUrl, { original: true });
-        allImages.push({ url: prevEdgeUrl, width: panelWidth, height: panelHeight });
+      let referencePanelImageUrl: string | null = null;
+      if (input.referencePanelId) {
+        const refPanel = await dbRead.comicPanel.findUnique({
+          where: { id: input.referencePanelId },
+          include: { chapter: { select: { projectId: true } } },
+        });
+        if (refPanel && refPanel.chapter.projectId === input.projectId && refPanel.status === ComicPanelStatus.Ready && refPanel.imageUrl) {
+          referencePanelImageUrl = refPanel.imageUrl;
+          const refEdgeUrl = getEdgeUrl(refPanel.imageUrl, { original: true });
+          allImages.push({ url: refEdgeUrl, width: panelWidth, height: panelHeight });
+        }
       }
 
       const token = await getOrchestratorToken(ctx.user!.id, ctx);
@@ -3582,7 +3909,8 @@ export const comicsRouter = router({
         referenceImages: combinedRefImages,
         selectedImageIds: input.selectedImageIds ?? null,
         useContext: input.useContext,
-        includePreviousImage: input.includePreviousImage,
+        referencePanelId: input.referencePanelId ?? null,
+        referencePanelImageUrl,
         enhanceEnabled: false,
         primaryReferenceName,
         allReferenceNames,

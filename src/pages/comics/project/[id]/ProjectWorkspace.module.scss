@@ -844,3 +844,10 @@
   border-radius: 50%;
   animation: spin 0.6s linear infinite;
 }
+
+:global {
+  @keyframes pulse-outline {
+    0%, 100% { outline-color: var(--mantine-color-yellow-6); }
+    50% { outline-color: var(--mantine-color-yellow-3); }
+  }
+}

@@ -172,7 +172,7 @@ export const processEnqueuedComicPanelsJob = createJob(
                 workflow: 'txt2img',
                 sampler: 'Euler',
                 steps: 25,
-                quantity: 1,
+                quantity: metadata.quantity ?? 1,
                 draft: false,
                 disablePoi: false,
                 priority: 'low',

@@ -4978,6 +4978,7 @@ enum ComicPanelStatus {
   Pending
   Enqueued
   Generating
+  AwaitingSelection
   Ready
   Failed
 }

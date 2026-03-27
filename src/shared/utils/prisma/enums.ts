@@ -895,6 +895,7 @@ export const ComicPanelStatus = {
   Pending: 'Pending',
   Enqueued: 'Enqueued',
   Generating: 'Generating',
+  AwaitingSelection: 'AwaitingSelection',
   Ready: 'Ready',
   Failed: 'Failed',
 } as const;
