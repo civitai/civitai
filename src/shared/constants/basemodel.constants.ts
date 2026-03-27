@@ -2578,7 +2578,7 @@ export function isEcosystemExperimental(ecosystemKey: string): boolean {
 export function getRootEcosystem(ecosystemIdOrBaseModel: number | string): EcosystemRecord {
   const ecosystem =
     typeof ecosystemIdOrBaseModel === 'string'
-      ? getEcosystem(ecosystemIdOrBaseModel)
+      ? getEcosystem(ecosystemIdOrBaseModel) ?? ecosystemByKey.get(ecosystemIdOrBaseModel)
       : ecosystemById.get(ecosystemIdOrBaseModel);
   if (!ecosystem) throw new Error(`Ecosystem ${ecosystemIdOrBaseModel} not found`);
 

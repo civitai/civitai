@@ -1,7 +1,7 @@
 /**
  * Generic Workflow Hooks
  *
- * Tag-based workflow query, cache management, and signal handling.
+ * Tag-based workflow query, cache management, signal handling, and polling fallback.
  * Used by prompt enhancement, future text workflows, and any workflow
  * that queries/caches by tags.
  */
@@ -9,7 +9,9 @@
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
+import { useEffect, useRef } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { SignalMessages } from '~/server/common/enums';
 import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 
@@ -125,4 +127,59 @@ export function useWorkflowUpdateSignal() {
       listener(event);
     }
   });
+}
+
+// =============================================================================
+// Polling fallback
+// =============================================================================
+
+const POLL_INTERVAL = 60_000; // 60 seconds
+
+type PollableWorkflow = {
+  workflowId: string;
+  tags: string[];
+};
+
+/** Tracked in-progress workflows that should be polled as a signal fallback */
+const pollableWorkflows = new Map<string, PollableWorkflow>();
+
+/** Register a workflow for polling fallback. Call when a workflow is submitted. */
+export function addPollableWorkflow(workflowId: string, tags: string[]) {
+  pollableWorkflows.set(workflowId, { workflowId, tags });
+}
+
+/** Remove a workflow from polling (e.g., when it reaches a terminal status). */
+export function removePollableWorkflow(workflowId: string) {
+  pollableWorkflows.delete(workflowId);
+}
+
+/**
+ * Hook that polls in-progress workflows as a fallback when signals don't arrive.
+ * Mount alongside useWorkflowUpdateSignal (e.g., in GenerationSignals).
+ */
+export function useWorkflowPolling() {
+  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+
+  useEffect(() => {
+    intervalRef.current = setInterval(async () => {
+      if (pollableWorkflows.size === 0) return;
+
+      const entries = [...pollableWorkflows.values()];
+      for (const { workflowId, tags } of entries) {
+        try {
+          const workflow = await fetchWorkflowById(workflowId);
+          updateWorkflowInTagCache(workflow, tags);
+
+          // Remove from polling if it's no longer in a pollable status
+          if (!POLLABLE_STATUSES.includes(workflow.status as any)) {
+            pollableWorkflows.delete(workflowId);
+          }
+        } catch {
+          // Fetch failed — will retry next interval
+        }
+      }
+    }, POLL_INTERVAL);
+
+    return () => clearInterval(intervalRef.current);
+  }, []);
 }

@@ -1482,6 +1482,7 @@ function PromptEnhancePanelWrapper({
       negativePrompt={data.negativePrompt}
       ecosystem={data.ecosystem}
       triggerWords={data.triggerWords}
+      onBack={onBack}
       onApply={(enhancedPrompt, enhancedNegativePrompt) => {
         graph.set({ prompt: enhancedPrompt } as Parameters<typeof graph.set>[0]);
         if (enhancedNegativePrompt) {

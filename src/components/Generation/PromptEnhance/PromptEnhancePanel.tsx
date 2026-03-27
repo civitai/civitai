@@ -10,6 +10,7 @@ type PromptEnhancePanelProps = {
   ecosystem: string;
   triggerWords?: string[];
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
+  onBack?: () => void;
 };
 
 export function PromptEnhancePanel({
@@ -18,6 +19,7 @@ export function PromptEnhancePanel({
   ecosystem,
   triggerWords,
   onApply,
+  onBack,
 }: PromptEnhancePanelProps) {
   const [activeTab, setActiveTab] = useState<string | null>('enhance');
 
@@ -44,6 +46,7 @@ export function PromptEnhancePanel({
             ecosystem={ecosystem}
             triggerWords={triggerWords}
             onApply={onApply}
+            onBack={onBack}
           />
         </Tabs.Panel>
       )}

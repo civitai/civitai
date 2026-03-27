@@ -18,6 +18,8 @@ import { trpc, trpcVanilla } from '~/utils/trpc';
 import {
   type WorkflowItem,
   addWorkflowToTagCache,
+  addPollableWorkflow,
+  removePollableWorkflow,
   updateWorkflowInTagCache,
   fetchWorkflowById,
   onWorkflowSignal,
@@ -107,8 +109,9 @@ export function useGetPromptEnhancementHistory() {
       try {
         const workflowItem = await fetchWorkflowById(event.workflowId);
         updateWorkflowInTagCache(workflowItem, PROMPT_ENHANCEMENT_TAGS);
+        removePollableWorkflow(event.workflowId);
       } catch {
-        // Signal fetch failed — will be picked up on next query
+        // Signal fetch failed — will be picked up by polling fallback
       }
     });
   }, []);
@@ -139,6 +142,9 @@ export async function submitPromptEnhancement(input: PromptEnhancementSchema): P
 
   // Add to history cache immediately (shows as in-progress)
   addWorkflowToTagCache(workflowItem, PROMPT_ENHANCEMENT_TAGS);
+
+  // Register for polling fallback in case signals don't arrive
+  addPollableWorkflow(workflowItem.id, PROMPT_ENHANCEMENT_TAGS);
 
   return workflowItem.id;
 }

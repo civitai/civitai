@@ -150,6 +150,21 @@ function splitByTriggerWords(
     }));
 }
 
+/** Compute similarity ratio (0–1) from diff segments based on equal character count */
+function getSimilarityRatio(segments: DiffSegment[]): number {
+  let equalChars = 0;
+  let totalChars = 0;
+  for (const seg of segments) {
+    const len = seg.value.trim().length;
+    totalChars += len;
+    if (seg.type === 'equal') equalChars += len;
+  }
+  return totalChars === 0 ? 1 : equalChars / totalChars;
+}
+
+/** Threshold below which we switch to stacked layout */
+const STACKED_THRESHOLD = 0.4;
+
 type PromptDiffProps = {
   oldText: string;
   newText: string;
@@ -158,14 +173,30 @@ type PromptDiffProps = {
 
 export function PromptDiff({ oldText, newText, triggerWords }: PromptDiffProps) {
   const segments = useMemo(() => computeWordDiff(oldText, newText), [oldText, newText]);
+  const similarity = useMemo(() => getSimilarityRatio(segments), [segments]);
   const tw = triggerWords ?? [];
 
+  if (similarity < STACKED_THRESHOLD) {
+    return <StackedDiff segments={segments} triggerWords={tw} />;
+  }
+
+  return <InlineDiff segments={segments} triggerWords={tw} />;
+}
+
+/** Inline interleaved diff — good for minor edits */
+function InlineDiff({
+  segments,
+  triggerWords,
+}: {
+  segments: DiffSegment[];
+  triggerWords: string[];
+}) {
   return (
     <Text size="sm" className="whitespace-pre-wrap rounded-md bg-gray-1 p-3 dark:bg-dark-6">
       {segments.map((seg, i) => {
         const baseClass = diffClassMap[seg.type];
 
-        if (!tw.length) {
+        if (!triggerWords.length) {
           return (
             <span key={i} className={baseClass || undefined}>
               {seg.value}
@@ -173,7 +204,7 @@ export function PromptDiff({ oldText, newText, triggerWords }: PromptDiffProps) 
           );
         }
 
-        const fragments = splitByTriggerWords(seg.value, tw);
+        const fragments = splitByTriggerWords(seg.value, triggerWords);
         return fragments.map((frag, j) => (
           <span
             key={`${i}-${j}`}
@@ -184,5 +215,75 @@ export function PromptDiff({ oldText, newText, triggerWords }: PromptDiffProps) 
         ));
       })}
     </Text>
+  );
+}
+
+const stackedHighlightMap = {
+  removed: 'rounded-sm bg-red-1/60 dark:bg-red-9/20',
+  added: 'rounded-sm bg-green-1/60 dark:bg-green-9/20',
+} as const;
+
+/** Stacked original/enhanced layout — good for heavy restructuring */
+function StackedDiff({
+  segments,
+  triggerWords,
+}: {
+  segments: DiffSegment[];
+  triggerWords: string[];
+}) {
+  // For the original text, highlight words that were removed
+  const oldSegments = segments.filter((s) => s.type !== 'added');
+  // For the enhanced text, highlight words that were added
+  const newSegments = segments.filter((s) => s.type !== 'removed');
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div>
+        <Text size="xs" fw={600} c="dimmed" mb={2}>
+          Original
+        </Text>
+        <Text size="sm" className="whitespace-pre-wrap rounded-md bg-gray-1 p-3 dark:bg-dark-6">
+          {oldSegments.map((seg, i) => {
+            const highlight = seg.type === 'removed' ? stackedHighlightMap.removed : undefined;
+            if (!triggerWords.length) {
+              return (
+                <span key={i} className={highlight}>
+                  {seg.value}
+                </span>
+              );
+            }
+            const fragments = splitByTriggerWords(seg.value, triggerWords);
+            return fragments.map((frag, j) => (
+              <span key={`${i}-${j}`} className={frag.isTrigger ? triggerWordClass : highlight}>
+                {frag.text}
+              </span>
+            ));
+          })}
+        </Text>
+      </div>
+      <div>
+        <Text size="xs" fw={600} c="dimmed" mb={2}>
+          Enhanced
+        </Text>
+        <Text size="sm" className="whitespace-pre-wrap rounded-md bg-gray-1 p-3 dark:bg-dark-6">
+          {newSegments.map((seg, i) => {
+            const highlight = seg.type === 'added' ? stackedHighlightMap.added : undefined;
+            if (!triggerWords.length) {
+              return (
+                <span key={i} className={highlight}>
+                  {seg.value}
+                </span>
+              );
+            }
+            const fragments = splitByTriggerWords(seg.value, triggerWords);
+            return fragments.map((frag, j) => (
+              <span key={`${i}-${j}`} className={frag.isTrigger ? triggerWordClass : highlight}>
+                {frag.text}
+              </span>
+            ));
+          })}
+        </Text>
+      </div>
+    </div>
   );
 }

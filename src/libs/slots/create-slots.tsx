@@ -1,4 +1,4 @@
-import React, { createContext, useCallback, useContext, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import useIsomorphicLayoutEffect from './useIsomorphicLayoutEffect';
 
@@ -8,7 +8,7 @@ import useIsomorphicLayoutEffect from './useIsomorphicLayoutEffect';
  * Inspired by .NET MVC @section / @RenderSection:
  * - `Slot` declares content from anywhere (like @section)
  * - `RenderSlot` places it in the layout (like @RenderSection)
- * - Content is portaled into the target DOM node via useLayoutEffect (no flash)
+ * - Content is portaled into the target DOM node
  *
  * Usage:
  *   const { SlotProvider, Slot, RenderSlot } = createSlots(['header', 'footer']);
@@ -23,34 +23,41 @@ type ConvenienceRenderProps = React.HTMLAttributes<HTMLDivElement> & {
   fallback?: React.ReactNode;
 };
 
-function createSlots<T extends string>(slotNames: T[]) {
-  type SlotTargets = { [K in T]?: HTMLElement | null };
+type SlotRegistry<T extends string> = {
+  targets: { [K in T]?: HTMLElement | null };
+  listeners: Set<() => void>;
+};
 
-  const TargetContext = createContext<React.MutableRefObject<SlotTargets> | null>(null);
+function createSlots<T extends string>(slotNames: T[]) {
+  const RegistryContext = createContext<SlotRegistry<T> | null>(null);
 
   /** Wrap your layout + content tree in this provider */
   function SlotProvider({ children }: { children: React.ReactNode }) {
-    const targetsRef = useRef<SlotTargets>({} as SlotTargets);
-    return <TargetContext.Provider value={targetsRef}>{children}</TargetContext.Provider>;
+    // Stable ref — never causes re-renders
+    const registryRef = useRef<SlotRegistry<T> | null>(null);
+    if (!registryRef.current) {
+      registryRef.current = { targets: {} as SlotRegistry<T>['targets'], listeners: new Set() };
+    }
+    return (
+      <RegistryContext.Provider value={registryRef.current}>{children}</RegistryContext.Provider>
+    );
   }
 
   /** Returns true when rendered inside a SlotProvider */
   function useHasSlots() {
-    return useContext(TargetContext) !== null;
+    return useContext(RegistryContext) !== null;
   }
 
-  /** Place this in your layout where the slot content should appear.
-   *  Analogous to @RenderSection("name") in .NET MVC.
-   *  `fallback` renders when no Slot has claimed this name (SSR + initial render).
-   *  All extra props (className, style, etc.) are forwarded to the wrapper div.
-   */
+  /** Place this in your layout where the slot content should appear. */
   function RenderSlot({ name, fallback, ...divProps }: RenderSlotProps<T>) {
-    const targetsRef = useContext(TargetContext);
+    const registry = useContext(RegistryContext);
     const ref = useCallback(
       (node: HTMLDivElement | null) => {
-        if (targetsRef) targetsRef.current[name] = node;
+        if (!registry) return;
+        registry.targets[name] = node;
+        if (node) registry.listeners.forEach((cb) => cb());
       },
-      [targetsRef, name]
+      [registry, name]
     );
 
     return (
@@ -60,32 +67,46 @@ function createSlots<T extends string>(slotNames: T[]) {
     );
   }
 
-  /** Declare slot content from anywhere in the tree.
-   *  Analogous to @section Name { ... } in .NET MVC.
-   *  The children get portaled into the matching RenderSlot target.
-   */
+  /** Declare slot content from anywhere in the tree. */
   function Slot({ name, children }: { name: T; children: React.ReactNode }) {
-    const targetsRef = useContext(TargetContext);
+    const registry = useContext(RegistryContext);
     const [target, setTarget] = useState<HTMLElement | null>(null);
 
+    // Try to resolve immediately on mount
     useIsomorphicLayoutEffect(() => {
-      const el = targetsRef?.current[name];
+      const el = registry?.targets[name];
       if (el) {
-        // Clear fallback content once portal takes over
         el.textContent = '';
         setTarget(el);
       }
-      return () => {
-        setTarget(null);
+    }, [registry, name]);
+
+    // Subscribe for late-registering targets
+    useEffect(() => {
+      if (target || !registry) return;
+      const cb = () => {
+        const el = registry.targets[name];
+        if (el) {
+          el.textContent = '';
+          setTarget(el);
+        }
       };
-    }, [targetsRef, name]);
+      registry.listeners.add(cb);
+      return () => {
+        registry.listeners.delete(cb);
+      };
+    }, [target, registry, name]);
+
+    // Clear on unmount
+    useIsomorphicLayoutEffect(() => {
+      return () => setTarget(null);
+    }, []);
 
     if (!target) return null;
     return createPortal(children, target);
   }
 
   // Create convenience sub-components keyed by slot name
-  // e.g. slots.Header = (props) => <Slot name="header" {...props} />
   const slotComponents = {} as {
     [K in T as Capitalize<K>]: React.FC<{ children: React.ReactNode }>;
   };

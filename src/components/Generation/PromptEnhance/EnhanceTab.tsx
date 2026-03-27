@@ -21,6 +21,7 @@ import {
   GenerationFooter,
   useHasGenerationSlots,
 } from '~/components/generation_v2/GenerationLayout';
+import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
 
@@ -39,6 +40,7 @@ type EnhanceTabProps = {
   ecosystem: string;
   triggerWords?: string[];
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
+  onBack?: () => void;
 };
 
 function getUsedTriggerWords(
@@ -57,6 +59,7 @@ export function EnhanceTab({
   ecosystem,
   triggerWords,
   onApply,
+  onBack,
 }: EnhanceTabProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -91,8 +94,12 @@ export function EnhanceTab({
 
   const buildMutationInput = () => {
     const values = form.getValues();
+    let orchestratorEcosystem = ecosystem;
+    try {
+      orchestratorEcosystem = getRootEcosystem(ecosystem).name;
+    } catch {}
     return {
-      ecosystem,
+      ecosystem: orchestratorEcosystem,
       prompt: values.prompt,
       negativePrompt: values.negativePrompt || null,
       instruction: values.instruction || null,
@@ -153,6 +160,12 @@ export function EnhanceTab({
     dialog.onClose();
   };
 
+  const handleApplyEdited = () => {
+    const values = form.getValues();
+    onApply(values.prompt, values.negativePrompt || undefined);
+    dialog.onClose();
+  };
+
   // Register fields managed via setValue
   form.register('temperature');
   form.register('instruction');
@@ -164,14 +177,21 @@ export function EnhanceTab({
 
   const showInputForm = (!pendingWorkflowId && !isLoading) || editing;
   const showResult = result && result.status === 'succeeded' && !editing;
+  const showInputFooter = showInputForm || (isLoading && !editing);
 
   // Footer buttons for each state
-  const inputFormFooter = showInputForm ? (
-    <Group justify="flex-end">
-      {editing && (
+  const inputFormFooter = showInputFooter ? (
+    <div className="flex gap-2">
+      {editing ? (
         <Button variant="default" size="md" onClick={handleBackToResult}>
           Back to Result
         </Button>
+      ) : (
+        onBack && (
+          <Button variant="default" size="md" onClick={onBack}>
+            Back
+          </Button>
+        )
       )}
       <BuzzTransactionButton
         buzzAmount={ENHANCE_COST}
@@ -181,12 +201,18 @@ export function EnhanceTab({
         loading={isLoading}
         showPurchaseModal
         size="md"
+        className="flex-1"
       />
-    </Group>
+      {editing && (
+        <Button size="md" onClick={handleApplyEdited} leftSection={<IconSparkles size={16} />}>
+          Apply
+        </Button>
+      )}
+    </div>
   ) : null;
 
   const resultFooter = showResult ? (
-    <Group justify="flex-end">
+    <div className="flex gap-2">
       <Button variant="default" size="md" onClick={handleEdit}>
         Edit
       </Button>
@@ -198,11 +224,12 @@ export function EnhanceTab({
         showPurchaseModal
         size="md"
         variant="light"
+        className="flex-1"
       />
-      <Button onClick={handleApply} leftSection={<IconSparkles size={16} />}>
+      <Button size="md" onClick={handleApply} leftSection={<IconSparkles size={16} />}>
         Apply
       </Button>
-    </Group>
+    </div>
   ) : null;
 
   const footerContent = inputFormFooter || resultFooter;

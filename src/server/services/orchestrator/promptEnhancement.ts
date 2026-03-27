@@ -1,5 +1,6 @@
 import type { PromptEnhancementStep } from '@civitai/client';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
+import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getWorkflowCallbacks } from '~/server/orchestrator/orchestrator.utils';
 
@@ -25,6 +26,12 @@ function buildInstruction(input: PromptEnhancementSchema): string | undefined {
       );
     }
   }
+
+  parts.push(
+    input.negativePrompt != null
+      ? `The enhanced prompt and negative prompt must each not exceed ${MAX_PROMPT_LENGTH} characters.`
+      : `The enhanced prompt must not exceed ${MAX_PROMPT_LENGTH} characters.`
+  );
 
   if (input.instruction) {
     parts.push(input.instruction);
