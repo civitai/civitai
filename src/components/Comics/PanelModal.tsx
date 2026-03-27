@@ -46,6 +46,8 @@ import {
 } from '~/components/Comics/comic-project-constants';
 import { EnhancePromptInPlace } from '~/components/Comics/EnhancePromptInPlace';
 import { ImageSelectionSection } from '~/components/Comics/ImageSelectionSection';
+import { LayoutPicker, LAYOUT_OPTIONS } from '~/components/Comics/LayoutPicker';
+import type { LayoutOption } from '~/components/Comics/LayoutPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { SortableBulkItem } from '~/components/Comics/SortableBulkItem';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -135,6 +137,8 @@ interface PanelModalProps {
   referencePanelId: number | null;
   setReferencePanelId: (id: number | null) => void;
   availablePanels: { id: number; imageUrl: string; position: number }[];
+  layoutImagePath: string | undefined;
+  setLayoutImagePath: (path: string | undefined) => void;
   quantity: number;
   setQuantity: (val: number) => void;
   aspectRatio: string;
@@ -195,6 +199,8 @@ export function PanelModal({
   referencePanelId,
   setReferencePanelId,
   availablePanels,
+  layoutImagePath,
+  setLayoutImagePath,
   quantity,
   setQuantity,
   aspectRatio,
@@ -234,6 +240,13 @@ export function PanelModal({
 
   // Track whether the EnhancePromptInPlace component is busy (blocks generate buttons)
   const [isEnhancing, setIsEnhancing] = useState(false);
+
+  // Layout reference state
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  // Derive layoutId from layoutImagePath for the picker's value prop
+  const selectedLayoutId = layoutImagePath
+    ? LAYOUT_OPTIONS.find((l) => l.imagePath === layoutImagePath)?.id
+    : undefined;
 
   // Enhance tab state
   const [enhanceSourceImage, setEnhanceSourceImage] = useState<{
@@ -293,6 +306,7 @@ export function PanelModal({
     setBulkItems([]);
     resetBulkFiles();
     setImportSelected([]);
+    setLayoutImagePath(undefined);
   };
 
   // Auto-switch to enhance tab when initialEnhanceSource is provided (e.g., from sketch edit)
@@ -686,6 +700,13 @@ export function PanelModal({
 
       {panelMode === 'generate' ? (
         <Stack gap="md">
+          <LayoutPicker
+            value={selectedLayoutId}
+            onChange={(layout: LayoutOption) => {
+              setLayoutImagePath(layout.id ? layout.imagePath : undefined);
+            }}
+          />
+
           <MentionTextarea
             label="Describe the scene"
             value={prompt}

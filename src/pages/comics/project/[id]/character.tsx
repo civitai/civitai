@@ -169,10 +169,11 @@ function ReferenceUpload() {
 
       setUploadProgress(80);
 
-      // 2. Create reference
+      // 2. Create reference (scoped to current project)
       const reference = await createReferenceMutation.mutateAsync({
         name: referenceName.trim(),
         type: referenceType as any,
+        projectId,
       });
 
       setUploadProgress(90);

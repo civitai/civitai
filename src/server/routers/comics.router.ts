@@ -266,7 +266,7 @@ const getProjectSchema = z.object({
   id: z.number().int(),
 });
 
-// Reference (character/location/item) creation — always global per user
+// Reference (character/location/item) creation — optionally scoped to a project
 const createReferenceSchema = z.object({
   name: z
     .string()
@@ -275,6 +275,7 @@ const createReferenceSchema = z.object({
     .refine((v) => !v.includes('@'), 'Name cannot contain @ character'),
   type: z.nativeEnum(ComicReferenceType).default(ComicReferenceType.Character),
   description: z.string().max(2000).optional(),
+  projectId: z.number().int().optional(),
 });
 
 const addReferenceImagesSchema = z.object({
@@ -301,6 +302,7 @@ const createPanelSchema = z.object({
   prompt: z.string().min(1).max(2000),
   useContext: z.boolean().default(true),
   referencePanelId: z.number().int().optional(),
+  layoutImagePath: z.string().optional(),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),
@@ -767,18 +769,40 @@ export const comicsRouter = router({
       throw throwAuthorizationError();
     }
 
-    // Fetch all user references (global — not project-specific)
+    // Fetch project-scoped references via junction table
     // Use dbWrite for read-after-write consistency (same as project query above)
-    const references = await dbWrite.comicReference.findMany({
-      where: { userId: ctx.user.id },
-      orderBy: { createdAt: 'asc' },
-      include: {
-        images: {
-          orderBy: { position: 'asc' },
-          include: { image: { select: { id: true, url: true, width: true, height: true } } },
-        },
-      },
+    const projectRefs = await dbWrite.comicProjectReference.findMany({
+      where: { projectId: project.id },
+      select: { referenceId: true },
     });
+
+    let references;
+    if (projectRefs.length > 0) {
+      // Project has scoped references — fetch only those
+      const refIds = projectRefs.map((pr) => pr.referenceId);
+      references = await dbWrite.comicReference.findMany({
+        where: { id: { in: refIds }, userId: ctx.user.id },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          images: {
+            orderBy: { position: 'asc' },
+            include: { image: { select: { id: true, url: true, width: true, height: true } } },
+          },
+        },
+      });
+    } else {
+      // Backward compat: no junction rows yet — show all user references
+      references = await dbWrite.comicReference.findMany({
+        where: { userId: ctx.user.id },
+        orderBy: { createdAt: 'asc' },
+        include: {
+          images: {
+            orderBy: { position: 'asc' },
+            include: { image: { select: { id: true, url: true, width: true, height: true } } },
+          },
+        },
+      });
+    }
 
     return {
       ...project,
@@ -1931,6 +1955,23 @@ export const comicsRouter = router({
         },
       });
 
+      // Auto-associate with project if projectId provided
+      if (input.projectId) {
+        // Verify project ownership
+        const project = await dbRead.comicProject.findUnique({
+          where: { id: input.projectId },
+          select: { userId: true },
+        });
+        if (project && project.userId === ctx.user!.id) {
+          await dbWrite.comicProjectReference.create({
+            data: {
+              projectId: input.projectId,
+              referenceId: reference.id,
+            },
+          });
+        }
+      }
+
       return reference;
     }),
 
@@ -2189,6 +2230,12 @@ export const comicsRouter = router({
         allImages.push({ url: refEdgeUrl, width: panelWidth, height: panelHeight });
       }
 
+      // Include layout reference image if provided
+      if (input.layoutImagePath) {
+        const layoutUrl = `${env.NEXTAUTH_URL}${input.layoutImagePath}`;
+        allImages.push({ url: layoutUrl, width: panelWidth, height: panelHeight });
+      }
+
       // Build metadata for debugging and regeneration
       const metadata: Record<string, any> = {
         previousPanelId: effectiveContext?.id ?? null,
@@ -2201,6 +2248,7 @@ export const comicsRouter = router({
         useContext: input.useContext,
         referencePanelId: input.referencePanelId ?? null,
         referencePanelImageUrl,
+        layoutImagePath: input.layoutImagePath ?? null,
         enhanceEnabled: false,
         primaryReferenceName,
         allReferenceNames,
@@ -4698,6 +4746,83 @@ export const comicsRouter = router({
       }
 
       return comment;
+    }),
+
+  // ──── Project-scoped references ────
+
+  addReferenceToProject: comicProtectedProcedure
+    .input(z.object({ projectId: z.number().int(), referenceId: z.number().int() }))
+    .use(isProjectOwner)
+    .mutation(async ({ ctx, input }) => {
+      // Verify the reference belongs to the user
+      const reference = await dbRead.comicReference.findUnique({
+        where: { id: input.referenceId },
+        select: { userId: true },
+      });
+      if (!reference || reference.userId !== ctx.user!.id) {
+        throw throwAuthorizationError();
+      }
+
+      await dbWrite.comicProjectReference.upsert({
+        where: {
+          projectId_referenceId: {
+            projectId: input.projectId,
+            referenceId: input.referenceId,
+          },
+        },
+        create: {
+          projectId: input.projectId,
+          referenceId: input.referenceId,
+        },
+        update: {},
+      });
+
+      return { success: true };
+    }),
+
+  removeReferenceFromProject: comicProtectedProcedure
+    .input(z.object({ projectId: z.number().int(), referenceId: z.number().int() }))
+    .use(isProjectOwner)
+    .mutation(async ({ ctx, input }) => {
+      await dbWrite.comicProjectReference.deleteMany({
+        where: {
+          projectId: input.projectId,
+          referenceId: input.referenceId,
+        },
+      });
+
+      return { success: true };
+    }),
+
+  getImportableReferences: comicProtectedProcedure
+    .input(z.object({ projectId: z.number().int() }))
+    .use(isProjectOwner)
+    .query(async ({ ctx, input }) => {
+      // Get reference IDs already associated with this project
+      const existing = await dbRead.comicProjectReference.findMany({
+        where: { projectId: input.projectId },
+        select: { referenceId: true },
+      });
+      const existingIds = existing.map((e) => e.referenceId);
+
+      // Fetch user's references NOT in this project
+      const references = await dbRead.comicReference.findMany({
+        where: {
+          userId: ctx.user!.id,
+          ...(existingIds.length > 0 ? { id: { notIn: existingIds } } : {}),
+        },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          images: {
+            orderBy: { position: 'asc' },
+            take: 1,
+            include: { image: { select: { id: true, url: true, width: true, height: true } } },
+          },
+          _count: { select: { images: true } },
+        },
+      });
+
+      return references;
     }),
 
   // ──── Queue Status ────

@@ -19,6 +19,7 @@ import {
   IconBook,
   IconCalendar,
   IconCopy,
+  IconDownload,
   IconEye,
   IconEyeOff,
   IconGripVertical,
@@ -55,6 +56,7 @@ import { PanelDetailDrawer } from '~/components/Comics/PanelDetailDrawer';
 import { PanelModal } from '~/components/Comics/PanelModal';
 import { ProjectSettingsModal } from '~/components/Comics/ProjectSettingsModal';
 import { PublishModal } from '~/components/Comics/PublishModal';
+import { ImportReferencesModal } from '~/components/Comics/ImportReferencesModal';
 import { ReferenceSidebarItem } from '~/components/Comics/ReferenceSidebarItem';
 import { SmartCreateModal } from '~/components/Comics/SmartCreateModal';
 import { SortableChapter } from '~/components/Comics/SortableChapter';
@@ -99,6 +101,8 @@ function ProjectWorkspace() {
   const [chapterSettingsOpened, { open: openChapterSettings, close: closeChapterSettings }] =
     useDisclosure(false);
   const [smartModalOpened, { open: openSmartModal, close: closeSmartModal }] = useDisclosure(false);
+  const [importRefsOpened, { open: openImportRefs, close: closeImportRefs }] =
+    useDisclosure(false);
 
   // ── Welcome modal (show once per user) ──
   const [welcomeOpened, setWelcomeOpened] = useState(() => {
@@ -115,6 +119,7 @@ function ProjectWorkspace() {
   const [prompt, setPrompt] = useState('');
   const [useContext, setUseContext] = useState(true);
   const [referencePanelId, setReferencePanelId] = useState<number | null>(null);
+  const [layoutImagePath, setLayoutImagePath] = useState<string | undefined>();
   const [quantity, setQuantity] = useState(1);
   const [aspectRatio, setAspectRatio] = useState('3:4');
   const [generationModel, setGenerationModel] = useState<
@@ -288,7 +293,10 @@ function ProjectWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mentionedIdKey]);
 
-  const reservedSlots = useMemo(() => (referencePanelId ? 1 : 0), [referencePanelId]);
+  const reservedSlots = useMemo(
+    () => (referencePanelId ? 1 : 0) + (layoutImagePath ? 1 : 0),
+    [referencePanelId, layoutImagePath]
+  );
   const refImageBudget = maxReferenceImages - reservedSlots;
 
   const needsImageSelection =
@@ -494,6 +502,11 @@ function ProjectWorkspace() {
     onError: handleMutationError,
   });
 
+  const removeReferenceFromProjectMutation = trpc.comics.removeReferenceFromProject.useMutation({
+    onSuccess: () => refetch(),
+    onError: handleMutationError,
+  });
+
   const deleteProjectMutation = trpc.comics.deleteProject.useMutation({
     onSuccess: () => {
       const username = currentUser?.username;
@@ -608,6 +621,7 @@ function ProjectWorkspace() {
         prompt: prompt.trim(),
         useContext,
         ...(referencePanelId ? { referencePanelId } : {}),
+        ...(layoutImagePath ? { layoutImagePath } : {}),
         quantity,
         aspectRatio,
         baseModel: generationModel,
@@ -868,16 +882,20 @@ function ProjectWorkspace() {
     );
   };
 
-  const handleDeleteReference = (referenceId: number, referenceName: string) => {
+  const handleRemoveReferenceFromProject = (referenceId: number, referenceName: string) => {
+    removeReferenceFromProjectMutation.mutate({ projectId, referenceId });
+  };
+
+  const handleDeleteReferencePermanently = (referenceId: number, referenceName: string) => {
     openConfirmModal({
-      title: 'Delete Reference',
+      title: 'Delete Reference Permanently',
       children: (
         <Text size="sm">
-          Are you sure you want to delete &quot;{referenceName}&quot;? Existing panels will be
-          preserved but unlinked.
+          This will permanently delete &quot;{referenceName}&quot; from ALL your projects.
+          This cannot be undone. Existing panels will be preserved but unlinked.
         </Text>
       ),
-      labels: { confirm: 'Delete', cancel: 'Cancel' },
+      labels: { confirm: 'Delete Permanently', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
         deleteReferenceMutation.mutate({ referenceId });
@@ -1090,15 +1108,27 @@ function ProjectWorkspace() {
             <div className={styles.sidebarSection}>
               <div className={styles.sidebarTitle}>
                 <span>References</span>
-                <ActionIcon
-                  variant="subtle"
-                  size="sm"
-                  component={Link}
-                  href={`/comics/project/${projectId}/character`}
-                  color="yellow"
-                >
-                  <IconPlus size={16} />
-                </ActionIcon>
+                <Group gap={4}>
+                  <Tooltip label="Import from other projects" withArrow>
+                    <ActionIcon
+                      variant="subtle"
+                      size="sm"
+                      onClick={openImportRefs}
+                      color="blue"
+                    >
+                      <IconDownload size={16} />
+                    </ActionIcon>
+                  </Tooltip>
+                  <ActionIcon
+                    variant="subtle"
+                    size="sm"
+                    component={Link}
+                    href={`/comics/project/${projectId}/character`}
+                    color="yellow"
+                  >
+                    <IconPlus size={16} />
+                  </ActionIcon>
+                </Group>
               </div>
 
               <ScrollArea.Autosize mah="calc(100vh - 240px)" scrollbarSize={6}>
@@ -1110,13 +1140,22 @@ function ProjectWorkspace() {
                         References help maintain character consistency across panels. Optional — you
                         can generate panels without them.
                       </Text>
-                      <button
-                        className={styles.gradientBtn}
-                        onClick={() => router.push(`/comics/project/${projectId}/character`)}
-                      >
-                        <IconPlus size={14} />
-                        Add Reference
-                      </button>
+                      <Group gap={8} justify="center">
+                        <button
+                          className={styles.gradientBtn}
+                          onClick={() => router.push(`/comics/project/${projectId}/character`)}
+                        >
+                          <IconPlus size={14} />
+                          Add Reference
+                        </button>
+                        <button
+                          className={styles.gradientBtn}
+                          onClick={openImportRefs}
+                        >
+                          <IconDownload size={14} />
+                          Import
+                        </button>
+                      </Group>
                     </div>
                   ) : (
                     allReferences.map((ref) => (
@@ -1125,7 +1164,8 @@ function ProjectWorkspace() {
                         character={ref}
                         projectId={projectId}
                         referenceImageMap={referenceImageMap}
-                        onDelete={handleDeleteReference}
+                        onRemoveFromProject={handleRemoveReferenceFromProject}
+                        onDeletePermanently={handleDeleteReferencePermanently}
                         getStatusDotClass={getStatusDotClass}
                         getStatusLabel={getStatusLabel}
                       />
@@ -1133,6 +1173,12 @@ function ProjectWorkspace() {
                   )}
                 </Stack>
               </ScrollArea.Autosize>
+
+              <ImportReferencesModal
+                projectId={projectId}
+                opened={importRefsOpened}
+                onClose={closeImportRefs}
+              />
             </div>
 
             {/* ── Sidebar: Chapters ───────────────── */}
@@ -1596,6 +1642,8 @@ function ProjectWorkspace() {
             .filter((p) => p.status === 'Ready' && p.imageUrl)
             .map((p) => ({ id: p.id, imageUrl: p.imageUrl!, position: p.idx }))
         }
+        layoutImagePath={layoutImagePath}
+        setLayoutImagePath={setLayoutImagePath}
         quantity={quantity}
         setQuantity={setQuantity}
         aspectRatio={aspectRatio}

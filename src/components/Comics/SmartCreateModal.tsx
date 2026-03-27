@@ -3,6 +3,8 @@ import { IconArrowLeft, IconClock, IconInfoCircle, IconPlus, IconX } from '@tabl
 import { useEffect, useRef, useState } from 'react';
 import { AspectRatioSelector } from '~/components/Comics/AspectRatioSelector';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
+import { LayoutPicker } from '~/components/Comics/LayoutPicker';
+import type { LayoutOption } from '~/components/Comics/LayoutPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
@@ -25,6 +27,7 @@ interface SmartCreateModalProps {
     storyDescription: string;
     panels: { prompt: string }[];
     aspectRatio: string;
+    layoutImagePath?: string;
   }) => void;
   isCreating: boolean;
   createError: string | null;
@@ -53,6 +56,8 @@ export function SmartCreateModal({
   const [smartPanelCount, setSmartPanelCount] = useState<number | ''>('');
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
   const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const [selectedLayout, setSelectedLayout] = useState<string | undefined>();
+  const [selectedLayoutImagePath, setSelectedLayoutImagePath] = useState<string | undefined>();
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const prevPanelCountRef = useRef(0);
 
@@ -70,6 +75,8 @@ export function SmartCreateModal({
     setSmartPanelCount('');
     setSmartPanels([]);
     setSmartAspectRatio('3:4');
+    setSelectedLayout(undefined);
+    setSelectedLayoutImagePath(undefined);
     prevPanelCountRef.current = 0;
   };
 
@@ -119,6 +126,7 @@ export function SmartCreateModal({
       storyDescription: smartStory.trim(),
       panels: smartPanels.filter((p) => p.prompt.trim()),
       aspectRatio: smartAspectRatio,
+      layoutImagePath: selectedLayoutImagePath,
     });
   };
 
@@ -157,6 +165,19 @@ export function SmartCreateModal({
             min={2}
             max={20}
             clampBehavior="strict"
+          />
+
+          <LayoutPicker
+            value={selectedLayout}
+            onChange={(layout: LayoutOption) => {
+              if (layout.id) {
+                setSelectedLayout(layout.id);
+                setSelectedLayoutImagePath(layout.imagePath);
+              } else {
+                setSelectedLayout(undefined);
+                setSelectedLayoutImagePath(undefined);
+              }
+            }}
           />
 
           {!queueLoading && limit > 0 && (
