@@ -49,6 +49,7 @@ type MetaBaseProps<TImage> = {
   schema?: object;
   images?: TImage | TImage[] | null;
   imageUrl?: string;
+  ogEndpoint?: string;
   keywords?: string | string[];
 };
 
@@ -67,13 +68,17 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   alternate,
   images,
   imageUrl,
+  ogEndpoint,
   keywords,
 }: MetaProps<TImage>) {
   const _images = images ? ([] as TImage[]).concat(images) : undefined;
   const _image = _images?.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const _imageProps =
     _image?.type === 'video' ? { anim: false, transcode: true, optimized: true } : {};
-  const _imageUrl = _image ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps }) : imageUrl;
+  const _fallbackImageUrl = _image
+    ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps })
+    : imageUrl;
+  const _ogImageUrl = ogEndpoint ? `${env.NEXT_PUBLIC_BASE_URL}${ogEndpoint}` : _fallbackImageUrl;
   const { query } = useBrowserRouter();
   const hasDialogParam = !!(query as Record<string, unknown>)?.dialog;
   const { canIndex } = useAppContext();
@@ -103,10 +108,16 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
       {stringifiedKeywords && <meta name="keywords" content={stringifiedKeywords} />}
       <meta property="og:type" content="website" />
       <meta property="twitter:card" content="summary_large_image" />
-      {_imageUrl && (
+      {_ogImageUrl && (
         <>
-          <meta property="og:image" content={_imageUrl} />
-          <meta property="twitter:image" content={_imageUrl} />
+          <meta property="og:image" content={_ogImageUrl} />
+          {ogEndpoint && (
+            <>
+              <meta property="og:image:width" content="1200" />
+              <meta property="og:image:height" content="630" />
+            </>
+          )}
+          <meta property="twitter:image" content={_ogImageUrl} />
           <meta name="robots" content="max-image-preview:large" />
         </>
       )}
