@@ -146,13 +146,31 @@ const fpQualityRank: Record<ModelFileFp, number> = {
 
 // Quality ranking for quant types (higher index = better quality)
 const quantQualityRank: Record<ModelFileQuantType, number> = {
-  Q2_K: 1,
-  Q3_K_M: 2,
-  Q4_K_S: 3,
-  Q4_K_M: 4,
-  Q5_K_M: 5,
-  Q6_K: 6,
-  Q8_0: 7,
+  IQ1_M: 1,
+  IQ1_S: 2,
+  IQ2_XXS: 3,
+  IQ2_XS: 4,
+  IQ2_S: 5,
+  IQ2_M: 6,
+  Q2_K_S: 7,
+  Q2_K: 8,
+  IQ3_XXS: 9,
+  IQ3_XS: 10,
+  Q3_K_S: 11,
+  Q3_K_M: 12,
+  Q3_K_L: 13,
+  IQ4_XS: 14,
+  IQ4_NL: 15,
+  Q4_0: 16,
+  Q4_1: 17,
+  Q4_K_S: 18,
+  Q4_K_M: 19,
+  Q5_0: 20,
+  Q5_1: 21,
+  Q5_K_S: 22,
+  Q5_K_M: 23,
+  Q6_K: 24,
+  Q8_0: 25,
 };
 
 // Model file types (as opposed to component types)
@@ -161,7 +179,7 @@ const modelFileTypes = ['Model', 'Pruned Model'] as const;
 /**
  * Sorts files by quality (best quality first).
  * For SafeTensor files: fp32 > fp16 > bf16 > fp8 > nf4
- * For GGUF files: Q8_0 > Q6_K > Q5_K_M > Q4_K_M > Q4_K_S > Q3_K_M > Q2_K
+ * For GGUF files: Q8_0 > Q6_K > Q5_K_M > ... > Q2_K > IQ2_M > ... > IQ1_M
  * Full size > pruned size
  */
 function sortByQuality<T extends FileFormatType>(files: T[]): T[] {
