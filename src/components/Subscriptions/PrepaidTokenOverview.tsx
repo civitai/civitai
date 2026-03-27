@@ -19,7 +19,7 @@ import {
   IconLock,
   IconLockOpen,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import type { PrepaidToken, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -39,14 +39,8 @@ const BUZZ_TO_TIER: Record<number, string> = {
 };
 
 /**
- * Fetches historical prepaid buzz deliveries from the buzz service and parses them
- * into PrepaidToken-like objects for display alongside real tokens.
- * Deduplicates against existing tokens that already have a buzzTransactionId.
- */
-/**
- * Paginates through buzz transactions until we've covered at least 1 year of history.
- * Uses cursor-based pagination since users with many transactions may exhaust the 200 limit
- * before reaching membership-specific entries.
+ * Fetches historical prepaid buzz deliveries with manual "load more" pagination.
+ * First page loads automatically; subsequent pages require user action.
  */
 function useHistoricalPrepaidDeliveries({
   subscription,
@@ -55,66 +49,69 @@ function useHistoricalPrepaidDeliveries({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   subscription: any;
   existingTokens: PrepaidToken[];
-}): { history: PrepaidToken[]; isLoading: boolean } {
+}): {
+  history: PrepaidToken[];
+  isLoading: boolean;
+  hasMore: boolean;
+  loadMore: () => void;
+} {
   const isCivitai = subscription?.product?.provider === 'Civitai';
   const buzzType =
     (subscription?.product?.metadata as SubscriptionProductMetadata)?.buzzType ?? 'yellow';
   const accountType = buzzType === 'green' ? ('green' as const) : ('yellow' as const);
 
-  const oneYearAgo = useRef(dayjs().subtract(12, 'months').startOf('day')).current;
   const endDate = useRef(dayjs().endOf('day').toDate()).current;
   const startDate = useRef(dayjs().subtract(24, 'months').startOf('day').toDate()).current;
 
-  // Accumulated transactions across all pages
-  const [allTransactions, setAllTransactions] = useState<
-    Array<{
-      date: Date;
-      amount: number;
-      externalTransactionId?: string | null;
-      details?: Record<string, unknown> | null;
-    }>
-  >([]);
+  // Accumulated raw transactions across all fetched pages
+  type RawTx = {
+    date: Date;
+    amount: number;
+    externalTransactionId?: string | null;
+    details?: Record<string, unknown> | null;
+  };
+  const [allTransactions, setAllTransactions] = useState<RawTx[]>([]);
   const [cursor, setCursor] = useState<Date | undefined>(undefined);
-  const [isComplete, setIsComplete] = useState(false);
-  const [pageIndex, setPageIndex] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  // Only the first page fetches automatically; further pages need user trigger
+  const [fetchEnabled, setFetchEnabled] = useState(true);
 
-  // Fetch the current page
   const { data: txData, isLoading: pageLoading } = trpc.buzz.getUserTransactions.useQuery(
     {
       type: TransactionType.Purchase,
       start: startDate,
       end: endDate,
-      limit: 200,
+      limit: 100,
       accountType,
       cursor,
     },
-    { enabled: isCivitai && !isComplete }
+    { enabled: isCivitai && hasMore && fetchEnabled }
   );
 
-  // Process each page as it arrives
+  // Process page data when it arrives
   useEffect(() => {
-    if (!txData || isComplete) return;
+    if (!txData) return;
 
     const txs = txData.transactions;
     if (txs.length === 0) {
-      setIsComplete(true);
+      setHasMore(false);
       return;
     }
 
     setAllTransactions((prev) => [...prev, ...txs]);
 
-    // Check if the oldest transaction in this page is older than 1 year
-    const oldestDate = dayjs(txs[txs.length - 1].date);
-    const hasMorePages = !!txData.cursor;
-
-    if (!hasMorePages || oldestDate.isBefore(oneYearAgo)) {
-      setIsComplete(true);
+    if (!txData.cursor) {
+      setHasMore(false);
     } else {
-      // Fetch the next page
       setCursor(txData.cursor as unknown as Date);
-      setPageIndex((p) => p + 1);
+      // Pause fetching — user must click "Load more" for the next page
+      setFetchEnabled(false);
     }
-  }, [txData, isComplete, oneYearAgo, pageIndex]);
+  }, [txData]);
+
+  const loadMore = useCallback(() => {
+    setFetchEnabled(true);
+  }, []);
 
   // Parse accumulated transactions into PrepaidToken objects
   const history = useMemo(() => {
@@ -161,7 +158,12 @@ function useHistoricalPrepaidDeliveries({
     return historicalTokens;
   }, [allTransactions, existingTokens]);
 
-  return { history, isLoading: isCivitai && !isComplete };
+  return {
+    history,
+    isLoading: isCivitai && pageLoading && fetchEnabled,
+    hasMore: isCivitai && hasMore && !fetchEnabled,
+    loadMore,
+  };
 }
 
 function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () => void }) {
@@ -349,11 +351,15 @@ export function PrepaidTokenOverview({
   };
 
   // Fetch historical prepaid deliveries from buzz service (on-demand, deduplicated)
-  const { history: historicalDeliveries, isLoading: historyLoading } =
-    useHistoricalPrepaidDeliveries({
-      subscription,
-      existingTokens: tokens,
-    });
+  const {
+    history: historicalDeliveries,
+    isLoading: historyLoading,
+    hasMore: hasMoreHistory,
+    loadMore: loadMoreHistory,
+  } = useHistoricalPrepaidDeliveries({
+    subscription,
+    existingTokens: tokens,
+  });
 
   const unlocked = tokens.filter((t) => t.status === 'unlocked');
   const locked = tokens.filter((t) => t.status === 'locked');
@@ -503,6 +509,20 @@ export function PrepaidTokenOverview({
                 <TokenCard key={token.id} token={token} />
               ))}
             </Box>
+            {(hasMoreHistory || historyLoading) && (
+              <Group justify="center" mt="xs">
+                <Button
+                  variant="subtle"
+                  color="yellow"
+                  size="xs"
+                  onClick={loadMoreHistory}
+                  loading={historyLoading}
+                  disabled={historyLoading}
+                >
+                  Load more history
+                </Button>
+              </Group>
+            )}
           </Collapse>
         </Stack>
       )}
