@@ -40,6 +40,26 @@ export const subscriptionProductMetadataSchema = z.looseObject({
   supportLevel: z.string().optional(),
 });
 
+export const prepaidTokenStatusSchema = z.enum(['locked', 'unlocked', 'claimed']);
+export type PrepaidTokenStatus = z.infer<typeof prepaidTokenStatusSchema>;
+
+export const prepaidTokenSchema = z.object({
+  id: z.string(),
+  tier: productTierSchema,
+  status: prepaidTokenStatusSchema,
+  buzzAmount: z.number(),
+  codeId: z.string().optional(),
+  unlockedAt: z.string().optional(), // ISO date — when the token was actually unlocked
+  claimedAt: z.string().optional(), // ISO date — when the user claimed it
+  buzzTransactionId: z.string().optional(),
+});
+export type PrepaidToken = z.infer<typeof prepaidTokenSchema>;
+
+export const claimPrepaidTokenSchema = z.object({
+  tokenId: z.string(),
+});
+export type ClaimPrepaidTokenInput = z.infer<typeof claimPrepaidTokenSchema>;
+
 export function getMembershipBuzzTransactionId({
   date,
   userId,
@@ -57,8 +77,11 @@ export type SubscriptionMetadata = z.infer<typeof subscriptionMetadata>;
 export const subscriptionMetadata = z.looseObject({
   renewalEmailSent: z.boolean().optional(),
   renewalBonus: z.number().optional(),
+  // Legacy fields — kept for backwards compatibility during migration
   prepaids: z.partialRecord(productTierSchema, z.number()).optional(),
   proratedDays: z.partialRecord(productTierSchema, z.number()).optional(),
   buzzTransactionIds: z.array(z.string()).optional(),
+  // New token-based prepaid system
+  tokens: z.array(prepaidTokenSchema).optional(),
   cancellationReason: z.string().optional(),
 });

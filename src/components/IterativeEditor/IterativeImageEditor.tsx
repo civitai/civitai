@@ -42,6 +42,7 @@ import { openGeneratorImagePicker } from '~/utils/comic-image-picker';
 import { getImageDimensions } from '~/utils/image-utils';
 
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
+import { trpc } from '~/utils/trpc';
 import { AspectRatioSelector } from './AspectRatioSelector';
 import { IterationMessage } from './IterationMessage';
 import type {
@@ -97,12 +98,72 @@ export interface IterativeImageEditorProps {
   isCostLoading?: boolean;
   /** Dynamic enhance cost from whatIf query. Overrides config.enhanceCost when ready. */
   enhanceCostEstimate?: CostEstimate | null;
+  /** When provided, replaces the internal enhance toggle with EnhancePromptInPlace.
+   *  Enhancement becomes a user-driven pre-step that edits the prompt textarea. */
+  enhanceInPlace?: {
+    projectId: number;
+    chapterPosition: number;
+    enhanceCost: number | null;
+    insertAtPosition?: number | null;
+  };
   /** Called when editor settings change so the parent can update cost queries. */
   onSettingsChange?: (params: CostEstimateParams) => void;
   /** Called when user clicks retry after cost estimation failure. */
   onRetryCost?: () => void;
 
   mode?: 'page' | 'modal';
+}
+
+/** Compact enhance button for the bottom action bar of the iterative editor. */
+function EnhancePromptInlineButton({
+  prompt,
+  setPrompt,
+  enhanceCost,
+  projectId,
+  chapterPosition,
+  insertAtPosition,
+}: {
+  prompt: string;
+  setPrompt: (val: string) => void;
+  enhanceCost: number | null;
+  projectId: number;
+  chapterPosition: number;
+  insertAtPosition?: number | null;
+}) {
+  const enhanceMutation = trpc.comics.enhancePromptText.useMutation({
+    onSuccess: (data) => setPrompt(data.enhancedPrompt),
+    onError: (err) =>
+      showErrorNotification({ error: new Error(err.message), title: 'Failed to enhance prompt' }),
+  });
+
+  return (
+    <Tooltip label={`Enhance prompt (~${enhanceCost ?? '?'} Buzz)`} withArrow position="top">
+      <BuzzTransactionButton
+        buzzAmount={enhanceCost ?? 0}
+        label={
+          <span className="flex items-center gap-1">
+            <IconWand size={14} />
+            Enhance Prompt
+          </span>
+        }
+        loading={enhanceMutation.isPending}
+        disabled={!prompt.trim() || enhanceCost == null}
+        onPerformTransaction={() => {
+          if (!prompt.trim() || enhanceMutation.isPending) return;
+          enhanceMutation.mutate({
+            projectId,
+            chapterPosition,
+            prompt: prompt.trim(),
+            useContext: false,
+            insertAtPosition: insertAtPosition ?? undefined,
+          });
+        }}
+        showPurchaseModal
+        size="compact-sm"
+        variant="light"
+      />
+    </Tooltip>
+  );
 }
 
 export function IterativeImageEditor({
@@ -118,6 +179,7 @@ export function IterativeImageEditor({
   costEstimate,
   isCostLoading,
   enhanceCostEstimate,
+  enhanceInPlace,
   onSettingsChange,
   onRetryCost,
   mode = 'page',
@@ -142,7 +204,8 @@ export function IterativeImageEditor({
 
   // ── Controls state ──
   const [prompt, setPrompt] = useState('');
-  const [enhancePrompt, setEnhancePrompt] = useState(true);
+  // Legacy enhance toggle — only shown when enhanceInPlace is not provided (non-comic usage)
+  const [enhancePromptToggle, setEnhancePromptToggle] = useState(true);
   const [aspectRatio, setAspectRatio] = useState(config.defaultAspectRatio);
   const [generationModel, setGenerationModel] = useState<string | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
@@ -376,16 +439,11 @@ export function IterativeImageEditor({
   // ── Generation cost (whatIf only — no fallback) ──
   const costLoading = isCostLoading ?? false;
   const costFailed = !!costEstimate && !costEstimate.ready && !costLoading;
+  // Enhancement cost is no longer bundled — it's a separate client-side action
   const estimatedCost = useMemo(() => {
     if (!costEstimate?.ready) return null;
-    const base = costEstimate.cost;
-    const enhanceCost =
-      enhanceCostEstimate?.ready && enhanceCostEstimate.cost > 0
-        ? enhanceCostEstimate.cost
-        : config.enhanceCost;
-    const enhance = enhancePrompt && prompt.trim() ? enhanceCost : 0;
-    return base + enhance;
-  }, [costEstimate, enhanceCostEstimate, config.enhanceCost, enhancePrompt, prompt]);
+    return costEstimate.cost;
+  }, [costEstimate]);
 
   // ── Send / Generate handler ──
   const handleSend = async () => {
@@ -417,7 +475,8 @@ export function IterativeImageEditor({
     try {
       const generateParams: GenerateParams = {
         prompt: currentPrompt,
-        enhance: enhancePrompt,
+        // Only pass enhance for non-comic editors (comics use enhanceInPlace instead)
+        ...(!enhanceInPlace && { enhance: enhancePromptToggle }),
         aspectRatio,
         baseModel: generationModel,
         quantity,
@@ -855,6 +914,16 @@ export function IterativeImageEditor({
                   </Button>
                 </Tooltip>
               )}
+              {enhanceInPlace && (
+                <EnhancePromptInlineButton
+                  prompt={prompt}
+                  setPrompt={setPrompt}
+                  enhanceCost={enhanceInPlace.enhanceCost}
+                  projectId={enhanceInPlace.projectId}
+                  chapterPosition={enhanceInPlace.chapterPosition}
+                  insertAtPosition={enhanceInPlace.insertAtPosition}
+                />
+              )}
               <Tooltip
                 label={
                   queueFull
@@ -877,7 +946,7 @@ export function IterativeImageEditor({
                     label={
                       <span className="flex items-center gap-1">
                         <IconSend size={14} />
-                        {currentSource ? 'Refine' : 'Generate'}
+                        {currentSource ? 'Refine Image' : 'Generate'}
                       </span>
                     }
                     loading={isGenerating || (costLoading && !costFailed)}
@@ -1210,15 +1279,17 @@ export function IterativeImageEditor({
           />
         </div>
 
-        {/* Enhance prompt toggle */}
-        <Switch
-          label="Enhance prompt"
-          description="AI adds detail and composition"
-          checked={enhancePrompt}
-          onChange={(e) => setEnhancePrompt(e.currentTarget.checked)}
-          color="yellow"
-          size="sm"
-        />
+        {/* Enhance prompt toggle (only when enhanceInPlace is not used) */}
+        {!enhanceInPlace && (
+          <Switch
+            label="Enhance prompt"
+            description="AI adds detail and composition"
+            checked={enhancePromptToggle}
+            onChange={(e) => setEnhancePromptToggle(e.currentTarget.checked)}
+            color="yellow"
+            size="sm"
+          />
+        )}
 
         {/* Plugin sidebar sections */}
         {renderSidebarExtra?.(slotContext)}

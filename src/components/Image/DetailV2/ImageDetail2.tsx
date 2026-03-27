@@ -244,6 +244,7 @@ export function ImageDetail2() {
       <Meta
         title={title}
         images={image}
+        ogEndpoint={`/api/og?type=image&id=${image.id}`}
         canonical={`/images/${image.id}`}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />

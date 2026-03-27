@@ -659,6 +659,7 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`}
         description={truncate(removeTags(model.description ?? ''), { length: 150 })}
         images={versionImages}
+        ogEndpoint={`/api/og?type=model&id=${model.id}`}
         canonical={`/models/${model.id}/${slugit(model.name)}`}
         alternate={`/models/${model.id}`}
         schema={metaSchema}

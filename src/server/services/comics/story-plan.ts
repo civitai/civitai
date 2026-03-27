@@ -1,9 +1,8 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
 
-const SYSTEM_PROMPT = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
+const SYSTEM_PROMPT_BASE = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
 
 Rules:
-- Choose the right number of panels (typically 4–12) based on story complexity
 - Each panel should describe a single moment, action, or beat
 - Focus on: action, emotion, camera angle, composition, environment
 - Do NOT describe character appearance — reference images handle that
@@ -14,10 +13,21 @@ Rules:
 - Keep each panel description under 300 characters
 - Output JSON: { "panels": [{ "prompt": "..." }, ...] }`;
 
+function buildSystemPrompt(panelCount?: number): string {
+  const panelCountRule = panelCount
+    ? `- Create exactly ${panelCount} panels`
+    : '- Choose the right number of panels (typically 4-12) based on story complexity';
+  return SYSTEM_PROMPT_BASE.replace(
+    '- Each panel should describe a single moment',
+    `${panelCountRule}\n- Each panel should describe a single moment`
+  );
+}
+
 export async function planChapterPanels(input: {
   token: string;
   storyDescription: string;
   characterNames: string[];
+  panelCount?: number;
 }): Promise<{ panels: { prompt: string }[] }> {
   const userMessage = [
     input.characterNames.length > 0
@@ -34,7 +44,7 @@ export async function planChapterPanels(input: {
     temperature: 0.7,
     maxTokens: 2048,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: buildSystemPrompt(input.panelCount) },
       { role: 'user', content: userMessage },
     ],
   });

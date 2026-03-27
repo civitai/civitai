@@ -172,7 +172,7 @@ export const processEnqueuedComicPanelsJob = createJob(
                 workflow: 'txt2img',
                 sampler: 'Euler',
                 steps: 25,
-                quantity: 1,
+                quantity: metadata.quantity ?? 1,
                 draft: false,
                 disablePoi: false,
                 priority: 'low',
@@ -203,11 +203,12 @@ export const processEnqueuedComicPanelsJob = createJob(
             await signalClient
               .send({
                 userId,
-                target: SignalMessages.TextToImageUpdate,
+                target: SignalMessages.ComicPanelUpdate,
                 data: {
-                  $type: 'step',
+                  panelId: panel.id,
+                  projectId: panel.projectId,
+                  status: ComicPanelStatus.Generating,
                   workflowId: result.id,
-                  status: 'submitted',
                 },
               })
               .catch(() => {}); // Don't fail the job if signal fails

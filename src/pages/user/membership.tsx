@@ -38,7 +38,7 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { PrepaidBuzzTransactions } from '~/components/Subscriptions/PrepaidBuzzTransactions';
+import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
 import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
@@ -46,7 +46,11 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type {
+  SubscriptionProductMetadata,
+  SubscriptionMetadata,
+} from '~/server/schema/subscriptions.schema';
+import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
@@ -438,15 +442,33 @@ export default function UserMembership() {
                   )}
                   {isCivitaiProvider && (
                     <Text c="yellow">
-                      You are currently in a pre-paid membership. No subsequent charges will be made
-                      to your account.
+                      You are on a prepaid membership. Tokens unlock monthly — claim them to receive
+                      your Buzz.
                     </Text>
                   )}
                 </Stack>
               </Paper>
 
-              <PrepaidTimelineProgress subscription={subscription} />
-              <PrepaidBuzzTransactions subscription={subscription} />
+              {isCivitaiProvider && (
+                <PrepaidTimelineProgress subscription={subscription} />
+              )}
+
+              {isCivitaiProvider && (() => {
+                const prepaidTokens = getPrepaidTokens({
+                  metadata: subscription.metadata as SubscriptionMetadata,
+                });
+                const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
+                // Always render for Civitai members — even with 0 tokens,
+                // the component fetches historical deliveries from the buzz service
+                return (
+                  <PrepaidTokenOverview
+                    tokens={prepaidTokens}
+                    nextUnlockDate={nextUnlockDate}
+                    defaultExpanded
+                    subscription={subscription}
+                  />
+                );
+              })()}
 
               {benefits && (
                 <div

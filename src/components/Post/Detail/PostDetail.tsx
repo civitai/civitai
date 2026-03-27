@@ -174,6 +174,7 @@ export function PostDetailContent({ postId }: Props) {
         }
         keywords={toStringList(post?.tags.map((x) => x.name) ?? [])}
         images={images}
+        ogEndpoint={`/api/og?type=post&id=${postId}`}
         canonical={`/posts/${postId}`}
         deIndex={post?.availability === Availability.Unsearchable}
       />

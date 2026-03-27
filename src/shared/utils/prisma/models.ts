@@ -188,7 +188,7 @@ export type ComicProjectStatus = "Active" | "Deleted";
 
 export type ComicReferenceStatus = "Pending" | "Ready" | "Failed";
 
-export type ComicPanelStatus = "Pending" | "Enqueued" | "Generating" | "Ready" | "Failed";
+export type ComicPanelStatus = "Pending" | "Enqueued" | "Generating" | "AwaitingSelection" | "Ready" | "Failed";
 
 export type ComicChapterStatus = "Draft" | "Published" | "Scheduled";
 
@@ -3900,6 +3900,7 @@ export interface ComicProject {
   chapters?: ComicChapter[];
   engagements?: ComicProjectEngagement[];
   reports?: ComicProjectReport[];
+  projectReferences?: ComicProjectReference[];
 }
 
 export interface ComicChapter {
@@ -3934,6 +3935,7 @@ export interface ComicReference {
   updatedAt: Date;
   images?: ComicReferenceImage[];
   panelReferences?: ComicPanelReference[];
+  projectReferences?: ComicProjectReference[];
 }
 
 export interface ComicReferenceImage {
@@ -3943,6 +3945,14 @@ export interface ComicReferenceImage {
   image?: Image;
   position: number;
   createdAt: Date;
+}
+
+export interface ComicProjectReference {
+  projectId: number;
+  referenceId: number;
+  createdAt: Date;
+  project?: ComicProject;
+  reference?: ComicReference;
 }
 
 export interface ComicPanel {

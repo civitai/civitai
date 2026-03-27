@@ -63,7 +63,8 @@ export interface ReferenceImage {
 
 export interface GenerateParams {
   prompt: string;
-  enhance: boolean;
+  /** @deprecated Enhancement now happens client-side for comics. Still used by non-comic iterative editors. */
+  enhance?: boolean;
   aspectRatio: string;
   baseModel: string | null;
   quantity: number;

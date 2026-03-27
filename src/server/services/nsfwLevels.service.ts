@@ -483,13 +483,18 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
 
 export async function updateComicChapterNsfwLevels(projectIds: number[]) {
   if (!projectIds.length) return;
+  // Use LEFT JOINs so chapters with no remaining panels (or no panel images)
+  // get their nsfwLevel reset to 0 instead of being silently skipped.
   await dbWrite.$queryRaw(Prisma.sql`
     WITH level AS (
-      SELECT p."projectId", p."chapterPosition", COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
-      FROM "ComicPanel" p
-      JOIN "Image" i ON i.id = p."imageId"
-      WHERE p."projectId" IN (${Prisma.join(projectIds)})
-      GROUP BY p."projectId", p."chapterPosition"
+      SELECT ch."projectId", ch."position" AS "chapterPosition",
+             COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
+      FROM "ComicChapter" ch
+      LEFT JOIN "ComicPanel" p ON p."projectId" = ch."projectId"
+        AND p."chapterPosition" = ch."position"
+      LEFT JOIN "Image" i ON i.id = p."imageId"
+      WHERE ch."projectId" IN (${Prisma.join(projectIds)})
+      GROUP BY ch."projectId", ch."position"
     )
     UPDATE "ComicChapter" ch
     SET "nsfwLevel" = level."nsfwLevel"

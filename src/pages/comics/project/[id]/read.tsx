@@ -97,6 +97,7 @@ function ComicReader() {
       <div
         ref={scrollRef}
         style={{
+          flex: 1,
           overflow: 'auto',
           background: 'var(--mantine-color-dark-8)',
         }}
@@ -213,4 +214,6 @@ function ComicReader() {
   );
 }
 
-export default Page(ComicReader);
+export default Page(ComicReader, {
+  scrollable: false,
+});
