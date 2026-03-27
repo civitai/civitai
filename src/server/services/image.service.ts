@@ -2443,6 +2443,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
+  // Only show images that belong to a post
+  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
+
   if (!isModerator) {
     filters.push(
       // Avoids exposing private resources to the public
@@ -3268,6 +3271,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
+
+  // Only show images that belong to a post
+  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
