@@ -13,3 +13,14 @@ export function getOrchestratorCallbacks(userId: number): Array<WorkflowCallback
     },
   ];
 }
+
+/** Generic workflow callbacks — used for non-generation workflows (prompt enhancement, etc.) */
+export function getWorkflowCallbacks(userId: number): Array<WorkflowCallback> | undefined {
+  if (!env.SIGNALS_ENDPOINT) return;
+  return [
+    {
+      url: `${env.SIGNALS_ENDPOINT}/users/${userId}/signals/${SignalMessages.WorkflowUpdate}`,
+      type: ['step:*'],
+    },
+  ];
+}

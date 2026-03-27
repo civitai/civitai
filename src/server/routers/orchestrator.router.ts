@@ -31,10 +31,14 @@ import {
   cancelWorkflow,
   deleteManyWorkflows,
   deleteWorkflow,
+  getWorkflow,
   patchWorkflows,
   patchWorkflowTags,
+  queryWorkflows,
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
+import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
@@ -46,7 +50,10 @@ import {
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
-import { createImageGen, createImageGenStep } from '~/server/services/orchestrator/imageGen/imageGen';
+import {
+  createImageGen,
+  createImageGenStep,
+} from '~/server/services/orchestrator/imageGen/imageGen';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import {
@@ -201,6 +208,27 @@ export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
     .input(z.object({ videoUrl: z.string() }))
     .query(({ ctx, input }) => getVideoMetadata(input)),
+
+  // #region [prompt enhancement]
+  enhancePrompt: orchestratorGuardedProcedure
+    .input(promptEnhancementSchema)
+    .mutation(({ ctx, input }) => enhancePrompt({ input, token: ctx.token, userId: ctx.user.id })),
+  /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
+  queryWorkflowsByTags: orchestratorProcedure
+    .input(workflowQuerySchema)
+    .query(async ({ ctx, input }) => {
+      return queryWorkflows({
+        ...input,
+        token: ctx.token,
+        hideMatureContent: ctx.hideMatureContent,
+      });
+    }),
+  getWorkflow: orchestratorProcedure
+    .input(workflowIdSchema)
+    .query(({ ctx, input }) =>
+      getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } })
+    ),
+  // #endregion
 
   // #region [requests]
   deleteWorkflow: orchestratorProcedure
@@ -464,8 +492,7 @@ export const orchestratorRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const modelConfig =
-        ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ??
-        ITERATE_MODEL_CONFIG.NanoBanana;
+        ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ?? ITERATE_MODEL_CONFIG.NanoBanana;
       const effectiveVersionId =
         input.sourceImageUrl && modelConfig.img2imgVersionId
           ? modelConfig.img2imgVersionId
@@ -578,8 +605,7 @@ export const orchestratorRouter = router({
       try {
         const token = await getOrchestratorToken(ctx.user!.id, ctx);
         const modelConfig =
-          ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ??
-          ITERATE_MODEL_CONFIG.NanoBanana;
+          ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ?? ITERATE_MODEL_CONFIG.NanoBanana;
         const hasSourceImage = !!input.sourceImage;
         const effectiveVersionId =
           hasSourceImage && modelConfig.img2imgVersionId
