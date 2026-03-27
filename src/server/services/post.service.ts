@@ -31,16 +31,19 @@ import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
+  removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
   createImageResources,
-  deleteImageById,
+  deleteImageFromS3,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   ingestImage,
+  invalidateManyImageExistence,
   purgeImageGenerationDataCache,
   purgeResizeCache,
   queueImageSearchIndexUpdate,
@@ -777,24 +780,60 @@ export const updatePost = async ({
 };
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
-  const images = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT i.id
-    FROM "Image" i
-    JOIN "Post" p ON p.id = "postId"
-    WHERE i."postId" = ${id}
-      AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
-  `;
-  if (images.length) {
-    for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
+  // Phase 1: Atomic DB operations in a single transaction
+  const { post, deletedImages } = await dbWrite.$transaction(
+    async (tx) => {
+      // Find images belonging to this post
+      const images = await tx.$queryRaw<{ id: number; url: string }[]>`
+        SELECT i.id, i.url
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE i."postId" = ${id}
+          AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
+      `;
+
+      let deletedImages: { id: number; url: string }[] = [];
+      if (images.length) {
+        // Remove images from collections before deleting
+        await Promise.all(images.map((img) => removeEntityFromAllCollections('image', img.id)));
+
+        deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
+          DELETE FROM "Image"
+          WHERE id IN (${Prisma.join(images.map((i) => i.id))})
+          RETURNING id, url
+        `;
+      }
+
+      // Delete the post
+      const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+        DELETE FROM "Post"
+        WHERE id = ${id}
+        RETURNING id, "nsfwLevel"
+      `;
+
+      return { post, deletedImages };
+    },
+    { timeout: 10000 }
+  );
+
+  // Phase 2: Side effects after successful transaction
+  if (deletedImages.length) {
+    const imageIds = deletedImages.map((img) => img.id);
+
+    await Promise.all([
+      queueImageSearchIndexUpdate({ ids: imageIds, action: SearchIndexUpdateQueueAction.Delete }),
+      invalidateManyImageExistence(imageIds),
+    ]);
+
+    // S3 deletion with concurrency limit
+    await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
+      Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
+    );
   }
 
   await bustCachesForPosts(id);
-  const [result] = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-    DELETE FROM "Post"
-    WHERE id = ${id}
-    RETURNING id, "nsfwLevel"
-  `;
-  return result;
+
+  return post;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
