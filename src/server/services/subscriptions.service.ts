@@ -770,11 +770,9 @@ export const getHistoricalPrepaidDeliveries = async ({
       amount,
       externalTransactionId,
       details
-    FROM buzzTransactions
+    FROM membership_prepaid_deliveries
     WHERE toAccountId = ${userId}
       AND toAccountType = '${accountType}'
-      AND type = 'purchase'
-      AND externalTransactionId LIKE 'civitai-membership%'
       AND date >= now() - INTERVAL 24 MONTH
     ORDER BY date DESC
   `;
