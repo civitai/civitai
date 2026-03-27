@@ -1443,7 +1443,6 @@ export function GenerationForm() {
           </>
           <GenerationFooter>
             <FormFooter
-              noSubmit={workflowConfigByKey.get(snapshot.workflow ?? '')?.noSubmit}
               onSubmitSuccess={
                 snapshot.workflow && isEnhancementWorkflow(snapshot.workflow)
                   ? handleNavigationBack
