@@ -5,6 +5,7 @@ import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -38,6 +39,9 @@ import type {
   PublishVersionInput,
   QueryModelVersionSchema,
   RecommendedSettingsSchema,
+  AddLinkedComponentInput,
+  LinkedComponentSettings,
+  SetLinkedComponentsInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -75,6 +79,7 @@ import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -783,12 +788,10 @@ export const publishModelVersionById = async ({
       },
     },
   } as const;
-  const currentVersion = await dbRead.modelVersion
-    .findUniqueOrThrow(versionFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
-      return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
-    });
+  const currentVersion = await dbRead.modelVersion.findUniqueOrThrow(versionFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
+    return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
+  });
 
   // Validate NSFW + restricted base model combination
   if (
@@ -1500,12 +1503,10 @@ export const modelVersionDonationGoals = async ({
       },
     },
   } as const;
-  const version = await dbRead.modelVersion
-    .findFirstOrThrow(donationFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
-      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
-    });
+  const version = await dbRead.modelVersion.findFirstOrThrow(donationFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+    return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+  });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
@@ -1686,7 +1687,7 @@ export const createModelVersionPostFromTraining = async ({
         modelVersionId,
         width: image.metadata?.width,
         height: image.metadata?.height,
-        metadata: image.metadata as any,
+        metadata: image.metadata as ImageMetadata,
         meta: image.meta,
         url: image.url as string,
         user,
@@ -1702,6 +1703,142 @@ export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularit
 
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
   return await modelVersionResourceCache.fetch(ids);
+};
+
+/**
+ * Resolves VAE version IDs from linked components for a set of model version IDs.
+ * Returns a Map<sourceVersionId, vaeVersionId>.
+ */
+export async function getLinkedVaeIds(sourceVersionIds: number[]): Promise<Map<number, number>> {
+  if (sourceVersionIds.length === 0) return new Map();
+
+  const rows = await dbRead.recommendedResource.findMany({
+    where: {
+      sourceId: { in: sourceVersionIds },
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { sourceId: true, resourceId: true, settings: true },
+  });
+
+  const map = new Map<number, number>();
+  for (const row of rows) {
+    const s = row.settings as LinkedComponentSettings;
+    if (s.componentType === 'VAE' && row.sourceId) {
+      map.set(row.sourceId, row.resourceId);
+    }
+  }
+  return map;
+}
+
+export const setLinkedComponents = async ({ id, components }: SetLinkedComponentsInput) => {
+  const existing = await dbWrite.recommendedResource.findMany({
+    where: {
+      sourceId: id,
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { id: true },
+  });
+
+  const existingIds = existing.map((x) => x.id);
+  const inputIds = components.map((c) => c.id).filter(isDefined);
+  const toDelete = existingIds.filter((eid) => !inputIds.includes(eid));
+
+  await dbWrite.$transaction([
+    ...(toDelete.length > 0
+      ? [dbWrite.recommendedResource.deleteMany({ where: { id: { in: toDelete }, sourceId: id } })]
+      : []),
+    ...components.map((component) =>
+      dbWrite.recommendedResource.upsert({
+        where: { id: component.id ?? -1 },
+        create: {
+          resourceId: component.resourceId,
+          sourceId: id,
+          settings: component.settings,
+        },
+        update: {
+          settings: component.settings,
+        },
+      })
+    ),
+  ]);
+};
+
+export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
+  // Find all files and pick the primary one using modelFileOrder priority
+  const files = await dbRead.modelFile.findMany({
+    where: { modelVersionId: input.targetVersionId },
+    select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+  });
+
+  if (files.length === 0) {
+    throw new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'No files found for the target model version',
+    });
+  }
+
+  const primaryFile = files.sort(
+    (a, b) =>
+      (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
+      (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
+  )[0];
+
+  const settings = {
+    isLinkedComponent: true as const,
+    componentType: input.componentType,
+    fileId: primaryFile.id,
+    modelId: input.modelId,
+    modelName: input.modelName,
+    versionName: input.versionName,
+    fileName: primaryFile.name,
+    isRequired: input.isRequired ?? true,
+  };
+
+  // Check for existing linked component with same source + target
+  const existing = await dbWrite.recommendedResource.findFirst({
+    where: {
+      sourceId: input.id,
+      resourceId: input.targetVersionId,
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { id: true },
+  });
+
+  const result = existing
+    ? await dbWrite.recommendedResource.update({
+        where: { id: existing.id },
+        data: { settings },
+      })
+    : await dbWrite.recommendedResource.create({
+        data: {
+          sourceId: input.id,
+          resourceId: input.targetVersionId,
+          settings,
+        },
+      });
+
+  const meta = primaryFile.metadata as Record<string, unknown> | null;
+
+  return {
+    recommendedResourceId: result.id,
+    componentType: input.componentType,
+    modelId: input.modelId,
+    modelName: input.modelName,
+    versionId: input.targetVersionId,
+    versionName: input.versionName,
+    fileId: primaryFile.id,
+    fileName: primaryFile.name,
+    sizeKB: primaryFile.sizeKB,
+    fileType: primaryFile.type,
+    fileMetadata: meta
+      ? {
+          format: meta.format as string | null,
+          size: meta.size as string | null,
+          fp: meta.fp as string | null,
+        }
+      : undefined,
+    isRequired: input.isRequired ?? true,
+  };
 };
 
 export async function updateModelVersionTrainingStatus({

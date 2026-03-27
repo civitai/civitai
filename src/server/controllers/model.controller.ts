@@ -17,6 +17,7 @@ import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import type { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import type {
+  LinkedComponentSettings,
   ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   RecommendedSettingsSchema,
@@ -63,7 +64,7 @@ import { getCollectionById, getCollectionItemCount } from '~/server/services/col
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
-import { bustMvCache } from '~/server/services/model-version.service';
+import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import {
   copyGallerySettingsToAllModelsByUser,
   deleteModelById,
@@ -187,9 +188,8 @@ export const getModelHandler = async ({
     });
     const tagsOnModels = await modelTagCache.fetch(model.id);
 
-    // recommended VAEs
-    const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
-    const vaeFiles = await getVaeFiles({ vaeIds });
+    const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
+      (settings as LinkedComponentSettings)?.isLinkedComponent === true;
 
     const suggestedResources = await dbRead.modelAssociations.count({
       where: { fromModelId: model.id, type: 'Suggested' },
@@ -207,10 +207,43 @@ export const getModelHandler = async ({
       userId: ctx.user?.id,
     });
 
-    const recommendedResourceIds =
-      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.resource.id)) ??
-      [];
-    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user);
+    // Only pass non-linked-component resources to getResourceData
+    const regularResourceIds =
+      model.modelVersions.flatMap((version) =>
+        version?.recommendedResources
+          .filter((x) => !isLinkedComponent(x.settings))
+          .map((x) => x.resource.id)
+      ) ?? [];
+    const generationResources = await getResourceData(regularResourceIds, ctx?.user);
+
+    // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
+    const allLinkedFileIds = [
+      ...new Set(
+        model.modelVersions.flatMap((version) =>
+          version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => (r.settings as LinkedComponentSettings).fileId)
+            .filter(isDefined)
+        )
+      ),
+    ];
+    const linkedFileDataMap = new Map<
+      number,
+      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
+    >();
+    if (allLinkedFileIds.length > 0) {
+      const fileData = await dbRead.modelFile.findMany({
+        where: { id: { in: allLinkedFileIds } },
+        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+      });
+      for (const f of fileData)
+        linkedFileDataMap.set(f.id, {
+          name: f.name,
+          sizeKB: f.sizeKB,
+          type: f.type,
+          metadata: f.metadata as Record<string, unknown> | null,
+        });
+    }
 
     return {
       ...model,
@@ -266,8 +299,9 @@ export const getModelHandler = async ({
           isBaseModelGenerationSupported(version.baseModel, model.type);
 
         // sort version files by file type, 'Model' type goes first
-        const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
-        version.files.push(...vaeFile);
+        // Note: VAE files from linked components are NOT pushed into version.files here
+        // because they are already returned in the linkedComponents array.
+        // The list endpoint and public API still push them for backward compat.
         const files = isDownloadable
           ? version.files
               .filter((x) => x.visibility === 'Public' || canManage)
@@ -329,12 +363,35 @@ export const getModelHandler = async ({
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
           settings: version.settings as RecommendedSettingsSchema | undefined,
           recommendedResources: version.recommendedResources
+            .filter((item) => !isLinkedComponent(item.settings))
             .map((item) => {
               const match = generationResources.find((x) => x.id === item.resource.id);
               if (!match) return null;
               return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
             })
             .filter(isDefined),
+          linkedComponents: version.recommendedResources
+            .filter((r) => isLinkedComponent(r.settings))
+            .map((r) => {
+              const s = r.settings as LinkedComponentSettings;
+              const fileData = linkedFileDataMap.get(s.fileId);
+              return {
+                recommendedResourceId: r.id,
+                componentType: s.componentType as ModelFileComponentType,
+                modelId: s.modelId,
+                modelName: s.modelName,
+                versionId: r.resource?.id ?? 0,
+                versionName: s.versionName,
+                fileId: s.fileId,
+                fileName: fileData?.name ?? s.fileName,
+                sizeKB: fileData?.sizeKB,
+                fileType: fileData?.type,
+                fileMetadata: fileData?.metadata as
+                  | { format?: string | null; size?: string | null; fp?: string | null }
+                  | undefined,
+                isRequired: s.isRequired,
+              };
+            }),
         };
       }),
     };
@@ -669,10 +726,13 @@ export const getModelsWithVersionsHandler = async ({
     const modelIds = rawResults.items.map(({ id }) => id);
     const tagsOnModels = await modelTagCache.fetch(modelIds);
 
-    const vaeIds = rawResults.items
-      .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
-      .filter(isDefined);
-    const vaeFiles = await getVaeFiles({ vaeIds });
+    // Get VAE version IDs from linked components
+    const allVersionIds = rawResults.items.flatMap(({ modelVersions }) =>
+      modelVersions.map((v) => v.id)
+    );
+    const vaeMap = await getLinkedVaeIds(allVersionIds);
+    const vaeVersionIds = [...new Set(vaeMap.values())];
+    const vaeFiles = vaeVersionIds.length ? await getVaeFiles({ vaeIds: vaeVersionIds }) : [];
 
     const metrics = await dbRead.modelMetric.findMany({
       where: { modelId: { in: modelIds } },
@@ -695,8 +755,11 @@ export const getModelsWithVersionsHandler = async ({
         ...model,
         tags: tagsOnModels[model.id]?.tags.map((x) => x.name) ?? [],
         modelVersions: modelVersions.map(({ metrics, files, ...modelVersion }) => {
-          const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
-          files.push(...vaeFile);
+          const vaeVersionId = vaeMap.get(modelVersion.id);
+          if (vaeVersionId) {
+            const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeVersionId);
+            files.push(...vaeFile);
+          }
           return {
             ...modelVersion,
             files,

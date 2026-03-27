@@ -207,7 +207,6 @@ type ModelRaw = {
     createdAt: Date;
     trainingStatus: string;
     trainedWords?: string[];
-    vaeId: number | null;
     publishedAt: Date | null;
     status: ModelStatus;
     covered: boolean;
@@ -2708,10 +2707,26 @@ export async function getModelsWithVersions({
   //   currentUserId: user?.id,
   // });
 
-  const vaeIds = items
-    .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
-    .filter(isDefined);
-  const vaeFiles = await getVaeFiles({ vaeIds });
+  // Get VAE version IDs from linked components
+  const allMvIds = items.flatMap(({ modelVersions }) => modelVersions.map((v) => v.id));
+  const vaeLinkedRows = allMvIds.length
+    ? await dbRead.recommendedResource.findMany({
+        where: {
+          sourceId: { in: allMvIds },
+          settings: { path: ['isLinkedComponent'], equals: true },
+        },
+        select: { sourceId: true, resourceId: true, settings: true },
+      })
+    : [];
+  const vaeMap = new Map<number, number>();
+  for (const row of vaeLinkedRows) {
+    const s = row.settings as Record<string, unknown>;
+    if (s?.componentType === 'VAE' && row.sourceId) {
+      vaeMap.set(row.sourceId, row.resourceId);
+    }
+  }
+  const vaeIds = [...new Set(vaeMap.values())];
+  const vaeFiles = vaeIds.length ? await getVaeFiles({ vaeIds }) : [];
 
   const groupedFiles = await getFilesForModelVersionCache(modelVersionIds);
 
@@ -2762,61 +2777,62 @@ export async function getModelsWithVersions({
         ...model,
         user: user.username === 'civitai' ? undefined : user,
         supportsGeneration: modelVersions.some((x) => x.covered),
-        modelVersions: modelVersions.map(
-          ({ trainingStatus, vaeId, earlyAccessTimeFrame, ...version }) => {
-            const stats = getStatsForVersion(version.id);
-            const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
-            const files = groupedFiles[version.id]?.files ?? [];
-            files.push(...vaeFile);
+        modelVersions: modelVersions.map(({ trainingStatus, earlyAccessTimeFrame, ...version }) => {
+          const stats = getStatsForVersion(version.id);
+          const vaeVersionId = vaeMap.get(version.id);
+          const vaeFile = vaeVersionId
+            ? vaeFiles.filter((x) => x.modelVersionId === vaeVersionId)
+            : [];
+          const files = groupedFiles[version.id]?.files ?? [];
+          files.push(...vaeFile);
 
-            let earlyAccessDeadline = getEarlyAccessDeadline({
-              versionCreatedAt: version.createdAt,
-              publishedAt: version.publishedAt,
-              earlyAccessTimeframe: earlyAccessTimeFrame,
-            });
-            if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-              earlyAccessDeadline = undefined;
+          let earlyAccessDeadline = getEarlyAccessDeadline({
+            versionCreatedAt: version.createdAt,
+            publishedAt: version.publishedAt,
+            earlyAccessTimeframe: earlyAccessTimeFrame,
+          });
+          if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
+            earlyAccessDeadline = undefined;
 
-            return {
-              ...version,
-              files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
-                const metadata = metadataRaw as FileMetadata | undefined;
+          return {
+            ...version,
+            files: files.map(({ metadata: metadataRaw, modelVersionId, ...file }) => {
+              const metadata = metadataRaw as FileMetadata | undefined;
 
-                return {
-                  ...file,
-                  metadata: {
-                    format: metadata?.format,
-                    size: metadata?.size,
-                    fp: metadata?.fp,
-                  },
-                };
-              }),
-              earlyAccessDeadline,
-              stats,
-              // images: images
-              //   .filter((image) => image.modelVersionId === version.id)
-              //   .map(
-              //     ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
-              //       ...image,
-              //     })
-              //   ),
-              images: (images[version.id]?.images ?? []).map(
-                ({
-                  modelVersionId,
-                  name,
-                  userId,
-                  sizeKB,
-                  availability,
-                  metadata,
-                  tags,
-                  ...image
-                }) => ({
-                  ...image,
-                })
-              ),
-            };
-          }
-        ),
+              return {
+                ...file,
+                metadata: {
+                  format: metadata?.format,
+                  size: metadata?.size,
+                  fp: metadata?.fp,
+                },
+              };
+            }),
+            earlyAccessDeadline,
+            stats,
+            // images: images
+            //   .filter((image) => image.modelVersionId === version.id)
+            //   .map(
+            //     ({ modelVersionId, name, userId, sizeKB, availability, metadata, ...image }) => ({
+            //       ...image,
+            //     })
+            //   ),
+            images: (images[version.id]?.images ?? []).map(
+              ({
+                modelVersionId,
+                name,
+                userId,
+                sizeKB,
+                availability,
+                metadata,
+                tags,
+                ...image
+              }) => ({
+                ...image,
+              })
+            ),
+          };
+        }),
         stats: getStatsForModel(model.id),
       })
     ),

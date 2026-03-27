@@ -92,14 +92,18 @@ export const BidModelButton = ({
   if (!features.auctions) return <></>;
   if (entityData.model.cannotPromote) return <></>;
 
+  const defaultButtonChildren = (
+    <Group gap={8} wrap="nowrap">
+      <IconGavel size={20} />
+      <Text inherit inline className="hide-mobile">
+        Bid
+      </Text>
+    </Group>
+  );
+
   const actionButton = asButton ? (
     <Button onClick={handle} disabled={!destAuction} {...buttonProps}>
-      <Group gap={8} wrap="nowrap">
-        <IconGavel size={20} />
-        <Text inherit inline className="hide-mobile">
-          Bid
-        </Text>
-      </Group>
+      {buttonProps?.children ?? defaultButtonChildren}
     </Button>
   ) : (
     <LegacyActionIcon

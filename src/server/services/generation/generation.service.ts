@@ -26,6 +26,7 @@ import { getFilesForModelVersionCache } from '~/server/services/model-file.servi
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { getFeaturedModels } from '~/server/services/model.service';
+import { getLinkedVaeIds } from '~/server/services/model-version.service';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import {
   handleLogError,
@@ -404,9 +405,14 @@ const getModelVersionGenerationData = async ({
   if (!versionIds.length) throw new Error('missing version ids');
   const resources = await getResourceData(versionIds, user, generation, withPreview);
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
-  if (checkpoint?.vaeId) {
-    const [vae] = await getResourceData([checkpoint.vaeId], user, generation);
-    if (vae) resources.push({ ...vae, vaeId: undefined });
+  // Resolve VAE from linked components instead of vaeId
+  if (checkpoint) {
+    const vaeMap = await getLinkedVaeIds([checkpoint.id]);
+    const vaeVersionId = vaeMap.get(checkpoint.id);
+    if (vaeVersionId) {
+      const [vae] = await getResourceData([vaeVersionId], user, generation);
+      if (vae) resources.push({ ...vae, vaeId: undefined });
+    }
   }
 
   const deduped = uniqBy(resources, 'id');
