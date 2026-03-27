@@ -300,6 +300,26 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         [k: string]: ZodErrorSchema;
       }>;
       setErrors(errors);
+
+      // Build user-friendly error messages per file
+      const missingFields: string[] = [];
+      errors.forEach((err, i) => {
+        if (!err) return;
+        const fileName = files[i]?.name ?? `File ${i + 1}`;
+        const fields: string[] = [];
+        if (err.size?._errors?.length) fields.push('model size');
+        if (err.fp?._errors?.length) fields.push('precision');
+        if (err.quantType?._errors?.length) fields.push('quant type');
+        if (err.type?._errors?.length) fields.push('file type');
+        if (fields.length) missingFields.push(`${fileName}: missing ${fields.join(', ')}`);
+      });
+      if (missingFields.length) {
+        showErrorNotification({
+          title: 'Missing required fields',
+          error: new Error(missingFields.join('\n')),
+        });
+      }
+
       return false;
     }
 
@@ -614,9 +634,8 @@ function inferFileType(fileName: string): ModelFileType | undefined {
       return 'Model';
     case 'yaml':
     case 'yml':
+    case 'json':
       return 'Config';
-    case 'zip':
-      return 'Archive';
     default:
       return undefined;
   }
@@ -646,8 +665,18 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       maxFiles: 8,
     },
     additional: {
-      extensions: [...configExts, ...archiveExts, ...modelExts],
-      fileTypes: ['VAE', 'Config', 'Training Data', 'UNet', 'CLIPVision', 'ControlNet'],
+      extensions: [...configExts, ...archiveExts, ...ggufExts],
+      fileTypes: [
+        'VAE',
+        'Config',
+        'Training Data',
+        'UNet',
+        'CLIPVision',
+        'ControlNet',
+        'Text Encoder',
+        'Workflow',
+        'Upscaler',
+      ],
       maxFiles: 6,
     },
   },

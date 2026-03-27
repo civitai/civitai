@@ -45,6 +45,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { comfyFileTypeLabels } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -119,6 +120,10 @@ function modelTypeToComponentType(modelType: ModelType): ModelFileComponentType 
       return 'CLIPVision';
     case ModelType.Controlnet:
       return 'ControlNet';
+    case ModelType.Upscaler:
+      return 'Upscaler';
+    case ModelType.Workflows:
+      return 'Workflow';
     case ModelType.Other:
     default:
       return 'Other';
@@ -210,6 +215,7 @@ export function Files() {
       ModelType.UNet,
       ModelType.CLIPVision,
       ModelType.Controlnet,
+      ModelType.Upscaler,
       ModelType.Poses,
     ] as const;
 
@@ -523,7 +529,7 @@ function FileCard({
   showRequiredToggle?: boolean;
   fileTypes?: ModelFileType[];
 }) {
-  const { removeFile, updateFile, dropzoneConfig, modelId } = useFilesContext();
+  const { removeFile, updateFile, dropzoneConfig, modelId, errors } = useFilesContext();
   const allFileTypes = [
     ...dropzoneConfig.primary.fileTypes,
     ...dropzoneConfig.additional.fileTypes,
@@ -564,8 +570,20 @@ function FileCard({
   const extension = getFileExtension(versionFile.name);
   const formatLabel = versionFile.format ?? (extension ? extension.toUpperCase() : undefined);
 
+  // Check if this file has validation errors
+  const fileError = errors?.[index] as Record<string, { _errors?: string[] }> | undefined;
+  const hasValidationError =
+    fileError && Object.entries(fileError).some(([k, v]) => k !== '_errors' && v?._errors?.length);
+
   return (
-    <Card style={{ opacity: deleteFileMutation.isLoading ? 0.2 : undefined }} withBorder p="sm">
+    <Card
+      style={{
+        opacity: deleteFileMutation.isLoading ? 0.2 : undefined,
+        borderColor: hasValidationError ? 'var(--mantine-color-red-6)' : undefined,
+      }}
+      withBorder
+      p="sm"
+    >
       <Group gap="md" wrap="nowrap">
         <ThemeIcon size={40} radius="sm" color={iconConfig.color} variant="light">
           <FileIcon size={20} />
@@ -828,13 +846,22 @@ function FileEditForm({
       case 'pt':
       case 'gguf':
       case 'onnx':
-        return ['Model', 'Negative', 'VAE', 'UNet', 'CLIPVision', 'ControlNet'].includes(value);
+        return [
+          'Model',
+          'Negative',
+          'VAE',
+          'UNet',
+          'CLIPVision',
+          'ControlNet',
+          'Upscaler',
+          'Text Encoder',
+        ].includes(value);
       case 'zip':
-        return ['Training Data', 'Archive', 'Model'].includes(value);
+        return ['Training Data', 'Archive', 'Model', 'Workflow'].includes(value);
       case 'yml':
       case 'yaml':
       case 'json':
-        return ['Config', 'Text Encoder'].includes(value);
+        return ['Config', 'Text Encoder', 'Workflow'].includes(value);
       case 'bin':
         return ['Model', 'Negative'].includes(value);
       default:
@@ -872,11 +899,13 @@ function FileEditForm({
         <Select
           allowDeselect={false}
           size="xs"
-          w={110}
+          w={160}
           placeholder="Type"
           error={error?.type?._errors[0]}
           data={fileTypes.filter(filterByFileExtension).map((x) => ({
-            label: getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
+            label:
+              comfyFileTypeLabels[x] ??
+              getDisplayName(x === 'Model' ? versionFile.modelType ?? x : x),
             value: x,
           }))}
           value={versionFile.type ?? null}
@@ -920,8 +949,9 @@ function FileEditForm({
               <Select
                 allowDeselect={false}
                 size="xs"
-                w={90}
+                w={110}
                 placeholder="Quant"
+                searchable
                 error={error?.quantType?._errors[0]}
                 data={constants.modelFileQuantTypes}
                 value={versionFile.quantType ?? null}

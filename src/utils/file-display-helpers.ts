@@ -5,6 +5,7 @@
 
 import {
   IconAdjustments,
+  IconArrowsMaximize,
   IconBrain,
   IconCube,
   IconEye,
@@ -14,6 +15,7 @@ import {
   IconPackage,
   IconPhotoScan,
   IconSettings,
+  IconTopologyRing,
   IconTypography,
 } from '@tabler/icons-react';
 
@@ -40,8 +42,22 @@ export const componentTypeConfig: Record<
   UNet: { name: 'UNet', icon: IconBrain, color: 'orange' },
   CLIPVision: { name: 'CLIP Vision', icon: IconEye, color: 'green' },
   ControlNet: { name: 'ControlNet', icon: IconAdjustments, color: 'cyan' },
+  Upscaler: { name: 'Upscale Model', icon: IconArrowsMaximize, color: 'teal' },
+  Workflow: { name: 'Workflow', icon: IconTopologyRing, color: 'indigo' },
   Config: { name: 'Config', icon: IconSettings, color: 'gray' },
   Other: { name: 'Other', icon: IconPackage, color: 'gray' },
+};
+
+/**
+ * ComfyUI-friendly display labels for model file types.
+ * Maps internal type values to user-facing names aligned with ComfyUI subfolder conventions.
+ */
+export const comfyFileTypeLabels: Record<string, string> = {
+  'Text Encoder': 'CLIP / Text Encoder',
+  UNet: 'UNet / Diffusion Model',
+  CLIPVision: 'CLIP Vision',
+  Workflow: 'Workflow',
+  Upscaler: 'Upscale Model',
 };
 
 /**

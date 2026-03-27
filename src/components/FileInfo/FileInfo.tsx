@@ -15,6 +15,8 @@ const componentTypeDisplayNames: Record<ModelFileComponentType, string> = {
   UNet: 'UNet',
   CLIPVision: 'CLIP Vision',
   ControlNet: 'ControlNet',
+  Upscaler: 'Upscale Model',
+  Workflow: 'Workflow',
   Config: 'Config',
   Other: 'Other',
 };
