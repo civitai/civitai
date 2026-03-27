@@ -99,7 +99,7 @@ export function PanelCard({
 
   // Patch this panel's data directly in the getProject cache (no full refetch needed)
   const patchPanel = useCallback(
-    (update: { status: string; imageUrl?: string | null }) => {
+    (update: { status: string; imageUrl?: string | null; errorMessage?: string | null }) => {
       utils.comics.getProject.setData({ id: projectId }, (prev) => {
         if (!prev) return prev;
         return {
@@ -108,7 +108,12 @@ export function PanelCard({
             ...ch,
             panels: ch.panels.map((p) =>
               p.id === panel.id
-                ? { ...p, status: update.status as ComicPanelStatus, imageUrl: update.imageUrl ?? p.imageUrl }
+                ? {
+                    ...p,
+                    status: update.status as ComicPanelStatus,
+                    imageUrl: update.imageUrl ?? p.imageUrl,
+                    ...(update.errorMessage !== undefined ? { errorMessage: update.errorMessage } : {}),
+                  }
                 : p
             ),
           })),
@@ -143,7 +148,11 @@ export function PanelCard({
         return;
       }
       if (result.status === 'Ready' || result.status === 'Failed') {
-        patchPanel({ status: result.status, imageUrl: result.imageUrl });
+        patchPanel({
+          status: result.status,
+          imageUrl: result.imageUrl,
+          errorMessage: result.errorMessage ?? null,
+        });
       }
     } catch {
       /* ignore */

@@ -2611,7 +2611,7 @@ export const comicsRouter = router({
         panel.status === ComicPanelStatus.Failed ||
         panel.status === ComicPanelStatus.AwaitingSelection
       ) {
-        return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl };
+        return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl, errorMessage: panel.errorMessage };
       }
 
       // Backstop timeout: orchestrator step timeout is 21 min, use 25 min as hard cap
@@ -2629,7 +2629,7 @@ export const comicsRouter = router({
           projectId: panel.projectId,
           status: updated.status,
         });
-        return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+        return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl, errorMessage: updated.errorMessage };
       }
 
       // Check orchestrator status
@@ -2702,7 +2702,7 @@ export const comicsRouter = router({
                 projectId: panel.projectId,
                 status: failed.status,
               });
-              return { id: failed.id, status: failed.status, imageUrl: null };
+              return { id: failed.id, status: failed.status, imageUrl: null, errorMessage: failed.errorMessage };
             }
 
             if (candidateImages.length > 1) {
@@ -2759,7 +2759,7 @@ export const comicsRouter = router({
               projectId: panel.projectId,
               status: ComicPanelStatus.Failed,
             });
-            return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null };
+            return { id: panel.id, status: ComicPanelStatus.Failed, imageUrl: null, errorMessage: 'Image upload failed. Please regenerate.' };
           }
 
           // Create Image record via standard pipeline (ingestion + flags)
@@ -2788,7 +2788,7 @@ export const comicsRouter = router({
             imageUrl: updated.imageUrl,
           });
 
-          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl, errorMessage: null };
         }
 
         if (workflow.status === 'succeeded' && !imageUrl) {
@@ -2806,7 +2806,7 @@ export const comicsRouter = router({
             status: updated.status,
             imageUrl: updated.imageUrl,
           });
-          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl, errorMessage: null };
         }
 
         if (workflow.status === 'failed' || workflow.status === 'canceled') {
@@ -2822,7 +2822,7 @@ export const comicsRouter = router({
             projectId: panel.projectId,
             status: updated.status,
           });
-          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl };
+          return { id: updated.id, status: updated.status, imageUrl: updated.imageUrl, errorMessage: updated.errorMessage };
         }
       } catch (error) {
         // If we can't check the workflow, don't fail the poll - just return current state
@@ -2830,7 +2830,7 @@ export const comicsRouter = router({
       }
 
       // Still processing - return as-is
-      return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl };
+      return { id: panel.id, status: panel.status, imageUrl: panel.imageUrl, errorMessage: panel.errorMessage };
     }),
 
   selectPanelImage: comicProtectedProcedure

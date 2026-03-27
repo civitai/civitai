@@ -46,13 +46,20 @@ export function ImportReferencesModal({
     const ids = Array.from(selected);
     if (ids.length === 0) return;
 
-    // Import all selected references in parallel
-    await Promise.all(
+    // Import all selected references in parallel — use allSettled so partial failures
+    // don't prevent successful imports from completing
+    const results = await Promise.allSettled(
       ids.map((referenceId) => addMutation.mutateAsync({ projectId, referenceId }))
     );
 
-    setSelected(new Set());
-    onClose();
+    // Keep failed items selected for retry
+    const failedIds = ids.filter((_, i) => results[i].status === 'rejected');
+    if (failedIds.length > 0) {
+      setSelected(new Set(failedIds));
+    } else {
+      setSelected(new Set());
+      onClose();
+    }
   };
 
   const references = importable ?? [];

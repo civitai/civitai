@@ -7,19 +7,19 @@ Source: [ClickUp Task 868hmbhq8](https://app.clickup.com/t/868hmbhq8)
 ## Critical Priority
 
 - [x] **Enhance Prompt should be an action that edits the active text box**: Instead of randomly enhancing a prompt the user has no control over, we should make the enhance action a button that changes the prompting text BEFORE generating. That will make it so that if the user doesn't like the enhanced prompt they can make relevant updates.
-- [ ] **References span all projects** - References are not per-project. Users can call references from other projects. Should be per-project, or allow importing references from existing projects into new ones.
+- [x] **References span all projects** - References are not per-project. Users can call references from other projects. Should be per-project, or allow importing references from existing projects into new ones.
 - [x] **Tips on Comics not associated with Comics** - Tips just look like direct Buzz tips instead of being linked to the Comic.
 - [x] **Sketch Edit warning** - Add a warning that Sketch Edit produces varying results based on the model used (works well with Nano Banana).
-- [ ] **Generate multiple images per panel** - Testers want to generate multiple options and pick the best one. Current workflow is slow "dice-rolling" regeneration one at a time. Needs implementation in the Create Panel dialog.
-- [ ] **Duplicate panel + Duplicate chapter** - Allow duplicating panels/chapters so users can refine results without losing moderately good existing results.
-- [ ] **Reference any panel (not just previous)** - Users want to pick which panel to reference. Stories aren't linear; panels may visually reference non-adjacent panels.
+- [x] **Generate multiple images per panel** - Testers want to generate multiple options and pick the best one. Current workflow is slow "dice-rolling" regeneration one at a time. Needs implementation in the Create Panel dialog.
+- [x] **Duplicate panel + Duplicate chapter** - Allow duplicating panels/chapters so users can refine results without losing moderately good existing results.
+- [x] **Reference any panel (not just previous)** - Users want to pick which panel to reference. Stories aren't linear; panels may visually reference non-adjacent panels.
 - [x] **Smart Create panel count choice** - When using Smart Create, let users specify how many panels the story should span before generating.
 - [x] **Welcome messaging** - Add a modal or banner on entry explaining: Beta version, limited features, rapid updates coming, no refunds for Beta issues.
 
 ## High Priority
 
-- [ ] **Pre-made panel layouts** - Integrate the pre-made layouts from the attached zip file.
-- [ ] **Pre-made dialog and action boxes** - Add pre-made speech bubble/dialog box assets.
+- [x] **Pre-made panel layouts** - Integrate the pre-made layouts from the attached zip file.
+- [x] **Pre-made dialog and action boxes** - Add pre-made speech bubble/dialog box assets.
 - [x] **Smart Create unlimited panels** - No limit on panels (~50-60 possible). What happens for Free tier (4 jobs) or Gold tier (12 jobs)? Does it queue and churn them out? Needs guardrails.
 - [x] **Add Seedream 5 Lite as generation option** - Fast and cheaper than 4.5, good candidate for comic generation.
 

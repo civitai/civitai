@@ -22,7 +22,7 @@ export const LAYOUT_OPTIONS: LayoutOption[] = [
 
 interface LayoutPickerProps {
   value?: string;
-  onChange: (layout: LayoutOption) => void;
+  onChange: (layout: LayoutOption | null) => void;
   layouts?: LayoutOption[];
 }
 
@@ -44,7 +44,7 @@ export function LayoutPicker({ value, onChange, layouts = LAYOUT_OPTIONS }: Layo
             return (
               <div key={layout.id} className="relative flex-shrink-0" style={{ width: 100 }}>
                 <UnstyledButton
-                  onClick={() => onChange(selected ? ({ id: '', name: '', imagePath: '' } as LayoutOption) : layout)}
+                  onClick={() => onChange(selected ? null : layout)}
                   className={clsx(
                     'flex flex-col items-center rounded-md border p-1.5 transition-colors w-full',
                     selected

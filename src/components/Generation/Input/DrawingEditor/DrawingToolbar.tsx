@@ -143,6 +143,7 @@ function SpeechBubblesPopover({
             {SPEECH_BUBBLE_STAMPS.map((stamp) => (
               <Tooltip key={stamp.id} label={stamp.name} withArrow>
                 <button
+                  type="button"
                   onClick={() => onSelect(stamp.imagePath)}
                   style={{
                     background: 'var(--mantine-color-dark-5)',

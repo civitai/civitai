@@ -169,14 +169,9 @@ export function SmartCreateModal({
 
           <LayoutPicker
             value={selectedLayout}
-            onChange={(layout: LayoutOption) => {
-              if (layout.id) {
-                setSelectedLayout(layout.id);
-                setSelectedLayoutImagePath(layout.imagePath);
-              } else {
-                setSelectedLayout(undefined);
-                setSelectedLayoutImagePath(undefined);
-              }
+            onChange={(layout: LayoutOption | null) => {
+              setSelectedLayout(layout?.id);
+              setSelectedLayoutImagePath(layout?.imagePath);
             }}
           />
 

@@ -702,8 +702,8 @@ export function PanelModal({
         <Stack gap="md">
           <LayoutPicker
             value={selectedLayoutId}
-            onChange={(layout: LayoutOption) => {
-              setLayoutImagePath(layout.id ? layout.imagePath : undefined);
+            onChange={(layout: LayoutOption | null) => {
+              setLayoutImagePath(layout?.imagePath);
             }}
           />
 
