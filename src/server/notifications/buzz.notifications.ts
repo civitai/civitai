@@ -51,8 +51,8 @@ export const buzzNotifications = createNotificationProcessor({
           ? `${Number(details.unitValue).toLocaleString()} Buzz`
           : `${details.unitValue}-month Membership`;
       return {
-        message: `Your crypto payment has been confirmed! Your redeemable code for ${description} is ready. View it in your account settings.`,
-        url: '/user/account#purchased-codes',
+        message: `Your crypto payment has been confirmed! Your redeemable code for ${description} is ready. View it in your Buzz Dashboard.`,
+        url: '/user/buzz-dashboard',
       };
     },
   },

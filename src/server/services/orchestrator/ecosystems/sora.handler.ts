@@ -5,7 +5,11 @@
  * Supports txt2vid and img2vid workflows.
  */
 
-import type { Sora2TextToVideoInput, Sora2ImageToVideoInput } from '@civitai/client';
+import type {
+  Sora2TextToVideoInput,
+  Sora2ImageToVideoInput,
+  VideoGenStepTemplate,
+} from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import { defineHandler } from './handler-factory';
@@ -21,7 +25,7 @@ type SoraInput = Sora2TextToVideoInput | Sora2ImageToVideoInput;
  * Creates videoGen input for Sora ecosystem.
  * Supports txt2vid and img2vid with resolution, pro mode, and duration options.
  */
-export const createSoraInput = defineHandler<SoraCtx, SoraInput>((data, ctx) => {
+export const createSoraInput = defineHandler<SoraCtx, [VideoGenStepTemplate]>((data, ctx) => {
   const hasImages = !!data.images?.length;
 
   const baseInput = {
@@ -37,12 +41,17 @@ export const createSoraInput = defineHandler<SoraCtx, SoraInput>((data, ctx) => 
   };
 
   if (hasImages) {
-    return removeEmpty({
-      ...baseInput,
-      images: data.images?.map((x) => x.url),
-      operation: 'image-to-video',
-    }) as Sora2ImageToVideoInput;
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty({
+          ...baseInput,
+          images: data.images?.map((x) => x.url),
+          operation: 'image-to-video',
+        }) as Sora2ImageToVideoInput,
+      },
+    ];
   } else {
-    return removeEmpty(baseInput) as Sora2TextToVideoInput;
+    return [{ $type: 'videoGen', input: removeEmpty(baseInput) as Sora2TextToVideoInput }];
   }
 });

@@ -61,6 +61,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import type {
   ImageSelectModalProps,
   SelectedImage,
@@ -244,6 +245,7 @@ const LabelSelectModal = ({
 };
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
+  registerSignalGroup('training');
   const thisModelVersion = model.modelVersions[0];
   const thisMediaType =
     (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';

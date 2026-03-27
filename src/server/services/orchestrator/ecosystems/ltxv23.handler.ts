@@ -14,6 +14,7 @@ import type {
   ComfyLtx23EditVideoInput,
   ComfyLtx23ExtendVideoInput,
   ComfyLtx23FirstLastFrameToVideoInput,
+  VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -36,19 +37,25 @@ type LTXV23Output =
  * Creates videoGen input for LTXV23 ecosystem.
  * Routes to the appropriate operation based on workflow.
  */
-export const createLTXV23Input = defineHandler<LTXV23Ctx, LTXV23Output>((data, ctx) => {
+export const createLTXV23Input = defineHandler<LTXV23Ctx, [VideoGenStepTemplate]>((data, ctx) => {
+  let input: LTXV23Output;
   switch (data.workflow) {
     case 'img2vid':
-      return createFirstLastFrameInput(data, ctx);
+      input = createFirstLastFrameInput(data, ctx);
+      break;
     case 'img2vid:ref2vid':
-      return createVideoInput(data, ctx);
+      input = createVideoInput(data, ctx);
+      break;
     case 'vid2vid:edit':
-      return createEditVideoInput(data, ctx);
+      input = createEditVideoInput(data, ctx);
+      break;
     case 'vid2vid:extend':
-      return createExtendVideoInput(data, ctx);
+      input = createExtendVideoInput(data, ctx);
+      break;
     default:
-      return createVideoInput(data, ctx);
+      input = createVideoInput(data, ctx);
   }
+  return [{ $type: 'videoGen', input }];
 });
 
 /** Builds loras record from additional resources */

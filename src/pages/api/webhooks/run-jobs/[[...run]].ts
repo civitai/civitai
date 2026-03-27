@@ -18,6 +18,7 @@ import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-rand
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
+import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { challengeActivationJob } from '~/server/jobs/challenge-activation';
@@ -161,6 +162,7 @@ export const jobs: Job[] = [
   expireStrikesJob,
   processTimedUnmutesJob,
   custodySweepJob,
+  reconcileNowpaymentsJob,
   processEnqueuedComicPanelsJob,
 ];
 

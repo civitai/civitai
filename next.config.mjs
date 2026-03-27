@@ -103,7 +103,7 @@ export default defineNextConfig(
             // removeConsole: true,
           }
         : {},
-    transpilePackages: ['lodash', 'lodash-es', 'prisma'],
+    transpilePackages: [],
     experimental: {
       // scrollRestoration: true,
       serverSourceMaps: true,
@@ -118,7 +118,7 @@ export default defineNextConfig(
         '@civitai/client',
         './src/libs/form',
         'lodash-es',
-        '@tabler-icons-react',
+        '@tabler/icons-react',
         '@headlessui/react',
       ],
     },

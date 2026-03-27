@@ -34,7 +34,7 @@ export type EcosystemRecord = {
   description?: string; // Brief description for UI display
   parentEcosystemId?: number;
   familyId?: number; // For UI family grouping
-  sortOrder?: number; // For ordering in UI
+  sortOrder: number; // For ordering in UI
 };
 
 export type EcosystemSupport = {
@@ -2520,6 +2520,23 @@ export const baseModels: BaseModelRecord[] = [
 
 export const baseModelById = new Map(baseModels.map((m) => [m.id, m]));
 export const baseModelByName = new Map(baseModels.map((m) => [m.name, m]));
+
+/** Grouped select data for base model multi-select inputs, grouped by ecosystem family */
+export const baseModelSelectData = (() => {
+  const activeModels = baseModels.filter((m) => !m.hidden);
+  const groupMap = new Map<string, { value: string; label: string }[]>();
+
+  for (const model of activeModels) {
+    const ecosystem = ecosystemById.get(model.ecosystemId);
+    const family = ecosystem?.familyId ? ecosystemFamilyById.get(ecosystem.familyId) : undefined;
+    const groupName = family?.name ?? ecosystem?.displayName ?? model.name;
+
+    if (!groupMap.has(groupName)) groupMap.set(groupName, []);
+    groupMap.get(groupName)!.push({ value: model.name, label: model.name });
+  }
+
+  return Array.from(groupMap.entries()).map(([group, items]) => ({ group, items }));
+})();
 
 export function getEcosystem(baseModel: string) {
   const model = baseModelByName.get(baseModel);

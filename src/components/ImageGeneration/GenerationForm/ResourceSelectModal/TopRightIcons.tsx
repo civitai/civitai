@@ -12,7 +12,7 @@ import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function TopRightIcons({

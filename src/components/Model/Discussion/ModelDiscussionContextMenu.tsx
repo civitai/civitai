@@ -6,7 +6,7 @@ import { DeleteComment } from '~/components/CommentsV2/Comment/DeleteComment';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 
 export function ModelDiscussionContextMenu() {
   const { entityId, entityType } = useCommentsContext();

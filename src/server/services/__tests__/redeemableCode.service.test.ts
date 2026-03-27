@@ -4,6 +4,7 @@ import utc from 'dayjs/plugin/utc';
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
+  PrepaidToken,
 } from '~/server/schema/subscriptions.schema';
 
 dayjs.extend(utc);
@@ -88,9 +89,31 @@ vi.mock('~/server/integrations/freshdesk', () => ({
   updateServiceTier: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('~/server/utils/subscription.utils', () => ({
-  invalidateSubscriptionCaches: vi.fn().mockResolvedValue(undefined),
-}));
+vi.mock('~/server/utils/subscription.utils', () => {
+  const TIER_BUZZ: Record<string, number> = { bronze: 10000, silver: 25000, gold: 50000 };
+  return {
+    invalidateSubscriptionCaches: vi.fn().mockResolvedValue(undefined),
+    getPrepaidTokens: ({ metadata }: any) => {
+      if (!metadata) return [];
+      if (metadata.tokens?.length > 0) return metadata.tokens;
+      const prepaids = metadata.prepaids;
+      if (!prepaids) return [];
+      const tokens: any[] = [];
+      for (const tier of ['gold', 'silver', 'bronze']) {
+        const count = prepaids[tier] ?? 0;
+        for (let i = 0; i < count; i++) {
+          tokens.push({
+            id: `legacy_${tier}_${i}`,
+            tier,
+            status: 'locked',
+            buzzAmount: TIER_BUZZ[tier] ?? 25000,
+          });
+        }
+      }
+      return tokens;
+    },
+  };
+});
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
@@ -198,6 +221,15 @@ const createMockRedeemableCode = (
   ...overrides,
 });
 
+const createMockToken = (overrides: Partial<PrepaidToken> = {}): PrepaidToken => ({
+  id: `tok_existing_${Math.random().toString(36).slice(2, 10)}`,
+  tier: 'gold',
+  status: 'locked',
+  buzzAmount: 50000,
+  codeId: 'MB-PREV-CODE',
+  ...overrides,
+});
+
 const createMockSubscription = (overrides: Partial<MockSubscription> = {}): MockSubscription => ({
   id: 'sub_test_123',
   userId: 1,
@@ -212,8 +244,10 @@ const createMockSubscription = (overrides: Partial<MockSubscription> = {}): Mock
   endedAt: null,
   buzzType: 'yellow',
   metadata: {
-    prepaids: { gold: 2 },
-    buzzTransactionIds: [],
+    tokens: [
+      createMockToken({ id: 'tok_existing_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }),
+      createMockToken({ id: 'tok_existing_2', tier: 'gold', status: 'locked', buzzAmount: 50000 }),
+    ],
   },
   product: createMockProduct(),
   price: createMockPrice(),
@@ -342,7 +376,7 @@ describe('redeemableCode.service', () => {
         expect(monthsDiff).toBe(3);
       });
 
-      it('should set prepaids to unitValue - 1 (first month granted immediately)', async () => {
+      it('should create N tokens where N equals unitValue, with first unlocked', async () => {
         const mockCode = createMockRedeemableCode({ unitValue: 3 });
         let createdSubscription: any = null;
 
@@ -365,10 +399,25 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        expect(createdSubscription.metadata.prepaids.gold).toBe(2); // 3 - 1 = 2
+        const tokens: PrepaidToken[] = createdSubscription.metadata.tokens;
+        expect(tokens).toHaveLength(3);
+
+        // First token should be unlocked with unlockedAt set
+        expect(tokens[0].status).toBe('unlocked');
+        expect(tokens[0].tier).toBe('gold');
+        expect(tokens[0].buzzAmount).toBe(50000);
+        expect(tokens[0].codeId).toBe('MB-TEST-1234');
+        expect(tokens[0].unlockedAt).toBeDefined();
+        expect(tokens[0].id).toMatch(/^tok_/);
+
+        // Remaining tokens should be locked without unlockedAt
+        expect(tokens[1].status).toBe('locked');
+        expect(tokens[1].unlockedAt).toBeUndefined();
+        expect(tokens[2].status).toBe('locked');
+        expect(tokens[2].unlockedAt).toBeUndefined();
       });
 
-      it('should grant immediate buzz based on product monthlyBuzz', async () => {
+      it('should NEVER call createBuzzTransaction for membership codes', async () => {
         const mockCode = createMockRedeemableCode({
           price: createMockPrice({
             product: createMockProduct({
@@ -393,13 +442,8 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            amount: 50000,
-            toAccountId: 1,
-            toAccountType: 'yellow',
-          })
-        );
+        // Token-based system never auto-delivers buzz for membership codes
+        expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
       });
 
       it('should set cancelAtPeriodEnd to true for new subscriptions', async () => {
@@ -427,10 +471,70 @@ describe('redeemableCode.service', () => {
 
         expect(createdSubscription.cancelAtPeriodEnd).toBe(true);
       });
+
+      it('should call deliverMonthlyCosmetics for new membership', async () => {
+        const mockCode = createMockRedeemableCode();
+
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) => {
+          const tx = {
+            redeemableCode: {
+              update: vi.fn().mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 }),
+            },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({ id: 'sub_new' }),
+            },
+          };
+          return callback(tx);
+        });
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+
+        expect(mockDeliverMonthlyCosmetics).toHaveBeenCalledWith(
+          expect.objectContaining({ userIds: [1] })
+        );
+      });
+
+      it('should store tokens with unique IDs matching tok_ prefix pattern', async () => {
+        const mockCode = createMockRedeemableCode({ unitValue: 5 });
+        let createdSubscription: any = null;
+
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) => {
+          const tx = {
+            redeemableCode: {
+              update: vi.fn().mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 }),
+            },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockImplementation((args: any) => {
+                createdSubscription = args.data;
+                return { id: 'sub_new' };
+              }),
+            },
+          };
+          return callback(tx);
+        });
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+
+        const tokens: PrepaidToken[] = createdSubscription.metadata.tokens;
+        expect(tokens).toHaveLength(5);
+
+        // All IDs should be unique
+        const ids = tokens.map((t) => t.id);
+        expect(new Set(ids).size).toBe(5);
+
+        // All should match tok_ pattern
+        tokens.forEach((token) => {
+          expect(token.id).toMatch(/^tok_/);
+        });
+      });
     });
 
     describe('Same Tier Extension', () => {
-      it('should NOT grant buzz instantly for same tier extension', async () => {
+      it('should NOT call createBuzzTransaction for same tier extension', async () => {
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
           price: createMockPrice({
@@ -441,11 +545,16 @@ describe('redeemableCode.service', () => {
           }),
         });
 
+        const existingTokens: PrepaidToken[] = [
+          createMockToken({ id: 'tok_prev_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }),
+          createMockToken({ id: 'tok_prev_2', tier: 'gold', status: 'locked', buzzAmount: 50000 }),
+        ];
+
         const existingSub = createMockSubscription({
           product: createMockProduct({
             metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { gold: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: { tokens: existingTokens },
         });
 
         mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
@@ -464,11 +573,10 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        // Same tier extension should NOT grant buzz immediately
         expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
       });
 
-      it('should add ALL tokens as prepaids for same tier (no immediate consumption)', async () => {
+      it('should append N locked tokens to existing tokens array for same tier', async () => {
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
           price: createMockPrice({
@@ -479,11 +587,16 @@ describe('redeemableCode.service', () => {
           }),
         });
 
+        const existingTokens: PrepaidToken[] = [
+          createMockToken({ id: 'tok_prev_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }),
+          createMockToken({ id: 'tok_prev_2', tier: 'gold', status: 'locked', buzzAmount: 50000 }),
+        ];
+
         const existingSub = createMockSubscription({
           product: createMockProduct({
             metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { gold: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: { tokens: existingTokens },
         });
 
         let updatedMetadata: any = null;
@@ -507,9 +620,26 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        // For same tier, ALL tokens should be added as prepaids (no -1 for immediate buzz)
-        // 2 (existing) + 3 (new) = 5
-        expect(updatedMetadata.prepaids.gold).toBe(5);
+        const tokens: PrepaidToken[] = updatedMetadata.tokens;
+        // 2 existing + 3 new = 5 total
+        expect(tokens).toHaveLength(5);
+
+        // First 2 tokens are the preserved existing ones
+        expect(tokens[0].id).toBe('tok_prev_1');
+        expect(tokens[0].status).toBe('claimed');
+        expect(tokens[1].id).toBe('tok_prev_2');
+        expect(tokens[1].status).toBe('locked');
+
+        // Last 3 are new tokens, ALL locked (same tier = no unlocked first token)
+        const newTokens = tokens.slice(2);
+        expect(newTokens).toHaveLength(3);
+        newTokens.forEach((token) => {
+          expect(token.status).toBe('locked');
+          expect(token.tier).toBe('gold');
+          expect(token.buzzAmount).toBe(50000);
+          expect(token.codeId).toBe('MB-TEST-1234');
+          expect(token.unlockedAt).toBeUndefined();
+        });
       });
 
       it('should extend currentPeriodEnd correctly', async () => {
@@ -528,7 +658,11 @@ describe('redeemableCode.service', () => {
           product: createMockProduct({
             metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { gold: 1 }, buzzTransactionIds: ['tx1'] },
+          metadata: {
+            tokens: [
+              createMockToken({ id: 'tok_prev_1', tier: 'gold', status: 'locked', buzzAmount: 50000 }),
+            ],
+          },
         });
 
         let updatedSubscription: any = null;
@@ -560,7 +694,7 @@ describe('redeemableCode.service', () => {
     });
 
     describe('Downgrade (User has higher tier)', () => {
-      it('should NOT grant buzz instantly when user has higher tier', async () => {
+      it('should NOT call createBuzzTransaction when user has higher tier', async () => {
         // User has gold, redeeming silver code
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
@@ -574,13 +708,18 @@ describe('redeemableCode.service', () => {
           }),
         });
 
+        const existingGoldTokens: PrepaidToken[] = [
+          createMockToken({ id: 'tok_gold_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }),
+          createMockToken({ id: 'tok_gold_2', tier: 'gold', status: 'locked', buzzAmount: 50000 }),
+        ];
+
         const existingSub = createMockSubscription({
           productId: 'prod_gold',
           product: createMockProduct({
             id: 'prod_gold',
             metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { gold: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: { tokens: existingGoldTokens },
         });
 
         mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
@@ -599,11 +738,10 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        // Downgrade should NOT grant buzz immediately
         expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
       });
 
-      it('should NOT change membership status when user has higher tier', async () => {
+      it('should NOT change productId or priceId when user has higher tier', async () => {
         // User has gold, redeeming silver code - should stay on gold
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
@@ -624,7 +762,11 @@ describe('redeemableCode.service', () => {
             id: 'prod_gold',
             metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { gold: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: {
+            tokens: [
+              createMockToken({ id: 'tok_gold_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }),
+            ],
+          },
         });
 
         let updatedSubscription: any = null;
@@ -653,8 +795,8 @@ describe('redeemableCode.service', () => {
         expect(updatedSubscription.priceId).toBeUndefined();
       });
 
-      it('should add ALL tokens as prepaids for lower tier (no immediate consumption)', async () => {
-        // User has gold, redeeming 3 silver tokens - all should be saved as prepaids
+      it('should append all-locked silver tokens and preserve existing gold tokens', async () => {
+        // User has gold, redeeming 3 silver tokens - all should be locked
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
           price: createMockPrice({
@@ -667,13 +809,18 @@ describe('redeemableCode.service', () => {
           }),
         });
 
+        const existingGoldTokens: PrepaidToken[] = [
+          createMockToken({ id: 'tok_gold_1', tier: 'gold', status: 'claimed', buzzAmount: 50000 }),
+          createMockToken({ id: 'tok_gold_2', tier: 'gold', status: 'locked', buzzAmount: 50000 }),
+        ];
+
         const existingSub = createMockSubscription({
           productId: 'prod_gold',
           product: createMockProduct({
             id: 'prod_gold',
             metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { gold: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: { tokens: existingGoldTokens },
         });
 
         let updatedMetadata: any = null;
@@ -697,16 +844,33 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        // All 3 silver tokens should be added as prepaids (no -1 for immediate buzz)
-        expect(updatedMetadata.prepaids.silver).toBe(3);
-        // Existing gold prepaids should remain unchanged
-        expect(updatedMetadata.prepaids.gold).toBe(2);
+        const tokens: PrepaidToken[] = updatedMetadata.tokens;
+        // 2 existing gold + 3 new silver = 5 total
+        expect(tokens).toHaveLength(5);
+
+        // Existing gold tokens preserved at the start
+        expect(tokens[0].id).toBe('tok_gold_1');
+        expect(tokens[0].tier).toBe('gold');
+        expect(tokens[0].status).toBe('claimed');
+        expect(tokens[1].id).toBe('tok_gold_2');
+        expect(tokens[1].tier).toBe('gold');
+
+        // New silver tokens: ALL locked (downgrade = no unlocked first token)
+        const silverTokens = tokens.slice(2);
+        expect(silverTokens).toHaveLength(3);
+        silverTokens.forEach((token) => {
+          expect(token.status).toBe('locked');
+          expect(token.tier).toBe('silver');
+          expect(token.buzzAmount).toBe(25000);
+          expect(token.codeId).toBe('MB-TEST-1234');
+          expect(token.unlockedAt).toBeUndefined();
+        });
       });
     });
 
     describe('Upgrade (User has lower tier)', () => {
-      it('should grant buzz instantly when upgrading to higher tier', async () => {
-        // User has silver, redeeming gold code - should grant buzz
+      it('should NOT call createBuzzTransaction when upgrading tier', async () => {
+        // User has silver, redeeming gold code - no immediate buzz delivery
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
           price: createMockPrice({
@@ -719,6 +883,11 @@ describe('redeemableCode.service', () => {
           }),
         });
 
+        const existingSilverTokens: PrepaidToken[] = [
+          createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
+          createMockToken({ id: 'tok_silver_2', tier: 'silver', status: 'locked', buzzAmount: 25000 }),
+        ];
+
         const existingSub = createMockSubscription({
           productId: 'prod_silver',
           priceId: 'price_silver',
@@ -726,7 +895,7 @@ describe('redeemableCode.service', () => {
             id: 'prod_silver',
             metadata: { tier: 'silver', monthlyBuzz: 25000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { silver: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: { tokens: existingSilverTokens },
         });
 
         mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
@@ -745,16 +914,11 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        // Upgrade should grant buzz immediately (gold tier = 50000)
-        expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            amount: 50000,
-            toAccountId: 1,
-          })
-        );
+        // Token-based system never auto-delivers buzz for membership codes
+        expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
       });
 
-      it('should update membership to higher tier', async () => {
+      it('should update membership productId and priceId to higher tier', async () => {
         // User has silver, redeeming gold code - should upgrade to gold
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
@@ -775,7 +939,11 @@ describe('redeemableCode.service', () => {
             id: 'prod_silver',
             metadata: { tier: 'silver', monthlyBuzz: 25000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { silver: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: {
+            tokens: [
+              createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
+            ],
+          },
         });
 
         let updatedSubscription: any = null;
@@ -804,8 +972,8 @@ describe('redeemableCode.service', () => {
         expect(updatedSubscription.priceId).toBe('price_gold');
       });
 
-      it('should set prepaids to unitValue - 1 for upgrade (first month granted immediately)', async () => {
-        // User has silver, redeeming 3 gold tokens - should grant 1 immediately
+      it('should create N gold tokens with first unlocked and preserve existing silver tokens', async () => {
+        // User has silver with 2 existing tokens, redeeming 3 gold tokens
         const mockCode = createMockRedeemableCode({
           unitValue: 3,
           price: createMockPrice({
@@ -818,6 +986,11 @@ describe('redeemableCode.service', () => {
           }),
         });
 
+        const existingSilverTokens: PrepaidToken[] = [
+          createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
+          createMockToken({ id: 'tok_silver_2', tier: 'silver', status: 'locked', buzzAmount: 25000 }),
+        ];
+
         const existingSub = createMockSubscription({
           productId: 'prod_silver',
           priceId: 'price_silver',
@@ -825,7 +998,7 @@ describe('redeemableCode.service', () => {
             id: 'prod_silver',
             metadata: { tier: 'silver', monthlyBuzz: 25000, buzzType: 'yellow' },
           }),
-          metadata: { prepaids: { silver: 2 }, buzzTransactionIds: ['tx1'] },
+          metadata: { tokens: existingSilverTokens },
         });
 
         let updatedMetadata: any = null;
@@ -849,11 +1022,89 @@ describe('redeemableCode.service', () => {
 
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
-        // For upgrade, prepaids should be unitValue - 1 (first month granted immediately)
-        // 3 - 1 = 2
-        expect(updatedMetadata.prepaids.gold).toBe(2);
-        // Existing silver prepaids should be preserved
-        expect(updatedMetadata.prepaids.silver).toBe(2);
+        const tokens: PrepaidToken[] = updatedMetadata.tokens;
+        // 2 existing silver + 3 new gold = 5 total
+        expect(tokens).toHaveLength(5);
+
+        // Existing silver tokens should be preserved at the start
+        expect(tokens[0].id).toBe('tok_silver_1');
+        expect(tokens[0].tier).toBe('silver');
+        expect(tokens[0].status).toBe('claimed');
+        expect(tokens[1].id).toBe('tok_silver_2');
+        expect(tokens[1].tier).toBe('silver');
+        expect(tokens[1].status).toBe('locked');
+
+        // New gold tokens: first is unlocked with unlockedAt, rest are locked
+        const goldTokens = tokens.slice(2);
+        expect(goldTokens).toHaveLength(3);
+
+        expect(goldTokens[0].status).toBe('unlocked');
+        expect(goldTokens[0].tier).toBe('gold');
+        expect(goldTokens[0].buzzAmount).toBe(50000);
+        expect(goldTokens[0].codeId).toBe('MB-TEST-1234');
+        expect(goldTokens[0].unlockedAt).toBeDefined();
+
+        expect(goldTokens[1].status).toBe('locked');
+        expect(goldTokens[1].unlockedAt).toBeUndefined();
+        expect(goldTokens[2].status).toBe('locked');
+        expect(goldTokens[2].unlockedAt).toBeUndefined();
+      });
+
+      it('should reset currentPeriodStart and compute new currentPeriodEnd on upgrade', async () => {
+        const mockCode = createMockRedeemableCode({
+          unitValue: 3,
+          price: createMockPrice({
+            id: 'price_gold',
+            interval: 'month',
+            product: createMockProduct({
+              id: 'prod_gold',
+              metadata: { tier: 'gold', monthlyBuzz: 50000, buzzType: 'yellow' },
+            }),
+          }),
+        });
+
+        const existingSub = createMockSubscription({
+          currentPeriodStart: new Date('2024-01-01'),
+          currentPeriodEnd: new Date('2024-04-01'),
+          productId: 'prod_silver',
+          priceId: 'price_silver',
+          product: createMockProduct({
+            id: 'prod_silver',
+            metadata: { tier: 'silver', monthlyBuzz: 25000, buzzType: 'yellow' },
+          }),
+          metadata: {
+            tokens: [
+              createMockToken({ id: 'tok_silver_1', tier: 'silver', status: 'claimed', buzzAmount: 25000 }),
+            ],
+          },
+        });
+
+        let updatedSubscription: any = null;
+
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) => {
+          const tx = {
+            redeemableCode: {
+              update: vi.fn().mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 }),
+            },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(existingSub),
+              update: vi.fn().mockImplementation((args: any) => {
+                updatedSubscription = args.data;
+                return { id: existingSub.id };
+              }),
+            },
+          };
+          return callback(tx);
+        });
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+
+        // Upgrade resets period start to now and computes new end from now
+        const now = new Date('2024-01-15T10:00:00Z');
+        const expectedEnd = dayjs.utc(now).add(3, 'month').toDate();
+        expect(updatedSubscription.currentPeriodStart.getTime()).toBe(now.getTime());
+        expect(updatedSubscription.currentPeriodEnd.getTime()).toBe(expectedEnd.getTime());
       });
     });
 

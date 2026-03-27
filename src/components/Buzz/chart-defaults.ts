@@ -8,8 +8,7 @@ export const truncateLabel = (text: string, max: number) =>
 export const abbreviateValue = (value: number | string): string => {
   const num = Number(value);
   if (num === 0) return '';
-  if (num >= 1_000_000)
-    return `${(num / 1_000_000).toFixed(num % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(num % 1_000_000 === 0 ? 0 : 1)}M`;
   if (num >= 1_000) return `${(num / 1_000).toFixed(num % 1_000 === 0 ? 0 : 1)}K`;
   return num.toString();
 };
@@ -52,7 +51,7 @@ export function chartScaleDefaults({
         grid: { color: 'rgba(128, 128, 128, 0.1)' },
       },
     },
-  };
+  } as Pick<ChartOptions, 'scales'>;
 }
 
 /**
@@ -67,6 +66,7 @@ export function chartTooltipDefaults({
   formatValue?: (value: number) => string;
   maxTitleLength?: number;
 } = {}): NonNullable<ChartOptions['plugins']>['tooltip'] {
+  type TooltipOptions = NonNullable<ChartOptions['plugins']>['tooltip'];
   return {
     position: 'nearest',
     xAlign: 'right',
@@ -102,7 +102,7 @@ export function chartTooltipDefaults({
         return formatValue ? formatValue(val) : val.toLocaleString();
       },
     },
-  };
+  } as TooltipOptions;
 }
 
 /**
@@ -134,17 +134,15 @@ export function chartLegendDefaults({
                   (chart.constructor as any).defaults?.plugins?.legend?.labels?.generateLabels?.(
                     chart
                   ) ?? [];
-                return defaults.map(
-                  (label: { text?: string; [key: string]: unknown }) => ({
-                    ...label,
-                    text: truncateLabel(label.text ?? '', maxLabelLength),
-                  })
-                );
+                return defaults.map((label: { text?: string; [key: string]: unknown }) => ({
+                  ...label,
+                  text: truncateLabel(label.text ?? '', maxLabelLength),
+                }));
               },
             }
           : {}),
       },
     },
     title: { display: false },
-  };
+  } as ChartOptions['plugins'];
 }

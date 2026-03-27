@@ -8,6 +8,7 @@
 import type {
   ComfyLtx2CreateVideoInput,
   ComfyLtx2FirstLastFrameToVideoInput,
+  VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
@@ -27,14 +28,12 @@ type LTXV2Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV2' };
  * Creates videoGen input for LTXV2 ecosystem.
  * Routes to createVideo or firstLastFrameToVideo based on workflow.
  */
-export const createLTXV2Input = defineHandler<
-  LTXV2Ctx,
-  ComfyLtx2CreateVideoInput | ComfyLtx2FirstLastFrameToVideoInput
->((data, ctx) => {
-  if (data.workflow === 'img2vid') {
-    return createFirstLastFrameInput(data, ctx);
-  }
-  return createVideoInput(data, ctx);
+export const createLTXV2Input = defineHandler<LTXV2Ctx, [VideoGenStepTemplate]>((data, ctx) => {
+  const input =
+    data.workflow === 'img2vid'
+      ? createFirstLastFrameInput(data, ctx)
+      : createVideoInput(data, ctx);
+  return [{ $type: 'videoGen', input }];
 });
 
 /** Builds loras record from additional resources */

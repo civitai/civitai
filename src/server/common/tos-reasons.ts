@@ -18,7 +18,7 @@ export const TOS_REASONS = [
     value: ViolationType.RealisticMinorNsfw,
   },
   {
-    label: 'Animated Minor in Mature Context',
+    label: 'Illustrated Minor in Mature Context',
     value: ViolationType.AnimatedMinorNsfw,
   },
   {

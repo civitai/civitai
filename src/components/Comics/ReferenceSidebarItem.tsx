@@ -1,5 +1,5 @@
-import { ActionIcon, Badge, Tooltip } from '@mantine/core';
-import { IconAlertTriangle, IconTrash, IconUser } from '@tabler/icons-react';
+import { ActionIcon, Badge, Menu, Tooltip } from '@mantine/core';
+import { IconAlertTriangle, IconDotsVertical, IconTrash, IconUnlink, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
 import { refTypeBadge } from '~/components/Comics/comic-project-constants';
@@ -10,14 +10,16 @@ export function ReferenceSidebarItem({
   character: ref,
   projectId,
   referenceImageMap,
-  onDelete,
+  onRemoveFromProject,
+  onDeletePermanently,
   getStatusDotClass,
   getStatusLabel,
 }: {
   character: { id: number; name: string; status: string; type?: string; images?: any[] };
   projectId: number;
   referenceImageMap: Map<number, { url: string }>;
-  onDelete: (id: number, name: string) => void;
+  onRemoveFromProject: (id: number, name: string) => void;
+  onDeletePermanently: (id: number, name: string) => void;
   getStatusDotClass: (status: string, hasRefs: boolean) => string;
   getStatusLabel: (status: string, hasRefs: boolean, isFailed: boolean) => string;
 }) {
@@ -77,18 +79,44 @@ export function ReferenceSidebarItem({
       </div>
 
       <div className={styles.characterDelete}>
-        <ActionIcon
-          variant="subtle"
-          color="red"
-          size="sm"
-          onClick={(e: React.MouseEvent) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDelete(ref.id, ref.name);
-          }}
-        >
-          <IconTrash size={14} />
-        </ActionIcon>
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              size="sm"
+              onClick={(e: React.MouseEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+            >
+              <IconDotsVertical size={14} />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item
+              leftSection={<IconUnlink size={14} />}
+              onClick={(e: React.MouseEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onRemoveFromProject(ref.id, ref.name);
+              }}
+            >
+              Remove from project
+            </Menu.Item>
+            <Menu.Item
+              color="red"
+              leftSection={<IconTrash size={14} />}
+              onClick={(e: React.MouseEvent) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onDeletePermanently(ref.id, ref.name);
+              }}
+            >
+              Delete permanently
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
       </div>
     </Link>
     </Tooltip>

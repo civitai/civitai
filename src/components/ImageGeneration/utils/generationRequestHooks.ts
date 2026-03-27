@@ -1,4 +1,3 @@
-import type { WorkflowStepEvent } from '@civitai/client';
 import { applyPatch, JsonPatchFactory } from '@civitai/client';
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
@@ -6,13 +5,9 @@ import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
 import { useMemo } from 'react';
 import type * as z from 'zod';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { GenerationReactType, GenerationSort, SignalMessages } from '~/server/common/enums';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { GenerationReactType, GenerationSort } from '~/server/common/enums';
 import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -23,23 +18,21 @@ import type {
   TagsPatchSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { BlobData, WorkflowData } from '~/shared/orchestrator/workflow-data';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
-import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
 import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
 import type {
   IWorkflow,
   IWorkflowsInfinite,
 } from '~/server/services/orchestrator/orchestrator.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
+import { queryClient, trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 
 export type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows2>
@@ -66,6 +59,7 @@ export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
   options?: { enabled?: boolean; includeTags?: boolean }
 ) {
+  registerSignalGroup('generation');
   const { domain } = useAppContext();
   const nsfwEnabled = useBrowsingSettings((state) => state.showNsfw);
   const currentUser = useCurrentUser();
@@ -444,58 +438,4 @@ export function usePatchTags() {
   }
 
   return { patchTags, isLoading };
-}
-
-type CustomWorkflowStepEvent = Omit<WorkflowStepEvent, '$type'> & { $type: 'step' };
-const debouncer = createDebouncer(100);
-let signalStepEventsDictionary: Record<string, CustomWorkflowStepEvent> = {};
-export function useTextToImageSignalUpdate() {
-  return useSignalConnection(SignalMessages.TextToImageUpdate, (data: CustomWorkflowStepEvent) => {
-    if (data.$type === 'step') signalStepEventsDictionary[data.workflowId] = { ...data };
-    debouncer(() => updateSignaledWorkflows());
-  });
-}
-
-export async function fetchSignaledWorkflow(
-  workflowId: string
-): Promise<WorkflowStatusUpdate | undefined> {
-  return await trpcVanilla.orchestrator.statusUpdate.query({ workflowId });
-}
-
-async function updateSignaledWorkflows() {
-  const signalData = { ...signalStepEventsDictionary };
-  signalStepEventsDictionary = {};
-
-  const workflowIds = Object.keys(signalData);
-  if (!workflowIds.length) return;
-
-  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const workflows = await Promise.all(workflowIds.map(fetchSignaledWorkflow)).then((data) =>
-    data.filter(isDefined)
-  );
-  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
-    produce(state, (old?: InfiniteTextToImageRequests) => {
-      if (!old) return;
-      outerLoop: for (const page of old.pages) {
-        for (const item of page.items) {
-          if (!workflows.length) break outerLoop;
-          const index = workflows.findIndex((x) => x.id === item.id);
-          if (index > -1) {
-            const match = workflows.splice(index, 1)[0];
-            if (match) {
-              item.status = match.status;
-              for (const step of item.steps) {
-                const stepMatch = match.steps?.find((x) => x.name === step.name);
-                if (stepMatch) {
-                  step.images = stepMatch.images;
-                  step.status = stepMatch.status;
-                  step.completedAt = stepMatch.completedAt;
-                }
-              }
-            }
-          }
-        }
-      }
-    })
-  );
 }

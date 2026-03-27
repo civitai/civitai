@@ -9,7 +9,7 @@ import type {
 type MetricKey = `${MetricEntityType}:${number}:${MetricType}`;
 
 interface MetricSignalsState {
-  deltas: Record<MetricKey, number>;
+  deltas: Record<string, number>;
   applyDelta: (
     entityType: MetricEntityType,
     entityId: number,
@@ -51,7 +51,7 @@ export const useMetricSignalsStore = create<MetricSignalsState>()(
           const prefix = `${entityType}:${entityId}:`;
           for (const key of Object.keys(newDeltas)) {
             if (key.startsWith(prefix)) {
-              delete newDeltas[key as MetricKey];
+              delete newDeltas[key];
             }
           }
         }

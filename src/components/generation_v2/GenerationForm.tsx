@@ -1310,6 +1310,20 @@ export function GenerationForm() {
                 )}
               />
 
+              {/* Wan 2.2: Multi-step toggle (comfy 12fps + VFIMamba interpolation) */}
+              <Controller
+                graph={graph}
+                name="multiStep"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    checked={value}
+                    onChange={(e) => onChange(e.target.checked)}
+                    label="Multi-step with interpolation"
+                    description="Generate at 12fps then interpolate to 24fps for smoother results"
+                  />
+                )}
+              />
+
               {/* Wan: Draft mode toggle (v2.2-5b) / Vidu Q3: Draft mode */}
               <Controller
                 graph={graph}

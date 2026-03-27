@@ -1,5 +1,14 @@
-import type { ButtonProps, PopoverProps } from '@mantine/core';
-import { Button, Divider, Group, Indicator, Popover, ScrollArea, Stack } from '@mantine/core';
+import type { ButtonProps, ComboboxItem, PopoverProps } from '@mantine/core';
+import {
+  Button,
+  Divider,
+  Group,
+  Indicator,
+  Popover,
+  ScrollArea,
+  Select,
+  Stack,
+} from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { IconFilter, IconX } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
@@ -7,23 +16,58 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
-import { ecosystems, getEcosystemSupport } from '~/shared/constants/basemodel.constants';
+import {
+  ecosystemFamilyById,
+  ecosystems,
+  getEcosystemSupport,
+} from '~/shared/constants/basemodel.constants';
 import { workflowConfigsArray } from '~/shared/data-graph/generation/config/workflows';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { titleCase } from '~/utils/string-helpers';
 
 // Get workflow options split by category (exclude utility workflows)
 const allWorkflowOptions = workflowConfigsArray.filter((w) => !w.noSubmit);
-const imageWorkflows = allWorkflowOptions.filter((w) => w.category === 'image');
-const videoWorkflows = allWorkflowOptions.filter((w) => w.category === 'video');
 
-// Get top-level ecosystems that support generation
-const generationEcosystems = ecosystems
-  .filter((e) => !e.parentEcosystemId && getEcosystemSupport(e.id, 'generation'))
-  .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+// Build grouped workflow select data
+const workflowSelectData = (() => {
+  const imageWorkflows = allWorkflowOptions.filter((w) => w.category === 'image');
+  const videoWorkflows = allWorkflowOptions.filter((w) => w.category === 'video');
+  const groups: { group: string; items: ComboboxItem[] }[] = [];
+  if (imageWorkflows.length) {
+    groups.push({
+      group: 'Image',
+      items: imageWorkflows.map((w) => ({ value: w.key, label: w.label })),
+    });
+  }
+  if (videoWorkflows.length) {
+    groups.push({
+      group: 'Video',
+      items: videoWorkflows.map((w) => ({ value: w.key, label: w.label })),
+    });
+  }
+  return groups;
+})();
+
+// Build grouped ecosystem select data
+const ecosystemSelectData = (() => {
+  const genEcosystems = ecosystems
+    .filter((e) => getEcosystemSupport(e.id, 'generation'))
+    .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+
+  const familyGroups = new Map<string, ComboboxItem[]>();
+  for (const eco of genEcosystems) {
+    const family = eco.familyId ? ecosystemFamilyById.get(eco.familyId) : undefined;
+    const groupName = family?.name ?? 'Other';
+    if (!familyGroups.has(groupName)) familyGroups.set(groupName, []);
+    familyGroups.get(groupName)!.push({ value: eco.key, label: eco.displayName });
+  }
+
+  return Array.from(familyGroups.entries()).map(([group, items]) => ({ group, items }));
+})();
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -164,56 +208,27 @@ export function DumbMarkerFiltersDropdown({
 
               {/* Base Model Filter */}
               <Divider label="Ecosystem" className="text-sm font-bold" />
-              <div className="flex flex-wrap gap-2">
-                <FilterChip
-                  checked={!filters.baseModel}
-                  onChange={() => setFilters({ baseModel: undefined })}
-                >
-                  All Models
-                </FilterChip>
-                {generationEcosystems.map((eco) => (
-                  <FilterChip
-                    key={eco.key}
-                    checked={filters.baseModel === eco.key}
-                    onChange={(checked) => setFilters({ baseModel: checked ? eco.key : undefined })}
-                  >
-                    {eco.displayName}
-                  </FilterChip>
-                ))}
-              </div>
+              <Select
+                data={ecosystemSelectData}
+                value={filters.baseModel ?? null}
+                onChange={(value) => setFilters({ baseModel: value ?? undefined })}
+                placeholder="All Models"
+                searchable={!isMobileDevice()}
+                clearable
+                comboboxProps={{ withinPortal: false }}
+              />
 
               {/* Workflow Filter */}
-              <Divider label="Image Workflows" className="text-sm font-bold" />
-              <div className="flex flex-wrap gap-2">
-                <FilterChip
-                  checked={!filters.processType}
-                  onChange={() => setFilters({ processType: undefined })}
-                >
-                  All
-                </FilterChip>
-                {imageWorkflows.map((w) => (
-                  <FilterChip
-                    key={w.key}
-                    checked={filters.processType === w.key}
-                    onChange={(checked) => setFilters({ processType: checked ? w.key : undefined })}
-                  >
-                    {w.label}
-                  </FilterChip>
-                ))}
-              </div>
-
-              <Divider label="Video Workflows" className="text-sm font-bold" />
-              <div className="flex flex-wrap gap-2">
-                {videoWorkflows.map((w) => (
-                  <FilterChip
-                    key={w.key}
-                    checked={filters.processType === w.key}
-                    onChange={(checked) => setFilters({ processType: checked ? w.key : undefined })}
-                  >
-                    {w.label}
-                  </FilterChip>
-                ))}
-              </div>
+              <Divider label="Workflow" className="text-sm font-bold" />
+              <Select
+                data={workflowSelectData}
+                value={filters.processType ?? null}
+                onChange={(value) => setFilters({ processType: value ?? undefined })}
+                placeholder="All Workflows"
+                searchable={!isMobileDevice()}
+                clearable
+                comboboxProps={{ withinPortal: false }}
+              />
 
               {/* Date Range Filter */}
               <Divider label="Date Range" className="text-sm font-bold" />
@@ -225,7 +240,6 @@ export function DumbMarkerFiltersDropdown({
                   onChange={(date) => setFilters({ fromDate: date ?? undefined })}
                   maxDate={filters.toDate ?? undefined}
                   clearable
-                  size="xs"
                 />
                 <DatePickerInput
                   label="To"
@@ -234,7 +248,6 @@ export function DumbMarkerFiltersDropdown({
                   onChange={(date) => setFilters({ toDate: date ?? undefined })}
                   minDate={filters.fromDate ?? undefined}
                   clearable
-                  size="xs"
                 />
               </Group>
 

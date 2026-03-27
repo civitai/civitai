@@ -1,4 +1,5 @@
-import { Badge, Button, Modal, Textarea } from '@mantine/core';
+import { Alert, Badge, Button, Modal, Text, Textarea } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useHotkeys } from '@mantine/hooks';
 import { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 import type Konva from 'konva';
@@ -261,6 +262,56 @@ export function DrawingEditorModal({
     [canvasDimensions, commitToHistory]
   );
 
+  // Add a speech bubble stamp image to the canvas
+  const handleAddSpeechBubble = useCallback(
+    (imagePath: string) => {
+      const img = new window.Image();
+      img.onload = () => {
+        // Scale to max 30% of canvas
+        const maxW = canvasDimensions.width * 0.3;
+        const maxH = canvasDimensions.height * 0.3;
+        let w = img.naturalWidth;
+        let h = img.naturalHeight;
+        if (w > maxW || h > maxH) {
+          const scale = Math.min(maxW / w, maxH / h);
+          w = Math.round(w * scale);
+          h = Math.round(h * scale);
+        }
+
+        const newElement: DrawingImageElement = {
+          type: 'image',
+          id: generateElementId(),
+          x: Math.round((canvasDimensions.width - w) / 2),
+          y: Math.round((canvasDimensions.height - h) / 2),
+          width: w,
+          height: h,
+          imageUrl: imagePath,
+          color: '#000000',
+          strokeWidth: 0,
+        };
+
+        setOverlayImages((prev) => {
+          const next = new Map(prev);
+          next.set(newElement.id, img);
+          return next;
+        });
+
+        setElements((prev) => [...prev, newElement]);
+        setTool('select');
+        setSelectedId(newElement.id);
+        setTimeout(commitToHistory, 0);
+      };
+      img.onerror = () => {
+        showErrorNotification({
+          title: 'Failed to load speech bubble',
+          error: new Error('Could not load the speech bubble image'),
+        });
+      };
+      img.src = imagePath;
+    },
+    [canvasDimensions, commitToHistory]
+  );
+
   // Sync overlayImages map when elements change (handles undo/redo, clear)
   useEffect(() => {
     const imageElements = elements.filter((el): el is DrawingImageElement => el.type === 'image');
@@ -463,6 +514,13 @@ export function DrawingEditorModal({
           </div>
         </div>
 
+        <Alert variant="light" color="yellow" icon={<IconAlertTriangle size={16} />} mx="md" py="xs">
+          <Text size="xs">
+            Sketch annotations produce varying results depending on the model used. For best results,
+            use <Text span fw={600}>Nano Banana</Text>.
+          </Text>
+        </Alert>
+
         {/* Canvas Area */}
         <div className={styles.canvasArea}>
           {/* Canvas Container with subtle shadow */}
@@ -551,6 +609,7 @@ export function DrawingEditorModal({
             canUndo={canUndo}
             onDownload={handleDownload}
             onAddImage={handleAddImage}
+            onAddSpeechBubble={handleAddSpeechBubble}
             isMobile={isMobile}
           />
         </div>

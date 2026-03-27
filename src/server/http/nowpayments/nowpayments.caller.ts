@@ -170,7 +170,11 @@ class NOWPaymentsCaller extends HttpCaller {
     dateFrom?: string;
     dateTo?: string;
   }): Promise<NOWPayments.PaymentsListResponse | null> {
-    const response = await this.getRaw(`/payment/`, { queryParams: params });
+    const token = await this.authenticate();
+    const response = await this.getRaw(`/payment/`, {
+      queryParams: params,
+      headers: { Authorization: `Bearer ${token}` },
+    });
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get payments list', response.statusText);
@@ -248,7 +252,7 @@ class NOWPaymentsCaller extends HttpCaller {
   }
 
   private async _doAuthenticate(): Promise<string> {
-    const response = await this.postRaw('/v1/auth', {
+    const response = await this.postRaw('/auth', {
       body: JSON.stringify({
         email: env.NOW_PAYMENTS_EMAIL,
         password: env.NOW_PAYMENTS_PASSWORD,
@@ -270,7 +274,7 @@ class NOWPaymentsCaller extends HttpCaller {
     input: NOWPayments.CreatePayoutInput,
     jwtToken: string
   ): Promise<NOWPayments.CreatePayoutResponse | null> {
-    const response = await this.postRaw('/v1/payout', {
+    const response = await this.postRaw('/payout', {
       body: JSON.stringify(input),
       headers: { Authorization: `Bearer ${jwtToken}` },
     });

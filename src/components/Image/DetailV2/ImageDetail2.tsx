@@ -76,7 +76,7 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -244,6 +244,7 @@ export function ImageDetail2() {
       <Meta
         title={title}
         images={image}
+        ogEndpoint={`/api/og?type=image&id=${image.id}`}
         canonical={`/images/${image.id}`}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />

@@ -277,12 +277,22 @@ export const getInfiniteImagesHandler = async ({
   // Skip BitDex for queries that need features it doesn't support:
   // - collectionId: requires relational joins through CollectionItem table
   // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
-  const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
-  const bitdexMode = skipBitdex ? null : await getFliptVariant(
-    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    user?.id?.toString() || 'anonymous',
-    buildFliptContext(user)
-  );
+  // - reactions: per-user reaction data isn't in the search index, needs DB subquery on ImageReaction
+  // - postId/postIds: specific post queries are ~2ms in Postgres (covered index) and create
+  //   unique cache keys in BitDex that hurt cache hit rate
+  const skipBitdex =
+    !!input.collectionId ||
+    !!input.prioritizedUserIds?.length ||
+    !!input.reactions?.length ||
+    !!input.postId ||
+    !!input.postIds?.length;
+  const bitdexMode = skipBitdex
+    ? null
+    : await getFliptVariant(
+        FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+        user?.id?.toString() || 'anonymous',
+        buildFliptContext(user)
+      );
   const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
   // Use getAllImagesIndex when useIndex is true OR BitDex is active.
@@ -348,11 +358,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
     // Check BitDex mode — if active, always route through getAllImagesIndex.
     // Skip BitDex for unsupported query types (collections, prioritized users).
     const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
-    const bitdexMode = skipBitdex ? null : await getFliptVariant(
-      FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-      user?.id?.toString() || 'anonymous',
-      buildFliptContext(user)
-    );
+    const bitdexMode = skipBitdex
+      ? null
+      : await getFliptVariant(
+          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+          user?.id?.toString() || 'anonymous',
+          buildFliptContext(user)
+        );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
     const useIndex = useBitdex || features.imageIndexFeed;
 
@@ -376,7 +388,11 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      const { items: pinnedPostsImages } = await fetchFn({
+      // Pinned posts: always use DB path (getAllImages) instead of BitDex.
+      // postId queries are ~2ms in Postgres (covered index) and create unique
+      // cache keys in BitDex that hurt cache hit rate. Model gallery queries
+      // (modelVersionId filter) stay on BitDex where they're needed.
+      const { items: pinnedPostsImages } = await getAllImages({
         ...input,
         limit: limit * 4,
         useCombinedNsfwLevel: !features.canViewNsfw,
