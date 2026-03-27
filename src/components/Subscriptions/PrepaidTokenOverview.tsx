@@ -19,7 +19,7 @@ import {
   IconLock,
   IconLockOpen,
 } from '@tabler/icons-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import dayjs from 'dayjs';
 import type { PrepaidToken, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -43,6 +43,11 @@ const BUZZ_TO_TIER: Record<number, string> = {
  * into PrepaidToken-like objects for display alongside real tokens.
  * Deduplicates against existing tokens that already have a buzzTransactionId.
  */
+/**
+ * Paginates through buzz transactions until we've covered at least 1 year of history.
+ * Uses cursor-based pagination since users with many transactions may exhaust the 200 limit
+ * before reaching membership-specific entries.
+ */
 function useHistoricalPrepaidDeliveries({
   subscription,
   existingTokens,
@@ -52,35 +57,72 @@ function useHistoricalPrepaidDeliveries({
   existingTokens: PrepaidToken[];
 }): { history: PrepaidToken[]; isLoading: boolean } {
   const isCivitai = subscription?.product?.provider === 'Civitai';
-  const buzzType = (subscription?.product?.metadata as SubscriptionProductMetadata)?.buzzType ?? 'yellow';
+  const buzzType =
+    (subscription?.product?.metadata as SubscriptionProductMetadata)?.buzzType ?? 'yellow';
+  const accountType = buzzType === 'green' ? ('green' as const) : ('yellow' as const);
 
-  const datesRef = useRef({
-    start: dayjs().subtract(24, 'months').startOf('day').toDate(),
-    end: dayjs().endOf('day').toDate(),
-  });
+  const oneYearAgo = useRef(dayjs().subtract(12, 'months').startOf('day')).current;
+  const endDate = useRef(dayjs().endOf('day').toDate()).current;
+  const startDate = useRef(dayjs().subtract(24, 'months').startOf('day').toDate()).current;
 
-  const { data: txData, isLoading } = trpc.buzz.getUserTransactions.useQuery(
+  // Accumulated transactions across all pages
+  const [allTransactions, setAllTransactions] = useState<
+    Array<{
+      date: Date;
+      amount: number;
+      externalTransactionId?: string | null;
+      details?: Record<string, unknown> | null;
+    }>
+  >([]);
+  const [cursor, setCursor] = useState<Date | undefined>(undefined);
+  const [isComplete, setIsComplete] = useState(false);
+  const [pageIndex, setPageIndex] = useState(0);
+
+  // Fetch the current page
+  const { data: txData, isLoading: pageLoading } = trpc.buzz.getUserTransactions.useQuery(
     {
       type: TransactionType.Purchase,
-      start: datesRef.current.start,
-      end: datesRef.current.end,
+      start: startDate,
+      end: endDate,
       limit: 200,
-      accountType: buzzType === 'green' ? 'green' : 'yellow',
+      accountType,
+      cursor,
     },
-    { enabled: isCivitai }
+    { enabled: isCivitai && !isComplete }
   );
 
+  // Process each page as it arrives
+  useEffect(() => {
+    if (!txData || isComplete) return;
+
+    const txs = txData.transactions;
+    if (txs.length === 0) {
+      setIsComplete(true);
+      return;
+    }
+
+    setAllTransactions((prev) => [...prev, ...txs]);
+
+    // Check if the oldest transaction in this page is older than 1 year
+    const oldestDate = dayjs(txs[txs.length - 1].date);
+    const hasMorePages = !!txData.cursor;
+
+    if (!hasMorePages || oldestDate.isBefore(oneYearAgo)) {
+      setIsComplete(true);
+    } else {
+      // Fetch the next page
+      setCursor(txData.cursor as unknown as Date);
+      setPageIndex((p) => p + 1);
+    }
+  }, [txData, isComplete, oneYearAgo, pageIndex]);
+
+  // Parse accumulated transactions into PrepaidToken objects
   const history = useMemo(() => {
-    if (!txData?.transactions) return [];
+    if (allTransactions.length === 0) return [];
 
-    // Collect all buzzTransactionIds from existing tokens to deduplicate
     const existingTxIds = new Set(
-      existingTokens
-        .filter((t) => t.buzzTransactionId)
-        .map((t) => t.buzzTransactionId!)
+      existingTokens.filter((t) => t.buzzTransactionId).map((t) => t.buzzTransactionId!)
     );
-
-    // Also collect prepaid-token-claim:* IDs since those are new-system claims
     const claimTxIds = new Set(
       existingTokens
         .filter((t) => t.buzzTransactionId?.startsWith('prepaid-token-claim:'))
@@ -89,41 +131,37 @@ function useHistoricalPrepaidDeliveries({
 
     const historicalTokens: PrepaidToken[] = [];
 
-    for (const tx of txData.transactions) {
+    for (const tx of allTransactions) {
       const extId = tx.externalTransactionId ?? '';
       const details = tx.details as Record<string, unknown> | null | undefined;
       const detailsType = details?.type as string | undefined;
 
-      // Only include civitai-membership transactions (old auto-deliveries)
       const isMembershipTx =
         extId.startsWith('civitai-membership') ||
         detailsType === 'membership-purchase' ||
         detailsType === 'civitai-membership-payment';
 
       if (!isMembershipTx) continue;
-
-      // Skip if this transaction is already represented by an existing token
       if (existingTxIds.has(extId)) continue;
       if (claimTxIds.has(extId)) continue;
 
-      // Infer tier from transaction details or amount
       const tier = (details?.tier as string) ?? BUZZ_TO_TIER[tx.amount] ?? 'silver';
-      const dateStr = (details?.date as string) ?? dayjs(tx.date).format('YYYY-MM');
 
       historicalTokens.push({
         id: `history_${extId}`,
         tier: tier as PrepaidToken['tier'],
         status: 'claimed',
         buzzAmount: tx.amount,
-        claimedAt: typeof tx.date === 'string' ? tx.date : new Date(tx.date as any).toISOString(),
+        claimedAt:
+          typeof tx.date === 'string' ? tx.date : new Date(tx.date as any).toISOString(),
         buzzTransactionId: extId,
       });
     }
 
     return historicalTokens;
-  }, [txData, existingTokens]);
+  }, [allTransactions, existingTokens]);
 
-  return { history, isLoading: isCivitai && isLoading };
+  return { history, isLoading: isCivitai && !isComplete };
 }
 
 function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () => void }) {
