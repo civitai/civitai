@@ -157,7 +157,7 @@ export function PostImages({
                           type={image.type}
                           imageId={image.id}
                           width={width < maxWidth ? width : maxWidth}
-                          original={image.type === 'video'}
+                          original={true}
                           anim={safe}
                           html5Controls={shouldDisplayHtmlControls(image)}
                           videoRef={videoRef}
