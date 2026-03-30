@@ -66,6 +66,7 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getS3Client } from '~/utils/s3-utils';
@@ -639,7 +640,7 @@ async function createSinglePanel(args: {
       tips: { creators: 0, civitai: 0 },
       user: ctx.user! as SessionUser,
       token,
-      currencies: ['yellow'],
+      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
     });
 
     const updated = await dbWrite.comicPanel.update({
@@ -769,40 +770,29 @@ export const comicsRouter = router({
       throw throwAuthorizationError();
     }
 
-    // Fetch project-scoped references via junction table
+    // Fetch only project-scoped references via junction table
     // Use dbWrite for read-after-write consistency (same as project query above)
     const projectRefs = await dbWrite.comicProjectReference.findMany({
       where: { projectId: project.id },
       select: { referenceId: true },
     });
 
-    let references;
-    if (projectRefs.length > 0) {
-      // Project has scoped references — fetch only those
-      const refIds = projectRefs.map((pr) => pr.referenceId);
-      references = await dbWrite.comicReference.findMany({
-        where: { id: { in: refIds }, userId: ctx.user.id },
-        orderBy: { createdAt: 'asc' },
-        include: {
-          images: {
-            orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
-          },
-        },
-      });
-    } else {
-      // Backward compat: no junction rows yet — show all user references
-      references = await dbWrite.comicReference.findMany({
-        where: { userId: ctx.user.id },
-        orderBy: { createdAt: 'asc' },
-        include: {
-          images: {
-            orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
-          },
-        },
-      });
-    }
+    const refIds = projectRefs.map((pr) => pr.referenceId);
+    const references =
+      refIds.length > 0
+        ? await dbWrite.comicReference.findMany({
+            where: { id: { in: refIds }, userId: ctx.user.id },
+            orderBy: { createdAt: 'asc' },
+            include: {
+              images: {
+                orderBy: { position: 'asc' },
+                include: {
+                  image: { select: { id: true, url: true, width: true, height: true } },
+                },
+              },
+            },
+          })
+        : [];
 
     return {
       ...project,
@@ -1350,7 +1340,7 @@ export const comicsRouter = router({
           token,
           body: {
             steps: [step],
-            currencies: ['yellow'],
+            currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any,
           },
           query: { whatif: true },
         });
@@ -2311,7 +2301,7 @@ export const comicsRouter = router({
           tips: { creators: 0, civitai: 0 },
           user: ctx.user! as SessionUser,
           token,
-          currencies: ['yellow'],
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
 
         // Atomically set status to Generating and store workflow ID
@@ -3020,7 +3010,7 @@ export const comicsRouter = router({
         tips: { creators: 0, civitai: 0 },
         user: ctx.user! as SessionUser,
         token,
-        currencies: ['yellow'],
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
 
       return {
@@ -3137,31 +3127,41 @@ export const comicsRouter = router({
         },
       });
 
-      // Get all user's ready references, then narrow to only those relevant
-      // to this comic to prevent cross-comic reference bleeding.
-      const allUserRefs = await dbRead.comicReference.findMany({
-        where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
-        select: { id: true, name: true },
+      // Only use references scoped to this project (via junction table).
+      // Then narrow further to those @-mentioned in the story or explicitly passed.
+      const projectRefRows = await dbRead.comicProjectReference.findMany({
+        where: { projectId: input.projectId },
+        select: { referenceId: true },
       });
+      const projectRefIds = new Set(projectRefRows.map((r) => r.referenceId));
 
-      // Only include references explicitly passed via referenceIds
-      const allowedRefIds = new Set(allUserRefs.map((r) => r.id));
-      if (input.referenceIds && input.referenceIds.some((id) => !allowedRefIds.has(id))) {
+      const projectRefs = projectRefIds.size > 0
+        ? await dbRead.comicReference.findMany({
+            where: {
+              id: { in: Array.from(projectRefIds) },
+              userId: ctx.user!.id,
+              status: ComicReferenceStatus.Ready,
+            },
+            select: { id: true, name: true },
+          })
+        : [];
+
+      // Validate explicitly passed referenceIds belong to this project
+      if (input.referenceIds && input.referenceIds.some((id) => !projectRefIds.has(id))) {
         throw throwAuthorizationError();
       }
 
       // Filter to references that are either explicitly provided via referenceIds
-      // or @-mentioned in the story description. This prevents Smart Create from
-      // pulling in characters from other comics that happen to share the user.
+      // or @-mentioned in the story description.
       const { mentionedIds: storyMentionedIds } = resolveReferenceMentions({
         prompt: input.storyDescription,
-        references: allUserRefs,
+        references: projectRefs,
       });
       const relevantRefIds = new Set([
         ...storyMentionedIds,
         ...(input.referenceIds ?? []),
       ]);
-      const relevantRefs = allUserRefs.filter((r) => relevantRefIds.has(r.id));
+      const relevantRefs = projectRefs.filter((r) => relevantRefIds.has(r.id));
 
       // Pre-load reference images keyed by refId (only used for panels that @mention them)
       const refImagesByRefId = new Map<
@@ -4017,7 +4017,7 @@ export const comicsRouter = router({
           tips: { creators: 0, civitai: 0 },
           user: ctx.user! as SessionUser,
           token,
-          currencies: ['yellow'],
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
 
         const updated = await dbWrite.comicPanel.update({
@@ -4315,7 +4315,7 @@ export const comicsRouter = router({
               tips: { creators: 0, civitai: 0 },
               user: ctx.user! as SessionUser,
               token: batchToken,
-              currencies: ['yellow'],
+              currencies: getAllowedAccountTypes(ctx.features, ['blue']),
             });
 
             const updated = await dbWrite.comicPanel.update({

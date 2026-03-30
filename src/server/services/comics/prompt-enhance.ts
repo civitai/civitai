@@ -63,11 +63,11 @@ export async function enhanceComicPrompt(input: {
   const mentionedSet = new Set(mentionedIds);
   const names = allRefs.filter((r) => mentionedSet.has(r.id)).map((r) => r.name);
 
-  // Fallback: just return the resolved prompt (no trained words for NanoBanana path)
+  // Fallback: return the original prompt (preserving @mentions) with trained words prepended
   const fallback =
     trainedWords && trainedWords.length > 0
-      ? `${trainedWords.join(', ')}, ${resolvedPrompt}`
-      : resolvedPrompt;
+      ? `${trainedWords.join(', ')}, ${userPrompt}`
+      : userPrompt;
 
   try {
     const textParts = [
@@ -122,8 +122,9 @@ export async function enhanceComicPrompt(input: {
 
     // Strip any @mentions the LLM hallucinated that weren't in the original prompt.
     // The LLM sometimes invents scenes with characters the user never referenced.
+    // Include apostrophes/hyphens in the name pattern so names like O'Brien match fully.
     const originalMentions = new Set(names.map((n) => n.toLowerCase()));
-    enhanced = enhanced.replace(/@([\w\p{L}]+)/gu, (match, name) => {
+    enhanced = enhanced.replace(/@([\w\p{L}'-]+)/gu, (match, name) => {
       if (originalMentions.has(name.toLowerCase())) return match;
       return name; // Strip the @ prefix, keep the word
     });
