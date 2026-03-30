@@ -496,6 +496,9 @@ async function processImageRating({
         consensus && consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
 
       if (isExcessiveDownRating) {
+        // No decision made yet — keep all votes (including this one) Pending until mod acts
+        currentNsfwLevel = undefined;
+
         // Remove from Knight queue and escalate to Inquisitor queue for mod review
         await removeImageFromQueue({ imageId, valueInQueue });
         await addImageToQueue({
