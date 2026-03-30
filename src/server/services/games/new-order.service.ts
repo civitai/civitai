@@ -24,6 +24,7 @@ import {
   getActiveSlot,
   getImageRatingsCounter,
   pendingBuzzCounter,
+  recentlyGrantedBuzzCounter,
   poolCounters,
   sanityCheckFailuresCounter,
   smitesCounter,
@@ -134,6 +135,7 @@ export async function joinGame({ userId }: { userId: number }) {
       smites: 0,
       blessedBuzz: 0,
       pendingBlessedBuzz: 0,
+      recentlyGrantedBuzz: 0,
       nextGrantDate: dayjs().add(1, 'day').startOf('day').toDate(),
     },
   };
@@ -153,16 +155,26 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
-  const [exp, fervor, smites, blessedBuzz, pendingBlessedBuzz] = await Promise.all([
-    expCounter.getCount(playerId),
-    fervorCounter.getCount(playerId),
-    smitesCounter.getCount(playerId),
-    blessedBuzzCounter.getCount(playerId),
-    pendingBuzzCounter.getCount(playerId),
-  ]);
+  const [exp, fervor, smites, blessedBuzz, pendingBlessedBuzz, recentlyGrantedBuzz] =
+    await Promise.all([
+      expCounter.getCount(playerId),
+      fervorCounter.getCount(playerId),
+      smitesCounter.getCount(playerId),
+      blessedBuzzCounter.getCount(playerId),
+      pendingBuzzCounter.getCount(playerId),
+      recentlyGrantedBuzzCounter.getCount(playerId),
+    ]);
   const nextGrantDate = dayjs().add(1, 'day').startOf('day').toDate(); // Next 00:00 UTC
 
-  return { exp, fervor, smites, blessedBuzz, pendingBlessedBuzz, nextGrantDate };
+  return {
+    exp,
+    fervor,
+    smites,
+    blessedBuzz,
+    pendingBlessedBuzz,
+    recentlyGrantedBuzz,
+    nextGrantDate,
+  };
 }
 
 export async function smitePlayer({
@@ -1006,6 +1018,7 @@ export async function updatePlayerStats({
     smites: 0,
     blessedBuzz: 0,
     pendingBlessedBuzz: 0,
+    recentlyGrantedBuzz: 0,
     nextGrantDate: new Date(),
   };
 
@@ -1021,11 +1034,21 @@ export async function updatePlayerStats({
     const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
     const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
 
-    // Get pending buzz from Redis counter (auto-queries ClickHouse on cache miss)
-    const pendingBlessedBuzz = await pendingBuzzCounter.getCount(playerId);
+    // Get pending buzz and recently granted from Redis counters (auto-query ClickHouse on cache miss)
+    const [pendingBlessedBuzz, recentlyGrantedBuzz] = await Promise.all([
+      pendingBuzzCounter.getCount(playerId),
+      recentlyGrantedBuzzCounter.getCount(playerId),
+    ]);
     const nextGrantDate = dayjs().add(1, 'day').startOf('day').toDate();
 
-    stats = { ...stats, fervor: newFervor, blessedBuzz, pendingBlessedBuzz, nextGrantDate };
+    stats = {
+      ...stats,
+      fervor: newFervor,
+      blessedBuzz,
+      pendingBlessedBuzz,
+      recentlyGrantedBuzz,
+      nextGrantDate,
+    };
   }
 
   // Fire-and-forget: don't block the response waiting for signal delivery
@@ -1257,6 +1280,7 @@ export async function resetPlayer({
     fervorCounter.reset({ id: playerId }),
     blessedBuzzCounter.reset({ id: playerId }),
     pendingBuzzCounter.reset({ id: playerId }),
+    recentlyGrantedBuzzCounter.reset({ id: playerId }),
   ]);
 
   // Clear rated images cache when player is reset
@@ -1276,6 +1300,8 @@ export async function resetPlayer({
           fervor: 0,
           smites: 0,
           blessedBuzz: 0,
+          pendingBlessedBuzz: 0,
+          recentlyGrantedBuzz: 0,
         },
         notification: {
           type: 'reset',

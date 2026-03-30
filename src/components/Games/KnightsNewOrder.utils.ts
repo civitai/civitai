@@ -40,7 +40,14 @@ const CareerResetModal = dynamic(() => import('./NewOrder/CareerResetModal'));
 
 type PlayerUpdateStatsPayload = {
   action: NewOrderSignalActions.UpdateStats | NewOrderSignalActions.Reset;
-  stats: { exp: number; fervor: number; blessedBuzz: number; smites: number };
+  stats: {
+    exp: number;
+    fervor: number;
+    blessedBuzz: number;
+    smites: number;
+    pendingBlessedBuzz?: number;
+    recentlyGrantedBuzz?: number;
+  };
   notification?: {
     type: 'smite' | 'reset' | 'warning' | 'cleanse';
     message: string;
@@ -124,7 +131,18 @@ export const useKnightsNewOrderListener = ({
         onReset?.();
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
-          return { ...old, stats: { ...old.stats, exp: 0, fervor: 0, blessedBuzz: 0, smites: 0 } };
+          return {
+            ...old,
+            stats: {
+              ...old.stats,
+              exp: 0,
+              fervor: 0,
+              blessedBuzz: 0,
+              smites: 0,
+              pendingBlessedBuzz: 0,
+              recentlyGrantedBuzz: 0,
+            },
+          };
         });
 
         await Promise.all([

@@ -494,7 +494,12 @@ async function createImageUpscaleSteps(
     steps.push(
       createComfyInput({
         key: 'img2img-upscale',
-        params: { image: image.url, upscaleWidth: dims.width, upscaleHeight: dims.height },
+        params: {
+          image: image.url,
+          upscaleWidth: dims.width,
+          upscaleHeight: dims.height,
+          outputFormat: data.outputFormat,
+        },
       }).then((step) => {
         if (!sourceCtx) return step;
         return { ...step, resolvedSource: buildResolvedSource(image.url, sourceCtx) };

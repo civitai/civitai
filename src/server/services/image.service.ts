@@ -123,7 +123,7 @@ import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -158,6 +158,7 @@ import {
   Availability,
   BlockImageReason,
   CollectionMode,
+  AppealStatus,
   EntityType,
   ImageIngestionStatus,
   MediaType,
@@ -467,6 +468,19 @@ export async function handleUnblockImages({
       });
     }
   });
+
+  // Resolve any pending appeals for images that were in appeal review
+  const appealImageIds = images.filter((img) => img.needsReview === 'appeal').map((img) => img.id);
+
+  if (appealImageIds.length > 0) {
+    await resolveEntityAppeal({
+      ids: appealImageIds,
+      entityType: EntityType.Image,
+      status: AppealStatus.Approved,
+      userId: moderatorId,
+    });
+  }
+
   return images;
 }
 
@@ -996,6 +1010,7 @@ export const getAllImages = async (
     fromPlatform,
     user,
     pending,
+    publishedOnly,
     notPublished,
     tools,
     techniques,
@@ -1124,7 +1139,7 @@ export const getAllImages = async (
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) {
-    if (userId) {
+    if (userId && !publishedOnly) {
       AND.push(Prisma.sql`(p."publishedAt" < now() OR p."userId" = ${userId})`);
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);
@@ -2443,6 +2458,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
+  // Only show images that belong to a post
+  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
+
   if (!isModerator) {
     filters.push(
       // Avoids exposing private resources to the public
@@ -3268,6 +3286,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
+
+  // Only show images that belong to a post
+  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];

@@ -706,6 +706,7 @@ export const REDIS_SYS_KEYS = {
     FERVOR: 'new-order:fervor',
     BUZZ: 'new-order:blessed-buzz',
     PENDING_BUZZ: 'new-order:pending-buzz',
+    RECENTLY_GRANTED_BUZZ: 'new-order:recently-granted-buzz',
     SMITE: 'new-order:smite-progress',
     QUEUES: 'new-order:queues',
     ACTIVE_SLOT: 'new-order:active-slot',

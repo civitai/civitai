@@ -366,6 +366,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     include: z.array(imageInclude).default(['cosmetics']),
     includeBaseModel: z.boolean().optional(),
     pending: z.boolean().optional(),
+    publishedOnly: z.boolean().optional(),
     postIds: z.number().array().optional(),
     reviewId: z.number().optional(),
     skip: z.number().optional(),
