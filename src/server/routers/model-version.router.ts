@@ -20,6 +20,7 @@ import {
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  consolidateVersionsSchema,
   deleteExplorationPromptSchema,
   earlyAccessModelVersionsOnTimeframeSchema,
   getModelVersionByModelTypeSchema,
@@ -49,6 +50,7 @@ import {
   setLinkedComponents,
   upsertExplorationPrompt,
   bustMvCache,
+  consolidateVersions,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
@@ -176,4 +178,7 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(recheckModelVersionTrainingStatusHandler),
+  consolidateVersions: guardedProcedure
+    .input(consolidateVersionsSchema)
+    .mutation(({ input, ctx }) => consolidateVersions({ ...input, userId: ctx.user.id })),
 });

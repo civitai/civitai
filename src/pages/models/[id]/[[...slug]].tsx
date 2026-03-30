@@ -70,6 +70,10 @@ const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection'),
   { ssr: false }
 );
+const ConsolidateVersions = dynamic(
+  () => import('~/components/Model/Actions/ConsolidateVersions'),
+  { ssr: false }
+);
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -1051,6 +1055,18 @@ export default function ModelDetailsV2({
                             >
                               Migrate to Collection
                             </Menu.Item>
+                            {isOwner && model.modelVersions.length > 1 && (
+                              <Menu.Item
+                                onClick={() =>
+                                  dialogStore.trigger({
+                                    component: ConsolidateVersions,
+                                    props: { modelId: model.id },
+                                  })
+                                }
+                              >
+                                Consolidate Versions
+                              </Menu.Item>
+                            )}
                           </>
                         )}
                       </Menu.Dropdown>

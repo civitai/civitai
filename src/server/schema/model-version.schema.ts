@@ -433,3 +433,19 @@ export type GetModelVersionsByIdsInput = z.infer<typeof getModelVersionsByIdsInp
 export const getModelVersionsByIdsInput = z.object({
   ids: z.array(z.number()).max(50),
 });
+
+export type ConsolidateVersionsInput = z.infer<typeof consolidateVersionsSchema>;
+export const consolidateVersionsSchema = z.object({
+  modelId: z.number(),
+  targetVersionId: z.number(),
+  sourceVersionIds: z.array(z.number()).min(1),
+  fileTypeMappings: z
+    .array(
+      z.object({
+        fileId: z.number(),
+        type: z.enum(constants.modelFileTypes),
+      })
+    )
+    .optional(),
+  appendDescriptions: z.boolean().default(false),
+});
