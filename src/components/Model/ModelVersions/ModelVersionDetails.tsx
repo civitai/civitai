@@ -111,7 +111,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { baseModelLicenses, CAROUSEL_LIMIT, constants } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
 import {
