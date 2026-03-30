@@ -1010,6 +1010,7 @@ export const getAllImages = async (
     fromPlatform,
     user,
     pending,
+    publishedOnly,
     notPublished,
     tools,
     techniques,
@@ -1138,7 +1139,7 @@ export const getAllImages = async (
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) {
-    if (userId) {
+    if (userId && !publishedOnly) {
       AND.push(Prisma.sql`(p."publishedAt" < now() OR p."userId" = ${userId})`);
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);
