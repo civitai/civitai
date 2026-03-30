@@ -13,6 +13,7 @@ import {
   getActiveSlot,
   pendingBuzzCounter,
   poolCounters,
+  recentlyGrantedBuzzCounter,
   setActiveSlot,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
@@ -75,30 +76,42 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
       for (const batch of batches) {
         log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
 
-        const transactions = batch
-          .filter((player) => player.balance > 0)
-          .map((validPlayer) => ({
-            fromAccountId: 0,
-            toAccountId: validPlayer.userId,
-            amount: validPlayer.balance,
-            type: TransactionType.Reward,
-            description: 'Content Moderation Correct Judgment',
-            externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-          }));
+        const grantedPlayers = batch.filter((player) => player.balance > 0);
+        const ungrantedPlayers = batch.filter((player) => player.balance <= 0);
+
+        const transactions = grantedPlayers.map((validPlayer) => ({
+          fromAccountId: 0,
+          toAccountId: validPlayer.userId,
+          amount: validPlayer.balance,
+          type: TransactionType.Reward,
+          description: 'Content Moderation Correct Judgment',
+          externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
+        }));
 
         if (transactions.length > 0) await createBuzzTransactionMany(transactions);
 
-        // Deduct the actual EXP from the blessed buzz counter
-        // Counter stores EXP values, not converted buzz, so we deduct totalExp
-        // Reset pending buzz counter so it recalculates the new day on next fetch
+        // Deduct the actual EXP from the blessed buzz counter only for players who received buzz.
+        // Players with balance <= 0 (< 10 correct votes) keep their EXP so it rolls over
+        // and accumulates until the next payout threshold is reached.
+        // Counter stores EXP values, not converted buzz, so we deduct totalExp.
+        // Reset pending buzz counter so it recalculates the new day on next fetch.
         await Promise.all(
-          batch.map((player) => {
+          grantedPlayers.map((player) => {
             return Promise.all([
               blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp }),
               pendingBuzzCounter.reset({ id: player.userId }),
+              recentlyGrantedBuzzCounter.reset({ id: player.userId }),
             ]);
           })
         );
+
+        // For ungranted players, only reset the pending buzz counter
+        // so it recalculates next cycle — but preserve their blessed buzz EXP
+        if (ungrantedPlayers.length > 0) {
+          await Promise.all(
+            ungrantedPlayers.map((player) => pendingBuzzCounter.reset({ id: player.userId }))
+          );
+        }
         log(
           `BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`
         );

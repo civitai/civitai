@@ -50,6 +50,7 @@ export function PlayerCard({
   fervor,
   blessedBuzz,
   pendingBlessedBuzz,
+  recentlyGrantedBuzz,
   nextGrantDate,
   smites = 0,
   leaderboard,
@@ -112,7 +113,16 @@ export function PlayerCard({
           icon={<IconSword size={18} stroke={1.5} />}
         />
         {showStats && (
-          <PlayerStats stats={{ fervor, blessedBuzz, smites, pendingBlessedBuzz, nextGrantDate }} />
+          <PlayerStats
+            stats={{
+              fervor,
+              blessedBuzz,
+              smites,
+              pendingBlessedBuzz,
+              recentlyGrantedBuzz,
+              nextGrantDate,
+            }}
+          />
         )}
       </div>
     </Paper>
@@ -153,6 +163,7 @@ export function PlayerStats({
     (stats.pendingBlessedBuzz ?? 0) * newOrderConfig.blessedBuzzConversionRatio
   );
   const futureGrantsBuzz = totalAccumulatedBuzz - pendingBuzzAmount;
+  const recentlyGranted = stats.recentlyGrantedBuzz ?? 0;
 
   return (
     <div className="flex items-center gap-1">
@@ -188,13 +199,16 @@ export function PlayerStats({
               )}
               <Text
                 size="xs"
-                c="dimmed"
                 style={{ borderTop: '1px solid var(--mantine-color-dark-4)', paddingTop: '4px' }}
               >
+                Recently Granted: <strong>{numberWithCommas(recentlyGranted)}</strong>{' '}
+                <span className="text-muted-foreground">(last 7 days)</span>
+              </Text>
+              <Text size="xs" c="dimmed">
                 Total Accumulated: <strong>{numberWithCommas(totalAccumulatedBuzz)}</strong>
               </Text>
               <Text size="xs" c="dimmed" fs="italic">
-                Buzz is granted after judgments age 3 days
+                1,000 Gold = 1 Buzz, granted after a 3-day settlement period
               </Text>
             </Stack>
           </Stack>
