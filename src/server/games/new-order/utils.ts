@@ -501,6 +501,37 @@ export const pendingBuzzCounter = createCounter({
   ttl: CacheTTL.day,
 });
 
+export const recentlyGrantedBuzzCounter = createCounter({
+  key: REDIS_SYS_KEYS.NEW_ORDER.RECENTLY_GRANTED_BUZZ,
+  fetchCount: async (ids) => {
+    const result = new Map<number | string, number>();
+    for (const id of ids) result.set(id, 0);
+
+    if (!clickhouse || ids.length === 0) return result;
+
+    const numericIds = ids.map(Number);
+    const sevenDaysAgo = dayjs().subtract(7, 'days').startOf('day').toDate();
+
+    const data = await clickhouse.$query<{ toAccountId: number; totalBuzz: number }>`
+      SELECT toAccountId, sum(amount) as totalBuzz
+      FROM buzzTransactions
+      WHERE toAccountId IN (${numericIds.join(',')})
+        AND externalTransactionId LIKE 'new-order-%'
+        AND date >= ${sevenDaysAgo}
+      GROUP BY toAccountId
+    `.catch(handleLogError);
+
+    if (data) {
+      for (const row of data) {
+        const idx = ids.findIndex((id) => Number(id) === row.toAccountId);
+        if (idx !== -1) result.set(ids[idx], row.totalBuzz ?? 0);
+      }
+    }
+    return result;
+  },
+  ttl: CacheTTL.day,
+});
+
 export const expCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.EXP,
   fetchCount: async (ids) => {

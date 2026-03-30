@@ -466,6 +466,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                           hideAutoResources: undefined,
                           hideManualResources: undefined,
                           includeBaseModel: true,
+                          publishedOnly: true,
                         }}
                         renderItem={LibraryImageCard}
                         disableStoreFilters
@@ -656,7 +657,7 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
   const currentUser = useCurrentUser();
 
   const { data, isFetching, isFetchingNextPage, hasNextPage, fetchNextPage } =
-    useGetTextToImageRequests({ tags: [WORKFLOW_TAGS.IMAGE] }, { enabled: !!currentUser });
+    useGetTextToImageRequests({ tags: [WORKFLOW_TAGS.IMAGE] }, { enabled: !!currentUser, ignoreFilters: true });
 
   const generatedMedia = useMemo(
     () => data.flatMap((wf) => wf.succeededImages.filter((x) => x.available)),
