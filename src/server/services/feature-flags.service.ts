@@ -322,7 +322,10 @@ const hasFeature = (
         key !== 'isBlue'
       )
         return true;
-      return host === domain;
+      if (host === domain) return true;
+      // Match any localhost port against a localhost domain
+      if (host.startsWith('localhost:') && domain?.startsWith('localhost:')) return true;
+      return false;
     });
 
     if (!serverMatch) return false;
