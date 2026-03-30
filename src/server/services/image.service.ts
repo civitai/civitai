@@ -398,6 +398,7 @@ function getReviewTypeToBlockedReason(reason: string) {
 export async function handleUnblockImages({
   ids: imageIds,
   moderatorId,
+  removeMinorFlag,
 }: ImageModerationUnblockSchema) {
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
@@ -431,7 +432,9 @@ export async function handleUnblockImages({
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
-                ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
+                ? removeMinorFlag
+                  ? Prisma.sql`"minor" = FALSE,`
+                  : Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
                 : Prisma.sql``
             }
             ${
