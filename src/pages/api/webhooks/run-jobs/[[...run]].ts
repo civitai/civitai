@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
+import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
@@ -164,6 +165,7 @@ export const jobs: Job[] = [
   custodySweepJob,
   reconcileNowpaymentsJob,
   processEnqueuedComicPanelsJob,
+  auditRemixSourcesJob,
 ];
 
 const log = createLogger('jobs', 'green');

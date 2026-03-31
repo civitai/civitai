@@ -395,9 +395,26 @@ function getReviewTypeToBlockedReason(reason: string) {
   }
 }
 
+/** Mark remix-source images as mod-reviewed so the audit job won't re-flag them. */
+async function markRemixSourceReviewed(
+  images: { id: number; needsReview: string | null }[]
+) {
+  const remixSourceIds = images
+    .filter((img) => img.needsReview === 'remixSource')
+    .map((img) => img.id);
+  if (remixSourceIds.length === 0) return;
+
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = "metadata" || '{"remixSourceReviewed": true}'::jsonb
+    WHERE id IN (${Prisma.join(remixSourceIds)})
+  `;
+}
+
 export async function handleUnblockImages({
   ids: imageIds,
   moderatorId,
+  removeMinorFlag,
 }: ImageModerationUnblockSchema) {
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
@@ -431,7 +448,9 @@ export async function handleUnblockImages({
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
-                ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
+                ? removeMinorFlag
+                  ? Prisma.sql`"minor" = FALSE,`
+                  : Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
                 : Prisma.sql``
             }
             ${
@@ -480,6 +499,9 @@ export async function handleUnblockImages({
       userId: moderatorId,
     });
   }
+
+  // Prevent remix-source audit job from re-flagging accepted images
+  await markRemixSourceReviewed(images);
 
   return images;
 }
@@ -569,6 +591,9 @@ export async function handleBlockImages({
       activity: 'removeContent',
     });
   }
+
+  // Prevent remix-source audit job from re-flagging blocked images
+  await markRemixSourceReviewed(images);
 
   return images;
 }
@@ -1010,6 +1035,7 @@ export const getAllImages = async (
     fromPlatform,
     user,
     pending,
+    publishedOnly,
     notPublished,
     tools,
     techniques,
@@ -1138,7 +1164,7 @@ export const getAllImages = async (
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) {
-    if (userId) {
+    if (userId && !publishedOnly) {
       AND.push(Prisma.sql`(p."publishedAt" < now() OR p."userId" = ${userId})`);
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);

@@ -1,14 +1,15 @@
 import { chunk } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
-import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
+import {
+  deliverMonthlyCosmetics,
+  unlockPrepaidTokensForDate,
+} from '../services/subscriptions.service';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
-  PrepaidToken,
 } from '~/server/schema/subscriptions.schema';
 
 /**
@@ -20,133 +21,8 @@ export const unlockPrepaidTokens = createJob(
   'unlock-prepaid-tokens',
   '0 1 * * *', // Run daily at 1 AM UTC (same schedule as before)
   async () => {
-    const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
-    const now = dayjs();
-    const currentDay = now.date();
-
-    // Use raw SQL to filter at the DB level — only returns memberships where
-    // the currentPeriodStart day-of-month matches today (with month-end edge case handling).
-    // This is the same approach as the old deliverPrepaidMembershipBuzz job.
-    const memberships = await dbWrite.$queryRaw<
-      {
-        id: string;
-        userId: number;
-        metadata: any;
-        tier: string;
-      }[]
-    >`
-      SELECT
-        cs.id,
-        cs."userId",
-        cs.metadata,
-        pr.metadata->>'tier' as "tier"
-      FROM "CustomerSubscription" cs
-      JOIN "Product" pr ON pr.id = cs."productId"
-      WHERE (
-        EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
-        OR
-        (
-          EXTRACT(day from cs."currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-          AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-        )
-      )
-      AND cs."createdAt" < NOW()::date
-      AND cs.status = 'active'
-      AND cs."currentPeriodEnd" > NOW()
-      AND cs."currentPeriodEnd"::date > NOW()::date
-      AND pr.provider = 'Civitai'
-      AND pr.metadata->>'monthlyBuzz' IS NOT NULL
-    `;
-
-    if (!memberships.length) {
-      console.log('No Civitai memberships match today for token unlock');
-      return;
-    }
-
-    let totalUnlocked = 0;
-    const updates: Array<{ id: string; userId: number; metadata: SubscriptionMetadata }> = [];
-
-    for (const membership of memberships) {
-      const meta = (membership.metadata ?? {}) as SubscriptionMetadata;
-      const currentTier = membership.tier;
-
-      if (!currentTier || currentTier === 'free') continue;
-
-      const tokens = getPrepaidTokens({ metadata: meta });
-      if (tokens.length === 0) continue;
-
-      // Idempotency: skip if ANY token was unlocked today (covers both unlocked and claimed-same-day)
-      const todayStart = now.startOf('day').toISOString();
-      const tomorrowStart = now.add(1, 'day').startOf('day').toISOString();
-      const alreadyUnlockedToday = tokens.some(
-        (t) =>
-          t.unlockedAt != null &&
-          t.unlockedAt >= todayStart &&
-          t.unlockedAt < tomorrowStart
-      );
-      if (alreadyUnlockedToday) continue;
-
-      // Only unlock a token matching the user's CURRENT subscription tier
-      const tokenIndex = tokens.findIndex(
-        (t) => t.status === 'locked' && t.tier === currentTier
-      );
-
-      if (tokenIndex === -1) continue;
-
-      const unlockedToken = tokens[tokenIndex];
-      const updatedTokens = tokens.map((t, i) => {
-        if (i === tokenIndex) {
-          return { ...t, status: 'unlocked' as const, unlockedAt: now.toISOString() };
-        }
-        return t;
-      });
-
-      // Build updated metadata — tokens array is now the source of truth.
-      // Clear legacy prepaids since the full token state is captured in the tokens array.
-      const updatedMeta: Record<string, any> = {
-        ...meta,
-        tokens: updatedTokens,
-        prepaids: {},
-      };
-
-      totalUnlocked++;
-      updates.push({
-        id: membership.id,
-        userId: membership.userId,
-        metadata: updatedMeta as SubscriptionMetadata,
-      });
-    }
-
-    // Batch update all memberships with unlocked tokens
-    if (updates.length > 0) {
-      const batches = chunk(updates, 100);
-      for (const batch of batches) {
-        await dbWrite.$executeRaw`
-          UPDATE "CustomerSubscription"
-          SET
-            "metadata" = (updates.data ->> 'metadata')::jsonb,
-            "updatedAt" = NOW()
-          FROM (
-            SELECT
-              (value ->> 'id')::text AS "id",
-              value AS data
-            FROM json_array_elements(${JSON.stringify(
-              batch.map((u) => ({
-                id: u.id,
-                metadata: JSON.stringify(u.metadata),
-              }))
-            )}::json)
-          ) AS updates
-          WHERE "CustomerSubscription"."id" = updates."id"
-        `;
-      }
-
-      console.log(
-        `Unlocked ${totalUnlocked} tokens for ${updates.length} users`
-      );
-    } else {
-      console.log('No tokens to unlock today');
-    }
+    const result = await unlockPrepaidTokensForDate({ date: new Date() });
+    console.log(result.message);
 
     // Still deliver monthly cosmetics on the same schedule
     await deliverMonthlyCosmetics({});

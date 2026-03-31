@@ -14,6 +14,9 @@ import { constants } from '~/server/common/constants';
 import { TransactionType, type BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { upsertContact } from '~/server/integrations/freshdesk';
 import { clickhouse } from '~/server/clickhouse/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import type { RedisKeyTemplateCache } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -444,8 +447,9 @@ export const claimPrepaidToken = async ({
 
     const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
-    const externalTransactionId = `prepaid-token-claim:${tokenId}`;
     const now = new Date().toISOString();
+    const dateKey = now.split('T')[0];
+    const externalTransactionId = `prepaid-token-claim:${userId}:${tokenId}:${dateKey}`;
 
     tokens[tokenIndex] = {
       ...token,
@@ -545,6 +549,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
     const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
     const now = new Date().toISOString();
+    const dateKey = now.split('T')[0];
 
     const updatedTokens = tokens.map((t) => {
       if (t.status === 'unlocked') {
@@ -552,7 +557,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
           ...t,
           status: 'claimed' as const,
           claimedAt: now,
-          buzzTransactionId: `prepaid-token-claim:${t.id}`,
+          buzzTransactionId: `prepaid-token-claim:${userId}:${t.id}:${dateKey}`,
         };
       }
       return t;
@@ -568,7 +573,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       for (const t of legacyClaimed) {
         const tierKey = t.tier as keyof typeof updatedPrepaids;
         updatedPrepaids[tierKey] = Math.max(0, (updatedPrepaids[tierKey] ?? 0) - 1);
-        newTxIds.push(`prepaid-token-claim:${t.id}`);
+        newTxIds.push(`prepaid-token-claim:${userId}:${t.id}:${dateKey}`);
       }
       updatedMeta.prepaids = updatedPrepaids;
       updatedMeta.buzzTransactionIds = newTxIds;
@@ -587,6 +592,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       claimed: unlockedTokens.length,
       totalBuzz,
       buzzType: buzzType as BuzzAccountType,
+      dateKey,
       unlockedTokens,
     };
   });
@@ -597,7 +603,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
     toAccountId: userId,
     toAccountType: result.buzzType,
     type: TransactionType.Purchase,
-    externalTransactionId: `prepaid-token-claim:${token.id}`,
+    externalTransactionId: `prepaid-token-claim:${userId}:${token.id}:${result.dateKey}`,
     amount: token.buzzAmount,
     description: `Claimed prepaid ${token.tier} token`,
     details: {
@@ -744,6 +750,136 @@ export const unlockTokensForUser = async ({
   return { unlocked: unlockedCount, totalBuzz };
 };
 
+/**
+ * Core unlock logic shared by the daily job and the manual API endpoint.
+ * Finds all active Civitai memberships whose currentPeriodStart day-of-month
+ * matches `targetDate`, then unlocks ONE locked token per membership.
+ *
+ * @param targetDate - The date to use for day-of-month matching and idempotency checks.
+ * @returns Summary of how many tokens were unlocked.
+ */
+export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
+  const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
+  const { chunk } = await import('lodash-es');
+  const target = (await import('~/shared/utils/dayjs')).default(date);
+  const currentDay = target.date();
+
+  const memberships = await dbWrite.$queryRaw<
+    {
+      id: string;
+      userId: number;
+      metadata: any;
+      tier: string;
+    }[]
+  >`
+    SELECT
+      cs.id,
+      cs."userId",
+      cs.metadata,
+      pr.metadata->>'tier' as "tier"
+    FROM "CustomerSubscription" cs
+    JOIN "Product" pr ON pr.id = cs."productId"
+    WHERE (
+      EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
+      OR
+      (
+        EXTRACT(day from cs."currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', ${date}::timestamp) + INTERVAL '1 month' - INTERVAL '1 day'))
+        AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', ${date}::timestamp) + INTERVAL '1 month' - INTERVAL '1 day'))
+      )
+    )
+    AND cs."createdAt" < ${date}::date
+    AND cs.status = 'active'
+    AND cs."currentPeriodEnd" > ${date}::timestamp
+    AND cs."currentPeriodEnd"::date > ${date}::date
+    AND pr.provider = 'Civitai'
+    AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+  `;
+
+  if (!memberships.length) {
+    return { matched: 0, unlocked: 0, message: 'No Civitai memberships match for token unlock' };
+  }
+
+  let totalUnlocked = 0;
+  const updates: Array<{ id: string; userId: number; metadata: SubscriptionMetadata }> = [];
+
+  for (const membership of memberships) {
+    const meta = (membership.metadata ?? {}) as SubscriptionMetadata;
+    const currentTier = membership.tier;
+
+    if (!currentTier || currentTier === 'free') continue;
+
+    const tokens = getPrepaidTokens({ metadata: meta });
+    if (tokens.length === 0) continue;
+
+    // Idempotency: skip if ANY token was unlocked on the target date
+    const dayStart = target.startOf('day').toISOString();
+    const dayEnd = target.add(1, 'day').startOf('day').toISOString();
+    const alreadyUnlockedOnDate = tokens.some(
+      (t) => t.unlockedAt != null && t.unlockedAt >= dayStart && t.unlockedAt < dayEnd
+    );
+    if (alreadyUnlockedOnDate) continue;
+
+    // Only unlock a token matching the user's CURRENT subscription tier
+    const tokenIndex = tokens.findIndex(
+      (t) => t.status === 'locked' && t.tier === currentTier
+    );
+    if (tokenIndex === -1) continue;
+
+    const updatedTokens = tokens.map((t, i) => {
+      if (i === tokenIndex) {
+        return { ...t, status: 'unlocked' as const, unlockedAt: target.toISOString() };
+      }
+      return t;
+    });
+
+    const updatedMeta: Record<string, any> = {
+      ...meta,
+      tokens: updatedTokens,
+      prepaids: {},
+    };
+
+    totalUnlocked++;
+    updates.push({
+      id: membership.id,
+      userId: membership.userId,
+      metadata: updatedMeta as SubscriptionMetadata,
+    });
+  }
+
+  // Batch update all memberships with unlocked tokens
+  if (updates.length > 0) {
+    const batches = chunk(updates, 100);
+    for (const batch of batches) {
+      await dbWrite.$executeRaw`
+        UPDATE "CustomerSubscription"
+        SET
+          "metadata" = (updates.data ->> 'metadata')::jsonb,
+          "updatedAt" = NOW()
+        FROM (
+          SELECT
+            (value ->> 'id')::text AS "id",
+            value AS data
+          FROM json_array_elements(${JSON.stringify(
+            batch.map((u) => ({
+              id: u.id,
+              metadata: JSON.stringify(u.metadata),
+            }))
+          )}::json)
+        ) AS updates
+        WHERE "CustomerSubscription"."id" = updates."id"
+      `;
+    }
+  }
+
+  return {
+    matched: memberships.length,
+    unlocked: totalUnlocked,
+    message: updates.length > 0
+      ? `Unlocked ${totalUnlocked} tokens for ${updates.length} users`
+      : 'No tokens to unlock for the given date',
+  };
+};
+
 const BUZZ_TO_TIER: Record<number, string> = {
   50000: 'gold',
   25000: 'silver',
@@ -758,6 +894,19 @@ export const getHistoricalPrepaidDeliveries = async ({
   accountType?: 'yellow' | 'green';
 }): Promise<PrepaidToken[]> => {
   if (!clickhouse) return [];
+
+  // This ClickHouse query is slow (~45s) because the buzzTransactions table primary key
+  // starts with (date, fromAccountId, toAccountId) and filtering by toAccountId requires
+  // scanning ~170K granules across 24 months. The byToAccount projection exists but can't
+  // be used with SharedReplacingMergeTree. Cache aggressively since membership payments
+  // change at most once per month.
+  const cacheKey = `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}` as RedisKeyTemplateCache;
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) return JSON.parse(cached) as PrepaidToken[];
+  } catch {
+    // Redis down — fall through to ClickHouse
+  }
 
   const results = await clickhouse.$query<{
     date: string;
@@ -777,7 +926,7 @@ export const getHistoricalPrepaidDeliveries = async ({
     ORDER BY date DESC
   `;
 
-  return results.map((tx) => {
+  const tokens = results.map((tx) => {
     let tier = BUZZ_TO_TIER[tx.amount] ?? 'silver';
     try {
       const parsed = JSON.parse(tx.details);
@@ -795,4 +944,13 @@ export const getHistoricalPrepaidDeliveries = async ({
       buzzTransactionId: tx.externalTransactionId,
     };
   });
+
+  // Cache for 1 hour — membership payments happen at most once per month
+  try {
+    await redis.set(cacheKey, JSON.stringify(tokens), { EX: CacheTTL.hour });
+  } catch {
+    // Redis down — result still returned
+  }
+
+  return tokens;
 };
