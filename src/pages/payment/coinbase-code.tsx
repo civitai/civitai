@@ -151,7 +151,7 @@ export default function CoinbaseCodeSuccess() {
             </Button>
             <Button
               component={Link}
-              href="/gift-cards?vendor=crypto"
+              href="/purchase/buzz"
               size="md"
               variant="light"
               leftSection={<IconGift size={20} />}

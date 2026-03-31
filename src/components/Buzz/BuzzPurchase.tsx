@@ -336,7 +336,7 @@ export const BuzzPurchase = ({
                         Now selling Buzz Gift Cards
                       </Text>
                       <Group>
-                        <Anchor component={Link} href="/gift-cards?type=buzz" size="xs" c="blue.3">
+                        <Anchor component={Link} href="/purchase/buzz" size="xs" c="blue.3">
                           Buy Now
                         </Anchor>
                       </Group>
@@ -600,8 +600,8 @@ export const BuzzPurchase = ({
             {liveFeatures.buzzGiftCards && (
               <Text align="center" size="xs" c="dimmed" mt="xs">
                 Don&rsquo;t see a supported payment method?{' '}
-                <Anchor component={Link} href="/gift-cards?type=buzz" size="xs">
-                  Buy a gift card!
+                <Anchor component={Link} href="/purchase/buzz" size="xs">
+                  Purchase Buzz
                 </Anchor>
               </Text>
             )}

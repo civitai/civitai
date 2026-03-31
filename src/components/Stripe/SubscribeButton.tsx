@@ -260,8 +260,8 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled, forceP
   if (provider === PaymentProvider.Civitai && featureFlags.prepaidMemberships) {
     // Default to Paddle:
     return (
-      <Button component={Link} href="/gift-cards?type=memberships" radius="xl">
-        Get Prepaid Membership
+      <Button component={Link} href="/purchase/buzz" radius="xl">
+        Purchase Buzz
       </Button>
     );
   }
