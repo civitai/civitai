@@ -262,13 +262,6 @@ export function EnhanceTab({
                 minRows={2}
                 maxRows={4}
               />
-              <TagsInput
-                label="Preserve Trigger Words"
-                description="These words will be preserved during enhancement"
-                placeholder="Add a trigger word..."
-                value={preserveTriggerWords}
-                onChange={setPreserveTriggerWords}
-              />
               <Textarea
                 label="Instructions"
                 description='Guide how the prompt is enhanced (e.g., "expand to 77 tokens")'
@@ -276,9 +269,16 @@ export function EnhanceTab({
                 value={form.watch('instruction')}
                 onChange={(e) => form.setValue('instruction', e.currentTarget.value)}
                 autosize
-                minRows={1}
-                maxRows={3}
+                minRows={2}
+                maxRows={4}
                 placeholder="Optional instructions..."
+              />
+              <TagsInput
+                label="Preserve Trigger Words"
+                description="These words will be preserved during enhancement"
+                placeholder="Add a trigger word..."
+                value={preserveTriggerWords}
+                onChange={setPreserveTriggerWords}
               />
               <div className="px-2">
                 <Text size="sm" fw={500} mb={4}>
