@@ -443,7 +443,16 @@ export const consolidateVersionsSchema = z.object({
     .array(
       z.object({
         fileId: z.number(),
-        type: z.enum(constants.modelFileTypes),
+        type: z.enum(constants.modelFileTypes).optional(),
+        metadata: z
+          .object({
+            fp: z.enum(constants.modelFileFp).nullish(),
+            size: z.enum(constants.modelFileSizes).nullish(),
+            format: z.enum(constants.modelFileFormats).nullish(),
+            quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+            isRequired: z.boolean().nullish(),
+          })
+          .optional(),
       })
     )
     .optional(),

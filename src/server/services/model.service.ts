@@ -2805,6 +2805,8 @@ export async function getModelsWithVersions({
                   format: metadata?.format,
                   size: metadata?.size,
                   fp: metadata?.fp,
+                  quantType: metadata?.quantType,
+                  isRequired: metadata?.isRequired,
                 },
               };
             }),

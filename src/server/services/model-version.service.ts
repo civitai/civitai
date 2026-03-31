@@ -1949,13 +1949,27 @@ export const consolidateVersions = async ({
 
   await dbWrite.$transaction(
     async (tx) => {
-      // 1. Remap file types if provided
+      // 1. Remap file types and metadata if provided
       if (fileTypeMappings?.length) {
         for (const mapping of fileTypeMappings) {
-          await tx.modelFile.update({
-            where: { id: mapping.fileId },
-            data: { type: mapping.type },
-          });
+          const updateData: Record<string, unknown> = {};
+          if (mapping.type) updateData.type = mapping.type;
+          if (mapping.metadata) {
+            const existing = await tx.modelFile.findUnique({
+              where: { id: mapping.fileId },
+              select: { metadata: true },
+            });
+            updateData.metadata = {
+              ...((existing?.metadata as Record<string, unknown>) ?? {}),
+              ...mapping.metadata,
+            };
+          }
+          if (Object.keys(updateData).length > 0) {
+            await tx.modelFile.update({
+              where: { id: mapping.fileId },
+              data: updateData,
+            });
+          }
         }
       }
 
