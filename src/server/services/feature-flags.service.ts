@@ -132,7 +132,7 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
-  coinbasePayments: ['public'],
+  coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],

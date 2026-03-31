@@ -40,7 +40,7 @@ const getEarnings = (
       key: 'purchase',
       icon: <IconCoin size={32} />,
       title: 'Purchase',
-      description: 'Send crypto to your deposit address or buy Buzz packages via Coinbase Commerce',
+      description: 'Send crypto to your deposit address to purchase Buzz',
       btnProps: {
         onClick: async () => {
           const BuyBuzzModal = (await import('~/components/Modals/BuyBuzzModal')).default;
