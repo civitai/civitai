@@ -327,6 +327,8 @@ export const deleteImageById = async ({
           ]
         : []),
       invalidateExistence,
+      imageMetaCache.bust(id),
+      imageMetadataCache.bust(id),
     ]);
 
     return image;
@@ -362,6 +364,8 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       bustCachesForPosts(idsForPostUpdate),
       postMetrics.queueUpdate(idsForPostUpdate),
       invalidateExistence,
+      imageMetaCache.bust(imageIds),
+      imageMetadataCache.bust(imageIds),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
