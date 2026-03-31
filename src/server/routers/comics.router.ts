@@ -3623,6 +3623,91 @@ export const comicsRouter = router({
       return { success: true, tosViolation: !project.tosViolation };
     }),
 
+  setProjectNsfwLevel: comicModeratorProcedure
+    .input(z.object({ id: z.number().int(), nsfwLevel: z.number().int() }))
+    .mutation(async ({ ctx, input }) => {
+      // Set project level
+      await dbWrite.comicProject.update({
+        where: { id: input.id },
+        data: { nsfwLevel: input.nsfwLevel },
+      });
+
+      // Waterfall: set all chapters to the same level
+      await dbWrite.comicChapter.updateMany({
+        where: { projectId: input.id },
+        data: { nsfwLevel: input.nsfwLevel },
+      });
+
+      // Waterfall: set all panel images to the same level
+      await dbWrite.$executeRaw`
+        UPDATE "Image" i
+        SET "nsfwLevel" = ${input.nsfwLevel}
+        FROM "ComicPanel" p
+        WHERE p."imageId" = i.id
+          AND p."projectId" = ${input.id}
+          AND i."nsfwLevel" != ${input.nsfwLevel}
+      `;
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.id,
+        activity: 'setNsfwLevel',
+      });
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
+      return { success: true };
+    }),
+
+  setChapterNsfwLevel: comicModeratorProcedure
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+        nsfwLevel: z.number().int(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Set chapter level
+      await dbWrite.comicChapter.update({
+        where: {
+          projectId_position: {
+            projectId: input.projectId,
+            position: input.chapterPosition,
+          },
+        },
+        data: { nsfwLevel: input.nsfwLevel },
+      });
+
+      // Set all panel images in this chapter to the same level
+      await dbWrite.$executeRaw`
+        UPDATE "Image" i
+        SET "nsfwLevel" = ${input.nsfwLevel}
+        FROM "ComicPanel" p
+        WHERE p."imageId" = i.id
+          AND p."projectId" = ${input.projectId}
+          AND p."chapterPosition" = ${input.chapterPosition}
+          AND i."nsfwLevel" != ${input.nsfwLevel}
+      `;
+
+      // Recalculate project NSFW level from chapters
+      await updateComicProjectNsfwLevels([input.projectId]);
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.projectId,
+        activity: 'setNsfwLevel',
+      });
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
+      return { success: true };
+    }),
+
   moderatorUnpublishChapter: comicModeratorProcedure
     .input(
       z.object({

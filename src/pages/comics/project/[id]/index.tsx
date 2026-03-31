@@ -121,7 +121,14 @@ function ProjectWorkspace() {
   const [referencePanelId, setReferencePanelId] = useState<number | null>(null);
   const [layoutImagePath, setLayoutImagePath] = useState<string | undefined>();
   const [quantity, setQuantity] = useState(1);
-  const [aspectRatio, setAspectRatio] = useState('3:4');
+  const [aspectRatio, setAspectRatioState] = useState(() => {
+    if (typeof window === 'undefined') return '3:4';
+    return localStorage.getItem(`comic-aspect-ratio-${projectId}`) ?? '3:4';
+  });
+  const setAspectRatio = (val: string) => {
+    setAspectRatioState(val);
+    try { localStorage.setItem(`comic-aspect-ratio-${projectId}`, val); } catch {}
+  };
   const [generationModel, setGenerationModel] = useState<
     'NanoBanana' | 'Flux2' | 'Seedream' | 'SeedreamLite' | 'OpenAI' | 'Qwen' | 'Grok' | null
   >(null);
@@ -1681,6 +1688,7 @@ function ProjectWorkspace() {
         panelCost={panelCost}
         effectiveModel={effectiveModel}
         activeAspectRatios={activeAspectRatios}
+        defaultAspectRatio={aspectRatio}
         onModelChange={handleModelChange}
         onPlanPanels={(story, panelCount) =>
           planPanelsMutation.mutate({ projectId, storyDescription: story, panelCount })

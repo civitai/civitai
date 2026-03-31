@@ -8,6 +8,7 @@ import {
   IconZoomIn,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { IterationEntry, SourceImage } from './iterative-editor.types';
@@ -125,23 +126,19 @@ export function IterationMessage({
           })}
         </div>
       ) : iteration.resultImage && imageUrl ? (
-        <div className={styles.iterationImage}>
-          <img src={imageUrl} alt={`Result: ${iteration.prompt.slice(0, 80)}`} />
-          {onZoomImage && (
-            <button
-              type="button"
-              className={styles.zoomButton}
-              onClick={() =>
-                onZoomImage(
-                  getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200 }) ??
-                    iteration.resultImage!.previewUrl
-                )
-              }
-            >
-              <IconZoomIn size={12} />
-            </button>
-          )}
-        </div>
+        <ImageWithLoader
+          src={imageUrl}
+          alt={`Result: ${iteration.prompt.slice(0, 80)}`}
+          onZoom={
+            onZoomImage
+              ? () =>
+                  onZoomImage(
+                    getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200 }) ??
+                      iteration.resultImage!.previewUrl
+                  )
+              : undefined
+          }
+        />
       ) : null}
 
       {/* Footer: cost badge, annotation badge, use-as-source button */}
@@ -171,6 +168,46 @@ export function IterationMessage({
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+function ImageWithLoader({
+  src,
+  alt,
+  onZoom,
+}: {
+  src: string;
+  alt: string;
+  onZoom?: () => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+
+  return (
+    <div className={styles.iterationImage} style={{ position: 'relative' }}>
+      {!loaded && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 24,
+          }}
+        >
+          <Loader size="sm" color="gray" />
+        </div>
+      )}
+      <img
+        src={src}
+        alt={alt}
+        onLoad={() => setLoaded(true)}
+        style={loaded ? undefined : { position: 'absolute', opacity: 0 }}
+      />
+      {loaded && onZoom && (
+        <button type="button" className={styles.zoomButton} onClick={onZoom}>
+          <IconZoomIn size={12} />
+        </button>
+      )}
     </div>
   );
 }
