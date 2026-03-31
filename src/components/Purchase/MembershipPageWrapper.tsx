@@ -103,18 +103,7 @@ export function MembershipPageWrapper({
             </Center>
           )}
 
-          {/* Prepaid memberships promo banner */}
-          {features.disablePayments && features.prepaidMemberships && (
-            <Center>
-              <PromoBanner
-                icon={<IconInfoCircle size={24} />}
-                title="Prepaid Memberships Available!"
-                subtitle="Regular membership purchases are unavailable, but you can still purchase Yellow prepaid memberships for Civitai.com! Prepaid memberships give you all the same benefits and can be stacked up!"
-                buyNowHref="/gift-cards?type=memberships"
-                buyNowText="Purchase Now!"
-              />
-            </Center>
-          )}
+          {/* Prepaid memberships promo banner - removed, yellow memberships no longer available */}
 
           {/* Buzz top-up card */}
           {showBuzzTopUp && currentUser && (

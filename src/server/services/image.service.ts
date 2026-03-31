@@ -2197,9 +2197,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
       const typeSet = new Set(input.types);
       ownDocs = ownDocs.filter((d) => typeSet.has(d.type as any));
     }
-    if (input.tags?.length) {
-      ownDocs = ownDocs.filter((d) => input.tags!.some((t) => d.tagIds.includes(t)));
-    }
+    // Tag filtering skipped on second pass — tagIds are expensive to store in BitDex docs.
+    // Edge case: user's own excluded content that doesn't match the active tag filter may
+    // appear when browsing by tag. Front-end hidden tag filtering still applies.
     if (input.baseModels?.length) {
       const bmSet = new Set(input.baseModels);
       ownDocs = ownDocs.filter((d) => bmSet.has(d.baseModel as any));
@@ -3023,7 +3023,7 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
     sortAt: new Date(sortAtUnix),
     sortAtUnix,
     publishedAtUnix: publishedAtRaw ? publishedAtRaw * 1000 : null,
-    tagIds: (doc.tagIds as number[]) ?? [],
+    tagIds: [] as number[], // tagIds not stored in BitDex docs (expensive); fetched from tagIdsForImagesCache downstream
     modelVersionIds: (doc.modelVersionIds as number[]) ?? [],
     toolIds: (doc.toolIds as number[]) ?? [],
     techniqueIds: (doc.techniqueIds as number[]) ?? [],
