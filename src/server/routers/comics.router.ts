@@ -70,7 +70,8 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { getS3Client } from '~/utils/s3-utils';
+import { getImageUploadBackend } from '~/utils/s3-utils';
+import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 
@@ -2689,7 +2690,7 @@ export const comicsRouter = router({
           // Multi-image: upload all candidates and let user pick
           if (panelQuantity > 1 && outputImages.length > 1) {
             const candidateImages: { key: string }[] = [];
-            const s3Multi = getS3Client('image');
+            const { s3: s3Multi, bucket: multiBucket, backend: multiBackend } = await getImageUploadBackend();
 
             for (const candidateImg of outputImages) {
               if (!candidateImg?.url) continue;
@@ -2700,12 +2701,13 @@ export const comicsRouter = router({
                 const s3Key = randomUUID();
                 await s3Multi.send(
                   new PutObjectCommand({
-                    Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                    Bucket: multiBucket,
                     Key: s3Key,
                     Body: buf,
                     ContentType: resp.headers.get('content-type') || 'image/jpeg',
                   })
                 );
+                registerMediaLocation(s3Key, multiBackend, buf.length);
                 candidateImages.push({ key: s3Key });
               } catch (e) {
                 console.error(`Failed to upload candidate image for panel ${panel.id}:`, e);
@@ -2760,15 +2762,16 @@ export const comicsRouter = router({
             const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
             s3ImageKey = randomUUID();
-            const s3 = getS3Client('image');
-            await s3.send(
+            const { s3: s3Single, bucket: singleBucket, backend: singleBackend } = await getImageUploadBackend();
+            await s3Single.send(
               new PutObjectCommand({
-                Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                Bucket: singleBucket,
                 Key: s3ImageKey,
                 Body: imageBuffer,
                 ContentType: imageResponse.headers.get('content-type') || 'image/jpeg',
               })
             );
+            registerMediaLocation(s3ImageKey, singleBackend, imageBuffer.length);
           } catch (e) {
             console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
             await dbWrite.comicPanel.update({
