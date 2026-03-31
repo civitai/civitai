@@ -123,7 +123,7 @@ import type { ImageModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import { getVotableTags2 } from '~/server/services/tag.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
@@ -158,6 +158,7 @@ import {
   Availability,
   BlockImageReason,
   CollectionMode,
+  AppealStatus,
   EntityType,
   ImageIngestionStatus,
   MediaType,
@@ -394,9 +395,26 @@ function getReviewTypeToBlockedReason(reason: string) {
   }
 }
 
+/** Mark remix-source images as mod-reviewed so the audit job won't re-flag them. */
+async function markRemixSourceReviewed(
+  images: { id: number; needsReview: string | null }[]
+) {
+  const remixSourceIds = images
+    .filter((img) => img.needsReview === 'remixSource')
+    .map((img) => img.id);
+  if (remixSourceIds.length === 0) return;
+
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = "metadata" || '{"remixSourceReviewed": true}'::jsonb
+    WHERE id IN (${Prisma.join(remixSourceIds)})
+  `;
+}
+
 export async function handleUnblockImages({
   ids: imageIds,
   moderatorId,
+  removeMinorFlag,
 }: ImageModerationUnblockSchema) {
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
@@ -430,7 +448,9 @@ export async function handleUnblockImages({
             ${needsReview === 'poi' ? Prisma.sql`"poi" = false,` : Prisma.sql``}
             ${
               needsReview === 'minor'
-                ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
+                ? removeMinorFlag
+                  ? Prisma.sql`"minor" = FALSE,`
+                  : Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
                 : Prisma.sql``
             }
             ${
@@ -467,6 +487,22 @@ export async function handleUnblockImages({
       });
     }
   });
+
+  // Resolve any pending appeals for images that were in appeal review
+  const appealImageIds = images.filter((img) => img.needsReview === 'appeal').map((img) => img.id);
+
+  if (appealImageIds.length > 0) {
+    await resolveEntityAppeal({
+      ids: appealImageIds,
+      entityType: EntityType.Image,
+      status: AppealStatus.Approved,
+      userId: moderatorId,
+    });
+  }
+
+  // Prevent remix-source audit job from re-flagging accepted images
+  await markRemixSourceReviewed(images);
+
   return images;
 }
 
@@ -555,6 +591,9 @@ export async function handleBlockImages({
       activity: 'removeContent',
     });
   }
+
+  // Prevent remix-source audit job from re-flagging blocked images
+  await markRemixSourceReviewed(images);
 
   return images;
 }
@@ -996,6 +1035,7 @@ export const getAllImages = async (
     fromPlatform,
     user,
     pending,
+    publishedOnly,
     notPublished,
     tools,
     techniques,
@@ -1124,7 +1164,7 @@ export const getAllImages = async (
   if (notPublished && isModerator) {
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) {
-    if (userId) {
+    if (userId && !publishedOnly) {
       AND.push(Prisma.sql`(p."publishedAt" < now() OR p."userId" = ${userId})`);
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);
@@ -2443,6 +2483,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
+  // Only show images that belong to a post
+  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
+
   if (!isModerator) {
     filters.push(
       // Avoids exposing private resources to the public
@@ -3268,6 +3311,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
+
+  // Only show images that belong to a post
+  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];

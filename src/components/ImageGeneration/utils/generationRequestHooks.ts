@@ -57,14 +57,17 @@ export function useInvalidateWhatIf() {
 
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
-  options?: { enabled?: boolean; includeTags?: boolean }
+  options?: { enabled?: boolean; includeTags?: boolean; ignoreFilters?: boolean }
 ) {
   registerSignalGroup('generation');
   const { domain } = useAppContext();
   const nsfwEnabled = useBrowsingSettings((state) => state.showNsfw);
   const currentUser = useCurrentUser();
 
-  const filters = useFiltersContext((state) => state.generation);
+  const globalFilters = useFiltersContext((state) => state.generation);
+  const filters = options?.ignoreFilters
+    ? ({ sort: GenerationSort.Newest } as typeof globalFilters)
+    : globalFilters;
 
   // Convert marker filter to tags
   const markerTags = useMemo(() => {

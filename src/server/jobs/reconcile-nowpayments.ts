@@ -5,19 +5,20 @@ import dayjs from '~/shared/utils/dayjs';
 
 export const reconcileNowpaymentsJob = createJob(
   'reconcile-nowpayments',
-  '30 5 * * *', // Daily at 05:30 UTC
+  '*/10 * * * *', // Every 10 minutes
   async () => {
-    // Look back 2 days to catch payments that were still "confirming" during previous runs
+    // Look back 24h to catch payments that were still "confirming" during previous runs.
+    // Processing is idempotent so overlapping windows are safe.
     const now = dayjs.utc();
-    const dateTo = now.format('YYYY-MM-DD');
-    const dateFrom = now.clone().subtract(2, 'day').format('YYYY-MM-DD');
+    const dateTo = now.clone().add(1, 'day').format('YYYY-MM-DD');
+    const dateFrom = now.clone().subtract(1, 'day').format('YYYY-MM-DD');
 
     const results = await reconcileDeposits({ dateFrom, dateTo });
 
     logToAxiom({
       name: 'reconcile-nowpayments-job',
       type: 'info',
-      message: `Daily reconciliation complete: ${results.newlyProcessed} processed, ${results.alreadyProcessed} already done, ${results.failed} failed`,
+      message: `Reconciliation complete: ${results.newlyProcessed} processed, ${results.alreadyProcessed} already done, ${results.failed} failed`,
       dateFrom,
       dateTo,
       totalPayments: results.totalPayments,

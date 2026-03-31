@@ -31,6 +31,7 @@ import {
   IconSquareOff,
   IconTrash,
   IconUserMinus,
+  IconShieldCheck,
   IconUserOff,
 } from '@tabler/icons-react';
 import produce from 'immer';
@@ -82,15 +83,18 @@ import { isDefined } from '~/utils/type-guards';
 
 type StoreState = {
   selected: Record<number, boolean>;
+  viewType: ModReviewType;
   getSelected: () => number[];
   toggleSelected: (value: number) => void;
   selectMany: (values: number[]) => void;
   deselectAll: () => void;
+  setViewType: (type: ModReviewType) => void;
 };
 
 const useStore = create<StoreState>()(
   immer((set, get) => ({
     selected: {},
+    viewType: ModReviewType.Minor,
     getSelected: () => {
       const dict = get().selected;
       return Object.keys(dict).map(Number);
@@ -113,6 +117,11 @@ const useStore = create<StoreState>()(
         state.selected = {};
       });
     },
+    setViewType: (type) => {
+      set((state) => {
+        state.viewType = type;
+      });
+    },
   }))
 );
 
@@ -120,7 +129,8 @@ export default function Images() {
   // const queryUtils = trpc.useUtils();
   // const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
-  const [type, setType] = useState<ModReviewType>(ModReviewType.Minor);
+  const type = useStore((state) => state.viewType);
+  const setViewType = useStore((state) => state.setViewType);
   const [tagFilters, setTagFilters] = useState({
     filtersOpened: false,
     include: [] as number[],
@@ -151,7 +161,7 @@ export default function Images() {
   const images = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data?.pages]);
 
   const handleTypeChange = (value: ModReviewType) => {
-    setType(value);
+    setViewType(value);
     setTagFilters({ filtersOpened: false, include: [], exclude: [] });
   };
 
@@ -341,6 +351,7 @@ export default function Images() {
 function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const selected = useStore(useCallback((state) => state.selected[image.id] ?? false, [image.id]));
   const toggleSelected = useStore((state) => state.toggleSelected);
+  const viewType = useStore((state) => state.viewType);
 
   const hasReport = !!image.report;
   const hasAppeal = !!image.appeal;
@@ -497,6 +508,22 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </ContentClamp>
         </Stack>
       )}
+      {(viewType === ModReviewType.Minor || image.reviewTags.length > 0) && (
+        <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+          <Group gap={4}>
+            {viewType === ModReviewType.Minor && (
+              <Badge size="sm" color={image.minor ? 'red' : 'green'}>
+                {image.minor ? 'Minor' : 'Not Minor'}
+              </Badge>
+            )}
+            {image.reviewTags.map((tag) => (
+              <Badge key={tag.id} size="sm">
+                {tag.name}
+              </Badge>
+            ))}
+          </Group>
+        </Card.Section>
+      )}
       {image.needsReview === 'minor' && (
         <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
           {({ includesInappropriate, html }) =>
@@ -517,16 +544,19 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           }
         </PromptHighlight>
       )}
-      {image.reviewTags.length > 0 && (
-        <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-          <Group gap={4}>
-            {image.reviewTags.map((tag) => (
-              <Badge key={tag.id} size="sm">
-                {tag.name}
-              </Badge>
-            ))}
-          </Group>
-        </Card.Section>
+      {image.needsReview === 'remixSource' && (
+        <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
+          {({ html }) => (
+            <Stack gap={4}>
+              <Card.Section p="xs" mt={0} style={{ cursor: 'auto', color: 'initial' }}>
+                <Badge size="sm" color="red" mb={4}>
+                  Remix Source — Prompt Flagged
+                </Badge>
+                <RenderHtml className="break-words text-sm leading-[1.2]" html={html} />
+              </Card.Section>
+            </Stack>
+          )}
+        </PromptHighlight>
       )}
       {/* {image.needsReview === 'poi' && !!image.names?.length && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
@@ -748,6 +778,22 @@ function ModerationControls({
 
   const handleUnblockSelected = () => handlModerateImage('unblock');
 
+  const handleAcceptAndRemoveMinor = () => {
+    deselectAll();
+    moderateImagesMutation.mutate(
+      {
+        ids: selected,
+        reviewAction: 'unblock',
+        removeMinorFlag: true,
+      },
+      {
+        onSuccess() {
+          showSuccessNotification({ message: 'Images accepted and minor flag removed' });
+        },
+      }
+    );
+  };
+
   const handleSelectAll = () => {
     selectMany(images.map((x) => x.id));
     // if (selected.length === images.length) handleClearAll();
@@ -800,9 +846,31 @@ function ModerationControls({
               withArrow
               withinPortal
             >
-              <ButtonTooltip label="Accept" {...tooltipProps}>
+              <ButtonTooltip
+                label={
+                  view === ModReviewType.Minor
+                    ? 'Accept (removes minor flag for R/X/XXX rated images, keeps it for PG/PG13)'
+                    : 'Accept'
+                }
+                {...tooltipProps}
+              >
                 <LegacyActionIcon variant="outline" disabled={!selected.length} color="green">
                   <IconCheck size="1.25rem" />
+                </LegacyActionIcon>
+              </ButtonTooltip>
+            </PopConfirm>
+          )}
+          {view === ModReviewType.Minor && (
+            <PopConfirm
+              message={`Are you sure you want to approve ${selected.length} image(s) and remove the minor flag?`}
+              position="bottom-end"
+              onConfirm={handleAcceptAndRemoveMinor}
+              withArrow
+              withinPortal
+            >
+              <ButtonTooltip label="Accept & Remove Minor Flag" {...tooltipProps}>
+                <LegacyActionIcon variant="outline" disabled={!selected.length} color="cyan">
+                  <IconShieldCheck size="1.25rem" />
                 </LegacyActionIcon>
               </ButtonTooltip>
             </PopConfirm>

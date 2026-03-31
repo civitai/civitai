@@ -7,6 +7,7 @@ const sharedMetadata = z.object({
   size: z.number().optional(),
   ruleId: z.number().optional(),
   ruleReason: z.string().optional(),
+  remixSourceReviewed: z.boolean().optional(),
   profilePicture: z.boolean().optional(),
   coverImage: z.boolean().optional(),
   username: z.string().optional(),
