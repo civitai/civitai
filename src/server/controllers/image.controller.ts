@@ -394,6 +394,13 @@ export const getImagesAsPostsInfiniteHandler = async ({
       // (modelVersionId filter) stay on BitDex where they're needed.
       const { items: pinnedPostsImages } = await getAllImages({
         ...input,
+        // Don't filter by model version/model for pinned posts — we already have
+        // exact postIds. The ImageResourceNew join that modelVersionId triggers
+        // excludes videos and other media that lack resource-detection entries,
+        // causing pinned posts with videos to silently disappear from the gallery.
+        modelVersionId: undefined,
+        modelId: undefined,
+        reviewId: undefined,
         limit: limit * 4,
         useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
