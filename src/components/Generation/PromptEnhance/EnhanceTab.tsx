@@ -128,11 +128,11 @@ export function EnhanceTab({
     if (!result) return;
     form.setValue('prompt', result.enhancedPrompt ?? '');
     form.setValue('negativePrompt', result.enhancedNegativePrompt ?? '');
-    setEditing(false);
     setSubmitting(true);
     try {
       const workflowId = await submitPromptEnhancement(buildMutationInput());
       setPendingWorkflowId(workflowId);
+      setEditing(false);
     } catch (error: any) {
       showErrorNotification({
         title: 'Enhancement failed',
@@ -175,8 +175,11 @@ export function EnhanceTab({
   const currentNegativePrompt = form.watch('negativePrompt');
   const currentTemperature = form.watch('temperature');
 
-  const showInputForm = (!pendingWorkflowId && !isLoading) || editing;
-  const showResult = result && result.status === 'succeeded' && !editing;
+  const isWaitingForWorkflow =
+    pendingWorkflowId !== null && (!result || result.status !== 'succeeded');
+  const hasSucceededResult = result && result.status === 'succeeded';
+  const showInputForm = (!isWaitingForWorkflow && !hasSucceededResult) || editing;
+  const showResult = hasSucceededResult && !editing;
   const showInputFooter = showInputForm || (isLoading && !editing);
 
   // Footer buttons for each state
