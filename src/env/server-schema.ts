@@ -272,12 +272,19 @@ export const serverSchema = z.object({
   FLIPT_FETCHER_SECRET: z.string(),
   FLIPT_DEPLOYMENT_ID: z.string().optional(),
 
-  // B2 Upload (gated by Flipt flag)
+  // B2 Upload — model files (gated by Flipt flag B2_UPLOAD_DEFAULT)
   S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
   S3_UPLOAD_B2_ACCESS_KEY: z.string().optional(),
   S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
   S3_UPLOAD_B2_BUCKET: z.string().optional(),
   S3_UPLOAD_B2_REGION: z.string().optional(),
+
+  // B2 Upload — media/images (gated by Flipt flag B2_IMAGE_UPLOAD)
+  S3_IMAGE_B2_ENDPOINT: z.string().optional(),
+  S3_IMAGE_B2_ACCESS_KEY: z.string().optional(),
+  S3_IMAGE_B2_SECRET_KEY: z.string().optional(),
+  S3_IMAGE_B2_BUCKET: z.string().optional(),
+  S3_IMAGE_B2_REGION: z.string().optional(),
 
   // Storage resolver internal API (for registering B2 uploads)
   STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),

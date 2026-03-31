@@ -169,8 +169,10 @@ import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { imageS3Client } from '~/utils/s3-client';
-import { serverUploadImage } from '~/utils/s3-utils';
+import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
+import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
@@ -256,9 +258,23 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 
     if (!!otherImagesWithSameUrl) return;
 
-    await withRetries(() =>
-      imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: url })
-    );
+    // Check storage-resolver for backend location (during media migration)
+    const location = await resolveMediaLocation(url);
+    if (location?.backend === 'backblaze' && env.S3_IMAGE_B2_ACCESS_KEY) {
+      const b2Client = getB2ImageS3Client();
+      await withRetries(() =>
+        b2Client.send(
+          new DeleteObjectCommand({
+            Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+            Key: url,
+          })
+        )
+      );
+    } else {
+      await withRetries(() =>
+        imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: url })
+      );
+    }
     await purgeResizeCache({ url: url });
   } catch (e) {
     // do nothing
