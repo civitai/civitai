@@ -1,13 +1,13 @@
 ---
 name: mod-actions
-description: Take moderator actions on users - ban, mute, remove content, manage leaderboard eligibility, send DMs. Use when you need to ban a user, mute them, send direct messages, or take other moderation actions.
+description: "Comprehensive moderation toolkit: user actions (ban/mute/DM), strike system, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting. All via Civitai tRPC API."
 ---
 
 # Moderator Actions
 
-Take moderator actions on Civitai users including banning, muting, removing content, managing leaderboard eligibility, and sending direct messages.
+Comprehensive moderation toolkit for Civitai. Covers user actions, strike management, image moderation, report handling, generation moderation, content/training moderation, and NCMEC/CSAM reporting.
 
-This skill uses the Civitai tRPC API with API key authentication, ensuring all actions go through the proper service layer with full side effects (session invalidation, search index updates, activity tracking, etc.).
+All scripts use the Civitai tRPC API with Bearer token authentication, ensuring actions go through the proper service layer with full side effects.
 
 ## Setup
 
@@ -20,195 +20,262 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 # Edit .env and add your API key
 ```
 
-Get your API key from: https://civitai.com/user/account (API Keys section)
-
 **Important:** The API key must belong to a user with moderator privileges.
-
-### Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `CIVITAI_API_KEY` | Yes | - | Your Civitai API key |
 | `CIVITAI_API_URL` | No | `https://civitai.com` | API base URL |
 
-For local development, set `CIVITAI_API_URL=http://localhost:3000`
+---
 
-## Running Commands
+## Skill Files
+
+| File | Domain | Commands |
+|------|--------|----------|
+| `query.mjs` | User moderation | user, ban, mute, leaderboard, remove-content, dm |
+| `strikes.mjs` | Strike system | get-user, standings, list, create, void |
+| `images.mjs` | Image moderation | review-queue, review-counts, moderate, tos-violation, rescan, report-csam, poi-tags, user-images, rating-requests, ingestion-errors, resolve-ingestion, downleveled, pending-ingestion, toggle-flag |
+| `reports.mjs` | Report handling | list, set-status, bulk-status, update, appeals, appeal-details, resolve-appeal |
+| `generation.mjs` | Generation moderation | flagged-consumers, flagged-reasons, consumer-strikes, review-strikes, user-generations, restrictions, resolve-restriction, allowlist-add, debug-audit, todays-counts, suspicious-matches |
+| `content.mjs` | Content & training | models, flagged-models, resolve-flagged, model-versions, rescan-model, restore-model, toggle-cannot-promote, toggle-cannot-publish, articles, training-models, approve-training, deny-training, mod-rule |
+| `csam.mjs` | NCMEC/CSAM reporting | reports, stats, image-resources, create-report |
+
+---
+
+## query.mjs — User Moderation
 
 ```bash
 node .claude/skills/mod-actions/query.mjs <command> [options]
 ```
 
-### Commands
-
 | Command | Description |
 |---------|-------------|
-| `user <id\|username>` | Look up user info by ID or username |
-| `ban <id\|username>` | Ban a user (toggle - will unban if already banned) |
-| `mute <id\|username>` | Mute a user (toggle - will unmute if already muted) |
+| `user <id\|username>` | Look up user info |
+| `ban <id\|username>` | Toggle ban status |
+| `mute <id\|username>` | Toggle mute status |
 | `leaderboard <id\|username> <true\|false>` | Set leaderboard eligibility |
-| `remove-content <id\|username>` | Remove all content from a user |
-| `dm <id\|username>` | Send a DM to a user (requires `--message`) |
+| `remove-content <id\|username>` | Remove all user content (DESTRUCTIVE) |
+| `dm <id\|username>` | Send a DM (requires `--message`) |
 
-### Ban Reason Codes
+**Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`
 
-| Code | Description |
-|------|-------------|
-| `SexualMinor` | Sexual content involving minors |
-| `SexualMinorGenerator` | Generator for sexual minor content |
-| `SexualMinorTraining` | Training on sexual minor content |
-| `SexualPOI` | Sexual content with people of interest |
-| `Bestiality` | Bestiality content |
-| `Scat` | Scat content |
-| `Nudify` | Nudification tools |
-| `Harassment` | Harassment |
-| `LeaderboardCheating` | Leaderboard manipulation |
-| `BuzzCheating` | Buzz system abuse |
-| `RRDViolation` | Rights and Restrictions Denial violation |
-| `Other` | Other violation |
+**Ban Reason Codes:** SexualMinor, SexualMinorGenerator, SexualMinorTraining, SexualPOI, Bestiality, Scat, Nudify, Harassment, LeaderboardCheating, BuzzCheating, RRDViolation, Other
 
-### Options
+```bash
+node .claude/skills/mod-actions/query.mjs user 3879899
+node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --dry-run
+node .claude/skills/mod-actions/query.mjs dm 3879899 --message "Please review our guidelines"
+```
+
+---
+
+## strikes.mjs — Strike System
+
+```bash
+node .claude/skills/mod-actions/strikes.mjs <command> [options]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `get-user <userId>` | READ | Strike history for a user |
+| `standings` | READ | User standings (filter: active/muted/flagged) |
+| `list` | READ | Paginated strike list with filters |
+| `create <userId>` | WRITE | Issue a strike (requires `--reason`, `--description`) |
+| `void <strikeId>` | WRITE | Void a strike (requires `--reason`) |
+
+**Strike Reasons:** BlockedContent, RealisticMinorContent, CSAMContent, TOSViolation, HarassmentContent, ProhibitedContent, ManualModAction
+
+**Options:** `--reason`, `--description`, `--points <1-3>`, `--entity-type`, `--entity-id`, `--report-id`, `--expires-days`, `--status <Active,Expired,Voided>`, `--sort <points|score|lastStrike|created>`, `--sort-order <asc|desc>`, `--flagged-for-review`, `--has-active-strikes`, `--page`, `--limit`, `--json`, `--dry-run`
+
+```bash
+node .claude/skills/mod-actions/strikes.mjs get-user 3879899
+node .claude/skills/mod-actions/strikes.mjs standings --has-active-strikes --limit 10
+node .claude/skills/mod-actions/strikes.mjs create 3879899 --reason BlockedContent --description "Uploaded prohibited content" --points 1 --dry-run
+node .claude/skills/mod-actions/strikes.mjs void 42 --reason "False positive from scanner"
+```
+
+---
+
+## images.mjs — Image Moderation
+
+```bash
+node .claude/skills/mod-actions/images.mjs <command> [options]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `review-queue` | READ | Image review queue |
+| `review-counts` | READ | Queue tab counts |
+| `moderate <ids> <action>` | WRITE | Block/unblock images |
+| `tos-violation <imageId>` | WRITE | Flag as TOS violation |
+| `rescan <imageId>` | WRITE | Re-ingest/rescan image |
+| `report-csam <imageIds>` | WRITE | Report images as CSAM |
+| `poi-tags` | READ | Person-of-interest tags |
+| `user-images <userId>` | READ | All images for a user |
+| `rating-requests` | READ | NSFW rating review requests |
+| `ingestion-errors` | READ | Images with ingestion errors |
+| `resolve-ingestion <id>` | WRITE | Resolve ingestion error |
+| `downleveled` | READ | Downleveled images |
+| `pending-ingestion` | READ | Pending ingestion images |
+| `toggle-flag <imageId>` | WRITE | Toggle image flag |
+
+**Options:** `--ids`, `--action`, `--review-type`, `--cursor`, `--page`, `--limit`, `--json`, `--dry-run`
+
+```bash
+node .claude/skills/mod-actions/images.mjs review-counts
+node .claude/skills/mod-actions/images.mjs review-queue --limit 20
+node .claude/skills/mod-actions/images.mjs moderate 12345,67890 block --dry-run
+node .claude/skills/mod-actions/images.mjs user-images 3879899 --json
+node .claude/skills/mod-actions/images.mjs rescan 12345
+```
+
+---
+
+## reports.mjs — Report Handling
+
+```bash
+node .claude/skills/mod-actions/reports.mjs <command> [options]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `list` | READ | Reports by entity type (requires `--type`) |
+| `set-status <reportId> <status>` | WRITE | Set report status |
+| `bulk-status <status>` | WRITE | Bulk update statuses (requires `--ids`) |
+| `update <reportId>` | WRITE | Update report with status/notes |
+| `appeals` | READ | Recent appeals |
+| `appeal-details <id>` | READ | Appeal details |
+| `resolve-appeal` | WRITE | Resolve appeal (requires `--ids`, `--entity-type`, `--status`) |
+
+**Report Entity Types:** model, comment, commentV2, image, resourceReview, article, post, reportedUser, collection, bounty, bountyEntry, chat, comicProject
+
+**Report Statuses:** Pending, Processing, Actioned, Unactioned
+
+**Appeal Statuses:** Pending, Approved, Rejected
+
+**Options:** `--type`, `--status`, `--ids`, `--entity-type`, `--internal`, `--message`, `--user-id`, `--start-date`, `--page`, `--limit`, `--query`, `--json`, `--dry-run`
+
+```bash
+node .claude/skills/mod-actions/reports.mjs list --type image --limit 20
+node .claude/skills/mod-actions/reports.mjs set-status 456 Actioned --dry-run
+node .claude/skills/mod-actions/reports.mjs bulk-status Actioned --ids 1,2,3
+node .claude/skills/mod-actions/reports.mjs appeals --user-id 3879899
+node .claude/skills/mod-actions/reports.mjs resolve-appeal --ids 10,11 --entity-type Image --status Approved
+```
+
+---
+
+## generation.mjs — Generation Moderation
+
+```bash
+node .claude/skills/mod-actions/generation.mjs <command> [options]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `flagged-consumers` | READ | Flagged generation consumers |
+| `flagged-reasons` | READ | Flagging reasons |
+| `consumer-strikes <userId>` | READ | Consumer's generation strikes |
+| `review-strikes <userId>` | WRITE | Mark strikes as reviewed |
+| `user-generations <userId>` | READ | User's generated images |
+| `restrictions` | READ | All generation restrictions |
+| `resolve-restriction <id>` | WRITE | Resolve restriction (Upheld/Overturned) |
+| `allowlist-add` | WRITE | Add prompt trigger to allowlist |
+| `debug-audit <prompt>` | READ | Test prompt auditing |
+| `todays-counts` | READ | Today's prohibited request counts |
+| `suspicious-matches` | READ | Saved suspicious audit matches |
+
+**Options:** `--status <Pending|Upheld|Overturned>`, `--reason`, `--start-date`, `--message`, `--trigger`, `--category`, `--negative-prompt`, `--user-id`, `--username`, `--restriction-id`, `--page`, `--limit`, `--json`, `--dry-run`
+
+```bash
+node .claude/skills/mod-actions/generation.mjs flagged-consumers
+node .claude/skills/mod-actions/generation.mjs consumer-strikes 3879899
+node .claude/skills/mod-actions/generation.mjs restrictions --status Pending
+node .claude/skills/mod-actions/generation.mjs resolve-restriction 42 --status Upheld --message "Confirmed violation" --dry-run
+node .claude/skills/mod-actions/generation.mjs debug-audit "some prompt text"
+node .claude/skills/mod-actions/generation.mjs allowlist-add --trigger "girl" --category "age" --reason "False positive"
+```
+
+---
+
+## content.mjs — Content & Training Moderation
+
+```bash
+node .claude/skills/mod-actions/content.mjs <command> [options]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `models` | READ | Models for mod review |
+| `flagged-models` | READ | Flagged models |
+| `resolve-flagged` | WRITE | Resolve flagged models (requires `--ids`) |
+| `model-versions` | READ | Model versions for mod |
+| `rescan-model <id>` | WRITE | Re-ingest a model |
+| `restore-model <id>` | WRITE | Restore deleted model |
+| `toggle-cannot-promote <id>` | WRITE | Toggle promotion eligibility |
+| `toggle-cannot-publish <id>` | WRITE | Toggle publish ability |
+| `articles` | READ | Articles for mod review |
+| `training-models` | READ | Training models for review |
+| `approve-training <id>` | WRITE | Approve training data |
+| `deny-training <id>` | WRITE | Deny training data |
+| `mod-rule <id>` | READ | Get moderation rule |
+
+**Options:** `--ids`, `--page`, `--limit`, `--json`, `--dry-run`
+
+```bash
+node .claude/skills/mod-actions/content.mjs flagged-models --limit 10
+node .claude/skills/mod-actions/content.mjs resolve-flagged --ids 1,2,3 --dry-run
+node .claude/skills/mod-actions/content.mjs training-models --limit 20
+node .claude/skills/mod-actions/content.mjs approve-training 456
+node .claude/skills/mod-actions/content.mjs rescan-model 789
+```
+
+---
+
+## csam.mjs — NCMEC/CSAM Reporting
+
+```bash
+node .claude/skills/mod-actions/csam.mjs <command> [options]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `reports` | READ | Paginated CSAM reports |
+| `stats` | READ | CSAM report statistics |
+| `image-resources <imageIds>` | READ | Resources used to generate flagged images |
+| `create-report <userId>` | WRITE | Create NCMEC CyberTipline report |
+
+**CSAM Report Types:** Image, TrainingData, GeneratedImage
+
+**Options:** `--type <CsamReportType>`, `--image-ids <id1,id2,...>`, `--minor-depiction <real|non-real>`, `--page`, `--limit`, `--json`, `--dry-run`
+
+```bash
+node .claude/skills/mod-actions/csam.mjs stats
+node .claude/skills/mod-actions/csam.mjs reports --limit 10
+node .claude/skills/mod-actions/csam.mjs image-resources 12345,67890
+node .claude/skills/mod-actions/csam.mjs create-report 3879899 --type GeneratedImage --image-ids 111,222 --dry-run
+```
+
+---
+
+## Global Options
+
+All scripts support:
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Output raw JSON response |
-| `--dry-run` | Show what would be done without making changes |
-| `--reason <code>` | Ban reason code (for ban command) |
-| `--message <text>` | External message shown to user (for ban command) |
-| `--internal <text>` | Internal notes (for ban command) |
-
-## Examples
-
-### Look Up User
-
-```bash
-# By user ID
-node .claude/skills/mod-actions/query.mjs user 3879899
-
-# By username
-node .claude/skills/mod-actions/query.mjs user unfazedanomaly964
-
-# Get raw JSON
-node .claude/skills/mod-actions/query.mjs user 3879899 --json
-```
-
-### Ban User
-
-```bash
-# Simple ban (toggles ban status)
-node .claude/skills/mod-actions/query.mjs ban 3879899
-
-# Ban with reason and message
-node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "Repeated ToS violations"
-
-# Ban with internal notes
-node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --internal "User exploited republish bug 15 times"
-
-# Ban by username
-node .claude/skills/mod-actions/query.mjs ban unfazedanomaly964 --reason Other
-
-# Dry run to see what would happen
-node .claude/skills/mod-actions/query.mjs ban 3879899 --dry-run
-```
-
-### Mute User
-
-```bash
-# Toggle mute status
-node .claude/skills/mod-actions/query.mjs mute 3879899
-
-# By username
-node .claude/skills/mod-actions/query.mjs mute unfazedanomaly964
-
-# Dry run
-node .claude/skills/mod-actions/query.mjs mute 3879899 --dry-run
-```
-
-### Manage Leaderboard Eligibility
-
-```bash
-# Exclude from leaderboards
-node .claude/skills/mod-actions/query.mjs leaderboard 3879899 false
-
-# Include in leaderboards
-node .claude/skills/mod-actions/query.mjs leaderboard 3879899 true
-
-# Dry run
-node .claude/skills/mod-actions/query.mjs leaderboard 3879899 false --dry-run
-```
-
-### Remove All Content
-
-```bash
-# Remove all content from a user (DESTRUCTIVE)
-node .claude/skills/mod-actions/query.mjs remove-content 3879899
-
-# Always dry run first!
-node .claude/skills/mod-actions/query.mjs remove-content 3879899 --dry-run
-```
-
-## Output Format
-
-### User Info
-
-```
-User: unfazedanomaly964
-ID: 3879899
-Status: Active
-Banned: No
-Muted: No
-Leaderboard Eligible: Yes
-Created: 2024-03-19
-```
-
-### Action Result
-
-```
-Action: BAN
-User: unfazedanomaly964 (ID: 3879899)
-Success: Yes
-Previous: Not Banned
-Now: Banned
-Reason: Other
-```
-
-## How It Works
-
-This skill calls the Civitai tRPC API endpoints:
-- `user.getById` / `user.getCreator` - User lookups
-- `user.toggleBan` - Ban/unban users
-- `user.toggleMute` - Mute/unmute users
-- `user.setLeaderboardEligibility` - Manage leaderboard access
-- `user.removeAllContent` - Remove all user content
-
-Authentication is via Bearer token in the Authorization header:
-```
-Authorization: Bearer <your-api-key>
-```
-
-All endpoints require `moderatorProcedure` access, meaning the API key must belong to a moderator account.
-
-## When to Use
-
-- **Investigating violations**: Look up user info before taking action
-- **Repeat offenders**: Ban users who repeatedly violate ToS
-- **Temporary restrictions**: Mute users for minor violations
-- **Leaderboard manipulation**: Exclude cheaters from leaderboards
-- **Content violations**: Remove all content from severe violators
+| `--json` | Output raw JSON (for agent/scripting consumption) |
+| `--dry-run` | Preview WRITE actions without executing |
+| `--page <n>` | Page number for paginated results (default: 1) |
+| `--limit <n>` | Page size for paginated results (default: 20) |
 
 ## Safety Notes
 
-- **Always use `--dry-run` first** for destructive actions
+- **Always use `--dry-run` first** for destructive/write actions
 - All actions are logged in the ModActivity table
 - Ban actions invalidate user sessions immediately
-- Universal bans unpublish all user content and cancel subscriptions
+- CSAM reports are submitted to NCMEC — use with extreme care
 - Document reasons with `--reason` and `--message` flags
 - API key must have moderator privileges
-
-## Tips
-
-- Always look up user info first to confirm the right user
-- Use `--dry-run` for destructive actions like bans and content removal
-- Document reasons with `--reason`, `--message`, and `--internal` flags
-- Use `--json` for scripting or piping to other tools
-- Set `CIVITAI_API_URL=http://localhost:3000` for local development
+- Use `--json` for programmatic consumption by agent daemons
