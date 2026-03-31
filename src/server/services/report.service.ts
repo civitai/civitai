@@ -544,6 +544,7 @@ export async function resolveEntityAppeal({
   status,
   internalNotes,
   resolvedMessage,
+  refundBuzz,
   userId,
 }: ResolveAppealInput & { userId?: number }) {
   const appeals = await dbRead.appeal.findMany({
@@ -570,48 +571,59 @@ export async function resolveEntityAppeal({
   for (const appeal of appeals) {
     switch (appeal.entityType) {
       case EntityType.Image:
-        // Update entity with needsReview = null
-        await dbWrite.image.update({
-          where: { id: appeal.entityId },
-          data: approved
-            ? {
-                needsReview: null,
-                blockedFor: null,
-                ingestion: ImageIngestionStatus.Scanned,
-              }
-            : { needsReview: null },
-        });
+        try {
+          // Update entity with needsReview = null
+          await dbWrite.image.update({
+            where: { id: appeal.entityId },
+            data: approved
+              ? {
+                  needsReview: null,
+                  blockedFor: null,
+                  ingestion: ImageIngestionStatus.Scanned,
+                }
+              : { needsReview: null },
+          });
 
-        if (approved) await updateNsfwLevel(appeal.entityId);
+          if (approved) await updateNsfwLevel(appeal.entityId);
 
-        await queueImageSearchIndexUpdate({
-          ids: [appeal.entityId],
-          action: approved
-            ? SearchIndexUpdateQueueAction.Update
-            : SearchIndexUpdateQueueAction.Delete,
-        });
+          await queueImageSearchIndexUpdate({
+            ids: [appeal.entityId],
+            action: approved
+              ? SearchIndexUpdateQueueAction.Update
+              : SearchIndexUpdateQueueAction.Delete,
+          });
+        } catch (e) {
+          // Image may have been deleted — log but continue resolving the appeal
+          console.error(`Failed to update image ${appeal.entityId} for appeal ${appeal.id}: ${e}`);
+        }
         break;
       default:
         // Do nothing
         break;
     }
 
-    if (approved && appeal.buzzTransactionId) {
-      await withRetries(async () => {
-        if (isAppealPrefix(appeal.buzzTransactionId as string)) {
-          await refundMultiAccountTransaction({
-            externalTransactionIdPrefix: appeal.buzzTransactionId as string,
-            description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
-          });
-        } else {
-          await refundTransaction(
-            appeal.buzzTransactionId as string,
-            `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-          );
-        }
+    if ((approved || refundBuzz) && appeal.buzzTransactionId) {
+      try {
+        await withRetries(async () => {
+          if (isAppealPrefix(appeal.buzzTransactionId as string)) {
+            await refundMultiAccountTransaction({
+              externalTransactionIdPrefix: appeal.buzzTransactionId as string,
+              description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
+            });
+          } else {
+            await refundTransaction(
+              appeal.buzzTransactionId as string,
+              `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+            );
+          }
 
-        return;
-      });
+          return;
+        });
+      } catch (e) {
+        // Log but don't block appeal resolution if refund fails
+        // (e.g., old transactions may no longer exist in buzz service)
+        console.error(`Failed to refund buzz for appeal ${appeal.id}: ${e}`);
+      }
     }
 
     // Notify the user that their appeal has been resolved
