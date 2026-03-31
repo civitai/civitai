@@ -1073,9 +1073,16 @@ export function calculateFervor({
   correctJudgments: number;
   allJudgments: number;
 }) {
-  // New formula: number_of_ratings + (number_correct_ratings * 100)
-  // This rewards both activity (total ratings) and accuracy (correct ratings)
-  return allJudgments + correctJudgments * 100;
+  // Formula: correct_ratings * 100 * accuracy_ratio
+  // The accuracy multiplier penalizes spammers: a user with 20% accuracy gets only 20% of
+  // the fervor they would otherwise earn. Legitimate users with 80%+ correct barely notice.
+  // Floor at 0.1 to avoid zeroing out completely.
+  // Examples:
+  //   Legitimate (500 total, 400 correct, 80%): 400 * 100 * 0.8 = 32,000
+  //   Spammer (5000 total, 1000 correct, 20%): 1000 * 100 * 0.2 = 20,000
+  const accuracyRatio = allJudgments > 0 ? correctJudgments / allJudgments : 0;
+  const accuracyMultiplier = Math.max(0.1, accuracyRatio);
+  return Math.floor(correctJudgments * 100 * accuracyMultiplier);
 }
 
 export function calculateVoteWeight({ level, smites }: { level: number; smites: number }): number {
@@ -1135,15 +1142,30 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
   }
 }
 
-export async function handleSanityCheckFailure(playerId: number, imageId: number) {
+export async function handleSanityCheckFailure({
+  playerId,
+  imageId,
+  submittedRating,
+  correctNsfwLevel,
+}: {
+  playerId: number;
+  imageId: number;
+  submittedRating: NsfwLevel;
+  correctNsfwLevel: NsfwLevel;
+}) {
   if (!sysRedis) return;
 
   try {
     // Increment failure counter (auto-expires after 24 hours from first failure)
     const failureCount = await sanityCheckFailuresCounter.increment({ id: playerId });
 
-    if (failureCount === 1) {
-      // First failure - warning only
+    // Severe under-rating: rating content 2+ levels below its actual level (e.g., XXX→PG)
+    // Uses Flags.distance() for safe bitwise-flag comparison
+    const isSevereUnderRating =
+      submittedRating < correctNsfwLevel && Flags.distance(correctNsfwLevel, submittedRating) >= 2;
+
+    if (failureCount === 1 && !isSevereUnderRating) {
+      // First failure (non-severe) - warning only
       await createNotification({
         category: NotificationCategory.System,
         type: 'new-order-sanity-warning',
@@ -1172,12 +1194,13 @@ export async function handleSanityCheckFailure(playerId: number, imageId: number
         })
         .catch((e) => handleLogError(e, 'signals:new-order-sanity-warning'));
     } else {
-      // Additional failure - apply smite
+      // Severe under-rating OR additional failure - apply smite immediately
       await smitePlayer({
         playerId,
         modId: -1, // System
-        reason:
-          'You failed another sanity check within 24 hours. A smite penalty has been applied, reducing your vote weight.',
+        reason: isSevereUnderRating
+          ? 'You severely under-rated a sanity check image. A smite penalty has been applied.'
+          : 'You failed another sanity check within 24 hours. A smite penalty has been applied, reducing your vote weight.',
         size: newOrderConfig.smiteSize * 10,
       });
     }
@@ -1215,8 +1238,25 @@ export async function addSanityCheckRating({
     `${imageId}:${rating}`
   );
 
-  // Handle failure if incorrect
-  if (!isCorrect) await handleSanityCheckFailure(playerId, imageId);
+  // Handle failure if incorrect — look up the correct level for penalty severity
+  if (!isCorrect) {
+    // Probe all possible NSFW levels via O(1) sIsMember checks instead of fetching the whole set
+    const possibleLevels = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+    const memberChecks = await Promise.all(
+      possibleLevels.map((level) =>
+        sysRedis.sIsMember(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL, `${imageId}:${level}`)
+      )
+    );
+    const matchIndex = memberChecks.findIndex(Boolean);
+    const correctNsfwLevel = matchIndex >= 0 ? possibleLevels[matchIndex] : rating; // fallback to submitted rating (won't trigger severe penalty)
+
+    await handleSanityCheckFailure({
+      playerId,
+      imageId,
+      submittedRating: rating,
+      correctNsfwLevel,
+    });
+  }
 
   // Return result (no XP, no stats update, no ClickHouse tracking)
   return { isCorrect };
@@ -1575,29 +1615,57 @@ export async function getImagesQueue({
       const allSanityChecks = await sysRedis!.sMembers(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL);
 
       if (allSanityChecks && allSanityChecks.length > 0) {
-        // Randomly select N sanity checks
-        const selectedCheck = getRandom(allSanityChecks);
-        // Extract image IDs for batch DB query
-        const [sanityImageId, sanityImageNsfwLevel] = selectedCheck.split(':').map(Number);
+        // Insert sanity checks scaled to queue size (~2 per 20 images, ~5 per 100)
+        // At least 1 even if the queue is tiny, scaling up for larger fetches
+        const sanityCheckCount = Math.max(1, Math.ceil(finalImages.length / 10));
 
-        // Batch fetch image data from database
-        const sanityImageData = await dbRead.image.findUnique({
-          where: { id: sanityImageId },
+        // Stratify selection: bias toward non-PG sanity images to catch under-raters
+        const pgChecks: string[] = [];
+        const nonPgChecks: string[] = [];
+        for (const entry of allSanityChecks) {
+          const nsfwLevel = Number(entry.split(':')[1]);
+          if (nsfwLevel <= NsfwLevel.PG13) {
+            pgChecks.push(entry);
+          } else {
+            nonPgChecks.push(entry);
+          }
+        }
+
+        // Select with bias: at least 40% non-PG if available
+        const shuffledNonPg = shuffle(nonPgChecks);
+        const shuffledPg = shuffle(pgChecks);
+        const minNonPg = Math.min(Math.ceil(sanityCheckCount * 0.4), shuffledNonPg.length);
+        const selectedChecks = [
+          ...shuffledNonPg.slice(0, minNonPg),
+          ...shuffle([...shuffledNonPg.slice(minNonPg), ...shuffledPg]),
+        ].slice(0, sanityCheckCount);
+
+        // Batch fetch image data for all selected sanity checks
+        const sanityImageIds = selectedChecks.map((entry) => Number(entry.split(':')[0]));
+        const sanityImagesData = await dbRead.image.findMany({
+          where: { id: { in: sanityImageIds } },
           select: { id: true, url: true, metadata: true },
         });
+        const sanityImageMap = new Map(sanityImagesData.map((img) => [img.id, img]));
 
-        if (sanityImageData) {
+        for (const entry of selectedChecks) {
+          const [imageIdStr, nsfwLevelStr] = entry.split(':');
+          const sanityImageId = Number(imageIdStr);
+          const sanityImageNsfwLevel = Number(nsfwLevelStr) as NsfwLevel;
+          const imageData = sanityImageMap.get(sanityImageId);
+          if (!imageData) continue;
+
           const sanityCheckImage = {
             id: sanityImageId,
-            url: sanityImageData.url,
-            nsfwLevel: sanityImageNsfwLevel as NsfwLevel,
+            url: imageData.url,
+            nsfwLevel: sanityImageNsfwLevel,
             metadata: {
-              ...(sanityImageData.metadata as ImageMetadata),
+              ...(imageData.metadata as ImageMetadata),
               isSanityCheck: true,
             } as ImageMetadata,
           };
 
-          const randomPosition = Math.floor(Math.random() * finalImages.length);
+          const randomPosition = Math.floor(Math.random() * (finalImages.length + 1));
           finalImages.splice(randomPosition, 0, sanityCheckImage);
         }
       }

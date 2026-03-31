@@ -755,9 +755,9 @@ export const getImageRatingsCounter = (imageId: number) => {
 
 // Rate limiting configuration for voting
 export const VOTING_RATE_LIMITS = {
-  perMinute: 75, // Max votes per minute
-  perHour: 4500, // Max votes per hour
-  abuseThreshold: 4510, // Auto-reset career threshold per hour
+  perMinute: 20, // Max votes per minute (~1 every 3 seconds)
+  perHour: 900, // Max votes per hour
+  abuseThreshold: 1000, // Auto-reset career threshold per hour
 } as const;
 
 // Simple sliding window rate limiter for voting
