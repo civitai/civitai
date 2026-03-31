@@ -16,6 +16,7 @@ import {
   IconChevronDown,
   IconChevronUp,
   IconInfoHexagon,
+  IconRefresh,
   IconSparkles,
 } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
@@ -25,11 +26,18 @@ import { useGetPromptEnhancementHistory, type PromptEnhancementRecord } from './
 import { computeWordDiff } from './PromptDiff';
 import { EnhancementDetails } from './EnhancementDetails';
 
-type HistoryTabProps = {
-  onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
+export type RemixData = {
+  prompt: string;
+  negativePrompt?: string;
+  instruction?: string;
 };
 
-export function HistoryTab({ onApply }: HistoryTabProps) {
+type HistoryTabProps = {
+  onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
+  onRemix?: (data: RemixData) => void;
+};
+
+export function HistoryTab({ onApply, onRemix }: HistoryTabProps) {
   const {
     data: records,
     isLoading,
@@ -63,7 +71,12 @@ export function HistoryTab({ onApply }: HistoryTabProps) {
     <ScrollArea className="flex-1">
       <Stack gap="xs" p="md">
         {records.map((record) => (
-          <HistoryItem key={record.workflowId} record={record} onApply={onApply} />
+          <HistoryItem
+            key={record.workflowId}
+            record={record}
+            onApply={onApply}
+            onRemix={onRemix}
+          />
         ))}
         {hasNextPage && (
           <InViewLoader loadFn={fetchNextPage} loadCondition={!isFetchingNextPage}>
@@ -78,9 +91,11 @@ export function HistoryTab({ onApply }: HistoryTabProps) {
 function HistoryItem({
   record,
   onApply,
+  onRemix,
 }: {
   record: PromptEnhancementRecord;
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
+  onRemix?: (data: RemixData) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const dialog = useDialogContext();
@@ -169,6 +184,22 @@ function HistoryItem({
           <EnhancementDetails record={record} />
           {record.enhancedPrompt && (
             <Group justify="flex-end">
+              {onRemix && (
+                <Button
+                  size="compact-sm"
+                  variant="light"
+                  onClick={() =>
+                    onRemix({
+                      prompt: record.originalPrompt,
+                      negativePrompt: record.originalNegativePrompt,
+                      instruction: record.instruction,
+                    })
+                  }
+                  leftSection={<IconRefresh size={14} />}
+                >
+                  Remix
+                </Button>
+              )}
               <Button
                 size="compact-sm"
                 onClick={handleApply}

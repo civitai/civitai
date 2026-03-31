@@ -37,6 +37,7 @@ const enhanceFormSchema = z.object({
 type EnhanceTabProps = {
   prompt: string;
   negativePrompt?: string;
+  instruction?: string;
   ecosystem: string;
   triggerWords?: string[];
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
@@ -56,6 +57,7 @@ function getUsedTriggerWords(
 export function EnhanceTab({
   prompt,
   negativePrompt,
+  instruction,
   ecosystem,
   triggerWords,
   onApply,
@@ -76,7 +78,7 @@ export function EnhanceTab({
     defaultValues: {
       prompt,
       negativePrompt: negativePrompt ?? '',
-      instruction: '',
+      instruction: instruction ?? '',
       temperature: 0.7,
     },
   });

@@ -72,6 +72,8 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
     [status.message]
   );
 
+  const showFooterContent = status.available && reviewed;
+
   return (
     <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
       {!status.available ? (
@@ -112,11 +114,12 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
           </Button>
         </Alert>
       ) : (
-        <>
-          {dailyBoost.canShow && <DailyBoostRewardClaim />}
-          {children}
-        </>
+        <>{dailyBoost.canShow && <DailyBoostRewardClaim />}</>
       )}
+
+      {/* Always keep the slot target in the DOM so portals can resolve it.
+          Hidden when generation is unavailable or terms not yet reviewed. */}
+      <div className={!showFooterContent ? 'hidden' : undefined}>{children}</div>
 
       {/* Dismissible status message — shown regardless of review state */}
       {status.available && status.message && messageHash && (

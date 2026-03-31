@@ -55,7 +55,8 @@ function createSlots<T extends string>(slotNames: T[]) {
       (node: HTMLDivElement | null) => {
         if (!registry) return;
         registry.targets[name] = node;
-        if (node) registry.listeners.forEach((cb) => cb());
+        // Notify on both mount and unmount so Slots can track target replacement
+        registry.listeners.forEach((cb) => cb());
       },
       [registry, name]
     );
@@ -81,21 +82,22 @@ function createSlots<T extends string>(slotNames: T[]) {
       }
     }, [registry, name]);
 
-    // Subscribe for late-registering targets
+    // Subscribe for target changes (late registration, replacement, or removal)
     useEffect(() => {
-      if (target || !registry) return;
+      if (!registry) return;
       const cb = () => {
-        const el = registry.targets[name];
-        if (el) {
-          el.textContent = '';
-          setTarget(el);
-        }
+        const el = registry.targets[name] ?? null;
+        setTarget((prev) => {
+          if (el === prev) return prev;
+          if (el) el.textContent = '';
+          return el;
+        });
       };
       registry.listeners.add(cb);
       return () => {
         registry.listeners.delete(cb);
       };
-    }, [target, registry, name]);
+    }, [registry, name]);
 
     // Clear on unmount
     useIsomorphicLayoutEffect(() => {

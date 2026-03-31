@@ -1,8 +1,8 @@
 import { Tabs } from '@mantine/core';
 import { IconHistory, IconSparkles } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { EnhanceTab } from './EnhanceTab';
-import { HistoryTab } from './HistoryTab';
+import { HistoryTab, type RemixData } from './HistoryTab';
 
 type PromptEnhancePanelProps = {
   prompt: string;
@@ -22,6 +22,17 @@ export function PromptEnhancePanel({
   onBack,
 }: PromptEnhancePanelProps) {
   const [activeTab, setActiveTab] = useState<string | null>('enhance');
+  const [remixData, setRemixData] = useState<RemixData | null>(null);
+
+  const handleRemix = useCallback((data: RemixData) => {
+    setRemixData(data);
+    setActiveTab('enhance');
+  }, []);
+
+  // Use remix data if available, otherwise fall back to props
+  const enhancePrompt = remixData?.prompt ?? prompt;
+  const enhanceNegativePrompt = remixData?.negativePrompt ?? negativePrompt;
+  const enhanceInstruction = remixData?.instruction;
 
   return (
     <Tabs
@@ -41,8 +52,10 @@ export function PromptEnhancePanel({
       {activeTab === 'enhance' && (
         <Tabs.Panel value="enhance" className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <EnhanceTab
-            prompt={prompt}
-            negativePrompt={negativePrompt}
+            key={remixData ? `remix-${Date.now()}` : 'default'}
+            prompt={enhancePrompt}
+            negativePrompt={enhanceNegativePrompt}
+            instruction={enhanceInstruction}
             ecosystem={ecosystem}
             triggerWords={triggerWords}
             onApply={onApply}
@@ -53,7 +66,7 @@ export function PromptEnhancePanel({
 
       {activeTab === 'history' && (
         <Tabs.Panel value="history" className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <HistoryTab onApply={onApply} />
+          <HistoryTab onApply={onApply} onRemix={handleRemix} />
         </Tabs.Panel>
       )}
     </Tabs>

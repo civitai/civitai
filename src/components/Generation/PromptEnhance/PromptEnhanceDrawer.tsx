@@ -1,11 +1,11 @@
 import { CloseButton, Drawer, Group, Tabs, Text } from '@mantine/core';
 import { IconHistory, IconSparkles } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import type { PromptEnhanceProps } from './triggerPromptEnhance';
 import { EnhanceTab } from './EnhanceTab';
-import { HistoryTab } from './HistoryTab';
+import { HistoryTab, type RemixData } from './HistoryTab';
 
 export default function PromptEnhanceDrawer({
   prompt,
@@ -17,6 +17,20 @@ export default function PromptEnhanceDrawer({
   const dialog = useDialogContext();
   const mobile = useIsMobile();
   const [activeTab, setActiveTab] = useState<string | null>('enhance');
+  const [remixData, setRemixData] = useState<RemixData | null>(null);
+
+  const handleRemix = useCallback((data: RemixData) => {
+    setRemixData(data);
+    setActiveTab('enhance');
+  }, []);
+
+  const triggerWords = [
+    ...new Set((resources ?? []).flatMap((r) => r.trainedWords ?? []).filter(Boolean)),
+  ];
+
+  const enhancePrompt = remixData?.prompt ?? prompt;
+  const enhanceNegativePrompt = remixData?.negativePrompt ?? negativePrompt;
+  const enhanceInstruction = remixData?.instruction;
 
   return (
     <Drawer
@@ -59,21 +73,19 @@ export default function PromptEnhanceDrawer({
 
         <Tabs.Panel value="enhance" className="flex flex-1 flex-col overflow-hidden">
           <EnhanceTab
-            prompt={prompt}
-            negativePrompt={negativePrompt}
+            key={remixData ? `remix-${Date.now()}` : 'default'}
+            prompt={enhancePrompt}
+            negativePrompt={enhanceNegativePrompt}
+            instruction={enhanceInstruction}
             ecosystem={ecosystem}
-            triggerWords={[
-              ...new Set(
-                (resources ?? []).flatMap((r) => r.trainedWords ?? []).filter(Boolean)
-              ),
-            ]}
+            triggerWords={triggerWords}
             onApply={onApply}
           />
         </Tabs.Panel>
 
         {activeTab === 'history' && (
           <Tabs.Panel value="history" className="flex flex-1 flex-col overflow-hidden">
-            <HistoryTab onApply={onApply} />
+            <HistoryTab onApply={onApply} onRemix={handleRemix} />
           </Tabs.Panel>
         )}
       </Tabs>
