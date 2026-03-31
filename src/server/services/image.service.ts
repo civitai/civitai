@@ -395,6 +395,22 @@ function getReviewTypeToBlockedReason(reason: string) {
   }
 }
 
+/** Mark remix-source images as mod-reviewed so the audit job won't re-flag them. */
+async function markRemixSourceReviewed(
+  images: { id: number; needsReview: string | null }[]
+) {
+  const remixSourceIds = images
+    .filter((img) => img.needsReview === 'remixSource')
+    .map((img) => img.id);
+  if (remixSourceIds.length === 0) return;
+
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET "metadata" = "metadata" || '{"remixSourceReviewed": true}'::jsonb
+    WHERE id IN (${Prisma.join(remixSourceIds)})
+  `;
+}
+
 export async function handleUnblockImages({
   ids: imageIds,
   moderatorId,
@@ -484,6 +500,9 @@ export async function handleUnblockImages({
     });
   }
 
+  // Prevent remix-source audit job from re-flagging accepted images
+  await markRemixSourceReviewed(images);
+
   return images;
 }
 
@@ -572,6 +591,9 @@ export async function handleBlockImages({
       activity: 'removeContent',
     });
   }
+
+  // Prevent remix-source audit job from re-flagging blocked images
+  await markRemixSourceReviewed(images);
 
   return images;
 }

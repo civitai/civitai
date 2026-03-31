@@ -640,6 +640,7 @@ export const REDIS_SYS_KEYS = {
     EXPERIMENTAL: 'generation:experimental',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
     BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
     CLIENT: 'generation:client',
     CLIENT_TEMP: 'generation:client-temp',
   },

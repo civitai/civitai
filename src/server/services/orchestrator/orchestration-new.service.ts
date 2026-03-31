@@ -869,6 +869,7 @@ export async function generateFromGraph({
       isGreen: !!isGreen,
       isModerator,
       track,
+      remixOfId,
     });
   }
 

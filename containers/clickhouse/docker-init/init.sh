@@ -677,7 +677,8 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         source Enum8('Regex' = 1, 'External' = 2) default 'Regex',
         negativePrompt Nullable(String),
-        deviceId    String                        default ''
+        deviceId    String                        default '',
+        remixOfId   Nullable(Int32)
     )
         engine = MergeTree()
             ORDER BY (time, userId)

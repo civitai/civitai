@@ -544,6 +544,20 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           }
         </PromptHighlight>
       )}
+      {image.needsReview === 'remixSource' && (
+        <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
+          {({ html }) => (
+            <Stack gap={4}>
+              <Card.Section p="xs" mt={0} style={{ cursor: 'auto', color: 'initial' }}>
+                <Badge size="sm" color="red" mb={4}>
+                  Remix Source — Prompt Flagged
+                </Badge>
+                <RenderHtml className="break-words text-sm leading-[1.2]" html={html} />
+              </Card.Section>
+            </Stack>
+          )}
+        </PromptHighlight>
+      )}
       {/* {image.needsReview === 'poi' && !!image.names?.length && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group spacing={4}>
