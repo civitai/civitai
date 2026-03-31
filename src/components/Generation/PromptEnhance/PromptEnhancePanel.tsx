@@ -38,6 +38,7 @@ export function PromptEnhancePanel({
     <Tabs
       value={activeTab}
       onChange={setActiveTab}
+      keepMounted
       className="flex min-w-0 flex-1 flex-col overflow-hidden"
     >
       <Tabs.List px="md" mt="xs">
@@ -49,26 +50,22 @@ export function PromptEnhancePanel({
         </Tabs.Tab>
       </Tabs.List>
 
-      {activeTab === 'enhance' && (
-        <Tabs.Panel value="enhance" className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <EnhanceTab
-            key={remixData ? `remix-${Date.now()}` : 'default'}
-            prompt={enhancePrompt}
-            negativePrompt={enhanceNegativePrompt}
-            instruction={enhanceInstruction}
-            ecosystem={ecosystem}
-            triggerWords={triggerWords}
-            onApply={onApply}
-            onBack={onBack}
-          />
-        </Tabs.Panel>
-      )}
+      <Tabs.Panel value="enhance" className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <EnhanceTab
+          key={remixData ? `remix-${Date.now()}` : 'default'}
+          prompt={enhancePrompt}
+          negativePrompt={enhanceNegativePrompt}
+          instruction={enhanceInstruction}
+          ecosystem={ecosystem}
+          triggerWords={triggerWords}
+          onApply={onApply}
+          onBack={onBack}
+        />
+      </Tabs.Panel>
 
-      {activeTab === 'history' && (
-        <Tabs.Panel value="history" className="flex min-w-0 flex-1 flex-col overflow-hidden">
-          <HistoryTab onApply={onApply} onRemix={handleRemix} />
-        </Tabs.Panel>
-      )}
+      <Tabs.Panel value="history" className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <HistoryTab onApply={onApply} onRemix={handleRemix} />
+      </Tabs.Panel>
     </Tabs>
   );
 }
