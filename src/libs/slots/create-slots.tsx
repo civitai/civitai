@@ -94,6 +94,12 @@ function createSlots<T extends string>(slotNames: T[]) {
         });
       };
       registry.listeners.add(cb);
+
+      // The layout effect (above) fires before sibling RenderSlots have their
+      // refs attached, so it may miss the target. By the time this useEffect
+      // runs, all refs in the commit are settled — check once to catch it.
+      cb();
+
       return () => {
         registry.listeners.delete(cb);
       };
