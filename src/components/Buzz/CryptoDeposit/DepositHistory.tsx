@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  Button,
   Group,
   HoverCard,
   Pagination,
@@ -18,6 +19,7 @@ import {
   IconLoader,
   IconPlus,
   IconRefresh,
+  IconSearch,
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
@@ -230,12 +232,9 @@ export function DepositHistory() {
           <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
         </Group>
       )}
-      <Group gap="xs" mt="sm" wrap="nowrap" align="flex-start">
-        <IconClock size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
-        <Text size="xs" c="dimmed">
-          Deposits can take up to 1 hour to appear, especially Bitcoin due to network congestion.
-        </Text>
-      </Group>
+      <CheckDepositsButton
+        onSuccess={() => utils.nowPayments.getDepositHistory.invalidate()}
+      />
     </Paper>
   );
 }
@@ -267,17 +266,7 @@ function EmptyDepositState({
             </Text>
           </Group>
         </Paper>
-        <Group gap="xs" wrap="nowrap" align="flex-start">
-          <IconClock
-            size={14}
-            className="text-yellow-500"
-            style={{ flexShrink: 0, marginTop: 2 }}
-          />
-          <Text size="xs" c="dimmed">
-            Deposits can take up to 1 hour to appear depending on network congestion. Bitcoin
-            transactions are particularly slow and may take the full hour.
-          </Text>
-        </Group>
+        <CheckDepositsButton onSuccess={onRefresh} />
       </Stack>
     </Paper>
   );
@@ -409,6 +398,41 @@ function BonusBuzzPopover({
   );
 }
 
+function CheckDepositsButton({ onSuccess }: { onSuccess: () => void }) {
+  const reconcileMutation = trpc.nowPayments.reconcileMyDeposits.useMutation({
+    onSuccess: (data) => {
+      if (data.processed > 0) onSuccess();
+    },
+  });
+
+  return (
+    <Stack gap={4} mt="sm">
+      <Button
+        variant="subtle"
+        size="compact-sm"
+        color="gray"
+        leftSection={<IconSearch size={14} />}
+        onClick={() => reconcileMutation.mutate()}
+        loading={reconcileMutation.isLoading}
+        disabled={reconcileMutation.isLoading}
+      >
+        {reconcileMutation.isLoading
+          ? 'Checking...'
+          : reconcileMutation.isSuccess
+          ? reconcileMutation.data.processed > 0
+            ? `Found ${reconcileMutation.data.processed} deposit(s)`
+            : 'No missing deposits found'
+          : reconcileMutation.isError
+          ? 'Try again in a minute'
+          : 'Missing a deposit? Check now'}
+      </Button>
+      <Text size="xs" c="dimmed" ta="center">
+        Deposits can take up to 1 hour to appear depending on network congestion.
+      </Text>
+    </Stack>
+  );
+}
+
 function DepositStatusBadge({ status }: { status: string }) {
   if (status === 'finished') {
     return (
@@ -429,6 +453,12 @@ function DepositStatusBadge({ status }: { status: string }) {
       return (
         <Badge color="gray" variant="light" size="sm" leftSection={<IconClock size={12} />}>
           Waiting
+        </Badge>
+      );
+    case 'buzz_failed':
+      return (
+        <Badge color="orange" variant="light" size="sm" leftSection={<IconRefresh size={12} />}>
+          Processing
         </Badge>
       );
     default:
