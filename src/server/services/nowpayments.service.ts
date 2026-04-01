@@ -552,8 +552,8 @@ export const retryFailedDeposits = async () => {
       const payment = await nowpaymentsCaller.getPaymentStatus(numericId);
       if (!payment || !isDepositComplete(payment.payment_status)) {
         // Payment not found or not complete yet — increment retry, skip
-        await dbWrite.cryptoDeposit.update({
-          where: { paymentId: deposit.paymentId },
+        await dbWrite.cryptoDeposit.updateMany({
+          where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
           data: { retryCount: { increment: 1 } },
         });
         failed++;
@@ -580,13 +580,18 @@ export const retryFailedDeposits = async () => {
       });
 
       if (updated?.status === 'finished') {
+        // Reset retryCount on success
+        await dbWrite.cryptoDeposit.update({
+          where: { paymentId: deposit.paymentId },
+          data: { retryCount: 0 },
+        });
         succeeded++;
-      } else {
-        // Still buzz_failed — processDeposit caught the error internally, increment retryCount
+      } else if (updated?.status === 'buzz_failed') {
+        // Only increment if still buzz_failed (another path may have fixed it)
         const newCount = deposit.retryCount + 1;
         if (newCount >= MAX_BUZZ_RETRIES) {
-          await dbWrite.cryptoDeposit.update({
-            where: { paymentId: deposit.paymentId },
+          await dbWrite.cryptoDeposit.updateMany({
+            where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
             data: { retryCount: newCount, status: 'failed' },
           });
           await log({
@@ -596,19 +601,22 @@ export const retryFailedDeposits = async () => {
           });
           exhausted++;
         } else {
-          await dbWrite.cryptoDeposit.update({
-            where: { paymentId: deposit.paymentId },
+          await dbWrite.cryptoDeposit.updateMany({
+            where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
             data: { retryCount: { increment: 1 } },
           });
           failed++;
         }
+      } else {
+        // Status changed by another path (e.g., webhook fixed it) — skip
+        succeeded++;
       }
     } catch (e) {
-      // Increment retry count
+      // Increment retry count — only if still buzz_failed
       const newCount = deposit.retryCount + 1;
       if (newCount >= MAX_BUZZ_RETRIES) {
-        await dbWrite.cryptoDeposit.update({
-          where: { paymentId: deposit.paymentId },
+        await dbWrite.cryptoDeposit.updateMany({
+          where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
           data: { retryCount: newCount, status: 'failed' },
         });
         await log({
@@ -619,8 +627,8 @@ export const retryFailedDeposits = async () => {
         });
         exhausted++;
       } else {
-        await dbWrite.cryptoDeposit.update({
-          where: { paymentId: deposit.paymentId },
+        await dbWrite.cryptoDeposit.updateMany({
+          where: { paymentId: deposit.paymentId, status: 'buzz_failed' },
           data: { retryCount: { increment: 1 } },
         });
         failed++;

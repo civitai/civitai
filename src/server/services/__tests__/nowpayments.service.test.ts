@@ -24,7 +24,7 @@ const {
     },
     mockDbWrite: {
       cryptoWallet: mockCryptoWallet,
-      cryptoDeposit: { upsert: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}) },
+      cryptoDeposit: { upsert: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}), updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     },
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
