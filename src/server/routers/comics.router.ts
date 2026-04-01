@@ -172,6 +172,68 @@ function capReferenceImages(
   return images.slice(0, max);
 }
 
+/**
+ * Single entry point for all comic image generation.
+ * Every call to the orchestrator from the comics system should go through here.
+ */
+async function submitComicGeneration({
+  prompt,
+  width,
+  height,
+  aspectRatio,
+  quantity = 1,
+  images,
+  modelConfig,
+  versionIdOverride,
+  user,
+  token,
+  features,
+}: {
+  prompt: string;
+  width: number;
+  height: number;
+  aspectRatio: string;
+  quantity?: number;
+  images?: { url: string; width: number; height: number }[] | null;
+  modelConfig: (typeof COMIC_MODEL_CONFIG)[string];
+  versionIdOverride?: number;
+  user: SessionUser;
+  token: string;
+  features: any;
+}) {
+  const versionId = versionIdOverride ?? modelConfig.versionId;
+  const cappedImages = images
+    ? capReferenceImages(images, modelConfig.maxReferenceImages)
+    : null;
+
+  return createImageGen({
+    params: {
+      prompt,
+      negativePrompt: '',
+      engine: modelConfig.engine,
+      baseModel: modelConfig.baseModel as any,
+      width,
+      height,
+      aspectRatio,
+      workflow: 'txt2img',
+      sampler: 'Euler',
+      steps: 25,
+      quantity,
+      draft: false,
+      disablePoi: false,
+      priority: 'low',
+      sourceImage: null,
+      images: cappedImages,
+    },
+    resources: [{ id: versionId, strength: 1 }],
+    tags: ['comics'],
+    tips: { creators: 0, civitai: 0 },
+    user,
+    token,
+    currencies: getAllowedAccountTypes(features, ['blue']) as any,
+  });
+}
+
 /** Detect orchestrator/generator offline errors and return a user-friendly message. */
 function getOrchestratorErrorMessage(error: unknown): string {
   const msg = error instanceof Error ? error.message : String(error);
@@ -616,31 +678,16 @@ async function createSinglePanel(args: {
   if (enqueue) return panel;
 
   try {
-    const result = await createImageGen({
-      params: {
-        prompt: fullPrompt,
-        negativePrompt: '',
-        engine: modelConfig.engine,
-        baseModel: modelConfig.baseModel as any,
-        width,
-        height,
-        aspectRatio,
-        workflow: 'txt2img',
-        sampler: 'Euler',
-        steps: 25,
-        quantity: 1,
-        draft: false,
-        disablePoi: false,
-        priority: 'low',
-        sourceImage: null,
-        images: capReferenceImages(refImages, modelConfig.maxReferenceImages),
-      },
-      resources: [{ id: modelConfig.versionId, strength: 1 }],
-      tags: ['comics'],
-      tips: { creators: 0, civitai: 0 },
+    const result = await submitComicGeneration({
+      prompt: fullPrompt,
+      width,
+      height,
+      aspectRatio,
+      images: refImages,
+      modelConfig,
       user: ctx.user! as SessionUser,
       token,
-      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      features: ctx.features,
     });
 
     const updated = await dbWrite.comicPanel.update({
@@ -2277,31 +2324,17 @@ export const comicsRouter = router({
 
       // Submit generation workflow
       try {
-        const result = await createImageGen({
-          params: {
-            prompt: fullPrompt,
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width: panelWidth,
-            height: panelHeight,
-            aspectRatio: input.aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity: input.quantity,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
-          },
-          resources: [{ id: modelConfig.versionId, strength: 1 }],
-          tags: ['comics'],
-          tips: { creators: 0, civitai: 0 },
+        const result = await submitComicGeneration({
+          prompt: fullPrompt,
+          width: panelWidth,
+          height: panelHeight,
+          aspectRatio: input.aspectRatio,
+          quantity: input.quantity,
+          images: allImages,
+          modelConfig,
           user: ctx.user! as SessionUser,
           token,
-          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+          features: ctx.features,
         });
 
         // Atomically set status to Generating and store workflow ID
@@ -2986,31 +3019,18 @@ export const comicsRouter = router({
       // Prompt is used as-is — enhancement happens client-side via enhancePromptText
       const fullPrompt = input.prompt.trim();
 
-      const result = await createImageGen({
-        params: {
-          prompt: fullPrompt || '',
-          negativePrompt: '',
-          engine: modelConfig.engine,
-          baseModel: modelConfig.baseModel as any,
-          width: panelWidth,
-          height: panelHeight,
-          aspectRatio: input.aspectRatio,
-          workflow: 'txt2img',
-          sampler: 'Euler',
-          steps: 25,
-          quantity: input.quantity,
-          draft: false,
-          disablePoi: false,
-          priority: 'low',
-          sourceImage: null,
-          images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
-        },
-        resources: [{ id: effectiveVersionId, strength: 1 }],
-        tags: ['comics'],
-        tips: { creators: 0, civitai: 0 },
+      const result = await submitComicGeneration({
+        prompt: fullPrompt || '',
+        width: panelWidth,
+        height: panelHeight,
+        aspectRatio: input.aspectRatio,
+        quantity: input.quantity,
+        images: allImages,
+        modelConfig,
+        versionIdOverride: effectiveVersionId,
         user: ctx.user! as SessionUser,
         token,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        features: ctx.features,
       });
 
       return {
@@ -3023,6 +3043,54 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — poll workflow status without panel involvement
+  generateComicImage: comicProtectedProcedure
+    .input(
+      z.object({
+        prompt: z.string().min(1).max(2000),
+        aspectRatio: z.string().default('3:4'),
+        baseModel: z.string().optional(),
+        quantity: z.number().int().min(1).max(4).default(1),
+        userReferenceImages: z
+          .array(z.object({ url: z.string(), width: z.number(), height: z.number() }))
+          .optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const token = await getOrchestratorToken(ctx.user!.id, ctx).catch((error) => {
+        throw throwBadRequestError(getOrchestratorErrorMessage(error));
+      });
+
+      const modelConfig = getComicModelConfig(input.baseModel);
+      const { width, height } = getAspectRatioDimensions(input.aspectRatio, modelConfig);
+
+      // Build reference images array from user uploads
+      const images = input.userReferenceImages?.map((ref) => ({
+        url: getEdgeUrl(ref.url, { original: true }),
+        width: ref.width,
+        height: ref.height,
+      }));
+
+      const result = await submitComicGeneration({
+        prompt: input.prompt,
+        width,
+        height,
+        aspectRatio: input.aspectRatio,
+        quantity: input.quantity,
+        images: images ?? null,
+        modelConfig,
+        user: ctx.user! as SessionUser,
+        token,
+        features: ctx.features,
+      });
+
+      return {
+        workflowId: result.id,
+        width,
+        height,
+        cost: result.cost?.total ?? 0,
+      };
+    }),
+
   pollIterationStatus: comicProtectedProcedure
     .input(
       z.object({
@@ -4078,31 +4146,17 @@ export const comicsRouter = router({
       }
 
       try {
-        const result = await createImageGen({
-          params: {
-            prompt: fullPrompt || '',
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width: panelWidth,
-            height: panelHeight,
-            aspectRatio: input.aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity: 1,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
-          },
-          resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['comics'],
-          tips: { creators: 0, civitai: 0 },
+        const result = await submitComicGeneration({
+          prompt: fullPrompt || '',
+          width: panelWidth,
+          height: panelHeight,
+          aspectRatio: input.aspectRatio,
+          images: allImages,
+          modelConfig,
+          versionIdOverride: effectiveVersionId,
           user: ctx.user! as SessionUser,
           token,
-          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+          features: ctx.features,
         });
 
         const updated = await dbWrite.comicPanel.update({
@@ -4376,31 +4430,17 @@ export const comicsRouter = router({
           }
 
           try {
-            const result = await createImageGen({
-              params: {
-                prompt: fullPrompt,
-                negativePrompt: '',
-                engine: bulkModelConfig.engine,
-                baseModel: bulkModelConfig.baseModel as any,
-                width: bulkPanelW,
-                height: bulkPanelH,
-                aspectRatio: panelDef.aspectRatio,
-                workflow: 'txt2img',
-                sampler: 'Euler',
-                steps: 25,
-                quantity: 1,
-                draft: false,
-                disablePoi: false,
-                priority: 'low',
-                sourceImage: null,
-                images: capReferenceImages(allImages, bulkModelConfig.maxReferenceImages),
-              },
-              resources: [{ id: bulkVersionId, strength: 1 }],
-              tags: ['comics'],
-              tips: { creators: 0, civitai: 0 },
+            const result = await submitComicGeneration({
+              prompt: fullPrompt,
+              width: bulkPanelW,
+              height: bulkPanelH,
+              aspectRatio: panelDef.aspectRatio,
+              images: allImages,
+              modelConfig: bulkModelConfig,
+              versionIdOverride: bulkVersionId,
               user: ctx.user! as SessionUser,
               token: batchToken,
-              currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+              features: ctx.features,
             });
 
             const updated = await dbWrite.comicPanel.update({
