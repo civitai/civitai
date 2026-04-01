@@ -1,10 +1,10 @@
 import { randomUUID } from 'crypto';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { env } from '~/env/server';
-import { getS3Client } from '~/utils/s3-utils';
+import { getImageUploadBackend } from '~/utils/s3-utils';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
+import { registerMediaLocation } from '~/server/services/storage-resolver';
 
 interface PollIterationArgs {
   workflowId: string;
@@ -29,15 +29,16 @@ async function downloadAndUploadImage(
     const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
     const s3Key = randomUUID();
-    const s3 = getS3Client('image');
+    const { s3, bucket, backend } = await getImageUploadBackend();
     await s3.send(
       new PutObjectCommand({
-        Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+        Bucket: bucket,
         Key: s3Key,
         Body: imageBuffer,
         ContentType: imageResponse.headers.get('content-type') || 'image/jpeg',
       })
     );
+    registerMediaLocation(s3Key, backend, imageBuffer.length);
 
     const image = await createImage({
       url: s3Key,

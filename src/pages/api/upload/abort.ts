@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { abortMultipartUpload, getS3Client, getUploadS3Client } from '~/utils/s3-utils';
+import { abortMultipartUpload, getS3Client, getUploadS3Client, getB2ImageS3Client } from '~/utils/s3-utils';
 import { UploadType } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -15,7 +15,9 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const { bucket, key, type, uploadId, backend } = req.body;
   try {
     let s3;
-    if (backend === 'b2') {
+    if (backend === 'backblaze') {
+      s3 = getB2ImageS3Client();
+    } else if (backend === 'b2') {
       s3 = getUploadS3Client('b2');
     } else if (type === UploadType.Image) {
       s3 = getS3Client('image');
