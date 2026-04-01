@@ -120,9 +120,19 @@ export async function enhanceComicPrompt(input: {
       return fallback;
     }
 
-    // Strip any @mentions the LLM hallucinated that weren't in the original prompt.
-    // The LLM sometimes invents scenes with characters the user never referenced.
-    // Include apostrophes/hyphens in the name pattern so names like O'Brien match fully.
+    // Re-inject @prefix onto recognized character names so downstream code
+    // can detect which references to attach. The LLM receives names without @
+    // so its output won't have them — we add them back here.
+    // Sort by length descending so "MayaWarrior" matches before "Maya".
+    const sortedNames = [...names].sort((a, b) => b.length - a.length);
+    for (const name of sortedNames) {
+      // Match the name as a whole word (not already prefixed with @)
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`(?<!@)\\b${escaped}\\b`, 'gi');
+      enhanced = enhanced.replace(pattern, `@${name}`);
+    }
+
+    // Strip any @mentions the LLM hallucinated that don't match a known character
     const originalMentions = new Set(names.map((n) => n.toLowerCase()));
     enhanced = enhanced.replace(/@([\w\p{L}'-]+)/gu, (match, name) => {
       if (originalMentions.has(name.toLowerCase())) return match;
