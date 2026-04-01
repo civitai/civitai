@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Badge,
-  Button,
   Group,
   HoverCard,
   Pagination,
@@ -19,7 +18,6 @@ import {
   IconLoader,
   IconPlus,
   IconRefresh,
-  IconSearch,
   IconWallet,
   IconWifiOff,
 } from '@tabler/icons-react';
@@ -232,7 +230,7 @@ export function DepositHistory() {
           <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
         </Group>
       )}
-      <CheckDepositsButton
+      <CheckDepositsNotice
         onSuccess={() => utils.nowPayments.getDepositHistory.invalidate()}
       />
     </Paper>
@@ -266,7 +264,7 @@ function EmptyDepositState({
             </Text>
           </Group>
         </Paper>
-        <CheckDepositsButton onSuccess={onRefresh} />
+        <CheckDepositsNotice onSuccess={onRefresh} />
       </Stack>
     </Paper>
   );
@@ -398,38 +396,46 @@ function BonusBuzzPopover({
   );
 }
 
-function CheckDepositsButton({ onSuccess }: { onSuccess: () => void }) {
+function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
   const reconcileMutation = trpc.nowPayments.reconcileMyDeposits.useMutation({
     onSuccess: (data) => {
       if (data.processed > 0) onSuccess();
     },
   });
 
+  const linkText = reconcileMutation.isLoading
+    ? 'Checking...'
+    : reconcileMutation.isSuccess
+    ? reconcileMutation.data.processed > 0
+      ? `Found ${reconcileMutation.data.processed} deposit(s)!`
+      : 'No missing deposits found'
+    : reconcileMutation.isError
+    ? 'Try again in a minute'
+    : 'Missing a deposit? Check now';
+
   return (
-    <Stack gap={4} mt="sm">
-      <Button
-        variant="subtle"
-        size="compact-sm"
-        color="gray"
-        leftSection={<IconSearch size={14} />}
-        onClick={() => reconcileMutation.mutate()}
-        loading={reconcileMutation.isLoading}
-        disabled={reconcileMutation.isLoading}
-      >
-        {reconcileMutation.isLoading
-          ? 'Checking...'
-          : reconcileMutation.isSuccess
-          ? reconcileMutation.data.processed > 0
-            ? `Found ${reconcileMutation.data.processed} deposit(s)`
-            : 'No missing deposits found'
-          : reconcileMutation.isError
-          ? 'Try again in a minute'
-          : 'Missing a deposit? Check now'}
-      </Button>
-      <Text size="xs" c="dimmed" ta="center">
-        Deposits can take up to 1 hour to appear depending on network congestion.
+    <Group gap="xs" mt="sm" wrap="nowrap" align="center">
+      <IconClock size={14} className="text-yellow-500" style={{ flexShrink: 0 }} />
+      <Text size="xs" c="dimmed" lh={1.4}>
+        Deposits can take up to 1 hour to appear depending on network congestion.{' '}
+        <UnstyledButton
+          onClick={() => !reconcileMutation.isLoading && reconcileMutation.mutate()}
+          disabled={reconcileMutation.isLoading}
+          style={{ display: 'inline' }}
+        >
+          <Text
+            span
+            size="xs"
+            c={reconcileMutation.isSuccess && reconcileMutation.data.processed > 0 ? 'green' : 'dimmed'}
+            td="underline"
+            className="cursor-pointer"
+          >
+            {reconcileMutation.isLoading && <IconLoader size={10} className="inline mr-1 animate-spin" />}
+            {linkText}
+          </Text>
+        </UnstyledButton>
       </Text>
-    </Stack>
+    </Group>
   );
 }
 
