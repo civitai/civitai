@@ -153,12 +153,7 @@ function createCounter<TId extends number | string = number | string>({
   }
 
   async function increment({ id, value = 1 }: { id: TId; value?: number }) {
-    let count = await getCount(id);
-    if (!count) {
-      const fetched = await fetchCount([id]);
-      count = fetched.get(id) ?? 0;
-      await setCacheValue(id, count);
-    }
+    const count = await getCount(id);
 
     const absValue = Math.abs(value); // Make sure we are using positive number
     if (ordered) await sysRedis.zIncrBy(key, absValue, id.toString());
@@ -168,12 +163,7 @@ function createCounter<TId extends number | string = number | string>({
   }
 
   async function decrement({ id, value = 1 }: { id: TId; value?: number }) {
-    let count = await getCount(id);
-    if (!count) {
-      const fetched = await fetchCount([id]);
-      count = fetched.get(id) ?? 0;
-      await setCacheValue(id, count);
-    }
+    const count = await getCount(id);
 
     const absValue = Math.abs(value); // Make sure we are using positive number
     const newValue = Math.max(0, count - absValue); // Ensure we don't go below 0
@@ -417,7 +407,7 @@ export const blessedBuzzCounter = createCounter({
 
     const data = await clickhouse.$query<{ userId: number; totalExp: number }>`
       SELECT userId, SUM(${caseExpression}) as totalExp
-      FROM knights_new_order_image_rating
+      FROM knights_new_order_image_rating FINAL
       WHERE userId IN (${validUserIds.join(',')})
         AND createdAt BETWEEN ${startDate} AND ${endDate}
         AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
@@ -481,7 +471,7 @@ export const pendingBuzzCounter = createCounter({
 
     const data = await clickhouse.$query<{ userId: number; totalExp: number }>`
       SELECT userId, SUM(${caseExpression}) as totalExp
-      FROM knights_new_order_image_rating
+      FROM knights_new_order_image_rating FINAL
       WHERE userId IN (${validUserIds.join(',')})
         AND createdAt BETWEEN ${startDate} AND ${endDate}
         AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
