@@ -20,11 +20,11 @@ const {
   return {
     mockDbRead: {
       cryptoWallet: { findUnique: vi.fn(), findMany: vi.fn().mockResolvedValue([]) },
-      cryptoDeposit: { findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
+      cryptoDeposit: { findUnique: vi.fn().mockResolvedValue(null), findMany: vi.fn().mockResolvedValue([]), count: vi.fn().mockResolvedValue(0) },
     },
     mockDbWrite: {
       cryptoWallet: mockCryptoWallet,
-      cryptoDeposit: { upsert: vi.fn().mockResolvedValue({}) },
+      cryptoDeposit: { upsert: vi.fn().mockResolvedValue({}), update: vi.fn().mockResolvedValue({}) },
     },
     mockNowpaymentsCaller: {
       createPayment: vi.fn(),
@@ -326,6 +326,54 @@ describe('processDeposit', () => {
       })
     );
   });
+
+  it('upserts buzz_failed status when grantBuzzPurchase throws', async () => {
+    mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('Buzz API down'));
+    const event = makeWebhookEvent({ outcome_amount: 5.0 });
+    const result = await processDeposit(12345, 'finished', event);
+
+    // Should not throw — error is caught internally
+    expect(result.buzzAmount).toBe(5000);
+    expect(result.transactionId).toBeUndefined();
+    expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          status: 'buzz_failed',
+          buzzCredited: null,
+        }),
+      })
+    );
+  });
+
+  it('treats 409 conflict as success (already granted by another path)', async () => {
+    mockGrantBuzzPurchase.mockRejectedValueOnce(
+      new Error('There is a conflict with the transaction')
+    );
+    const event = makeWebhookEvent({ outcome_amount: 5.0 });
+    const result = await processDeposit(12345, 'finished', event);
+
+    expect(result.transactionId).toBe('already_granted');
+    expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          status: 'finished',
+        }),
+      })
+    );
+  });
+
+  it('does not overwrite finished status with confirming', async () => {
+    // wallet lookup returns chain, cryptoDeposit status check returns finished
+    mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished' });
+
+    const event = makeWebhookEvent({ payment_status: 'confirming' });
+    await processDeposit(12345, 'confirming', event);
+
+    // The update object should NOT contain status (existing is terminal, new is non-terminal)
+    const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+    expect(upsertCall?.update).not.toHaveProperty('status');
+  });
 });
 
 // ─── getDepositAddress ───────────────────────────────────────────────────────
@@ -604,8 +652,8 @@ describe('reconcileDeposits', () => {
   });
 
   it('paginates through multiple pages', async () => {
-    // First page: 100 items (full page → triggers next page fetch)
-    const page1 = Array.from({ length: 100 }, (_, i) =>
+    // First page: 500 items (full page → triggers next page fetch)
+    const page1 = Array.from({ length: 500 }, (_, i) =>
       makePayment({ payment_id: 1000 + i, outcome_amount: 1.0 })
     );
     // Second page: 2 items (< PAGE_SIZE → last page)
@@ -621,8 +669,8 @@ describe('reconcileDeposits', () => {
     const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
 
     expect(mockNowpaymentsCaller.getListPayments).toHaveBeenCalledTimes(2);
-    expect(result.totalPayments).toBe(102);
-    expect(result.newlyProcessed).toBe(102);
+    expect(result.totalPayments).toBe(502);
+    expect(result.newlyProcessed).toBe(502);
   });
 
   it('returns empty results when no payments found', async () => {
@@ -636,15 +684,15 @@ describe('reconcileDeposits', () => {
     expect(result.details).toEqual([]);
   });
 
-  it('handles null response from NP API gracefully', async () => {
+  it('throws on null response from NP API', async () => {
     mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce(null);
 
-    const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
-
-    expect(result.totalPayments).toBe(0);
+    await expect(
+      reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' })
+    ).rejects.toThrow('NP API returned error');
   });
 
-  it('records failed deposits without stopping the batch', async () => {
+  it('processes deposits with buzz_failed status when grantBuzzPurchase throws', async () => {
     mockNowpaymentsCaller.getListPayments.mockResolvedValueOnce({
       data: [
         makePayment({ payment_id: 666, outcome_amount: 5.0 }),
@@ -652,19 +700,24 @@ describe('reconcileDeposits', () => {
       ],
     });
     // First call (payment 666) will fail at grantBuzzPurchase
+    // processDeposit now catches this internally and upserts as buzz_failed
     mockGrantBuzzPurchase
       .mockRejectedValueOnce(new Error('Buzz API error'))
       .mockResolvedValueOnce('tx_ok');
 
     const result = await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-31' });
 
-    expect(result.failed).toBe(1);
-    expect(result.newlyProcessed).toBe(1);
-    expect(result.details).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ paymentId: 666, action: 'failed' }),
-        expect.objectContaining({ paymentId: 667, action: 'processed' }),
-      ])
+    // Both are "processed" at the reconciliation level — buzz_failed is handled inside processDeposit
+    expect(result.newlyProcessed).toBe(2);
+    expect(result.failed).toBe(0);
+    // The first deposit should have been upserted with buzz_failed status in CryptoDeposit
+    expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          paymentId: BigInt(666),
+          status: 'buzz_failed',
+        }),
+      })
     );
   });
 
@@ -699,8 +752,8 @@ describe('reconcileDeposits', () => {
     await reconcileDeposits({ dateFrom: '2026-03-01', dateTo: '2026-03-23' });
 
     expect(mockNowpaymentsCaller.getListPayments).toHaveBeenCalledWith({
-      limit: 100,
-      page: 1,
+      limit: 500,
+      page: 0,
       dateFrom: '2026-03-01',
       dateTo: '2026-03-23',
       sortBy: 'created_at',
