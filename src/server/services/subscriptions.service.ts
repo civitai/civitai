@@ -869,6 +869,10 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
         WHERE "CustomerSubscription"."id" = updates."id"
       `;
     }
+
+    // Grant monthly cosmetics/badges for users who got tokens unlocked
+    const userIds = updates.map((u) => u.userId);
+    await deliverMonthlyCosmetics({ userIds });
   }
 
   return {

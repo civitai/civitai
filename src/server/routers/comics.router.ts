@@ -3553,7 +3553,7 @@ export const comicsRouter = router({
           description: `Early access: ${chapter.project.name} - ${chapter.name}`,
           details: { comicChapterId: chapter.id, earlyAccessPurchase: true },
           externalTransactionIdPrefix,
-          fromAccountTypes: ['yellow'],
+          fromAccountTypes: getAllowedAccountTypes(ctx.features),
         });
 
         if (data?.transactionCount === 0) {
