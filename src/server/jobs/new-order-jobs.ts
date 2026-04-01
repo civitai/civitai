@@ -1,3 +1,4 @@
+import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -494,7 +495,7 @@ const newOrderChangeRateTarget = createJob(
 
 // Periodic abuse detection: identify users with suspicious rating patterns
 // Runs every 6 hours, logs to Axiom for monitoring
-const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 */6 * * *', async () => {
+const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * *', async () => {
   if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
 
@@ -535,25 +536,53 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 */6 * *
 
   if (suspects.length > 0) {
     log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
-    await logToAxiom(
-      {
-        type: 'warning',
-        name: 'new-order-abuse-detection-scan',
-        details: {
-          suspectCount: suspects.length,
-          suspects: suspects.map((s) => ({
-            userId: s.userId,
-            totalRatings: s.totalRatings,
-            uniqueRatings: s.uniqueRatings,
-            dominantRating: s.dominantRating,
-            dominantPct: Math.round(s.dominantPct),
-            avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
-          })),
-        },
-        message: `Abuse detection scan found ${suspects.length} suspicious users in the last 48 hours`,
+    await logToAxiom({
+      type: 'warning',
+      name: 'new-order-abuse-detection-scan',
+      details: {
+        suspectCount: suspects.length,
+        suspects: suspects.map((s) => ({
+          userId: s.userId,
+          totalRatings: s.totalRatings,
+          uniqueRatings: s.uniqueRatings,
+          dominantRating: s.dominantRating,
+          dominantPct: Math.round(s.dominantPct),
+          avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
+        })),
       },
-      'new-order'
-    ).catch(() => null);
+      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 48 hours`,
+    }).catch(() => null);
+
+    // Alert moderators via Discord webhook
+    if (env.DISCORD_WEBHOOK_MOD_ALERTS) {
+      const suspectLines = suspects
+        .slice(0, 10) // Cap at 10 to keep the embed manageable
+        .map(
+          (s) =>
+            `• **User ${s.userId}** — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
+            `${Math.round(s.dominantPct)}% same value, ${(
+              Math.round(s.avgPerMinute * 10) / 10
+            ).toFixed(1)}/min`
+        )
+        .join('\n');
+
+      await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          embeds: [
+            {
+              title: `⚠️ KoN Abuse Detection — ${suspects.length} suspect(s)`,
+              description:
+                suspectLines +
+                (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),
+              color: 0xff9800,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        }),
+      }).catch(() => null);
+    }
   } else {
     log('AbuseDetection :: No suspicious users found');
   }

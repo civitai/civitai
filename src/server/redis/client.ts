@@ -722,6 +722,7 @@ export const REDIS_SYS_KEYS = {
       POOL: 'new-order:sanity-checks',
       FAILURES: 'new-order:sanity-failures',
     },
+    CONFIG: 'new-order:config',
     PROCESSING: {
       LAST_PROCESSED_AT: 'new-order:processing:last-processed-at',
       BATCH_CUTOFF: 'new-order:processing:batch-cutoff',
@@ -858,6 +859,7 @@ export const REDIS_KEYS = {
       RATE_LIMIT: {
         MINUTE: 'new-order:rate-limit:minute',
         HOUR: 'new-order:rate-limit:hour',
+        DAY: 'new-order:rate-limit:day',
       },
     },
     TOP_EARNERS: 'packed:caches:top-earners',
