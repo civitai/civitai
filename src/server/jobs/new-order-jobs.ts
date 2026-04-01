@@ -1,3 +1,4 @@
+import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -17,7 +18,7 @@ import {
   setActiveSlot,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import {
   calculateFervor,
@@ -26,6 +27,7 @@ import {
   processFinalRatings,
 } from '~/server/services/games/new-order.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
@@ -491,6 +493,101 @@ const newOrderChangeRateTarget = createJob(
   }
 );
 
+// Periodic abuse detection: identify users with suspicious rating patterns
+// Runs every 6 hours, logs to Axiom for monitoring
+const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * *', async () => {
+  if (!clickhouse) return;
+  log('AbuseDetection :: Scanning for suspicious rating patterns');
+
+  const suspects = await clickhouse.$query<{
+    userId: number;
+    totalRatings: number;
+    uniqueRatings: number;
+    dominantRating: number;
+    dominantPct: number;
+    avgPerMinute: number;
+  }>`
+      WITH user_dominant AS (
+        SELECT
+          userId,
+          topK(1)(rating)[1] as dominantRating
+        FROM knights_new_order_image_rating
+        WHERE createdAt >= now() - INTERVAL 48 HOUR
+          AND rank != 'Acolyte'
+        GROUP BY userId
+      )
+      SELECT
+        r.userId,
+        count() as totalRatings,
+        uniq(r.rating) as uniqueRatings,
+        d.dominantRating,
+        countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
+        count() / greatest(dateDiff('minute', min(r.createdAt), max(r.createdAt)), 1) as avgPerMinute
+      FROM knights_new_order_image_rating r
+      JOIN user_dominant d ON r.userId = d.userId
+      WHERE r.createdAt >= now() - INTERVAL 48 HOUR
+        AND r.rank != 'Acolyte'
+      GROUP BY r.userId, d.dominantRating
+      HAVING totalRatings >= 200
+        AND (uniqueRatings = 1 OR dominantPct >= 90 OR avgPerMinute > 15)
+      ORDER BY totalRatings DESC
+      LIMIT 50
+    `;
+
+  if (suspects.length > 0) {
+    log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
+    await logToAxiom({
+      type: 'warning',
+      name: 'new-order-abuse-detection-scan',
+      details: {
+        suspectCount: suspects.length,
+        suspects: suspects.map((s) => ({
+          userId: s.userId,
+          totalRatings: s.totalRatings,
+          uniqueRatings: s.uniqueRatings,
+          dominantRating: s.dominantRating,
+          dominantPct: Math.round(s.dominantPct),
+          avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
+        })),
+      },
+      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 48 hours`,
+    }).catch(() => null);
+
+    // Alert moderators via Discord webhook
+    if (env.DISCORD_WEBHOOK_MOD_ALERTS) {
+      const suspectLines = suspects
+        .slice(0, 10) // Cap at 10 to keep the embed manageable
+        .map(
+          (s) =>
+            `• **User ${s.userId}** — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
+            `${Math.round(s.dominantPct)}% same value, ${(
+              Math.round(s.avgPerMinute * 10) / 10
+            ).toFixed(1)}/min`
+        )
+        .join('\n');
+
+      await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          embeds: [
+            {
+              title: `⚠️ KoN Abuse Detection — ${suspects.length} suspect(s)`,
+              description:
+                suspectLines +
+                (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),
+              color: 0xff9800,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        }),
+      }).catch(() => null);
+    }
+  } else {
+    log('AbuseDetection :: No suspicious users found');
+  }
+});
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
@@ -498,4 +595,5 @@ export const newOrderJobs = [
   // newOrderCleanupQueues,
   newOrderChangeFillTarget,
   newOrderChangeRateTarget,
+  newOrderAbuseDetection,
 ];
