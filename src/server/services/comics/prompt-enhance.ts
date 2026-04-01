@@ -63,11 +63,11 @@ export async function enhanceComicPrompt(input: {
   const mentionedSet = new Set(mentionedIds);
   const names = allRefs.filter((r) => mentionedSet.has(r.id)).map((r) => r.name);
 
-  // Fallback: just return the resolved prompt (no trained words for NanoBanana path)
+  // Fallback: return the original prompt (preserving @mentions) with trained words prepended
   const fallback =
     trainedWords && trainedWords.length > 0
-      ? `${trainedWords.join(', ')}, ${resolvedPrompt}`
-      : resolvedPrompt;
+      ? `${trainedWords.join(', ')}, ${userPrompt}`
+      : userPrompt;
 
   try {
     const textParts = [
@@ -120,10 +120,25 @@ export async function enhanceComicPrompt(input: {
       return fallback;
     }
 
-    // Strip any @mentions the LLM hallucinated that weren't in the original prompt.
-    // The LLM sometimes invents scenes with characters the user never referenced.
+    // Re-inject @prefix onto recognized character names so downstream code
+    // can detect which references to attach. The LLM receives names without @
+    // so its output won't have them — we add them back here.
+    // Sort by length descending so "MayaWarrior" matches before "Maya".
+    // Use Unicode-safe boundaries (lookaround for non-word chars) instead of \b
+    // which fails on non-ASCII names.
+    const sortedNames = [...names].sort((a, b) => b.length - a.length);
+    for (const name of sortedNames) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(
+        `(?<!@)(?<=^|[\\s.,!?;:'"\\)\\]])${escaped}(?=$|[\\s.,!?;:'"\\)\\]])`,
+        'giu'
+      );
+      enhanced = enhanced.replace(pattern, `@${name}`);
+    }
+
+    // Strip any @mentions the LLM hallucinated that don't match a known character
     const originalMentions = new Set(names.map((n) => n.toLowerCase()));
-    enhanced = enhanced.replace(/@([\w\p{L}]+)/gu, (match, name) => {
+    enhanced = enhanced.replace(/@([\w\p{L}'-]+)/gu, (match, name) => {
       if (originalMentions.has(name.toLowerCase())) return match;
       return name; // Strip the @ prefix, keep the word
     });

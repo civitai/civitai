@@ -46,9 +46,9 @@ export function LayoutPicker({ value, onChange, layouts = LAYOUT_OPTIONS }: Layo
                 <UnstyledButton
                   onClick={() => onChange(selected ? null : layout)}
                   className={clsx(
-                    'flex flex-col items-center rounded-md border p-1.5 transition-colors w-full',
+                    'flex flex-col items-center rounded-md border-2 p-1.5 transition-colors w-full',
                     selected
-                      ? 'border-blue-500 bg-blue-500/10'
+                      ? 'border-blue-500 bg-blue-500/20 ring-1 ring-blue-500/40'
                       : 'border-gray-600 hover:border-gray-400 bg-transparent'
                   )}
                 >
