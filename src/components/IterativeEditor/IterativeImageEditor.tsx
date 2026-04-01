@@ -971,7 +971,7 @@ export function IterativeImageEditor({
           {currentSourcePreviewUrl ? (
             <div
               className={styles.currentSourcePreview}
-              style={{ cursor: 'pointer' }}
+              style={{ cursor: 'pointer', position: 'relative' }}
               onClick={() =>
                 setLightboxUrl(
                   currentSource
@@ -983,6 +983,21 @@ export function IterativeImageEditor({
               tabIndex={0}
             >
               <img src={currentSourcePreviewUrl} alt="Current source" />
+              {isGenerating && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'rgba(0,0,0,0.5)',
+                    borderRadius: 'var(--mantine-radius-sm)',
+                  }}
+                >
+                  <Loader size="sm" color="white" />
+                </div>
+              )}
             </div>
           ) : (
             <div className={styles.noSourcePlaceholder}>

@@ -183,4 +183,5 @@ export const resolveAppealSchema = z.object({
   status: z.enum(AppealStatus),
   resolvedMessage: z.string().trim().max(MAX_APPEAL_MESSAGE_LENGTH).optional(),
   internalNotes: z.string().trim().optional(),
+  refundBuzz: z.boolean().optional(),
 });

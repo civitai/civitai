@@ -153,11 +153,11 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 ) : redirectToPrepaidPage ? (
                   <Button
                     component={Link}
-                    href="/gift-cards?type=memberships"
+                    href="/purchase/buzz"
                     radius="xl"
                     {...btnProps}
                   >
-                    Get Prepaid {capitalize(meta?.tier)}
+                    Purchase Buzz
                   </Button>
                 ) : isDowngrade ? (
                   <Button

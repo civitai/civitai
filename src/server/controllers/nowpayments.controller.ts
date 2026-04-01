@@ -11,6 +11,7 @@ import {
   getDepositHistory,
   getMinAmount,
   getSupportedCurrencies,
+  reconcileUserDeposits,
 } from '~/server/services/nowpayments.service';
 
 export const getDepositAddressHandler = async ({
@@ -47,5 +48,13 @@ export const getBuzzConversionRateHandler = async ({
   input: GetBuzzConversionRateInput;
 }) => {
   return getBuzzConversionRate(input.fiat);
+};
+
+export const reconcileUserDepositsHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  return reconcileUserDeposits(ctx.user.id);
 };
 

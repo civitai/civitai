@@ -44,7 +44,7 @@ type UserModActivity = {
 
 type ComicProjectModActivity = {
   entityType: 'comicProject';
-  activity: 'tosViolation' | 'unpublishChapter';
+  activity: 'tosViolation' | 'unpublishChapter' | 'setNsfwLevel';
 };
 
 type ModActivity = {

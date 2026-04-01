@@ -20,6 +20,7 @@ export default function SetBrowsingLevelModal({
   imageId,
   nsfwLevel,
   hideLevelSelect = false,
+  skipImageUpdate = false,
   onSubmit,
 }: SetBrowsingLevelModalProps) {
   const currentUser = useCurrentUser();
@@ -48,7 +49,8 @@ export default function SetBrowsingLevelModal({
       return;
     }
 
-    if (level !== selectedNsfwLevel) updateImageNsfwLevel.mutate({ id: imageId, nsfwLevel: level });
+    if (level !== selectedNsfwLevel && !skipImageUpdate)
+      updateImageNsfwLevel.mutate({ id: imageId, nsfwLevel: level });
     dialog.onClose();
   };
 
@@ -56,12 +58,14 @@ export default function SetBrowsingLevelModal({
     if (!selectedNsfwLevel) return;
 
     onSubmit?.({ level: selectedNsfwLevel, reason });
-    imageStore.setImage(imageId, { nsfwLevel: selectedNsfwLevel });
-    updateImageNsfwLevel.mutate({
-      id: imageId,
-      nsfwLevel: selectedNsfwLevel,
-      reason,
-    });
+    if (!skipImageUpdate) {
+      imageStore.setImage(imageId, { nsfwLevel: selectedNsfwLevel });
+      updateImageNsfwLevel.mutate({
+        id: imageId,
+        nsfwLevel: selectedNsfwLevel,
+        reason,
+      });
+    }
     dialog.onClose();
   };
 
@@ -142,5 +146,7 @@ export interface SetBrowsingLevelModalProps {
   imageId: number;
   nsfwLevel: NsfwLevel;
   hideLevelSelect?: boolean;
+  /** When true, only calls onSubmit without updating the image nsfwLevel via the image mutation. */
+  skipImageUpdate?: boolean;
   onSubmit?: (data: { level: NsfwLevel; reason: string | undefined }) => void;
 }

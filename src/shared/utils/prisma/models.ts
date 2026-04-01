@@ -343,6 +343,7 @@ export interface CryptoDeposit {
   feeCurrency: string | null;
   paidFiat: number | null;
   chain: string | null;
+  retryCount: number;
   createdAt: Date;
   updatedAt: Date;
 }

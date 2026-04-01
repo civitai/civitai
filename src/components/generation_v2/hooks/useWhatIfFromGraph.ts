@@ -37,7 +37,16 @@ import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/Sou
  * Changes to these fields will NOT trigger a new whatIf query.
  * Note: 'prompt' IS included because it affects SFW/NSFW classification and pricing.
  */
-const IGNORED_KEYS_FOR_WHATIF = ['negativePrompt', 'seed'] as const;
+const IGNORED_KEYS_FOR_WHATIF = ['negativePrompt', 'seed', 'denoise'] as const;
+
+/** Strip resource strength values from a snapshot so they don't trigger whatIf re-fetches. */
+function stripResourceStrengths(snapshot: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(snapshot.resources)) return snapshot;
+  return {
+    ...snapshot,
+    resources: snapshot.resources.map((r: Record<string, unknown>) => omit(r, ['strength'])),
+  };
+}
 
 // =============================================================================
 // Helper Functions
@@ -90,12 +99,12 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
 
     // Initialize with current snapshot
     const initialSnapshot = graph.getSnapshot() as Record<string, unknown>;
-    prevSnapshotRef.current = omit(initialSnapshot, keysToOmit);
+    prevSnapshotRef.current = stripResourceStrengths(omit(initialSnapshot, keysToOmit));
     promptRef.current = (initialSnapshot.prompt as string) ?? '';
 
     return graph.subscribe(() => {
       const snapshot = graph.getSnapshot() as Record<string, unknown>;
-      const relevantSnapshot = omit(snapshot, keysToOmit);
+      const relevantSnapshot = stripResourceStrengths(omit(snapshot, keysToOmit));
 
       if (!isEqual(relevantSnapshot, prevSnapshotRef.current)) {
         prevSnapshotRef.current = relevantSnapshot;
@@ -150,7 +159,12 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
 
   const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(queryPayload as any, {
     enabled:
-      enabled && !isNoSubmit && !!currentUser && !!queryPayload && !resourcesLoading && !imagesPending,
+      enabled &&
+      !isNoSubmit &&
+      !!currentUser &&
+      !!queryPayload &&
+      !resourcesLoading &&
+      !imagesPending,
   });
 
   const data = useMemo(

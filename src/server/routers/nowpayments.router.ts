@@ -4,6 +4,7 @@ import {
   getDepositHistoryHandler,
   getMinAmountHandler,
   getSupportedCurrenciesHandler,
+  reconcileUserDepositsHandler,
 } from '~/server/controllers/nowpayments.controller';
 import {
   depositHistoryInputSchema,
@@ -11,7 +12,7 @@ import {
   getBuzzConversionRateInputSchema,
   getMinAmountInputSchema,
 } from '~/server/schema/nowpayments.schema';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { protectedProcedure, router } from '~/server/trpc';
 
@@ -36,4 +37,7 @@ export const nowPaymentsRouter = router({
     .input(getBuzzConversionRateInputSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(getBuzzConversionRateHandler),
+  reconcileMyDeposits: protectedProcedure
+    .use(rateLimit({ limit: 1, period: 60 }))
+    .mutation(reconcileUserDepositsHandler),
 });

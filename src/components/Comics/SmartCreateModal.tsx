@@ -31,6 +31,7 @@ interface SmartCreateModalProps {
   }) => void;
   isCreating: boolean;
   createError: string | null;
+  defaultAspectRatio?: string;
 }
 
 export function SmartCreateModal({
@@ -49,13 +50,14 @@ export function SmartCreateModal({
   onCreateChapter,
   isCreating,
   createError,
+  defaultAspectRatio = '3:4',
 }: SmartCreateModalProps) {
   const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
   const [smartChapterName, setSmartChapterName] = useState('New Chapter');
   const [smartStory, setSmartStory] = useState('');
   const [smartPanelCount, setSmartPanelCount] = useState<number | ''>('');
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
-  const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const [smartAspectRatio, setSmartAspectRatio] = useState(defaultAspectRatio);
   const [selectedLayout, setSelectedLayout] = useState<string | undefined>();
   const [selectedLayoutImagePath, setSelectedLayoutImagePath] = useState<string | undefined>();
   const scrollViewportRef = useRef<HTMLDivElement>(null);
@@ -158,13 +160,13 @@ export function SmartCreateModal({
 
           <NumberInput
             label="Number of panels"
-            description="Leave empty to let AI decide based on story complexity"
+            description="Max 20 panels per chapter. Leave empty to let AI decide."
             placeholder="Auto (4-12)"
             value={smartPanelCount}
             onChange={(val) => setSmartPanelCount(val === '' ? '' : Number(val))}
             min={2}
             max={20}
-            clampBehavior="strict"
+            clampBehavior="blur"
           />
 
           <LayoutPicker

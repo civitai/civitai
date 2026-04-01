@@ -36,6 +36,7 @@ const showAllQueuesSchema = z.object({
 });
 const removeFromQueueSchema = z.object({
   action: z.literal('remove-from-queue'),
+  imageIds: commaDelimitedNumberArray().optional(),
   limit: z.coerce.number().default(1000),
   rankType: z.enum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const),
 });
@@ -141,9 +142,23 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   }
 
   if (action === 'remove-from-queue') {
-    const { rankType, limit } = payload;
+    const { rankType, limit, imageIds } = payload;
 
-    // Fetch current image IDs from both slots
+    // If specific imageIds provided, remove them directly
+    if (imageIds && imageIds.length > 0) {
+      await Promise.all([
+        ...poolCounters[rankType as NewOrderRankType].a.map((pool) => pool.reset({ id: imageIds })),
+        ...poolCounters[rankType as NewOrderRankType].b.map((pool) => pool.reset({ id: imageIds })),
+      ]);
+
+      return res.status(200).json({
+        message: `Removed ${imageIds.length} image(s) from ${rankType} queue`,
+        removedCount: imageIds.length,
+        imageIds,
+      });
+    }
+
+    // Otherwise, scan and remove non-existing/blocked images
     const slotAImageIds = (
       await Promise.all(
         poolCounters[rankType as NewOrderRankType].a.map((pool) => pool.getAll({ limit }))
@@ -166,7 +181,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     let removedCount = 0;
 
     for (const chunk of chunks) {
-      // Check against the database to find non-existing image IDs
       const existingImages = await dbRead.image.findMany({
         where: { id: { in: chunk } },
         select: { id: true, nsfwLevel: true },
@@ -184,7 +198,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
       removedCount += imageIdsToRemove.length;
 
-      // Remove from both slots
       await Promise.all([
         ...poolCounters[rankType as NewOrderRankType].a.map((pool) =>
           pool.reset({ id: imageIdsToRemove })

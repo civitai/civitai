@@ -23,7 +23,7 @@ export function CryptoDepositTab() {
   }
 
   return (
-    <Stack gap="lg" mt="md">
+    <Stack gap="lg">
       <DepositAddressCard chain={selectedChain} onCurrencySelect={handleCurrencySelect} />
       <OnrampGuidance />
       <DepositHistory />

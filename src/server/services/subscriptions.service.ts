@@ -447,8 +447,9 @@ export const claimPrepaidToken = async ({
 
     const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
-    const externalTransactionId = `prepaid-token-claim:${tokenId}`;
     const now = new Date().toISOString();
+    const dateKey = now.split('T')[0];
+    const externalTransactionId = `prepaid-token-claim:${userId}:${tokenId}:${dateKey}`;
 
     tokens[tokenIndex] = {
       ...token,
@@ -548,6 +549,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
     const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
     const now = new Date().toISOString();
+    const dateKey = now.split('T')[0];
 
     const updatedTokens = tokens.map((t) => {
       if (t.status === 'unlocked') {
@@ -555,7 +557,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
           ...t,
           status: 'claimed' as const,
           claimedAt: now,
-          buzzTransactionId: `prepaid-token-claim:${t.id}`,
+          buzzTransactionId: `prepaid-token-claim:${userId}:${t.id}:${dateKey}`,
         };
       }
       return t;
@@ -571,7 +573,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       for (const t of legacyClaimed) {
         const tierKey = t.tier as keyof typeof updatedPrepaids;
         updatedPrepaids[tierKey] = Math.max(0, (updatedPrepaids[tierKey] ?? 0) - 1);
-        newTxIds.push(`prepaid-token-claim:${t.id}`);
+        newTxIds.push(`prepaid-token-claim:${userId}:${t.id}:${dateKey}`);
       }
       updatedMeta.prepaids = updatedPrepaids;
       updatedMeta.buzzTransactionIds = newTxIds;
@@ -590,6 +592,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       claimed: unlockedTokens.length,
       totalBuzz,
       buzzType: buzzType as BuzzAccountType,
+      dateKey,
       unlockedTokens,
     };
   });
@@ -600,7 +603,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
     toAccountId: userId,
     toAccountType: result.buzzType,
     type: TransactionType.Purchase,
-    externalTransactionId: `prepaid-token-claim:${token.id}`,
+    externalTransactionId: `prepaid-token-claim:${userId}:${token.id}:${result.dateKey}`,
     amount: token.buzzAmount,
     description: `Claimed prepaid ${token.tier} token`,
     details: {
@@ -866,6 +869,10 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
         WHERE "CustomerSubscription"."id" = updates."id"
       `;
     }
+
+    // Grant monthly cosmetics/badges for users who got tokens unlocked
+    const userIds = updates.map((u) => u.userId);
+    await deliverMonthlyCosmetics({ userIds });
   }
 
   return {

@@ -169,11 +169,6 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                         judgeInfo={contextProps.judgeInfo}
                       />
                     )}
-                    {isModerator && image.minor && (
-                      <Badge variant="filled" radius="xl" h={26} color="pink.3">
-                        Minor
-                      </Badge>
-                    )}
                     {isModerator && image.poi && (
                       <Badge variant="filled" radius="xl" h={26} color="pink.3">
                         POI

@@ -73,13 +73,13 @@ const PurchaseOptionsCard = () => {
             </Button>
             <Button
               component="a"
-              href="/gift-cards"
+              href="/purchase/buzz"
               variant="outline"
               color="gray"
               size="sm"
               leftSection={<IconGift size={16} />}
             >
-              Purchase Codes
+              Purchase Buzz
             </Button>
           </Group>
         </div>

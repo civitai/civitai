@@ -426,6 +426,7 @@ export enum ModReviewType {
   NewUsers = 'newUser',
   Appeals = 'appeal',
   RuleViolations = 'modRule',
+  RemixSource = 'remixSource',
 }
 
 export enum MarketplacePaymentMethod {

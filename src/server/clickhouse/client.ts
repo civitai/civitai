@@ -577,6 +577,7 @@ export class Tracker {
     prompt: string;
     negativePrompt: string;
     source?: ProhibitedSources;
+    remixOfId?: number;
   }) {
     return this.track('prohibitedRequests', values);
   }
