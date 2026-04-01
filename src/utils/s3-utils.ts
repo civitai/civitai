@@ -78,6 +78,8 @@ export async function getImageUploadBackend(userId?: number): Promise<{
   bucket: string;
   backend: ImageUploadBackend;
 }> {
+  // Server-side paths (orchestrator, comics) pass no userId and default to DO Spaces.
+  // This is intentional for Phase 1 — migrate user-facing uploads first, then flip server-side.
   const useB2 =
     env.S3_IMAGE_B2_ACCESS_KEY &&
     (userId
