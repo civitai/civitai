@@ -33,7 +33,10 @@ export async function resolveMediaLocation(
   try {
     const res = await fetch(`${STORAGE_RESOLVER_URL}/resolve-media`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(STORAGE_RESOLVER_TOKEN && { Authorization: `Bearer ${STORAGE_RESOLVER_TOKEN}` }),
+      },
       body: JSON.stringify({ uuid }),
     });
     if (!res.ok) return null;
