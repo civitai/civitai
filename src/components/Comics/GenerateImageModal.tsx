@@ -137,8 +137,22 @@ export function GenerateImageModal({
   // Fallback polling in case signal is missed
   useEffect(() => {
     if (!isGenerating || !activeWorkflowId.current) return;
-    const timer = setInterval(() => void doPollOnce(), 10_000);
-    return () => clearInterval(timer);
+    const pollTimer = setInterval(() => void doPollOnce(), 10_000);
+    // Auto-timeout after 90s — gives the user a clear failure instead of infinite spinner
+    const timeoutTimer = setTimeout(() => {
+      if (activeWorkflowId.current) {
+        activeWorkflowId.current = null;
+        setIsGenerating(false);
+        showErrorNotification({
+          title: 'Generation timed out',
+          error: new Error('The image took too long to generate. Please try again.'),
+        });
+      }
+    }, 90_000);
+    return () => {
+      clearInterval(pollTimer);
+      clearTimeout(timeoutTimer);
+    };
   }, [isGenerating, doPollOnce]);
 
   const handleGenerate = async () => {
@@ -316,6 +330,9 @@ export function GenerateImageModal({
               <Text size="sm" c="dimmed">
                 Generating {quantity} image{quantity > 1 ? 's' : ''}...
               </Text>
+              <Button variant="subtle" color="gray" size="compact-xs" onClick={handleReset}>
+                Cancel
+              </Button>
             </Stack>
           </div>
         )}

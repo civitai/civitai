@@ -4,6 +4,7 @@ import produce from 'immer';
 import Router from 'next/router';
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { auditPrompt } from '~/utils/metadata/audit';
 import { SignalMessages } from '~/server/common/enums';
 import type { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
@@ -208,6 +209,9 @@ export const useOrchestratorUpdateSignal = () => {
             .map((t) => t[0]);
 
           tags = [...prependList, ...tags, ...appendList];
+
+          // Filter out tags that individually trigger the safety filter
+          tags = tags.filter((tag) => auditPrompt(tag).success);
 
           updateImage(modelId, mediaType, {
             matcher: k,
