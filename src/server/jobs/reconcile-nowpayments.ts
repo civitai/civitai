@@ -16,14 +16,15 @@ export const reconcileNowpaymentsJob = createJob(
     );
 
     const now = dayjs.utc();
-    const dateFrom = dayjs(lastRun).subtract(2, 'minute').format('YYYY-MM-DDTHH:mm:ss'); // 2min overlap for safety
-    const dateTo = now.subtract(1, 'minute').format('YYYY-MM-DDTHH:mm:ss'); // Exclude present to avoid webhook race
+    const dateFrom = dayjs.utc(lastRun).subtract(2, 'minute').toISOString(); // 2min overlap for safety
+    const dateTo = now.subtract(1, 'minute').toISOString(); // Exclude present to avoid webhook race
 
     let results;
     try {
       results = await reconcileDeposits({ dateFrom, dateTo });
 
-      // Always advance the cursor — failures are captured as buzz_failed in CryptoDeposit
+      // Advance cursor — per-payment buzz failures are persisted as buzz_failed
+      // and retried in Phase 2. Only NP API-level errors block cursor advancement.
       await setLastRun(now.subtract(1, 'minute').toDate());
     } catch (e) {
       // NP API error (e.g., pagination failure) — do NOT advance cursor
@@ -35,7 +36,6 @@ export const reconcileNowpaymentsJob = createJob(
         dateTo,
         error: e instanceof Error ? e.message : String(e),
       });
-      // Still run Phase 2 (retry sweep) even if Phase 1 fails
       results = null;
     }
 
@@ -56,7 +56,17 @@ export const reconcileNowpaymentsJob = createJob(
     }
 
     // Phase 2: Retry sweep for buzz_failed deposits (no window, runs every time)
-    const retryResults = await retryFailedDeposits();
+    let retryResults = { retried: 0, succeeded: 0, failed: 0, exhausted: 0 };
+    try {
+      retryResults = await retryFailedDeposits();
+    } catch (e) {
+      await logToAxiom({
+        name: 'reconcile-nowpayments-job',
+        type: 'error',
+        message: `Retry sweep error`,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
 
     if (retryResults.retried > 0) {
       logToAxiom({

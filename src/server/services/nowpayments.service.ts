@@ -213,29 +213,36 @@ export const processDeposit = async (
   // Upsert the CryptoDeposit record on every webhook status
   if (event.payment_id) {
     try {
+      // Fetch existing record for status ordering and data preservation
+      const existing = await dbRead.cryptoDeposit.findUnique({
+        where: { paymentId: BigInt(event.payment_id) },
+        select: { status: true, buzzCredited: true, bonusBuzz: true, multiplier: true,
+                  depositFee: true, serviceFee: true, feeCurrency: true, paidFiat: true },
+      });
+
       const depositData = {
         payCurrency: event.pay_currency ?? 'unknown',
         payAmount: event.actually_paid ?? null,
         outcomeAmount: event.outcome_amount ?? null,
-        buzzCredited: buzzAmount > 0 && !buzzGrantFailed ? buzzAmount : null,
-        bonusBuzz: !buzzGrantFailed ? bonusBuzz : null,
-        multiplier: !buzzGrantFailed ? multiplierInt : null,
-        depositFee: event.fee ? parseFloat(event.fee.depositFee) : null,
-        serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : null,
-        feeCurrency: event.fee?.currency ?? null,
-        paidFiat: event.actually_paid_at_fiat ?? null,
+        buzzCredited: buzzAmount > 0 && !buzzGrantFailed ? buzzAmount : (existing?.buzzCredited ?? null),
+        bonusBuzz: !buzzGrantFailed ? bonusBuzz : (existing?.bonusBuzz ?? null),
+        multiplier: !buzzGrantFailed ? multiplierInt : (existing?.multiplier ?? null),
+        depositFee: event.fee ? parseFloat(event.fee.depositFee) : (existing?.depositFee ?? null),
+        serviceFee: event.fee ? parseFloat(event.fee.serviceFee) : (existing?.serviceFee ?? null),
+        feeCurrency: event.fee?.currency ?? (existing?.feeCurrency ?? null),
+        paidFiat: event.actually_paid_at_fiat ?? (existing?.paidFiat ?? null),
         chain,
       };
 
-      // Enforce status ordering: don't let confirming overwrite buzz_failed or finished
-      const existing = await dbRead.cryptoDeposit.findUnique({
-        where: { paymentId: BigInt(event.payment_id) },
-        select: { status: true },
-      });
-
-      const terminalStatuses = ['finished', 'buzz_failed', 'failed'];
-      const shouldUpdateStatus =
-        !existing || !terminalStatuses.includes(existing.status) || terminalStatuses.includes(depositStatus);
+      const statusRank: Record<string, number> = {
+        waiting: 0, confirming: 1, sending: 1, partially_paid: 1,
+        buzz_failed: 2, finished: 3, failed: 4,
+      };
+      const existingRank = existing ? (statusRank[existing.status] ?? 0) : -1;
+      const nextRank = statusRank[depositStatus] ?? 0;
+      // Only advance status forward; finished is immutable except via failed (manual)
+      const shouldUpdateStatus = !existing || (existing.status !== 'finished' && nextRank > existingRank)
+        || (existing.status === 'buzz_failed' && depositStatus === 'finished');
 
       await dbWrite.cryptoDeposit.upsert({
         where: { paymentId: BigInt(event.payment_id) },
@@ -527,6 +534,7 @@ export const retryFailedDeposits = async () => {
   const failedDeposits = await dbRead.cryptoDeposit.findMany({
     where: { status: 'buzz_failed', retryCount: { lt: MAX_BUZZ_RETRIES } },
     select: { paymentId: true, retryCount: true },
+    orderBy: [{ retryCount: 'asc' }, { updatedAt: 'asc' }],
     take: 50, // Cap per run to avoid overloading
   });
 
@@ -574,8 +582,26 @@ export const retryFailedDeposits = async () => {
       if (updated?.status === 'finished') {
         succeeded++;
       } else {
-        // Still buzz_failed — processDeposit caught the error internally
-        failed++;
+        // Still buzz_failed — processDeposit caught the error internally, increment retryCount
+        const newCount = deposit.retryCount + 1;
+        if (newCount >= MAX_BUZZ_RETRIES) {
+          await dbWrite.cryptoDeposit.update({
+            where: { paymentId: deposit.paymentId },
+            data: { retryCount: newCount, status: 'failed' },
+          });
+          await log({
+            message: 'Deposit exhausted max retries, marked as failed',
+            paymentId: numericId,
+            retryCount: newCount,
+          });
+          exhausted++;
+        } else {
+          await dbWrite.cryptoDeposit.update({
+            where: { paymentId: deposit.paymentId },
+            data: { retryCount: { increment: 1 } },
+          });
+          failed++;
+        }
       }
     } catch (e) {
       // Increment retry count

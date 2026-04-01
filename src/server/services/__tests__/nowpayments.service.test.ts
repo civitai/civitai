@@ -142,6 +142,8 @@ describe('processDeposit', () => {
     vi.clearAllMocks();
     // Default: wallet lookup returns a chain
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
+    // Default: no existing CryptoDeposit record
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
   });
 
   it('parses userId from order_id and sends signal', async () => {
@@ -363,16 +365,37 @@ describe('processDeposit', () => {
   });
 
   it('does not overwrite finished status with confirming', async () => {
-    // wallet lookup returns chain, cryptoDeposit status check returns finished
     mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
-    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished' });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished', buzzCredited: 5000 });
 
     const event = makeWebhookEvent({ payment_status: 'confirming' });
     await processDeposit(12345, 'confirming', event);
 
-    // The update object should NOT contain status (existing is terminal, new is non-terminal)
     const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
     expect(upsertCall?.update).not.toHaveProperty('status');
+  });
+
+  it('does not overwrite finished status with buzz_failed', async () => {
+    mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'finished', buzzCredited: 5000 });
+    mockGrantBuzzPurchase.mockRejectedValueOnce(new Error('Buzz API down'));
+
+    const event = makeWebhookEvent({ outcome_amount: 5.0 });
+    await processDeposit(12345, 'finished', event);
+
+    const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+    expect(upsertCall?.update).not.toHaveProperty('status');
+  });
+
+  it('allows buzz_failed to be overwritten by finished on successful retry', async () => {
+    mockDbRead.cryptoWallet.findUnique.mockResolvedValueOnce({ chain: 'evm' });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({ status: 'buzz_failed', buzzCredited: null });
+
+    const event = makeWebhookEvent({ outcome_amount: 5.0 });
+    await processDeposit(12345, 'finished', event);
+
+    const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+    expect(upsertCall?.update).toHaveProperty('status', 'finished');
   });
 });
 
@@ -573,6 +596,7 @@ describe('reconcileDeposits', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
     mockGetTransactionByExternalId.mockResolvedValue(null);
   });
 
