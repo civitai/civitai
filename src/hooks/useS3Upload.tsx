@@ -194,6 +194,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             key,
             type,
             uploadId,
+            backend,
           }),
         });
 
@@ -209,6 +210,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
                 type,
                 uploadId,
                 parts,
+                backend,
               }),
             });
 

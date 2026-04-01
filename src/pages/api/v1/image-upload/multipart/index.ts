@@ -49,7 +49,7 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
     // Register in storage-resolver (fire-and-forget)
     registerMediaLocation(imageKey, backend, req.body.size ?? 0);
 
-    res.status(200).json(result);
+    res.status(200).json({ ...result, backend });
   } catch (error) {
     const e = error as Error;
     return res.status(500).json({ error: e.message });
