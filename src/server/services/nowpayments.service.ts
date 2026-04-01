@@ -816,6 +816,106 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
   return result;
 };
 
+/**
+ * Reconcile deposits for a specific user by fetching all their payments from NP.
+ * Used for self-service "check my deposits" button on the deposit card.
+ * Fetches by each wallet's smartAccount (parent payment ID) to find child payments.
+ */
+export const reconcileUserDeposits = async (userId: number) => {
+  // Get all wallets for this user
+  const wallets = await dbRead.cryptoWallet.findMany({
+    where: { userId },
+    select: { smartAccount: true },
+  });
+
+  if (!wallets.length) return { checked: 0, found: 0, processed: 0 };
+
+  let found = 0;
+  let processed = 0;
+
+  // For each wallet, check the parent payment and look for child payments
+  for (const wallet of wallets) {
+    if (!wallet.smartAccount) continue;
+    const parentId = Number(wallet.smartAccount);
+
+    // Fetch parent payment — may have child payments
+    const parentPayment = await nowpaymentsCaller.getPaymentStatus(parentId);
+    if (!parentPayment) continue;
+
+    // Check parent itself (some wallets ARE the payment)
+    const paymentsToCheck = [parentPayment];
+
+    // If parent has a payment_extra_ids or we can infer children, check those too
+    // NP child payments have parent_payment_id set — fetch via list API
+    // Use a wide date range centered on parent's created_at
+    try {
+      const parentDate = new Date(parentPayment.created_at);
+      const dateFrom = new Date(parentDate.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+      const dateTo = new Date().toISOString();
+
+      const listResult = await fetchPaymentsByDateRange(dateFrom, dateTo);
+      const childPayments = listResult.filter(
+        (p) =>
+          p.parent_payment_id === parentId &&
+          p.order_id === `user:${userId}`
+      );
+      paymentsToCheck.push(...childPayments);
+    } catch {
+      // List API failed — still process what we have
+    }
+
+    for (const payment of paymentsToCheck) {
+      if (!isDepositComplete(payment.payment_status)) continue;
+      if (payment.order_id !== `user:${userId}`) continue;
+      found++;
+
+      const numericId =
+        typeof payment.payment_id === 'string'
+          ? parseInt(payment.payment_id, 10)
+          : payment.payment_id;
+
+      // Check if already processed
+      const existingTx = await getTransactionByExternalId(`np-deposit-${numericId}`).catch(
+        () => null
+      );
+      const existingDeposit = await dbRead.cryptoDeposit.findUnique({
+        where: { paymentId: BigInt(numericId) },
+        select: { status: true, buzzCredited: true },
+      });
+
+      if (existingTx || (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)) {
+        continue; // Already processed
+      }
+
+      // Process the deposit
+      try {
+        const event: NOWPayments.WebhookEvent = {
+          payment_id: numericId,
+          payment_status: payment.payment_status,
+          order_id: payment.order_id,
+          outcome_amount: payment.outcome_amount,
+          actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+          pay_currency: payment.pay_currency,
+          pay_address: payment.pay_address,
+          parent_payment_id: payment.parent_payment_id,
+        };
+
+        await processDeposit(numericId, payment.payment_status, event);
+        processed++;
+      } catch (e) {
+        await log({
+          message: 'User reconciliation: failed to process deposit',
+          paymentId: numericId,
+          userId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+  }
+
+  return { checked: wallets.length, found, processed };
+};
+
 export const getBuzzConversionRate = async (fiat: string) => {
   const cacheKey = `${REDIS_KEYS.CACHES.CRYPTO_CONVERSION_RATE}:${fiat}` as RedisKeyTemplateCache;
   return fetchThroughCache(
