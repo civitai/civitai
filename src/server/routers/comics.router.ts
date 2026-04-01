@@ -67,6 +67,7 @@ import {
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getS3Client } from '~/utils/s3-utils';
@@ -199,7 +200,7 @@ async function submitComicGeneration({
   versionIdOverride?: number;
   user: SessionUser;
   token: string;
-  features: any;
+  features: FeatureAccess;
 }) {
   const versionId = versionIdOverride ?? modelConfig.versionId;
   const cappedImages = images
@@ -3692,7 +3693,7 @@ export const comicsRouter = router({
     }),
 
   setProjectNsfwLevel: comicModeratorProcedure
-    .input(z.object({ id: z.number().int(), nsfwLevel: z.number().int() }))
+    .input(z.object({ id: z.number().int(), nsfwLevel: z.number().refine((n) => [1, 2, 4, 8, 16, 32].includes(n), 'Invalid NSFW level') }))
     .mutation(async ({ ctx, input }) => {
       // Set project level
       await dbWrite.comicProject.update({
@@ -3734,7 +3735,7 @@ export const comicsRouter = router({
       z.object({
         projectId: z.number().int(),
         chapterPosition: z.number().int().min(0),
-        nsfwLevel: z.number().int(),
+        nsfwLevel: z.number().refine((n) => [1, 2, 4, 8, 16, 32].includes(n), 'Invalid NSFW level'),
       })
     )
     .mutation(async ({ ctx, input }) => {

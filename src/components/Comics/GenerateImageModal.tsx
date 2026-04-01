@@ -14,9 +14,7 @@ import {
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
 import {
   IconCheck,
-  IconPhoto,
   IconRefresh,
-  IconTrash,
   IconUpload,
   IconX,
 } from '@tabler/icons-react';

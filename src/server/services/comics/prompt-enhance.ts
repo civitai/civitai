@@ -124,11 +124,15 @@ export async function enhanceComicPrompt(input: {
     // can detect which references to attach. The LLM receives names without @
     // so its output won't have them — we add them back here.
     // Sort by length descending so "MayaWarrior" matches before "Maya".
+    // Use Unicode-safe boundaries (lookaround for non-word chars) instead of \b
+    // which fails on non-ASCII names.
     const sortedNames = [...names].sort((a, b) => b.length - a.length);
     for (const name of sortedNames) {
-      // Match the name as a whole word (not already prefixed with @)
       const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = new RegExp(`(?<!@)\\b${escaped}\\b`, 'gi');
+      const pattern = new RegExp(
+        `(?<!@)(?<=^|[\\s.,!?;:'"\\)\\]])${escaped}(?=$|[\\s.,!?;:'"\\)\\]])`,
+        'giu'
+      );
       enhanced = enhanced.replace(pattern, `@${name}`);
     }
 
