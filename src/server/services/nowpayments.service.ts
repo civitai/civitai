@@ -301,6 +301,21 @@ export const processDeposit = async (
     );
   }
 
+  // Log successful processing for observability
+  await log({
+    type: 'info',
+    message: buzzGrantFailed
+      ? 'Deposit processed with buzz_failed'
+      : buzzAmount > 0
+      ? 'Deposit processed successfully'
+      : `Deposit status update: ${depositStatus}`,
+    paymentId,
+    userId,
+    buzzAmount: buzzAmount || undefined,
+    status: depositStatus,
+    transactionId: transactionId || undefined,
+  });
+
   return { userId, buzzAmount, transactionId };
 };
 
@@ -584,6 +599,12 @@ export const retryFailedDeposits = async () => {
         await dbWrite.cryptoDeposit.update({
           where: { paymentId: deposit.paymentId },
           data: { retryCount: 0 },
+        });
+        await log({
+          type: 'info',
+          message: 'Retry sweep: deposit recovered successfully',
+          paymentId: numericId,
+          retriesUsed: deposit.retryCount,
         });
         succeeded++;
       } else if (updated?.status === 'buzz_failed') {
