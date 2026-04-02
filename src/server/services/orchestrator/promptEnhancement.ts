@@ -65,6 +65,16 @@ export async function enhancePrompt({
     isModerator,
   });
 
+  // Audit user-provided enhancement instruction (same rules as prompt)
+  if (input.instruction) {
+    await auditPromptServer({
+      prompt: input.instruction,
+      userId,
+      isGreen: !!isGreen,
+      isModerator,
+    });
+  }
+
   const instruction = buildInstruction(input);
 
   const workflow = await submitWorkflow({
