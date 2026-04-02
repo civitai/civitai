@@ -279,38 +279,68 @@ function SignalStatusBadge({
 }) {
   if (status === 'connected') {
     return (
-      <Group gap={4} wrap="nowrap">
-        <div className="relative flex items-center justify-center">
-          <div className="absolute size-3 animate-ping rounded-full bg-green-500/40" />
-          <div className="size-2 rounded-full bg-green-500" />
-        </div>
-        <Text size="xs" c="green">
-          Live
-        </Text>
-      </Group>
+      <HoverCard width={220} position="bottom-end" withArrow shadow="md" openDelay={300}>
+        <HoverCard.Target>
+          <Group gap={4} wrap="nowrap" className="cursor-help">
+            <div className="relative flex items-center justify-center">
+              <div className="absolute size-3 animate-ping rounded-full bg-green-500/40" />
+              <div className="size-2 rounded-full bg-green-500" />
+            </div>
+            <Text size="xs" c="green">
+              Live
+            </Text>
+          </Group>
+        </HoverCard.Target>
+        <HoverCard.Dropdown>
+          <Text size="xs">
+            Deposits will appear automatically as they&rsquo;re confirmed on the blockchain. No need
+            to refresh.
+          </Text>
+        </HoverCard.Dropdown>
+      </HoverCard>
     );
   }
 
   if (status === 'reconnecting') {
     return (
-      <Group gap={4} wrap="nowrap">
-        <IconRefresh size={14} className="text-yellow-500" />
-        <Text size="xs" c="yellow">
-          Reconnecting&hellip;
-        </Text>
-      </Group>
+      <HoverCard width={220} position="bottom-end" withArrow shadow="md" openDelay={300}>
+        <HoverCard.Target>
+          <Group gap={4} wrap="nowrap" className="cursor-help">
+            <IconRefresh size={14} className="text-yellow-500" />
+            <Text size="xs" c="yellow">
+              Reconnecting&hellip;
+            </Text>
+          </Group>
+        </HoverCard.Target>
+        <HoverCard.Dropdown>
+          <Text size="xs">
+            Reconnecting to live updates. Deposits are still being processed &mdash; they&rsquo;ll
+            appear once the connection is restored.
+          </Text>
+        </HoverCard.Dropdown>
+      </HoverCard>
     );
   }
 
   return (
-    <UnstyledButton onClick={onRefresh} aria-label="Refresh deposit history (live updates disconnected)">
-      <Group gap={4} wrap="nowrap">
-        <IconWifiOff size={14} className="text-red-500" />
-        <Text size="xs" c="red" td="underline">
-          Disconnected &mdash; refresh
+    <HoverCard width={220} position="bottom-end" withArrow shadow="md" openDelay={300}>
+      <HoverCard.Target>
+        <UnstyledButton onClick={onRefresh} aria-label="Refresh deposit history">
+          <Group gap={4} wrap="nowrap">
+            <IconWifiOff size={14} className="text-red-500" />
+            <Text size="xs" c="red" td="underline">
+              Disconnected &mdash; refresh
+            </Text>
+          </Group>
+        </UnstyledButton>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text size="xs">
+          Live updates are disconnected. Click to refresh manually, or use &ldquo;Check now&rdquo;
+          below to scan for missing deposits.
         </Text>
-      </Group>
-    </UnstyledButton>
+      </HoverCard.Dropdown>
+    </HoverCard>
   );
 }
 

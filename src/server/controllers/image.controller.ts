@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
-import { logToAxiom } from '~/server/logging/client';
 import {
   BlockedReason,
   ImageSort,
@@ -409,34 +408,15 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useDatapacketRead: features.datapacketRead,
+        // Bypass datapacket for pinned posts — bounded query (max ~20 posts),
+        // and datapacket replicas have been observed to silently drop rows.
+        useDatapacketRead: false,
       });
 
       for (const image of pinnedPostsImages) {
         if (!image?.postId) continue;
         if (!pinned[image.postId]) pinned[image.postId] = [];
         pinned[image.postId].push(image);
-      }
-
-      // Debug: log pinned posts that were expected but not found
-      const missingPinnedPosts = versionPinnedPosts.filter((postId) => !pinned[postId]);
-      if (missingPinnedPosts.length > 0) {
-        const debugPayload = {
-          modelId: input.modelId,
-          modelVersionId: input.modelVersionId,
-          expectedPinnedPosts: versionPinnedPosts.length,
-          returnedImages: pinnedPostsImages.length,
-          returnedPostIds: [...new Set(pinnedPostsImages.map((i) => i.postId))],
-          missingPinnedPosts,
-          browsingLevel: input.browsingLevel,
-          types: input.types,
-        };
-        console.warn('[pinned-posts-debug]', debugPayload);
-        logToAxiom({
-          type: 'warning',
-          name: 'pinned-posts-missing',
-          message: JSON.stringify(debugPayload),
-        }).catch(() => null);
       }
     }
 
