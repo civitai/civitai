@@ -15,26 +15,34 @@ type EnhancementDetailsProps = {
 };
 
 export function EnhancementDetails({ record }: EnhancementDetailsProps) {
-  if (!record.enhancedPrompt) {
-    return (
-      <Text size="xs" c="dimmed">
-        Enhancement {record.status === 'failed' ? 'failed' : 'in progress'}
-      </Text>
-    );
-  }
+  const hasNoOutput = !record.enhancedPrompt;
+  const statusLower = record.status.toLowerCase();
+  const isComplete = statusLower === 'succeeded' || statusLower === 'failed';
 
   return (
     <Stack gap="sm">
-      <div>
-        <Text size="xs" fw={600} c="dimmed" mb={4}>
-          Prompt Changes
+      {hasNoOutput && (
+        <Text size="xs" c="dimmed">
+          {statusLower === 'succeeded'
+            ? 'Enhancement produced no output. The request may have been refused.'
+            : statusLower === 'failed'
+            ? 'Enhancement failed'
+            : 'Enhancement in progress'}
         </Text>
-        <PromptDiff
-          oldText={record.originalPrompt}
-          newText={record.enhancedPrompt}
-          triggerWords={record.preserveTriggerWords}
-        />
-      </div>
+      )}
+
+      {record.enhancedPrompt && (
+        <div>
+          <Text size="xs" fw={600} c="dimmed" mb={4}>
+            Prompt Changes
+          </Text>
+          <PromptDiff
+            oldText={record.originalPrompt}
+            newText={record.enhancedPrompt}
+            triggerWords={record.preserveTriggerWords}
+          />
+        </div>
+      )}
 
       {record.originalNegativePrompt && record.enhancedNegativePrompt && (
         <div>
@@ -82,7 +90,7 @@ export function EnhancementDetails({ record }: EnhancementDetailsProps) {
       {record.issues && record.issues.length > 0 && (
         <div>
           <Text size="xs" fw={600} c="dimmed" mb={4}>
-            Issues Addressed
+            {isComplete && hasNoOutput ? 'Issues' : 'Issues Addressed'}
           </Text>
           <Stack gap={2}>
             {record.issues.map((issue, i) => (

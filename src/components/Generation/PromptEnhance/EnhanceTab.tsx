@@ -93,8 +93,9 @@ export function EnhanceTab({
     ? records.find((r) => r.workflowId === pendingWorkflowId) ?? null
     : null;
 
+  const resultStatus = result?.status.toLowerCase();
   const isLoading =
-    submitting || (pendingWorkflowId !== null && (!result || result.status !== 'succeeded'));
+    submitting || (pendingWorkflowId !== null && (!result || resultStatus !== 'succeeded'));
 
   const buildMutationInput = () => {
     const values = form.getValues();
@@ -190,8 +191,8 @@ export function EnhanceTab({
   const currentTemperature = form.watch('temperature');
 
   const isWaitingForWorkflow =
-    pendingWorkflowId !== null && (!result || result.status !== 'succeeded');
-  const hasSucceededResult = result && result.status === 'succeeded';
+    pendingWorkflowId !== null && (!result || resultStatus !== 'succeeded');
+  const hasSucceededResult = result && resultStatus === 'succeeded';
   const showInputForm = (!isWaitingForWorkflow && !hasSucceededResult) || editing;
   const showResult = hasSucceededResult && !editing;
   const showInputFooter = showInputForm || (isLoading && !editing);
