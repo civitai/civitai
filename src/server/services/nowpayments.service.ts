@@ -822,46 +822,41 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
  * Fetches by each wallet's smartAccount (parent payment ID) to find child payments.
  */
 export const reconcileUserDeposits = async (userId: number) => {
+  const start = Date.now();
+
   // Get all wallets for this user
   const wallets = await dbRead.cryptoWallet.findMany({
     where: { userId },
     select: { smartAccount: true },
   });
 
-  if (!wallets.length) return { checked: 0, found: 0, processed: 0 };
+  if (!wallets.length) {
+    await log({ type: 'info', message: 'User reconciliation: no wallets', userId });
+    return { checked: 0, found: 0, processed: 0 };
+  }
 
   let found = 0;
   let processed = 0;
 
-  // For each wallet, check the parent payment and look for child payments
+  // For each wallet, fetch the parent payment and its child payments by ID
   for (const wallet of wallets) {
     if (!wallet.smartAccount) continue;
     const parentId = Number(wallet.smartAccount);
 
-    // Fetch parent payment — may have child payments
     const parentPayment = await nowpaymentsCaller.getPaymentStatus(parentId);
     if (!parentPayment) continue;
 
-    // Check parent itself (some wallets ARE the payment)
+    // Collect payments to check: parent + any children listed in payment_extra_ids
     const paymentsToCheck = [parentPayment];
-
-    // If parent has a payment_extra_ids or we can infer children, check those too
-    // NP child payments have parent_payment_id set — fetch via list API
-    // Use a wide date range centered on parent's created_at
-    try {
-      const parentDate = new Date(parentPayment.created_at);
-      const dateFrom = new Date(parentDate.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const dateTo = new Date().toISOString();
-
-      const listResult = await fetchPaymentsByDateRange(dateFrom, dateTo);
-      const childPayments = listResult.filter(
-        (p) =>
-          p.parent_payment_id === parentId &&
-          p.order_id === `user:${userId}`
+    const childIds = parentPayment.payment_extra_ids ?? [];
+    if (childIds.length > 0) {
+      // Fetch child payments individually by ID (fast, no full list scan)
+      const children = await mapWithConcurrency(childIds, 5, (id) =>
+        nowpaymentsCaller.getPaymentStatus(id)
       );
-      paymentsToCheck.push(...childPayments);
-    } catch {
-      // List API failed — still process what we have
+      paymentsToCheck.push(
+        ...children.filter((p): p is NOWPayments.CreatePaymentResponse => p != null)
+      );
     }
 
     for (const payment of paymentsToCheck) {
@@ -912,6 +907,17 @@ export const reconcileUserDeposits = async (userId: number) => {
       }
     }
   }
+
+  const duration = Date.now() - start;
+  await log({
+    type: 'info',
+    message: `User reconciliation complete`,
+    userId,
+    wallets: wallets.length,
+    found,
+    processed,
+    duration,
+  });
 
   return { checked: wallets.length, found, processed };
 };
