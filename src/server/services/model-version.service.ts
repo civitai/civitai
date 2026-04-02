@@ -2047,21 +2047,7 @@ export const consolidateVersions = async ({
         where: { modelVersionId: { in: sourceVersionIds } },
       });
 
-      // 5. Re-point DownloadHistory — delete conflicts first, then move remaining
-      await tx.$executeRaw`
-        DELETE FROM "DownloadHistory"
-        WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
-          AND "userId" IN (
-            SELECT "userId" FROM "DownloadHistory"
-            WHERE "modelVersionId" = ${targetVersionId}
-          )
-      `;
-      await tx.downloadHistory.updateMany({
-        where: { modelVersionId: { in: sourceVersionIds } },
-        data: { modelVersionId: targetVersionId },
-      });
-
-      // 6. Re-point ModelVersionEngagement — delete conflicts first, then move
+      // 5. Re-point ModelVersionEngagement — delete conflicts first, then move
       await tx.$executeRaw`
         DELETE FROM "ModelVersionEngagement"
         WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
@@ -2075,19 +2061,19 @@ export const consolidateVersions = async ({
         data: { modelVersionId: targetVersionId },
       });
 
-      // 7. Re-point Posts
+      // 6. Re-point Posts
       await tx.post.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
       });
 
-      // 8. Re-point ImageResource
+      // 7. Re-point ImageResource
       await tx.imageResource.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
       });
 
-      // 9. Re-point ImageResourceNew — delete conflicts first
+      // 8. Re-point ImageResourceNew — delete conflicts first
       await tx.$executeRaw`
         DELETE FROM "ImageResourceNew"
         WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
@@ -2101,13 +2087,13 @@ export const consolidateVersions = async ({
         data: { modelVersionId: targetVersionId },
       });
 
-      // 10. Re-point ResourceReview
+      // 9. Re-point ResourceReview
       await tx.resourceReview.updateMany({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
       });
 
-      // 11. Re-point RecommendedResource (where source versions are the resource or source)
+      // 10. Re-point RecommendedResource (where source versions are the resource or source)
       // Delete any that would create self-references
       await tx.recommendedResource.deleteMany({
         where: {
@@ -2126,7 +2112,7 @@ export const consolidateVersions = async ({
         data: { sourceId: targetVersionId },
       });
 
-      // 12. Optionally append source version descriptions
+      // 11. Optionally append source version descriptions
       if (appendDescriptions) {
         const targetVersion = model.modelVersions.find((v) => v.id === targetVersionId);
         const sourceVersions = model.modelVersions.filter((v) => sourceVersionIds.includes(v.id));
@@ -2145,12 +2131,12 @@ export const consolidateVersions = async ({
         }
       }
 
-      // 13. Delete source versions (cascade handles remaining child records)
+      // 12. Delete source versions (cascade handles remaining child records)
       await tx.modelVersion.deleteMany({
         where: { id: { in: sourceVersionIds } },
       });
 
-      // 14. Update the model's lastVersionAt
+      // 13. Update the model's lastVersionAt
       await updateModelLastVersionAt({ id: modelId, tx });
     },
     { timeout: 60000 }
