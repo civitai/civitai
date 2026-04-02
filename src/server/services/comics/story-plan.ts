@@ -7,7 +7,7 @@ Rules:
 - Each panel should describe a single moment, action, or beat
 - Focus on: action, emotion, camera angle, composition, environment
 - Do NOT describe character appearance — reference images handle that
-- Reference characters with @ prefix (e.g., @Maya, @Dragon) — the generation system uses these to identify which reference images to include
+- Reference characters with @ prefix exactly as given (e.g., @Maya, @Dragon, @O'Brien) — preserve apostrophes, hyphens, and special characters in names. The generation system uses these to identify which reference images to include
 - Panels should flow naturally and tell a coherent visual story
 - When the story has dialogue, narration, or thoughts, include them directly in the prompt as visual text elements the image generator should render (e.g. "speech bubble saying 'I won't give up!'", "narration box at top reading 'Three days earlier...'", "thought bubble: 'This can't be real...'")
 - Not every panel needs text — only include speech bubbles, narration boxes, or captions where dialogue or narration serves the story

@@ -8,7 +8,7 @@ You will be given the names of characters the user referenced in their prompt. K
 
 Rules:
 - Do NOT describe any character's physical appearance (hair color, eye color, clothing, etc.) — reference images handle that
-- Preserve character names exactly as provided — do not rename, shorten, or omit them
+- Preserve character names EXACTLY as provided, including apostrophes, hyphens, and special characters (e.g. O'Brien stays O'Brien, robot's stays robot's) — do not rename, shorten, or omit them
 - Focus on: pose, expression, action, emotion, scene composition, camera angle, environment
 - Keep every element the user mentioned — do not drop, replace, or reinterpret anything
 - Do NOT invent or add new characters, objects, actions, or locations the user didn't mention
@@ -133,8 +133,10 @@ export async function enhanceComicPrompt(input: {
     const sortedNames = [...names].sort((a, b) => b.length - a.length);
     for (const name of sortedNames) {
       const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Boundary chars must NOT include apostrophes or quotes — names like O'Brien
+      // contain them. Use only whitespace and punctuation that can't appear in names.
       const pattern = new RegExp(
-        `(?<!@)(?<=^|[\\s.,!?;:'"\\)\\]])${escaped}(?=$|[\\s.,!?;:'"\\)\\]])`,
+        `(?<!@)(?<=^|[\\s.,!?;:\\)\\]])${escaped}(?=$|[\\s.,!?;:\\)\\]])`,
         'giu'
       );
       enhanced = enhanced.replace(pattern, `@${name}`);
