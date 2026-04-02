@@ -40,7 +40,14 @@ const CareerResetModal = dynamic(() => import('./NewOrder/CareerResetModal'));
 
 type PlayerUpdateStatsPayload = {
   action: NewOrderSignalActions.UpdateStats | NewOrderSignalActions.Reset;
-  stats: { exp: number; fervor: number; blessedBuzz: number; smites: number };
+  stats: {
+    exp: number;
+    fervor: number;
+    blessedBuzz: number;
+    smites: number;
+    pendingBlessedBuzz?: number;
+    recentlyGrantedBuzz?: number;
+  };
   notification?: {
     type: 'smite' | 'reset' | 'warning' | 'cleanse';
     message: string;
@@ -124,7 +131,18 @@ export const useKnightsNewOrderListener = ({
         onReset?.();
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
-          return { ...old, stats: { ...old.stats, exp: 0, fervor: 0, blessedBuzz: 0, smites: 0 } };
+          return {
+            ...old,
+            stats: {
+              ...old.stats,
+              exp: 0,
+              fervor: 0,
+              blessedBuzz: 0,
+              smites: 0,
+              pendingBlessedBuzz: 0,
+              recentlyGrantedBuzz: 0,
+            },
+          };
         });
 
         await Promise.all([
@@ -317,35 +335,7 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
     },
   });
 
-  const addSanityCheckRatingMutation = trpc.games.newOrder.addSanityCheckRating.useMutation({
-    onMutate: async (payload) => {
-      await queryUtils.games.newOrder.getImagesQueue.cancel();
-
-      queryUtils.games.newOrder.getImagesQueue.setData(opts?.filters, (old) => {
-        if (!old) return old;
-        return old.filter((image) => image.id !== payload.imageId);
-      });
-    },
-    onError: (error) => {
-      showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
-    },
-  });
-
   const handleAddRating = (input: Omit<AddImageRatingInput, 'playerId'>) => {
-    // Check if this is a sanity check image
-    const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData(opts?.filters);
-    const matchedImage = prevQueue?.find((image) => image.id === input.imageId);
-    const isSanityCheck = matchedImage?.metadata?.isSanityCheck === true;
-
-    if (isSanityCheck) {
-      // Use sanity check endpoint (only imageId and rating, no damnedReason)
-      return addSanityCheckRatingMutation.mutateAsync({
-        imageId: input.imageId,
-        rating: input.rating,
-      });
-    }
-
-    // Use regular rating endpoint
     return addRatingMutation.mutateAsync(input);
   };
 
@@ -360,7 +350,7 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
 
   return {
     addRating: handleAddRating,
-    isLoading: addRatingMutation.isLoading || addSanityCheckRatingMutation.isLoading,
+    isLoading: addRatingMutation.isLoading,
     skipRating: handleSkipImage,
   };
 };

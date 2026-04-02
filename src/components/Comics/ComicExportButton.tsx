@@ -14,25 +14,48 @@ interface ChapterExportButtonProps {
   panels: { imageUrl: string | null }[];
 }
 
+async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const response = await fetch(url);
+    if (response.ok) return response;
+    if (attempt < retries) await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+  }
+  throw new Error(`Failed to fetch after ${retries + 1} attempts`);
+}
+
 async function fetchPanelBlobs(panels: { imageUrl: string | null }[]) {
-  const results: { blob: Blob; ext: string }[] = [];
-  for (const panel of panels) {
-    if (!panel.imageUrl) continue;
-    const url = getEdgeUrl(panel.imageUrl, { original: true });
-    try {
-      const response = await fetch(url);
-      if (!response.ok) continue;
+  const validPanels = panels.filter((p) => p.imageUrl);
+  const settled = await Promise.allSettled(
+    validPanels.map(async (panel) => {
+      const url = getEdgeUrl(panel.imageUrl!, { original: true });
+      const response = await fetchWithRetry(url);
       const blob = await response.blob();
       const ext = blob.type.includes('png')
         ? 'png'
         : blob.type.includes('webp')
           ? 'webp'
           : 'jpg';
-      results.push({ blob, ext });
-    } catch {
-      // Skip panels that fail to fetch
+      return { blob, ext };
+    })
+  );
+
+  const results: { blob: Blob; ext: string }[] = [];
+  let skipped = 0;
+  for (const result of settled) {
+    if (result.status === 'fulfilled') {
+      results.push(result.value);
+    } else {
+      skipped++;
     }
   }
+
+  if (skipped > 0) {
+    showErrorNotification({
+      title: 'Some panels could not be downloaded',
+      error: new Error(`${skipped} panel(s) were skipped due to fetch errors`),
+    });
+  }
+
   return results;
 }
 
@@ -101,25 +124,17 @@ export function ChapterExportButton({
         panelImage: { objectFit: 'contain', maxWidth: '100%', maxHeight: '100%' },
       });
 
-      // Fetch all images as data URLs for react-pdf
+      // Fetch all images as data URLs for react-pdf (reuses fetchPanelBlobs with retry logic)
+      const images = await fetchPanelBlobs(panels);
       const dataUrls: string[] = [];
-      for (const panel of panels) {
-        if (!panel.imageUrl) continue;
-        const url = getEdgeUrl(panel.imageUrl, { original: true });
-        try {
-          const response = await fetch(url);
-          if (!response.ok) continue;
-          const blob = await response.blob();
-          const dataUrl = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.onerror = () => reject(new Error('Failed to read image'));
-            reader.readAsDataURL(blob);
-          });
-          dataUrls.push(dataUrl);
-        } catch {
-          // Skip panels that fail to fetch
-        }
+      for (const { blob } of images) {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('Failed to read image'));
+          reader.readAsDataURL(blob);
+        });
+        dataUrls.push(dataUrl);
       }
 
       if (dataUrls.length === 0) {

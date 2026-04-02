@@ -1,23 +1,35 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
-const SYSTEM_PROMPT = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
+const SYSTEM_PROMPT_BASE = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
 
 Rules:
-- Choose the right number of panels (typically 4–12) based on story complexity
 - Each panel should describe a single moment, action, or beat
 - Focus on: action, emotion, camera angle, composition, environment
 - Do NOT describe character appearance — reference images handle that
-- Reference characters with @ prefix (e.g., @Maya, @Dragon) — the generation system uses these to identify which reference images to include
+- Reference characters with @ prefix exactly as given (e.g., @Maya, @Dragon, @O'Brien) — preserve apostrophes, hyphens, and special characters in names. The generation system uses these to identify which reference images to include
 - Panels should flow naturally and tell a coherent visual story
 - When the story has dialogue, narration, or thoughts, include them directly in the prompt as visual text elements the image generator should render (e.g. "speech bubble saying 'I won't give up!'", "narration box at top reading 'Three days earlier...'", "thought bubble: 'This can't be real...'")
 - Not every panel needs text — only include speech bubbles, narration boxes, or captions where dialogue or narration serves the story
 - Keep each panel description under 300 characters
 - Output JSON: { "panels": [{ "prompt": "..." }, ...] }`;
 
+function buildSystemPrompt(panelCount?: number): string {
+  const panelCountRule = panelCount
+    ? `- Create exactly ${panelCount} panels`
+    : '- Choose the right number of panels (typically 4-12) based on story complexity';
+  return SYSTEM_PROMPT_BASE.replace(
+    '- Each panel should describe a single moment',
+    `${panelCountRule}\n- Each panel should describe a single moment`
+  );
+}
+
 export async function planChapterPanels(input: {
   token: string;
   storyDescription: string;
   characterNames: string[];
+  panelCount?: number;
+  currencies?: BuzzSpendType[];
 }): Promise<{ panels: { prompt: string }[] }> {
   const userMessage = [
     input.characterNames.length > 0
@@ -34,9 +46,10 @@ export async function planChapterPanels(input: {
     temperature: 0.7,
     maxTokens: 2048,
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: buildSystemPrompt(input.panelCount) },
       { role: 'user', content: userMessage },
     ],
+    currencies: input.currencies,
   });
 
   const parsed = parseJsonBlock<{ panels: { prompt: string }[] }>(result.content);

@@ -68,10 +68,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       await processDeposit(event.payment_id, paymentStatus, event);
     }
   } catch (error: any) {
+    const body = req.body ?? {};
     log({
       message: `Webhook error: ${error.message}`,
       error: error.stack,
-      payload: req.body,
+      payload: {
+        payment_id: body.payment_id,
+        payment_status: body.payment_status,
+        order_id: body.order_id,
+        pay_currency: body.pay_currency,
+        actually_paid: body.actually_paid,
+        outcome_amount: body.outcome_amount,
+      },
     });
     return res.status(400).send(`Webhook Error: ${error.message}`);
   }

@@ -8,7 +8,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
-import { isApril1 } from '~/utils/date-helpers';
 
 export const getAssistantUUID = (personality: UserAssistantPersonality, isGreen?: boolean) => {
   const baseUUID = isGreen
@@ -16,8 +15,7 @@ export const getAssistantUUID = (personality: UserAssistantPersonality, isGreen?
     : env.NEXT_PUBLIC_GPTT_UUID;
   const altUUID = env.NEXT_PUBLIC_GPTT_UUID_ALT ?? baseUUID;
 
-  const selectedUUID = personality === 'civchan' ? altUUID : baseUUID;
-  return isApril1() ? altUUID : selectedUUID;
+  return personality === 'civchan' ? altUUID : baseUUID;
 };
 
 export function AssistantChat({

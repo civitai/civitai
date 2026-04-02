@@ -28,6 +28,10 @@ import { Meta } from '~/components/Meta/Meta';
 import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
+import type { SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
+import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -92,6 +96,10 @@ export default function UserBuzzDashboard() {
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
+  const { subscription, subscriptionPaymentProvider } = useActiveSubscription({
+    buzzType: selectedAccountType,
+  });
+  const isCivitaiPrepaid = subscriptionPaymentProvider === PaymentProvider.Civitai;
 
   const filteredRewards = rewards.filter((reward) => reward.accountType === selectedAccountType);
   const hasRewards = filteredRewards.length > 0;
@@ -152,6 +160,21 @@ export default function UserBuzzDashboard() {
           ) : selectedAccountType !== 'blue' ? (
             <EarningBuzz withCTA accountType={selectedAccountType} hideHeader />
           ) : null}
+
+          {/* Prepaid Token Claim Section (yellow buzz only, Civitai prepaid members) */}
+          {selectedAccountType === 'yellow' && isCivitaiPrepaid && subscription && (() => {
+            const prepaidTokens = getPrepaidTokens({
+              metadata: subscription.metadata as SubscriptionMetadata,
+            });
+            const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
+            return (
+              <PrepaidTokenOverview
+                tokens={prepaidTokens}
+                nextUnlockDate={nextUnlockDate}
+                subscription={subscription}
+              />
+            );
+          })()}
 
           {/* Ways to Earn Rewards (hidden when empty) */}
           {(loadingRewards || multipliersLoading || hasRewards) && (

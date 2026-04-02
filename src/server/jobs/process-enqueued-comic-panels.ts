@@ -10,6 +10,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import type { SessionUser } from 'next-auth';
 import type { UserTier } from '~/server/schema/user.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const log = createLogger('process-enqueued-comic-panels', 'cyan');
 
@@ -155,9 +156,16 @@ export const processEnqueuedComicPanelsJob = createJob(
             }
 
             const { generationParams, referenceImages, maxReferenceImages } = metadata;
+            const isGreen = metadata.isGreen === true;
 
             // Cap reference images (simple slice)
             const images = (referenceImages || []).slice(0, maxReferenceImages || 3);
+
+            // Determine currencies based on the domain the panel was created on
+            const currencies: BuzzSpendType[] = isGreen
+              ? ['green', 'blue']
+              : ['yellow', 'blue'];
+            const tags = isGreen ? ['comics', 'green'] : ['comics'];
 
             // Submit to orchestrator
             const result = await createImageGen({
@@ -172,7 +180,7 @@ export const processEnqueuedComicPanelsJob = createJob(
                 workflow: 'txt2img',
                 sampler: 'Euler',
                 steps: 25,
-                quantity: 1,
+                quantity: metadata.quantity ?? 1,
                 draft: false,
                 disablePoi: false,
                 priority: 'low',
@@ -180,11 +188,13 @@ export const processEnqueuedComicPanelsJob = createJob(
                 images,
               },
               resources: [{ id: generationParams.checkpointVersionId, strength: 1 }],
-              tags: ['comics'],
+              tags,
               tips: { creators: 0, civitai: 0 },
               user: sessionUser,
               token,
-              currencies: ['yellow'],
+              isGreen,
+              allowMatureContent: isGreen ? false : undefined,
+              currencies,
             });
 
             // Update panel status
@@ -203,11 +213,12 @@ export const processEnqueuedComicPanelsJob = createJob(
             await signalClient
               .send({
                 userId,
-                target: SignalMessages.TextToImageUpdate,
+                target: SignalMessages.ComicPanelUpdate,
                 data: {
-                  $type: 'step',
+                  panelId: panel.id,
+                  projectId: panel.projectId,
+                  status: ComicPanelStatus.Generating,
                   workflowId: result.id,
-                  status: 'submitted',
                 },
               })
               .catch(() => {}); // Don't fail the job if signal fails

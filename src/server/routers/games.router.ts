@@ -5,7 +5,6 @@ import { env } from '~/env/server';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   addImageRatingSchema,
-  addSanityCheckRatingSchema,
   cleanseSmiteSchema,
   getHistorySchema,
   getImageRatersSchema,
@@ -22,7 +21,6 @@ import {
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import {
   addImageRating,
-  addSanityCheckRating,
   cleanseSmite,
   getImageRaters,
   getImagesQueue,
@@ -144,15 +142,6 @@ export const gamesRouter = router({
           playerId: ctx.user.id,
           chTracker: ctx.track,
           isModerator: ctx.user.isModerator,
-        })
-      ),
-    addSanityCheckRating: guardedProcedure
-      .input(addSanityCheckRatingSchema)
-      .use(isFlagProtected('newOrderGame'))
-      .mutation(({ input, ctx }) =>
-        addSanityCheckRating({
-          ...input,
-          playerId: ctx.user.id,
         })
       ),
     resetCareer: guardedProcedure

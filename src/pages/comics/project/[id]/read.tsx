@@ -97,6 +97,7 @@ function ComicReader() {
       <div
         ref={scrollRef}
         style={{
+          flex: 1,
           overflow: 'auto',
           background: 'var(--mantine-color-dark-8)',
         }}
@@ -162,7 +163,11 @@ function ComicReader() {
           {panels.length === 0 ? (
             <Stack align="center" gap="md" py={80}>
               <IconPhotoOff size={48} style={{ color: 'var(--mantine-color-dark-3)' }} />
-              <Text c="dimmed">No panels in this chapter yet</Text>
+              <Text c="dimmed">
+                {chapters.every((ch) => ch.panels.length === 0)
+                  ? 'No panels are ready yet. Panels appear here once they finish generating.'
+                  : 'No panels in this chapter yet'}
+              </Text>
               <Button variant="subtle" component={Link} href={`/comics/project/${projectId}`}>
                 Back to editor
               </Button>
@@ -213,4 +218,6 @@ function ComicReader() {
   );
 }
 
-export default Page(ComicReader);
+export default Page(ComicReader, {
+  scrollable: false,
+});

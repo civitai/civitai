@@ -142,6 +142,7 @@ export enum SignalMessages {
   MetricUpdate = 'metric:update',
   SessionRefresh = 'session:refresh',
   CryptoDepositUpdate = 'crypto-deposit:update',
+  ComicPanelUpdate = 'comic:panel-update',
 }
 
 export enum BountySort {
@@ -425,6 +426,7 @@ export enum ModReviewType {
   NewUsers = 'newUser',
   Appeals = 'appeal',
   RuleViolations = 'modRule',
+  RemixSource = 'remixSource',
 }
 
 export enum MarketplacePaymentMethod {

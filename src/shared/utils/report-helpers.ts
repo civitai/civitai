@@ -1,0 +1,15 @@
+export enum ReportEntity {
+  Model = 'model',
+  Comment = 'comment',
+  CommentV2 = 'commentV2',
+  Image = 'image',
+  ResourceReview = 'resourceReview',
+  Article = 'article',
+  Post = 'post',
+  User = 'reportedUser',
+  Collection = 'collection',
+  Bounty = 'bounty',
+  BountyEntry = 'bountyEntry',
+  Chat = 'chat',
+  ComicProject = 'comicProject',
+}

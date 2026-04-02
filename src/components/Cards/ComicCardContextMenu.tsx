@@ -6,7 +6,7 @@ import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIcon
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ComicEngagementType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';

@@ -118,7 +118,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
     // Use legacy getAllImages for specific model/image lookups (unless BitDex active),
     // BitDex getAllImagesIndex when flag is active, or feed search for index queries.
-    const useLegacyMethod = !useBitdex && (data.modelId || data.imageId);
+    const useLegacyMethod = data.imageId || (!useBitdex && data.modelId);
 
     const { items, nextCursor } = useLegacyMethod
       ? await getAllImages({

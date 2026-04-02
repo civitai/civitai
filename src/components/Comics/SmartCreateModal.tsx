@@ -1,10 +1,13 @@
-import { ActionIcon, Alert, Button, Group, Modal, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
-import { IconArrowLeft, IconClock, IconPlus, IconX } from '@tabler/icons-react';
+import { ActionIcon, Alert, Button, Group, Modal, NumberInput, ScrollArea, Select, Stack, Switch, Text, TextInput } from '@mantine/core';
+import { IconArrowLeft, IconClock, IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { AspectRatioSelector } from '~/components/Comics/AspectRatioSelector';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
+import { LayoutPicker } from '~/components/Comics/LayoutPicker';
+import type { LayoutOption } from '~/components/Comics/LayoutPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 
 interface SmartCreateModalProps {
@@ -13,11 +16,10 @@ interface SmartCreateModalProps {
   references: { id: number; name: string }[];
   planCost: number | null;
   panelCost: number | null;
-  enhanceCost: number | null;
   effectiveModel: string;
   activeAspectRatios: { label: string; width: number; height: number }[];
   onModelChange: (value: string | null) => void;
-  onPlanPanels: (story: string) => void;
+  onPlanPanels: (story: string, panelCount: number | null) => void;
   isPlanningPanels: boolean;
   planError: string | null;
   plannedPanels: { prompt: string }[] | null;
@@ -25,11 +27,12 @@ interface SmartCreateModalProps {
     chapterName: string;
     storyDescription: string;
     panels: { prompt: string }[];
-    enhance: boolean;
     aspectRatio: string;
+    layoutImagePath?: string;
   }) => void;
   isCreating: boolean;
   createError: string | null;
+  defaultAspectRatio?: string;
 }
 
 export function SmartCreateModal({
@@ -38,7 +41,6 @@ export function SmartCreateModal({
   references,
   planCost,
   panelCost,
-  enhanceCost,
   effectiveModel,
   activeAspectRatios,
   onModelChange,
@@ -49,14 +51,19 @@ export function SmartCreateModal({
   onCreateChapter,
   isCreating,
   createError,
+  defaultAspectRatio = '3:4',
 }: SmartCreateModalProps) {
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
   const [smartChapterName, setSmartChapterName] = useState('New Chapter');
   const [smartStory, setSmartStory] = useState('');
+  const [smartPanelCount, setSmartPanelCount] = useState<number | ''>('');
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
-  const [smartEnhance, setSmartEnhance] = useState(true);
-  const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const [smartAspectRatio, setSmartAspectRatio] = useState(defaultAspectRatio);
+  const [selectedLayout, setSelectedLayout] = useState<string | undefined>();
+  const [selectedLayoutImagePath, setSelectedLayoutImagePath] = useState<string | undefined>();
   const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const prevPanelCountRef = useRef(0);
 
   // Queue status for showing warnings
   const { canGenerate, available, limit, used, isLoading: queueLoading } = useComicsQueueStatus();
@@ -69,9 +76,12 @@ export function SmartCreateModal({
     setSmartStep('input');
     setSmartChapterName('New Chapter');
     setSmartStory('');
+    setSmartPanelCount('');
     setSmartPanels([]);
-    setSmartEnhance(true);
     setSmartAspectRatio('3:4');
+    setSelectedLayout(undefined);
+    setSelectedLayoutImagePath(undefined);
+    prevPanelCountRef.current = 0;
   };
 
   // When planned panels arrive, move to review step
@@ -81,6 +91,20 @@ export function SmartCreateModal({
       setSmartStep('review');
     }
   }, [plannedPanels]);
+
+  // Auto-scroll to bottom when panels are added (not on initial load from planning)
+  useEffect(() => {
+    if (smartPanels.length > prevPanelCountRef.current && prevPanelCountRef.current > 0) {
+      // A panel was manually added — scroll to bottom after render
+      requestAnimationFrame(() => {
+        const viewport = scrollViewportRef.current;
+        if (viewport) {
+          viewport.scrollTo({ top: viewport.scrollHeight, behavior: 'smooth' });
+        }
+      });
+    }
+    prevPanelCountRef.current = smartPanels.length;
+  }, [smartPanels.length]);
 
   // Reset when modal closes
   useEffect(() => {
@@ -96,7 +120,7 @@ export function SmartCreateModal({
 
   const handlePlanPanels = () => {
     if (!smartStory.trim()) return;
-    onPlanPanels(smartStory.trim());
+    onPlanPanels(smartStory.trim(), smartPanelCount === '' ? null : smartPanelCount);
   };
 
   const handleSmartCreate = () => {
@@ -105,8 +129,8 @@ export function SmartCreateModal({
       chapterName: smartChapterName.trim() || 'New Chapter',
       storyDescription: smartStory.trim(),
       panels: smartPanels.filter((p) => p.prompt.trim()),
-      enhance: smartEnhance,
       aspectRatio: smartAspectRatio,
+      layoutImagePath: selectedLayoutImagePath,
     });
   };
 
@@ -136,12 +160,53 @@ export function SmartCreateModal({
             rows={6}
           />
 
+          <NumberInput
+            label="Number of panels"
+            description="Max 20 panels per chapter. Leave empty to let AI decide."
+            placeholder="Auto (4-12)"
+            value={smartPanelCount}
+            onChange={(val) => setSmartPanelCount(val === '' ? '' : Number(val))}
+            min={2}
+            max={20}
+            clampBehavior="blur"
+          />
+
+          <LayoutPicker
+            value={selectedLayout}
+            onChange={(layout: LayoutOption | null) => {
+              setSelectedLayout(layout?.id);
+              setSelectedLayoutImagePath(layout?.imagePath);
+            }}
+          />
+
+          {!queueLoading && limit > 0 && (
+            <Alert
+              variant="light"
+              color="blue"
+              icon={<IconInfoCircle size={16} />}
+            >
+              You have {available} of {limit} queue slots available.
+              {smartPanelCount !== '' && smartPanelCount > available && available > 0 && (
+                <Text size="sm" mt={4}>
+                  Creating {smartPanelCount} panels with {available} slots will require multiple queue
+                  cycles and take longer.
+                </Text>
+              )}
+              {smartPanelCount !== '' && smartPanelCount > available && available === 0 && (
+                <Text size="sm" mt={4} c="red">
+                  Your queue is currently full. Panels will be queued and processed as slots free up.
+                </Text>
+              )}
+            </Alert>
+          )}
+
           <Group justify="flex-end">
             <Button variant="default" onClick={handleClose}>
               Cancel
             </Button>
             <BuzzTransactionButton
               buzzAmount={planCost ?? 0}
+              accountTypes={availableBuzzTypes}
               label={planCost == null ? 'Loading cost...' : isPlanningPanels ? 'Planning...' : 'Plan Panels'}
               loading={isPlanningPanels}
               disabled={!smartStory.trim() || planCost == null}
@@ -163,7 +228,7 @@ export function SmartCreateModal({
           </Text>
 
           <ScrollArea.Autosize mah="50vh" viewportRef={scrollViewportRef}>
-            <Stack gap="sm" pr="sm">
+            <Stack gap="sm" pr="md">
               {smartPanels.map((panel, index) => (
                 <div key={index} className="flex gap-2 items-start">
                   <Text size="xs" c="dimmed" fw={600} mt={8} style={{ minWidth: 24 }}>
@@ -204,13 +269,6 @@ export function SmartCreateModal({
             leftSection={<IconPlus size={14} />}
             onClick={() => {
               setSmartPanels([...smartPanels, { prompt: '' }]);
-              // Scroll to the newly added panel after render
-              requestAnimationFrame(() => {
-                scrollViewportRef.current?.scrollTo({
-                  top: scrollViewportRef.current.scrollHeight,
-                  behavior: 'smooth',
-                });
-              });
             }}
           >
             Add Panel
@@ -223,14 +281,6 @@ export function SmartCreateModal({
             onChange={onModelChange}
             size="sm"
           />
-          <Switch
-            label="Enhance prompts"
-            description="Use AI to add detail and composition to each panel"
-            checked={smartEnhance}
-            onChange={(e) => setSmartEnhance(e.currentTarget.checked)}
-            color="yellow"
-          />
-
           <AspectRatioSelector
             value={smartAspectRatio}
             onChange={setSmartAspectRatio}
@@ -239,7 +289,7 @@ export function SmartCreateModal({
 
           <Text size="sm" c="dimmed">
             {panelCost != null
-              ? `Cost: ${smartPanels.filter((p) => p.prompt.trim()).length} panels x ${panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0)} = ${smartPanels.filter((p) => p.prompt.trim()).length * (panelCost + (smartEnhance ? (enhanceCost ?? 0) : 0))} Buzz`
+              ? `Cost: ${smartPanels.filter((p) => p.prompt.trim()).length} panels x ${panelCost} = ${smartPanels.filter((p) => p.prompt.trim()).length * panelCost} Buzz`
               : 'Calculating cost...'}
           </Text>
 
@@ -271,9 +321,9 @@ export function SmartCreateModal({
             </Button>
             <BuzzTransactionButton
               buzzAmount={
-                smartPanels.filter((p) => p.prompt.trim()).length *
-                ((panelCost ?? 0) + (smartEnhance ? (enhanceCost ?? 0) : 0))
+                smartPanels.filter((p) => p.prompt.trim()).length * (panelCost ?? 0)
               }
+              accountTypes={availableBuzzTypes}
               label={panelCost == null ? 'Loading cost...' : isCreating ? 'Creating...' : 'Create Chapter'}
               loading={isCreating}
               disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null || generationDisabled}

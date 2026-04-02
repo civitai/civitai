@@ -197,7 +197,10 @@ export const BuzzDashboardOverview = ({
   }, [report, viewingHourly, currentAccountType, currentAccountTypeLabel, buzzConfig]);
 
   return (
-    <div className={classes.dashboardGrid} style={{ '--grid-cols': 'minmax(0, 7fr) minmax(0, 5fr)' } as React.CSSProperties}>
+    <div
+      className={classes.dashboardGrid}
+      style={{ '--grid-cols': 'minmax(0, 7fr) minmax(0, 5fr)' } as React.CSSProperties}
+    >
       <div>
         <Stack h="100%">
           <Paper p="lg" radius="md" className={classes.tileCard} h="100%">
@@ -205,7 +208,9 @@ export const BuzzDashboardOverview = ({
               <Stack gap={0} mb="auto">
                 <Group justify="space-between" align="flex-start" wrap="wrap" mb="sm">
                   <Stack gap={4}>
-                    <h3 className="text-xl font-bold" style={{ margin: 0 }}>Current {currentAccountTypeLabel} Buzz</h3>
+                    <h3 className="text-xl font-bold" style={{ margin: 0 }}>
+                      Current {currentAccountTypeLabel} Buzz
+                    </h3>
                     <Group gap="sm" align="center" wrap="nowrap">
                       <UserBuzz
                         key={currentAccountType}
@@ -292,7 +297,7 @@ export const BuzzDashboardOverview = ({
               {isLoadingReport ? (
                 <Skeleton height={413} mt="sm" radius="sm" />
               ) : report.length > 0 ? (
-                <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative', overflow: 'hidden', width: '100%' }}>
                   <Text
                     c={buzzConfig.color}
                     size="xs"
@@ -338,7 +343,9 @@ export const BuzzDashboardOverview = ({
           }}
         >
           <Group justify="space-between" align="center" wrap="nowrap" mb="sm">
-            <h3 className="text-xl font-bold" style={{ margin: 0 }}>Recent {currentAccountTypeLabel} Transactions</h3>
+            <h3 className="text-xl font-bold" style={{ margin: 0 }}>
+              Recent {currentAccountTypeLabel} Transactions
+            </h3>
             <Anchor
               component={Link}
               href={`/user/transactions?accountType=${currentAccountType}`}
@@ -366,59 +373,58 @@ export const BuzzDashboardOverview = ({
               style={{
                 marginLeft: 'calc(-1 * var(--mantine-spacing-lg))',
                 marginRight: 'calc(-1 * var(--mantine-spacing-lg))',
-                borderTop: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+                borderTop:
+                  '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
               }}
             >
-            <ScrollArea
-              style={{ minHeight: 0, height: '100%' }}
-              key={currentAccountType}
-            >
-              <div style={{ paddingBottom: 'var(--mantine-spacing-lg)' }}>
-                {transactions.map((transaction, index) => {
-                  const { amount, date } = transaction;
+              <ScrollArea style={{ minHeight: 0, height: '100%' }} key={currentAccountType}>
+                <div style={{ paddingBottom: 'var(--mantine-spacing-lg)' }}>
+                  {transactions.map((transaction, index) => {
+                    const { amount, date } = transaction;
 
-                  return (
-                    <Group
-                      key={index + '@' + date.toISOString()}
-                      justify="space-between"
-                      wrap="nowrap"
-                      align="flex-start"
-                      py="xs"
-                      px="lg"
-                      style={{
-                        borderBottom: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
-                      }}
-                    >
-                      <Stack gap={0}>
-                        <Text size="sm" fw="500" lh={1.2}>
-                          {INCLUDE_DESCRIPTION.includes(transaction.type) &&
-                          transaction.description ? (
-                            <>{transaction.description}</>
-                          ) : (
-                            <>{getDisplayName(TransactionType[transaction.type])}</>
-                          )}
-                        </Text>
-                        <Text size="xs" c="dimmed">
-                          <DaysFromNow date={date} />
-                        </Text>
-                      </Stack>
-                      <Text c={buzzConfig.color}>
-                        <Group gap={2} wrap="nowrap">
-                          <IconBolt
-                            size={16}
-                            color={buzzConfig.color}
-                            style={{ fill: buzzConfig.fill }}
-                          />
-                          <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
-                            {amount.toLocaleString()}
+                    return (
+                      <Group
+                        key={index + '@' + date.toISOString()}
+                        justify="space-between"
+                        wrap="nowrap"
+                        align="flex-start"
+                        py="xs"
+                        px="lg"
+                        style={{
+                          borderBottom:
+                            '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+                        }}
+                      >
+                        <Stack gap={0}>
+                          <Text size="sm" fw="500" lh={1.2}>
+                            {INCLUDE_DESCRIPTION.includes(transaction.type) &&
+                            transaction.description ? (
+                              <>{transaction.description}</>
+                            ) : (
+                              <>{getDisplayName(TransactionType[transaction.type])}</>
+                            )}
                           </Text>
-                        </Group>
-                      </Text>
-                    </Group>
-                  );
-                })}
-              </div>
-            </ScrollArea>
+                          <Text size="xs" c="dimmed">
+                            <DaysFromNow date={date} />
+                          </Text>
+                        </Stack>
+                        <Text c={buzzConfig.color}>
+                          <Group gap={2} wrap="nowrap">
+                            <IconBolt
+                              size={16}
+                              color={buzzConfig.color}
+                              style={{ fill: buzzConfig.fill }}
+                            />
+                            <Text size="lg" style={{ fontVariantNumeric: 'tabular-nums' }} span>
+                              {amount.toLocaleString()}
+                            </Text>
+                          </Group>
+                        </Text>
+                      </Group>
+                    );
+                  })}
+                </div>
+              </ScrollArea>
             </div>
           ) : (
             <Text c="dimmed" mt="md">

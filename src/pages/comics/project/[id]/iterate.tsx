@@ -1,5 +1,5 @@
-import { ActionIcon, Text, Title, Tooltip } from '@mantine/core';
-import { IconArrowLeft, IconMessages } from '@tabler/icons-react';
+import { ActionIcon, Alert, Text, Title, Tooltip } from '@mantine/core';
+import { IconAlertTriangle, IconArrowLeft, IconMessages } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo, useState } from 'react';
@@ -150,7 +150,6 @@ function ComicIteratePage() {
         projectId,
         chapterPosition,
         prompt: params.prompt,
-        enhance: params.enhance,
         aspectRatio: params.aspectRatio,
         baseModel: params.baseModel as any,
         quantity: params.quantity,
@@ -232,7 +231,7 @@ function ComicIteratePage() {
     return (
       <div
         style={{
-          height: '100vh',
+          height: '100%',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -244,7 +243,7 @@ function ComicIteratePage() {
   }
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
       <div
         style={{
@@ -277,6 +276,24 @@ function ComicIteratePage() {
         </Title>
       </div>
 
+      {/* Sketch Edit Warning */}
+      <Alert
+        variant="light"
+        color="yellow"
+        icon={<IconAlertTriangle size={16} />}
+        mx="md"
+        mt="sm"
+        mb="xs"
+      >
+        <Text size="xs">
+          Sketch Edit produces varying results depending on the model used. For best results, use{' '}
+          <Text span fw={600}>
+            Nano Banana
+          </Text>
+          .
+        </Text>
+      </Alert>
+
       {/* Editor */}
       <div style={{ flex: 1, minHeight: 0 }}>
         <IterativeImageEditor
@@ -291,6 +308,12 @@ function ComicIteratePage() {
           costEstimate={iterateCostEstimate ?? null}
           isCostLoading={isCostFetching}
           enhanceCostEstimate={enhanceCostEstimate ?? null}
+          enhanceInPlace={{
+            projectId,
+            chapterPosition,
+            enhanceCost: enhanceCostEstimate?.cost ?? null,
+            insertAtPosition: numericPanelPosition ?? undefined,
+          }}
           onSettingsChange={handleSettingsChange}
           onRetryCost={handleRetryCost}
           mode="page"
@@ -302,6 +325,4 @@ function ComicIteratePage() {
 
 export default Page(ComicIteratePage, {
   scrollable: false,
-  header: null,
-  footer: null,
 });

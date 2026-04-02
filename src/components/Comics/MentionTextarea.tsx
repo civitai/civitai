@@ -37,9 +37,11 @@ export function MentionTextarea({
   );
 
   const extractMention = useCallback((text: string, cursorPos: number) => {
-    // Walk backwards from cursor to find @ preceded by whitespace or start-of-string
+    // Walk backwards from cursor to find @ preceded by whitespace or start-of-string.
+    // Allow word chars, hyphens, apostrophes, and Unicode letters so names like
+    // O'Brien, May-Lee, and robot's are captured as a single mention.
     const before = text.slice(0, cursorPos);
-    const match = before.match(/(?:^|\s)@([\w\-\u00C0-\u024F]*)$/);
+    const match = before.match(/(?:^|\s)@([\w\-'\u00C0-\u024F\u0370-\u03FF\u1E00-\u1EFF]*)$/);
     if (match) {
       // Calculate start: the match includes the leading space/start, find the @ position
       const atIndex = before.lastIndexOf('@', cursorPos - 1);

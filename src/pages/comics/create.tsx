@@ -12,13 +12,14 @@ import {
   Title,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import { IconBook, IconPhoto, IconPhotoUp, IconUpload, IconUser, IconX } from '@tabler/icons-react';
+import { IconBook, IconPhoto, IconPhotoUp, IconUpload, IconUser, IconWand, IconX } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Page } from '~/components/AppLayout/Page';
+import { GenerateImageModal } from '~/components/Comics/GenerateImageModal';
 import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
@@ -68,6 +69,8 @@ function CreateComicPage() {
   const [heroPosition, setHeroPosition] = useState(50);
   const [pickingCover, setPickingCover] = useState(false);
   const [pickingHero, setPickingHero] = useState(false);
+  const [generateCoverOpened, setGenerateCoverOpened] = useState(false);
+  const [generateHeroOpened, setGenerateHeroOpened] = useState(false);
 
   const { uploadToCF: uploadCoverToCF, files: coverFiles } = useCFImageUpload();
   const { uploadToCF: uploadHeroToCF, files: heroFiles } = useCFImageUpload();
@@ -222,15 +225,25 @@ function CreateComicPage() {
                         </Text>
                       </Stack>
                     </Dropzone>
-                    <Button
-                      variant="subtle"
-                      size="compact-xs"
-                      leftSection={<IconPhotoUp size={14} />}
-                      onClick={handlePickHeroFromGenerator}
-                      loading={pickingHero}
-                    >
-                      Pick from generator
-                    </Button>
+                    <Group gap={4}>
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={<IconPhotoUp size={14} />}
+                        onClick={handlePickHeroFromGenerator}
+                        loading={pickingHero}
+                      >
+                        Pick from generator
+                      </Button>
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={<IconWand size={14} />}
+                        onClick={() => setGenerateHeroOpened(true)}
+                      >
+                        Generate
+                      </Button>
+                    </Group>
                   </Stack>
                 )}
               </div>
@@ -293,15 +306,25 @@ function CreateComicPage() {
                         </Text>
                       </Stack>
                     </Dropzone>
-                    <Button
-                      variant="subtle"
-                      size="compact-xs"
-                      leftSection={<IconPhotoUp size={14} />}
-                      onClick={handlePickCoverFromGenerator}
-                      loading={pickingCover}
-                    >
-                      Pick from generator
-                    </Button>
+                    <Group gap={4}>
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={<IconPhotoUp size={14} />}
+                        onClick={handlePickCoverFromGenerator}
+                        loading={pickingCover}
+                      >
+                        Pick from generator
+                      </Button>
+                      <Button
+                        variant="subtle"
+                        size="compact-xs"
+                        leftSection={<IconWand size={14} />}
+                        onClick={() => setGenerateCoverOpened(true)}
+                      >
+                        Generate
+                      </Button>
+                    </Group>
                   </Stack>
                 )}
               </div>
@@ -479,6 +502,21 @@ function CreateComicPage() {
           </div>
         </div>
       </div>
+
+      <GenerateImageModal
+        opened={generateCoverOpened}
+        onClose={() => setGenerateCoverOpened(false)}
+        aspectRatio="3:4"
+        label="Cover"
+        onConfirm={setCoverUrl}
+      />
+      <GenerateImageModal
+        opened={generateHeroOpened}
+        onClose={() => setGenerateHeroOpened(false)}
+        aspectRatio="16:9"
+        label="Hero Banner"
+        onConfirm={setHeroUrl}
+      />
     </Container>
   );
 }

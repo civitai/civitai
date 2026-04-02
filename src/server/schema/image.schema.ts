@@ -250,11 +250,13 @@ export const imageModerationSchema = z.object({
   reviewAction: z.enum(['unblock', 'block']),
   violationType: z.enum(ViolationType).optional(),
   violationDetails: z.string().optional(),
+  removeMinorFlag: z.boolean().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {
   ids: number[];
   moderatorId?: number;
+  removeMinorFlag?: boolean;
 };
 export type ImageModerationBlockSchema = {
   ids?: number[];
@@ -366,6 +368,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     include: z.array(imageInclude).default(['cosmetics']),
     includeBaseModel: z.boolean().optional(),
     pending: z.boolean().optional(),
+    publishedOnly: z.boolean().optional(),
     postIds: z.number().array().optional(),
     reviewId: z.number().optional(),
     skip: z.number().optional(),

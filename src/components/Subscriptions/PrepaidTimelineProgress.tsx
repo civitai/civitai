@@ -3,11 +3,13 @@ import dayjs from '~/shared/utils/dayjs';
 import {
   type SubscriptionProductMetadata,
   type SubscriptionMetadata,
+  type PrepaidToken,
 } from '~/server/schema/subscriptions.schema';
 import styles from './PrepaidTimelineProgress.module.scss';
 import type { Dayjs } from 'dayjs';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { useNextBuzzDelivery } from '~/hooks/useNextBuzzDelivery';
+import { getPrepaidTokens } from '~/shared/utils/subscription-tokens';
 
 interface TimelineSegment {
   tier: string;
@@ -29,16 +31,15 @@ const TIER_COLORS = {
   bronze: '#fd7e14',
 } as const;
 
-const TIERS = ['gold', 'silver', 'bronze'] as const;
-
 export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgressProps) {
   const metadata = subscription.metadata as SubscriptionMetadata | null;
-  const prepaids = metadata?.prepaids;
-  const proratedDays = metadata?.proratedDays || {};
+  if (!metadata) return null;
 
-  if (!prepaids) return null;
-
+  const tokens = getPrepaidTokens({ metadata });
   const currentTier = (subscription.product?.metadata as SubscriptionProductMetadata)?.tier;
+  const proratedDays = metadata.proratedDays || {};
+
+  // Always show the timeline for active Civitai memberships — at minimum it shows the current period
   const currentPeriodStart = dayjs(subscription.currentPeriodStart);
   const currentPeriodEnd = dayjs(subscription.currentPeriodEnd);
   const now = dayjs();
@@ -47,7 +48,7 @@ export function PrepaidTimelineProgress({ subscription }: PrepaidTimelineProgres
     currentTier,
     currentPeriodStart,
     currentPeriodEnd,
-    prepaids,
+    tokens,
     proratedDays,
     now,
   });
@@ -95,7 +96,7 @@ function PrepaidTimelineProgressSegments({
         {shouldShow && nextBuzzDelivery && buzzAmount && (
           <Group gap="xs" wrap="nowrap">
             <Text size="sm" c="dimmed">
-              Next Buzz Delivery:
+              Next Token Unlock:
             </Text>
             <Text size="sm" fw={600}>
               {nextBuzzDelivery.format('MMM D, YYYY')}
@@ -197,7 +198,7 @@ interface CalculateTimelineSegmentsParams {
   currentTier: string;
   currentPeriodStart: Dayjs;
   currentPeriodEnd: Dayjs;
-  prepaids: Record<string, number>;
+  tokens: PrepaidToken[];
   proratedDays: Record<string, number>;
   now: Dayjs;
 }
@@ -206,7 +207,7 @@ function calculateTimelineSegments({
   currentTier,
   currentPeriodStart,
   currentPeriodEnd,
-  prepaids,
+  tokens,
   proratedDays,
   now,
 }: CalculateTimelineSegmentsParams): TimelineSegment[] {
@@ -215,7 +216,7 @@ function calculateTimelineSegments({
 
   const currentPeriodDays = currentPeriodEnd.diff(currentPeriodStart, 'day');
 
-  // Add current tier (use only current period, ignore prepaid for same tier)
+  // Add current active tier segment
   segments.push({
     tier: currentTier,
     days: currentPeriodDays,
@@ -227,13 +228,22 @@ function calculateTimelineSegments({
 
   cumulativeDays += currentPeriodDays;
 
-  // Add prepaid tiers (excluding current tier - no prepaid for active membership)
-  for (const tier of TIERS) {
-    if (tier === currentTier) continue; // Skip current tier completely
+  // Build future segments from tokens (excluding current tier's tokens since they're
+  // consumed within the current period by the unlock job).
+  // Group remaining locked tokens by tier, count months per tier.
+  const futureTierMonths: Record<string, number> = {};
+  for (const token of tokens) {
+    if (token.status === 'claimed') continue; // Already used
+    if (token.tier === currentTier) continue; // Part of current period
+    futureTierMonths[token.tier] = (futureTierMonths[token.tier] ?? 0) + 1;
+  }
 
-    const prepaidMonths = prepaids[tier] || 0;
-    const extraDays = proratedDays[tier] || 0;
-    const totalDays = prepaidMonths * 30 + extraDays;
+  // Add future tier segments in priority order (gold > silver > bronze)
+  const tierOrder = ['gold', 'silver', 'bronze'] as const;
+  for (const tier of tierOrder) {
+    const months = futureTierMonths[tier] ?? 0;
+    const extraDays = proratedDays[tier] ?? 0;
+    const totalDays = months * 30 + extraDays;
 
     if (totalDays > 0) {
       const startDate = currentPeriodStart.add(cumulativeDays, 'day');

@@ -398,6 +398,7 @@ export const userRestrictionRouter = router({
             matchedWord: firstMatch?.matchedText,
             matchedRegex: firstMatch?.regex,
             imageId: null,
+            remixOfId: null,
             time: row.createdDate,
           };
         });

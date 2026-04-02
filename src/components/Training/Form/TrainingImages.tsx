@@ -61,6 +61,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import type {
   ImageSelectModalProps,
   SelectedImage,
@@ -244,6 +245,7 @@ const LabelSelectModal = ({
 };
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
+  registerSignalGroup('training');
   const thisModelVersion = model.modelVersions[0];
   const thisMediaType =
     (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
@@ -1254,9 +1256,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       imageList.forEach((i) => {
         if (i.label.length > 0) {
-          const { blockedFor, success } = auditPrompt(i.label, undefined, isGreen);
-          if (!success) {
-            issues.push(...blockedFor);
+          // Validate each tag individually to avoid cross-tag false positives
+          // (e.g. "school_uniform, 1girl" matching composed "school...girl" pattern)
+          const tags = i.label.split(',').map((t) => t.trim()).filter(Boolean);
+          let hasInvalid = false;
+          for (const tag of tags) {
+            const { blockedFor, success } = auditPrompt(tag, undefined, isGreen);
+            if (!success) {
+              issues.push(...blockedFor);
+              hasInvalid = true;
+            }
+          }
+          if (hasInvalid) {
             if (!i.invalidLabel) {
               updateImage(model.id, thisMediaType, {
                 matcher: getShortNameFromUrl(i),

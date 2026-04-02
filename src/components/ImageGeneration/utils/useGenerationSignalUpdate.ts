@@ -1,11 +1,11 @@
 import type { WorkflowStepEvent } from '@civitai/client';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import { type InfiniteTextToImageRequests, fetchSignaledWorkflow } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { type InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
-import { queryClient, trpc } from '~/utils/trpc';
+import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
 import { COMPLETE_STATUSES, POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
@@ -110,4 +110,10 @@ function usePollWorkflows() {
 
     return handleClearInterval;
   }, [hasIds]);
+}
+
+export async function fetchSignaledWorkflow(
+  workflowId: string
+): Promise<WorkflowStatusUpdate | undefined> {
+  return await trpcVanilla.orchestrator.statusUpdate.query({ workflowId });
 }

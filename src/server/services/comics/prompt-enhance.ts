@@ -1,5 +1,6 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const SYSTEM_PROMPT = `You enhance user prompts for AI comic panel generation. The generation model receives separate reference images of the main character, so you do NOT need to describe physical appearance.
 
@@ -7,7 +8,7 @@ You will be given the names of characters the user referenced in their prompt. K
 
 Rules:
 - Do NOT describe any character's physical appearance (hair color, eye color, clothing, etc.) — reference images handle that
-- Preserve character names exactly as provided — do not rename, shorten, or omit them
+- Preserve character names EXACTLY as provided, including apostrophes, hyphens, and special characters (e.g. O'Brien stays O'Brien, robot's stays robot's) — do not rename, shorten, or omit them
 - Focus on: pose, expression, action, emotion, scene composition, camera angle, environment
 - Keep every element the user mentioned — do not drop, replace, or reinterpret anything
 - Do NOT invent or add new characters, objects, actions, or locations the user didn't mention
@@ -34,6 +35,7 @@ export async function enhanceComicPrompt(input: {
     storyDescription: string;
     previousPanelPrompts: string[];
   };
+  currencies?: BuzzSpendType[];
 }): Promise<string> {
   const {
     token,
@@ -43,6 +45,7 @@ export async function enhanceComicPrompt(input: {
     trainedWords,
     previousPanel,
     storyContext,
+    currencies,
   } = input;
 
   // Resolve @mentions: replace @ReferenceName with the exact name
@@ -63,11 +66,11 @@ export async function enhanceComicPrompt(input: {
   const mentionedSet = new Set(mentionedIds);
   const names = allRefs.filter((r) => mentionedSet.has(r.id)).map((r) => r.name);
 
-  // Fallback: just return the resolved prompt (no trained words for NanoBanana path)
+  // Fallback: return the original prompt (preserving @mentions) with trained words prepended
   const fallback =
     trainedWords && trainedWords.length > 0
-      ? `${trainedWords.join(', ')}, ${resolvedPrompt}`
-      : resolvedPrompt;
+      ? `${trainedWords.join(', ')}, ${userPrompt}`
+      : userPrompt;
 
   try {
     const textParts = [
@@ -112,6 +115,7 @@ export async function enhanceComicPrompt(input: {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content },
       ],
+      currencies,
     });
 
     let enhanced = result.content;
@@ -120,10 +124,27 @@ export async function enhanceComicPrompt(input: {
       return fallback;
     }
 
-    // Strip any @mentions the LLM hallucinated that weren't in the original prompt.
-    // The LLM sometimes invents scenes with characters the user never referenced.
+    // Re-inject @prefix onto recognized character names so downstream code
+    // can detect which references to attach. The LLM receives names without @
+    // so its output won't have them — we add them back here.
+    // Sort by length descending so "MayaWarrior" matches before "Maya".
+    // Use Unicode-safe boundaries (lookaround for non-word chars) instead of \b
+    // which fails on non-ASCII names.
+    const sortedNames = [...names].sort((a, b) => b.length - a.length);
+    for (const name of sortedNames) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Boundary chars must NOT include apostrophes or quotes — names like O'Brien
+      // contain them. Use only whitespace and punctuation that can't appear in names.
+      const pattern = new RegExp(
+        `(?<!@)(?<=^|[\\s.,!?;:\\)\\]])${escaped}(?=$|[\\s.,!?;:\\)\\]])`,
+        'giu'
+      );
+      enhanced = enhanced.replace(pattern, `@${name}`);
+    }
+
+    // Strip any @mentions the LLM hallucinated that don't match a known character
     const originalMentions = new Set(names.map((n) => n.toLowerCase()));
-    enhanced = enhanced.replace(/@([\w\p{L}]+)/gu, (match, name) => {
+    enhanced = enhanced.replace(/@([\w\p{L}'-]+)/gu, (match, name) => {
       if (originalMentions.has(name.toLowerCase())) return match;
       return name; // Strip the @ prefix, keep the word
     });

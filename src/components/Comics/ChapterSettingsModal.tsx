@@ -91,12 +91,14 @@ export function ChapterSettingsModal({
                   description={
                     currentEaConfig
                       ? `Current: ${currentEaConfig.buzzPrice} Buzz (can only reduce)`
-                      : 'Amount of Buzz readers must pay'
+                      : 'Amount of Buzz readers must pay (max 10,000)'
                   }
                   value={chapterSettingsEaBuzzPrice}
                   onChange={(val) => setChapterSettingsEaBuzzPrice(val)}
                   min={1}
                   max={currentEaConfig ? Math.min(currentEaConfig.buzzPrice, 10000) : 10000}
+                  step={10}
+                  clampBehavior="strict"
                   leftSection={<IconLock size={16} />}
                 />
                 <NumberInput
@@ -104,12 +106,14 @@ export function ChapterSettingsModal({
                   description={
                     currentEaConfig
                       ? `Current: ${currentEaConfig.timeframe} days (can only reduce)`
-                      : 'After this many days the chapter becomes free'
+                      : 'After this many days the chapter becomes free (max 30)'
                   }
                   value={chapterSettingsEaTimeframe}
                   onChange={(val) => setChapterSettingsEaTimeframe(val)}
                   min={1}
                   max={currentEaConfig ? Math.min(currentEaConfig.timeframe, 30) : 30}
+                  step={1}
+                  clampBehavior="strict"
                 />
               </>
             )}

@@ -91,9 +91,9 @@ export default WebhookEndpoint(async (req, res) => {
     // Only check blocking if this is a NEW or CHANGED hash (not a rescan of existing file)
     const hashChanged = !existingHash || existingHash.hash !== sha256Hash;
 
-    if (sha256Hash && hashChanged && (await isModelHashBlocked(sha256Hash))) {
-      await unpublishBlockedModel(file.modelVersionId);
-    }
+    // if (sha256Hash && hashChanged && (await isModelHashBlocked(sha256Hash))) {
+    //   await unpublishBlockedModel(file.modelVersionId);
+    // }
   }
 
   // Hanlde file conversion

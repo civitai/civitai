@@ -37,6 +37,12 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
         tip: 'Send USDC on Base for the lowest fees.',
         url: 'https://www.coinbase.com',
       },
+      {
+        name: 'Peer',
+        description:
+          'Buy crypto from other people using Venmo, Cash App, PayPal, or Zelle — no exchange account needed.',
+        url: 'https://www.peer.xyz/swap?tab=buy',
+      },
     ],
   },
   {
@@ -64,6 +70,12 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
         description: 'Free USDC withdrawals on Base — the lowest fee option.',
         tip: 'Send USDC on Base for the lowest fees.',
         url: 'https://www.coinbase.com',
+      },
+      {
+        name: 'Peer',
+        description:
+          'Buy crypto from other people using Revolut, Wise, Monzo, or PayPal — no exchange account needed.',
+        url: 'https://www.peer.xyz/swap?tab=buy',
       },
     ],
   },
@@ -96,6 +108,12 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
           'Buy USDC with a card and have it sent directly to your wallet — no exchange needed.',
         url: 'https://www.moonpay.com',
       },
+      {
+        name: 'Peer',
+        description:
+          'Buy crypto from other people using Wise or PayPal — no exchange account needed.',
+        url: 'https://www.peer.xyz/swap?tab=buy',
+      },
     ],
   },
   {
@@ -121,6 +139,12 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
           'Buy USDC with a card in one step — works across most Latin American countries.',
         url: 'https://www.moonpay.com',
       },
+      {
+        name: 'Peer',
+        description:
+          'Buy crypto from other people using Mercado Pago, PayPal, or Wise — no exchange account needed.',
+        url: 'https://www.peer.xyz/swap?tab=buy',
+      },
     ],
   },
   {
@@ -145,6 +169,12 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
         description:
           'Available in 180+ countries with P2P trading for local currencies.',
         url: 'https://www.binance.com',
+      },
+      {
+        name: 'Peer',
+        description:
+          'Buy crypto from other people using Wise, Revolut, or PayPal — no exchange account needed.',
+        url: 'https://www.peer.xyz/swap?tab=buy',
       },
     ],
   },

@@ -9,7 +9,7 @@ import { clavataEvaluate } from '~/server/integrations/clavata';
 import { logToAxiom } from '~/server/logging/client';
 import { clavataCounter } from '~/server/prom/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { updateUserById } from '~/server/services/user.service';

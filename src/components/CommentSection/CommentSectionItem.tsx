@@ -19,7 +19,7 @@ import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ReactionDetails } from '~/server/selectors/reaction.selector';
 import type { CommentGetCommentsById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';

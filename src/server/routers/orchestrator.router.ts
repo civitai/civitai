@@ -489,6 +489,7 @@ export const orchestratorRouter = router({
           userPrompt: fullPrompt,
           characterName: '',
           characterNames: [],
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
       }
 
@@ -514,6 +515,8 @@ export const orchestratorRouter = router({
           ? allImages
           : allImages.slice(0, modelConfig.maxReferenceImages);
 
+      const tags = ctx.domain === 'green' ? ['iterate', 'green'] : ['iterate'];
+
       const result = await createImageGen({
         params: {
           prompt: fullPrompt || '',
@@ -534,11 +537,13 @@ export const orchestratorRouter = router({
           images: cappedImages,
         },
         resources: [{ id: effectiveVersionId, strength: 1 }],
-        tags: ['iterate'],
+        tags,
         tips: { creators: 0, civitai: 0 },
         user: ctx.user! as SessionUser,
         token,
-        currencies: ['yellow'],
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
 
       return {
@@ -633,7 +638,7 @@ export const orchestratorRouter = router({
             images: cappedImages,
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['iterate'],
+          tags: ctx.domain === 'green' ? ['iterate', 'green'] : ['iterate'],
           tips: { creators: 0, civitai: 0 },
           whatIf: true,
           user: ctx.user! as SessionUser,
@@ -641,7 +646,7 @@ export const orchestratorRouter = router({
 
         const workflow = await submitWorkflow({
           token,
-          body: { steps: [step], currencies: ['yellow'] },
+          body: { steps: [step], currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any },
           query: { whatif: true },
         });
 

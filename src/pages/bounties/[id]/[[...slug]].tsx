@@ -199,6 +199,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
       <Meta
         title={`Civitai | ${bounty?.name}`}
         images={bounty?.images}
+        ogEndpoint={`/api/og?type=bounty&id=${bounty.id}`}
         description={bounty?.description}
         canonical={`/bounties/${bounty.id}/${slugit(bounty.name)}`}
         alternate={`/bounties/${bounty.id}`}

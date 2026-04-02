@@ -66,7 +66,17 @@ export function useGetActiveChallenges() {
 }
 
 const useStore = create<{ dismissed: number[] }>()(
-  persist(() => ({ dismissed: [] as number[] }), { name: 'challenges', version: 2 })
+  persist(() => ({ dismissed: [] as number[] }), {
+    name: 'challenges',
+    version: 2,
+    migrate: (state) => {
+      const prev = state as Record<string, unknown> | null;
+      const dismissed = Array.isArray(prev?.dismissed)
+        ? prev.dismissed.filter((id): id is number => typeof id === 'number')
+        : [];
+      return { dismissed };
+    },
+  })
 );
 
 /**

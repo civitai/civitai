@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
+import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
@@ -18,6 +19,7 @@ import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-rand
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
+import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { challengeActivationJob } from '~/server/jobs/challenge-activation';
@@ -161,7 +163,9 @@ export const jobs: Job[] = [
   expireStrikesJob,
   processTimedUnmutesJob,
   custodySweepJob,
+  reconcileNowpaymentsJob,
   processEnqueuedComicPanelsJob,
+  auditRemixSourcesJob,
 ];
 
 const log = createLogger('jobs', 'green');

@@ -153,12 +153,7 @@ function createCounter<TId extends number | string = number | string>({
   }
 
   async function increment({ id, value = 1 }: { id: TId; value?: number }) {
-    let count = await getCount(id);
-    if (!count) {
-      const fetched = await fetchCount([id]);
-      count = fetched.get(id) ?? 0;
-      await setCacheValue(id, count);
-    }
+    const count = await getCount(id);
 
     const absValue = Math.abs(value); // Make sure we are using positive number
     if (ordered) await sysRedis.zIncrBy(key, absValue, id.toString());
@@ -168,12 +163,7 @@ function createCounter<TId extends number | string = number | string>({
   }
 
   async function decrement({ id, value = 1 }: { id: TId; value?: number }) {
-    let count = await getCount(id);
-    if (!count) {
-      const fetched = await fetchCount([id]);
-      count = fetched.get(id) ?? 0;
-      await setCacheValue(id, count);
-    }
+    const count = await getCount(id);
 
     const absValue = Math.abs(value); // Make sure we are using positive number
     const newValue = Math.max(0, count - absValue); // Ensure we don't go below 0
@@ -417,7 +407,7 @@ export const blessedBuzzCounter = createCounter({
 
     const data = await clickhouse.$query<{ userId: number; totalExp: number }>`
       SELECT userId, SUM(${caseExpression}) as totalExp
-      FROM knights_new_order_image_rating
+      FROM knights_new_order_image_rating FINAL
       WHERE userId IN (${validUserIds.join(',')})
         AND createdAt BETWEEN ${startDate} AND ${endDate}
         AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
@@ -481,7 +471,7 @@ export const pendingBuzzCounter = createCounter({
 
     const data = await clickhouse.$query<{ userId: number; totalExp: number }>`
       SELECT userId, SUM(${caseExpression}) as totalExp
-      FROM knights_new_order_image_rating
+      FROM knights_new_order_image_rating FINAL
       WHERE userId IN (${validUserIds.join(',')})
         AND createdAt BETWEEN ${startDate} AND ${endDate}
         AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
@@ -494,6 +484,37 @@ export const pendingBuzzCounter = createCounter({
       for (const row of data) {
         const idx = ids.findIndex((id) => Number(id) === row.userId);
         if (idx !== -1) result.set(ids[idx], row.totalExp ?? 0);
+      }
+    }
+    return result;
+  },
+  ttl: CacheTTL.day,
+});
+
+export const recentlyGrantedBuzzCounter = createCounter({
+  key: REDIS_SYS_KEYS.NEW_ORDER.RECENTLY_GRANTED_BUZZ,
+  fetchCount: async (ids) => {
+    const result = new Map<number | string, number>();
+    for (const id of ids) result.set(id, 0);
+
+    if (!clickhouse || ids.length === 0) return result;
+
+    const numericIds = ids.map(Number);
+    const sevenDaysAgo = dayjs().subtract(7, 'days').startOf('day').toDate();
+
+    const data = await clickhouse.$query<{ toAccountId: number; totalBuzz: number }>`
+      SELECT toAccountId, sum(amount) as totalBuzz
+      FROM buzzTransactions
+      WHERE toAccountId IN (${numericIds.join(',')})
+        AND externalTransactionId LIKE 'new-order-%'
+        AND date >= ${sevenDaysAgo}
+      GROUP BY toAccountId
+    `.catch(handleLogError);
+
+    if (data) {
+      for (const row of data) {
+        const idx = ids.findIndex((id) => Number(id) === row.toAccountId);
+        if (idx !== -1) result.set(ids[idx], row.totalBuzz ?? 0);
       }
     }
     return result;
@@ -722,12 +743,29 @@ export const getImageRatingsCounter = (imageId: number) => {
   return counter;
 };
 
-// Rate limiting configuration for voting
-export const VOTING_RATE_LIMITS = {
-  perMinute: 75, // Max votes per minute
-  perHour: 4500, // Max votes per hour
-  abuseThreshold: 4510, // Auto-reset career threshold per hour
-} as const;
+type VotingRateLimitConfig = {
+  perMinute: number;
+  perHour: number;
+  perDay: number;
+  abuseThreshold: number;
+};
+
+const ALLOWED_RESPONSE = { allowed: true, remaining: 0, resetTime: 0, isAbuse: false } as const;
+const MINUTE_WINDOW = 60 * 1000;
+const HOUR_WINDOW = 60 * MINUTE_WINDOW;
+const DAY_WINDOW = 24 * HOUR_WINDOW;
+
+/**
+ * Get rate limit config from Redis. Returns null if unavailable — callers
+ * should skip rate limiting entirely when config is not set.
+ */
+async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
+  try {
+    return await sysRedis.packed.get<VotingRateLimitConfig>(REDIS_SYS_KEYS.NEW_ORDER.CONFIG);
+  } catch {
+    return null;
+  }
+}
 
 // Simple sliding window rate limiter for voting
 export async function checkVotingRateLimit(userId: number): Promise<{
@@ -736,63 +774,60 @@ export async function checkVotingRateLimit(userId: number): Promise<{
   resetTime: number;
   isAbuse: boolean;
 }> {
-  if (!redis) {
-    return {
-      allowed: true,
-      remaining: VOTING_RATE_LIMITS.perMinute,
-      resetTime: Date.now() + 60000,
-      isAbuse: false,
-    };
-  }
+  if (!redis) return ALLOWED_RESPONSE;
+
+  const limits = await getVotingRateLimitConfig();
+  if (!limits) return ALLOWED_RESPONSE;
 
   const now = Date.now();
   const minuteKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.MINUTE}:${userId}` as const;
   const hourKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.HOUR}:${userId}` as const;
-  const minuteWindow = 60 * 1000; // 1 minute
-  const hourWindow = 60 * 60 * 1000; // 1 hour
+  const dayKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.DAY}:${userId}` as const;
 
   try {
     // Clean up old entries
-    await redis.zRemRangeByScore(minuteKey, '-inf', now - minuteWindow);
-    await redis.zRemRangeByScore(hourKey, '-inf', now - hourWindow);
+    await Promise.all([
+      redis.zRemRangeByScore(minuteKey, '-inf', now - MINUTE_WINDOW),
+      redis.zRemRangeByScore(hourKey, '-inf', now - HOUR_WINDOW),
+      redis.zRemRangeByScore(dayKey, '-inf', now - DAY_WINDOW),
+    ]);
 
     // Count current requests
-    const [minuteCount, hourCount] = await Promise.all([
+    const [minuteCount, hourCount, dayCount] = await Promise.all([
       redis.zCard(minuteKey),
       redis.zCard(hourKey),
+      redis.zCard(dayKey),
     ]);
 
     // Check limits
-    const minuteAllowed = minuteCount < VOTING_RATE_LIMITS.perMinute;
-    const hourAllowed = hourCount < VOTING_RATE_LIMITS.perHour;
-    const isAbuse = hourCount >= VOTING_RATE_LIMITS.abuseThreshold;
-    const allowed = minuteAllowed && hourAllowed && !isAbuse;
+    const minuteAllowed = minuteCount < limits.perMinute;
+    const hourAllowed = hourCount < limits.perHour;
+    const dayAllowed = dayCount < limits.perDay;
+    const isAbuse = hourCount >= limits.abuseThreshold;
+    const allowed = minuteAllowed && hourAllowed && dayAllowed && !isAbuse;
 
     if (allowed) {
       // Add current request
       const requestId = `${now}-${Math.random()}`;
-      await Promise.all([
-        redis.zAdd(minuteKey, { score: now, value: requestId }),
-        redis.zAdd(hourKey, { score: now, value: requestId }),
-        redis.expire(minuteKey, 60),
-        redis.expire(hourKey, 3600),
-      ]);
+      await redis
+        .multi()
+        .zAdd(minuteKey, { score: now, value: requestId })
+        .zAdd(hourKey, { score: now, value: requestId })
+        .zAdd(dayKey, { score: now, value: requestId })
+        .expire(minuteKey, 60)
+        .expire(hourKey, 3600)
+        .expire(dayKey, 86400)
+        .exec();
     }
 
     return {
       allowed,
-      remaining: Math.max(0, VOTING_RATE_LIMITS.perMinute - minuteCount - (allowed ? 1 : 0)),
-      resetTime: now + minuteWindow,
+      remaining: Math.max(0, limits.perMinute - minuteCount - (allowed ? 1 : 0)),
+      resetTime: now + MINUTE_WINDOW,
       isAbuse,
     };
   } catch (error) {
     handleLogError(error as Error, `Rate limiting failed for user ${userId}`);
-    // Fallback to allow if Redis fails
-    return {
-      allowed: true,
-      remaining: VOTING_RATE_LIMITS.perMinute,
-      resetTime: now + 60000,
-      isAbuse: false,
-    };
+    return ALLOWED_RESPONSE;
   }
 }

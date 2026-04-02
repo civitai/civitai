@@ -8,6 +8,7 @@ import type {
 } from '@civitai/client';
 import { WorkflowStatus } from '@civitai/client';
 import { dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -401,6 +402,7 @@ export type TrainingWorkflowUpdateResult = {
   trainingStatus: TrainingStatus;
   previousStatus: TrainingStatus | undefined;
   statusChanged: boolean;
+  hasOutput: boolean;
   modelVersionId: number;
   modelVersionName: string;
   modelId: number;
@@ -534,12 +536,38 @@ export async function updateTrainingWorkflowRecords(
     sampleImages: e.sampleImages ?? [],
   }));
 
+  const resolvedStartedAt =
+    trainingResults.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null);
+
+  // Flag anomalous completion: workflow succeeded but never had a start time or produced no epochs
+  if (
+    trainingStatus === TrainingStatus.InReview &&
+    (!resolvedStartedAt || epochData.length === 0)
+  ) {
+    logToAxiom(
+      {
+        name: 'training-anomaly',
+        type: 'warning',
+        message: 'Training completed without starting or producing output',
+        data: {
+          workflowId,
+          modelFileId,
+          startedAt: resolvedStartedAt,
+          epochCount: epochData.length,
+          status,
+          userId: model.user.id,
+        },
+      },
+      'webhooks'
+    ).catch();
+  }
+
   const newTrainingResults: TrainingResultsV2 = {
     ...trainingResults,
     version: 2,
     workflowId: trainingResults.workflowId ?? workflowId ?? 'unk',
     submittedAt: (createdAt ? new Date(createdAt) : new Date()).toISOString(),
-    startedAt: trainingResults.startedAt ?? (startedAt ? new Date(startedAt).toISOString() : null),
+    startedAt: resolvedStartedAt,
     completedAt: completedAt ? new Date(completedAt).toISOString() : null,
     epochs: epochData,
     history,
@@ -574,6 +602,7 @@ export async function updateTrainingWorkflowRecords(
     trainingStatus,
     previousStatus,
     statusChanged,
+    hasOutput: epochData.length > 0,
     modelVersionId: modelVersion.id,
     modelVersionName: modelVersion.name,
     modelId: model.id,

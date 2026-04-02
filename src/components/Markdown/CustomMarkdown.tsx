@@ -23,69 +23,70 @@ export function CustomMarkdown({
 }: CustomOptions) {
   const user = useCurrentUser();
 
+  const mergedComponents: Options['components'] = {
+    ...components,
+    a: ({ node, href, ...props }) => {
+      if (!href) return <a {...props}>{props.children}</a>;
+      if (
+        allowExternalVideo &&
+        videoKeysRequirements.some((requirements) =>
+          requirements.every((item) => href?.includes(item))
+        )
+      ) {
+        return (
+          <span className="relative mx-auto mb-3 block aspect-video max-w-sm">
+            <iframe
+              allowFullScreen
+              src={href}
+              className="absolute inset-0 size-full border-none"
+            ></iframe>
+          </span>
+        );
+      }
+
+      const isExternalLink = href.startsWith('http');
+      if (typeof window !== 'undefined') href = href.replace('//civitai.com', `//${location.host}`);
+
+      href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
+
+      return (
+        <Link legacyBehavior href={href} passHref>
+          <a target={isExternalLink ? '_blank' : '_self'} rel="nofollow noreferrer">
+            {props.children}
+          </a>
+        </Link>
+      );
+    },
+    table: ({ node, children, ref, ...props }) => {
+      return (
+        <Table {...props} striped withTableBorder withColumnBorders>
+          {children}
+        </Table>
+      );
+    },
+    thead: ({ node, children, ref, ...props }) => {
+      return <Table.Thead {...props}>{children}</Table.Thead>;
+    },
+    tbody: ({ node, children, ref, ...props }) => {
+      return <Table.Tbody {...props}>{children}</Table.Tbody>;
+    },
+    tr: ({ node, children, ref, ...props }) => {
+      return <Table.Tr {...props}>{children}</Table.Tr>;
+    },
+    th: ({ node, children, ref, ...props }) => {
+      return <Table.Th {...props}>{children}</Table.Th>;
+    },
+    td: ({ node, children, ref, ...props }) => {
+      return <Table.Td {...props}>{children}</Table.Td>;
+    },
+  };
+
   return (
     <ContentErrorBoundary>
       <ReactMarkdown
         {...options}
         className={clsx(className, 'markdown-content')}
-        components={{
-          ...components,
-          a: ({ node, href, ...props }) => {
-            if (!href) return <a {...props}>{props.children}</a>;
-            if (
-              allowExternalVideo &&
-              videoKeysRequirements.some((requirements) =>
-                requirements.every((item) => href?.includes(item))
-              )
-            ) {
-              return (
-                <span className="relative mx-auto mb-3 block aspect-video max-w-sm">
-                  <iframe
-                    allowFullScreen
-                    src={href}
-                    className="absolute inset-0 size-full border-none"
-                  ></iframe>
-                </span>
-              );
-            }
-
-            const isExternalLink = href.startsWith('http');
-            if (typeof window !== 'undefined')
-              href = href.replace('//civitai.com', `//${location.host}`);
-
-            href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
-
-            return (
-              <Link legacyBehavior href={href} passHref>
-                <a target={isExternalLink ? '_blank' : '_self'} rel="nofollow noreferrer">
-                  {props.children}
-                </a>
-              </Link>
-            );
-          },
-          table: ({ node, children, ref, ...props }) => {
-            return (
-              <Table {...props} striped withTableBorder withColumnBorders>
-                {children}
-              </Table>
-            );
-          },
-          thead: ({ node, children, ref, ...props }) => {
-            return <Table.Thead {...props}>{children}</Table.Thead>;
-          },
-          tbody: ({ node, children, ref, ...props }) => {
-            return <Table.Tbody {...props}>{children}</Table.Tbody>;
-          },
-          tr: ({ node, children, ref, ...props }) => {
-            return <Table.Tr {...props}>{children}</Table.Tr>;
-          },
-          th: ({ node, children, ref, ...props }) => {
-            return <Table.Th {...props}>{children}</Table.Th>;
-          },
-          td: ({ node, children, ref, ...props }) => {
-            return <Table.Td {...props}>{children}</Table.Td>;
-          },
-        }}
+        components={mergedComponents}
       />
     </ContentErrorBoundary>
   );

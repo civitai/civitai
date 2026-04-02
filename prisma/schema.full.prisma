@@ -236,10 +236,12 @@ model CryptoDeposit {
   feeCurrency   String?
   paidFiat      Float?
   chain         String?
+  retryCount    Int      @default(0)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([userId, createdAt(sort: Desc)])
+  @@index([status])
 }
 
 enum CryptoTransactionStatus {
@@ -4978,6 +4980,7 @@ enum ComicPanelStatus {
   Pending
   Enqueued
   Generating
+  AwaitingSelection
   Ready
   Failed
 }
@@ -5037,9 +5040,10 @@ model ComicProject {
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 
-  chapters    ComicChapter[]
-  engagements ComicProjectEngagement[]
-  reports     ComicProjectReport[]
+  chapters          ComicChapter[]
+  engagements       ComicProjectEngagement[]
+  reports           ComicProjectReport[]
+  projectReferences ComicProjectReference[]
 
   @@index([userId])
   @@index([status])
@@ -5081,8 +5085,9 @@ model ComicReference {
   createdAt    DateTime                   @default(now())
   updatedAt    DateTime                   @updatedAt
 
-  images          ComicReferenceImage[]
-  panelReferences ComicPanelReference[]
+  images            ComicReferenceImage[]
+  panelReferences   ComicPanelReference[]
+  projectReferences ComicProjectReference[]
 
   @@index([userId])
   @@index([status])
@@ -5098,6 +5103,18 @@ model ComicReferenceImage {
 
   @@id([referenceId, imageId])
   @@index([imageId], type: Hash)
+}
+
+model ComicProjectReference {
+  projectId   Int
+  referenceId Int
+  createdAt   DateTime @default(now())
+
+  project     ComicProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  reference   ComicReference @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, referenceId])
+  @@index([referenceId])
 }
 
 model ComicPanel {

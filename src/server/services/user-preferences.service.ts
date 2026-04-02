@@ -166,35 +166,41 @@ export const HiddenModels = createUserCache({
 });
 
 export const HiddenUsers = createUserCache({
-  key: 'hidden-users-3',
+  key: 'hidden-users-4',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
-          ue."targetUserId" "id"
+          ue."targetUserId" "id",
+          u."username"
         FROM "UserEngagement" ue
-        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Hide}::"UserEngagementType"
+        JOIN "User" u ON u."id" = ue."targetUserId"
+        WHERE ue."userId" = ${userId} AND ue.type = ${UserEngagementType.Hide}::"UserEngagementType"
       `,
 });
 
 export const BlockedUsers = createUserCache({
-  key: 'blocked-users',
+  key: 'blocked-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
-          ue."targetUserId" "id"
+          ue."targetUserId" "id",
+          u."username"
         FROM "UserEngagement" ue
-        WHERE "userId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+        JOIN "User" u ON u."id" = ue."targetUserId"
+        WHERE ue."userId" = ${userId} AND ue.type = ${UserEngagementType.Block}::"UserEngagementType"
       `,
 });
 
 export const BlockedByUsers = createUserCache({
-  key: 'blocked-by-users',
+  key: 'blocked-by-users-2',
   callback: async ({ userId }) =>
-    await dbRead.$queryRaw<{ id: number }[]>`
+    await dbRead.$queryRaw<{ id: number; username: string | null }[]>`
         SELECT
-          ue."userId" "id"
+          ue."userId" "id",
+          u."username"
         FROM "UserEngagement" ue
-        WHERE "targetUserId" = ${userId} AND type = ${UserEngagementType.Block}::"UserEngagementType"
+        JOIN "User" u ON u."id" = ue."userId"
+        WHERE ue."targetUserId" = ${userId} AND ue.type = ${UserEngagementType.Block}::"UserEngagementType"
       `,
 });
 
@@ -403,10 +409,10 @@ export async function getAllHiddenForUser({
   const result = {
     hiddenImages: [...images.map((id) => ({ id, hidden: true })), ...implicitImages],
     hiddenModels: models.map((id) => ({ id, hidden: true })),
-    hiddenUsers: users.map((user) => ({ id: user.id, hidden: true })),
+    hiddenUsers: users.map((user) => ({ ...user, hidden: true })),
     hiddenTags: [...hiddenTags.map((tag) => ({ ...tag, hidden: true })), ...moderatedTags],
-    blockedUsers: blockedUsers.map((user) => ({ id: user.id, hidden: true })),
-    blockedByUsers: blockedByUsers.map((user) => ({ id: user.id, hidden: true })),
+    blockedUsers: blockedUsers.map((user) => ({ ...user, hidden: true })),
+    blockedByUsers: blockedByUsers.map((user) => ({ ...user, hidden: true })),
   } as HiddenPreferenceTypes;
 
   return result;
