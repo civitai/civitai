@@ -79,6 +79,8 @@ import {
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
+import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
 
 export const moderateImageHandler = async ({
   input,
@@ -387,6 +389,20 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const pinnedPosts = modelGallerySettings?.pinnedPosts ?? {};
     const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
+    // Log gallery settings source data for pinned post debugging
+    if (input.modelVersionId && versionPinnedPosts.length) {
+      logToAxiom({
+        type: 'info',
+        name: 'pinned-posts-settings',
+        modelId: input.modelId,
+        modelVersionId: input.modelVersionId,
+        pinnedPostIds: versionPinnedPosts,
+        pinnedPostCount: versionPinnedPosts.length,
+        allVersionsWithPins: Object.keys(pinnedPosts),
+        hasCursor: !!cursor,
+      });
+    }
+
     if (versionPinnedPosts.length && !cursor) {
       // Pinned posts: always use DB path (getAllImages) instead of BitDex.
       // postId queries are ~2ms in Postgres (covered index) and create unique
@@ -401,7 +417,8 @@ export const getImagesAsPostsInfiniteHandler = async ({
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
-        limit: limit * 4,
+        // Max pinned posts (20) × max images per post (20) = 400
+        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
         useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,
@@ -417,6 +434,26 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (!image?.postId) continue;
         if (!pinned[image.postId]) pinned[image.postId] = [];
         pinned[image.postId].push(image);
+      }
+
+      const returnedPostIds = [...new Set(pinnedPostsImages.map((i) => i.postId))];
+      const missingPostIds = versionPinnedPosts.filter((id) => !returnedPostIds.includes(id));
+      if (missingPostIds.length) {
+        logToAxiom({
+          type: 'warning',
+          name: 'pinned-posts-missing',
+          message: `Pinned posts missing from getAllImages results`,
+          modelId: input.modelId,
+          modelVersionId: input.modelVersionId,
+          requestedPostIds: versionPinnedPosts,
+          returnedPostIds,
+          missingPostIds,
+          totalImagesReturned: pinnedPostsImages.length,
+          limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
+          browsingLevel: input.browsingLevel,
+          userId: user?.id,
+          isModerator: user?.isModerator,
+        });
       }
     }
 
@@ -453,6 +490,26 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     const mergedPosts = Object.values({ ...pinned, ...posts });
+
+    // Verify pinned posts survived the merge
+    if (versionPinnedPosts.length && !cursor) {
+      const pinnedPostIdsInResult = Object.keys(pinned).map(Number);
+      const mergedPostIds = mergedPosts.map(([img]) => img.postId).filter(isDefined);
+      const droppedInMerge = pinnedPostIdsInResult.filter((id) => !mergedPostIds.includes(id));
+      if (droppedInMerge.length) {
+        logToAxiom({
+          type: 'error',
+          name: 'pinned-posts-dropped-in-merge',
+          message: `Pinned posts present after fetch but missing after merge`,
+          modelId: input.modelId,
+          modelVersionId: input.modelVersionId,
+          pinnedPostIdsInResult,
+          droppedInMerge,
+          pinnedKeys: Object.keys(pinned),
+          postsKeys: Object.keys(posts),
+        });
+      }
+    }
 
     // Get reviews from the users who created the posts
     const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];
