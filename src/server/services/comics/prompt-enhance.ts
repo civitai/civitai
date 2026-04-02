@@ -1,5 +1,6 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const SYSTEM_PROMPT = `You enhance user prompts for AI comic panel generation. The generation model receives separate reference images of the main character, so you do NOT need to describe physical appearance.
 
@@ -34,6 +35,7 @@ export async function enhanceComicPrompt(input: {
     storyDescription: string;
     previousPanelPrompts: string[];
   };
+  currencies?: BuzzSpendType[];
 }): Promise<string> {
   const {
     token,
@@ -43,6 +45,7 @@ export async function enhanceComicPrompt(input: {
     trainedWords,
     previousPanel,
     storyContext,
+    currencies,
   } = input;
 
   // Resolve @mentions: replace @ReferenceName with the exact name
@@ -112,6 +115,7 @@ export async function enhanceComicPrompt(input: {
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content },
       ],
+      currencies,
     });
 
     let enhanced = result.content;

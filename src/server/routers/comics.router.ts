@@ -190,6 +190,8 @@ async function submitComicGeneration({
   user,
   token,
   features,
+  isGreen,
+  allowMatureContent,
 }: {
   prompt: string;
   width: number;
@@ -202,11 +204,15 @@ async function submitComicGeneration({
   user: SessionUser;
   token: string;
   features: FeatureAccess;
+  isGreen?: boolean;
+  allowMatureContent?: boolean;
 }) {
   const versionId = versionIdOverride ?? modelConfig.versionId;
   const cappedImages = images
     ? capReferenceImages(images, modelConfig.maxReferenceImages)
     : null;
+
+  const tags = isGreen ? ['comics', 'green'] : ['comics'];
 
   return createImageGen({
     params: {
@@ -228,10 +234,12 @@ async function submitComicGeneration({
       images: cappedImages,
     },
     resources: [{ id: versionId, strength: 1 }],
-    tags: ['comics'],
+    tags,
     tips: { creators: 0, civitai: 0 },
     user,
     token,
+    isGreen,
+    allowMatureContent,
     currencies: getAllowedAccountTypes(features, ['blue']) as any,
   });
 }
@@ -654,6 +662,7 @@ async function createSinglePanel(args: {
   if (enqueue) {
     metadata.aspectRatio = aspectRatio;
     metadata.maxReferenceImages = modelConfig.maxReferenceImages;
+    metadata.isGreen = ctx.features.isGreen ?? false;
   }
 
   const panel = await dbWrite.comicPanel.create({
@@ -690,6 +699,8 @@ async function createSinglePanel(args: {
       user: ctx.user! as SessionUser,
       token,
       features: ctx.features,
+      isGreen: ctx.features.isGreen,
+      allowMatureContent: ctx.domain === 'green' ? false : undefined,
     });
 
     const updated = await dbWrite.comicPanel.update({
@@ -1379,7 +1390,7 @@ export const comicsRouter = router({
             images: cappedImages.length > 0 ? cappedImages : null,
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['comics'],
+          tags: ctx.features.isGreen ? ['comics', 'green'] : ['comics'],
           tips: { creators: 0, civitai: 0 },
           whatIf: true,
           user: ctx.user! as SessionUser,
@@ -1415,6 +1426,7 @@ export const comicsRouter = router({
           { role: 'user', content: 'A sample prompt for cost estimation.' },
         ],
         maxTokens: 512,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (error) {
       console.error('Comics getPromptEnhanceCostEstimate failed:', error);
@@ -1488,6 +1500,7 @@ export const comicsRouter = router({
         characterName: primaryReferenceName,
         characterNames: mentionedNames,
         previousPanel: contextPanel ?? undefined,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
 
       return { enhancedPrompt };
@@ -1504,6 +1517,7 @@ export const comicsRouter = router({
           { role: 'user', content: 'A sample story for cost estimation.' },
         ],
         maxTokens: 2048,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (error) {
       console.error('Comics getPlanChapterCostEstimate failed:', error);
@@ -2337,6 +2351,8 @@ export const comicsRouter = router({
           user: ctx.user! as SessionUser,
           token,
           features: ctx.features,
+          isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.domain === 'green' ? false : undefined,
         });
 
         // Atomically set status to Generating and store workflow ID
@@ -3035,6 +3051,8 @@ export const comicsRouter = router({
         user: ctx.user! as SessionUser,
         token,
         features: ctx.features,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
       });
 
       return {
@@ -3085,6 +3103,8 @@ export const comicsRouter = router({
         user: ctx.user! as SessionUser,
         token,
         features: ctx.features,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
       });
 
       return {
@@ -3146,6 +3166,7 @@ export const comicsRouter = router({
           storyDescription: input.storyDescription,
           characterNames: mentionedNames,
           panelCount: input.panelCount ?? undefined,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
@@ -4161,6 +4182,8 @@ export const comicsRouter = router({
           user: ctx.user! as SessionUser,
           token,
           features: ctx.features,
+          isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.domain === 'green' ? false : undefined,
         });
 
         const updated = await dbWrite.comicPanel.update({
@@ -4445,6 +4468,8 @@ export const comicsRouter = router({
               user: ctx.user! as SessionUser,
               token: batchToken,
               features: ctx.features,
+              isGreen: ctx.features.isGreen,
+              allowMatureContent: ctx.domain === 'green' ? false : undefined,
             });
 
             const updated = await dbWrite.comicPanel.update({

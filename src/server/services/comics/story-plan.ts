@@ -1,4 +1,5 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const SYSTEM_PROMPT_BASE = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
 
@@ -28,6 +29,7 @@ export async function planChapterPanels(input: {
   storyDescription: string;
   characterNames: string[];
   panelCount?: number;
+  currencies?: BuzzSpendType[];
 }): Promise<{ panels: { prompt: string }[] }> {
   const userMessage = [
     input.characterNames.length > 0
@@ -47,6 +49,7 @@ export async function planChapterPanels(input: {
       { role: 'system', content: buildSystemPrompt(input.panelCount) },
       { role: 'user', content: userMessage },
     ],
+    currencies: input.currencies,
   });
 
   const parsed = parseJsonBlock<{ panels: { prompt: string }[] }>(result.content);
