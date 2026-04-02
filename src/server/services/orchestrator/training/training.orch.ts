@@ -337,7 +337,7 @@ export const createTrainingWorkflow = async ({
   const workflow = await submitWorkflow({
     token,
     body: {
-      tags: ['training'],
+      tags: ['training', `modelVersion:${modelVersionId}`],
       steps: [stepRun],
       callbacks: [
         {
