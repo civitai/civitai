@@ -408,7 +408,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useDatapacketRead: features.datapacketRead,
+        // Bypass datapacket for pinned posts — bounded query (max ~20 posts),
+        // and datapacket replicas have been observed to silently drop rows.
+        useDatapacketRead: false,
       });
 
       for (const image of pinnedPostsImages) {

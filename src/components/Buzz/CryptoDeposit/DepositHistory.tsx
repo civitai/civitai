@@ -230,12 +230,9 @@ export function DepositHistory() {
           <Pagination total={totalPages} value={page} onChange={setPage} size="sm" />
         </Group>
       )}
-      <Group gap="xs" mt="sm" wrap="nowrap" align="flex-start">
-        <IconClock size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
-        <Text size="xs" c="dimmed">
-          Deposits can take up to 1 hour to appear, especially Bitcoin due to network congestion.
-        </Text>
-      </Group>
+      <CheckDepositsNotice
+        onSuccess={() => utils.nowPayments.getDepositHistory.invalidate()}
+      />
     </Paper>
   );
 }
@@ -267,17 +264,7 @@ function EmptyDepositState({
             </Text>
           </Group>
         </Paper>
-        <Group gap="xs" wrap="nowrap" align="flex-start">
-          <IconClock
-            size={14}
-            className="text-yellow-500"
-            style={{ flexShrink: 0, marginTop: 2 }}
-          />
-          <Text size="xs" c="dimmed">
-            Deposits can take up to 1 hour to appear depending on network congestion. Bitcoin
-            transactions are particularly slow and may take the full hour.
-          </Text>
-        </Group>
+        <CheckDepositsNotice onSuccess={onRefresh} />
       </Stack>
     </Paper>
   );
@@ -292,38 +279,68 @@ function SignalStatusBadge({
 }) {
   if (status === 'connected') {
     return (
-      <Group gap={4} wrap="nowrap">
-        <div className="relative flex items-center justify-center">
-          <div className="absolute size-3 animate-ping rounded-full bg-green-500/40" />
-          <div className="size-2 rounded-full bg-green-500" />
-        </div>
-        <Text size="xs" c="green">
-          Live
-        </Text>
-      </Group>
+      <HoverCard width={220} position="bottom-end" withArrow shadow="md" openDelay={300}>
+        <HoverCard.Target>
+          <Group gap={4} wrap="nowrap" className="cursor-help">
+            <div className="relative flex items-center justify-center">
+              <div className="absolute size-3 animate-ping rounded-full bg-green-500/40" />
+              <div className="size-2 rounded-full bg-green-500" />
+            </div>
+            <Text size="xs" c="green">
+              Live
+            </Text>
+          </Group>
+        </HoverCard.Target>
+        <HoverCard.Dropdown>
+          <Text size="xs">
+            Deposits will appear automatically as they&rsquo;re confirmed on the blockchain. No need
+            to refresh.
+          </Text>
+        </HoverCard.Dropdown>
+      </HoverCard>
     );
   }
 
   if (status === 'reconnecting') {
     return (
-      <Group gap={4} wrap="nowrap">
-        <IconRefresh size={14} className="text-yellow-500" />
-        <Text size="xs" c="yellow">
-          Reconnecting&hellip;
-        </Text>
-      </Group>
+      <HoverCard width={220} position="bottom-end" withArrow shadow="md" openDelay={300}>
+        <HoverCard.Target>
+          <Group gap={4} wrap="nowrap" className="cursor-help">
+            <IconRefresh size={14} className="text-yellow-500" />
+            <Text size="xs" c="yellow">
+              Reconnecting&hellip;
+            </Text>
+          </Group>
+        </HoverCard.Target>
+        <HoverCard.Dropdown>
+          <Text size="xs">
+            Reconnecting to live updates. Deposits are still being processed &mdash; they&rsquo;ll
+            appear once the connection is restored.
+          </Text>
+        </HoverCard.Dropdown>
+      </HoverCard>
     );
   }
 
   return (
-    <UnstyledButton onClick={onRefresh} aria-label="Refresh deposit history (live updates disconnected)">
-      <Group gap={4} wrap="nowrap">
-        <IconWifiOff size={14} className="text-red-500" />
-        <Text size="xs" c="red" td="underline">
-          Disconnected &mdash; refresh
+    <HoverCard width={220} position="bottom-end" withArrow shadow="md" openDelay={300}>
+      <HoverCard.Target>
+        <UnstyledButton onClick={onRefresh} aria-label="Refresh deposit history">
+          <Group gap={4} wrap="nowrap">
+            <IconWifiOff size={14} className="text-red-500" />
+            <Text size="xs" c="red" td="underline">
+              Disconnected &mdash; refresh
+            </Text>
+          </Group>
+        </UnstyledButton>
+      </HoverCard.Target>
+      <HoverCard.Dropdown>
+        <Text size="xs">
+          Live updates are disconnected. Click to refresh manually, or use &ldquo;Check now&rdquo;
+          below to scan for missing deposits.
         </Text>
-      </Group>
-    </UnstyledButton>
+      </HoverCard.Dropdown>
+    </HoverCard>
   );
 }
 
@@ -409,6 +426,49 @@ function BonusBuzzPopover({
   );
 }
 
+function CheckDepositsNotice({ onSuccess }: { onSuccess: () => void }) {
+  const reconcileMutation = trpc.nowPayments.reconcileMyDeposits.useMutation({
+    onSuccess: (data) => {
+      if (data.processed > 0) onSuccess();
+    },
+  });
+
+  const linkText = reconcileMutation.isLoading
+    ? 'Checking...'
+    : reconcileMutation.isSuccess
+    ? reconcileMutation.data.processed > 0
+      ? `Found ${reconcileMutation.data.processed} deposit(s)!`
+      : 'No missing deposits found'
+    : reconcileMutation.isError
+    ? 'Try again in a minute'
+    : 'Missing a deposit? Check now';
+
+  return (
+    <Group gap="xs" mt="sm" wrap="nowrap" align="center">
+      <IconClock size={14} className="text-yellow-500" style={{ flexShrink: 0 }} />
+      <Text size="xs" c="dimmed" lh={1.4}>
+        Deposits can take up to 1 hour to appear depending on network congestion.{' '}
+        <UnstyledButton
+          onClick={() => !reconcileMutation.isLoading && reconcileMutation.mutate()}
+          disabled={reconcileMutation.isLoading}
+          style={{ display: 'inline' }}
+        >
+          <Text
+            span
+            size="xs"
+            c={reconcileMutation.isSuccess && reconcileMutation.data.processed > 0 ? 'green' : 'dimmed'}
+            td="underline"
+            className="cursor-pointer"
+          >
+            {reconcileMutation.isLoading && <IconLoader size={10} className="inline mr-1 animate-spin" />}
+            {linkText}
+          </Text>
+        </UnstyledButton>
+      </Text>
+    </Group>
+  );
+}
+
 function DepositStatusBadge({ status }: { status: string }) {
   if (status === 'finished') {
     return (
@@ -429,6 +489,12 @@ function DepositStatusBadge({ status }: { status: string }) {
       return (
         <Badge color="gray" variant="light" size="sm" leftSection={<IconClock size={12} />}>
           Waiting
+        </Badge>
+      );
+    case 'buzz_failed':
+      return (
+        <Badge color="orange" variant="light" size="sm" leftSection={<IconRefresh size={12} />}>
+          Processing
         </Badge>
       );
     default:

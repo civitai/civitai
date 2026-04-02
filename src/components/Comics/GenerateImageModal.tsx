@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -51,6 +52,7 @@ export function GenerateImageModal({
   label,
   onConfirm,
 }: GenerateImageModalProps) {
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('NanoBanana');
   const [quantity, setQuantity] = useState(4);
@@ -445,6 +447,7 @@ export function GenerateImageModal({
           ) : (
             <BuzzTransactionButton
               buzzAmount={cost}
+              accountTypes={availableBuzzTypes}
               label={isGenerating ? 'Generating...' : 'Generate'}
               loading={isGenerating}
               disabled={!prompt.trim() || isGenerating || costEstimate == null}

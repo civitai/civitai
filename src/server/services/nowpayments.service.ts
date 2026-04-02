@@ -301,6 +301,21 @@ export const processDeposit = async (
     );
   }
 
+  // Log successful processing for observability
+  await log({
+    type: 'info',
+    message: buzzGrantFailed
+      ? 'Deposit processed with buzz_failed'
+      : buzzAmount > 0
+      ? 'Deposit processed successfully'
+      : `Deposit status update: ${depositStatus}`,
+    paymentId,
+    userId,
+    buzzAmount: buzzAmount || undefined,
+    status: depositStatus,
+    transactionId: transactionId || undefined,
+  });
+
   return { userId, buzzAmount, transactionId };
 };
 
@@ -585,6 +600,12 @@ export const retryFailedDeposits = async () => {
           where: { paymentId: deposit.paymentId },
           data: { retryCount: 0 },
         });
+        await log({
+          type: 'info',
+          message: 'Retry sweep: deposit recovered successfully',
+          paymentId: numericId,
+          retriesUsed: deposit.retryCount,
+        });
         succeeded++;
       } else if (updated?.status === 'buzz_failed') {
         // Only increment if still buzz_failed (another path may have fixed it)
@@ -793,6 +814,107 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
   await redis.packed.set(CACHE_KEY, result, { EX: CacheTTL.hour * 3 });
 
   return result;
+};
+
+/**
+ * Reconcile deposits for a specific user by fetching all their payments from NP.
+ * Used for self-service "check my deposits" button on the deposit card.
+ * Fetches by each wallet's smartAccount (parent payment ID) to find child payments.
+ */
+export const reconcileUserDeposits = async (userId: number) => {
+  const start = Date.now();
+
+  const wallets = await dbRead.cryptoWallet.findMany({
+    where: { userId },
+    select: { smartAccount: true },
+  });
+
+  if (!wallets.length) {
+    await log({ type: 'info', message: 'User reconciliation: no wallets', userId });
+    return { checked: 0, found: 0, processed: 0 };
+  }
+
+  let found = 0;
+  let processed = 0;
+
+  for (const wallet of wallets) {
+    if (!wallet.smartAccount) continue;
+    const parentId = Number(wallet.smartAccount);
+
+    // Fetch parent to get invoiceId, then fetch all payments for that invoice
+    const parentPayment = await nowpaymentsCaller.getPaymentStatus(parentId);
+    if (!parentPayment) continue;
+
+    const invoiceId = parentPayment.invoice_id
+      ? Number(parentPayment.invoice_id)
+      : null;
+
+    // Use invoiceId filter if available (fast, server-side filtered)
+    // Fall back to just the parent payment if no invoiceId
+    const payments = invoiceId
+      ? await nowpaymentsCaller.getPaymentsByInvoiceId(invoiceId)
+      : [parentPayment];
+
+    for (const payment of payments) {
+      if (!isDepositComplete(payment.payment_status)) continue;
+      if (payment.order_id !== `user:${userId}`) continue;
+      found++;
+
+      const numericId =
+        typeof payment.payment_id === 'string'
+          ? parseInt(payment.payment_id, 10)
+          : payment.payment_id;
+
+      // Check if already processed
+      const existingTx = await getTransactionByExternalId(`np-deposit-${numericId}`).catch(
+        () => null
+      );
+      const existingDeposit = await dbRead.cryptoDeposit.findUnique({
+        where: { paymentId: BigInt(numericId) },
+        select: { status: true, buzzCredited: true },
+      });
+
+      if (existingTx || (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)) {
+        continue;
+      }
+
+      try {
+        const event: NOWPayments.WebhookEvent = {
+          payment_id: numericId,
+          payment_status: payment.payment_status,
+          order_id: payment.order_id,
+          outcome_amount: payment.outcome_amount,
+          actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+          pay_currency: payment.pay_currency,
+          pay_address: payment.pay_address,
+          parent_payment_id: payment.parent_payment_id,
+        };
+
+        await processDeposit(numericId, payment.payment_status, event);
+        processed++;
+      } catch (e) {
+        await log({
+          message: 'User reconciliation: failed to process deposit',
+          paymentId: numericId,
+          userId,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+    }
+  }
+
+  const duration = Date.now() - start;
+  await log({
+    type: 'info',
+    message: `User reconciliation complete`,
+    userId,
+    wallets: wallets.length,
+    found,
+    processed,
+    duration,
+  });
+
+  return { checked: wallets.length, found, processed };
 };
 
 export const getBuzzConversionRate = async (fiat: string) => {

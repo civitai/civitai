@@ -51,6 +51,7 @@ import type { LayoutOption } from '~/components/Comics/LayoutPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { SortableBulkItem } from '~/components/Comics/SortableBulkItem';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -232,6 +233,9 @@ export function PanelModal({
   const [panelMode, setPanelMode] = useState<'generate' | 'enhance' | 'bulk' | 'import'>(
     'generate'
   );
+
+  // Allowed buzz account types (includes blue + domain currency)
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
 
   // Queue status for disabling generation when full
   const { canGenerate, available, used, limit, isLoading: queueLoading } = useComicsQueueStatus();
@@ -794,6 +798,7 @@ export function PanelModal({
             >
               <BuzzTransactionButton
                 buzzAmount={effectivePanelCost}
+                accountTypes={availableBuzzTypes}
                 label={!costReady ? 'Loading cost...' : insertAtPosition != null ? 'Insert' : quantity > 1 ? `Generate ${quantity} images` : 'Generate'}
                 loading={isSubmitting || isCreatePending}
                 disabled={!prompt.trim() || !costReady || queueFull || generationDisabled || isEnhancing}
@@ -1002,6 +1007,7 @@ export function PanelModal({
             >
               <BuzzTransactionButton
                 buzzAmount={enhanceGenCost ?? 0}
+                accountTypes={availableBuzzTypes}
                 label={enhanceGenCost == null ? 'Loading cost...' : regeneratingPanelId ? 'Regenerate' : 'Enhance'}
                 loading={isSubmitting || isEnhancePending}
                 disabled={!enhanceSourceImage || enhanceGenCost == null || (!!prompt.trim() && (queueFull || generationDisabled)) || isEnhancing}
@@ -1133,6 +1139,7 @@ export function PanelModal({
             {bulkTotalCost > 0 || (bulkGenerationCount > 0 && !costReady) ? (
               <BuzzTransactionButton
                 buzzAmount={bulkTotalCost}
+                accountTypes={availableBuzzTypes}
                 label={!costReady ? 'Loading cost...' : `Add ${bulkItems.length} Panel${bulkItems.length !== 1 ? 's' : ''}`}
                 loading={isSubmitting || isBulkPending}
                 disabled={

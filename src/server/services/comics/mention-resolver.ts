@@ -19,13 +19,14 @@ export function resolveReferenceMentions(input: {
   for (const ref of sorted) {
     const escaped = ref.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     // Use lookahead for end-of-mention boundary instead of \b (which breaks on non-ASCII).
-    // Apostrophes/hyphens are NOT treated as boundaries so names like O'Brien or May-Lee work.
-    const pattern = new RegExp(`@${escaped}(?=$|[\\s.,!?;:'"\\)\\]])`, 'gi');
+    // The boundary set must NOT include characters that can appear inside names
+    // (apostrophes, hyphens) so O'Brien and May-Lee match fully.
+    const pattern = new RegExp(`@${escaped}(?=$|[\\s.,!?;:\\)\\]])`, 'gi');
     if (pattern.test(resolvedPrompt)) {
       mentionedIds.add(ref.id);
       // Replace @Name with just Name (strip the @) — recreate regex since .test() advances lastIndex
       resolvedPrompt = resolvedPrompt.replace(
-        new RegExp(`@${escaped}(?=$|[\\s.,!?;:'"\\)\\]])`, 'gi'),
+        new RegExp(`@${escaped}(?=$|[\\s.,!?;:\\)\\]])`, 'gi'),
         ref.name
       );
     }

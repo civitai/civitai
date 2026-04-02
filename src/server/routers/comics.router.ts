@@ -70,7 +70,8 @@ import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { getS3Client } from '~/utils/s3-utils';
+import { getImageUploadBackend } from '~/utils/s3-utils';
+import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 
@@ -189,6 +190,8 @@ async function submitComicGeneration({
   user,
   token,
   features,
+  isGreen,
+  allowMatureContent,
 }: {
   prompt: string;
   width: number;
@@ -201,11 +204,15 @@ async function submitComicGeneration({
   user: SessionUser;
   token: string;
   features: FeatureAccess;
+  isGreen?: boolean;
+  allowMatureContent?: boolean;
 }) {
   const versionId = versionIdOverride ?? modelConfig.versionId;
   const cappedImages = images
     ? capReferenceImages(images, modelConfig.maxReferenceImages)
     : null;
+
+  const tags = isGreen ? ['comics', 'green'] : ['comics'];
 
   return createImageGen({
     params: {
@@ -227,10 +234,12 @@ async function submitComicGeneration({
       images: cappedImages,
     },
     resources: [{ id: versionId, strength: 1 }],
-    tags: ['comics'],
+    tags,
     tips: { creators: 0, civitai: 0 },
     user,
     token,
+    isGreen,
+    allowMatureContent,
     currencies: getAllowedAccountTypes(features, ['blue']) as any,
   });
 }
@@ -653,6 +662,7 @@ async function createSinglePanel(args: {
   if (enqueue) {
     metadata.aspectRatio = aspectRatio;
     metadata.maxReferenceImages = modelConfig.maxReferenceImages;
+    metadata.isGreen = ctx.features.isGreen ?? false;
   }
 
   const panel = await dbWrite.comicPanel.create({
@@ -689,6 +699,8 @@ async function createSinglePanel(args: {
       user: ctx.user! as SessionUser,
       token,
       features: ctx.features,
+      isGreen: ctx.features.isGreen,
+      allowMatureContent: ctx.domain === 'green' ? false : undefined,
     });
 
     const updated = await dbWrite.comicPanel.update({
@@ -1378,7 +1390,7 @@ export const comicsRouter = router({
             images: cappedImages.length > 0 ? cappedImages : null,
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['comics'],
+          tags: ctx.features.isGreen ? ['comics', 'green'] : ['comics'],
           tips: { creators: 0, civitai: 0 },
           whatIf: true,
           user: ctx.user! as SessionUser,
@@ -1414,6 +1426,7 @@ export const comicsRouter = router({
           { role: 'user', content: 'A sample prompt for cost estimation.' },
         ],
         maxTokens: 512,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (error) {
       console.error('Comics getPromptEnhanceCostEstimate failed:', error);
@@ -1487,6 +1500,7 @@ export const comicsRouter = router({
         characterName: primaryReferenceName,
         characterNames: mentionedNames,
         previousPanel: contextPanel ?? undefined,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
 
       return { enhancedPrompt };
@@ -1503,6 +1517,7 @@ export const comicsRouter = router({
           { role: 'user', content: 'A sample story for cost estimation.' },
         ],
         maxTokens: 2048,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (error) {
       console.error('Comics getPlanChapterCostEstimate failed:', error);
@@ -2336,6 +2351,8 @@ export const comicsRouter = router({
           user: ctx.user! as SessionUser,
           token,
           features: ctx.features,
+          isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.domain === 'green' ? false : undefined,
         });
 
         // Atomically set status to Generating and store workflow ID
@@ -2689,7 +2706,7 @@ export const comicsRouter = router({
           // Multi-image: upload all candidates and let user pick
           if (panelQuantity > 1 && outputImages.length > 1) {
             const candidateImages: { key: string }[] = [];
-            const s3Multi = getS3Client('image');
+            const { s3: s3Multi, bucket: multiBucket, backend: multiBackend } = await getImageUploadBackend();
 
             for (const candidateImg of outputImages) {
               if (!candidateImg?.url) continue;
@@ -2700,12 +2717,13 @@ export const comicsRouter = router({
                 const s3Key = randomUUID();
                 await s3Multi.send(
                   new PutObjectCommand({
-                    Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                    Bucket: multiBucket,
                     Key: s3Key,
                     Body: buf,
                     ContentType: resp.headers.get('content-type') || 'image/jpeg',
                   })
                 );
+                registerMediaLocation(s3Key, multiBackend, buf.length);
                 candidateImages.push({ key: s3Key });
               } catch (e) {
                 console.error(`Failed to upload candidate image for panel ${panel.id}:`, e);
@@ -2760,15 +2778,16 @@ export const comicsRouter = router({
             const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
             s3ImageKey = randomUUID();
-            const s3 = getS3Client('image');
-            await s3.send(
+            const { s3: s3Single, bucket: singleBucket, backend: singleBackend } = await getImageUploadBackend();
+            await s3Single.send(
               new PutObjectCommand({
-                Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                Bucket: singleBucket,
                 Key: s3ImageKey,
                 Body: imageBuffer,
                 ContentType: imageResponse.headers.get('content-type') || 'image/jpeg',
               })
             );
+            registerMediaLocation(s3ImageKey, singleBackend, imageBuffer.length);
           } catch (e) {
             console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
             await dbWrite.comicPanel.update({
@@ -3032,6 +3051,8 @@ export const comicsRouter = router({
         user: ctx.user! as SessionUser,
         token,
         features: ctx.features,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
       });
 
       return {
@@ -3082,6 +3103,8 @@ export const comicsRouter = router({
         user: ctx.user! as SessionUser,
         token,
         features: ctx.features,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
       });
 
       return {
@@ -3143,6 +3166,7 @@ export const comicsRouter = router({
           storyDescription: input.storyDescription,
           characterNames: mentionedNames,
           panelCount: input.panelCount ?? undefined,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
@@ -4158,6 +4182,8 @@ export const comicsRouter = router({
           user: ctx.user! as SessionUser,
           token,
           features: ctx.features,
+          isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.domain === 'green' ? false : undefined,
         });
 
         const updated = await dbWrite.comicPanel.update({
@@ -4442,6 +4468,8 @@ export const comicsRouter = router({
               user: ctx.user! as SessionUser,
               token: batchToken,
               features: ctx.features,
+              isGreen: ctx.features.isGreen,
+              allowMatureContent: ctx.domain === 'green' ? false : undefined,
             });
 
             const updated = await dbWrite.comicPanel.update({
