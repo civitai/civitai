@@ -595,10 +595,16 @@ const metadataSchema = modelFileMetadataSchema
       path: ['size'],
     }
   )
-  .refine((data) => (data.type === 'Model' && data.modelType === 'Checkpoint' ? !!data.fp : true), {
-    error: 'Floating point is required for model files',
-    path: ['fp'],
-  })
+  .refine(
+    (data) =>
+      data.type === 'Model' && data.modelType === 'Checkpoint' && !data.name.endsWith('.gguf')
+        ? !!data.fp
+        : true,
+    {
+      error: 'Floating point is required for model files',
+      path: ['fp'],
+    }
+  )
   .refine((data) => (data.name.endsWith('.gguf') ? !!data.quantType : true), {
     error: 'Quant type is required for GGUF files',
     path: ['quantType'],

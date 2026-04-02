@@ -846,6 +846,7 @@ function FileEditForm({
       case 'pt':
       case 'gguf':
       case 'onnx':
+      case 'bin':
         return [
           'Model',
           'Negative',
@@ -862,8 +863,6 @@ function FileEditForm({
       case 'yaml':
       case 'json':
         return ['Config', 'Text Encoder', 'Workflow'].includes(value);
-      case 'bin':
-        return ['Model', 'Negative'].includes(value);
       default:
         return true;
     }
@@ -915,9 +914,6 @@ function FileEditForm({
               type: newType,
               size: null,
               fp: null,
-              isRequired: newType
-                ? (componentFileTypes as readonly string[]).includes(newType)
-                : false,
             });
           }}
         />

@@ -837,6 +837,7 @@ function filterByFileExtension(value: ModelFileType, fileName: string) {
     case 'pt':
     case 'gguf':
     case 'onnx':
+    case 'bin':
       return [
         'Model',
         'Negative',
@@ -853,8 +854,6 @@ function filterByFileExtension(value: ModelFileType, fileName: string) {
     case 'yaml':
     case 'json':
       return ['Config', 'Text Encoder', 'Workflow'].includes(value);
-    case 'bin':
-      return ['Model', 'Negative'].includes(value);
     default:
       return true;
   }
