@@ -416,9 +416,7 @@ function getReviewTypeToBlockedReason(reason: string) {
 }
 
 /** Mark remix-source images as mod-reviewed so the audit job won't re-flag them. */
-async function markRemixSourceReviewed(
-  images: { id: number; needsReview: string | null }[]
-) {
+async function markRemixSourceReviewed(images: { id: number; needsReview: string | null }[]) {
   const remixSourceIds = images
     .filter((img) => img.needsReview === 'remixSource')
     .map((img) => img.id);
