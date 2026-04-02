@@ -169,8 +169,10 @@ import { withRetries } from '~/utils/errorHandling';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
+import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { imageS3Client } from '~/utils/s3-client';
-import { serverUploadImage } from '~/utils/s3-utils';
+import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
+import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import FliptSingleton, { FLIPT_FEATURE_FLAGS, getFliptVariant, isFlipt } from '../flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
@@ -256,9 +258,23 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
 
     if (!!otherImagesWithSameUrl) return;
 
-    await withRetries(() =>
-      imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: url })
-    );
+    // Check storage-resolver for backend location (during media migration)
+    const location = await resolveMediaLocation(url);
+    if (location?.backend === 'backblaze' && env.S3_IMAGE_B2_ACCESS_KEY) {
+      const b2Client = getB2ImageS3Client();
+      await withRetries(() =>
+        b2Client.send(
+          new DeleteObjectCommand({
+            Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+            Key: url,
+          })
+        )
+      );
+    } else {
+      await withRetries(() =>
+        imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: url })
+      );
+    }
     await purgeResizeCache({ url: url });
   } catch (e) {
     // do nothing
@@ -327,6 +343,8 @@ export const deleteImageById = async ({
           ]
         : []),
       invalidateExistence,
+      imageMetaCache.bust(id),
+      imageMetadataCache.bust(id),
     ]);
 
     return image;
@@ -362,6 +380,8 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       bustCachesForPosts(idsForPostUpdate),
       postMetrics.queueUpdate(idsForPostUpdate),
       invalidateExistence,
+      imageMetaCache.bust(imageIds),
+      imageMetadataCache.bust(imageIds),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -396,9 +416,7 @@ function getReviewTypeToBlockedReason(reason: string) {
 }
 
 /** Mark remix-source images as mod-reviewed so the audit job won't re-flag them. */
-async function markRemixSourceReviewed(
-  images: { id: number; needsReview: string | null }[]
-) {
+async function markRemixSourceReviewed(images: { id: number; needsReview: string | null }[]) {
   const remixSourceIds = images
     .filter((img) => img.needsReview === 'remixSource')
     .map((img) => img.id);
@@ -2197,9 +2215,9 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
       const typeSet = new Set(input.types);
       ownDocs = ownDocs.filter((d) => typeSet.has(d.type as any));
     }
-    if (input.tags?.length) {
-      ownDocs = ownDocs.filter((d) => input.tags!.some((t) => d.tagIds.includes(t)));
-    }
+    // Tag filtering skipped on second pass — tagIds are expensive to store in BitDex docs.
+    // Edge case: user's own excluded content that doesn't match the active tag filter may
+    // appear when browsing by tag. Front-end hidden tag filtering still applies.
     if (input.baseModels?.length) {
       const bmSet = new Set(input.baseModels);
       ownDocs = ownDocs.filter((d) => bmSet.has(d.baseModel as any));
@@ -3023,7 +3041,7 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
     sortAt: new Date(sortAtUnix),
     sortAtUnix,
     publishedAtUnix: publishedAtRaw ? publishedAtRaw * 1000 : null,
-    tagIds: (doc.tagIds as number[]) ?? [],
+    tagIds: [] as number[], // tagIds not stored in BitDex docs (expensive); fetched from tagIdsForImagesCache downstream
     modelVersionIds: (doc.modelVersionIds as number[]) ?? [],
     toolIds: (doc.toolIds as number[]) ?? [],
     techniqueIds: (doc.techniqueIds as number[]) ?? [],

@@ -7,6 +7,7 @@ import { LayoutPicker } from '~/components/Comics/LayoutPicker';
 import type { LayoutOption } from '~/components/Comics/LayoutPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 
 interface SmartCreateModalProps {
@@ -31,6 +32,7 @@ interface SmartCreateModalProps {
   }) => void;
   isCreating: boolean;
   createError: string | null;
+  defaultAspectRatio?: string;
 }
 
 export function SmartCreateModal({
@@ -49,13 +51,15 @@ export function SmartCreateModal({
   onCreateChapter,
   isCreating,
   createError,
+  defaultAspectRatio = '3:4',
 }: SmartCreateModalProps) {
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
   const [smartChapterName, setSmartChapterName] = useState('New Chapter');
   const [smartStory, setSmartStory] = useState('');
   const [smartPanelCount, setSmartPanelCount] = useState<number | ''>('');
   const [smartPanels, setSmartPanels] = useState<{ prompt: string }[]>([]);
-  const [smartAspectRatio, setSmartAspectRatio] = useState('3:4');
+  const [smartAspectRatio, setSmartAspectRatio] = useState(defaultAspectRatio);
   const [selectedLayout, setSelectedLayout] = useState<string | undefined>();
   const [selectedLayoutImagePath, setSelectedLayoutImagePath] = useState<string | undefined>();
   const scrollViewportRef = useRef<HTMLDivElement>(null);
@@ -158,13 +162,13 @@ export function SmartCreateModal({
 
           <NumberInput
             label="Number of panels"
-            description="Leave empty to let AI decide based on story complexity"
+            description="Max 20 panels per chapter. Leave empty to let AI decide."
             placeholder="Auto (4-12)"
             value={smartPanelCount}
             onChange={(val) => setSmartPanelCount(val === '' ? '' : Number(val))}
             min={2}
             max={20}
-            clampBehavior="strict"
+            clampBehavior="blur"
           />
 
           <LayoutPicker
@@ -202,6 +206,7 @@ export function SmartCreateModal({
             </Button>
             <BuzzTransactionButton
               buzzAmount={planCost ?? 0}
+              accountTypes={availableBuzzTypes}
               label={planCost == null ? 'Loading cost...' : isPlanningPanels ? 'Planning...' : 'Plan Panels'}
               loading={isPlanningPanels}
               disabled={!smartStory.trim() || planCost == null}
@@ -318,6 +323,7 @@ export function SmartCreateModal({
               buzzAmount={
                 smartPanels.filter((p) => p.prompt.trim()).length * (panelCost ?? 0)
               }
+              accountTypes={availableBuzzTypes}
               label={panelCost == null ? 'Loading cost...' : isCreating ? 'Creating...' : 'Create Chapter'}
               loading={isCreating}
               disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null || generationDisabled}

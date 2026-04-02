@@ -110,13 +110,14 @@ export default WebhookEndpoint(async (req, res) => {
             user: { id: result.userId, email: result.userEmail, username: result.username },
           };
 
-          if (result.trainingStatus === TrainingStatus.InReview) {
+          if (result.trainingStatus === TrainingStatus.InReview && result.hasOutput) {
             trainingCompleteEmail
               .send(emailData)
               .catch((error) =>
                 logWebhook({ message: 'Failed to send training complete email', error })
               );
           } else if (
+            (result.trainingStatus === TrainingStatus.InReview && !result.hasOutput) ||
             result.trainingStatus === TrainingStatus.Failed ||
             result.trainingStatus === TrainingStatus.Denied ||
             result.trainingStatus === TrainingStatus.Expired

@@ -66,9 +66,12 @@ import {
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { getS3Client } from '~/utils/s3-utils';
+import { getImageUploadBackend } from '~/utils/s3-utils';
+import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 
@@ -169,6 +172,76 @@ function capReferenceImages(
 ): { url: string; width: number; height: number }[] {
   if (images.length <= max) return images;
   return images.slice(0, max);
+}
+
+/**
+ * Single entry point for all comic image generation.
+ * Every call to the orchestrator from the comics system should go through here.
+ */
+async function submitComicGeneration({
+  prompt,
+  width,
+  height,
+  aspectRatio,
+  quantity = 1,
+  images,
+  modelConfig,
+  versionIdOverride,
+  user,
+  token,
+  features,
+  isGreen,
+  allowMatureContent,
+}: {
+  prompt: string;
+  width: number;
+  height: number;
+  aspectRatio: string;
+  quantity?: number;
+  images?: { url: string; width: number; height: number }[] | null;
+  modelConfig: (typeof COMIC_MODEL_CONFIG)[string];
+  versionIdOverride?: number;
+  user: SessionUser;
+  token: string;
+  features: FeatureAccess;
+  isGreen?: boolean;
+  allowMatureContent?: boolean;
+}) {
+  const versionId = versionIdOverride ?? modelConfig.versionId;
+  const cappedImages = images
+    ? capReferenceImages(images, modelConfig.maxReferenceImages)
+    : null;
+
+  const tags = isGreen ? ['comics', 'green'] : ['comics'];
+
+  return createImageGen({
+    params: {
+      prompt,
+      negativePrompt: '',
+      engine: modelConfig.engine,
+      baseModel: modelConfig.baseModel as any,
+      width,
+      height,
+      aspectRatio,
+      workflow: 'txt2img',
+      sampler: 'Euler',
+      steps: 25,
+      quantity,
+      draft: false,
+      disablePoi: false,
+      priority: 'low',
+      sourceImage: null,
+      images: cappedImages,
+    },
+    resources: [{ id: versionId, strength: 1 }],
+    tags,
+    tips: { creators: 0, civitai: 0 },
+    user,
+    token,
+    isGreen,
+    allowMatureContent,
+    currencies: getAllowedAccountTypes(features, ['blue']) as any,
+  });
 }
 
 /** Detect orchestrator/generator offline errors and return a user-friendly message. */
@@ -589,6 +662,7 @@ async function createSinglePanel(args: {
   if (enqueue) {
     metadata.aspectRatio = aspectRatio;
     metadata.maxReferenceImages = modelConfig.maxReferenceImages;
+    metadata.isGreen = ctx.features.isGreen ?? false;
   }
 
   const panel = await dbWrite.comicPanel.create({
@@ -615,31 +689,18 @@ async function createSinglePanel(args: {
   if (enqueue) return panel;
 
   try {
-    const result = await createImageGen({
-      params: {
-        prompt: fullPrompt,
-        negativePrompt: '',
-        engine: modelConfig.engine,
-        baseModel: modelConfig.baseModel as any,
-        width,
-        height,
-        aspectRatio,
-        workflow: 'txt2img',
-        sampler: 'Euler',
-        steps: 25,
-        quantity: 1,
-        draft: false,
-        disablePoi: false,
-        priority: 'low',
-        sourceImage: null,
-        images: capReferenceImages(refImages, modelConfig.maxReferenceImages),
-      },
-      resources: [{ id: modelConfig.versionId, strength: 1 }],
-      tags: ['comics'],
-      tips: { creators: 0, civitai: 0 },
+    const result = await submitComicGeneration({
+      prompt: fullPrompt,
+      width,
+      height,
+      aspectRatio,
+      images: refImages,
+      modelConfig,
       user: ctx.user! as SessionUser,
       token,
-      currencies: ['yellow'],
+      features: ctx.features,
+      isGreen: ctx.features.isGreen,
+      allowMatureContent: ctx.domain === 'green' ? false : undefined,
     });
 
     const updated = await dbWrite.comicPanel.update({
@@ -769,40 +830,29 @@ export const comicsRouter = router({
       throw throwAuthorizationError();
     }
 
-    // Fetch project-scoped references via junction table
+    // Fetch only project-scoped references via junction table
     // Use dbWrite for read-after-write consistency (same as project query above)
     const projectRefs = await dbWrite.comicProjectReference.findMany({
       where: { projectId: project.id },
       select: { referenceId: true },
     });
 
-    let references;
-    if (projectRefs.length > 0) {
-      // Project has scoped references — fetch only those
-      const refIds = projectRefs.map((pr) => pr.referenceId);
-      references = await dbWrite.comicReference.findMany({
-        where: { id: { in: refIds }, userId: ctx.user.id },
-        orderBy: { createdAt: 'asc' },
-        include: {
-          images: {
-            orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
-          },
-        },
-      });
-    } else {
-      // Backward compat: no junction rows yet — show all user references
-      references = await dbWrite.comicReference.findMany({
-        where: { userId: ctx.user.id },
-        orderBy: { createdAt: 'asc' },
-        include: {
-          images: {
-            orderBy: { position: 'asc' },
-            include: { image: { select: { id: true, url: true, width: true, height: true } } },
-          },
-        },
-      });
-    }
+    const refIds = projectRefs.map((pr) => pr.referenceId);
+    const references =
+      refIds.length > 0
+        ? await dbWrite.comicReference.findMany({
+            where: { id: { in: refIds }, userId: ctx.user.id },
+            orderBy: { createdAt: 'asc' },
+            include: {
+              images: {
+                orderBy: { position: 'asc' },
+                include: {
+                  image: { select: { id: true, url: true, width: true, height: true } },
+                },
+              },
+            },
+          })
+        : [];
 
     return {
       ...project,
@@ -1340,7 +1390,7 @@ export const comicsRouter = router({
             images: cappedImages.length > 0 ? cappedImages : null,
           },
           resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['comics'],
+          tags: ctx.features.isGreen ? ['comics', 'green'] : ['comics'],
           tips: { creators: 0, civitai: 0 },
           whatIf: true,
           user: ctx.user! as SessionUser,
@@ -1350,7 +1400,7 @@ export const comicsRouter = router({
           token,
           body: {
             steps: [step],
-            currencies: ['yellow'],
+            currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any,
           },
           query: { whatif: true },
         });
@@ -1376,6 +1426,7 @@ export const comicsRouter = router({
           { role: 'user', content: 'A sample prompt for cost estimation.' },
         ],
         maxTokens: 512,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (error) {
       console.error('Comics getPromptEnhanceCostEstimate failed:', error);
@@ -1449,6 +1500,7 @@ export const comicsRouter = router({
         characterName: primaryReferenceName,
         characterNames: mentionedNames,
         previousPanel: contextPanel ?? undefined,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
 
       return { enhancedPrompt };
@@ -1465,6 +1517,7 @@ export const comicsRouter = router({
           { role: 'user', content: 'A sample story for cost estimation.' },
         ],
         maxTokens: 2048,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (error) {
       console.error('Comics getPlanChapterCostEstimate failed:', error);
@@ -2287,31 +2340,19 @@ export const comicsRouter = router({
 
       // Submit generation workflow
       try {
-        const result = await createImageGen({
-          params: {
-            prompt: fullPrompt,
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width: panelWidth,
-            height: panelHeight,
-            aspectRatio: input.aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity: input.quantity,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
-          },
-          resources: [{ id: modelConfig.versionId, strength: 1 }],
-          tags: ['comics'],
-          tips: { creators: 0, civitai: 0 },
+        const result = await submitComicGeneration({
+          prompt: fullPrompt,
+          width: panelWidth,
+          height: panelHeight,
+          aspectRatio: input.aspectRatio,
+          quantity: input.quantity,
+          images: allImages,
+          modelConfig,
           user: ctx.user! as SessionUser,
           token,
-          currencies: ['yellow'],
+          features: ctx.features,
+          isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.domain === 'green' ? false : undefined,
         });
 
         // Atomically set status to Generating and store workflow ID
@@ -2665,7 +2706,7 @@ export const comicsRouter = router({
           // Multi-image: upload all candidates and let user pick
           if (panelQuantity > 1 && outputImages.length > 1) {
             const candidateImages: { key: string }[] = [];
-            const s3Multi = getS3Client('image');
+            const { s3: s3Multi, bucket: multiBucket, backend: multiBackend } = await getImageUploadBackend();
 
             for (const candidateImg of outputImages) {
               if (!candidateImg?.url) continue;
@@ -2676,12 +2717,13 @@ export const comicsRouter = router({
                 const s3Key = randomUUID();
                 await s3Multi.send(
                   new PutObjectCommand({
-                    Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                    Bucket: multiBucket,
                     Key: s3Key,
                     Body: buf,
                     ContentType: resp.headers.get('content-type') || 'image/jpeg',
                   })
                 );
+                registerMediaLocation(s3Key, multiBackend, buf.length);
                 candidateImages.push({ key: s3Key });
               } catch (e) {
                 console.error(`Failed to upload candidate image for panel ${panel.id}:`, e);
@@ -2736,15 +2778,16 @@ export const comicsRouter = router({
             const imageBuffer = Buffer.from(await imageResponse.arrayBuffer());
 
             s3ImageKey = randomUUID();
-            const s3 = getS3Client('image');
-            await s3.send(
+            const { s3: s3Single, bucket: singleBucket, backend: singleBackend } = await getImageUploadBackend();
+            await s3Single.send(
               new PutObjectCommand({
-                Bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+                Bucket: singleBucket,
                 Key: s3ImageKey,
                 Body: imageBuffer,
                 ContentType: imageResponse.headers.get('content-type') || 'image/jpeg',
               })
             );
+            registerMediaLocation(s3ImageKey, singleBackend, imageBuffer.length);
           } catch (e) {
             console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
             await dbWrite.comicPanel.update({
@@ -2996,31 +3039,20 @@ export const comicsRouter = router({
       // Prompt is used as-is — enhancement happens client-side via enhancePromptText
       const fullPrompt = input.prompt.trim();
 
-      const result = await createImageGen({
-        params: {
-          prompt: fullPrompt || '',
-          negativePrompt: '',
-          engine: modelConfig.engine,
-          baseModel: modelConfig.baseModel as any,
-          width: panelWidth,
-          height: panelHeight,
-          aspectRatio: input.aspectRatio,
-          workflow: 'txt2img',
-          sampler: 'Euler',
-          steps: 25,
-          quantity: input.quantity,
-          draft: false,
-          disablePoi: false,
-          priority: 'low',
-          sourceImage: null,
-          images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
-        },
-        resources: [{ id: effectiveVersionId, strength: 1 }],
-        tags: ['comics'],
-        tips: { creators: 0, civitai: 0 },
+      const result = await submitComicGeneration({
+        prompt: fullPrompt || '',
+        width: panelWidth,
+        height: panelHeight,
+        aspectRatio: input.aspectRatio,
+        quantity: input.quantity,
+        images: allImages,
+        modelConfig,
+        versionIdOverride: effectiveVersionId,
         user: ctx.user! as SessionUser,
         token,
-        currencies: ['yellow'],
+        features: ctx.features,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
       });
 
       return {
@@ -3033,6 +3065,56 @@ export const comicsRouter = router({
     }),
 
   // Iterative panel editor — poll workflow status without panel involvement
+  generateComicImage: comicProtectedProcedure
+    .input(
+      z.object({
+        prompt: z.string().min(1).max(2000),
+        aspectRatio: z.string().default('3:4'),
+        baseModel: z.string().optional(),
+        quantity: z.number().int().min(1).max(4).default(1),
+        userReferenceImages: z
+          .array(z.object({ url: z.string(), width: z.number(), height: z.number() }))
+          .optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const token = await getOrchestratorToken(ctx.user!.id, ctx).catch((error) => {
+        throw throwBadRequestError(getOrchestratorErrorMessage(error));
+      });
+
+      const modelConfig = getComicModelConfig(input.baseModel);
+      const { width, height } = getAspectRatioDimensions(input.aspectRatio, modelConfig);
+
+      // Build reference images array from user uploads
+      const images = input.userReferenceImages?.map((ref) => ({
+        url: getEdgeUrl(ref.url, { original: true }),
+        width: ref.width,
+        height: ref.height,
+      }));
+
+      const result = await submitComicGeneration({
+        prompt: input.prompt,
+        width,
+        height,
+        aspectRatio: input.aspectRatio,
+        quantity: input.quantity,
+        images: images ?? null,
+        modelConfig,
+        user: ctx.user! as SessionUser,
+        token,
+        features: ctx.features,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
+      });
+
+      return {
+        workflowId: result.id,
+        width,
+        height,
+        cost: result.cost?.total ?? 0,
+      };
+    }),
+
   pollIterationStatus: comicProtectedProcedure
     .input(
       z.object({
@@ -3084,6 +3166,7 @@ export const comicsRouter = router({
           storyDescription: input.storyDescription,
           characterNames: mentionedNames,
           panelCount: input.panelCount ?? undefined,
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         });
       } catch (error) {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
@@ -3137,31 +3220,41 @@ export const comicsRouter = router({
         },
       });
 
-      // Get all user's ready references, then narrow to only those relevant
-      // to this comic to prevent cross-comic reference bleeding.
-      const allUserRefs = await dbRead.comicReference.findMany({
-        where: { userId: ctx.user!.id, status: ComicReferenceStatus.Ready },
-        select: { id: true, name: true },
+      // Only use references scoped to this project (via junction table).
+      // Then narrow further to those @-mentioned in the story or explicitly passed.
+      const projectRefRows = await dbRead.comicProjectReference.findMany({
+        where: { projectId: input.projectId },
+        select: { referenceId: true },
       });
+      const projectRefIds = new Set(projectRefRows.map((r) => r.referenceId));
 
-      // Only include references explicitly passed via referenceIds
-      const allowedRefIds = new Set(allUserRefs.map((r) => r.id));
-      if (input.referenceIds && input.referenceIds.some((id) => !allowedRefIds.has(id))) {
+      const projectRefs = projectRefIds.size > 0
+        ? await dbRead.comicReference.findMany({
+            where: {
+              id: { in: Array.from(projectRefIds) },
+              userId: ctx.user!.id,
+              status: ComicReferenceStatus.Ready,
+            },
+            select: { id: true, name: true },
+          })
+        : [];
+
+      // Validate explicitly passed referenceIds belong to this project
+      if (input.referenceIds && input.referenceIds.some((id) => !projectRefIds.has(id))) {
         throw throwAuthorizationError();
       }
 
       // Filter to references that are either explicitly provided via referenceIds
-      // or @-mentioned in the story description. This prevents Smart Create from
-      // pulling in characters from other comics that happen to share the user.
+      // or @-mentioned in the story description.
       const { mentionedIds: storyMentionedIds } = resolveReferenceMentions({
         prompt: input.storyDescription,
-        references: allUserRefs,
+        references: projectRefs,
       });
       const relevantRefIds = new Set([
         ...storyMentionedIds,
         ...(input.referenceIds ?? []),
       ]);
-      const relevantRefs = allUserRefs.filter((r) => relevantRefIds.has(r.id));
+      const relevantRefs = projectRefs.filter((r) => relevantRefIds.has(r.id));
 
       // Pre-load reference images keyed by refId (only used for panels that @mention them)
       const refImagesByRefId = new Map<
@@ -3484,7 +3577,7 @@ export const comicsRouter = router({
           description: `Early access: ${chapter.project.name} - ${chapter.name}`,
           details: { comicChapterId: chapter.id, earlyAccessPurchase: true },
           externalTransactionIdPrefix,
-          fromAccountTypes: ['yellow'],
+          fromAccountTypes: getAllowedAccountTypes(ctx.features),
         });
 
         if (data?.transactionCount === 0) {
@@ -3621,6 +3714,91 @@ export const comicsRouter = router({
       ]);
 
       return { success: true, tosViolation: !project.tosViolation };
+    }),
+
+  setProjectNsfwLevel: comicModeratorProcedure
+    .input(z.object({ id: z.number().int(), nsfwLevel: z.number().refine((n) => [1, 2, 4, 8, 16, 32].includes(n), 'Invalid NSFW level') }))
+    .mutation(async ({ ctx, input }) => {
+      // Set project level
+      await dbWrite.comicProject.update({
+        where: { id: input.id },
+        data: { nsfwLevel: input.nsfwLevel },
+      });
+
+      // Waterfall: set all chapters to the same level
+      await dbWrite.comicChapter.updateMany({
+        where: { projectId: input.id },
+        data: { nsfwLevel: input.nsfwLevel },
+      });
+
+      // Waterfall: set all panel images to the same level
+      await dbWrite.$executeRaw`
+        UPDATE "Image" i
+        SET "nsfwLevel" = ${input.nsfwLevel}
+        FROM "ComicPanel" p
+        WHERE p."imageId" = i.id
+          AND p."projectId" = ${input.id}
+          AND i."nsfwLevel" != ${input.nsfwLevel}
+      `;
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.id,
+        activity: 'setNsfwLevel',
+      });
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
+      return { success: true };
+    }),
+
+  setChapterNsfwLevel: comicModeratorProcedure
+    .input(
+      z.object({
+        projectId: z.number().int(),
+        chapterPosition: z.number().int().min(0),
+        nsfwLevel: z.number().refine((n) => [1, 2, 4, 8, 16, 32].includes(n), 'Invalid NSFW level'),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Set chapter level
+      await dbWrite.comicChapter.update({
+        where: {
+          projectId_position: {
+            projectId: input.projectId,
+            position: input.chapterPosition,
+          },
+        },
+        data: { nsfwLevel: input.nsfwLevel },
+      });
+
+      // Set all panel images in this chapter to the same level
+      await dbWrite.$executeRaw`
+        UPDATE "Image" i
+        SET "nsfwLevel" = ${input.nsfwLevel}
+        FROM "ComicPanel" p
+        WHERE p."imageId" = i.id
+          AND p."projectId" = ${input.projectId}
+          AND p."chapterPosition" = ${input.chapterPosition}
+          AND i."nsfwLevel" != ${input.nsfwLevel}
+      `;
+
+      // Recalculate project NSFW level from chapters
+      await updateComicProjectNsfwLevels([input.projectId]);
+
+      await trackModActivity(ctx.user.id, {
+        entityType: 'comicProject',
+        entityId: input.projectId,
+        activity: 'setNsfwLevel',
+      });
+
+      await comicsSearchIndex.queueUpdate([
+        { id: input.projectId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+
+      return { success: true };
     }),
 
   moderatorUnpublishChapter: comicModeratorProcedure
@@ -3993,31 +4171,19 @@ export const comicsRouter = router({
       }
 
       try {
-        const result = await createImageGen({
-          params: {
-            prompt: fullPrompt || '',
-            negativePrompt: '',
-            engine: modelConfig.engine,
-            baseModel: modelConfig.baseModel as any,
-            width: panelWidth,
-            height: panelHeight,
-            aspectRatio: input.aspectRatio,
-            workflow: 'txt2img',
-            sampler: 'Euler',
-            steps: 25,
-            quantity: 1,
-            draft: false,
-            disablePoi: false,
-            priority: 'low',
-            sourceImage: null,
-            images: capReferenceImages(allImages, modelConfig.maxReferenceImages),
-          },
-          resources: [{ id: effectiveVersionId, strength: 1 }],
-          tags: ['comics'],
-          tips: { creators: 0, civitai: 0 },
+        const result = await submitComicGeneration({
+          prompt: fullPrompt || '',
+          width: panelWidth,
+          height: panelHeight,
+          aspectRatio: input.aspectRatio,
+          images: allImages,
+          modelConfig,
+          versionIdOverride: effectiveVersionId,
           user: ctx.user! as SessionUser,
           token,
-          currencies: ['yellow'],
+          features: ctx.features,
+          isGreen: ctx.features.isGreen,
+          allowMatureContent: ctx.domain === 'green' ? false : undefined,
         });
 
         const updated = await dbWrite.comicPanel.update({
@@ -4291,31 +4457,19 @@ export const comicsRouter = router({
           }
 
           try {
-            const result = await createImageGen({
-              params: {
-                prompt: fullPrompt,
-                negativePrompt: '',
-                engine: bulkModelConfig.engine,
-                baseModel: bulkModelConfig.baseModel as any,
-                width: bulkPanelW,
-                height: bulkPanelH,
-                aspectRatio: panelDef.aspectRatio,
-                workflow: 'txt2img',
-                sampler: 'Euler',
-                steps: 25,
-                quantity: 1,
-                draft: false,
-                disablePoi: false,
-                priority: 'low',
-                sourceImage: null,
-                images: capReferenceImages(allImages, bulkModelConfig.maxReferenceImages),
-              },
-              resources: [{ id: bulkVersionId, strength: 1 }],
-              tags: ['comics'],
-              tips: { creators: 0, civitai: 0 },
+            const result = await submitComicGeneration({
+              prompt: fullPrompt,
+              width: bulkPanelW,
+              height: bulkPanelH,
+              aspectRatio: panelDef.aspectRatio,
+              images: allImages,
+              modelConfig: bulkModelConfig,
+              versionIdOverride: bulkVersionId,
               user: ctx.user! as SessionUser,
               token: batchToken,
-              currencies: ['yellow'],
+              features: ctx.features,
+              isGreen: ctx.features.isGreen,
+              allowMatureContent: ctx.domain === 'green' ? false : undefined,
             });
 
             const updated = await dbWrite.comicPanel.update({

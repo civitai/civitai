@@ -15,7 +15,6 @@ import type { CheckoutEventsData } from '@paddle/paddle-js';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useHasPaddleSubscription, useMutatePaddle } from '~/components/Paddle/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
 
 function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
@@ -254,15 +253,6 @@ export function SubscribeButton({ children, priceId, onSuccess, disabled, forceP
       >
         {children}
       </PaddleSubscribeButton>
-    );
-  }
-
-  if (provider === PaymentProvider.Civitai && featureFlags.prepaidMemberships) {
-    // Default to Paddle:
-    return (
-      <Button component={Link} href="/gift-cards?type=memberships" radius="xl">
-        Get Prepaid Membership
-      </Button>
     );
   }
 

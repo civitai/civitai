@@ -19,46 +19,11 @@
  *   --internal <text>     Internal notes
  */
 
-import { readFileSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
+import {
+  requireApiKey, trpcCall, lookupUser, getModUserId, formatUser, API_URL, API_KEY, run,
+} from './lib.mjs';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const skillDir = __dirname;
-const projectRoot = resolve(__dirname, '../../..');
-
-// Load .env files (skill-specific first, then project root)
-function loadEnv() {
-  const envFiles = [
-    resolve(skillDir, '.env'),      // Skill-specific (API key, URL)
-    resolve(projectRoot, '.env'),   // Project root (fallback)
-  ];
-
-  for (const envPath of envFiles) {
-    try {
-      const envContent = readFileSync(envPath, 'utf-8');
-      for (const line of envContent.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eqIndex = trimmed.indexOf('=');
-        if (eqIndex === -1) continue;
-        const key = trimmed.slice(0, eqIndex);
-        const value = trimmed.slice(eqIndex + 1);
-        if (!process.env[key]) {
-          process.env[key] = value;
-        }
-      }
-    } catch (e) {
-      // Ignore missing files
-    }
-  }
-}
-
-loadEnv();
-
-// Configuration
-const API_KEY = process.env.CIVITAI_API_KEY;
-const API_URL = (process.env.CIVITAI_API_URL || 'https://civitai.com').replace(/\/$/, '');
+requireApiKey();
 
 // Ban reason codes
 const BAN_REASONS = [
@@ -137,89 +102,12 @@ Configuration:
 
 if (!command) showUsage();
 
-if (!API_KEY) {
-  console.error('Error: CIVITAI_API_KEY not set');
-  console.error('Create .claude/skills/mod-actions/.env with your API key');
-  console.error('See .env-example for details');
-  process.exit(1);
-}
-
-// Call tRPC endpoint
-async function trpcCall(procedure, input, method = 'POST') {
-  // tRPC expects input wrapped in { json: ... } format
-  const wrappedInput = { json: input };
-  const url = method === 'GET'
-    ? `${API_URL}/api/trpc/${procedure}?input=${encodeURIComponent(JSON.stringify(wrappedInput))}`
-    : `${API_URL}/api/trpc/${procedure}`;
-
-  const options = {
-    method,
-    headers: {
-      'Authorization': `Bearer ${API_KEY}`,
-      'Content-Type': 'application/json',
-    },
-  };
-
-  if (method === 'POST') {
-    options.body = JSON.stringify(wrappedInput);
-  }
-
-  const response = await fetch(url, options);
-
-  if (!response.ok) {
-    const text = await response.text();
-    let errorMessage = `API request failed: ${response.status} ${response.statusText}`;
-    try {
-      const errorData = JSON.parse(text);
-      if (errorData.error?.message) {
-        errorMessage = errorData.error.message;
-      } else if (errorData.message) {
-        errorMessage = errorData.message;
-      }
-    } catch {
-      if (text) errorMessage += `: ${text.slice(0, 200)}`;
-    }
-    throw new Error(errorMessage);
-  }
-
-  const data = await response.json();
-  // tRPC wraps response in { result: { data: { json: ... } } }
-  return data.result?.data?.json ?? data.result?.data ?? data;
-}
-
-// Look up user by ID or username
-async function lookupUser(input) {
-  const isId = /^\d+$/.test(input);
-
-  if (isId) {
-    // Use getById for numeric IDs
-    return await trpcCall('user.getById', { id: parseInt(input) }, 'GET');
-  } else {
-    // Use getCreator for usernames
-    return await trpcCall('user.getCreator', { username: input }, 'GET');
-  }
-}
-
-// Format user for display
-function formatUser(user) {
-  if (!user) return 'User not found';
-
-  return `User: ${user.username}
-ID: ${user.id}
-Status: ${user.deletedAt ? 'Deleted' : 'Active'}
-Banned: ${user.bannedAt ? `Yes (${new Date(user.bannedAt).toISOString().split('T')[0]})` : 'No'}
-Muted: ${user.muted ? 'Yes' : 'No'}
-Leaderboard Eligible: ${user.excludeFromLeaderboards ? 'No' : 'Yes'}
-Created: ${user.createdAt ? new Date(user.createdAt).toISOString().split('T')[0] : 'N/A'}`;
-}
-
 // Toggle ban status
 async function toggleBan(userId, options) {
   const input = { id: userId };
   if (options.reasonCode) input.reasonCode = options.reasonCode;
   if (options.message) input.detailsExternal = options.message;
   if (options.internal) input.detailsInternal = options.internal;
-
   return await trpcCall('user.toggleBan', input, 'POST');
 }
 
@@ -236,32 +124,6 @@ async function setLeaderboardEligibility(userId, eligible) {
 // Remove all content
 async function removeAllContent(userId) {
   return await trpcCall('user.removeAllContent', { id: userId }, 'POST');
-}
-
-// Resolve the mod's user ID from the API key via user.getToken tRPC endpoint
-let _modUserId = null;
-async function getModUserId() {
-  if (_modUserId) return _modUserId;
-  if (process.env.MOD_USER_ID) {
-    _modUserId = parseInt(process.env.MOD_USER_ID);
-    return _modUserId;
-  }
-  try {
-    // user.getToken returns a JWT containing { userId }
-    const result = await trpcCall('user.getToken', undefined, 'GET');
-    const token = result.token;
-    // Decode JWT payload (base64url-encoded second segment)
-    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString());
-    if (payload.userId) {
-      _modUserId = payload.userId;
-      return _modUserId;
-    }
-  } catch (e) {
-    console.error(`Warning: Could not resolve mod user ID via API: ${e.message}`);
-  }
-  throw new Error(
-    'Could not resolve moderator user ID. Set MOD_USER_ID in .claude/skills/mod-actions/.env'
-  );
 }
 
 // Create or find a 1-on-1 chat between the mod and a target user
@@ -281,12 +143,8 @@ async function sendChatMessage(chatId, content) {
 // Send a DM to a user (create chat + send message)
 async function sendDm(targetUserId, message) {
   const modUserId = await getModUserId();
-
-  // Create or find existing 1:1 chat
   const chat = await createOrFindChat(modUserId, targetUserId);
   const chatId = chat.id;
-
-  // Send the message
   const result = await sendChatMessage(chatId, message);
   return { chatId, messageId: result.id, modUserId };
 }
@@ -506,13 +364,64 @@ async function main() {
       break;
     }
 
+    case 'reprocess-order': {
+      if (!targetInput) {
+        console.error('Error: NowPayments payment ID required');
+        console.error('Usage: node query.mjs reprocess-order <paymentId> [--reason nowpayments|coinbase]');
+        process.exit(1);
+      }
+
+      const provider = reasonCode || 'nowpayments';
+
+      if (dryRun) {
+        console.log(`[DRY RUN] Would reprocess order:`);
+        console.log(`Provider: ${provider}`);
+        console.log(`Payment ID: ${targetInput}`);
+        break;
+      }
+
+      console.error(`Reprocessing ${provider} order ${targetInput}...`);
+      const reprocessUrl = `${API_URL}/api/mod/reprocess-order?provider=${encodeURIComponent(provider)}&orderId=${encodeURIComponent(targetInput)}`;
+      const reprocessResponse = await fetch(reprocessUrl, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!reprocessResponse.ok) {
+        const errorText = await reprocessResponse.text();
+        let errorMsg = `Reprocess failed: ${reprocessResponse.status}`;
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMsg = errorData.error || errorMsg;
+        } catch {
+          errorMsg += `: ${errorText.slice(0, 200)}`;
+        }
+        console.error(errorMsg);
+        process.exit(1);
+      }
+
+      const reprocessResult = await reprocessResponse.json();
+      if (jsonOutput) {
+        console.log(JSON.stringify(reprocessResult, null, 2));
+      } else {
+        console.log(`Action: REPROCESS ORDER`);
+        console.log(`Provider: ${provider}`);
+        console.log(`Payment ID: ${targetInput}`);
+        console.log(`User ID: ${reprocessResult.userId || 'N/A'}`);
+        console.log(`Buzz Credited: ${reprocessResult.buzzAmount || 0}`);
+        console.log(`Transaction ID: ${reprocessResult.transactionId || 'N/A'}`);
+        console.log(`Success: Yes`);
+      }
+      break;
+    }
+
     default:
       console.error(`Unknown command: ${command}`);
       showUsage();
   }
 }
 
-main().catch((err) => {
-  console.error('Error:', err.message);
-  process.exit(1);
-});
+run(main);

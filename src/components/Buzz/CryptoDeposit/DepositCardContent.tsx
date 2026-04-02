@@ -330,6 +330,16 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                     Deposits below the minimum will be lost
                   </Text>
                 </Group>
+                {chain === 'btc' && (
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
+                    <Text size="xs" c="dimmed">
+                      Send BTC on the <Text span fw={600} c="yellow">Bitcoin network</Text> only.
+                      Coinbase users: select &quot;Bitcoin&quot; as the network, not Base or
+                      other networks. cbBTC (wrapped Bitcoin) is not supported.
+                    </Text>
+                  </Group>
+                )}
               </Stack>
             </>
           )}

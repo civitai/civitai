@@ -54,10 +54,8 @@ import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
-import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import classes from '~/components/Buzz/buzz.module.scss';
 import clsx from 'clsx';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -239,8 +237,6 @@ export const BuzzPurchase = ({
 
   const unitAmount = (selectedPrice?.unitAmount ?? customAmount) as number;
   const buzzAmount = selectedPrice?.buzzAmount ?? unitAmount * 10;
-  const liveFeatures = useLiveFeatureFlags();
-
   const onValidate = () => {
     if (!selectedPrice && !customAmount) {
       setError('Please choose one option');
@@ -329,20 +325,6 @@ export const BuzzPurchase = ({
           ) : (
             <Input.Wrapper error={error}>
               <Stack gap="md" mb={error ? 5 : undefined}>
-                {liveFeatures.buzzGiftCards && (
-                  <Alert>
-                    <Stack gap={0}>
-                      <Text size="sm" fw={500}>
-                        Now selling Buzz Gift Cards
-                      </Text>
-                      <Group>
-                        <Anchor component={Link} href="/gift-cards?type=buzz" size="xs" c="blue.3">
-                          Buy Now
-                        </Anchor>
-                      </Group>
-                    </Stack>
-                  </Alert>
-                )}
                 <Chip.Group
                   value={selectedPrice?.id ?? ''}
                   onChange={(priceId: string | string[]) => {
@@ -597,14 +579,6 @@ export const BuzzPurchase = ({
               </Button>
             </div>
 
-            {liveFeatures.buzzGiftCards && (
-              <Text align="center" size="xs" c="dimmed" mt="xs">
-                Don&rsquo;t see a supported payment method?{' '}
-                <Anchor component={Link} href="/gift-cards?type=buzz" size="xs">
-                  Buy a gift card!
-                </Anchor>
-              </Text>
-            )}
             {(features.nowpaymentPayments || features.coinbasePayments) && (
               <Stack align="center">
                 <AlertWithIcon icon={<IconInfoCircle />} py="xs" px="xs" mt="sm">

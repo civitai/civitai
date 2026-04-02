@@ -20,7 +20,7 @@ import type { TRPCClientErrorBase } from '@trpc/client';
 import type { DefaultErrorShape } from '@trpc/server';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
-import { capitalize } from 'lodash-es';
+import { capitalize, isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -104,7 +104,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const availableBuzzTypes = useAvailableBuzz(['blue']);
 
   const { addRun, removeRun, updateRun } = trainingStore;
-  const { runs } = useTrainingImageStore(
+  const { runs, imageList, initialImageList } = useTrainingImageStore(
     (state) =>
       state[model.id] ?? {
         ...(thisMediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
@@ -487,6 +487,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   };
 
   const handleConfirm = () => {
+    // Guard against submitting with stale/unsaved training data
+    if (imageList.length > 0 && !isEqual(imageList, initialImageList)) {
+      showErrorNotification({
+        error: new Error(
+          'Your training data has unsaved changes. Please go back to Step 2 and save your images before submitting.'
+        ),
+        title: 'Unsaved training data',
+        autoClose: false,
+      });
+      return;
+    }
+
     setAwaitInvalidate(true);
     finishedRuns = 0;
 

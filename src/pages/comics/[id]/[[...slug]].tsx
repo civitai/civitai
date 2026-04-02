@@ -40,6 +40,7 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -48,6 +49,8 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ChapterComments } from '~/components/Comics/ChapterComments';
 import { ChapterExportButton, ChapterDownloadButton } from '~/components/Comics/ComicExportButton';
+import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
+import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
 import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import { Page } from '~/components/AppLayout/Page';
@@ -141,6 +144,7 @@ function ChapterListItem({
   isNsfw,
   onToggleBlur,
   showDownload,
+  onChangeNsfwLevel,
 }: {
   project: Project;
   chapter: Chapter;
@@ -149,6 +153,7 @@ function ChapterListItem({
   isNsfw: boolean;
   onToggleBlur: (e: React.MouseEvent, position: number) => void;
   showDownload?: boolean;
+  onChangeNsfwLevel?: (level: number) => void;
 }) {
   const { canRead } = useChapterPermission({
     chapterId: ch.id,
@@ -222,13 +227,24 @@ function ChapterListItem({
             </Badge>
           )}
           {isNsfw && (
-            <button
-              className={styles.chapterRatingPill}
-              onClick={(e) => onToggleBlur(e, ch.position)}
-              title={isBlurred ? 'Click to show' : 'Click to hide'}
-            >
-              {getBrowsingLevelLabel(ch.nsfwLevel)}
-            </button>
+            <span className="ml-1" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+              <BrowsingLevelBadge
+                browsingLevel={ch.nsfwLevel}
+                size="xs"
+                onClick={
+                  onChangeNsfwLevel
+                    ? () =>
+                        openSetBrowsingLevelModal({
+                          imageId: 0,
+                          nsfwLevel: ch.nsfwLevel as any,
+                          skipImageUpdate: true,
+                          onSubmit: ({ level }) => onChangeNsfwLevel(level),
+                        })
+                    : undefined
+                }
+                style={onChangeNsfwLevel ? { cursor: 'pointer' } : undefined}
+              />
+            </span>
           )}
         </p>
         <p className={styles.chapterPanelCount}>
@@ -289,6 +305,14 @@ function ComicOverview({ project }: { project: Project }) {
   });
 
   const setTosViolation = trpc.comics.setTosViolation.useMutation({
+    onSuccess: () => void utils.comics.getPublicProjectForReader.invalidate({ id: project.id }),
+  });
+
+  const setProjectNsfwLevel = trpc.comics.setProjectNsfwLevel.useMutation({
+    onSuccess: () => void utils.comics.getPublicProjectForReader.invalidate({ id: project.id }),
+  });
+
+  const setChapterNsfwLevel = trpc.comics.setChapterNsfwLevel.useMutation({
     onSuccess: () => void utils.comics.getPublicProjectForReader.invalidate({ id: project.id }),
   });
 
@@ -519,9 +543,22 @@ function ComicOverview({ project }: { project: Project }) {
           <div className="flex items-center gap-2">
             <h1 className={styles.overviewTitle}>{project.name}</h1>
             {project.nsfwLevel > 0 && (
-              <Badge size="sm" color="red" variant="filled">
-                {getBrowsingLevelLabel(project.nsfwLevel)}
-              </Badge>
+              <BrowsingLevelBadge
+                browsingLevel={project.nsfwLevel}
+                onClick={
+                  isMod
+                    ? () =>
+                        openSetBrowsingLevelModal({
+                          imageId: 0,
+                          nsfwLevel: project.nsfwLevel as any,
+                          skipImageUpdate: true,
+                          onSubmit: ({ level }) =>
+                            setProjectNsfwLevel.mutate({ id: project.id, nsfwLevel: level }),
+                        })
+                    : undefined
+                }
+                style={isMod ? { cursor: 'pointer' } : undefined}
+              />
             )}
           </div>
 
@@ -629,7 +666,14 @@ function ComicOverview({ project }: { project: Project }) {
                   }
                   isNsfw={ch.nsfwLevel > 0 && Flags.hasFlag(blurLevels, ch.nsfwLevel)}
                   onToggleBlur={toggleChapterBlur}
-                  showDownload={projectMeta?.allowDownload || isOwner}
+                  showDownload={projectMeta?.allowDownload || isOwner || isMod}
+                  onChangeNsfwLevel={(level) =>
+                    setChapterNsfwLevel.mutate({
+                      projectId: project.id,
+                      chapterPosition: ch.position,
+                      nsfwLevel: level,
+                    })
+                  }
                 />
               ))}
             </div>
@@ -648,6 +692,7 @@ type ReaderMode = 'scroll' | 'pages';
 function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const availableBuzzTypes = useAvailableBuzz();
   const chapters = project.chapters;
   const chapterIdx = chapters.findIndex((ch) => ch.position === chapterDbPos);
   const safeIdx = chapterIdx >= 0 ? chapterIdx : 0;
@@ -816,28 +861,34 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
           >
             {(safe) =>
               safe ? (
-                <img
-                  src={panelSrc}
-                  alt={panel.prompt}
-                  loading="lazy"
-                  className={styles.readerPanel}
-                />
-              ) : (
-                <div className={styles.readerPanelBlurWrap}>
+                <>
                   <img
                     src={panelSrc}
                     alt={panel.prompt}
                     loading="lazy"
                     className={styles.readerPanel}
-                    aria-hidden
                   />
-                  <img
-                    src={panelSrc}
-                    alt={panel.prompt}
-                    loading="lazy"
-                    className={styles.readerPanelBlurred}
-                  />
-                </div>
+                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                </>
+              ) : (
+                <>
+                  <div className={styles.readerPanelBlurWrap}>
+                    <img
+                      src={panelSrc}
+                      alt={panel.prompt}
+                      loading="lazy"
+                      className={styles.readerPanel}
+                      aria-hidden
+                    />
+                    <img
+                      src={panelSrc}
+                      alt={panel.prompt}
+                      loading="lazy"
+                      className={styles.readerPanelBlurred}
+                    />
+                  </div>
+                  <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
+                </>
               )
             }
           </ImageGuard2>
@@ -999,7 +1050,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                 </CopyButton>
                 {activeChapter &&
                   canDownload &&
-                  (projectMeta?.allowDownload || currentUser?.id === project.user.id) && (
+                  (projectMeta?.allowDownload || currentUser?.id === project.user.id || currentUser?.isModerator) && (
                     <ChapterExportButton
                       projectName={project.name}
                       chapterName={activeChapter.name}
@@ -1090,6 +1141,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
               </Text>
               <BuzzTransactionButton
                 buzzAmount={activeChapter.earlyAccessConfig?.buzzPrice ?? 0}
+                accountTypes={availableBuzzTypes}
                 label={`Unlock for ${activeChapter.earlyAccessConfig?.buzzPrice ?? 0} Buzz`}
                 onPerformTransaction={() =>
                   purchaseAccessMutation.mutate({ chapterId: activeChapter.id })
@@ -1116,7 +1168,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             )}
 
             {/* Panel content */}
-            <Container size={readerMode === 'pages' ? 'lg' : 'sm'} p={0}>
+            <Container size={readerMode === 'pages' ? 'lg' : 'md'} p={0}>
               {panels.length === 0 ? (
                 <div className={styles.readerEmpty}>
                   <IconPhotoOff size={48} />
