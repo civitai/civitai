@@ -22,6 +22,7 @@ import {
   IconWifiOff,
 } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
+import useIsClient from '~/hooks/useIsClient';
 import { BonusBuzzContent } from '~/components/Buzz/CryptoDeposit/BonusBuzzContent';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -34,6 +35,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
 export function DepositHistory() {
+  const isClient = useIsClient();
   const currentUser = useCurrentUser();
   const [page, setPage] = useState(1);
   const perPage = 3;
@@ -73,6 +75,8 @@ export function DepositHistory() {
   );
   const total = data?.total ?? 0;
   const totalPages = Math.ceil(total / perPage);
+
+  if (!isClient) return null;
 
   if (isLoading && deposits.length === 0) {
     return (
