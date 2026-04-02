@@ -1,5 +1,6 @@
 import { EnhancementDetails } from './EnhancementDetails';
 import {
+  Alert,
   Button,
   Group,
   Loader,
@@ -10,7 +11,7 @@ import {
   Text,
   Textarea,
 } from '@mantine/core';
-import { IconSparkles } from '@tabler/icons-react';
+import { IconCheck, IconSparkles } from '@tabler/icons-react';
 import { useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -69,6 +70,7 @@ export function EnhanceTab({
   const [editing, setEditing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [pendingWorkflowId, setPendingWorkflowId] = useState<string | null>(null);
+  const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [preserveTriggerWords, setPreserveTriggerWords] = useState<string[]>(() =>
     getUsedTriggerWords(triggerWords, prompt, negativePrompt)
   );
@@ -117,10 +119,15 @@ export function EnhanceTab({
       setPendingWorkflowId(workflowId);
       setEditing(false);
     } catch (error: any) {
-      showErrorNotification({
-        title: 'Enhancement failed',
-        error: new Error(error.message),
-      });
+      const isFlagged = error.message?.startsWith('Your prompt was flagged');
+      if (isFlagged) {
+        setPromptWarning(error.message);
+      } else {
+        showErrorNotification({
+          title: 'Enhancement failed',
+          error: new Error(error.message),
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -136,10 +143,15 @@ export function EnhanceTab({
       setPendingWorkflowId(workflowId);
       setEditing(false);
     } catch (error: any) {
-      showErrorNotification({
-        title: 'Enhancement failed',
-        error: new Error(error.message),
-      });
+      const isFlagged = error.message?.startsWith('Your prompt was flagged');
+      if (isFlagged) {
+        setPromptWarning(error.message);
+      } else {
+        showErrorNotification({
+          title: 'Enhancement failed',
+          error: new Error(error.message),
+        });
+      }
     } finally {
       setSubmitting(false);
     }
@@ -237,7 +249,37 @@ export function EnhanceTab({
     </div>
   ) : null;
 
-  const footerContent = inputFormFooter || resultFooter;
+  const warningAlert = promptWarning ? (
+    <Alert color="red" title="Prohibited Prompt">
+      <Text className="whitespace-pre-wrap">{promptWarning}</Text>
+      <Button
+        color="red"
+        variant="light"
+        onClick={() => setPromptWarning(null)}
+        style={{ marginTop: 10 }}
+        leftSection={<IconCheck />}
+        fullWidth
+      >
+        I Understand
+      </Button>
+      {currentUser?.username && (
+        <Text size="xs" c="dimmed" mt={4}>
+          Is this a mistake?{' '}
+          <Text
+            component="a"
+            td="underline"
+            href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai Username=${currentUser.username}`}
+            target="_blank"
+          >
+            Submit your prompt for review
+          </Text>{' '}
+          so we can refine our system.
+        </Text>
+      )}
+    </Alert>
+  ) : null;
+
+  const footerContent = warningAlert || inputFormFooter || resultFooter;
 
   return (
     <>

@@ -212,7 +212,15 @@ export const orchestratorRouter = router({
   // #region [prompt enhancement]
   enhancePrompt: orchestratorGuardedProcedure
     .input(promptEnhancementSchema)
-    .mutation(({ ctx, input }) => enhancePrompt({ input, token: ctx.token, userId: ctx.user.id })),
+    .mutation(({ ctx, input }) =>
+      enhancePrompt({
+        input,
+        token: ctx.token,
+        userId: ctx.user.id,
+        isGreen: ctx.domain === 'green',
+        isModerator: ctx.user.isModerator,
+      })
+    ),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
   queryWorkflowsByTags: orchestratorProcedure
     .input(workflowQuerySchema)

@@ -3,6 +3,7 @@ import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promp
 import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getWorkflowCallbacks } from '~/server/orchestrator/orchestrator.utils';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
 const PROMPT_ENHANCEMENT_STEP_NAME = 'prompt-enhancement';
 
@@ -44,12 +45,26 @@ export async function enhancePrompt({
   token,
   userId,
   input,
+  isGreen,
+  isModerator,
 }: {
   token: string;
   userId: number;
   input: PromptEnhancementSchema;
+  isGreen?: boolean;
+  isModerator?: boolean;
 }) {
   const { ecosystem, prompt, negativePrompt, temperature } = input;
+
+  // Audit prompt before enhancement
+  await auditPromptServer({
+    prompt,
+    negativePrompt: negativePrompt ?? undefined,
+    userId,
+    isGreen: !!isGreen,
+    isModerator,
+  });
+
   const instruction = buildInstruction(input);
 
   const workflow = await submitWorkflow({
