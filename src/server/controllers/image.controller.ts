@@ -389,20 +389,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const pinnedPosts = modelGallerySettings?.pinnedPosts ?? {};
     const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
-    // Log gallery settings source data for pinned post debugging
-    if (input.modelVersionId && versionPinnedPosts.length) {
-      logToAxiom({
-        type: 'info',
-        name: 'pinned-posts-settings',
-        modelId: input.modelId,
-        modelVersionId: input.modelVersionId,
-        pinnedPostIds: versionPinnedPosts,
-        pinnedPostCount: versionPinnedPosts.length,
-        allVersionsWithPins: Object.keys(pinnedPosts),
-        hasCursor: !!cursor,
-      });
-    }
-
     if (versionPinnedPosts.length && !cursor) {
       // Pinned posts: always use DB path (getAllImages) instead of BitDex.
       // postId queries are ~2ms in Postgres (covered index) and create unique
@@ -436,25 +422,30 @@ export const getImagesAsPostsInfiniteHandler = async ({
         pinned[image.postId].push(image);
       }
 
+      // Build per-post image count map to see which posts got partial vs zero results
+      const imagesPerPost: Record<number, number> = {};
+      for (const id of versionPinnedPosts) imagesPerPost[id] = 0;
+      for (const img of pinnedPostsImages) {
+        if (img.postId) imagesPerPost[img.postId] = (imagesPerPost[img.postId] ?? 0) + 1;
+      }
+
       const returnedPostIds = [...new Set(pinnedPostsImages.map((i) => i.postId))];
       const missingPostIds = versionPinnedPosts.filter((id) => !returnedPostIds.includes(id));
-      if (missingPostIds.length) {
-        logToAxiom({
-          type: 'warning',
-          name: 'pinned-posts-missing',
-          message: `Pinned posts missing from getAllImages results`,
-          modelId: input.modelId,
-          modelVersionId: input.modelVersionId,
-          requestedPostIds: versionPinnedPosts,
-          returnedPostIds,
-          missingPostIds,
-          totalImagesReturned: pinnedPostsImages.length,
-          limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
-          browsingLevel: input.browsingLevel,
-          userId: user?.id,
-          isModerator: user?.isModerator,
-        });
-      }
+
+      // Always log pinned post fetch results so we can compare good vs bad pods
+      logToAxiom({
+        type: missingPostIds.length ? 'warning' : 'info',
+        name: missingPostIds.length ? 'pinned-posts-missing' : 'pinned-posts-ok',
+        input,
+        requestedPostIds: versionPinnedPosts,
+        returnedPostIds,
+        missingPostIds,
+        imagesPerPost,
+        totalImagesReturned: pinnedPostsImages.length,
+        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      });
     }
 
     while (true) {
