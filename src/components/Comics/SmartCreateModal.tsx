@@ -7,6 +7,7 @@ import { LayoutPicker } from '~/components/Comics/LayoutPicker';
 import type { LayoutOption } from '~/components/Comics/LayoutPicker';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 
 interface SmartCreateModalProps {
@@ -52,6 +53,7 @@ export function SmartCreateModal({
   createError,
   defaultAspectRatio = '3:4',
 }: SmartCreateModalProps) {
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [smartStep, setSmartStep] = useState<'input' | 'review'>('input');
   const [smartChapterName, setSmartChapterName] = useState('New Chapter');
   const [smartStory, setSmartStory] = useState('');
@@ -204,6 +206,7 @@ export function SmartCreateModal({
             </Button>
             <BuzzTransactionButton
               buzzAmount={planCost ?? 0}
+              accountTypes={availableBuzzTypes}
               label={planCost == null ? 'Loading cost...' : isPlanningPanels ? 'Planning...' : 'Plan Panels'}
               loading={isPlanningPanels}
               disabled={!smartStory.trim() || planCost == null}
@@ -320,6 +323,7 @@ export function SmartCreateModal({
               buzzAmount={
                 smartPanels.filter((p) => p.prompt.trim()).length * (panelCost ?? 0)
               }
+              accountTypes={availableBuzzTypes}
               label={panelCost == null ? 'Loading cost...' : isCreating ? 'Creating...' : 'Create Chapter'}
               loading={isCreating}
               disabled={smartPanels.filter((p) => p.prompt.trim()).length === 0 || panelCost == null || generationDisabled}

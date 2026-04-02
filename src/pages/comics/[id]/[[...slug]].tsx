@@ -40,6 +40,7 @@ import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -691,6 +692,7 @@ type ReaderMode = 'scroll' | 'pages';
 function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const availableBuzzTypes = useAvailableBuzz();
   const chapters = project.chapters;
   const chapterIdx = chapters.findIndex((ch) => ch.position === chapterDbPos);
   const safeIdx = chapterIdx >= 0 ? chapterIdx : 0;
@@ -1139,6 +1141,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
               </Text>
               <BuzzTransactionButton
                 buzzAmount={activeChapter.earlyAccessConfig?.buzzPrice ?? 0}
+                accountTypes={availableBuzzTypes}
                 label={`Unlock for ${activeChapter.earlyAccessConfig?.buzzPrice ?? 0} Buzz`}
                 onPerformTransaction={() =>
                   purchaseAccessMutation.mutate({ chapterId: activeChapter.id })
