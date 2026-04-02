@@ -417,6 +417,16 @@ export const getImagesAsPostsInfiniteHandler = async ({
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
+        // Clear user-facing content filters for pinned posts — the model owner
+        // pinned them explicitly, so they should always appear regardless of the
+        // viewer's filter preferences (media type, period, generation, etc.).
+        types: undefined,
+        period: undefined,
+        periodMode: undefined,
+        generation: undefined,
+        baseModels: undefined,
+        tools: undefined,
+        techniques: undefined,
         // Max pinned posts (20) × max images per post (20) = 400
         limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
         useCombinedNsfwLevel: !features.canViewNsfw,
