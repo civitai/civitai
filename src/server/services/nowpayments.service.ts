@@ -824,7 +824,6 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
 export const reconcileUserDeposits = async (userId: number) => {
   const start = Date.now();
 
-  // Get all wallets for this user
   const wallets = await dbRead.cryptoWallet.findMany({
     where: { userId },
     select: { smartAccount: true },
@@ -838,28 +837,25 @@ export const reconcileUserDeposits = async (userId: number) => {
   let found = 0;
   let processed = 0;
 
-  // For each wallet, fetch the parent payment and its child payments by ID
   for (const wallet of wallets) {
     if (!wallet.smartAccount) continue;
     const parentId = Number(wallet.smartAccount);
 
+    // Fetch parent to get invoiceId, then fetch all payments for that invoice
     const parentPayment = await nowpaymentsCaller.getPaymentStatus(parentId);
     if (!parentPayment) continue;
 
-    // Collect payments to check: parent + any children listed in payment_extra_ids
-    const paymentsToCheck = [parentPayment];
-    const childIds = parentPayment.payment_extra_ids ?? [];
-    if (childIds.length > 0) {
-      // Fetch child payments individually by ID (fast, no full list scan)
-      const children = await mapWithConcurrency(childIds, 5, (id) =>
-        nowpaymentsCaller.getPaymentStatus(id)
-      );
-      paymentsToCheck.push(
-        ...children.filter((p): p is NOWPayments.CreatePaymentResponse => p != null)
-      );
-    }
+    const invoiceId = parentPayment.invoice_id
+      ? Number(parentPayment.invoice_id)
+      : null;
 
-    for (const payment of paymentsToCheck) {
+    // Use invoiceId filter if available (fast, server-side filtered)
+    // Fall back to just the parent payment if no invoiceId
+    const payments = invoiceId
+      ? await nowpaymentsCaller.getPaymentsByInvoiceId(invoiceId)
+      : [parentPayment];
+
+    for (const payment of payments) {
       if (!isDepositComplete(payment.payment_status)) continue;
       if (payment.order_id !== `user:${userId}`) continue;
       found++;
@@ -879,10 +875,9 @@ export const reconcileUserDeposits = async (userId: number) => {
       });
 
       if (existingTx || (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)) {
-        continue; // Already processed
+        continue;
       }
 
-      // Process the deposit
       try {
         const event: NOWPayments.WebhookEvent = {
           payment_id: numericId,
