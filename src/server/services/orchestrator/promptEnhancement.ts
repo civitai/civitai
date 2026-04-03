@@ -4,6 +4,7 @@ import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { getWorkflowCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const PROMPT_ENHANCEMENT_STEP_NAME = 'prompt-enhancement';
 
@@ -47,12 +48,14 @@ export async function enhancePrompt({
   input,
   isGreen,
   isModerator,
+  currencies,
 }: {
   token: string;
   userId: number;
   input: PromptEnhancementSchema;
   isGreen?: boolean;
   isModerator?: boolean;
+  currencies: BuzzSpendType[];
 }) {
   const { ecosystem, prompt, negativePrompt, temperature } = input;
 
@@ -99,7 +102,8 @@ export async function enhancePrompt({
         } as PromptEnhancementStep,
       ],
       callbacks: getWorkflowCallbacks(userId),
-      currencies: ['yellow'],
+      // @ts-ignore - BuzzSpendType is properly supported
+      currencies: BuzzTypes.toOrchestratorType(currencies),
     },
   });
 

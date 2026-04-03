@@ -23,6 +23,7 @@ import {
   useHasGenerationSlots,
 } from '~/components/generation_v2/GenerationLayout';
 import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
 
@@ -194,7 +195,7 @@ export function EnhanceTab({
     pendingWorkflowId !== null && (!result || resultStatus !== 'succeeded');
   const hasSucceededResult = result && resultStatus === 'succeeded';
   const showInputForm = (!isWaitingForWorkflow && !hasSucceededResult) || editing;
-  const showResult = hasSucceededResult && !editing;
+  const showResult = hasSucceededResult && !editing && !isLoading;
   const showInputFooter = showInputForm || (isLoading && !editing);
 
   // Footer buttons for each state
@@ -220,6 +221,7 @@ export function EnhanceTab({
         showPurchaseModal
         size="md"
         className="flex-1"
+        accountTypes={buzzSpendTypes}
       />
       {editing && (
         <Button size="md" onClick={handleApplyEdited} leftSection={<IconSparkles size={16} />}>
@@ -243,6 +245,7 @@ export function EnhanceTab({
         size="md"
         variant="light"
         className="flex-1"
+        accountTypes={buzzSpendTypes}
       />
       <Button size="md" onClick={handleApply} leftSection={<IconSparkles size={16} />}>
         Apply

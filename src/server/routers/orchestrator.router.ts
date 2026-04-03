@@ -219,6 +219,7 @@ export const orchestratorRouter = router({
         userId: ctx.user.id,
         isGreen: ctx.domain === 'green',
         isModerator: ctx.user.isModerator,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       })
     ),
   /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
@@ -680,7 +681,10 @@ export const orchestratorRouter = router({
 
         const workflow = await submitWorkflow({
           token,
-          body: { steps: [step], currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any },
+          body: {
+            steps: [step],
+            currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any,
+          },
           query: { whatif: true },
         });
 
