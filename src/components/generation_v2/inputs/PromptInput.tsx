@@ -1,7 +1,7 @@
 import { Button, type TextareaProps } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { IconSparkles } from '@tabler/icons-react';
-import type { ClipboardEvent, KeyboardEvent } from 'react';
+import { forwardRef, type ClipboardEvent, type KeyboardEvent } from 'react';
 import { useState } from 'react';
 import { create } from 'zustand';
 
@@ -16,7 +16,10 @@ export type PromptInputProps = Omit<TextareaProps, 'onChange'> & {
   onFillForm?: (metadata: Record<string, unknown>) => void;
 };
 
-export function PromptInput({ onFillForm, ...props }: PromptInputProps) {
+export const PromptInput = forwardRef<HTMLTextAreaElement, PromptInputProps>(function PromptInput(
+  { onFillForm, ...props },
+  ref
+) {
   const [showFillForm, setShowFillForm] = useState(false);
   const [pastedMetadata, setPastedMetadata] = useState<Record<string, unknown> | null>(null);
 
@@ -69,6 +72,7 @@ export function PromptInput({ onFillForm, ...props }: PromptInputProps) {
   return (
     <div className="relative">
       <AutosizeTextarea
+        ref={ref}
         {...props}
         onChange={(e) => props.onChange?.(e.target.value)}
         onKeyDown={keyHandler}
@@ -88,7 +92,7 @@ export function PromptInput({ onFillForm, ...props }: PromptInputProps) {
       )}
     </div>
   );
-}
+});
 
 /**
  * Taken from stable-diffusion-webui github repo and modified to fit our needs

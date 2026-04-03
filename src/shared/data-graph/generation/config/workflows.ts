@@ -297,6 +297,20 @@ export const workflowConfigs: WorkflowConfigs = {
   //   category: 'video',
   //   ecosystemIds: [ECO.LTXV23],
   // },
+
+  // ===========================================================================
+  // Text Output Workflows (hidden from picker, triggered programmatically)
+  // ===========================================================================
+
+  'prompt:enhance': {
+    label: 'Enhance Prompt',
+    description: 'Improve your prompt with AI suggestions',
+    category: 'image',
+    ecosystemIds: [],
+    noSubmit: true,
+    hidden: true,
+    enhancement: true,
+  },
 };
 
 // =============================================================================
@@ -428,6 +442,7 @@ export function getWorkflowsForEcosystem(
   modelVersionId?: number
 ): WorkflowOption[] {
   return workflowOptions.filter((w) => {
+    if (workflowConfigByKey.get(w.graphKey)?.hidden) return false;
     if (w.ecosystemIds.length === 0) return true; // Standalone (available to all)
     if (!w.ecosystemIds.includes(ecosystemId)) return false;
     if (modelVersionId && w.excludeModelVersionIds?.includes(modelVersionId)) return false;
@@ -453,7 +468,7 @@ export function getWorkflowsWithCompatibility(ecosystemId: number): {
     category,
     label,
     workflows: workflowOptions
-      .filter((w) => w.category === category)
+      .filter((w) => w.category === category && !workflowConfigByKey.get(w.graphKey)?.hidden)
       .map((w) => ({
         ...w,
         compatible: w.ecosystemIds.length === 0 || w.ecosystemIds.includes(ecosystemId),
@@ -473,7 +488,7 @@ export function getAllWorkflowsGrouped(): {
     category,
     label,
     workflows: workflowOptions
-      .filter((w) => w.category === category)
+      .filter((w) => w.category === category && !workflowConfigByKey.get(w.graphKey)?.hidden)
       .map((w) => ({ ...w, compatible: true })),
   }));
 }

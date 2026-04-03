@@ -100,7 +100,10 @@ export const ecosystemGraph = new DataGraph<
         : compatibleEcosystems[0] ?? 'SDXL';
 
       return {
-        input: z.string().optional(),
+        input: z
+          .string()
+          .optional()
+          .transform((v) => (v ? v : undefined)),
         output: z.string(),
         defaultValue,
         meta: {

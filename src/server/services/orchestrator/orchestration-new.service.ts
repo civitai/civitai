@@ -1088,7 +1088,7 @@ export interface NormalizedStep {
 /** Workflow-level metadata — the generation form input snapshot. */
 export interface NormalizedWorkflowMetadata {
   /** The generation form params (prompt, steps, model settings, etc.) */
-  params: Partial<GenerationGraphValues> & Record<string, unknown>;
+  params: Record<string, unknown>;
   /** The generation form resources (model, LoRAs, VAE, etc.) — enriched */
   resources: GenerationResource[];
   /** Remix reference */

@@ -170,7 +170,7 @@ export function QueueItem({
     });
   };
 
-  const { prompt, ...details } = params;
+  const { prompt, ...details } = params as { prompt: string };
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =

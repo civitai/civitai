@@ -59,6 +59,9 @@ export interface WorkflowConfig {
   /** When true, no FormFooter (submit/quantity/reset) is shown for this workflow */
   noSubmit?: boolean;
 
+  /** When true, this workflow is hidden from the workflow picker (triggered programmatically) */
+  hidden?: boolean;
+
   /** Short label for segmented mode control. Falls back to `label` if omitted. */
   modeLabel?: string;
 
