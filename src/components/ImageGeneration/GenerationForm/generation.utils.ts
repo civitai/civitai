@@ -258,6 +258,8 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
 
 export const isMadeOnSite = (meta: ImageMetaProps | null) => {
   if (!meta) return false;
+  // Capitalized keys like 'Version' and 'Model' indicate external tools (A1111, ComfyUI)
+  if ('Version' in meta || 'Model' in meta) return false;
   if ('civitaiResources' in meta) return true;
   if (meta.engine && Object.keys(videoGenerationConfig2).includes(meta.engine as string))
     return true;
