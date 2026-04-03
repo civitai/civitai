@@ -31,7 +31,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-import { baseModels } from '~/shared/constants/base-model.constants';
 import type { ProfanityEvaluation } from '~/libs/profanity-simple';
 
 const licensingSchema = z.object({
@@ -88,7 +87,7 @@ export const getAllModelsSchema = z.object({
     .optional(),
   checkpointType: z.enum(CheckpointType).optional(),
   baseModels: z
-    .union([z.enum(baseModels), z.enum(baseModels).array()])
+    .union([z.string(), z.string().array()])
     .transform((rel) => {
       if (!rel) return undefined;
       return Array.isArray(rel) ? rel : [rel];

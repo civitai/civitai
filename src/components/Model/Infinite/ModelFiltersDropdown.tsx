@@ -25,7 +25,7 @@ import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { baseModelSelectData } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {

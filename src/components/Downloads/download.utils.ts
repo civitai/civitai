@@ -4,7 +4,7 @@ import * as z from 'zod';
 import dayjs from '~/shared/utils/dayjs';
 import type { DownloadHistoryItem } from '~/server/services/download.service';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { parseStringArray } from '~/utils/query-string-helpers';
 
 // Period options for time-based filtering

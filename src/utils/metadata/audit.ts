@@ -330,10 +330,10 @@ export function includesMinorAge(prompt: string | undefined) {
 // #endregion
 
 // #region [inappropriate]
-function prepareWordRegex(word: string, pluralize = false) {
+function prepareWordRegex(word: string, pluralize = false, leet = true) {
   let regexStr = word;
   regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]*`);
-  if (!word.includes('[')) {
+  if (leet && !word.includes('[')) {
     regexStr = regexStr
       .replace(/i/g, '[i|l|1]')
       .replace(/o/g, '[o|0]')
@@ -361,10 +361,10 @@ type MatcherFn = (prompt: string, checkable: Checkable) => string | false;
 type PreprocessorFn = (word: string) => string;
 export function checkable(
   words: string[],
-  options?: { pluralize?: boolean; matcher?: MatcherFn; preprocessor?: PreprocessorFn }
+  options?: { pluralize?: boolean; leet?: boolean; matcher?: MatcherFn; preprocessor?: PreprocessorFn }
 ) {
   const regexes = words.map((word) => {
-    const regex = prepareWordRegex(word, options?.pluralize);
+    const regex = prepareWordRegex(word, options?.pluralize, options?.leet);
     return { regex, word } as Checkable;
   });
   function preprocessor(prompt: string) {
@@ -447,6 +447,7 @@ const words = {
     }),
   },
   poi: checkable(poiWords, {
+    leet: false,
     preprocessor: (word) => word.replace(/[^\w\s\|\:\[\],]/g, ''),
   }),
   tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),

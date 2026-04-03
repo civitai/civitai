@@ -7,7 +7,7 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
+import { DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { modelsSearchIndex } from '~/server/search-index';
 import { updateModelLastVersionAt } from '~/server/services/model.service';
 import { bustMvCache } from '~/server/services/model-version.service';

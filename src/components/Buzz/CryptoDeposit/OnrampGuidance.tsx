@@ -1,5 +1,5 @@
-import { Button, Divider, Group, Paper, Stack, Tabs, Text, Title } from '@mantine/core';
-import { IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
+import { Anchor, Button, Divider, Group, Paper, Stack, Tabs, Text, Title } from '@mantine/core';
+import { IconAlertTriangle, IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { trpc } from '~/utils/trpc';
@@ -8,6 +8,7 @@ type OnrampService = {
   name: string;
   description: string;
   tip?: string;
+  disclaimer?: React.ReactNode;
   url: string;
 };
 
@@ -69,6 +70,20 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
         name: 'Coinbase',
         description: 'Free USDC withdrawals on Base — the lowest fee option.',
         tip: 'Send USDC on Base for the lowest fees.',
+        disclaimer: (
+          <>
+            Coinbase may block direct sends — send to your{' '}
+            <Anchor
+              href="https://wallet.coinbase.com"
+              target="_blank"
+              rel="noopener noreferrer"
+              size="xs"
+            >
+              Coinbase Wallet
+            </Anchor>{' '}
+            first, then send here.
+          </>
+        ),
         url: 'https://www.coinbase.com',
       },
       {
@@ -270,6 +285,18 @@ export function OnrampGuidance() {
                             <Text size="xs" c="green" fw={500}>
                               {service.tip}
                             </Text>
+                          )}
+                          {service.disclaimer && (
+                            <Group gap={4} wrap="nowrap" align="center">
+                              <IconAlertTriangle
+                                size={12}
+                                className="text-yellow-500"
+                                style={{ flexShrink: 0 }}
+                              />
+                              <Text size="xs" c="dimmed">
+                                {service.disclaimer}
+                              </Text>
+                            </Group>
                           )}
                         </Stack>
                         <Button

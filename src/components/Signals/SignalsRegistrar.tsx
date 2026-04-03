@@ -13,7 +13,8 @@ import { imageStore } from '~/store/image.store';
 import { useSchedulerDownloadSignal } from '~/store/scheduler-download.store';
 
 const TrainingSignals = dynamic(
-  () => import('~/components/Signals/TrainingSignals').then((m) => ({ default: m.TrainingSignals })),
+  () =>
+    import('~/components/Signals/TrainingSignals').then((m) => ({ default: m.TrainingSignals })),
   { ssr: false }
 );
 const GenerationSignals = dynamic(

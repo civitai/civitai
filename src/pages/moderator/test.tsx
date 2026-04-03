@@ -18,54 +18,40 @@ import { trpc } from '~/utils/trpc';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
-const { Slots, Slot } = createSlots(['header', 'footer']);
-
-function Header({
-  children,
-  withCloseButton = true,
-}: {
-  children: React.ReactNode;
-  withCloseButton?: boolean;
-}) {
-  return (
-    <Slot name="header">
-      <div className="flex items-center justify-between bg-red-400 p-2 text-white">
-        <div>{children}</div>
-        {withCloseButton && <CloseButton />}
-      </div>
-    </Slot>
-  );
-}
-
-function Footer({ children }: { children: React.ReactNode }) {
-  return (
-    <Slot name="footer">
-      <div className="bg-green-400 p-2 text-white">{children}</div>
-    </Slot>
-  );
-}
+const {
+  SlotProvider,
+  Slot,
+  RenderSlot,
+  Header,
+  Footer,
+  RenderHeader,
+  RenderFooter,
+} = createSlots(['header', 'footer']);
 
 function ComponentWithSlots({ children }: { children: React.ReactNode }) {
   return (
-    <Slots context={{ test: true }}>
-      {(slots) => (
-        <div className="container flex flex-col">
-          {slots.header}
-          <div className="bg-orange-400 text-white">{children}</div>
-          {slots.footer}
+    <SlotProvider>
+      <div className="container flex flex-col">
+        <div className="flex items-center justify-between bg-red-400 p-2 text-white">
+          <RenderHeader />
+          <CloseButton />
         </div>
-      )}
-    </Slots>
+        <div className="bg-orange-400 text-white">{children}</div>
+        <div className="bg-green-400 p-2 text-white">
+          <RenderFooter />
+        </div>
+      </div>
+    </SlotProvider>
   );
 }
 
 function Content() {
   return (
-    <>
+    <ComponentWithSlots>
       <Header>This is my header</Header>
       This is my content
       <Footer>This is my Footer</Footer>
-    </>
+    </ComponentWithSlots>
   );
 }
 

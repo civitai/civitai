@@ -7,18 +7,18 @@ WORKDIR /app
 # Enable corepack for pnpm
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
-# Install Prisma Client - remove if not using Prisma
+# Copy Prisma schema for client generation (postinstall generates schema.prisma from this)
+COPY prisma/schema.full.prisma ./prisma/
 
-COPY prisma ./prisma
-
-# Install dependencies
-
-COPY package.json pnpm-lock.yaml ./
-
-# copy ./scripts directory to /app/scripts to run prisma enum generator
+# Install dependencies — lockfile and scripts rarely change, so they go first.
+# package.json changes on every version bump but pnpm only needs it for the
+# workspace root name; the store cache mount lets pnpm reuse downloaded packages
+# even when this layer is invalidated.
+COPY pnpm-lock.yaml package.json ./
 COPY scripts ./scripts
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 ##### BUILDER
 
@@ -56,8 +56,6 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/next.config.mjs ./
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/scripts ./scripts
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static

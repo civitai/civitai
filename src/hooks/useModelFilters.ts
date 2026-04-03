@@ -7,7 +7,7 @@ import type { SetStateAction } from 'react';
 import { useCallback, useMemo } from 'react';
 import { isDefined } from '~/utils/type-guards';
 import { constants } from '~/server/common/constants';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 
 const filterSchema = z.object({
   types: z

@@ -72,7 +72,7 @@ import {
   getBaseModelGroup,
   getGenerationBaseModelAssociatedGroups,
   getGenerationBaseModelResourceOptions,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
