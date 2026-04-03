@@ -20,6 +20,7 @@ export async function orchestratorChatCompletion(input: {
   currencies?: BuzzSpendType[];
 }): Promise<{
   content: string;
+  workflowId: string;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }> {
   const { token, model = 'gpt-4o-mini', messages, temperature, maxTokens, currencies } = input;
@@ -50,6 +51,7 @@ export async function orchestratorChatCompletion(input: {
 
   return {
     content,
+    workflowId: workflow.id as string,
     usage: output?.usage
       ? {
           promptTokens: output.usage.promptTokens,

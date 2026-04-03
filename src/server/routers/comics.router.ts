@@ -42,6 +42,7 @@ import {
 import { createImage, ingestImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { commentV2Select } from '~/server/selectors/commentv2.selector';
@@ -53,6 +54,12 @@ import {
 } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { comicsSearchIndex } from '~/server/search-index';
+import {
+  publicBrowsingLevelsFlag,
+  hasPublicBrowsingLevel,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import {
   commonAspectRatios,
   nanoBananaProSizes,
@@ -207,6 +214,15 @@ async function submitComicGeneration({
   isGreen?: boolean;
   allowMatureContent?: boolean;
 }) {
+  // Audit prompt before submitting to orchestrator (same as generateFromGraph)
+  await auditPromptServer({
+    prompt,
+    negativePrompt: '',
+    userId: user.id,
+    isGreen: !!isGreen,
+    isModerator: user.isModerator,
+  });
+
   const versionId = versionIdOverride ?? modelConfig.versionId;
   const cappedImages = images
     ? capReferenceImages(images, modelConfig.maxReferenceImages)
@@ -242,6 +258,30 @@ async function submitComicGeneration({
     allowMatureContent,
     currencies: getAllowedAccountTypes(features, ['blue']) as any,
   });
+}
+
+/**
+ * Strip imageUrl from NSFW panels so they appear blocked on green domain.
+ * Checks the panel's image nsfwLevel if available, otherwise falls back to
+ * the chapter's aggregated nsfwLevel. If a panel has an imageUrl but no Image
+ * record, it's treated as NSFW to be safe.
+ */
+function stripNsfwPanelImages(
+  chapters: { nsfwLevel: number; panels: { imageUrl: string | null; image?: { nsfwLevel: number } | null }[] }[]
+) {
+  for (const chapter of chapters) {
+    const chapterHasNsfw = Flags.intersects(chapter.nsfwLevel, nsfwBrowsingLevelsFlag);
+    for (const panel of chapter.panels) {
+      const panelNsfw = panel.image
+        ? !hasPublicBrowsingLevel(panel.image.nsfwLevel)
+        : panel.imageUrl
+          ? true // Has image URL but no Image record — assume NSFW to be safe
+          : chapterHasNsfw;
+      if (panelNsfw && panel.imageUrl) {
+        (panel as any).imageUrl = null;
+      }
+    }
+  }
 }
 
 /** Detect orchestrator/generator offline errors and return a user-friendly message. */
@@ -781,14 +821,31 @@ export const comicsRouter = router({
       const panelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
       const thumbnailUrl =
         p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ?? null;
+
+      // On green, strip NSFW cover/hero/thumbnail images so the card is still
+      // visible and navigable but doesn't display mature imagery.
+      const coverImage =
+        ctx.features.isGreen && p.coverImage && !hasPublicBrowsingLevel(p.coverImage.nsfwLevel)
+          ? null
+          : p.coverImage;
+      const heroImage =
+        ctx.features.isGreen && p.heroImage && !hasPublicBrowsingLevel(p.heroImage.nsfwLevel)
+          ? null
+          : p.heroImage;
+      const safeThumbnailUrl =
+        ctx.features.isGreen && Flags.intersects(p.nsfwLevel, nsfwBrowsingLevelsFlag)
+          ? null
+          : thumbnailUrl;
+
       return {
         id: p.id,
         name: p.name,
         description: p.description,
-        coverImage: p.coverImage,
-        heroImage: p.heroImage,
+        coverImage,
+        heroImage,
+        nsfwLevel: p.nsfwLevel,
         panelCount,
-        thumbnailUrl,
+        thumbnailUrl: safeThumbnailUrl,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
       };
@@ -847,12 +904,26 @@ export const comicsRouter = router({
               images: {
                 orderBy: { position: 'asc' },
                 include: {
-                  image: { select: { id: true, url: true, width: true, height: true } },
+                  image: { select: { id: true, url: true, width: true, height: true, nsfwLevel: true } },
                 },
               },
             },
           })
         : [];
+
+    // On green, strip NSFW reference images so they appear blocked.
+    if (ctx.features.isGreen) {
+      for (const ref of references) {
+        ref.images = ref.images.filter(
+          (ri: any) => !ri.image.nsfwLevel || hasPublicBrowsingLevel(ri.image.nsfwLevel)
+        );
+      }
+    }
+
+    // On green, strip imageUrl from NSFW panels so they appear blocked.
+    if (ctx.features.isGreen) {
+      stripNsfwPanelImages(project.chapters);
+    }
 
     return {
       ...project,
@@ -944,10 +1015,21 @@ export const comicsRouter = router({
       if (userId) where.userId = userId;
 
       // NSFW browsing level filter — compute allowed nsfwLevel values using bitwise match
-      if (browsingLevel != null && browsingLevel > 0) {
+      // On green domain, enforce PG-only even if browsingLevel not passed
+      const effectiveBrowsingLevel =
+        browsingLevel != null && browsingLevel > 0
+          ? browsingLevel
+          : ctx.features.isGreen
+            ? publicBrowsingLevelsFlag
+            : null;
+
+      if (effectiveBrowsingLevel != null) {
+        // Comic project nsfwLevel is a bit_or aggregate of all chapter levels.
+        // A project with PG + R chapters has nsfwLevel=5. We must only allow projects
+        // whose ALL bits fall within the allowed browsing level, not just "any overlap".
         const allowedNsfwLevels = [0]; // Always include unclassified (nsfwLevel=0)
         for (let i = 1; i <= 63; i++) {
-          if ((i & browsingLevel) !== 0) allowedNsfwLevels.push(i);
+          if ((i & ~effectiveBrowsingLevel) === 0) allowedNsfwLevels.push(i);
         }
         where.nsfwLevel = { in: allowedNsfwLevels };
       }
@@ -1067,10 +1149,24 @@ export const comicsRouter = router({
       const items = projects.map((p) => {
         const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
         const chapterCount = p.chapters.length;
-        const thumbnailUrl =
+        const rawThumbnailUrl =
           p.coverImage?.url ??
           p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
           null;
+
+        // On green, strip NSFW cover/hero/thumbnail images
+        const coverImage =
+          ctx.features.isGreen && p.coverImage && !hasPublicBrowsingLevel(p.coverImage.nsfwLevel)
+            ? null
+            : p.coverImage;
+        const heroImage =
+          ctx.features.isGreen && p.heroImage && !hasPublicBrowsingLevel(p.heroImage.nsfwLevel)
+            ? null
+            : p.heroImage;
+        const thumbnailUrl =
+          ctx.features.isGreen && Flags.intersects(p.nsfwLevel, nsfwBrowsingLevelsFlag)
+            ? null
+            : rawThumbnailUrl;
 
         // Latest 3 published chapters
         const latestChapters = p.chapters.slice(0, 3).map((ch) => ({
@@ -1085,8 +1181,8 @@ export const comicsRouter = router({
           name: p.name,
           description: p.description,
           thumbnailUrl,
-          coverImage: p.coverImage,
-          heroImage: p.heroImage,
+          coverImage,
+          heroImage,
           genre: p.genre,
           nsfwLevel: p.nsfwLevel,
           readyPanelCount,
@@ -1164,6 +1260,16 @@ export const comicsRouter = router({
         throw throwNotFoundError('Comic not found');
       }
 
+      // Block NSFW projects on green domain.
+      // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
+      if (
+        ctx.features.isGreen &&
+        project.nsfwLevel !== 0 &&
+        Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
+      ) {
+        throw throwNotFoundError('Comic not found');
+      }
+
       // Block TOS-violated projects for non-owner, non-mod
       const isOwnerOrModViewer =
         ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
@@ -1237,6 +1343,11 @@ export const comicsRouter = router({
           panels: isLocked ? [] : ch.panels,
         };
       });
+
+      // On green, strip imageUrl from NSFW panels so they appear blocked.
+      if (ctx.features.isGreen) {
+        stripNsfwPanelImages(chapters);
+      }
 
       // Aggregate tip total from BuzzTip table
       const tipResult = await dbRead.$queryRaw<[{ total: number }]>`

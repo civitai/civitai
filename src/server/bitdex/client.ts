@@ -11,7 +11,9 @@ export type FilterClause =
   | { NotIn: [string, Value[]] }
   | { And: FilterClause[] }
   | { Or: FilterClause[] }
-  | { Not: FilterClause };
+  | { Not: FilterClause }
+  | { IsNull: string }
+  | { IsNotNull: string };
 
 export type SortClause = { field: string; direction: 'Asc' | 'Desc' };
 

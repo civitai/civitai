@@ -19,6 +19,8 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { NsfwLevel } from '~/server/common/enums';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
@@ -62,6 +64,13 @@ export function PanelDetailDrawer({
   onIterativeEdit,
 }: PanelDetailDrawerProps) {
   const utils = trpc.useUtils();
+  const { isGreen } = useFeatureFlags();
+
+  const isNsfwBlocked =
+    isGreen &&
+    detailPanel?.status === 'Ready' &&
+    (detailPanel?.image ? !hasPublicBrowsingLevel(detailPanel.image.nsfwLevel) : !!detailPanel?.imageUrl);
+
   // Lock body scroll when drawer is open
   useEffect(() => {
     if (detailPanelId != null) {
@@ -99,7 +108,17 @@ export function PanelDetailDrawer({
             <div className={styles.drawerContent}>
               {/* Image */}
               <div className={styles.drawerImageContainer}>
-                {detailPanel.imageUrl ? (
+                {isNsfwBlocked ? (
+                  <div
+                    className="w-full flex flex-col items-center justify-center gap-2"
+                    style={{ background: '#2C2E33', aspectRatio: '3/4', opacity: 0.6 }}
+                  >
+                    <IconX size={32} />
+                    <Text size="sm" c="dimmed" ta="center">
+                      Mature content is not available on this site
+                    </Text>
+                  </div>
+                ) : detailPanel.imageUrl ? (
                   <img src={getEdgeUrl(detailPanel.imageUrl, { width: 800 })} alt="Panel" />
                 ) : (
                   <div
