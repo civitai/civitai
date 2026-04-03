@@ -130,7 +130,6 @@ const isMod = t.middleware(({ ctx: { user, acceptableOrigin, ...ctx }, next }) =
 export const isFlagProtected = (flag: keyof FeatureAccess) =>
   middleware(({ ctx, next }) => {
     const features = getFeatureFlags(ctx);
-    console.log(features, ctx.isGreen);
     if (!features[flag]) throw new TRPCError({ code: 'FORBIDDEN' });
 
     return next();
