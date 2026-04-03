@@ -434,8 +434,8 @@ export const getModelVersionsByIdsInput = z.object({
   ids: z.array(z.number()).max(50),
 });
 
-export type ConsolidateVersionsInput = z.infer<typeof consolidateVersionsSchema>;
-export const consolidateVersionsSchema = z.object({
+export type MergeVersionsInput = z.infer<typeof mergeVersionsSchema>;
+export const mergeVersionsSchema = z.object({
   modelId: z.number(),
   targetVersionId: z.number(),
   sourceVersionIds: z.array(z.number()).min(1),

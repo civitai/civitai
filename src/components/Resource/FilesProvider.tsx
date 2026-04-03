@@ -16,6 +16,7 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
+import { getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -456,7 +457,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
 
   const onDrop = (files: File[], defaultType?: ModelFileType) => {
     const toUpload = files.map((file) => {
-      const inferredType = defaultType ?? inferFileType(file.name);
+      const inferredType = defaultType ?? inferFileType(file.name, model?.type);
       return {
         name: file.name,
         versionId: version?.id,
@@ -626,9 +627,17 @@ export const checkConflictingFiles = (files: FileFromContextProps[]) => {
   return Object.values(conflictCount).every((count) => count === 1);
 };
 
-/** Infer a default file type from the file extension */
-function inferFileType(fileName: string): ModelFileType | undefined {
-  const ext = fileName.split('.').pop()?.toLowerCase();
+/** Model types whose primary file is an archive/config rather than model weights */
+const archivePrimaryModelTypes: ModelType[] = [
+  ModelType.Workflows,
+  ModelType.Poses,
+  ModelType.Wildcards,
+  ModelType.Other,
+];
+
+/** Infer a default file type from the file extension, using model type for context */
+function inferFileType(fileName: string, modelType?: ModelType | null): ModelFileType | undefined {
+  const ext = getFileExtension(fileName);
   switch (ext) {
     case 'safetensors':
     case 'ckpt':
@@ -638,9 +647,12 @@ function inferFileType(fileName: string): ModelFileType | undefined {
     case 'sft':
     case 'onnx':
       return 'Model';
+    case 'zip':
+      return modelType && archivePrimaryModelTypes.includes(modelType) ? 'Archive' : undefined;
     case 'yaml':
     case 'yml':
     case 'json':
+    case 'txt':
       return 'Config';
     default:
       return undefined;
@@ -661,6 +673,7 @@ export type DropzoneOptions = {
 const modelExts = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin'];
 const ggufExts = [...modelExts, '.gguf'];
 const configExts = ['.yaml', '.yml', '.json'];
+const wildcardExts = ['.txt', ...configExts];
 const archiveExts = ['.zip'];
 
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
@@ -751,12 +764,20 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   Detection: {
-    primary: { extensions: ['.pt'], fileTypes: ['Model'], maxFiles: 4 },
-    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+    primary: { extensions: ['.pt', '.safetensors'], fileTypes: ['Model'], maxFiles: 4 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
   },
   Upscaler: {
     primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
-    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
   },
   VAE: {
     primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
@@ -791,19 +812,51 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   Poses: {
-    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
-    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+    primary: {
+      extensions: [...archiveExts, ...configExts],
+      fileTypes: ['Archive', 'Config'],
+      maxFiles: 1,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
   },
   Wildcards: {
-    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
-    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+    primary: {
+      extensions: [...archiveExts, ...wildcardExts],
+      fileTypes: ['Archive', 'Config'],
+      maxFiles: 1,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
   },
   Workflows: {
-    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
-    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+    primary: {
+      extensions: [...archiveExts, ...configExts],
+      fileTypes: ['Archive', 'Config'],
+      maxFiles: 1,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
   },
   Other: {
-    primary: { extensions: archiveExts, fileTypes: ['Archive'], maxFiles: 1 },
-    additional: { extensions: configExts, fileTypes: ['Config'], maxFiles: 1 },
+    primary: {
+      extensions: [...archiveExts, ...configExts, ...ggufExts],
+      fileTypes: ['Archive', 'Config', 'Model'],
+      maxFiles: 1,
+    },
+    additional: {
+      extensions: [...configExts, ...archiveExts],
+      fileTypes: ['Config', 'Archive'],
+      maxFiles: 1,
+    },
   },
 };

@@ -29,14 +29,18 @@ import {
   IconTarget,
 } from '@tabler/icons-react';
 import { startCase } from 'lodash-es';
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import type { ModelFileType } from '~/server/common/constants';
 import { componentFileTypes, constants, zipModelFileTypes } from '~/server/common/constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { getFileExtension } from '~/utils/string-helpers';
-import { comfyFileTypeLabels, getFileIconConfig } from '~/utils/file-display-helpers';
+import {
+  comfyFileTypeLabels,
+  filterFileTypeByExtension,
+  getFileIconConfig,
+} from '~/utils/file-display-helpers';
 import { trpc } from '~/utils/trpc';
 
 type FileMetadataUpdate = {
@@ -57,7 +61,7 @@ type Step = 'select-target' | 'map-files' | 'confirm';
 
 const STEP_KEYS: Step[] = ['select-target', 'map-files', 'confirm'];
 
-/** Theme-aware color tokens for the consolidation modal */
+/** Theme-aware color tokens for the merge versions modal */
 function useThemeColors() {
   const colorScheme = useComputedColorScheme('dark');
   const dark = colorScheme === 'dark';
@@ -182,11 +186,12 @@ function StepperNav({ currentStep }: { currentStep: Step }) {
   );
 }
 
-export default function ConsolidateVersions({ modelId }: { modelId: number }) {
+export default function MergeVersions({ modelId }: { modelId: number }) {
   const dialog = useDialogContext();
   const tc = useThemeColors();
   const [step, setStep] = useState<Step>('select-target');
   const [targetVersionId, setTargetVersionId] = useState<number | null>(null);
+  const [selectedSourceIds, setSelectedSourceIds] = useState<Set<number>>(new Set());
   const [fileTypeMappings, setFileTypeMappings] = useState<FileTypeMapping[]>([]);
   const [appendDescriptions, setAppendDescriptions] = useState(false);
 
@@ -195,35 +200,40 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
     { enabled: !!modelId }
   );
 
-  const consolidateMutation = trpc.modelVersion.consolidateVersions.useMutation({
+  const mergeMutation = trpc.modelVersion.mergeVersions.useMutation({
     onSuccess: () => {
       window.location.reload();
       handleClose();
     },
     onError: (error) => {
       showErrorNotification({
-        title: 'Unable to consolidate versions',
+        title: 'Unable to merge versions',
         error: new Error(error.message),
       });
     },
   });
 
   const handleClose = () => {
-    if (consolidateMutation.isPending) return;
+    if (mergeMutation.isPending) return;
     dialog.onClose();
   };
 
-  const handleConsolidate = () => {
-    if (!targetVersionId || consolidateMutation.isPending) return;
+  // Auto-select all non-target versions when target changes
+  const versions = model?.modelVersions ?? [];
+  useEffect(() => {
+    if (!targetVersionId) return;
+    setSelectedSourceIds(
+      new Set(versions.filter((v) => v.id !== targetVersionId).map((v) => v.id))
+    );
+  }, [targetVersionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const sourceVersionIds = (model?.modelVersions ?? [])
-      .map((v) => v.id)
-      .filter((id) => id !== targetVersionId);
+  const handleMerge = () => {
+    if (!targetVersionId || selectedSourceIds.size === 0 || mergeMutation.isPending) return;
 
-    consolidateMutation.mutate({
+    mergeMutation.mutate({
       modelId,
       targetVersionId,
-      sourceVersionIds,
+      sourceVersionIds: Array.from(selectedSourceIds),
       fileTypeMappings: fileTypeMappings.length > 0 ? fileTypeMappings : undefined,
       appendDescriptions,
     });
@@ -247,8 +257,9 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
     });
   };
 
-  const versions = model?.modelVersions ?? [];
-  const sourceVersions = versions.filter((v) => v.id !== targetVersionId);
+  const sourceVersions = versions.filter(
+    (v) => v.id !== targetVersionId && selectedSourceIds.has(v.id)
+  );
   const targetVersion = versions.find((v) => v.id === targetVersionId);
 
   const renderContent = () => {
@@ -263,13 +274,13 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
       );
     }
 
-    if (consolidateMutation.isPending) {
+    if (mergeMutation.isPending) {
       return (
         <div className="flex flex-col items-center justify-center gap-6 p-16">
           <Loader size={64} type="bars" />
           <Stack gap={4} align="center">
             <Text size="lg" fw={600}>
-              Consolidating versions...
+              Merging versions...
             </Text>
             <Text size="sm" c="dimmed" ta="center" maw={360}>
               Merging files, stats, and reviews into the target version. This may take a few minutes
@@ -303,7 +314,7 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
     if (versions.length < 2) {
       return (
         <Stack>
-          <Text>This model only has one version. There is nothing to consolidate.</Text>
+          <Text>This model only has one version. There is nothing to merge.</Text>
           <Group justify="flex-end">
             <Button variant="default" onClick={handleClose}>
               Close
@@ -314,14 +325,37 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
     }
 
     switch (step) {
-      case 'select-target':
+      case 'select-target': {
+        const nonTargetVersions = versions.filter((v) => v.id !== targetVersionId);
+        const allSourcesSelected =
+          targetVersionId != null &&
+          nonTargetVersions.length > 0 &&
+          nonTargetVersions.every((v) => selectedSourceIds.has(v.id));
+
+        const toggleSourceVersion = (versionId: number) => {
+          setSelectedSourceIds((prev) => {
+            const next = new Set(prev);
+            if (next.has(versionId)) next.delete(versionId);
+            else next.add(versionId);
+            return next;
+          });
+        };
+
+        const toggleAllSources = () => {
+          if (allSourcesSelected) {
+            setSelectedSourceIds(new Set());
+          } else {
+            setSelectedSourceIds(new Set(nonTargetVersions.map((v) => v.id)));
+          }
+        };
+
         return (
           <Stack gap="md">
             <StepperNav currentStep={step} />
 
             <Text size="sm" c="dimmed">
-              Choose which version to keep. All files from the other versions will be merged into it
-              and their stats (downloads, likes, etc.) will be combined.
+              Choose which version to keep as the target, then select which versions to merge into
+              it. Their files and stats (downloads, likes, etc.) will be combined.
             </Text>
 
             <ScrollArea.Autosize mah="60vh" offsetScrollbars>
@@ -331,18 +365,13 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
               >
                 <Stack gap={6}>
                   {versions.map((version) => {
-                    const isSelected = targetVersionId === version.id;
+                    const isTarget = targetVersionId === version.id;
+                    const isSource = selectedSourceIds.has(version.id);
                     const fileCount = version.files?.length ?? 0;
 
                     return (
                       <div
                         key={version.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => setTargetVersionId(version.id)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') setTargetVersionId(version.id);
-                        }}
                         style={{
                           cursor: 'pointer',
                           display: 'flex',
@@ -350,24 +379,37 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
                           gap: 12,
                           padding: '12px 14px',
                           borderRadius: 8,
-                          border: `${isSelected ? 1.5 : 1}px solid ${
-                            isSelected ? tc.blue : tc.borderLight
+                          border: `${isTarget ? 1.5 : 1}px solid ${
+                            isTarget ? tc.blue : isSource ? tc.borderLight : tc.borderLight
                           }`,
-                          backgroundColor: isSelected ? tc.blueGhost : 'transparent',
+                          backgroundColor: isTarget
+                            ? tc.blueGhost
+                            : isSource
+                            ? tc.redGhost
+                            : 'transparent',
                           transition: 'border-color 150ms, background-color 150ms',
                         }}
                       >
                         <Radio
                           value={version.id.toString()}
                           styles={{ radio: { cursor: 'pointer' } }}
+                          onClick={() => setTargetVersionId(version.id)}
                         />
-                        <div style={{ flex: 1, minWidth: 0 }}>
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setTargetVersionId(version.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') setTargetVersionId(version.id);
+                          }}
+                          style={{ flex: 1, minWidth: 0, cursor: 'pointer' }}
+                        >
                           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                             <Text
                               style={{
                                 fontSize: 14,
                                 fontWeight: 500,
-                                color: isSelected ? tc.text : tc.textSecondary,
+                                color: isTarget ? tc.text : tc.textSecondary,
                               }}
                               truncate
                             >
@@ -393,7 +435,7 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
                             )}
                           </Text>
                         </div>
-                        {isSelected && (
+                        {isTarget ? (
                           <div
                             style={{
                               backgroundColor: tc.blueBadgeBg,
@@ -410,7 +452,14 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
                           >
                             Target
                           </div>
-                        )}
+                        ) : targetVersionId != null ? (
+                          <Checkbox
+                            checked={isSource}
+                            onChange={() => toggleSourceVersion(version.id)}
+                            onClick={(e) => e.stopPropagation()}
+                            styles={{ input: { cursor: 'pointer' } }}
+                          />
+                        ) : null}
                       </div>
                     );
                   })}
@@ -418,12 +467,31 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
               </Radio.Group>
             </ScrollArea.Autosize>
 
+            {targetVersionId != null && nonTargetVersions.length > 1 && (
+              <Group justify="space-between">
+                <Checkbox
+                  label={
+                    <Text size="xs" c="dimmed">
+                      {allSourcesSelected ? 'Deselect all' : 'Select all'} versions to merge
+                    </Text>
+                  }
+                  checked={allSourcesSelected}
+                  onChange={toggleAllSources}
+                  size="xs"
+                  styles={{ input: { cursor: 'pointer' }, label: { cursor: 'pointer' } }}
+                />
+                <Text size="xs" c="dimmed">
+                  {selectedSourceIds.size} of {nonTargetVersions.length} selected
+                </Text>
+              </Group>
+            )}
+
             <Group justify="flex-end" gap="sm" mt="xs">
               <Button variant="default" onClick={handleClose}>
                 Cancel
               </Button>
               <Button
-                disabled={!targetVersionId}
+                disabled={!targetVersionId || selectedSourceIds.size === 0}
                 onClick={() => setStep('map-files')}
                 rightSection={<IconChevronRight size={16} />}
               >
@@ -432,6 +500,7 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
             </Group>
           </Stack>
         );
+      }
 
       case 'map-files': {
         const totalFiles =
@@ -477,7 +546,7 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
                     </Group>
                     <Stack gap={6}>
                       {targetVersion.files.map((file) => (
-                        <ConsolidateFileCard
+                        <MergeFileCard
                           key={file.id}
                           file={file}
                           mapping={fileTypeMappings.find((m) => m.fileId === file.id)}
@@ -521,7 +590,7 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
                       </Group>
                       <Stack gap={6}>
                         {files.map((file) => (
-                          <ConsolidateFileCard
+                          <MergeFileCard
                             key={file.id}
                             file={file}
                             mapping={fileTypeMappings.find((m) => m.fileId === file.id)}
@@ -584,7 +653,7 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
             <StepperNav currentStep={step} />
 
             <Text size="sm" c="dimmed">
-              Review the consolidation details before proceeding.
+              Review the merge details before proceeding.
             </Text>
 
             {/* Merge visualization */}
@@ -766,8 +835,8 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
               <Button variant="default" onClick={() => setStep('map-files')}>
                 Back
               </Button>
-              <Button color="red" onClick={handleConsolidate}>
-                Consolidate Versions
+              <Button color="red" onClick={handleMerge}>
+                Merge Versions
               </Button>
             </Group>
           </Stack>
@@ -782,15 +851,15 @@ export default function ConsolidateVersions({ modelId }: { modelId: number }) {
       title={
         <Group gap="xs">
           <IconGitMerge size={24} />
-          <Title order={3}>Consolidate Versions</Title>
+          <Title order={3}>Merge Versions</Title>
         </Group>
       }
       radius="md"
       onClose={handleClose}
-      closeOnClickOutside={!consolidateMutation.isPending}
-      closeOnEscape={!consolidateMutation.isPending}
-      withCloseButton={!consolidateMutation.isPending}
-      closeButtonProps={{ 'aria-label': 'Close consolidate versions modal' }}
+      closeOnClickOutside={!mergeMutation.isPending}
+      closeOnEscape={!mergeMutation.isPending}
+      withCloseButton={!mergeMutation.isPending}
+      closeButtonProps={{ 'aria-label': 'Close merge versions modal' }}
       size="75%"
       withinPortal
     >
@@ -828,39 +897,8 @@ const selectInputStyles = {
   },
 };
 
-// Filter file type options by extension (same logic as Files.tsx)
-function filterByFileExtension(value: ModelFileType, fileName: string) {
-  const extension = getFileExtension(fileName);
-  switch (extension) {
-    case 'ckpt':
-    case 'safetensors':
-    case 'pt':
-    case 'gguf':
-    case 'onnx':
-    case 'bin':
-      return [
-        'Model',
-        'Negative',
-        'VAE',
-        'UNet',
-        'CLIPVision',
-        'ControlNet',
-        'Upscaler',
-        'Text Encoder',
-      ].includes(value);
-    case 'zip':
-      return ['Training Data', 'Archive', 'Model', 'Workflow'].includes(value);
-    case 'yml':
-    case 'yaml':
-    case 'json':
-      return ['Config', 'Text Encoder', 'Workflow'].includes(value);
-    default:
-      return true;
-  }
-}
-
 // File card matching the upload screen pattern: icon + name/meta/required on left, selects on right
-function ConsolidateFileCard({
+function MergeFileCard({
   file,
   mapping,
   onUpdate,
@@ -909,7 +947,7 @@ function ConsolidateFileCard({
   const tc = useThemeColors();
 
   const fileTypeOptions = constants.modelFileTypes
-    .filter((t) => filterByFileExtension(t, file.name))
+    .filter((t) => filterFileTypeByExtension(t, file.name))
     .map((x) => ({
       label: comfyFileTypeLabels[x] ?? (x === 'Model' && modelType ? modelType : x),
       value: x,

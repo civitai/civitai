@@ -3,6 +3,8 @@
  * Used by DownloadVariantDropdown, RequiredComponentsSection, and file upload UI
  */
 
+import type { ModelFileType } from '~/server/common/constants';
+import { getFileExtension } from '~/utils/string-helpers';
 import {
   IconAdjustments,
   IconArrowsMaximize,
@@ -105,6 +107,41 @@ export function getFileIconConfig(
   }
 
   return fileFormatConfig.Other;
+}
+
+/**
+ * Filter which ModelFileType options are valid for a given file extension.
+ * Used by file upload UI and merge versions modal.
+ */
+export function filterFileTypeByExtension(value: ModelFileType, fileName: string) {
+  const extension = getFileExtension(fileName);
+  switch (extension) {
+    case 'ckpt':
+    case 'safetensors':
+    case 'pt':
+    case 'gguf':
+    case 'onnx':
+    case 'bin':
+      return [
+        'Model',
+        'Negative',
+        'VAE',
+        'UNet',
+        'CLIPVision',
+        'ControlNet',
+        'Upscaler',
+        'Text Encoder',
+      ].includes(value);
+    case 'zip':
+      return ['Training Data', 'Archive', 'Model', 'Workflow'].includes(value);
+    case 'yml':
+    case 'yaml':
+    case 'json':
+    case 'txt':
+      return ['Config', 'Text Encoder', 'Workflow'].includes(value);
+    default:
+      return true;
+  }
 }
 
 /**

@@ -27,7 +27,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
-  ConsolidateVersionsInput,
+  MergeVersionsInput,
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
@@ -1885,14 +1885,14 @@ export async function updateModelVersionTrainingStatus({
   return updatedVersion;
 }
 
-export const consolidateVersions = async ({
+export const mergeVersions = async ({
   modelId,
   targetVersionId,
   sourceVersionIds,
   fileTypeMappings,
   appendDescriptions,
   userId,
-}: ConsolidateVersionsInput & { userId: number }) => {
+}: MergeVersionsInput & { userId: number }) => {
   // Validate ownership
   const model = await dbRead.model.findUniqueOrThrow({
     where: { id: modelId },
@@ -1931,18 +1931,18 @@ export const consolidateVersions = async ({
   for (const sv of model.modelVersions.filter((v) => sourceVersionIds.includes(v.id))) {
     if (sv.monetization) {
       throw throwBadRequestError(
-        `Version "${sv.name}" has active monetization. Remove it before consolidating.`
+        `Version "${sv.name}" has active monetization. Remove it before merging.`
       );
     }
     if (sv.earlyAccessEndsAt && sv.earlyAccessEndsAt > new Date()) {
       throw throwBadRequestError(
-        `Version "${sv.name}" has active early access. Wait for it to end or remove it before consolidating.`
+        `Version "${sv.name}" has active early access. Wait for it to end or remove it before merging.`
       );
     }
     const meta = sv.meta as ModelVersionMeta | null;
     if (meta?.hadEarlyAccessPurchase) {
       throw throwBadRequestError(
-        `Version "${sv.name}" has had early access purchases and cannot be consolidated.`
+        `Version "${sv.name}" has had early access purchases and cannot be merged.`
       );
     }
   }

@@ -45,7 +45,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes, formatKBytes, formatSeconds } from '~/utils/number-helpers';
 import { getDisplayName, getFileExtension } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { comfyFileTypeLabels } from '~/utils/file-display-helpers';
+import { comfyFileTypeLabels, filterFileTypeByExtension } from '~/utils/file-display-helpers';
 import classes from './Files.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { isAndroidDevice } from '~/utils/device-helpers';
@@ -278,7 +278,12 @@ export function Files() {
               <InlineDropzone
                 label="Add another model file variant"
                 onDrop={(dropped) =>
-                  handleInlineDrop(dropped, modelFiles, primary.maxFiles, primaryTypes[0])
+                  handleInlineDrop(
+                    dropped,
+                    modelFiles,
+                    primary.maxFiles,
+                    primaryTypes.length === 1 ? primaryTypes[0] : undefined
+                  )
                 }
                 accept={primaryAccept}
                 maxFiles={primary.maxFiles}
@@ -291,7 +296,8 @@ export function Files() {
               onDrop={(droppedFiles) => {
                 if (modelFiles.length + droppedFiles.length > primary.maxFiles) return;
                 if (files.length + droppedFiles.length > totalMaxFiles) return;
-                onDrop(droppedFiles, primaryTypes[0]);
+                const defaultType = primaryTypes.length === 1 ? primaryTypes[0] : undefined;
+                onDrop(droppedFiles, defaultType);
               }}
               maxFiles={primary.maxFiles}
               onReject={handleReject}
@@ -383,7 +389,7 @@ export function Files() {
                 dropped,
                 additionalFiles,
                 additional.maxFiles,
-                additionalFileTypes[0]
+                additionalFileTypes.length === 1 ? additionalFileTypes[0] : undefined
               )
             }
             accept={additionalAccept}
@@ -837,36 +843,8 @@ function FileEditForm({
     }
   };
 
-  const filterByFileExtension = (value: ModelFileType) => {
-    const extension = getFileExtension(versionFile.name);
-
-    switch (extension) {
-      case 'ckpt':
-      case 'safetensors':
-      case 'pt':
-      case 'gguf':
-      case 'onnx':
-      case 'bin':
-        return [
-          'Model',
-          'Negative',
-          'VAE',
-          'UNet',
-          'CLIPVision',
-          'ControlNet',
-          'Upscaler',
-          'Text Encoder',
-        ].includes(value);
-      case 'zip':
-        return ['Training Data', 'Archive', 'Model', 'Workflow'].includes(value);
-      case 'yml':
-      case 'yaml':
-      case 'json':
-        return ['Config', 'Text Encoder', 'Workflow'].includes(value);
-      default:
-        return true;
-    }
-  };
+  const filterByFileExtension = (value: ModelFileType) =>
+    filterFileTypeByExtension(value, versionFile.name);
 
   const handleReset = () => {
     updateFile(versionFile.uuid, {

@@ -70,10 +70,9 @@ const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection'),
   { ssr: false }
 );
-const ConsolidateVersions = dynamic(
-  () => import('~/components/Model/Actions/ConsolidateVersions'),
-  { ssr: false }
-);
+const MergeVersions = dynamic(() => import('~/components/Model/Actions/MergeVersions'), {
+  ssr: false,
+});
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -1059,12 +1058,12 @@ export default function ModelDetailsV2({
                               <Menu.Item
                                 onClick={() =>
                                   dialogStore.trigger({
-                                    component: ConsolidateVersions,
+                                    component: MergeVersions,
                                     props: { modelId: model.id },
                                   })
                                 }
                               >
-                                Consolidate Versions
+                                Merge Versions
                               </Menu.Item>
                             )}
                           </>
