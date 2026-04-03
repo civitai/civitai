@@ -49,6 +49,7 @@ const featureFlags = createFeatureFlags({
   zimagebaseTraining: { availability: ['mod'], fliptKey: 'zimage-base-training' },
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
+  ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
   questions: ['dev', 'mod'],

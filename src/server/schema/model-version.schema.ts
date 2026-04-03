@@ -71,6 +71,7 @@ export const trainingDetailsBaseModelsQwen = ['qwen_image'] as const;
 export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as const;
 export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
 export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
+export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -87,6 +88,7 @@ const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
   ...trainingDetailsBaseModelsWan,
   ...trainingDetailsBaseModelsLtx2,
+  ...trainingDetailsBaseModelsLtx23,
 ] as const;
 
 const trainingDetailsBaseModels = [

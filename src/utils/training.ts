@@ -20,7 +20,7 @@ export const trainingBaseModelTypesImage = [
   'qwen',
   'zimage',
 ] as const;
-export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2'] as const;
+export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2', 'ltx23'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
   ...trainingBaseModelTypesVideo,
@@ -268,6 +268,16 @@ export const trainingModelInfo: {
     isNew: true,
     aiToolkit: { ecosystem: 'ltx2' },
   },
+  ltx23: {
+    label: 'LTX 2.3',
+    pretty: 'LTX 2.3',
+    type: 'ltx23',
+    description: 'Next generation LTX video model with improved quality.',
+    air: 'urn:air:ltxv23:checkpoint:civitai:2445735@2749908',
+    baseModel: 'LTXV',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ltx23' },
+  },
   //
   flux2_dev: {
     label: 'Dev',
@@ -371,6 +381,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   zimage: 'zimageturbo',
   flux2klein: 'flux2klein',
   ltx2: 'ltx2',
+  ltx23: 'ltx23',
 };
 
 /**
@@ -461,13 +472,14 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'zimage',
     'flux2klein',
     'ltx2',
+    'ltx23',
   ];
   return supportedTypes.includes(baseType);
 };
 
 // Check if AI Toolkit is mandatory (cannot use other engines)
 export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
-  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimage', 'flux2klein', 'ltx2'];
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimage', 'flux2klein', 'ltx2', 'ltx23'];
   return mandatoryTypes.includes(baseType);
 };
 
@@ -482,6 +494,7 @@ export const getDefaultEngine = (
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'flux2klein') return 'ai-toolkit'; // Flux2 Klein requires AI Toolkit
   if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
+  if (baseType === 'ltx23') return 'ai-toolkit'; // LTX 2.3 requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model
   if (baseType === 'flux2') {
