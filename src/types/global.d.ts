@@ -107,12 +107,50 @@ declare global {
     | 'Other';
   type ModelFileSize = 'full' | 'pruned';
   type ModelFileFp = 'fp32' | 'fp16' | 'bf16' | 'fp8' | 'nf4';
+  type ModelFileQuantType =
+    | 'Q8_0'
+    | 'Q6_K'
+    | 'Q5_K_M'
+    | 'Q5_K_S'
+    | 'Q5_1'
+    | 'Q5_0'
+    | 'Q4_K_M'
+    | 'Q4_K_S'
+    | 'Q4_1'
+    | 'Q4_0'
+    | 'Q3_K_L'
+    | 'Q3_K_M'
+    | 'Q3_K_S'
+    | 'Q2_K'
+    | 'Q2_K_S'
+    | 'IQ4_XS'
+    | 'IQ4_NL'
+    | 'IQ3_XS'
+    | 'IQ3_XXS'
+    | 'IQ2_XS'
+    | 'IQ2_XXS'
+    | 'IQ2_S'
+    | 'IQ2_M'
+    | 'IQ1_S'
+    | 'IQ1_M';
+  type ModelFileComponentType =
+    | 'Checkpoint'
+    | 'VAE'
+    | 'TextEncoder'
+    | 'UNet'
+    | 'CLIPVision'
+    | 'ControlNet'
+    | 'Upscaler'
+    | 'Workflow'
+    | 'Config'
+    | 'Other';
   type ImageFormat = 'optimized' | 'metadata';
 
   type UserFilePreferences = {
     format: ModelFileFormat;
     size: ModelFileSize;
     fp: ModelFileFp;
+    quantType?: ModelFileQuantType;
     imageFormat: ImageFormat;
   };
 
@@ -120,6 +158,8 @@ declare global {
     format?: ModelFileFormat;
     size?: ModelFileSize;
     fp?: ModelFileFp;
+    quantType?: ModelFileQuantType;
+    isRequired?: boolean;
   };
 
   // TODO should find a way to merge this with ModelFileMetadata

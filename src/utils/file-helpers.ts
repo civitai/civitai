@@ -5,7 +5,7 @@ export function getModelFileFormat(filename: string): ModelFileFormat {
   if (filename.endsWith('.safetensors') || filename.endsWith('.sft')) return 'SafeTensor';
   else if (filename.endsWith('.gguf')) return 'GGUF';
   else if (filename.endsWith('.pt') || filename.endsWith('.ckpt')) return 'PickleTensor';
-  else if (filename.endsWith('.zip')) return 'Diffusers';
+  else if (filename.endsWith('.zip')) return 'Other';
 
   return 'Other';
 }

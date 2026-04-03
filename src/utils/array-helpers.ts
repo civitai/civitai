@@ -44,18 +44,21 @@ const modelTypeOrder: { [k in ModelType]: number } = {
 
   [ModelType.TextualInversion]: 4,
   [ModelType.VAE]: 5,
+  [ModelType.TextEncoder]: 6,
+  [ModelType.UNet]: 7,
+  [ModelType.CLIPVision]: 8,
 
-  [ModelType.Upscaler]: 6,
-  [ModelType.Controlnet]: 7,
-  [ModelType.Workflows]: 8,
-  [ModelType.Wildcards]: 9,
-  [ModelType.Poses]: 10,
-  [ModelType.MotionModule]: 11,
+  [ModelType.Upscaler]: 9,
+  [ModelType.Controlnet]: 10,
+  [ModelType.Workflows]: 11,
+  [ModelType.Wildcards]: 12,
+  [ModelType.Poses]: 13,
+  [ModelType.MotionModule]: 14,
 
-  [ModelType.AestheticGradient]: 12,
-  [ModelType.Hypernetwork]: 13,
-  [ModelType.Detection]: 14,
-  [ModelType.Other]: 15,
+  [ModelType.AestheticGradient]: 15,
+  [ModelType.Hypernetwork]: 16,
+  [ModelType.Detection]: 17,
+  [ModelType.Other]: 18,
 };
 
 export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {

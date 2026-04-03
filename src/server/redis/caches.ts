@@ -424,7 +424,11 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
         mv."nsfwLevel",
         mv."description",
         mv."trainedWords",
-        mv."vaeId",
+        (SELECT rr."resourceId" FROM "RecommendedResource" rr
+         WHERE rr."sourceId" = mv.id
+           AND rr.settings->>'isLinkedComponent' = 'true'
+           AND rr.settings->>'componentType' = 'VAE'
+         LIMIT 1) AS "vaeId",
         COALESCE((
           SELECT gc.covered
           FROM "GenerationCoverage" gc

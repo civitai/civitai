@@ -56,6 +56,9 @@ const typeUrnMap: Partial<Record<ModelType, string>> = {
   [ModelType.DoRA]: 'dora',
   [ModelType.LoCon]: 'lycoris',
   [ModelType.Controlnet]: 'controlnet',
+  [ModelType.TextEncoder]: 'textencoder',
+  [ModelType.UNet]: 'unet',
+  [ModelType.CLIPVision]: 'clipvision',
 };
 
 /** Reverse map: URN type string → ModelType enum value */
