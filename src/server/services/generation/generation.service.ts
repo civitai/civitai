@@ -49,13 +49,11 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
-import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelEngine,
   getBaseModelMediaType,
   getBaseModelsByGroup,
-} from '~/shared/constants/base-model.constants';
-import {
   getEcosystem,
   hasGenerationSupport,
   getResourceGenerationSupport,
@@ -421,7 +419,7 @@ const getModelVersionGenerationData = async ({
 
   // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
   return {
-    type: getBaseModelMediaType(params.baseModel as string),
+    type: getBaseModelMediaType(params.baseModel as string) ?? 'image',
     resources: deduped,
     params,
   };

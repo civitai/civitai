@@ -35,7 +35,7 @@ import {
   ToolType,
 } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({

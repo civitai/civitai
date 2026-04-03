@@ -165,7 +165,7 @@ import {
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
   getBaseModelConfig,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import {
   geminiModelVersionMap,
   getIsNanoBanana,
