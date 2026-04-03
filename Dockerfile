@@ -7,8 +7,8 @@ WORKDIR /app
 # Enable corepack for pnpm
 RUN corepack enable && corepack prepare pnpm@10.28.1 --activate
 
-# Copy Prisma schemas for client generation (postinstall runs prisma generate)
-COPY prisma/schema.full.prisma prisma/schema.prisma ./prisma/
+# Copy Prisma schema for client generation (postinstall generates schema.prisma from this)
+COPY prisma/schema.full.prisma ./prisma/
 
 # Install dependencies — lockfile and scripts rarely change, so they go first.
 # package.json changes on every version bump but pnpm only needs it for the
