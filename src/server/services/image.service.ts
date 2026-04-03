@@ -192,6 +192,8 @@ const _gt = (f: string, v: Value): FilterClause => ({ Gt: [f, v] });
 const _gte = (f: string, v: Value): FilterClause => ({ Gte: [f, v] });
 const _lte = (f: string, v: Value): FilterClause => ({ Lte: [f, v] });
 const _not = (c: FilterClause): FilterClause => ({ Not: c });
+const _isNull = (f: string): FilterClause => ({ IsNull: f });
+const _isNotNull = (f: string): FilterClause => ({ IsNotNull: f });
 const _and = (...cs: (FilterClause | null)[]): FilterClause => {
   const valid = cs.filter((c): c is FilterClause => c !== null);
   return valid.length === 1 ? valid[0] : { And: valid };
@@ -2132,7 +2134,7 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
     const scopeFilters: FilterClause[] = [
       _eq('userId', _int(input.currentUserId!)),
       _or(...ownExcludedClauses),
-      _not(_eq('postId', _int(0))),
+      _isNotNull('postId'),
     ];
 
     // Map the active sort to a BitDex sort field for consistent ordering
@@ -3010,7 +3012,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
 // --- BitDex document mapping ---
 // BitDex low_cardinality_string fields preserve original casing (case-insensitive for queries,
-// but output matches input). Sort fields are u32 unix seconds. Zero values for optional IDs mean absent.
+// but output matches input). Sort fields are u32 unix seconds. Nullable fields return null directly.
 
 /** Map a raw BitDex document to the shape consumers expect (matching Meili search result). */
 function mapBitdexDoc(doc: Record<string, unknown>) {
@@ -3019,25 +3021,25 @@ function mapBitdexDoc(doc: Record<string, unknown>) {
   return {
     id: doc.id as number,
     url: doc.url as string,
-    hash: (doc.hash as string) || null,
+    hash: (doc.hash as string) ?? null,
     nsfwLevel: doc.nsfwLevel as number,
     userId: doc.userId as number,
-    type: (doc.type as string) || 'image',
-    availability: (doc.availability as string) || 'Public',
-    baseModel: (doc.baseModel as string) || null,
-    postId: (doc.postId as number) || null,
-    postedToId: (doc.postedToId as number) || null,
-    remixOfId: (doc.remixOfId as number) || null,
+    type: (doc.type as string) ?? 'image',
+    availability: (doc.availability as string) ?? 'Public',
+    baseModel: (doc.baseModel as string) ?? null,
+    postId: (doc.postId as number) ?? null,
+    postedToId: (doc.postedToId as number) ?? null,
+    remixOfId: (doc.remixOfId as number) ?? null,
     hasMeta: doc.hasMeta as boolean,
     onSite: doc.onSite as boolean,
     poi: doc.poi as boolean,
     minor: doc.minor as boolean,
-    width: (doc.width as number) || null,
-    height: (doc.height as number) || null,
-    needsReview: (doc.needsReview as string) || null,
-    reactionCount: (doc.reactionCount as number) || 0,
-    commentCount: (doc.commentCount as number) || 0,
-    collectedCount: (doc.collectedCount as number) || 0,
+    width: (doc.width as number) ?? null,
+    height: (doc.height as number) ?? null,
+    needsReview: (doc.needsReview as string) ?? null,
+    reactionCount: (doc.reactionCount as number) ?? 0,
+    commentCount: (doc.commentCount as number) ?? 0,
+    collectedCount: (doc.collectedCount as number) ?? 0,
     sortAt: new Date(sortAtUnix),
     sortAtUnix,
     publishedAtUnix: publishedAtRaw ? publishedAtRaw * 1000 : null,
@@ -3120,8 +3122,8 @@ export async function getImagesFromBitdexPreFilter(
     filters.push(_notIn('blockedFor', allBlockedReasons));
   }
 
-  // Only show images that belong to a post (postId=0 means no post — e.g. comic references)
-  filters.push(_not(_eq('postId', _int(0))));
+  // Only show images that belong to a post (null postId = no post, e.g. comic references)
+  filters.push(_isNotNull('postId'));
 
   if (postId) postIds = [...postIds, postId];
 

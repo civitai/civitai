@@ -38,7 +38,8 @@ COPY --from=deps /app/prisma/schema.prisma ./prisma/schema.prisma
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=6144" pnpm run build
+RUN --mount=type=cache,target=/app/.next/cache \
+    SKIP_ENV_VALIDATION=1 IS_BUILD=true NODE_OPTIONS="--max_old_space_size=6144" pnpm run build
 
 ##### RUNNER
 
