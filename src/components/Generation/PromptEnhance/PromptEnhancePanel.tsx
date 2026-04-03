@@ -1,4 +1,4 @@
-import { Tabs } from '@mantine/core';
+import { Badge, Tabs } from '@mantine/core';
 import { IconHistory, IconSparkles } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { EnhanceTab } from './EnhanceTab';
@@ -48,6 +48,9 @@ export function PromptEnhancePanel({
         <Tabs.Tab value="history" leftSection={<IconHistory size={14} />}>
           History
         </Tabs.Tab>
+        <Badge size="sm" variant="light" color="yellow" ml="auto" mr="xs" my="auto">
+          Beta
+        </Badge>
       </Tabs.List>
 
       <Tabs.Panel value="enhance" className="flex min-w-0 flex-1 flex-col overflow-hidden">

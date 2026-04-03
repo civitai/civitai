@@ -1,4 +1,4 @@
-import { CloseButton, Drawer, Group, Tabs, Text } from '@mantine/core';
+import { Badge, CloseButton, Drawer, Group, Tabs, Text } from '@mantine/core';
 import { IconHistory, IconSparkles } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -58,7 +58,12 @@ export default function PromptEnhanceDrawer({
         className="flex flex-1 flex-col overflow-hidden"
       >
         <Group justify="space-between" px="md" pt="md" pb={0}>
-          <Text fw={600}>Prompt Enhancement</Text>
+          <Group gap={8}>
+            <Text fw={600}>Prompt Enhancement</Text>
+            <Badge size="sm" variant="light" color="yellow">
+              Beta
+            </Badge>
+          </Group>
           <CloseButton onClick={dialog.onClose} />
         </Group>
 
