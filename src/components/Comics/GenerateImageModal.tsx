@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { COMIC_MODEL_OPTIONS } from '~/components/Comics/comic-project-constants';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
@@ -51,6 +52,7 @@ export function GenerateImageModal({
   label,
   onConfirm,
 }: GenerateImageModalProps) {
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('NanoBanana');
   const [quantity, setQuantity] = useState(4);
@@ -137,8 +139,22 @@ export function GenerateImageModal({
   // Fallback polling in case signal is missed
   useEffect(() => {
     if (!isGenerating || !activeWorkflowId.current) return;
-    const timer = setInterval(() => void doPollOnce(), 10_000);
-    return () => clearInterval(timer);
+    const pollTimer = setInterval(() => void doPollOnce(), 10_000);
+    // Auto-timeout after 90s — gives the user a clear failure instead of infinite spinner
+    const timeoutTimer = setTimeout(() => {
+      if (activeWorkflowId.current) {
+        activeWorkflowId.current = null;
+        setIsGenerating(false);
+        showErrorNotification({
+          title: 'Generation timed out',
+          error: new Error('The image took too long to generate. Please try again.'),
+        });
+      }
+    }, 90_000);
+    return () => {
+      clearInterval(pollTimer);
+      clearTimeout(timeoutTimer);
+    };
   }, [isGenerating, doPollOnce]);
 
   const handleGenerate = async () => {
@@ -316,6 +332,9 @@ export function GenerateImageModal({
               <Text size="sm" c="dimmed">
                 Generating {quantity} image{quantity > 1 ? 's' : ''}...
               </Text>
+              <Button variant="subtle" color="gray" size="compact-xs" onClick={handleReset}>
+                Cancel
+              </Button>
             </Stack>
           </div>
         )}
@@ -428,6 +447,7 @@ export function GenerateImageModal({
           ) : (
             <BuzzTransactionButton
               buzzAmount={cost}
+              accountTypes={availableBuzzTypes}
               label={isGenerating ? 'Generating...' : 'Generate'}
               loading={isGenerating}
               disabled={!prompt.trim() || isGenerating || costEstimate == null}

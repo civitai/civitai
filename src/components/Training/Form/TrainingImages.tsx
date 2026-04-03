@@ -1256,9 +1256,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       imageList.forEach((i) => {
         if (i.label.length > 0) {
-          const { blockedFor, success } = auditPrompt(i.label, undefined, isGreen);
-          if (!success) {
-            issues.push(...blockedFor);
+          // Validate each tag individually to avoid cross-tag false positives
+          // (e.g. "school_uniform, 1girl" matching composed "school...girl" pattern)
+          const tags = i.label.split(',').map((t) => t.trim()).filter(Boolean);
+          let hasInvalid = false;
+          for (const tag of tags) {
+            const { blockedFor, success } = auditPrompt(tag, undefined, isGreen);
+            if (!success) {
+              issues.push(...blockedFor);
+              hasInvalid = true;
+            }
+          }
+          if (hasInvalid) {
             if (!i.invalidLabel) {
               updateImage(model.id, thisMediaType, {
                 matcher: getShortNameFromUrl(i),

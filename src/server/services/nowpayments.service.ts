@@ -822,49 +822,40 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
  * Fetches by each wallet's smartAccount (parent payment ID) to find child payments.
  */
 export const reconcileUserDeposits = async (userId: number) => {
-  // Get all wallets for this user
+  const start = Date.now();
+
   const wallets = await dbRead.cryptoWallet.findMany({
     where: { userId },
     select: { smartAccount: true },
   });
 
-  if (!wallets.length) return { checked: 0, found: 0, processed: 0 };
+  if (!wallets.length) {
+    await log({ type: 'info', message: 'User reconciliation: no wallets', userId });
+    return { checked: 0, found: 0, processed: 0 };
+  }
 
   let found = 0;
   let processed = 0;
 
-  // For each wallet, check the parent payment and look for child payments
   for (const wallet of wallets) {
     if (!wallet.smartAccount) continue;
     const parentId = Number(wallet.smartAccount);
 
-    // Fetch parent payment — may have child payments
+    // Fetch parent to get invoiceId, then fetch all payments for that invoice
     const parentPayment = await nowpaymentsCaller.getPaymentStatus(parentId);
     if (!parentPayment) continue;
 
-    // Check parent itself (some wallets ARE the payment)
-    const paymentsToCheck = [parentPayment];
+    const invoiceId = parentPayment.invoice_id
+      ? Number(parentPayment.invoice_id)
+      : null;
 
-    // If parent has a payment_extra_ids or we can infer children, check those too
-    // NP child payments have parent_payment_id set — fetch via list API
-    // Use a wide date range centered on parent's created_at
-    try {
-      const parentDate = new Date(parentPayment.created_at);
-      const dateFrom = new Date(parentDate.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
-      const dateTo = new Date().toISOString();
+    // Use invoiceId filter if available (fast, server-side filtered)
+    // Fall back to just the parent payment if no invoiceId
+    const payments = invoiceId
+      ? await nowpaymentsCaller.getPaymentsByInvoiceId(invoiceId)
+      : [parentPayment];
 
-      const listResult = await fetchPaymentsByDateRange(dateFrom, dateTo);
-      const childPayments = listResult.filter(
-        (p) =>
-          p.parent_payment_id === parentId &&
-          p.order_id === `user:${userId}`
-      );
-      paymentsToCheck.push(...childPayments);
-    } catch {
-      // List API failed — still process what we have
-    }
-
-    for (const payment of paymentsToCheck) {
+    for (const payment of payments) {
       if (!isDepositComplete(payment.payment_status)) continue;
       if (payment.order_id !== `user:${userId}`) continue;
       found++;
@@ -884,10 +875,9 @@ export const reconcileUserDeposits = async (userId: number) => {
       });
 
       if (existingTx || (existingDeposit?.status === 'finished' && existingDeposit.buzzCredited)) {
-        continue; // Already processed
+        continue;
       }
 
-      // Process the deposit
       try {
         const event: NOWPayments.WebhookEvent = {
           payment_id: numericId,
@@ -912,6 +902,17 @@ export const reconcileUserDeposits = async (userId: number) => {
       }
     }
   }
+
+  const duration = Date.now() - start;
+  await log({
+    type: 'info',
+    message: `User reconciliation complete`,
+    userId,
+    wallets: wallets.length,
+    found,
+    processed,
+    duration,
+  });
 
   return { checked: wallets.length, found, processed };
 };

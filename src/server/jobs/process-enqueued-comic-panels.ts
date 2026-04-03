@@ -10,6 +10,8 @@ import { SignalMessages } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import type { SessionUser } from 'next-auth';
 import type { UserTier } from '~/server/schema/user.schema';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
 const log = createLogger('process-enqueued-comic-panels', 'cyan');
 
@@ -155,9 +157,25 @@ export const processEnqueuedComicPanelsJob = createJob(
             }
 
             const { generationParams, referenceImages, maxReferenceImages } = metadata;
+            const isGreen = metadata.isGreen === true;
 
             // Cap reference images (simple slice)
             const images = (referenceImages || []).slice(0, maxReferenceImages || 3);
+
+            // Determine currencies based on the domain the panel was created on
+            const currencies: BuzzSpendType[] = isGreen
+              ? ['green', 'blue']
+              : ['yellow', 'blue'];
+            const tags = isGreen ? ['comics', 'green'] : ['comics'];
+
+            // Audit prompt before submitting (same rules as real-time generation)
+            await auditPromptServer({
+              prompt: generationParams.prompt,
+              negativePrompt: generationParams.negativePrompt || '',
+              userId,
+              isGreen,
+              isModerator: sessionUser.isModerator,
+            });
 
             // Submit to orchestrator
             const result = await createImageGen({
@@ -180,11 +198,13 @@ export const processEnqueuedComicPanelsJob = createJob(
                 images,
               },
               resources: [{ id: generationParams.checkpointVersionId, strength: 1 }],
-              tags: ['comics'],
+              tags,
               tips: { creators: 0, civitai: 0 },
               user: sessionUser,
               token,
-              currencies: ['yellow'],
+              isGreen,
+              allowMatureContent: isGreen ? false : undefined,
+              currencies,
             });
 
             // Update panel status

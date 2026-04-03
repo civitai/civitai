@@ -2,6 +2,7 @@ import { Stack, Text, Center, Loader, Title, ThemeIcon, Group, Card, Badge } fro
 import { IconCloudOff } from '@tabler/icons-react';
 import { useInstantSearch } from 'react-instantsearch';
 import {
+  BrowsingLevelFilter,
   ClearRefinements,
   SearchableMultiSelectRefinementList,
   SortBy,
@@ -17,6 +18,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import Link from 'next/link';
 import classes from '~/components/Search/SearchLayout.module.scss';
 
@@ -46,6 +48,7 @@ export default function ComicSearch() {
 const RenderFilters = () => {
   return (
     <>
+      <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort comics by"
         items={[
@@ -63,8 +66,9 @@ const RenderFilters = () => {
 };
 
 export function ComicHitList() {
-  const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'comics'>();
+  const { items: rawItems, showMore, isLastPage } = useInfiniteHitsTransformed<'comics'>();
   const { status } = useInstantSearch();
+  const { items } = useApplyHiddenPreferences({ type: 'comics', data: rawItems });
 
   if (items.length === 0) {
     const NotFound = (

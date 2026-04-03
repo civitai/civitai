@@ -169,6 +169,7 @@ class NOWPaymentsCaller extends HttpCaller {
     orderBy?: string;
     dateFrom?: string;
     dateTo?: string;
+    invoiceId?: number;
   }): Promise<NOWPayments.PaymentsListResponse | null> {
     const token = await this.authenticate();
     const response = await this.getRaw(`/payment/`, {
@@ -182,6 +183,32 @@ class NOWPaymentsCaller extends HttpCaller {
     }
     const data = await response.json();
     return NOWPayments.paymentsListResponseSchema.parse(data);
+  }
+
+  /** Fetch all payments associated with an invoice (wallet). Handles pagination. */
+  async getPaymentsByInvoiceId(
+    invoiceId: number
+  ): Promise<NOWPayments.CreatePaymentResponse[]> {
+    const PAGE_SIZE = 100;
+    let page = 0;
+    const all: NOWPayments.CreatePaymentResponse[] = [];
+
+    while (true) {
+      const result = await this.getListPayments({
+        limit: PAGE_SIZE,
+        page,
+        invoiceId,
+        sortBy: 'created_at',
+        orderBy: 'desc',
+      });
+
+      if (!result || result.data.length === 0) break;
+      all.push(...result.data);
+      if (result.data.length < PAGE_SIZE) break;
+      page++;
+    }
+
+    return all;
   }
 
   async getMerchantCoins(): Promise<NOWPayments.MerchantCoinsResponse | null> {

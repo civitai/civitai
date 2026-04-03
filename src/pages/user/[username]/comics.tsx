@@ -1,14 +1,18 @@
-import { Box, Button, Center, Container, Loader } from '@mantine/core';
-import { IconAlertCircle, IconPhoto, IconPhotoOff, IconPlus } from '@tabler/icons-react';
+import { Badge, Box, Button, Center, Container, Loader, Text } from '@mantine/core';
+import { IconAlertCircle, IconEyeOff, IconPhoto, IconPhotoOff, IconPlus } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { ComicCard } from '~/components/Cards/ComicCard';
+import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
 import { formatRelativeDate } from '~/utils/comic-helpers';
@@ -182,7 +186,12 @@ function UserPublicComics({ username }: { username: string }) {
 type ProjectItem = RouterOutput['comics']['getMyProjects'][number];
 
 function ProjectCard({ project }: { project: ProjectItem }) {
+  const { isGreen } = useFeatureFlags();
   const imageUrl = project.coverImage?.url ?? project.thumbnailUrl;
+  const hasNsfw =
+    project.nsfwLevel !== 0 && Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag);
+  const isBlocked = isGreen && hasNsfw;
+  const nsfwInfo = hasNsfw ? getNsfwLabel(project.nsfwLevel) : null;
 
   return (
     <Link
@@ -190,7 +199,19 @@ function ProjectCard({ project }: { project: ProjectItem }) {
       className="block overflow-hidden rounded-lg border border-gray-700 bg-gray-800 transition-colors hover:border-gray-500"
     >
       <div className="relative aspect-[3/4] bg-gray-900">
-        {imageUrl ? (
+        {isBlocked ? (
+          <div className="flex h-full w-full flex-col items-center justify-center gap-2 px-3">
+            <IconEyeOff size={36} className="text-gray-500" />
+            <Text size="xs" c="dimmed" ta="center">
+              Mature content is not available on this site
+            </Text>
+            {nsfwInfo && (
+              <Badge size="sm" color={nsfwInfo.color} variant="filled">
+                {nsfwInfo.label}
+              </Badge>
+            )}
+          </div>
+        ) : imageUrl ? (
           <img
             src={getEdgeUrl(imageUrl, { width: 450 })}
             alt={project.name}

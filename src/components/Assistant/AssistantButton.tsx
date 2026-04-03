@@ -7,7 +7,6 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { isApril1 } from '~/utils/date-helpers';
 
 const WIDTH = 320;
 const HEIGHT = 500;
@@ -24,8 +23,8 @@ export function AssistantButton({ ...props }: ButtonProps) {
   const gpttUUID = getAssistantUUID(userPersonality);
   if (!gpttUUID) return null;
 
-  const Icon = isApril1() || userPersonality === 'civchan' ? IconCat : IconMessageChatbot;
-  const color = isApril1() || userPersonality === 'civchan' ? 'pink' : 'blue';
+  const Icon = userPersonality === 'civchan' ? IconCat : IconMessageChatbot;
+  const color = userPersonality === 'civchan' ? 'pink' : 'blue';
 
   return (
     <IsClient>

@@ -2,6 +2,7 @@ import { Button, Group, Switch, Text } from '@mantine/core';
 import { IconWand } from '@tabler/icons-react';
 import { useCallback, useEffect, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 
@@ -40,6 +41,7 @@ export function EnhancePromptInPlace({
   insertAtPosition,
   onPendingChange,
 }: EnhancePromptInPlaceProps) {
+  const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [preEnhancePrompt, setPreEnhancePrompt] = useState<string | null>(null);
 
   const enhanceMutation = trpc.comics.enhancePromptText.useMutation({
@@ -87,6 +89,7 @@ export function EnhancePromptInPlace({
       <Group gap="xs" align="center">
         <BuzzTransactionButton
           buzzAmount={enhanceCost ?? 0}
+          accountTypes={availableBuzzTypes}
           label={
             <span className="flex items-center gap-1">
               <IconWand size={14} />

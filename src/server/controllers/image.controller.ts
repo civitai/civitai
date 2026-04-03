@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
-import { logToAxiom } from '~/server/logging/client';
 import {
   BlockedReason,
   ImageSort,
@@ -80,6 +79,8 @@ import {
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
+import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
 
 export const moderateImageHandler = async ({
   input,
@@ -402,14 +403,17 @@ export const getImagesAsPostsInfiniteHandler = async ({
         modelVersionId: undefined,
         modelId: undefined,
         reviewId: undefined,
-        limit: limit * 4,
+        // Max pinned posts (20) × max images per post (20) = 400
+        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
         useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useDatapacketRead: features.datapacketRead,
+        // Bypass datapacket for pinned posts — bounded query (max ~20 posts),
+        // and datapacket replicas have been observed to silently drop rows.
+        useDatapacketRead: false,
       });
 
       for (const image of pinnedPostsImages) {
@@ -418,26 +422,30 @@ export const getImagesAsPostsInfiniteHandler = async ({
         pinned[image.postId].push(image);
       }
 
-      // Debug: log pinned posts that were expected but not found
-      const missingPinnedPosts = versionPinnedPosts.filter((postId) => !pinned[postId]);
-      if (missingPinnedPosts.length > 0) {
-        const debugPayload = {
-          modelId: input.modelId,
-          modelVersionId: input.modelVersionId,
-          expectedPinnedPosts: versionPinnedPosts.length,
-          returnedImages: pinnedPostsImages.length,
-          returnedPostIds: [...new Set(pinnedPostsImages.map((i) => i.postId))],
-          missingPinnedPosts,
-          browsingLevel: input.browsingLevel,
-          types: input.types,
-        };
-        console.warn('[pinned-posts-debug]', debugPayload);
-        logToAxiom({
-          type: 'warning',
-          name: 'pinned-posts-missing',
-          message: JSON.stringify(debugPayload),
-        }).catch(() => null);
+      // Build per-post image count map to see which posts got partial vs zero results
+      const imagesPerPost: Record<number, number> = {};
+      for (const id of versionPinnedPosts) imagesPerPost[id] = 0;
+      for (const img of pinnedPostsImages) {
+        if (img.postId) imagesPerPost[img.postId] = (imagesPerPost[img.postId] ?? 0) + 1;
       }
+
+      const returnedPostIds = [...new Set(pinnedPostsImages.map((i) => i.postId))];
+      const missingPostIds = versionPinnedPosts.filter((id) => !returnedPostIds.includes(id));
+
+      // Always log pinned post fetch results so we can compare good vs bad pods
+      logToAxiom({
+        type: missingPostIds.length ? 'warning' : 'info',
+        name: missingPostIds.length ? 'pinned-posts-missing' : 'pinned-posts-ok',
+        input,
+        requestedPostIds: versionPinnedPosts,
+        returnedPostIds,
+        missingPostIds,
+        imagesPerPost,
+        totalImagesReturned: pinnedPostsImages.length,
+        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      });
     }
 
     while (true) {
@@ -473,6 +481,26 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     const mergedPosts = Object.values({ ...pinned, ...posts });
+
+    // Verify pinned posts survived the merge
+    if (versionPinnedPosts.length && !cursor) {
+      const pinnedPostIdsInResult = Object.keys(pinned).map(Number);
+      const mergedPostIds = mergedPosts.map(([img]) => img.postId).filter(isDefined);
+      const droppedInMerge = pinnedPostIdsInResult.filter((id) => !mergedPostIds.includes(id));
+      if (droppedInMerge.length) {
+        logToAxiom({
+          type: 'error',
+          name: 'pinned-posts-dropped-in-merge',
+          message: `Pinned posts present after fetch but missing after merge`,
+          modelId: input.modelId,
+          modelVersionId: input.modelVersionId,
+          pinnedPostIdsInResult,
+          droppedInMerge,
+          pinnedKeys: Object.keys(pinned),
+          postsKeys: Object.keys(posts),
+        });
+      }
+    }
 
     // Get reviews from the users who created the posts
     const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];

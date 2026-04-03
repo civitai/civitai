@@ -7,6 +7,7 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import type { ComicGenre } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
@@ -45,7 +46,8 @@ export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false 
     if (isEqual(filterOverrides, debouncedFilters)) cancel();
   }, [cancel, debouncedFilters, filterOverrides]);
 
-  const items = data?.pages.flatMap((page) => page.items) ?? [];
+  const rawItems = data?.pages.flatMap((page) => page.items) ?? [];
+  const { items } = useApplyHiddenPreferences({ type: 'comics', data: rawItems });
 
   return (
     <>

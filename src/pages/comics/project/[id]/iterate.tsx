@@ -21,6 +21,8 @@ import type {
   SourceImage,
 } from '~/components/IterativeEditor/iterative-editor.types';
 import { Page } from '~/components/AppLayout/Page';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -227,6 +229,19 @@ function ComicIteratePage() {
     [mentions]
   );
 
+  const { isGreen } = useFeatureFlags();
+
+  // Block iterative editing of NSFW panels on green domain
+  const sourcePanel = numericPanelId
+    ? project?.chapters
+        .flatMap((ch: any) => ch.panels)
+        .find((p: any) => p.id === numericPanelId)
+    : null;
+  const isNsfwBlocked =
+    isGreen &&
+    sourcePanel?.image &&
+    !hasPublicBrowsingLevel(sourcePanel.image.nsfwLevel);
+
   if (!project) {
     return (
       <div
@@ -238,6 +253,21 @@ function ComicIteratePage() {
         }}
       >
         <Text c="dimmed">Loading project...</Text>
+      </div>
+    );
+  }
+
+  if (isNsfwBlocked) {
+    return (
+      <div
+        style={{
+          height: '100%',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
+      >
+        <Text c="dimmed">Mature content is not available on this site</Text>
       </div>
     );
   }

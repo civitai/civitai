@@ -1,4 +1,6 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
+import { refundMultiAccountTransaction } from '~/server/services/buzz.service';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const SYSTEM_PROMPT_BASE = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
 
@@ -6,7 +8,7 @@ Rules:
 - Each panel should describe a single moment, action, or beat
 - Focus on: action, emotion, camera angle, composition, environment
 - Do NOT describe character appearance — reference images handle that
-- Reference characters with @ prefix (e.g., @Maya, @Dragon) — the generation system uses these to identify which reference images to include
+- Reference characters with @ prefix exactly as given (e.g., @Maya, @Dragon, @O'Brien) — preserve apostrophes, hyphens, and special characters in names. The generation system uses these to identify which reference images to include
 - Panels should flow naturally and tell a coherent visual story
 - When the story has dialogue, narration, or thoughts, include them directly in the prompt as visual text elements the image generator should render (e.g. "speech bubble saying 'I won't give up!'", "narration box at top reading 'Three days earlier...'", "thought bubble: 'This can't be real...'")
 - Not every panel needs text — only include speech bubbles, narration boxes, or captions where dialogue or narration serves the story
@@ -28,6 +30,7 @@ export async function planChapterPanels(input: {
   storyDescription: string;
   characterNames: string[];
   panelCount?: number;
+  currencies?: BuzzSpendType[];
 }): Promise<{ panels: { prompt: string }[] }> {
   const userMessage = [
     input.characterNames.length > 0
@@ -47,11 +50,17 @@ export async function planChapterPanels(input: {
       { role: 'system', content: buildSystemPrompt(input.panelCount) },
       { role: 'user', content: userMessage },
     ],
+    currencies: input.currencies,
   });
 
   const parsed = parseJsonBlock<{ panels: { prompt: string }[] }>(result.content);
 
   if (!parsed?.panels || !Array.isArray(parsed.panels) || parsed.panels.length === 0) {
+    // Refund buzz since the orchestrator charged for the completion but the output was unusable
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: result.workflowId,
+      description: 'Refund for invalid panel breakdown response',
+    }).catch(() => {}); // Best-effort refund — don't block the error from reaching the user
     throw new Error('LLM returned invalid panel breakdown');
   }
 
