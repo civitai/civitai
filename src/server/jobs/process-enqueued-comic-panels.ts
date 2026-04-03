@@ -11,6 +11,7 @@ import { signalClient } from '~/utils/signal-client';
 import type { SessionUser } from 'next-auth';
 import type { UserTier } from '~/server/schema/user.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 
 const log = createLogger('process-enqueued-comic-panels', 'cyan');
 
@@ -166,6 +167,15 @@ export const processEnqueuedComicPanelsJob = createJob(
               ? ['green', 'blue']
               : ['yellow', 'blue'];
             const tags = isGreen ? ['comics', 'green'] : ['comics'];
+
+            // Audit prompt before submitting (same rules as real-time generation)
+            await auditPromptServer({
+              prompt: generationParams.prompt,
+              negativePrompt: generationParams.negativePrompt || '',
+              userId,
+              isGreen,
+              isModerator: sessionUser.isModerator,
+            });
 
             // Submit to orchestrator
             const result = await createImageGen({

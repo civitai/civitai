@@ -21,8 +21,11 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { NsfwLevel, SignalMessages } from '~/server/common/enums';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
+import { IconEyeOff } from '@tabler/icons-react';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const nsfwBadgeColors: Record<number, string> = {
@@ -86,6 +89,15 @@ export function PanelCard({
 }: PanelCardProps) {
   const { imageUrl, prompt, status, errorMessage } = panel;
   const utils = trpc.useUtils();
+  const { isGreen } = useFeatureFlags();
+
+  // Panel is blocked when it has NSFW content and we're on the green domain.
+  // The server strips imageUrl from NSFW panels, so a Ready panel with no imageUrl on green
+  // means it was blocked. Check image nsfwLevel when available, otherwise trust the server.
+  const isNsfwBlocked =
+    isGreen &&
+    status === 'Ready' &&
+    (panel.image ? !hasPublicBrowsingLevel(panel.image.nsfwLevel) : true);
 
   const isActive = status === 'Generating' || status === 'Pending' || status === 'Enqueued';
 
@@ -229,7 +241,19 @@ export function PanelCard({
           <Loader size="sm" color="yellow" />
         </div>
       )}
-      {imageUrl ? (
+      {isNsfwBlocked ? (
+        <>
+          <div className={styles.panelEmpty} style={{ opacity: 0.6 }}>
+            <IconEyeOff size={28} />
+            <Text size="xs" c="dimmed" ta="center">
+              Mature content is not available on this site
+            </Text>
+          </div>
+          <div className="absolute top-2 left-2">
+            <span className={styles.panelNumber}>#{position}</span>
+          </div>
+        </>
+      ) : imageUrl ? (
         <>
           <img
             src={getEdgeUrl(imageUrl, { width: 450 })}

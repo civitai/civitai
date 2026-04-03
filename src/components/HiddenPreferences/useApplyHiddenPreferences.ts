@@ -634,8 +634,16 @@ function filterPreferences<
       // No need to apply hidden preferences to tools
       return { items: value, hidden };
     case 'comics':
-      // No need to apply hidden preferences to comics
-      return { items: value, hidden };
+      // Comic nsfwLevel is a bit_or aggregate — ALL bits must fall within browsingLevel
+      const comics = value.filter((comic) => {
+        if (!canViewNsfw && comic.name && hasNsfwWords(comic.name)) return false;
+        if (comic.nsfwLevel !== 0 && (comic.nsfwLevel & ~browsingLevel) !== 0) {
+          hidden.browsingLevel++;
+          return false;
+        }
+        return true;
+      });
+      return { items: comics, hidden };
     case 'challenges':
       const challenges = value.filter((challenge) => {
         const isOwner = challenge.createdBy.id === currentUser?.id;
@@ -773,6 +781,8 @@ type BaseTool = {
 
 type BaseComic = {
   id: number;
+  nsfwLevel: number;
+  name?: string;
 };
 
 type BaseChallenge = {

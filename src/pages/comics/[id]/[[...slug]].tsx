@@ -64,7 +64,11 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Flags } from '~/shared/utils/flags';
-import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getBrowsingLevelLabel,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ComicChapterStatus, ComicEngagementType } from '~/shared/utils/prisma/enums';
 import { formatRelativeDate } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -82,6 +86,7 @@ export const getServerSideProps = createServerSideProps({
 
 function PublicComicReader() {
   const router = useRouter();
+  const { isGreen } = useFeatureFlags();
   const { id, slug } = router.query as { id: string; slug?: string[] };
   const projectId = Number(id);
 
@@ -118,6 +123,16 @@ function PublicComicReader() {
           <IconArrowLeft size={16} />
           Browse Comics
         </Link>
+      </div>
+    );
+  }
+
+  // Block NSFW comics on green domain.
+  // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
+  if (isGreen && project.nsfwLevel !== 0 && Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)) {
+    return (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <Text>This content is not available on this site</Text>
       </div>
     );
   }
