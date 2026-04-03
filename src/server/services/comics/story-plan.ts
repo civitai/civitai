@@ -1,4 +1,5 @@
 import { orchestratorChatCompletion } from '~/server/services/comics/orchestrator-chat';
+import { refundMultiAccountTransaction } from '~/server/services/buzz.service';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const SYSTEM_PROMPT_BASE = `You are a comic storyboard planner. Given an overall story or scene description, break it down into individual comic panels.
@@ -55,6 +56,11 @@ export async function planChapterPanels(input: {
   const parsed = parseJsonBlock<{ panels: { prompt: string }[] }>(result.content);
 
   if (!parsed?.panels || !Array.isArray(parsed.panels) || parsed.panels.length === 0) {
+    // Refund buzz since the orchestrator charged for the completion but the output was unusable
+    await refundMultiAccountTransaction({
+      externalTransactionIdPrefix: result.workflowId,
+      description: 'Refund for invalid panel breakdown response',
+    }).catch(() => {}); // Best-effort refund — don't block the error from reaching the user
     throw new Error('LLM returned invalid panel breakdown');
   }
 
