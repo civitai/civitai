@@ -144,7 +144,7 @@ const featureFlags = createFeatureFlags({
   cashManagement: ['granted'],
   auctionsMod: ['granted'],
   challengePlatform: ['blue', 'red', 'public'],
-  comicCreator: ['public'], // { availability: ['mod', 'dev'], fliptKey: 'comic-creator' },
+  comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },

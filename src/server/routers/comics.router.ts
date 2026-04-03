@@ -821,14 +821,31 @@ export const comicsRouter = router({
       const panelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
       const thumbnailUrl =
         p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ?? null;
+
+      // On green, strip NSFW cover/hero/thumbnail images so the card is still
+      // visible and navigable but doesn't display mature imagery.
+      const coverImage =
+        ctx.features.isGreen && p.coverImage && !hasPublicBrowsingLevel(p.coverImage.nsfwLevel)
+          ? null
+          : p.coverImage;
+      const heroImage =
+        ctx.features.isGreen && p.heroImage && !hasPublicBrowsingLevel(p.heroImage.nsfwLevel)
+          ? null
+          : p.heroImage;
+      const safeThumbnailUrl =
+        ctx.features.isGreen && Flags.intersects(p.nsfwLevel, nsfwBrowsingLevelsFlag)
+          ? null
+          : thumbnailUrl;
+
       return {
         id: p.id,
         name: p.name,
         description: p.description,
-        coverImage: p.coverImage,
-        heroImage: p.heroImage,
+        coverImage,
+        heroImage,
+        nsfwLevel: p.nsfwLevel,
         panelCount,
-        thumbnailUrl,
+        thumbnailUrl: safeThumbnailUrl,
         createdAt: p.createdAt,
         updatedAt: p.updatedAt,
       };
@@ -894,8 +911,8 @@ export const comicsRouter = router({
           })
         : [];
 
-    // On green domain, strip NSFW reference images so they appear blocked.
-    if (ctx.domain === 'green') {
+    // On green, strip NSFW reference images so they appear blocked.
+    if (ctx.features.isGreen) {
       for (const ref of references) {
         ref.images = ref.images.filter(
           (ri: any) => !ri.image.nsfwLevel || hasPublicBrowsingLevel(ri.image.nsfwLevel)
@@ -903,8 +920,8 @@ export const comicsRouter = router({
       }
     }
 
-    // On green domain, strip imageUrl from NSFW panels so they appear blocked.
-    if (ctx.domain === 'green') {
+    // On green, strip imageUrl from NSFW panels so they appear blocked.
+    if (ctx.features.isGreen) {
       stripNsfwPanelImages(project.chapters);
     }
 
@@ -1002,7 +1019,7 @@ export const comicsRouter = router({
       const effectiveBrowsingLevel =
         browsingLevel != null && browsingLevel > 0
           ? browsingLevel
-          : ctx.domain === 'green'
+          : ctx.features.isGreen
             ? publicBrowsingLevelsFlag
             : null;
 
@@ -1132,10 +1149,24 @@ export const comicsRouter = router({
       const items = projects.map((p) => {
         const readyPanelCount = p.chapters.reduce((sum, ch) => sum + ch._count.panels, 0);
         const chapterCount = p.chapters.length;
-        const thumbnailUrl =
+        const rawThumbnailUrl =
           p.coverImage?.url ??
           p.chapters.flatMap((ch) => ch.panels).find((panel) => panel.imageUrl)?.imageUrl ??
           null;
+
+        // On green, strip NSFW cover/hero/thumbnail images
+        const coverImage =
+          ctx.features.isGreen && p.coverImage && !hasPublicBrowsingLevel(p.coverImage.nsfwLevel)
+            ? null
+            : p.coverImage;
+        const heroImage =
+          ctx.features.isGreen && p.heroImage && !hasPublicBrowsingLevel(p.heroImage.nsfwLevel)
+            ? null
+            : p.heroImage;
+        const thumbnailUrl =
+          ctx.features.isGreen && Flags.intersects(p.nsfwLevel, nsfwBrowsingLevelsFlag)
+            ? null
+            : rawThumbnailUrl;
 
         // Latest 3 published chapters
         const latestChapters = p.chapters.slice(0, 3).map((ch) => ({
@@ -1150,8 +1181,8 @@ export const comicsRouter = router({
           name: p.name,
           description: p.description,
           thumbnailUrl,
-          coverImage: p.coverImage,
-          heroImage: p.heroImage,
+          coverImage,
+          heroImage,
           genre: p.genre,
           nsfwLevel: p.nsfwLevel,
           readyPanelCount,
@@ -1232,7 +1263,7 @@ export const comicsRouter = router({
       // Block NSFW projects on green domain.
       // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
       if (
-        ctx.domain === 'green' &&
+        ctx.features.isGreen &&
         project.nsfwLevel !== 0 &&
         Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
       ) {
@@ -1313,8 +1344,8 @@ export const comicsRouter = router({
         };
       });
 
-      // On green domain, strip imageUrl from NSFW panels so they appear blocked.
-      if (ctx.domain === 'green') {
+      // On green, strip imageUrl from NSFW panels so they appear blocked.
+      if (ctx.features.isGreen) {
         stripNsfwPanelImages(chapters);
       }
 
