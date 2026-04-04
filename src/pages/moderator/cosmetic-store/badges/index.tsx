@@ -79,7 +79,24 @@ type ProductWithBadge = {
   } | null;
 };
 
-function BadgeHistoryRow({ productId, productName }: { productId: string; productName: string }) {
+type HistoryBadge = {
+  id: number;
+  name: string;
+  url: string | null;
+  animated: boolean;
+  availableStart: Date | null;
+  availableEnd: Date | null;
+};
+
+function BadgeHistoryRow({
+  productId,
+  productName,
+  onEditBadge,
+}: {
+  productId: string;
+  productName: string;
+  onEditBadge: (badge: HistoryBadge) => void;
+}) {
   const [opened, { toggle }] = useDisclosure(false);
   const { data: history, isLoading } = trpc.productBadge.getBadgeHistory.useQuery(
     { productId },
@@ -147,6 +164,9 @@ function BadgeHistoryRow({ productId, productName }: { productId: string; produc
                     <Badge size="xs" color="gray" variant="light">
                       ID: {badge.id}
                     </Badge>
+                    <Button size="compact-xs" variant="subtle" onClick={() => onEditBadge(badge)}>
+                      Edit
+                    </Button>
                   </Group>
                 ))}
               </Stack>
@@ -165,6 +185,7 @@ function BadgeHistoryRow({ productId, productName }: { productId: string; produc
 function BadgeForm({
   mode,
   editingId,
+  editingBadge,
   product,
   products,
   onSuccess,
@@ -172,12 +193,13 @@ function BadgeForm({
 }: {
   mode: 'create' | 'edit';
   editingId: number | null;
+  editingBadge: HistoryBadge | null;
   product: ProductWithBadge | null;
   products: ProductWithBadge[];
   onSuccess: () => void;
   onCancel: () => void;
 }) {
-  const badge = mode === 'edit' && product?.currentBadge ? product.currentBadge : null;
+  const badge = mode === 'edit' ? editingBadge : null;
 
   const [formName, setFormName] = useState(badge?.name ?? '');
   const [formAnimated, setFormAnimated] = useState(badge?.animated ?? false);
@@ -506,6 +528,7 @@ export default function BadgeManagement() {
   const [formMode, setFormMode] = useState<'create' | 'edit'>('create');
   const [selectedProduct, setSelectedProduct] = useState<ProductWithBadge | null>(null);
   const [editingBadgeId, setEditingBadgeId] = useState<number | null>(null);
+  const [editingBadge, setEditingBadge] = useState<HistoryBadge | null>(null);
 
   const { data: products, isLoading } = trpc.productBadge.getProductsWithBadges.useQuery({
     name: debouncedName || undefined,
@@ -515,6 +538,7 @@ export default function BadgeManagement() {
   const handleNewBadge = (product: ProductWithBadge) => {
     setSelectedProduct(product);
     setEditingBadgeId(null);
+    setEditingBadge(null);
     setFormMode('create');
     setView('form');
   };
@@ -523,6 +547,15 @@ export default function BadgeManagement() {
     if (!product.currentBadge) return;
     setSelectedProduct(product);
     setEditingBadgeId(product.currentBadge.id);
+    setEditingBadge(product.currentBadge);
+    setFormMode('edit');
+    setView('form');
+  };
+
+  const handleEditHistoryBadge = (product: ProductWithBadge, badge: HistoryBadge) => {
+    setSelectedProduct(product);
+    setEditingBadgeId(badge.id);
+    setEditingBadge(badge);
     setFormMode('edit');
     setView('form');
   };
@@ -531,6 +564,7 @@ export default function BadgeManagement() {
     setView('list');
     setSelectedProduct(null);
     setEditingBadgeId(null);
+    setEditingBadge(null);
   };
 
   if (view === 'form' && products) {
@@ -546,6 +580,7 @@ export default function BadgeManagement() {
             <BadgeForm
               mode={formMode}
               editingId={editingBadgeId}
+              editingBadge={editingBadge}
               product={selectedProduct}
               products={products}
               onSuccess={handleFormDone}
@@ -723,6 +758,7 @@ export default function BadgeManagement() {
                       key={`history-${product.id}`}
                       productId={product.id}
                       productName={product.name}
+                      onEditBadge={(badge) => handleEditHistoryBadge(product, badge)}
                     />
                   </>
                 ))}
