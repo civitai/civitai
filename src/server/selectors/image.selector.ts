@@ -30,6 +30,26 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
     },
     where: { disabled: false },
   },
+  resources: {
+    select: {
+      id: true,
+      name: true,
+      detected: true,
+      modelVersion: {
+        select: {
+          id: true,
+          name: true,
+          model: {
+            select: {
+              id: true,
+              name: true,
+              type: true,
+            },
+          },
+        },
+      },
+    },
+  },
 });
 
 export const profileImageSelect = Prisma.validator<Prisma.ImageSelect>()({
