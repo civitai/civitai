@@ -286,6 +286,8 @@ function inferComponentType(fileType: string): ModelFileComponentType | null {
       return 'Config';
     case 'UNet':
       return 'UNet';
+    case 'Diffusion Model':
+      return 'DiffusionModel';
     case 'CLIPVision':
       return 'CLIPVision';
     case 'ControlNet':

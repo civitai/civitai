@@ -132,6 +132,7 @@ const fileTypeToComponentTypeMap: Record<string, ModelFileComponentType> = {
   VAE: 'VAE',
   'Text Encoder': 'TextEncoder',
   UNet: 'UNet',
+  'Diffusion Model': 'DiffusionModel',
   CLIPVision: 'CLIPVision',
   ControlNet: 'ControlNet',
   Config: 'Config',

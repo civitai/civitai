@@ -138,6 +138,7 @@ declare global {
     | 'VAE'
     | 'TextEncoder'
     | 'UNet'
+    | 'DiffusionModel'
     | 'CLIPVision'
     | 'ControlNet'
     | 'Upscaler'

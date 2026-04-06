@@ -13,6 +13,7 @@ const componentTypeDisplayNames: Record<ModelFileComponentType, string> = {
   VAE: 'VAE',
   TextEncoder: 'Text Encoder',
   UNet: 'UNet',
+  DiffusionModel: 'Diffusion Model',
   CLIPVision: 'CLIP Vision',
   ControlNet: 'ControlNet',
   Upscaler: 'Upscale Model',

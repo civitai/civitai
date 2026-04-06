@@ -56,7 +56,7 @@ type FilesContextState = {
   modelId?: number;
   baseModel?: string;
   dropzoneConfig: DropzoneOptions;
-  onDrop: (files: File[], defaultType?: ModelFileType) => void;
+  onDrop: (files: File[], defaultType?: ModelFileType, skipInference?: boolean) => void;
   startUpload: () => Promise<void>;
   retry: (uuid: string) => Promise<void>;
   updateFile: (uuid: string, file: Partial<FileFromContextProps>) => void;
@@ -455,9 +455,11 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     },
   });
 
-  const onDrop = (files: File[], defaultType?: ModelFileType) => {
+  const onDrop = (files: File[], defaultType?: ModelFileType, skipInference?: boolean) => {
     const toUpload = files.map((file) => {
-      const inferredType = defaultType ?? inferFileType(file.name, model?.type);
+      const inferredType = skipInference
+        ? defaultType
+        : defaultType ?? inferFileType(file.name, model?.type);
       return {
         name: file.name,
         versionId: version?.id,
@@ -690,6 +692,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
         'Config',
         'Training Data',
         'UNet',
+        'Diffusion Model',
         'CLIPVision',
         'ControlNet',
         'Text Encoder',
@@ -703,7 +706,14 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
-      fileTypes: ['Text Encoder', 'Config', 'Training Data', 'UNet', 'CLIPVision'],
+      fileTypes: [
+        'Text Encoder',
+        'Config',
+        'Training Data',
+        'UNet',
+        'Diffusion Model',
+        'CLIPVision',
+      ],
       maxFiles: 5,
     },
   },
@@ -711,7 +721,14 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
-      fileTypes: ['Text Encoder', 'Config', 'Training Data', 'UNet', 'CLIPVision'],
+      fileTypes: [
+        'Text Encoder',
+        'Config',
+        'Training Data',
+        'UNet',
+        'Diffusion Model',
+        'CLIPVision',
+      ],
       maxFiles: 5,
     },
   },
@@ -719,7 +736,14 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
-      fileTypes: ['Text Encoder', 'Config', 'Training Data', 'UNet', 'CLIPVision'],
+      fileTypes: [
+        'Text Encoder',
+        'Config',
+        'Training Data',
+        'UNet',
+        'Diffusion Model',
+        'CLIPVision',
+      ],
       maxFiles: 5,
     },
   },

@@ -42,6 +42,7 @@ export const componentTypeConfig: Record<
   VAE: { name: 'VAE', icon: IconPhotoScan, color: 'purple' },
   TextEncoder: { name: 'Text Encoder', icon: IconTypography, color: 'blue' },
   UNet: { name: 'UNet', icon: IconBrain, color: 'orange' },
+  DiffusionModel: { name: 'Diffusion Model', icon: IconBrain, color: 'orange' },
   CLIPVision: { name: 'CLIP Vision', icon: IconEye, color: 'green' },
   ControlNet: { name: 'ControlNet', icon: IconAdjustments, color: 'cyan' },
   Upscaler: { name: 'Upscale Model', icon: IconArrowsMaximize, color: 'teal' },
@@ -55,8 +56,9 @@ export const componentTypeConfig: Record<
  * Maps internal type values to user-facing names aligned with ComfyUI subfolder conventions.
  */
 export const comfyFileTypeLabels: Record<string, string> = {
-  'Text Encoder': 'CLIP / Text Encoder',
-  UNet: 'UNet / Diffusion Model',
+  'Text Encoder': 'Text Encoder',
+  UNet: 'UNet',
+  'Diffusion Model': 'Diffusion Model',
   CLIPVision: 'CLIP Vision',
   Workflow: 'Workflow',
   Upscaler: 'Upscale Model',
@@ -127,6 +129,7 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
         'Negative',
         'VAE',
         'UNet',
+        'Diffusion Model',
         'CLIPVision',
         'ControlNet',
         'Upscaler',

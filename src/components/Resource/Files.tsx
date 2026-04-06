@@ -154,7 +154,8 @@ export function Files() {
     droppedFiles: File[],
     sectionFiles: FileFromContextProps[],
     sectionMaxFiles: number,
-    defaultType?: ModelFileType
+    defaultType?: ModelFileType,
+    skipInference?: boolean
   ) => {
     if (sectionFiles.length + droppedFiles.length > sectionMaxFiles) {
       showErrorNotification({
@@ -170,7 +171,7 @@ export function Files() {
       });
       return;
     }
-    onDrop(droppedFiles, defaultType);
+    onDrop(droppedFiles, defaultType, skipInference);
   };
 
   const primaryAccept = { 'mime/type': primary.extensions };
@@ -389,7 +390,8 @@ export function Files() {
                 dropped,
                 additionalFiles,
                 additional.maxFiles,
-                additionalFileTypes.length === 1 ? additionalFileTypes[0] : undefined
+                additionalFileTypes.length === 1 ? additionalFileTypes[0] : undefined,
+                true
               )
             }
             accept={additionalAccept}
