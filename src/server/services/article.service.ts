@@ -57,6 +57,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { deleteArticleContentImages } from '~/server/services/article-content-cleanup.service';
 
 type ArticleRaw = {
   id: number;
@@ -947,7 +948,10 @@ export const deleteArticleById = async ({
     if (!isOwner) throw throwAuthorizationError(`You cannot perform this action`);
 
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
+      const article = await tx.article.delete({
+        where: { id },
+        select: { coverId: true, content: true },
+      });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
 
@@ -955,6 +959,7 @@ export const deleteArticleById = async ({
     });
 
     if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
+    if (deleted.content) await deleteArticleContentImages(deleted.content);
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     return deleted;
