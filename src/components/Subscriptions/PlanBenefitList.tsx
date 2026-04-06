@@ -9,8 +9,11 @@ const defaultBenefits = [
   { content: 'Ad free browsing', icon: <IconAdCircleOff size={benefitIconSize} /> },
   {
     content: (
-      <Text td="underline" component="a" href="/product/link" target="_blank">
-        Civitai Link
+      <Text>
+        <Text td="underline" component="a" href="/product/link" target="_blank">
+          Civitai Link
+        </Text>
+        : sync resources to your machine
       </Text>
     ),
   },
@@ -21,11 +24,10 @@ const defaultBenefits = [
     tiers: ['bronze', 'silver', 'gold'], // Not available in supporter / founder.
     content: (
       <Text>
-        Access to the{' '}
-        <Anchor td="underline" component="a" href="/creator-program" target="_blank">
+        <Text td="underline" component="a" href="/creator-program" target="_blank">
           Creator Program
-        </Anchor>{' '}
-        to get paid for earned Buzz
+        </Text>
+        : earn from your Buzz
       </Text>
     ),
   },
@@ -81,7 +83,7 @@ export const PlanBenefitList = ({
       </List>
       {useDefaultBenefits && (
         <>
-          <Divider mx="-md" />
+          <Divider mx="-xl" />
           <List size="md" center>
             <Stack gap="xs">
               {defaultBenefits.map(({ content, tiers, subType }, index) => {

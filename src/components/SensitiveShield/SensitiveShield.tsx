@@ -167,6 +167,8 @@ function MatureContentRedirect({ redUrl }: { redUrl: string }) {
         <Button
           component="a"
           href={redUrl}
+          target="_blank"
+          rel="noreferrer nofollow"
           color="red"
           size="lg"
           radius="md"

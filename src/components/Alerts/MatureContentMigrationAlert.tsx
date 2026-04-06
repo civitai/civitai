@@ -90,6 +90,8 @@ export function MatureContentMigrationAlert() {
               <Text
                 component="a"
                 href={redUrl}
+                target="_blank"
+                rel="noreferrer nofollow"
                 size="sm"
                 fw={700}
                 className="text-red-4 underline decoration-red-4/40 underline-offset-2 transition-colors hover:text-red-3 hover:decoration-red-3"
@@ -102,6 +104,8 @@ export function MatureContentMigrationAlert() {
             <Button
               component="a"
               href={redUrl}
+              target="_blank"
+              rel="noreferrer nofollow"
               color="red"
               variant="outline"
               size="compact-sm"
