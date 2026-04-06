@@ -74,6 +74,8 @@ export type MediaType = "image" | "video" | "audio";
 
 export type BlockImageReason = "Ownership" | "CSAM" | "TOS";
 
+export type EntityModerationStatus = "Pending" | "Succeeded" | "Failed" | "Expired" | "Canceled";
+
 export type ImageEngagementType = "Favorite" | "Hide";
 
 export type ImageOnModelType = "Example" | "Training";
@@ -1268,6 +1270,21 @@ export interface ImageConnection {
   image?: Image;
   entityId: number;
   entityType: string;
+}
+
+export interface EntityModeration {
+  id: number;
+  entityType: string;
+  entityId: number;
+  workflowId: string | null;
+  status: EntityModerationStatus;
+  retryCount: number;
+  blocked: boolean | null;
+  triggeredLabels: string[];
+  result: JsonValue | null;
+  contentHash: string | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface ImageEngagement {

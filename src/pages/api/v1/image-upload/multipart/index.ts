@@ -28,21 +28,12 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
     const mimeType = imageMime ?? (fileExt ? getMimeTypeFromExt(fileExt) : undefined);
 
     const { s3, bucket, backend } = await getImageUploadBackend(userId);
-    const result = await getMultipartPutUrl(
-      imageKey,
-      req.body.size,
-      s3,
-      bucket,
-      mimeType
-    );
+    const result = await getMultipartPutUrl(imageKey, req.body.size, s3, bucket, mimeType);
 
     if (backend === 'cloudflare' && env.S3_IMAGE_UPLOAD_OVERRIDE) {
       result.urls = result.urls.map((item) => ({
         ...item,
-        url: item.url.replace(
-          `${bucket}.${s3Domain}`,
-          env.S3_IMAGE_UPLOAD_OVERRIDE as string
-        ),
+        url: item.url.replace(`${bucket}.${s3Domain}`, env.S3_IMAGE_UPLOAD_OVERRIDE as string),
       }));
     }
 
