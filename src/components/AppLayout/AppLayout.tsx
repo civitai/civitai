@@ -9,6 +9,7 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { MatureContentMigrationAlert } from '~/components/Alerts/MatureContentMigrationAlert';
 import { Announcements } from '~/components/Announcements/Announcements';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
@@ -123,6 +124,7 @@ export function MainContent({
       <main className="flex-1">
         {subNav && <SubNav>{subNav}</SubNav>}
         {announcements && <Announcements />}
+        {announcements && <MatureContentMigrationAlert />}
         {children}
       </main>
       {footer}
