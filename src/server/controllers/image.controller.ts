@@ -411,10 +411,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        // Bypass all replicas for pinned posts — bounded query (max ~20 posts),
-        // and read replicas have been observed to silently drop rows due to
-        // replication lag. Route directly to the primary DB.
-        dbTarget: 'write',
+        dbTarget: 'datapacket',
       });
 
       for (const image of pinnedPostsImages) {
