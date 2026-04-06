@@ -5,11 +5,9 @@ import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
-import { extractImagesFromArticle } from '~/server/utils/article-image-helpers';
-import { ingestImage } from '~/server/services/image.service';
+import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import type { ExtractedMedia } from '~/utils/article-helpers';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
-import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ImageConnectionType } from '~/server/common/enums';
 
 const log = createLogger('migrate-article-images', 'blue');
@@ -114,7 +112,7 @@ export default WebhookEndpoint(async (req, res) => {
         if (dryRun) {
           // Dry run: just count without processing
           for (const article of articleBatch) {
-            const contentMedia = extractImagesFromArticle(article.content);
+            const contentMedia = getContentMedia(article.content);
             log(`[DRY RUN] Article ${article.id}: ${contentMedia.length} media items`);
             batchStats.articlesProcessed++;
             batchStats.imagesCreated += contentMedia.length;
@@ -127,7 +125,7 @@ export default WebhookEndpoint(async (req, res) => {
 
           for (const article of articleBatch) {
             try {
-              const contentMedia = extractImagesFromArticle(article.content);
+              const contentMedia = getContentMedia(article.content);
 
               if (contentMedia.length === 0) {
                 batchStats.articlesProcessed++;
@@ -150,9 +148,8 @@ export default WebhookEndpoint(async (req, res) => {
             log(`Extracted ${allUrls.size} unique URLs from ${articleMediaMap.size} articles`);
 
             // Process batch in single transaction
-            let newImages: Array<{ id: number; url: string; type: MediaType }> = [];
             try {
-              const transactionResult = await dbWrite.$transaction(
+              await dbWrite.$transaction(
                 async (tx) => {
                   // Fetch existing images
                   const existingImages = await tx.image.findMany({
@@ -165,7 +162,7 @@ export default WebhookEndpoint(async (req, res) => {
                   // Create missing images
                   const missingUrls = Array.from(allUrls).filter((url) => !existingUrlMap.has(url));
 
-                  let createdImages: Array<{ id: number; url: string; type: MediaType }> = [];
+                  let createdImages: Array<{ id: number; url: string }> = [];
                   if (missingUrls.length > 0) {
                     const mediaByUrl = new Map<
                       string,
@@ -191,7 +188,7 @@ export default WebhookEndpoint(async (req, res) => {
                           scanRequestedAt: new Date(),
                         })
                       ),
-                      select: { id: true, url: true, type: true },
+                      select: { id: true, url: true },
                       skipDuplicates: true,
                     });
 
@@ -241,33 +238,17 @@ export default WebhookEndpoint(async (req, res) => {
                       data: { contentScannedAt: new Date() },
                     });
                   }
-
-                  return { newImages: createdImages };
                 },
                 { timeout: 60000, maxWait: 10000 }
               );
-
-              newImages = transactionResult.newImages;
 
               log(
                 `  Transaction complete: ${batchStats.imagesCreated} images, ${batchStats.connectionsCreated} connections`
               );
 
-              // Queue images for ingestion AFTER transaction commits
-              // This prevents race conditions where webhooks fire before the transaction commits
-              if (newImages.length > 0) {
-                log(`  Queueing ${newImages.length} images for scanning...`);
-                for (const img of newImages) {
-                  await ingestImage({
-                    image: img,
-                    lowPriority: true,
-                    userId: 4, // System user
-                  }).catch((error) => {
-                    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-                    log(`⚠️  Failed to queue image ${img.id}: ${errorMessage}`);
-                  });
-                }
-              }
+              // No need to manually queue for ingestion — the `trg_image_scan_queue` DB trigger
+              // automatically adds a JobQueue record when images are created with Pending status,
+              // and the `ingest-images` job picks them up every 5 minutes.
             } catch (error) {
               const errorMessage = error instanceof Error ? error.message : 'Unknown error';
               const errorMsg = `Batch transaction failed: ${errorMessage}`;

@@ -64,10 +64,12 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
-import { deleteArticleContentImages } from '~/server/services/article-content-cleanup.service';
+import {
+  deleteArticleContentImages,
+  getContentMedia,
+} from '~/server/services/article-content-cleanup.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
-import { extractImagesFromArticle } from '~/server/utils/article-image-helpers';
 
 type ArticleRaw = {
   id: number;
@@ -1345,7 +1347,7 @@ export async function linkArticleContentImages({
   content: string;
   userId: number;
 }): Promise<void> {
-  const contentImages = extractImagesFromArticle(content);
+  const contentImages = getContentMedia(content);
   if (contentImages.length === 0) return;
 
   await dbWrite.$transaction(async (tx) => {
