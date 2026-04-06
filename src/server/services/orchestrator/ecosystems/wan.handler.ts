@@ -16,7 +16,7 @@ import type {
   Wan25FalTextToVideoInput,
   Wan25FalImageToVideoInput,
   Wan27FalTextToImageInput,
-  Wan27FalEditInput,
+  Wan27FalImageEditInput,
   Wan27FalTextToVideoInput,
   Wan27FalImageToVideoInput,
   Wan27FalReferenceToVideoInput,
@@ -384,7 +384,7 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
                 ...v27Base,
                 operation: 'image-to-video',
                 prompt: data.prompt || undefined,
-                images: startImage ? [startImage] : undefined,
+                startImage,
                 endImage,
                 duration,
                 negativePrompt,
@@ -407,13 +407,13 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
               duration,
               negativePrompt,
               enablePromptExpansion:
-                'enablePromptExpansion' in data ? data.enablePromptExpansion : undefined,
+                'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
             }) as Wan27FalTextToVideoInput,
           },
         ];
       }
 
-      // Image generation
+      // Image generation (createImage / editImage)
       return [
         {
           $type: 'imageGen',
@@ -428,11 +428,11 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
             quantity: data.quantity ?? 1,
             aspectRatio: data.aspectRatio?.value,
             enablePromptExpansion:
-              'enablePromptExpansion' in data ? data.enablePromptExpansion : undefined,
+              'enablePromptEnhancer' in data ? data.enablePromptEnhancer : undefined,
             ...(hasImages
-              ? { operation: 'edit', images: data.images!.map((x) => x.url) }
-              : { operation: 'text-to-image' }),
-          }) as Wan27FalTextToImageInput | Wan27FalEditInput,
+              ? { operation: 'editImage', images: data.images!.map((x) => x.url) }
+              : { operation: 'createImage' }),
+          }) as Wan27FalTextToImageInput | Wan27FalImageEditInput,
         },
       ];
     }

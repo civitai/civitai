@@ -21,8 +21,8 @@ importers:
         specifier: ^0.12.0
         version: 0.12.0
       '@civitai/client':
-        specifier: 0.2.0-beta.45
-        version: 0.2.0-beta.45
+        specifier: 0.2.0-beta.47
+        version: 0.2.0-beta.47
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -1153,8 +1153,8 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@civitai/client@0.2.0-beta.45':
-    resolution: {integrity: sha512-w7uTZX3OofG/6KUcacdw1Sn/AzaiRO+fC/sWm8KefsuUwtZ4Mhz5DuSyF4bNzmljkCrVYKFd5Lw0bd1y/xoQgg==}
+  '@civitai/client@0.2.0-beta.47':
+    resolution: {integrity: sha512-gat3sJgZzz7bZ+glSAe67mQ8OWQKdZl6I3q7k5rwLREMgLYgMmwvOSLMuBBE3HnOqly5Xd0KMX4yPjoJ/TK1dw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@civitai/cybertipline-tools@0.1.0':
@@ -10728,7 +10728,7 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@civitai/client@0.2.0-beta.45':
+  '@civitai/client@0.2.0-beta.47':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0

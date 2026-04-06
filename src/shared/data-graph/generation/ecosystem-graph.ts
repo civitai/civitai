@@ -23,6 +23,7 @@ import {
   getWorkflowsForEcosystem,
   isWorkflowAvailable,
   getDefaultEcosystemForWorkflow,
+  workflowConfigByKey,
   workflowGroups,
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
@@ -155,12 +156,22 @@ export const ecosystemGraph = new DataGraph<
         return;
       }
 
-      // Workflow not supported - find a compatible non-enhancement workflow
-      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id).filter(
-        (w) => !w.enhancement
-      );
-      if (compatibleWorkflows.length > 0) {
-        set('workflow', compatibleWorkflows[0].graphKey);
+      // Workflow not supported - find a compatible workflow.
+      // Prefer workflows in the same category (image/video) as the current workflow,
+      // and exclude enhancement and noSubmit (utility) workflows.
+      const currentCategory = workflowConfigByKey.get(ctx.workflow)?.category;
+      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id).filter((w) => {
+        if (w.enhancement) return false;
+        const config = workflowConfigByKey.get(w.graphKey);
+        if (config?.noSubmit) return false;
+        return true;
+      });
+      const sameCategory = currentCategory
+        ? compatibleWorkflows.filter((w) => w.category === currentCategory)
+        : [];
+      const fallback = sameCategory[0] ?? compatibleWorkflows[0];
+      if (fallback) {
+        set('workflow', fallback.graphKey);
       } else {
         set('workflow', 'txt2img');
       }

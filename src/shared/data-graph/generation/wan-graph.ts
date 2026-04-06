@@ -584,7 +584,7 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
 
       if (isV27 && isRef2vid) {
         return {
-          ...imagesNode({ warnOnMissingAiMetadata: true, max: 10 }),
+          ...imagesNode({ warnOnMissingAiMetadata: true, max: 5 }),
           when: true,
         };
       }
