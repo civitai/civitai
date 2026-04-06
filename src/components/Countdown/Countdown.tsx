@@ -38,7 +38,7 @@ function getCountdownString(
 type Props = { endTime: Date; refreshIntervalMs?: number; format?: 'short' | 'long' };
 
 export function Countdown({ endTime, refreshIntervalMs = 1000 * 60, format = 'long' }: Props) {
-  const intervalRef = useRef<NodeJS.Timer>();
+  const intervalRef = useRef<number>();
   const currentTime = dayjs();
   const diffTime = dayjs(endTime).unix() - currentTime.unix();
   const isClient = useIsClient();
@@ -54,7 +54,7 @@ export function Countdown({ endTime, refreshIntervalMs = 1000 * 60, format = 'lo
 
   useEffect(() => {
     if (!intervalRef.current) {
-      intervalRef.current = setInterval(() => {
+      intervalRef.current = window.setInterval(() => {
         // TODO - clear interval if endTime is less than new date
         setTime((duration) => {
           const formatted = dayjs.duration(duration.asMilliseconds() - interval, 'milliseconds');
@@ -63,7 +63,7 @@ export function Countdown({ endTime, refreshIntervalMs = 1000 * 60, format = 'lo
       }, interval);
     }
     return () => {
-      clearInterval(intervalRef.current);
+      window.clearInterval(intervalRef.current);
       intervalRef.current = undefined;
     };
   }, [endTime, interval]);

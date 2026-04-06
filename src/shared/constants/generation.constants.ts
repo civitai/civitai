@@ -8,20 +8,35 @@ import {
   getGenerationConfig,
   maxUpscaleSize,
   minDownscaleSize,
+  maxRandomSeed,
 } from '~/server/common/constants';
 import type { GenerationLimits } from '~/server/schema/generation.schema';
 import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   getBaseModelEcosystem,
   getBaseModelGroup,
-  getBaseModelGroupsByMediaType,
   getBaseModelMediaType,
-} from '~/shared/constants/base-model.constants';
-import type { ModelType } from '~/shared/utils/prisma/enums';
+  getResourceGenerationSupport,
+} from '~/shared/constants/basemodel.constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { findClosest, getRatio } from '~/utils/number-helpers';
+
+// =============================================================================
+// Seed Constants
+// =============================================================================
+
+/** Maximum seed value that can be input (unsigned 32-bit integer max) */
+export const MAX_SEED = 4294967295;
+
+/** Maximum seed value for random generation (signed 32-bit integer max) */
+export { maxRandomSeed as MAX_RANDOM_SEED };
+
+// =============================================================================
+// Workflow Tags
+// =============================================================================
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -33,7 +48,61 @@ export const WORKFLOW_TAGS = {
     LIKED: 'feedback:liked',
     DISLIKED: 'feedback:disliked',
   },
+  // Process types for filtering
+  PROCESS: {
+    // Image processes
+    TXT2IMG: 'process:txt2img',
+    IMG2IMG: 'process:img2img',
+    UPSCALE: 'process:upscale',
+    BACKGROUND_REMOVAL: 'process:bg-removal',
+    // Video processes
+    TXT2VID: 'process:txt2vid',
+    IMG2VID: 'process:img2vid',
+    VID_UPSCALE: 'process:vid-upscale',
+    VID_INTERPOLATION: 'process:vid-interpolation',
+    VID_ENHANCEMENT: 'process:vid-enhancement',
+  },
 };
+
+/**
+ * Derives the process tag from workflow ID and source image presence.
+ * Used to add consistent process tags to workflows for filtering.
+ */
+export function getProcessTagFromWorkflow(
+  workflow: string,
+  hasSourceImage: boolean,
+  mediaType: 'image' | 'video' = 'image'
+): string {
+  // Check for specific workflow types first
+  if (workflow.includes('background-removal')) return WORKFLOW_TAGS.PROCESS.BACKGROUND_REMOVAL;
+  if (workflow.includes('upscale') && mediaType === 'video')
+    return WORKFLOW_TAGS.PROCESS.VID_UPSCALE;
+  if (workflow.includes('upscale')) return WORKFLOW_TAGS.PROCESS.UPSCALE;
+  if (workflow.includes('interpolation')) return WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION;
+  if (workflow.includes('enhancement') && mediaType === 'video')
+    return WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT;
+
+  // Default based on media type and source image
+  if (mediaType === 'video') {
+    return hasSourceImage ? WORKFLOW_TAGS.PROCESS.IMG2VID : WORKFLOW_TAGS.PROCESS.TXT2VID;
+  }
+  return hasSourceImage ? WORKFLOW_TAGS.PROCESS.IMG2IMG : WORKFLOW_TAGS.PROCESS.TXT2IMG;
+}
+
+/** Process type options for filter UI */
+export const PROCESS_TYPE_OPTIONS = [
+  // Image processes
+  { value: WORKFLOW_TAGS.PROCESS.TXT2IMG, label: 'Text to Image' },
+  { value: WORKFLOW_TAGS.PROCESS.IMG2IMG, label: 'Image to Image' },
+  { value: WORKFLOW_TAGS.PROCESS.UPSCALE, label: 'Upscale' },
+  { value: WORKFLOW_TAGS.PROCESS.BACKGROUND_REMOVAL, label: 'Background Removal' },
+  // Video processes
+  { value: WORKFLOW_TAGS.PROCESS.TXT2VID, label: 'Text to Video' },
+  { value: WORKFLOW_TAGS.PROCESS.IMG2VID, label: 'Image to Video' },
+  { value: WORKFLOW_TAGS.PROCESS.VID_UPSCALE, label: 'Video Upscale' },
+  { value: WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION, label: 'Interpolation' },
+  { value: WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT, label: 'Enhancement' },
+] as const;
 
 export const generationServiceCookie = {
   name: 'generation-token',
@@ -94,6 +163,20 @@ export const draftInjectableResources = [
   } as InjectableResource,
 ];
 
+const SD1DraftResource = {
+  id: 424706,
+  baseModel: 'SD 1.5',
+  strength: 1,
+  model: { id: 195519, type: ModelType.LORA },
+};
+
+const SDXLDraftResource = {
+  id: 391999,
+  baseModel: 'SDXL 1.0',
+  strength: 1,
+  model: { id: 350450, type: ModelType.LORA },
+};
+
 export const allInjectableResourceIds = [...draftInjectableResources].map((x) => x.id);
 
 export function getInjectableResources(baseModelSetType: BaseModelGroup) {
@@ -115,6 +198,17 @@ export const whatIfQueryOverrides = {
   cfgScale: generation.defaultValues.cfgScale,
   remixSimilarity: 1,
 };
+
+export const samplers = [
+  'Euler a',
+  'Euler',
+  'Heun',
+  'LMS',
+  'DDIM',
+  'DPM++ 2M Karras',
+  'DPM2',
+  'DPM2 a',
+] as const;
 
 export const samplersToSchedulers = {
   'Euler a': Scheduler.EULER_A,
@@ -231,40 +325,52 @@ export function getIsZImageTurbo(baseModel?: string) {
   return baseModelSetType === 'ZImageTurbo';
 }
 
+export function getIsZImageBase(baseModel?: string) {
+  const baseModelSetType = getBaseModelSetType(baseModel);
+  return baseModelSetType === 'ZImageBase';
+}
+
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
   resources: T[]
 ): BaseModelGroup | undefined {
   const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
   if (checkpoint) return getBaseModelGroup(checkpoint.baseModel);
-  const resourceBaseModels = resources.map((x) => getBaseModelGroup(x.baseModel));
-  // image base models
-  if (resourceBaseModels.some((baseModel) => baseModel === 'Pony')) return 'Pony';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'SDXL')) return 'SDXL';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1')) return 'Flux1';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'FluxKrea')) return 'FluxKrea';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Illustrious'))
-    return 'Illustrious';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'NoobAI')) return 'NoobAI';
-  // else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3')) return 'SD3';
-  // else if (resourceBaseModels.some((baseModel) => baseModel === 'SD3_5M')) return 'SD3_5M';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'OpenAI')) return 'OpenAI';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Imagen4')) return 'Imagen4';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux1Kontext'))
-    return 'Flux1Kontext';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Flux2')) return 'Flux2';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'HiDream')) return 'HiDream';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Qwen')) return 'Qwen';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'NanoBanana')) return 'NanoBanana';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Chroma')) return 'Chroma';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'Seedream')) return 'Seedream';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'PonyV7')) return 'PonyV7';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'ZImageTurbo'))
-    return 'ZImageTurbo';
-  else if (resourceBaseModels.some((baseModel) => baseModel === 'SD1')) return 'SD1';
-  // video base models
-  for (const baseModelSet of getBaseModelGroupsByMediaType('video')) {
-    if (resources.some((x) => getBaseModelGroup(x.baseModel) === baseModelSet)) return baseModelSet;
+
+  if (resources.length === 0) return undefined;
+
+  // Get ecosystem groups for each resource, excluding 'Other' (unresolvable)
+  const resourceGroups = resources
+    .map((x) => getBaseModelGroup(x.baseModel))
+    .filter((g): g is string => g !== undefined && g !== 'Other');
+
+  if (resourceGroups.length === 0) return undefined;
+
+  // If all resources map to the same group, use it directly
+  const uniqueGroups = [...new Set(resourceGroups)];
+  if (uniqueGroups.length === 1) return uniqueGroups[0];
+
+  // Multiple groups: score each candidate by how many resources are compatible with it.
+  // On tie, the first group encountered wins (preserves resource order intent).
+  let bestGroup = uniqueGroups[0];
+  let bestScore = 0;
+
+  for (const candidateGroup of uniqueGroups) {
+    let score = 0;
+    for (const resource of resources) {
+      const support = getResourceGenerationSupport(
+        candidateGroup,
+        resource.baseModel,
+        resource.modelType
+      );
+      if (support !== null) score++;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestGroup = candidateGroup;
+    }
   }
+
+  return bestGroup;
 }
 
 export function getBaseModelFromResourcesWithDefault<
@@ -309,14 +415,19 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
   if (isSDXL) params.clipSkip = 2;
 
   if (limits) {
-    if (params.steps) params.steps = Math.min(params.steps, limits.steps);
+    if (params.steps) params.steps = Math.min(params.steps, 50);
     if (params.quantity) params.quantity = Math.min(params.quantity, limits.quantity);
   }
   return params;
 }
 
-export function getSizeFromAspectRatio(aspectRatio: string, baseModel?: string) {
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+export function getSizeFromAspectRatio(
+  aspectRatio: string,
+  baseModel?: string,
+  modelVersionId?: number
+) {
+  const aspectRatios = getGenerationConfig(baseModel, modelVersionId).aspectRatios;
+
   return (
     aspectRatios.find((x) => getRatio(x.width, x.height) === aspectRatio) ??
     generationConfig.SD1.aspectRatios[0]
@@ -402,14 +513,24 @@ export const fluxModeOptions = [
 
 // #region [workflows]
 
+/** Standard Flux aspect ratios (1024px based) */
+export const fluxAspectRatios = [
+  { label: '2:3', width: 832, height: 1216 },
+  { label: '1:1', width: 1024, height: 1024 },
+  { label: '3:2', width: 1216, height: 832 },
+  { label: '9:16', width: 768, height: 1344 },
+  { label: '16:9', width: 1344, height: 768 },
+];
+
+/** Ultra mode aspect ratios (higher resolution) */
 export const fluxUltraAspectRatios = [
-  { label: 'Landscape - 21:9', width: 3136, height: 1344 },
-  { label: 'Landscape - 16:9', width: 2752, height: 1536 },
-  { label: 'Landscape - 4:3', width: 2368, height: 1792 },
-  { label: 'Square - 1:1', width: 2048, height: 2048 },
-  { label: 'Portrait - 3:4', width: 1792, height: 2368 },
-  { label: 'Portrait - 9:16', width: 1536, height: 2752 },
-  { label: 'Portrait - 9:21', width: 1344, height: 3136 },
+  { label: '21:9', width: 3136, height: 1344 },
+  { label: '16:9', width: 2752, height: 1536 },
+  { label: '4:3', width: 2368, height: 1792 },
+  { label: '1:1', width: 2048, height: 2048 },
+  { label: '3:4', width: 1792, height: 2368 },
+  { label: '9:16', width: 1536, height: 2752 },
+  { label: '9:21', width: 1344, height: 3136 },
 ];
 const defaultFluxUltraAspectRatioIndex = generation.defaultValues.fluxUltraAspectRatio;
 

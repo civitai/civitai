@@ -52,7 +52,7 @@ export const getPlanDetails: (
         ),
       },
 
-      features.membershipsV2
+      features.membershipsV2 && features.isGreen
         ? {
             icon: <IconBolt size={benefitIconSize} />,
             iconColor:

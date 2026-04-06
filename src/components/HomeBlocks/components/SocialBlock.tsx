@@ -76,7 +76,7 @@ function TwitchStream({ url }: { url: string }) {
 
   useEffect(() => {
     if (!ready || initialized) return;
-    const interval = setInterval(() => {
+    const interval = window.setInterval(() => {
       if (!window.Twitch) return;
       new window.Twitch.Embed(id, {
         width: '100%',
@@ -88,7 +88,7 @@ function TwitchStream({ url }: { url: string }) {
         parent: ['civitai.com'],
       });
       setInitialized(true);
-      clearInterval(interval);
+      window.clearInterval(interval);
     }, 100);
   }, [ready, id, url, initialized]);
 

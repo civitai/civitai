@@ -2,7 +2,6 @@ import { Alert, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import type { BuiltInProviderType } from 'next-auth/providers/index';
-import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
@@ -13,6 +12,7 @@ import { SignInError } from '~/components/SignInError/SignInError';
 import { providers, SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { handleSignIn } from '~/utils/auth-helpers';
 import { setCookie } from '~/utils/cookies-helpers';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
@@ -111,7 +111,7 @@ export function LoginContent(args: {
               size="md"
               provider={provider.id as BuiltInProviderType}
               onClick={() => {
-                signIn(provider.id, { callbackUrl: returnUrl });
+                handleSignIn(provider.id, returnUrl);
               }}
             />
           ))}

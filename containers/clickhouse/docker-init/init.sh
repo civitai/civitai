@@ -192,13 +192,14 @@ clickhouse client -n <<-EOSQL
 
     create table if not exists orchestration.resourceCompensations
     (
-        date           DateTime,
+        date           Date,
         modelVersionId Int32,
-        accountType    String,        
-        amount         UInt32,
+        accountType    LowCardinality(String),
+        amount         Float64
     )
-        engine = ReplacingMergeTree()
-            ORDER BY (date, modelVersionId)
+        engine = SummingMergeTree()
+            PARTITION BY toYYYYMM(date)
+            ORDER BY (date, modelVersionId, accountType)
             SETTINGS index_granularity = 8192;
 
     create table if not exists default.commentEvents
@@ -676,7 +677,8 @@ clickhouse client -n <<-EOSQL
         createdDate Date materialized toDate(time),
         source Enum8('Regex' = 1, 'External' = 2) default 'Regex',
         negativePrompt Nullable(String),
-        deviceId    String                        default ''
+        deviceId    String                        default '',
+        remixOfId   Nullable(Int32)
     )
         engine = MergeTree()
             ORDER BY (time, userId)
@@ -1436,6 +1438,28 @@ clickhouse client -n <<-EOSQL
     GROUP BY type,
             entityId,
             viewKey;
+
+    CREATE MATERIALIZED VIEW default.uniqueViewsDaily
+                (
+                type String,
+                entityId Int32,
+                date Date,
+                view_count UInt32
+                    )
+                ENGINE = SummingMergeTree()
+                    PARTITION BY toYYYYMM(date)
+                    ORDER BY (type, entityId, date)
+                    SETTINGS index_granularity = 8192
+    AS
+    SELECT type,
+        entityId,
+        toDate(time) AS date,
+        toUInt32(1) AS view_count
+    FROM default.views
+    GROUP BY type,
+            entityId,
+            toDate(time),
+            if(userId = 0, ip, toString(userId));
 
     CREATE MATERIALIZED VIEW default.user_activity_combined_pt1
                 (

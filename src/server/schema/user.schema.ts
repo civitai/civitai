@@ -80,13 +80,15 @@ export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
 export const profilePictureSchema = z.object({
   id: z.number().optional(),
   name: z.string().nullish(),
-  url: z.url().or(z.string().uuid()),
+  url: z
+    .url()
+    .or(z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)),
   hash: z.string().nullish(),
   height: z.number().nullish(),
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
-  metadata: z.object({}).passthrough().optional(),
+  metadata: z.looseObject({}).optional(),
   type: z.enum(MediaType).default(MediaType.image),
 });
 
@@ -257,6 +259,7 @@ export const userSettingsSchema = z.object({
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
+  preferredFiatCurrency: z.string().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -279,9 +282,14 @@ export const setUserSettingsInput = z.object({
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
+  preferredFiatCurrency: z.string().optional(),
 });
 
-export const dismissAlertSchema = z.object({ alertId: z.string() });
+export const dismissAlertSchema = z.object({
+  alertId: z.string(),
+  dismiss: z.boolean().default(true),
+});
+export const restoreAlertSchema = z.object({ alertId: z.string() });
 
 export type UserOnboardingSchema = z.infer<typeof userOnboardingSchema>;
 export const userOnboardingSchema = z.discriminatedUnion('step', [
@@ -335,6 +343,8 @@ export const userMeta = z.object({
     })
     .optional(),
   membershipChangedAt: z.date().optional(),
+  strikeFlaggedForReview: z.boolean().optional(),
+  strikeFlaggedAt: z.date().optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 

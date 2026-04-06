@@ -1,4 +1,3 @@
-import type { WorkflowStepEvent } from '@civitai/client';
 import { applyPatch, JsonPatchFactory } from '@civitai/client';
 import type { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
@@ -6,13 +5,9 @@ import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
 import { useMemo } from 'react';
 import type * as z from 'zod';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { GenerationReactType, GenerationSort, SignalMessages } from '~/server/common/enums';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { GenerationReactType, GenerationSort } from '~/server/common/enums';
 import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -23,63 +18,59 @@ import type {
   TagsPatchSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import type { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
-import type {
-  queryGeneratedImageWorkflows,
-  WorkflowStatusUpdate,
-  WorkflowStepFormatted,
-} from '~/server/services/orchestrator/common';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
+import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
 import type {
   IWorkflow,
   IWorkflowsInfinite,
 } from '~/server/services/orchestrator/orchestrator.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
-import { numberWithCommas } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
 import { useAppContext } from '~/providers/AppProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { BlobData } from '~/components/ImageGeneration/utils/BlobData';
+import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 
 export type InfiniteTextToImageRequests = InfiniteData<
-  AsyncReturnType<typeof queryGeneratedImageWorkflows>
+  AsyncReturnType<typeof queryGeneratedImageWorkflows2>
 >;
-export type TextToImageSteps = ReturnType<typeof useGetTextToImageRequests>['steps'];
 
-function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?: string[] }) {
-  return step.images.filter(({ id }) => {
-    const imageMeta = step.metadata?.images?.[id];
-    if (imageMeta?.hidden) return false;
-    if (tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite) return false;
-    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && imageMeta?.feedback !== 'liked')
-      return false;
-    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && imageMeta?.feedback !== 'disliked')
-      return false;
-    return true;
-  });
+/** Check whether a BlobData image passes the active marker-tag filter. */
+export function matchesMarkerTags(image: BlobData, tags?: string[]): boolean {
+  if (!tags?.length) return true;
+  const meta = image.imageMeta;
+  if (tags.includes(WORKFLOW_TAGS.FAVORITE) && !meta?.favorite) return false;
+  if (tags.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && meta?.feedback !== 'liked') return false;
+  if (tags.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && meta?.feedback !== 'disliked') return false;
+  return true;
 }
 
 export function useInvalidateWhatIf() {
   const queryUtils = trpc.useUtils();
   return function () {
-    queryUtils.orchestrator.getImageWhatIf.invalidate();
+    queryUtils.orchestrator.whatIfFromGraph.invalidate();
   };
 }
 
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
-  options?: { enabled?: boolean; includeTags?: boolean }
+  options?: { enabled?: boolean; includeTags?: boolean; ignoreFilters?: boolean }
 ) {
+  registerSignalGroup('generation');
   const { domain } = useAppContext();
   const nsfwEnabled = useBrowsingSettings((state) => state.showNsfw);
   const currentUser = useCurrentUser();
 
-  const filters = useFiltersContext((state) => state.generation);
+  const globalFilters = useFiltersContext((state) => state.generation);
+  const filters = options?.ignoreFilters
+    ? ({ sort: GenerationSort.Newest } as typeof globalFilters)
+    : globalFilters;
 
-  const tags = useMemo(() => {
+  // Convert marker filter to tags
+  const markerTags = useMemo(() => {
     switch (filters.marker) {
       case GenerationReactType.Favorited:
         return [WORKFLOW_TAGS.FAVORITE];
@@ -92,15 +83,35 @@ export function useGetTextToImageRequests(
     }
   }, [filters.marker]);
 
+  // Build complete query tags including new filters
+  const queryTags = useMemo(() => {
+    const baseTags = [
+      WORKFLOW_TAGS.GENERATION,
+      ...(options?.includeTags === false ? [] : [...markerTags, ...(filters.tags ?? [])]),
+      ...(input?.tags ?? []),
+    ];
+
+    if (filters.baseModel) baseTags.push(filters.baseModel);
+    if (filters.processType) baseTags.push(filters.processType);
+
+    return baseTags;
+  }, [
+    markerTags,
+    filters.tags,
+    filters.baseModel,
+    filters.processType,
+    options?.includeTags,
+    input?.tags,
+  ]);
+
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
     {
       ...input,
       ascending: filters.sort === GenerationSort.Oldest,
-      tags: [
-        WORKFLOW_TAGS.GENERATION,
-        ...(options?.includeTags === false ? [] : [...tags, ...(filters.tags ?? [])]),
-        ...(input?.tags ?? []),
-      ],
+      tags: queryTags,
+      fromDate: filters.fromDate,
+      toDate: filters.toDate,
+      excludeFailed: filters.excludeFailed,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
@@ -113,39 +124,22 @@ export function useGetTextToImageRequests(
       data?.pages.flatMap((x) =>
         (x.items ?? [])
           .filter((workflow) => {
-            if (!!tags.length && workflow.tags.every((tag) => !tags.includes(tag))) return false;
+            if (!!markerTags.length && workflow.tags.every((tag) => !markerTags.includes(tag)))
+              return false;
             return true;
           })
-          .map((workflow) => {
-            const steps = workflow.steps.map((step) => {
-              const images = imageFilter({ step, tags }).map(
-                (image) =>
-                  new BlobData({
-                    data: image,
-                    step: step,
-                    allowMatureContent: workflow.allowMatureContent,
-                    domain,
-                    nsfwEnabled,
-                  })
-              );
-              return { ...step, images };
-            });
-            return { ...workflow, steps };
-          })
+          .map((workflow) => new WorkflowData(workflow, { domain, nsfwEnabled }))
       ) ?? [],
-    [data, nsfwEnabled, domain, tags]
+    [data, nsfwEnabled, domain, markerTags]
   );
 
-  const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
-  const images = useMemo(() => steps.flatMap((step) => imageFilter({ step, tags })), [steps]);
-
-  return { data: flatData, steps, images, ...rest };
+  return { data: flatData, markerTags, ...rest };
 }
 
 export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQuerySchema>) {
-  const { data, steps, ...rest } = useGetTextToImageRequests(input);
+  const { data, markerTags, ...rest } = useGetTextToImageRequests(input);
 
-  return { requests: data, steps, ...rest };
+  return { requests: data, markerTags, ...rest };
 }
 
 function updateTextToImageRequests({
@@ -171,43 +165,12 @@ function updateTextToImageRequests({
       },
     },
     (state) => {
-      // console.log(state);
       return produce(state, (old?: InfiniteTextToImageRequests) => {
         if (!old) return;
         cb(old);
       });
     }
   );
-}
-
-export function useSubmitCreateImage() {
-  return trpc.orchestrator.generateImage.useMutation({
-    onSuccess: (data, input) => {
-      updateTextToImageRequests({
-        input: { ascending: false },
-        cb: (old) => {
-          old.pages[0].items.unshift(data);
-        },
-      });
-      updateTextToImageRequests({
-        input: { ascending: true },
-        cb: (old) => {
-          const index = old.pages.length - 1;
-          if (!old.pages[index].nextCursor) {
-            old.pages[index].items.push(data);
-          }
-        },
-      });
-      // updateFromEvents();
-    },
-    // onError: (error) => {
-    //   showErrorNotification({
-    //     title: 'Failed to generate',
-    //     error: new Error(error.message),
-    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-    //   });
-    // },
-  });
 }
 
 export function useUpdateWorkflow() {
@@ -218,7 +181,7 @@ export function useUpdateWorkflow() {
           for (const page of data.pages) {
             const index = page.items.findIndex((x) => x.id === workflowId);
             if (index > -1) {
-              page.items[index] = response;
+              page.items[index] = response as any;
               break;
             }
           }
@@ -228,8 +191,8 @@ export function useUpdateWorkflow() {
   });
 }
 
-export function useGenerate(args?: { onError?: (e: any) => void }) {
-  return trpc.orchestrator.generate.useMutation({
+export function useGenerateFromGraph(args?: { onError?: (e: any) => void }) {
+  return trpc.orchestrator.generateFromGraph.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests({
         input: { ascending: false },
@@ -246,39 +209,9 @@ export function useGenerate(args?: { onError?: (e: any) => void }) {
           }
         },
       });
-      // updateFromEvents();
     },
     ...args,
   });
-}
-
-export function useGenerateWithCost(cost = 0) {
-  const { conditionalPerformTransaction } = useBuzzTransaction({
-    message: (requiredBalance) =>
-      `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
-        requiredBalance
-      )}. Buy or earn more Buzz to perform this action.`,
-    performTransactionOnPurchase: true,
-    accountTypes: buzzSpendTypes,
-  });
-
-  const generate = useGenerate();
-
-  return useMemo(() => {
-    async function mutateAsync(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, async () => {
-        return await generate.mutateAsync(...args);
-      });
-    }
-
-    function mutate(...args: Parameters<typeof generate.mutate>) {
-      conditionalPerformTransaction(cost, () => {
-        generate.mutate(...args);
-      });
-    }
-
-    return { ...generate, mutateAsync, mutate };
-  }, [cost, generate]);
 }
 
 export function useDeleteTextToImageRequest() {
@@ -321,7 +254,16 @@ export type UpdateImageStepMetadataArgs = {
 
 export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void }) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation();
+  const { mutate, isLoading } = trpc.orchestrator.patch.useMutation({
+    onError: async (error) => {
+      // Rollback optimistic update by refetching from server
+      await queryClient.invalidateQueries({ queryKey, exact: false });
+      showErrorNotification({
+        title: 'Failed to update image',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   function updateImages(args: Array<UpdateImageStepMetadataArgs>, onError?: () => void) {
     const allQueriesData = queryClient.getQueriesData<IWorkflowsInfinite>({
@@ -436,6 +378,35 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
       }
     }
 
+    // Optimistically update the cache before mutation to ensure UI updates
+    // even if the component unmounts (e.g., menu closing)
+    updateTextToImageRequests({
+      cb: (old) => {
+        for (const page of old.pages) {
+          page.items = page.items.filter((x) => !toDelete.includes(x.id));
+          for (const workflow of page.items) {
+            const tagsToAdd = tags.filter((x) => x.workflowId === workflow.id && x.op === 'add');
+            const tagsToRemove = tags.filter(
+              (x) => x.workflowId === workflow.id && x.op === 'remove'
+            );
+            for (const tagOp of tagsToAdd) workflow.tags.push(tagOp.tag);
+            if (tagsToRemove.length) {
+              const tagsToRemoveSet = new Set(tagsToRemove.map((x) => x.tag));
+              workflow.tags = workflow.tags.filter((tag) => !tagsToRemoveSet.has(tag));
+            }
+
+            const toUpdate = updated.filter((x) => x.workflowId === workflow.id);
+            if (!toUpdate.length) continue;
+
+            for (const step of workflow.steps) {
+              const images = toUpdate.find((x) => x.stepName === step.name)?.images;
+              if (images) step.metadata = { ...step.metadata, images };
+            }
+          }
+        }
+      },
+    });
+
     mutate(
       {
         workflows: workflowPatches.length ? workflowPatches : undefined,
@@ -445,42 +416,17 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
       },
       {
         onSuccess: () => {
-          updateQueries<IWorkflowsInfinite>(queryKey, (old) => {
-            for (const page of old.pages) {
-              // remove deleted items
-              page.items = page.items.filter((x) => !toDelete.includes(x.id));
-              for (const workflow of page.items) {
-                // add/remove workflow tags
-                const addTagsMatch = tags.find(
-                  (x) => x.workflowId === workflow.id && x.op === 'add'
-                );
-                const removeTagsMatch = tags.find(
-                  (x) => x.workflowId === workflow.id && x.op === 'remove'
-                );
-                if (addTagsMatch) workflow.tags.push(addTagsMatch.tag);
-                if (removeTagsMatch)
-                  workflow.tags = workflow.tags.filter((tag) => tag !== removeTagsMatch.tag);
-
-                const toUpdate = updated.filter((x) => x.workflowId === workflow.id);
-                if (!toUpdate.length) continue;
-                for (const step of workflow.steps) {
-                  const images = toUpdate.find((x) => x.stepName === step.name)?.images;
-                  if (images) step.metadata = { ...step.metadata, images };
-                }
-              }
-            }
-          });
-
           const tagNames = [...new Set(tags.filter((x) => x.op === 'add').map((x) => x.tag))];
-          // ['favorite' 'feedback:liked', 'feedback:'disliked']
           for (const tag of tagNames) {
             const key = getQueryKey(trpc.orchestrator.queryGeneratedImages, { tags: [tag] });
-            queryClient.invalidateQueries(key, { exact: false });
+            queryClient.invalidateQueries({ queryKey: key, exact: false });
           }
 
           options?.onSuccess?.();
         },
-        onError,
+        onError: () => {
+          onError?.();
+        },
       }
     );
   }
@@ -495,62 +441,4 @@ export function usePatchTags() {
   }
 
   return { patchTags, isLoading };
-}
-
-type CustomWorkflowStepEvent = Omit<WorkflowStepEvent, '$type'> & { $type: 'step' };
-const debouncer = createDebouncer(100);
-let signalStepEventsDictionary: Record<string, CustomWorkflowStepEvent> = {};
-export function useTextToImageSignalUpdate() {
-  return useSignalConnection(SignalMessages.TextToImageUpdate, (data: CustomWorkflowStepEvent) => {
-    if (data.$type === 'step') signalStepEventsDictionary[data.workflowId] = { ...data };
-    debouncer(() => updateSignaledWorkflows());
-  });
-}
-
-async function fetchSignaledWorkflow(
-  workflowId: string
-): Promise<WorkflowStatusUpdate | undefined> {
-  const response = await fetch(`/api/generation/workflows/${workflowId}/status-update`);
-  if (response.ok) return await response.json();
-  else {
-    // TODO - handle errors
-  }
-}
-
-async function updateSignaledWorkflows() {
-  const signalData = { ...signalStepEventsDictionary };
-  signalStepEventsDictionary = {};
-
-  const workflowIds = Object.keys(signalData);
-  if (!workflowIds.length) return;
-
-  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  const workflows = await Promise.all(workflowIds.map(fetchSignaledWorkflow)).then((data) =>
-    data.filter(isDefined)
-  );
-  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
-    produce(state, (old?: InfiniteTextToImageRequests) => {
-      if (!old) return;
-      outerLoop: for (const page of old.pages) {
-        for (const item of page.items) {
-          if (!workflows.length) break outerLoop;
-          const index = workflows.findIndex((x) => x.id === item.id);
-          if (index > -1) {
-            const match = workflows.splice(index, 1)[0];
-            if (match) {
-              item.status = match.status;
-              for (const step of item.steps) {
-                const stepMatch = match.steps?.find((x) => x.name === step.name);
-                if (stepMatch) {
-                  step.images = stepMatch.images;
-                  step.status = stepMatch.status;
-                  step.completedAt = stepMatch.completedAt;
-                }
-              }
-            }
-          }
-        }
-      }
-    })
-  );
 }

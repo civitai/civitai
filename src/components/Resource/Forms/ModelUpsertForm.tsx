@@ -165,7 +165,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
-  const allowCommercialUse = form.watch('allowCommercialUse');
+  const allowCommercialUse = form.watch('allowCommercialUse') as CommercialUse[] | undefined;
   const availability = form.watch('availability');
   const isPrivate = availability === Availability.Private;
   const hasPoiInNsfw = nsfw && poi === 'true';
@@ -262,19 +262,6 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
       subscription.unsubscribe();
     };
   }, []); // eslint-disable-line
-
-  useEffect(() => {
-    if (model)
-      form.reset({
-        ...model,
-        tagsOnModels: model.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
-        category: model.tagsOnModels?.find((tag) => tag.isCategory)?.id ?? defaultCategory,
-        description: model.description ?? '',
-        poi: model?.poi == null ? '' : model?.poi === true ? 'true' : 'false',
-        attestation: !!model?.id,
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [defaultCategory, model]);
 
   const modelUser = model?.user?.username ?? currentUser?.username;
 

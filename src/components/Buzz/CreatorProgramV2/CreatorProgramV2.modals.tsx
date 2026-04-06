@@ -12,6 +12,7 @@ import {
   MIN_CAP,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
+import { getCapForDefinition, getNextCapDefinition } from '~/shared/utils/creator-program.utils';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -271,17 +272,14 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
     );
   }
 
-  const nextCap = CAP_DEFINITIONS.find(
-    (c) =>
-      banked?.cap &&
-      (!c.limit ||
-        (banked.cap?.cap ?? 0) < banked.cap.peakEarning.earned * (c.percentOfPeakEarning ?? 1)) &&
-      c.tier !== banked.cap.definition.tier &&
-      !c.hidden
-  );
+  const peakEarned = banked?.cap?.peakEarning?.earned ?? 0;
+  const currentCap = banked?.cap?.cap ?? 0;
 
-  const potentialEarnings =
-    nextCap && (banked?.cap?.peakEarning?.earned ?? 0) * (nextCap.percentOfPeakEarning ?? 1);
+  const nextCap = banked?.cap
+    ? getNextCapDefinition(banked.cap.definition.tier, currentCap, peakEarned)
+    : undefined;
+
+  const potentialEarnings = nextCap && getCapForDefinition(nextCap, peakEarned);
 
   return (
     <div className="flex flex-col gap-4">

@@ -1,0 +1,1595 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ralph Daemon</title>
+  <style>
+    :root {
+      --bg-dark: #1a1a1a;
+      --bg-card: #252525;
+      --bg-input: #2a2a2a;
+      --text-primary: #e8e8e8;
+      --text-secondary: #999;
+      --accent: #00d9ff;
+      --success: #00ff88;
+      --warning: #ffaa00;
+      --danger: #ff4444;
+      --border: #3a3a3a;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.5;
+    }
+
+    .header {
+      background: var(--bg-card);
+      padding: 15px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header h1 {
+      color: var(--accent);
+      font-size: 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .header h1 span {
+      font-size: 0.75rem;
+      background: var(--accent);
+      color: var(--bg-dark);
+      padding: 2px 8px;
+      border-radius: 4px;
+    }
+
+    .header-stats {
+      display: flex;
+      gap: 20px;
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+    }
+
+    .header-stats strong { color: var(--text-primary); }
+
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+
+    .new-session-form {
+      background: var(--bg-card);
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 20px;
+      display: flex;
+      gap: 15px;
+      flex-wrap: wrap;
+      align-items: flex-end;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .form-group label {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+    }
+
+    .form-group input, .form-group select {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 0.95rem;
+    }
+
+    .form-group input:focus, .form-group select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .form-group.prd-path { flex: 1; min-width: 300px; }
+
+    .btn {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+
+    .btn:hover { opacity: 0.85; }
+    .btn:active { transform: scale(0.98); }
+
+    .btn-primary { background: var(--accent); color: var(--bg-dark); }
+    .btn-success { background: var(--success); color: var(--bg-dark); }
+    .btn-warning { background: var(--warning); color: var(--bg-dark); }
+    .btn-danger { background: var(--danger); color: white; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text-primary); }
+    .btn-sm { padding: 6px 12px; font-size: 0.85rem; }
+
+    .status-filters {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 15px;
+      padding: 10px 15px;
+      background: var(--bg-card);
+      border-radius: 8px;
+    }
+
+    .filter-label {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .filter-chips {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .status-chip {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      opacity: 0.4;
+      transition: opacity 0.15s;
+      font-weight: 500;
+      border: 1px solid transparent;
+    }
+
+    .status-chip.active {
+      opacity: 1;
+    }
+
+    .status-chip.CREATED { background: var(--accent); color: var(--bg-dark); }
+    .status-chip.RUNNING { background: var(--success); color: var(--bg-dark); }
+    .status-chip.PAUSED { background: var(--warning); color: var(--bg-dark); }
+    .status-chip.WAITING_APPROVAL { background: var(--danger); color: white; }
+    .status-chip.COMPLETED { background: var(--text-secondary); color: var(--bg-dark); }
+    .status-chip.ABORTED { background: #666; color: white; }
+
+    .sessions-grid {
+      display: grid;
+      gap: 20px;
+    }
+
+    .session-card {
+      background: var(--bg-card);
+      border-radius: 12px;
+      overflow: hidden;
+      border-left: 4px solid var(--accent);
+    }
+
+    .session-card.RUNNING { border-left-color: var(--success); }
+    .session-card.PAUSED { border-left-color: var(--warning); }
+    .session-card.COMPLETED { border-left-color: var(--text-secondary); }
+    .session-card.ABORTED { border-left-color: var(--danger); }
+    .session-card.WAITING_APPROVAL { border-left-color: var(--danger); animation: pulse 2s infinite; }
+
+    .session-card.is-child {
+      margin-left: 40px;
+      border-left-width: 3px;
+      opacity: 0.95;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    .session-header {
+      padding: 15px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .session-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .session-name {
+      font-weight: 600;
+      font-size: 1.1rem;
+    }
+
+    .copy-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      font-size: 0.8rem;
+      opacity: 0.5;
+      transition: opacity 0.15s;
+      padding: 2px 4px;
+    }
+
+    .copy-btn:hover {
+      opacity: 1;
+    }
+
+    .copy-btn.copied {
+      opacity: 1;
+    }
+
+    .session-id {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      font-family: monospace;
+    }
+
+    .session-badges {
+      display: flex;
+      gap: 6px;
+      margin-left: 8px;
+    }
+
+    .badge {
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      font-weight: 500;
+    }
+
+    .badge-parent {
+      background: rgba(0, 217, 255, 0.2);
+      color: var(--accent);
+    }
+
+    .badge-child {
+      background: rgba(255, 170, 0, 0.2);
+      color: var(--warning);
+      cursor: pointer;
+    }
+
+    .badge-child:hover {
+      background: rgba(255, 170, 0, 0.3);
+    }
+
+    .badge-child .parent-ref {
+      opacity: 0.8;
+      margin-left: 4px;
+    }
+
+    .children-section {
+      background: var(--bg-dark);
+      border-radius: 6px;
+      margin-top: 15px;
+      border: 1px solid var(--border);
+    }
+
+    .children-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 15px;
+      background: var(--bg-input);
+      border-radius: 6px 6px 0 0;
+      cursor: pointer;
+    }
+
+    .children-header:hover {
+      background: rgba(0, 217, 255, 0.1);
+    }
+
+    .children-list {
+      padding: 10px;
+    }
+
+    .child-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 4px;
+      margin-bottom: 4px;
+      background: var(--bg-input);
+    }
+
+    .child-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .child-status {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .child-status.RUNNING { background: var(--success); }
+    .child-status.PAUSED { background: var(--warning); }
+    .child-status.COMPLETED { background: var(--text-secondary); }
+    .child-status.ABORTED { background: var(--danger); }
+    .child-status.CREATED { background: var(--accent); }
+
+    .child-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .child-name {
+      font-size: 0.85rem;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .child-progress {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    .status-badge {
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .status-badge.CREATED { background: rgba(0, 217, 255, 0.2); color: var(--accent); }
+    .status-badge.RUNNING { background: rgba(0, 255, 136, 0.2); color: var(--success); }
+    .status-badge.PAUSED { background: rgba(255, 170, 0, 0.2); color: var(--warning); }
+    .status-badge.COMPLETED { background: rgba(136, 136, 136, 0.2); color: var(--text-secondary); }
+    .status-badge.ABORTED { background: rgba(255, 68, 68, 0.2); color: var(--danger); }
+    .status-badge.WAITING_APPROVAL { background: rgba(255, 68, 68, 0.4); color: var(--danger); }
+
+    .session-body {
+      padding: 15px 20px;
+    }
+
+    .iteration-banner {
+      background: linear-gradient(135deg, rgba(0, 217, 255, 0.15), rgba(0, 255, 136, 0.1));
+      border: 1px solid rgba(0, 217, 255, 0.3);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 15px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .iteration-label {
+      color: var(--text-secondary);
+      font-size: 0.85rem;
+    }
+
+    .iteration-story {
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 1rem;
+      flex: 1;
+    }
+
+    .iteration-progress {
+      background: rgba(0, 217, 255, 0.2);
+      color: var(--accent);
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .session-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stat-label {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      margin-bottom: 2px;
+    }
+
+    .stat-value {
+      font-weight: 600;
+      font-size: 1rem;
+    }
+
+    .stat-value.danger { color: var(--danger); }
+    .stat-value.warning { color: var(--warning); }
+
+    .progress-bar {
+      height: 6px;
+      background: var(--bg-input);
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 10px 0;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--success);
+      transition: width 0.3s;
+    }
+
+    .session-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 15px;
+    }
+
+    .inject-form {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
+    .inject-form input {
+      flex: 1;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      color: var(--text-primary);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 0.9rem;
+    }
+
+    .inject-form input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .logs-container {
+      background: var(--bg-dark);
+      border-radius: 6px;
+      max-height: 300px;
+      overflow-y: auto;
+      font-family: 'SF Mono', 'Monaco', 'Inconsolata', monospace;
+      font-size: 0.8rem;
+    }
+
+    .logs-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--bg-input);
+      border-radius: 6px 6px 0 0;
+      position: sticky;
+      top: 0;
+    }
+
+    .logs-header > span {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+    }
+
+    .log-filters {
+      display: flex;
+      gap: 4px;
+      flex: 1;
+      margin: 0 10px;
+      flex-wrap: wrap;
+    }
+
+    .log-filter {
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 0.65rem;
+      cursor: pointer;
+      opacity: 0.4;
+      transition: opacity 0.15s;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+
+    .log-filter.active {
+      opacity: 1;
+    }
+
+    .log-filter.text { background: var(--success); color: var(--bg-dark); }
+    .log-filter.tool { background: var(--accent); color: var(--bg-dark); }
+    .log-filter.story { background: var(--success); color: var(--bg-dark); }
+    .log-filter.info { background: var(--text-secondary); color: var(--bg-dark); }
+    .log-filter.warn { background: var(--warning); color: var(--bg-dark); }
+    .log-filter.error { background: var(--danger); color: white; }
+    .log-filter.inject { background: #ff79c6; color: var(--bg-dark); }
+
+    .logs-body {
+      padding: 10px;
+    }
+
+    .log-entry {
+      padding: 2px 0;
+      display: flex;
+      gap: 8px;
+    }
+
+    .log-entry .time {
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .log-entry.error { color: var(--danger); }
+    .log-entry.warn { color: var(--warning); }
+    .log-entry.tool { color: var(--accent); font-weight: 500; flex-wrap: wrap; }
+    .log-entry.result { color: var(--text-secondary); padding-left: 20px; font-size: 0.75rem; }
+    .log-entry.text { color: var(--success); font-style: italic; }
+    .log-entry.inject { color: #ff79c6; font-weight: 500; } /* Pink for injections */
+    .log-entry.story { color: var(--success); font-weight: 600; background: rgba(0, 255, 136, 0.1); padding: 4px 8px; border-radius: 4px; margin: 4px 0; }
+    .log-entry.info { color: var(--text-primary); }
+    .log-entry.debug { color: var(--text-secondary); opacity: 0.7; }
+
+    /* Tool call formatting */
+    .tool-name {
+      background: var(--accent);
+      color: var(--bg-primary);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+    .tool-inputs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      align-items: center;
+    }
+    .tool-desc {
+      color: var(--text-primary);
+      font-weight: 400;
+      font-style: italic;
+    }
+    .tool-badge {
+      background: rgba(100, 100, 100, 0.3);
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 0.75rem;
+      font-weight: 400;
+      color: var(--text-secondary);
+    }
+    .tool-key {
+      color: var(--accent);
+      margin-right: 4px;
+    }
+    .tool-key::after {
+      content: ':';
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--text-secondary);
+    }
+
+    .empty-state h3 {
+      margin-bottom: 10px;
+      color: var(--text-primary);
+    }
+
+    .blocking-alert {
+      background: rgba(255, 68, 68, 0.1);
+      border: 1px solid var(--danger);
+      border-radius: 6px;
+      padding: 10px 15px;
+      margin-bottom: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .blocking-alert .message {
+      color: var(--danger);
+      font-weight: 500;
+    }
+
+    .blocking-alert .actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .prd-viewer {
+      background: var(--bg-dark);
+      border-radius: 6px;
+      margin-bottom: 15px;
+      border: 1px solid var(--border);
+    }
+
+    .prd-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 15px;
+      background: var(--bg-input);
+      border-radius: 6px 6px 0 0;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+    }
+
+    .prd-stories {
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    .prd-story {
+      padding: 12px 15px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }
+
+    .prd-story:last-child {
+      border-bottom: none;
+    }
+
+    .prd-story-status {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      font-size: 12px;
+    }
+
+    .prd-story-status.passed {
+      background: var(--success);
+      color: var(--bg-dark);
+    }
+
+    .prd-story-status.pending {
+      background: var(--bg-input);
+      border: 2px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    .prd-story-status.current {
+      background: var(--accent);
+      color: var(--bg-dark);
+      animation: pulse 1.5s infinite;
+    }
+
+    .prd-story-content {
+      flex: 1;
+    }
+
+    .prd-story-id {
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: var(--accent);
+      margin-right: 8px;
+    }
+
+    .prd-story-title {
+      font-weight: 500;
+      font-size: 0.95rem;
+    }
+
+    .prd-story-desc {
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .prd-story-criteria {
+      margin-top: 8px;
+      padding-left: 15px;
+    }
+
+    .prd-story-criteria li {
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      margin: 2px 0;
+    }
+
+    @media (max-width: 768px) {
+      .new-session-form {
+        flex-direction: column;
+      }
+      .form-group.prd-path {
+        width: 100%;
+      }
+      .session-stats {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <h1>
+      Ralph Daemon
+      <span>v1.0</span>
+    </h1>
+    <div class="header-stats">
+      <div>Active: <strong id="active-count">0</strong></div>
+      <div>Running: <strong id="running-count">0</strong></div>
+      <div>Completed: <strong id="completed-count">0</strong></div>
+    </div>
+  </header>
+
+  <div class="container">
+    <div class="new-session-form">
+      <div class="form-group prd-path">
+        <label>PRD Path</label>
+        <input type="text" id="prd-input" placeholder=".claude/skills/ralph/projects/my-project/prd.json">
+      </div>
+      <div class="form-group">
+        <label>Model</label>
+        <select id="model-select">
+          <option value="sonnet">Sonnet</option>
+          <option value="opus">Opus</option>
+          <option value="haiku">Haiku</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Max Turns</label>
+        <input type="number" id="max-turns-input" value="100" min="10" max="500" style="width: 80px;">
+      </div>
+      <button class="btn btn-primary" onclick="createSession()">Create Session</button>
+    </div>
+
+    <div class="status-filters">
+      <span class="filter-label">Show:</span>
+      <div class="filter-chips" id="status-filter-chips"></div>
+    </div>
+
+    <div id="sessions-container" class="sessions-grid">
+      <div class="empty-state">
+        <h3>No Sessions</h3>
+        <p>Create a session to get started with Ralph.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin + '/api';
+    let sessions = [];
+    let wsConnections = new Map();
+    let sessionLogs = new Map();
+    let openPrdViewers = new Set();  // Track which PRD viewers are open
+    let openChildrenLists = new Set();  // Track which children lists are expanded
+    let logFilters = new Map();  // Track log level filters per session (Map<sessionId, Set<level>>)
+    const defaultLogLevels = ['text', 'tool', 'story', 'info', 'warn', 'error', 'inject'];
+
+    // Session status filtering
+    const allStatuses = ['CREATED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL', 'COMPLETED', 'ABORTED'];
+    let activeStatusFilters = new Set(['CREATED', 'RUNNING', 'PAUSED', 'WAITING_APPROVAL']);  // Default to active sessions
+
+    // API Functions
+    async function fetchSessions() {
+      try {
+        const res = await fetch(`${API_BASE}/sessions`);
+        const data = await res.json();
+        sessions = data.sessions || [];
+        updateStats();
+        renderSessions();
+      } catch (err) {
+        console.error('Failed to fetch sessions:', err);
+      }
+    }
+
+    async function createSession() {
+      const prd = document.getElementById('prd-input').value.trim();
+      if (!prd) {
+        alert('Please enter a PRD path');
+        return;
+      }
+
+      const model = document.getElementById('model-select').value;
+      const maxTurns = parseInt(document.getElementById('max-turns-input').value) || 100;
+
+      try {
+        const res = await fetch(`${API_BASE}/sessions`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prd, model, maxTurns, autoStart: false })
+        });
+        const data = await res.json();
+        if (data.error) {
+          alert('Error: ' + data.error);
+          return;
+        }
+        document.getElementById('prd-input').value = '';
+        fetchSessions();
+      } catch (err) {
+        alert('Failed to create session: ' + err.message);
+      }
+    }
+
+    async function startSession(id) {
+      await fetch(`${API_BASE}/sessions/${id}/start`, { method: 'POST' });
+      fetchSessions();
+    }
+
+    async function pauseSession(id) {
+      await fetch(`${API_BASE}/sessions/${id}/pause`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'web-ui' })
+      });
+      fetchSessions();
+    }
+
+    async function resumeSession(id, guidance = null) {
+      const body = { source: 'web-ui', force: true };
+      if (guidance) body.guidance = guidance;
+
+      await fetch(`${API_BASE}/sessions/${id}/resume`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      fetchSessions();
+    }
+
+    async function abortSession(id) {
+      if (!confirm('Are you sure you want to abort this session?')) return;
+      await fetch(`${API_BASE}/sessions/${id}/abort`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'web-ui' })
+      });
+      fetchSessions();
+    }
+
+    async function destroySession(id) {
+      if (!confirm('Delete this session permanently?')) return;
+      closeWebSocket(id);  // Clean up WebSocket
+      sessionLogs.delete(id);  // Clean up logs
+      openPrdViewers.delete(id);  // Clean up PRD viewer state
+      await fetch(`${API_BASE}/sessions/${id}`, { method: 'DELETE' });
+      fetchSessions();
+    }
+
+    async function injectGuidance(id) {
+      const input = document.getElementById(`inject-${id}`);
+      const content = input.value.trim();
+      if (!content) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/sessions/${id}/inject`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content, source: 'web-ui', type: 'HINT' })
+        });
+        const data = await res.json();
+        if (data.error) {
+          console.error('Inject failed:', data.error);
+          alert('Failed to inject guidance: ' + data.error);
+          return;
+        }
+        input.value = '';
+      } catch (err) {
+        console.error('Inject error:', err);
+        alert('Failed to inject guidance: ' + err.message);
+      }
+    }
+
+    async function approveOperation(id) {
+      await fetch(`${API_BASE}/sessions/${id}/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'web-ui' })
+      });
+      fetchSessions();
+    }
+
+    async function rejectOperation(id) {
+      const reason = prompt('Reason for rejection (optional):');
+      await fetch(`${API_BASE}/sessions/${id}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'web-ui', reason })
+      });
+      fetchSessions();
+    }
+
+    async function skipStory(id) {
+      if (!confirm('Skip the current story?')) return;
+      await fetch(`${API_BASE}/sessions/${id}/skip`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'web-ui' })
+      });
+    }
+
+    // WebSocket Management
+    async function connectWebSocket(session) {
+      if (wsConnections.has(session.id)) return;
+
+      // Fetch historical logs first
+      try {
+        const res = await fetch(`${API_BASE}/sessions/${session.id}/logs?limit=50`);
+        const data = await res.json();
+        if (data.logs && data.logs.length > 0) {
+          sessionLogs.set(session.id, data.logs.map(log => ({
+            level: log.level,
+            message: log.message,
+            time: new Date(log.createdAt).toLocaleTimeString()
+          })));
+          renderLogs(session.id);
+        }
+      } catch (err) {
+        console.log('Could not fetch historical logs:', err);
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/sessions/${session.id}/stream`);
+      let retryCount = 0;
+
+      ws.onopen = () => {
+        console.log(`WebSocket connected for ${session.id}`);
+        retryCount = 0;  // Reset on successful connection
+      };
+
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        handleWebSocketMessage(session.id, data);
+      };
+
+      ws.onclose = (event) => {
+        wsConnections.delete(session.id);
+        // Reconnect if session is still active (not a clean close)
+        const currentSession = sessions.find(s => s.id === session.id);
+        if (currentSession && ['CREATED', 'RUNNING', 'PAUSED', 'WAITING', 'WAITING_APPROVAL'].includes(currentSession.status)) {
+          retryCount++;
+          const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);  // Max 30s
+          console.log(`WebSocket closed for ${session.id}, reconnecting in ${delay}ms...`);
+          setTimeout(() => connectWebSocket(session), delay);
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error(`WebSocket error for ${session.id}:`, err);
+      };
+
+      wsConnections.set(session.id, ws);
+    }
+
+    function closeWebSocket(sessionId) {
+      const ws = wsConnections.get(sessionId);
+      if (ws) {
+        ws.close();
+        wsConnections.delete(sessionId);
+      }
+    }
+
+    function handleWebSocketMessage(sessionId, data) {
+      // Store log
+      if (!sessionLogs.has(sessionId)) {
+        sessionLogs.set(sessionId, []);
+      }
+      const logs = sessionLogs.get(sessionId);
+
+      if (data.event === 'log') {
+        logs.push({
+          time: new Date().toLocaleTimeString(),
+          level: data.level,
+          message: data.message
+        });
+        // Keep last 500 logs
+        if (logs.length > 500) logs.shift();
+      } else if (data.event === 'toolUse') {
+        logs.push({
+          time: new Date().toLocaleTimeString(),
+          level: 'tool',
+          tool: data.tool,
+          input: data.input || {}
+        });
+      } else if (data.event === 'turnUpdate') {
+        // Update turn counter in real-time without full re-render
+        updateTurnCounter(sessionId, data.storyTurnCount, data.maxTurns, data.turnCount);
+        return;  // Don't render logs for turn updates
+      }
+
+      // Update logs display
+      renderLogs(sessionId);
+
+      // Refresh sessions on status changes
+      if (['completed', 'aborted', 'paused', 'resumed', 'storyCompleted'].includes(data.event)) {
+        // Clean up WebSocket for completed/aborted sessions
+        if (['completed', 'aborted'].includes(data.event)) {
+          closeWebSocket(sessionId);
+        }
+        fetchSessions();
+      }
+    }
+
+    // Rendering
+    function updateStats() {
+      const active = sessions.filter(s => ['CREATED', 'RUNNING', 'PAUSED', 'WAITING', 'WAITING_APPROVAL'].includes(s.status)).length;
+      const running = sessions.filter(s => s.status === 'RUNNING').length;
+      const completed = sessions.filter(s => s.status === 'COMPLETED').length;
+
+      document.getElementById('active-count').textContent = active;
+      document.getElementById('running-count').textContent = running;
+      document.getElementById('completed-count').textContent = completed;
+    }
+
+    function renderStatusFilters() {
+      const container = document.getElementById('status-filter-chips');
+      if (!container) return;
+
+      container.innerHTML = allStatuses.map(status => `
+        <span class="status-chip ${status} ${activeStatusFilters.has(status) ? 'active' : ''}"
+              onclick="toggleStatusFilter('${status}')">${status.replace('_', ' ')}</span>
+      `).join('');
+    }
+
+    function toggleStatusFilter(status) {
+      if (activeStatusFilters.has(status)) {
+        activeStatusFilters.delete(status);
+      } else {
+        activeStatusFilters.add(status);
+      }
+      renderStatusFilters();
+      renderSessions();
+    }
+
+    function getFilteredSessions() {
+      return sessions.filter(s => activeStatusFilters.has(s.status));
+    }
+
+    function renderSessions() {
+      const container = document.getElementById('sessions-container');
+      renderStatusFilters();
+
+      if (sessions.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <h3>No Sessions</h3>
+            <p>Create a session to get started with Ralph.</p>
+          </div>
+        `;
+        return;
+      }
+
+      const filteredSessions = getFilteredSessions();
+      if (filteredSessions.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <h3>No Matching Sessions</h3>
+            <p>No sessions match the current filter. Try adjusting the status filters above.</p>
+          </div>
+        `;
+        return;
+      }
+
+      // Organize hierarchically: parents first, then their children indented
+      const parentSessions = filteredSessions.filter(s => !s.parentId);
+      const childSessions = filteredSessions.filter(s => s.parentId);
+
+      let html = '';
+      parentSessions.forEach(parent => {
+        html += renderSessionCard(parent, false);
+        // Render children of this parent
+        const children = childSessions.filter(c => c.parentId === parent.id);
+        children.forEach(child => {
+          html += renderSessionCard(child, true);
+        });
+      });
+
+      // Render orphan children (parent not in current view)
+      const renderedChildIds = new Set(parentSessions.flatMap(p => childSessions.filter(c => c.parentId === p.id).map(c => c.id)));
+      childSessions.filter(c => !renderedChildIds.has(c.id)).forEach(orphan => {
+        html += renderSessionCard(orphan, true);
+      });
+
+      container.innerHTML = html;
+
+      // Restore PRD content from cache for open viewers
+      openPrdViewers.forEach(sessionId => {
+        if (prdCache.has(sessionId)) {
+          const session = sessions.find(s => s.id === sessionId);
+          if (session) loadPrd(sessionId);  // Re-render from cache
+        }
+      });
+
+      // Connect WebSocket for active sessions
+      sessions
+        .filter(s => ['CREATED', 'RUNNING', 'PAUSED', 'WAITING', 'WAITING_APPROVAL'].includes(s.status))
+        .forEach(s => connectWebSocket(s));
+    }
+
+    function renderSessionCard(s, isChild = false) {
+      const progress = s.storiesTotal > 0 ? Math.round((s.storiesCompleted / s.storiesTotal) * 100) : 0;
+      const storyTurns = s.storyTurnCount || 0;
+      const turnProgress = s.maxTurns > 0 ? Math.round((storyTurns / s.maxTurns) * 100) : 0;
+
+      return `
+        <div class="session-card ${s.status}${isChild ? ' is-child' : ''}" data-id="${s.id}">
+          <div class="session-header">
+            <div class="session-title">
+              <span class="session-name">${escapeHtml(s.name || s.id)}</span>
+              <button class="copy-btn" onclick="copyToClipboard('${s.id}', this)" title="Copy session ID">📋</button>
+              <div class="session-badges">
+                ${s.childIds && s.childIds.length > 0 ? `<span class="badge badge-parent">${s.childIds.length} children</span>` : ''}
+                ${s.parentId ? `<span class="badge badge-child" onclick="scrollToSession('${s.parentId}')" title="Click to go to parent">child<span class="parent-ref">→ ${getSessionName(s.parentId)}</span></span>` : ''}
+              </div>
+            </div>
+            <span class="status-badge ${s.status}">${s.status.replace('_', ' ')}</span>
+          </div>
+
+          <div class="session-body">
+            ${s.status === 'WAITING_APPROVAL' ? `
+              <div class="blocking-alert">
+                <span class="message">Approval required: ${escapeHtml(s.blockingResource || 'Sensitive operation')}</span>
+                <div class="actions">
+                  <button class="btn btn-success btn-sm" onclick="approveOperation('${s.id}')">Approve</button>
+                  <button class="btn btn-danger btn-sm" onclick="rejectOperation('${s.id}')">Reject</button>
+                </div>
+              </div>
+            ` : ''}
+
+            ${s.currentStoryId ? `
+              <div class="iteration-banner">
+                <span class="iteration-label">Working on:</span>
+                <span class="iteration-story">${s.currentStoryId}${s.currentStoryTitle ? ' - ' + escapeHtml(s.currentStoryTitle) : ''}</span>
+                <span class="iteration-progress">Story ${(s.storiesCompleted || 0) + 1} of ${s.storiesTotal || '?'}</span>
+              </div>
+            ` : ''}
+
+            <div class="session-stats">
+              <div class="stat">
+                <span class="stat-label">Progress</span>
+                <span class="stat-value">${s.storiesCompleted || 0}/${s.storiesTotal || 0} stories</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Story Turns</span>
+                <span id="turns-${s.id}" class="stat-value ${turnProgress > 90 ? 'danger' : turnProgress > 70 ? 'warning' : ''}" title="Total session turns: ${s.turnCount || 0}">${storyTurns}/${s.maxTurns || 100}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Health</span>
+                <span class="stat-value ${s.health === 'STUCK' || s.health === 'CRITICAL' ? 'danger' : s.health === 'DEGRADED' ? 'warning' : ''}">${s.health || 'HEALTHY'}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Model</span>
+                <span class="stat-value">${s.model || 'opus'}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Elapsed</span>
+                <span id="elapsed-${s.id}" class="stat-value">${formatElapsedTime(s)}</span>
+              </div>
+            </div>
+
+            <div class="progress-bar">
+              <div class="progress-fill" style="width: ${progress}%"></div>
+            </div>
+
+            <div class="session-actions">
+              ${s.status === 'CREATED' ? `<button class="btn btn-success btn-sm" onclick="startSession('${s.id}')">Start</button>` : ''}
+              ${s.status === 'RUNNING' ? `<button class="btn btn-warning btn-sm" onclick="pauseSession('${s.id}')">Pause</button>` : ''}
+              ${s.status === 'PAUSED' ? `<button class="btn btn-success btn-sm" onclick="resumeSession('${s.id}')">Resume</button>` : ''}
+              ${['RUNNING', 'PAUSED'].includes(s.status) ? `
+                <button class="btn btn-ghost btn-sm" onclick="skipStory('${s.id}')">Skip Story</button>
+                <button class="btn btn-danger btn-sm" onclick="abortSession('${s.id}')">Abort</button>
+              ` : ''}
+              ${['COMPLETED', 'ABORTED'].includes(s.status) ? `<button class="btn btn-danger btn-sm" onclick="destroySession('${s.id}')">Delete</button>` : ''}
+              <button class="btn btn-ghost btn-sm" onclick="togglePrdView('${s.id}')">View PRD</button>
+            </div>
+
+            <div class="prd-viewer" id="prd-viewer-${s.id}" style="display: ${openPrdViewers.has(s.id) ? 'block' : 'none'};">
+              <div class="prd-header">
+                <span>PRD: ${escapeHtml(s.prdPath || 'Unknown')}</span>
+                <button class="copy-btn" onclick="copyToClipboard('${escapeHtml(s.prdPath || '')}', this)" title="Copy PRD path">📋</button>
+                <button class="btn btn-ghost btn-sm" onclick="togglePrdView('${s.id}')">Close</button>
+              </div>
+              <div class="prd-stories" id="prd-stories-${s.id}">
+                ${prdCache.has(s.id) ? '' : '<div style="color: var(--text-secondary); padding: 10px;">Loading PRD...</div>'}
+              </div>
+            </div>
+
+            ${['RUNNING', 'PAUSED', 'CREATED'].includes(s.status) ? `
+              <div class="inject-form">
+                <input type="text" id="inject-${s.id}" placeholder="Inject guidance..." onkeypress="if(event.key==='Enter')injectGuidance('${s.id}')">
+                <button class="btn btn-primary btn-sm" onclick="injectGuidance('${s.id}')">Send</button>
+              </div>
+            ` : ''}
+
+            <div class="logs-container" id="logs-container-${s.id}">
+              <div class="logs-header">
+                <span>Live Logs</span>
+                <div class="log-filters" id="log-filters-${s.id}">
+                  ${renderLogFilters(s.id)}
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="clearLogs('${s.id}')">Clear</button>
+              </div>
+              <div class="logs-body" id="logs-${s.id}">
+                ${renderLogEntries(s.id)}
+              </div>
+            </div>
+
+            ${s.childIds && s.childIds.length > 0 ? `
+              <div class="children-section">
+                <div class="children-header" onclick="toggleChildren('${s.id}')">
+                  <span>Children (${s.childIds.length})</span>
+                  <span id="children-toggle-${s.id}">${openChildrenLists.has(s.id) ? '▲' : '▼'}</span>
+                </div>
+                <div class="children-list" id="children-list-${s.id}" style="display: ${openChildrenLists.has(s.id) ? 'block' : 'none'};">
+                  ${renderChildrenList(s.id, s.childIds)}
+                </div>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderLogs(sessionId) {
+      const logsEl = document.getElementById(`logs-${sessionId}`);
+      if (!logsEl) return;
+
+      logsEl.innerHTML = renderLogEntries(sessionId);
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
+
+    function getLogFilters(sessionId) {
+      if (!logFilters.has(sessionId)) {
+        logFilters.set(sessionId, new Set(defaultLogLevels));
+      }
+      return logFilters.get(sessionId);
+    }
+
+    function renderLogFilters(sessionId) {
+      const filters = getLogFilters(sessionId);
+      return defaultLogLevels.map(level => `
+        <span class="log-filter ${level} ${filters.has(level) ? 'active' : ''}"
+              onclick="toggleLogFilter('${sessionId}', '${level}')">${level}</span>
+      `).join('');
+    }
+
+    function toggleLogFilter(sessionId, level) {
+      const filters = getLogFilters(sessionId);
+      if (filters.has(level)) {
+        filters.delete(level);
+      } else {
+        filters.add(level);
+      }
+      // Update filter display
+      const filtersEl = document.getElementById(`log-filters-${sessionId}`);
+      if (filtersEl) {
+        filtersEl.innerHTML = renderLogFilters(sessionId);
+      }
+      // Re-render logs with filter
+      renderLogs(sessionId);
+    }
+
+    function formatToolInput(tool, input) {
+      const parts = [];
+
+      // Show description first if available (full text)
+      if (input.description) {
+        parts.push(`<span class="tool-desc">${escapeHtml(input.description)}</span>`);
+      }
+
+      // Format other keys as badges
+      const skipKeys = ['description'];
+      const keyOrder = ['command', 'file_path', 'pattern', 'query', 'path', 'content', 'old_string', 'new_string'];
+
+      // Sort keys: prioritized keys first, then others
+      const keys = Object.keys(input).filter(k => !skipKeys.includes(k));
+      keys.sort((a, b) => {
+        const aIdx = keyOrder.indexOf(a);
+        const bIdx = keyOrder.indexOf(b);
+        if (aIdx === -1 && bIdx === -1) return 0;
+        if (aIdx === -1) return 1;
+        if (bIdx === -1) return -1;
+        return aIdx - bIdx;
+      });
+
+      for (const key of keys) {
+        let value = input[key];
+        if (typeof value === 'object') value = JSON.stringify(value);
+        if (typeof value === 'string' && value.length > 60) {
+          value = value.substring(0, 60) + '…';
+        }
+        parts.push(`<span class="tool-badge"><span class="tool-key">${escapeHtml(key)}</span>${escapeHtml(String(value))}</span>`);
+      }
+
+      return parts.join(' ');
+    }
+
+    function renderLogEntries(sessionId) {
+      const logs = sessionLogs.get(sessionId) || [];
+      const filters = getLogFilters(sessionId);
+
+      if (logs.length === 0) {
+        return '<div class="log-entry" style="color: var(--text-secondary)">Waiting for logs...</div>';
+      }
+
+      const filteredLogs = logs.slice(-100).filter(log => filters.has(log.level));
+
+      if (filteredLogs.length === 0) {
+        return '<div class="log-entry" style="color: var(--text-secondary)">No logs match current filters</div>';
+      }
+
+      return filteredLogs.map(log => {
+        if (log.level === 'tool' && log.tool) {
+          return `
+            <div class="log-entry tool">
+              <span class="time">${log.time}</span>
+              <span class="tool-name">${escapeHtml(log.tool)}</span>
+              <span class="tool-inputs">${formatToolInput(log.tool, log.input)}</span>
+            </div>
+          `;
+        }
+        return `
+          <div class="log-entry ${log.level}">
+            <span class="time">${log.time}</span>
+            <span class="message">${escapeHtml(log.message)}</span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function clearLogs(sessionId) {
+      sessionLogs.set(sessionId, []);
+      renderLogs(sessionId);
+    }
+
+    function getSessionName(sessionId) {
+      const session = sessions.find(s => s.id === sessionId);
+      return session ? (session.name || sessionId) : sessionId;
+    }
+
+    function formatElapsedTime(session) {
+      if (!session) return '-';
+
+      let startTime, endTime;
+
+      // For completed/aborted sessions, show total elapsed time
+      if (['COMPLETED', 'ABORTED'].includes(session.status)) {
+        startTime = session.startedAt ? new Date(session.startedAt) : null;
+        endTime = session.completedAt ? new Date(session.completedAt) : new Date();
+      } else if (session.startedAt) {
+        // For running/paused sessions, show time since start
+        startTime = new Date(session.startedAt);
+        endTime = new Date();
+      } else {
+        // Not started yet
+        return '-';
+      }
+
+      if (!startTime) return '-';
+
+      const ms = endTime - startTime;
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+
+      if (days > 0) {
+        return `${days}d ${hours % 24}h`;
+      } else if (hours > 0) {
+        return `${hours}h ${minutes % 60}m`;
+      } else if (minutes > 0) {
+        return `${minutes}m`;
+      } else {
+        return `${seconds}s`;
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    async function copyToClipboard(text, button) {
+      try {
+        await navigator.clipboard.writeText(text);
+        const originalText = button.textContent;
+        button.textContent = '✓';
+        button.classList.add('copied');
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.classList.remove('copied');
+        }, 1500);
+      } catch (err) {
+        console.error('Failed to copy:', err);
+      }
+    }
+
+    function updateTurnCounter(sessionId, storyTurns, maxTurns, totalTurns) {
+      const el = document.getElementById(`turns-${sessionId}`);
+      if (!el) return;
+
+      // Update the local session data
+      const session = sessions.find(s => s.id === sessionId);
+      if (session) {
+        session.storyTurnCount = storyTurns;
+        session.turnCount = totalTurns;
+      }
+
+      // Update display
+      el.textContent = `${storyTurns}/${maxTurns}`;
+      el.title = `Total session turns: ${totalTurns}`;
+
+      // Update warning class
+      const progress = Math.round((storyTurns / maxTurns) * 100);
+      el.classList.remove('danger', 'warning');
+      if (progress > 90) {
+        el.classList.add('danger');
+      } else if (progress > 70) {
+        el.classList.add('warning');
+      }
+    }
+
+    // Children/Orchestration helpers
+    function renderChildrenList(parentId, childIds) {
+      const children = childIds.map(id => sessions.find(s => s.id === id)).filter(Boolean);
+      if (children.length === 0) {
+        return '<div style="color: var(--text-secondary); padding: 5px;">Loading children...</div>';
+      }
+
+      return children.map(c => `
+        <div class="child-item">
+          <div class="child-status ${c.status}"></div>
+          <div class="child-info">
+            <div class="child-name">${escapeHtml(c.name || c.id)}</div>
+            <div class="child-progress">${c.storiesCompleted || 0}/${c.storiesTotal || 0} stories, turn ${c.turnCount || 0}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" onclick="scrollToSession('${c.id}')">View</button>
+        </div>
+      `).join('');
+    }
+
+    function toggleChildren(sessionId) {
+      const list = document.getElementById(`children-list-${sessionId}`);
+      const toggle = document.getElementById(`children-toggle-${sessionId}`);
+      if (list && toggle) {
+        if (list.style.display === 'none') {
+          list.style.display = 'block';
+          toggle.textContent = '▲';
+          openChildrenLists.add(sessionId);
+        } else {
+          list.style.display = 'none';
+          toggle.textContent = '▼';
+          openChildrenLists.delete(sessionId);
+        }
+      }
+    }
+
+    function scrollToSession(sessionId) {
+      const card = document.querySelector(`[data-id="${sessionId}"]`);
+      if (card) {
+        card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        card.style.outline = '2px solid var(--accent)';
+        setTimeout(() => { card.style.outline = ''; }, 2000);
+      }
+    }
+
+    // PRD Viewer
+    const prdCache = new Map();
+
+    async function togglePrdView(sessionId) {
+      const viewer = document.getElementById(`prd-viewer-${sessionId}`);
+      if (!viewer) return;
+
+      if (viewer.style.display === 'none') {
+        viewer.style.display = 'block';
+        openPrdViewers.add(sessionId);
+        await loadPrd(sessionId);
+      } else {
+        viewer.style.display = 'none';
+        openPrdViewers.delete(sessionId);
+      }
+    }
+
+    async function loadPrd(sessionId) {
+      const storiesEl = document.getElementById(`prd-stories-${sessionId}`);
+      if (!storiesEl) return;
+
+      try {
+        const res = await fetch(`${API_BASE}/sessions/${sessionId}/prd`);
+        const data = await res.json();
+
+        if (data.error) {
+          storiesEl.innerHTML = `<div style="color: var(--danger); padding: 10px;">Error: ${escapeHtml(data.error)}</div>`;
+          return;
+        }
+
+        const prd = data.prd;
+        prdCache.set(sessionId, prd);
+
+        // Find current session to highlight current story
+        const session = sessions.find(s => s.id === sessionId);
+        const currentStoryId = session?.currentStoryId;
+
+        storiesEl.innerHTML = `
+          <div style="padding: 10px 15px; border-bottom: 1px solid var(--border);">
+            <strong>${escapeHtml(prd.project || 'Unnamed Project')}</strong>
+            <div style="font-size: 0.85rem; color: var(--text-secondary); margin-top: 4px;">
+              ${escapeHtml(prd.description || '')}
+            </div>
+          </div>
+          ${(prd.userStories || []).map(story => renderPrdStory(story, currentStoryId)).join('')}
+        `;
+      } catch (err) {
+        storiesEl.innerHTML = `<div style="color: var(--danger); padding: 10px;">Failed to load PRD: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderPrdStory(story, currentStoryId) {
+      const isCurrent = story.id === currentStoryId;
+      const isPassed = story.passes === true;
+      const statusClass = isPassed ? 'passed' : (isCurrent ? 'current' : 'pending');
+      const statusIcon = isPassed ? '✓' : (isCurrent ? '▶' : (story.priority || ''));
+
+      return `
+        <div class="prd-story">
+          <div class="prd-story-status ${statusClass}">${statusIcon}</div>
+          <div class="prd-story-content">
+            <div>
+              <span class="prd-story-id">${escapeHtml(story.id)}</span>
+              <span class="prd-story-title">${escapeHtml(story.title)}</span>
+            </div>
+            <div class="prd-story-desc">${escapeHtml(story.description)}</div>
+            ${story.acceptanceCriteria && story.acceptanceCriteria.length > 0 ? `
+              <ul class="prd-story-criteria">
+                ${story.acceptanceCriteria.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+              </ul>
+            ` : ''}
+            ${story.notes ? `<div style="font-size: 0.8rem; color: var(--success); margin-top: 6px;">Notes: ${escapeHtml(story.notes)}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // Update elapsed time for running sessions every second
+    function updateElapsedTimes() {
+      sessions.forEach(s => {
+        if (['RUNNING', 'PAUSED'].includes(s.status) && s.startedAt) {
+          const el = document.getElementById(`elapsed-${s.id}`);
+          if (el) {
+            el.textContent = formatElapsedTime(s);
+          }
+        }
+      });
+    }
+
+    // Initialize
+    fetchSessions();
+    setInterval(fetchSessions, 15000);
+    setInterval(updateElapsedTimes, 1000);  // Update elapsed time every second
+
+    // Handle Enter key on PRD input
+    document.getElementById('prd-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') createSession();
+    });
+  </script>
+</body>
+</html>

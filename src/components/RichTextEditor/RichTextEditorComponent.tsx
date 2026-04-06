@@ -27,11 +27,8 @@ import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
 import { MentionNode } from '~/components/TipTap/MentionNode';
 import { InstagramNode } from '~/components/TipTap/InstagramNode';
 import { StrawPollNode } from '~/components/TipTap/StrawPollNode';
-import { YoutubeNode } from '~/components/TipTap/YoutubeNode';
 import type { MediaType } from '~/shared/utils/prisma/enums';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
-import { hideNotification, showNotification } from '@mantine/notifications';
 import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
@@ -40,7 +37,6 @@ import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 //   lg: '70px',
 //   xl: '90px',
 // };
-const UPLOAD_NOTIFICATION_ID = 'upload-image-notification';
 const mapEditorSize: Omit<Record<MantineSize, CSSProperties>, 'xs'> = {
   sm: {
     minHeight: 30,
@@ -140,8 +136,6 @@ export function RichTextEditor({
   const addMentions = includeControls.includes('mentions');
   const addPolls = includeControls.includes('polls');
 
-  const { uploadToCF } = useCFImageUpload();
-
   const accepts = useMemo(() => {
     const accepts: MediaType[] = [];
     if (addVideo) accepts.push('video');
@@ -189,29 +183,11 @@ export function RichTextEditor({
       );
     if (addVideo) {
       arr.push(
-        EdgeMediaEditNode.configure({ accepts }),
+        EdgeMediaEditNode.configure({ accepts, inline: true }),
         ImageExtension.configure({ inline: true })
       );
     } else if (addImages) {
-      arr.push(
-        CustomImage.configure({
-          // To allow links on images
-          inline: true,
-          uploadImage: uploadToCF,
-          onUploadStart: () => {
-            showNotification({
-              id: UPLOAD_NOTIFICATION_ID,
-              loading: true,
-              withCloseButton: false,
-              autoClose: false,
-              message: 'Uploading images...',
-            });
-          },
-          onUploadEnd: () => {
-            hideNotification(UPLOAD_NOTIFICATION_ID);
-          },
-        })
-      );
+      arr.push(CustomImage.configure({ inline: true }));
     }
     if (addMedia) {
       arr.push(
@@ -373,9 +349,12 @@ export function RichTextEditor({
             {addMedia && (
               <RTE.ControlsGroup>
                 {addVideo && addImages ? (
-                  <InsertImageControl accepts={accepts} />
+                  <InsertImageControl
+                    accepts={accepts}
+                    maxFileSize={constants.richTextEditor.maxFileSize}
+                  />
                 ) : addImages ? (
-                  <InsertImageControlLegacy />
+                  <InsertImageControlLegacy maxFileSize={constants.richTextEditor.maxFileSize} />
                 ) : null}
                 <InsertYoutubeVideoControl />
                 <InsertInstagramEmbedControl />

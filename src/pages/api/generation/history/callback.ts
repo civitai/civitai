@@ -1,13 +1,13 @@
 import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLimiter } from '~/server/utils/rate-limiting';
 import { signalClient } from '~/utils/signal-client';
 
 const historyLimiter = createLimiter({
-  counterKey: REDIS_KEYS.COUNTERS.HISTORY_DOWNLOADS,
+  counterKey: REDIS_SYS_KEYS.COUNTERS.HISTORY_DOWNLOADS,
   limitKey: REDIS_SYS_KEYS.LIMITS.HISTORY_DOWNLOADS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,

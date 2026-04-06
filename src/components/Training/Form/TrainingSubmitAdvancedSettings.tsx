@@ -15,7 +15,7 @@ import {
 } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconConfetti } from '@tabler/icons-react';
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -44,7 +44,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import {
   discountInfo,
   isValidRapid,
-  isAiToolkitSupported,
+  isAiToolkitEnabled,
   isAiToolkitMandatory,
   isSamplePromptsRequired,
   getDefaultEngine,
@@ -76,6 +76,9 @@ export const AdvancedSettings = ({
   );
   const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
+  // Track runs that have already had the flag-driven default applied,
+  // so switching back to a run the user manually changed won't re-override.
+  const appliedDefaultEngineRuns = useRef(new Set<number>());
 
   const doUpdate = (data: TrainingRunUpdate) => {
     updateRun(modelId, mediaType, selectedRun.id, data);
@@ -91,7 +94,11 @@ export const AdvancedSettings = ({
     const defaultParams = getDefaultTrainingParams(runBase, selectedRun.params.engine);
 
     defaultParams.engine = selectedRun.params.engine;
-    defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+    const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
+    defaultParams.numRepeats = Math.max(
+      1,
+      Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1)))
+    );
 
     if (selectedRun.params.engine !== 'rapid') {
       defaultParams.targetSteps = Math.ceil(
@@ -106,7 +113,8 @@ export const AdvancedSettings = ({
   // Use functions to set proper starting values based on metadata
   useEffect(() => {
     if (selectedRun.params.numRepeats === undefined) {
-      const numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
+      const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
+      const numRepeats = Math.max(1, Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1))));
       doUpdate({ params: { numRepeats } });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -158,11 +166,50 @@ export const AdvancedSettings = ({
         ? 'cosine'
         : selectedRun.params.lrScheduler;
 
-    if (
-      newOptimizerArgs !== selectedRun.params.optimizerArgs ||
-      newScheduler !== selectedRun.params.lrScheduler
-    ) {
-      doUpdate({ params: { optimizerArgs: newOptimizerArgs, lrScheduler: newScheduler } });
+    const updatedParams: Record<string, unknown> = {};
+
+    if (newOptimizerArgs !== selectedRun.params.optimizerArgs) {
+      updatedParams.optimizerArgs = newOptimizerArgs;
+    }
+    if (newScheduler !== selectedRun.params.lrScheduler) {
+      updatedParams.lrScheduler = newScheduler;
+    }
+
+    // Check if textEncoderLR is disabled for this base model (non-SD1/SDXL models)
+    const textEncoderSetting = trainingSettings.find((ts) => ts.name === 'textEncoderLR');
+    const textEncoderOverride =
+      textEncoderSetting?.overrides?.[runBase]?.all ??
+      textEncoderSetting?.overrides?.[runBase]?.[selectedRun.params.engine];
+    const isTextEncoderDisabled = textEncoderOverride?.disabled === true;
+
+    // Prodigy optimizer requires LR values set to 1
+    if (selectedRun.params.optimizerType === 'Prodigy') {
+      if (selectedRun.params.unetLR !== 1) {
+        updatedParams.unetLR = 1;
+      }
+      // Only set textEncoderLR for models that support text encoder training
+      if (!isTextEncoderDisabled && selectedRun.params.textEncoderLR !== 1) {
+        updatedParams.textEncoderLR = 1;
+      }
+    } else {
+      // For non-Prodigy optimizers, LR=1 is dangerously high and produces noise.
+      // Reset to defaults if LR values are at Prodigy levels (e.g. after switching away).
+      const defaults = getDefaultTrainingParams(runBase, selectedRun.params.engine);
+      if (selectedRun.params.unetLR >= 0.1) {
+        updatedParams.unetLR = defaults.unetLR;
+      }
+      if (selectedRun.params.textEncoderLR >= 0.1) {
+        updatedParams.textEncoderLR = defaults.textEncoderLR;
+      }
+    }
+
+    // Ensure textEncoderLR is 0 for models that don't support text encoder training
+    if (isTextEncoderDisabled && selectedRun.params.textEncoderLR !== 0) {
+      updatedParams.textEncoderLR = 0;
+    }
+
+    if (Object.keys(updatedParams).length > 0) {
+      doUpdate({ params: updatedParams });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.optimizerType]);
@@ -232,8 +279,60 @@ export const AdvancedSettings = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.engine, selectedRun.id]);
 
+  // Apply feature-flag-driven default engine once per run.
+  // The store's defaultRun always uses 'kohya' because it can't access feature flags,
+  // so we correct it here when aiToolkitDefaultSd is enabled for sd15/sdxl.
+  // Only applies once per run ID — if the user toggles off AI Toolkit and switches
+  // between multi-train runs, their choice is preserved.
+  useEffect(() => {
+    if (!features.aiToolkitDefaultSd) return;
+    if (selectedRun.baseType !== 'sd15' && selectedRun.baseType !== 'sdxl') return;
+    if (selectedRun.params.engine !== 'kohya') return;
+    if (appliedDefaultEngineRuns.current.has(selectedRun.id)) return;
+
+    appliedDefaultEngineRuns.current.add(selectedRun.id);
+
+    const defaultParams = getDefaultTrainingParams(runBase, 'ai-toolkit');
+    defaultParams.engine = 'ai-toolkit' as typeof selectedRun.params.engine;
+    const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
+    defaultParams.numRepeats = Math.max(
+      1,
+      Math.min(5000, Math.ceil(repeatsTarget / (numImages || 1)))
+    );
+    defaultParams.targetSteps = Math.ceil(
+      ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
+        defaultParams.trainBatchSize
+    );
+
+    doUpdate({ params: defaultParams });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedRun.id, features.aiToolkitDefaultSd]);
+
+  const engineLabel =
+    selectedRun.params.engine === 'ai-toolkit'
+      ? 'AI Toolkit'
+      : selectedRun.params.engine === 'rapid'
+      ? 'Rapid'
+      : selectedRun.params.engine === 'kohya'
+      ? 'Kohya'
+      : selectedRun.params.engine;
+
   return (
     <>
+      {/* Active engine indicator */}
+      <Group mt="md" gap="xs">
+        <Text size="sm" fw={500}>
+          Engine:
+        </Text>
+        <Badge
+          size="sm"
+          color={selectedRun.params.engine === 'ai-toolkit' ? 'blue' : 'gray'}
+          variant="light"
+        >
+          {engineLabel}
+        </Badge>
+      </Group>
+
       {/* Flux1 can toggle Rapid Training on/off */}
       {selectedRun.baseType === 'flux' && (
         <Group mt="md">
@@ -280,8 +379,8 @@ export const AdvancedSettings = ({
       )}
 
       {/* AI Toolkit Training Toggle or Required Badge */}
-      {/* AI Toolkit is public for SD1.5 and SDXL, mod-only for other supported models */}
-      {features.aiToolkitTraining && isAiToolkitSupported(selectedRun.baseType) && (
+      {/* Per-model AI Toolkit availability controlled via Flipt boolean flags */}
+      {isAiToolkitEnabled(selectedRun.baseType, features) && (
         <Group mt="md">
           {!isAiToolkitMandatory(selectedRun.baseType) && (
             // Show toggle for optional AI Toolkit
@@ -587,6 +686,10 @@ export const AdvancedSettings = ({
                       options = options.filter((o) => o !== 'Prodigy');
                     }
 
+                    if (ts.name === 'optimizerType' && selectedRun.params.engine !== 'ai-toolkit') {
+                      options = options.filter((o) => o !== 'Automagic');
+                    }
+
                     if (ts.name === 'engine') {
                       if (isVideo) {
                         options = options.filter((o) => o !== 'kohya' && o !== 'rapid');
@@ -677,8 +780,8 @@ export const AdvancedSettings = ({
                     value: inp,
                     visible: !(
                       ts.name === 'engine' ||
-                      ((ts.name === 'numRepeats' || ts.name === 'trainBatchSize') &&
-                        selectedRun.params.engine === 'ai-toolkit')
+                      (ts.name === 'trainBatchSize' && selectedRun.params.engine === 'ai-toolkit') ||
+                      (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit')
                     ),
                   };
                 })}

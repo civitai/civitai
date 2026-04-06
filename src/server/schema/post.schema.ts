@@ -23,7 +23,7 @@ export type PostsQueryInput = z.infer<typeof postsQuerySchema>;
 export const postsQuerySchema = baseQuerySchema.merge(
   postsFilterSchema.extend({
     limit: z.preprocess((val) => Number(val), z.number().min(0).max(200)).default(100),
-    cursor: z.preprocess((val) => Number(val), z.number()).optional(),
+    cursor: z.union([z.number(), z.string()]).optional(),
     query: z.string().optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),

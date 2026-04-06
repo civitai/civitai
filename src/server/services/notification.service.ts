@@ -165,26 +165,33 @@ export const markNotificationsRead = async ({
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
   if (all) {
-    const AND = [
-      Prisma.sql`un."notificationId" = n.id`,
-      Prisma.sql`un."userId" = ${userId}`,
-      Prisma.sql`un.viewed IS FALSE`,
-    ];
-    if (category) AND.push(Prisma.sql`n."category" = ${category}::"NotificationCategory"`);
-
-    await notifDbWrite.query(Prisma.sql`
-      UPDATE "UserNotification" un
-      SET
-        viewed = TRUE
-      FROM
-        "Notification" n
-      WHERE
-        ${Prisma.join(AND, ' AND ')}
-    `);
-
-    // Update cache
-    if (category) await notificationCache.clearCategory(userId, category);
-    else await notificationCache.bustUser(userId);
+    if (category) {
+      // Join only needed when filtering by category
+      await notifDbWrite.query(Prisma.sql`
+        UPDATE "UserNotification" un
+        SET
+          viewed = TRUE
+        FROM
+          "Notification" n
+        WHERE
+          un."notificationId" = n.id
+          AND un."userId" = ${userId}
+          AND un.viewed IS FALSE
+          AND n."category" = ${category}::"NotificationCategory"
+      `);
+      notificationCache.clearCategory(userId, category).catch(() => {});
+    } else {
+      // No join needed - faster query
+      await notifDbWrite.query(Prisma.sql`
+        UPDATE "UserNotification" un
+        SET
+          viewed = TRUE
+        WHERE
+          un."userId" = ${userId}
+          AND un.viewed IS FALSE
+      `);
+      notificationCache.bustUser(userId).catch(() => {});
+    }
   } else {
     const resp = await notifDbWrite.query(Prisma.sql`
       UPDATE "UserNotification" un
@@ -210,7 +217,7 @@ export const markNotificationsRead = async ({
       `);
       const catData = await catQuery.result();
       if (catData && catData.length)
-        await notificationCache.decrementUser(userId, catData[0].category);
+        notificationCache.decrementUser(userId, catData[0].category).catch(() => {});
     }
   }
 };

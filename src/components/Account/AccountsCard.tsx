@@ -10,11 +10,12 @@ import {
   Title,
 } from '@mantine/core';
 import type { BuiltInProviderType } from 'next-auth/providers/index';
-import { getProviders, signIn } from 'next-auth/react';
+import { getProviders } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { SocialLabel } from '~/components/Social/SocialLabel';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { handleSignIn } from '~/utils/auth-helpers';
 import { trpc } from '~/utils/trpc';
 
 type NextAuthProviders = AsyncReturnType<typeof getProviders>;
@@ -82,9 +83,7 @@ export function AccountsCard() {
                               variant="transparent"
                               size="compact-sm"
                               onClick={() =>
-                                signIn(provider.id, {
-                                  callbackUrl: '/user/account?connect=true#accounts',
-                                })
+                                handleSignIn(provider.id, '/user/account?connect=true#accounts')
                               }
                             >
                               Connect

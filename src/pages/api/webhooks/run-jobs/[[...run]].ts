@@ -2,6 +2,7 @@ import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
+import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyNsfwBaseline } from '~/server/jobs/apply-nsfw-baseline';
@@ -17,8 +18,13 @@ import { collectionGameProcessing } from '~/server/jobs/collection-game-processi
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
+import { custodySweepJob } from '~/server/jobs/custody-sweep';
+import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
+import { challengeActivationJob } from '~/server/jobs/challenge-activation';
+import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
+import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
@@ -63,6 +69,7 @@ import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
+import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
@@ -71,6 +78,8 @@ import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
+import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
+import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -104,6 +113,7 @@ export const jobs: Job[] = [
   updateCollectionItemRandomId,
   ...metricJobs,
   ...searchIndexJobs,
+  searchIndexUserCleanupJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
@@ -135,6 +145,9 @@ export const jobs: Job[] = [
   sendCollectionNotifications,
   checkProcessingResourceTrainingV2,
   ...dailyChallengeJobs,
+  challengeActivationJob,
+  challengeCompletionJob,
+  challengeAutoQueueJob,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
   dummyJob,
@@ -147,6 +160,12 @@ export const jobs: Job[] = [
   deliverAnnualSubscriptionBuzz,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
+  expireStrikesJob,
+  processTimedUnmutesJob,
+  custodySweepJob,
+  reconcileNowpaymentsJob,
+  processEnqueuedComicPanelsJob,
+  auditRemixSourcesJob,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -208,7 +227,7 @@ async function isLocked(name: string, noCheck?: boolean) {
 
 const LOCK_REFRESH_INTERVAL = 8; // Every 8 seconds
 const LOCK_BUFFER = 2; // 2 second buffer on redis expiry
-const lockIntervals: Record<string, NodeJS.Timer> = {};
+const lockIntervals: Record<string, ReturnType<typeof setInterval>> = {};
 async function lock(name: string, lockExpiration: number, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
   logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();

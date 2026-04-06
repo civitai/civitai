@@ -1,5 +1,4 @@
 import { Button, Text } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconEyeOff, IconKey } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
@@ -11,6 +10,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { useSession } from 'next-auth/react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { requireLogin } from '~/components/Login/requireLogin';
 
 export function SensitiveShield({
   children,
@@ -52,9 +52,15 @@ export function SensitiveShield({
           </Text>
           <Text>This content has been marked as NSFW</Text>
           <Button
-            component={Link}
-            href={`/login?returnUrl=${router.asPath}`}
             leftSection={<IconKey />}
+            onClick={(e: React.MouseEvent) =>
+              requireLogin({
+                uiEvent: e,
+                reason: 'blur-toggle',
+                returnUrl: router.asPath,
+                cb: () => undefined,
+              })
+            }
           >
             Log in to view
           </Button>

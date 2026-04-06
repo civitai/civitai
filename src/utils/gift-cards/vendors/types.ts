@@ -24,9 +24,9 @@ export interface VendorProducts {
 }
 
 export interface VendorPromo {
-  code: string;
-  discount: string;
-  message?: string;
+  code?: string;
+  discount?: string;
+  message: string;
   startDate: Date;
   endDate: Date;
 }
@@ -47,6 +47,7 @@ export interface Vendor {
   products: VendorProducts;
   promo?: VendorPromo;
   discount?: VendorDiscount;
+  badge?: string;
 }
 
 export type VendorRegistry = Record<string, Vendor>;

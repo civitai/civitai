@@ -1,5 +1,5 @@
 import type JSZip from 'jszip';
-import { getBaseModelEcosystem, type BaseModel } from '~/shared/constants/base-model.constants';
+import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
@@ -15,11 +15,12 @@ export const trainingBaseModelTypesImage = [
   'sd35',
   'flux',
   'flux2',
+  'flux2klein',
   'chroma',
   'qwen',
-  'zimageturbo',
+  'zimage',
 ] as const;
-export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
+export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2', 'ltx23'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
   ...trainingBaseModelTypesVideo,
@@ -36,7 +37,7 @@ export const engineTypes = [
 ] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
-export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy', 'Automagic'] as const;
 export type OptimizerTypes = (typeof optimizerTypes)[number];
 
 export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris
@@ -218,12 +219,64 @@ export const trainingModelInfo: {
   zimageturbo: {
     label: 'Turbo',
     pretty: 'ZImageTurbo',
-    type: 'zimageturbo',
+    type: 'zimage',
     description: 'High-speed image generation with turbo acceleration.',
     air: 'urn:air:zimageturbo:checkpoint:civitai:2168935@2442439',
     baseModel: 'ZImageTurbo',
     isNew: true,
     aiToolkit: { ecosystem: 'zimageturbo' },
+  },
+  zimagebase: {
+    label: 'Base',
+    pretty: 'ZImageBase',
+    type: 'zimage',
+    description: 'High-quality image generation with the ZImage Base model.',
+    air: 'urn:air:zimagebase:checkpoint:civitai:2342797@2635223',
+    baseModel: 'ZImageBase',
+    isNew: true,
+    aiToolkit: { ecosystem: 'zimagebase' },
+  },
+  //
+  flux2klein_4b: {
+    label: '4B Base',
+    pretty: 'Flux.2 Klein 4B Base',
+    type: 'flux2klein',
+    description: 'Efficient 4B parameter Flux.2 Klein base model.',
+    air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734041',
+    baseModel: 'Flux.2 Klein 4B-base',
+    isNew: true,
+    aiToolkit: { ecosystem: 'flux2klein', modelVariant: '4b' },
+  },
+  flux2klein_9b: {
+    label: '9B Base',
+    pretty: 'Flux.2 Klein 9B Base',
+    type: 'flux2klein',
+    description: 'High-quality 9B parameter Flux.2 Klein base model.',
+    air: 'urn:air:flux2klein:checkpoint:civitai:2427783@2734042',
+    baseModel: 'Flux.2 Klein 9B-base',
+    isNew: true,
+    aiToolkit: { ecosystem: 'flux2klein', modelVariant: '9b' },
+  },
+  //
+  ltx2: {
+    label: 'LTX2',
+    pretty: 'LTX2',
+    type: 'ltx2',
+    description: 'Advanced video generation model.',
+    air: 'urn:air:ltx2:checkpoint:civitai:2427783@2734043',
+    baseModel: 'LTXV',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ltx2' },
+  },
+  ltx23: {
+    label: 'LTX 2.3',
+    pretty: 'LTX 2.3',
+    type: 'ltx23',
+    description: 'Next generation LTX video model with improved quality.',
+    air: 'urn:air:ltxv23:checkpoint:civitai:2445735@2749908',
+    baseModel: 'LTXV',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ltx23' },
   },
   //
   flux2_dev: {
@@ -312,17 +365,47 @@ export const getTrainingFields = {
 };
 
 /**
- * Get AI Toolkit ecosystem for a training model
- * Reads from the centralized trainingModelInfo structure
+ * Map from TrainingBaseModelType to the AI Toolkit ecosystem string.
+ * Used as a fallback for custom models where the base model key
+ * is an AIR URN rather than a key in trainingModelInfo.
  */
-export function getAiToolkitEcosystem(baseModel: string): string | null {
+const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
+  sd15: 'sd1',
+  sdxl: 'sdxl',
+  flux: 'flux1',
+  sd35: 'sd3',
+  hunyuan: 'wan',
+  wan: 'wan',
+  chroma: 'chroma',
+  qwen: 'qwen',
+  zimage: 'zimageturbo',
+  flux2klein: 'flux2klein',
+  ltx2: 'ltx2',
+  ltx23: 'ltx23',
+};
+
+/**
+ * Get AI Toolkit ecosystem for a training model
+ * Reads from the centralized trainingModelInfo structure.
+ * Falls back to baseType mapping for custom models where
+ * baseModel is an AIR URN instead of a trainingModelInfo key.
+ */
+export function getAiToolkitEcosystem(
+  baseModel: string,
+  baseType?: TrainingBaseModelType
+): string | null {
   const modelInfo = trainingModelInfo[baseModel as TrainingDetailsBaseModelList];
 
   if (modelInfo?.aiToolkit) {
     return modelInfo.aiToolkit.ecosystem;
   }
 
-  // For custom models, we can't determine the ecosystem
+  // Fallback for custom models: derive ecosystem from baseType
+  if (baseType) {
+    const ecosystem = baseTypeToEcosystem[baseType];
+    if (ecosystem) return ecosystem;
+  }
+
   console.warn(`No AI Toolkit ecosystem configured for: ${baseModel}`);
   return null;
 }
@@ -343,42 +426,84 @@ export function getAiToolkitModelVariant(
   return modelInfo?.aiToolkit?.modelVariant;
 }
 
+/**
+ * Map from TrainingBaseModelType to the per-model AI Toolkit feature flag key.
+ * Only includes models where AI Toolkit is optional — mandatory models (qwen, zimage,
+ * flux2klein, ltx2) are already gated by their own training feature flags.
+ */
+const aiToolkitFlagByBaseType: Partial<Record<TrainingBaseModelType, string>> = {
+  sd15: 'aiToolkitSd15',
+  sdxl: 'aiToolkitSdxl',
+  flux: 'aiToolkitFlux',
+  sd35: 'aiToolkitSd35',
+  hunyuan: 'aiToolkitHunyuan',
+  wan: 'aiToolkitWan',
+  chroma: 'aiToolkitChroma',
+};
+
+/**
+ * Check if AI Toolkit is enabled for a base model type, using feature flags.
+ * Mandatory AI Toolkit models always return true (gated elsewhere by their own flags).
+ * Optional models check their per-model Flipt boolean flag.
+ */
+export const isAiToolkitEnabled = (
+  baseType: TrainingBaseModelType,
+  features: Record<string, boolean>
+): boolean => {
+  if (isAiToolkitMandatory(baseType)) return true;
+  // When aiToolkitDefaultSd is on, AI Toolkit is enabled (and default) for sd15/sdxl
+  if ((baseType === 'sd15' || baseType === 'sdxl') && features.aiToolkitDefaultSd) return true;
+  const flagKey = aiToolkitFlagByBaseType[baseType];
+  return flagKey ? !!features[flagKey] : false;
+};
+
 // Check if base model supports AI Toolkit
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
   // AI Toolkit supports these base model types (flux2 is not included - it only uses rapid)
   const supportedTypes: TrainingBaseModelType[] = [
-    // @justin: Disable AI Toolkit for all but mandatory due to issues
-    // 'sd15',
-    // 'sdxl',
-    // 'flux',
-    // 'sd35',
-    // 'hunyuan',
-    // 'wan',
-    // 'chroma',
+    'sd15',
+    'sdxl',
+    'flux',
+    'sd35',
+    'hunyuan',
+    'wan',
+    'chroma',
     'qwen',
-    'zimageturbo',
+    'zimage',
+    'flux2klein',
+    'ltx2',
+    'ltx23',
   ];
   return supportedTypes.includes(baseType);
 };
 
 // Check if AI Toolkit is mandatory (cannot use other engines)
 export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
-  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimageturbo'];
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimage', 'flux2klein', 'ltx2', 'ltx23'];
   return mandatoryTypes.includes(baseType);
 };
 
 // Get default engine for base type
+// Pass features to enable feature-flag-driven defaults (e.g. aiToolkitDefaultSd)
 export const getDefaultEngine = (
   baseType: TrainingBaseModelType,
-  baseModel?: string
+  baseModel?: string,
+  features?: Record<string, boolean>
 ): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
-  if (baseType === 'zimageturbo') return 'ai-toolkit'; // ZImageTurbo requires AI Toolkit
+  if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
+  if (baseType === 'flux2klein') return 'ai-toolkit'; // Flux2 Klein requires AI Toolkit
+  if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
+  if (baseType === 'ltx23') return 'ai-toolkit'; // LTX 2.3 requires AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model
   if (baseType === 'flux2') {
     if (baseModel === 'flux2_dev_edit') return 'flux2-dev-edit';
     return 'flux2-dev'; // Default for flux2_dev
+  }
+  // When flag is on, default sd15/sdxl to ai-toolkit
+  if ((baseType === 'sd15' || baseType === 'sdxl') && features?.aiToolkitDefaultSd) {
+    return 'ai-toolkit';
   }
   return 'kohya';
 };

@@ -24,6 +24,7 @@ import {
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
+  ModCashAdjustmentInput,
   UpdateCashWithdrawalSchema,
 } from '~/server/schema/creator-program.schema';
 import type { UserTier } from '~/server/schema/user.schema';
@@ -61,6 +62,7 @@ import {
   PEAK_EARNING_WINDOW,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
+import { getCapForDefinition } from '~/shared/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
@@ -147,12 +149,7 @@ const createUserCapCache = (buzzType: BuzzSpendType) => {
             earned: 0,
           };
 
-          let cap = definition.limit ?? MIN_CAP;
-          if (definition.percentOfPeakEarning && peakEarning?.earned) {
-            const peakEarnedCap = peakEarning.earned * definition.percentOfPeakEarning;
-            if (peakEarnedCap < MIN_CAP) cap = MIN_CAP;
-            else cap = Math.min(peakEarnedCap, definition.limit ?? Infinity);
-          }
+          const cap = getCapForDefinition(definition, peakEarning.earned);
 
           return [s.userId, { id: s.userId, definition, peakEarning, cap }];
         })
@@ -1071,3 +1068,75 @@ export const getPrevMonthStats = async (buzzType?: BuzzSpendType) => {
 
   return data;
 };
+
+export async function modAdjustCashBalance({
+  userId,
+  amount,
+  accountType,
+  direction,
+  note,
+  modUserId,
+}: ModCashAdjustmentInput & { modUserId: number }) {
+  const externalId = `mod-cash-${modUserId}-${userId}-${Date.now()}`;
+
+  if (direction === 'grant') {
+    await createBuzzTransaction({
+      amount,
+      fromAccountId: 0,
+      toAccountId: userId,
+      toAccountType: accountType,
+      type: TransactionType.Incentive,
+      description: `Mod cash adjustment (grant): ${note}`,
+      externalTransactionId: externalId,
+    });
+  } else {
+    const { transactionId } = await createBuzzTransaction({
+      amount,
+      fromAccountId: userId,
+      fromAccountType: accountType,
+      toAccountId: 0,
+      toAccountType: 'yellow',
+      type: TransactionType.Withdrawal,
+      description: `Mod cash adjustment (deduct): ${note}`,
+      externalTransactionId: externalId,
+    });
+
+    if (!transactionId) {
+      throw new Error('Failed to create transaction');
+    }
+
+    if (accountType === 'cashSettled') {
+      await dbWrite.cashWithdrawal.create({
+        data: {
+          userId,
+          amount,
+          fee: 0,
+          status: CashWithdrawalStatus.Paid,
+          method: CashWithdrawalMethod.Custom,
+          transactionId,
+          note: `[Mod adjustment] ${note}`,
+          metadata: { modUserId, accountType, direction },
+        },
+      });
+    }
+  }
+
+  await logToAxiom({
+    name: 'mod-cash-adjustment',
+    type: 'info',
+    modUserId,
+    targetUserId: userId,
+    amount,
+    accountType,
+    direction,
+    note,
+  });
+
+  await userCashCache.bust(userId);
+
+  signalClient.topicSend({
+    topic: SignalTopic.CreatorProgram,
+    target: SignalMessages.CashInvalidator,
+    data: {},
+  });
+}

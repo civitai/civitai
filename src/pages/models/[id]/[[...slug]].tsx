@@ -77,6 +77,7 @@ const MigrateModelToCollection = dynamic(
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { StatHoverCard } from '~/components/Stats/StatHoverCard';
 import { useQueryImages } from '~/components/Image/image.utils';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 // import { ImageFiltersDropdown } from '~/components/Image/Infinite/ImageFiltersDropdown';
@@ -111,7 +112,7 @@ import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -130,7 +131,7 @@ import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
-import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
+import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 
 export const getServerSideProps = createServerSideProps({
@@ -215,15 +216,6 @@ export const getServerSideProps = createServerSideProps({
     // }
 
     if (ssg) {
-      // if (version)
-      //   await ssg.image.getInfinite.prefetchInfinite({
-      //     modelVersionId: version.id,
-      //     prioritizedUserIds: [version.model.userId],
-      //     period: 'AllTime',
-      //     sort: ImageSort.MostReactions,
-      //     limit: CAROUSEL_LIMIT,
-      //     pending: true,
-      //   });
       await ssg.hiddenPreferences.getHidden.prefetch();
 
       if (modelVersionIdParsed) {
@@ -231,18 +223,32 @@ export const getServerSideProps = createServerSideProps({
           entityId: modelVersionIdParsed as number,
           entityType: 'ModelVersion',
         });
-
-        // await ssg.common.getEntityClubRequirement.prefetch({
-        //   entityId: modelVersionIdParsed as number,
-        //   entityType: 'ModelVersion',
-        // });
-        // await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
-      await ssg.model.getById.prefetch({ id, excludeTrainingData: true });
+
+      // Fetch model to check slug and prefetch for client hydration
+      const model = await ssg.model.getById
+        .fetch({ id, excludeTrainingData: true })
+        .catch(() => null);
+
       await ssg.model.getCollectionShowcase.prefetch({ id });
       if (session) {
         await ssg.user.getEngagedModelVersions.prefetch({ id });
         await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
+      }
+
+      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (model) {
+        const correctSlug = slugit(model.name);
+        const currentSlug = params.slug?.join('/');
+        if (correctSlug && currentSlug !== correctSlug) {
+          const queryString = modelVersionId ? `?modelVersionId=${modelVersionId}` : '';
+          return {
+            redirect: {
+              destination: `/models/${id}/${correctSlug}${queryString}`,
+              permanent: false,
+            },
+          };
+        }
       }
     }
 
@@ -458,24 +464,36 @@ export default function ModelDetailsV2({
   };
 
   const handlePublishModel = () => {
-    if (model && model.status === ModelStatus.Unpublished && isCreator)
-      openConfirmModal({
-        centered: true,
-        closeOnConfirm: false,
-        title: 'Republish model',
-        children:
-          'This model and all of its versions will be publicly available. Are you sure you want to republish this model?',
-        labels: { confirm: 'Yes, republish', cancel: 'No, go back' },
-        onConfirm: () => {
-          publishModelMutation.mutate(
-            {
-              id: model.id,
-              versionIds: model?.modelVersions.map((v) => v.id),
-            },
-            { onSuccess: () => closeAllModals() }
-          );
-        },
-      });
+    if (!model) return;
+
+    const isUnpublished = model.status === ModelStatus.Unpublished;
+    const isUnpublishedViolation = model.status === ModelStatus.UnpublishedViolation;
+    const canRepublish =
+      (isUnpublished && (isCreator || isModerator)) || (isUnpublishedViolation && isModerator);
+
+    if (!canRepublish) return;
+
+    const isPrivate = model.availability === Availability.Private;
+    const message = isPrivate
+      ? 'This model and all of its versions will be restored to their previous state while remaining private. Are you sure you want to republish this model?'
+      : 'This model and all of its versions will be publicly available. Are you sure you want to republish this model?';
+
+    openConfirmModal({
+      centered: true,
+      closeOnConfirm: false,
+      title: 'Republish model',
+      children: message,
+      labels: { confirm: 'Yes, republish', cancel: 'No, go back' },
+      onConfirm: () => {
+        publishModelMutation.mutate(
+          {
+            id: model.id,
+            versionIds: model?.modelVersions.map((v) => v.id),
+          },
+          { onSuccess: () => closeAllModals() }
+        );
+      },
+    });
   };
 
   const toggleCannotPromoteMutation = trpc.model.toggleCannotPromote.useMutation({
@@ -541,11 +559,14 @@ export default function ModelDetailsV2({
 
   if (modelDeleted && !isOwner && !isModerator)
     return (
-      <Center p="xl">
-        <Alert>
-          <Text size="lg">This resource has been removed by its owner</Text>
-        </Alert>
-      </Center>
+      <>
+        <Meta title="This resource has been removed by its owner" deIndex />
+        <Center p="xl">
+          <Alert>
+            <Text size="lg">This resource has been removed by its owner</Text>
+          </Alert>
+        </Center>
+      </>
     );
 
   if (modelDoesntExist || ((modelDeleted || modelNotVisible || isBlocked) && !isModerator)) {
@@ -638,20 +659,9 @@ export default function ModelDetailsV2({
         } | ${selectedEcosystemName} ${getDisplayName(model.type)} | Civitai`}
         description={truncate(removeTags(model.description ?? ''), { length: 150 })}
         images={versionImages}
-        links={
-          env.NEXT_PUBLIC_BASE_URL
-            ? [
-                {
-                  href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
-                  rel: 'canonical',
-                },
-                {
-                  href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}`,
-                  rel: 'alternate',
-                },
-              ]
-            : undefined
-        }
+        ogEndpoint={`/api/og?type=model&id=${model.id}`}
+        canonical={`/models/${model.id}/${slugit(model.name)}`}
+        alternate={`/models/${model.id}`}
         schema={metaSchema}
         deIndex={
           model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
@@ -669,11 +679,9 @@ export default function ModelDetailsV2({
                     <Title className={classes.title} order={1} lineClamp={2}>
                       {model?.name}
                     </Title>
-                    <Tooltip
-                      label={`${(
-                        model.rank?.thumbsUpCountAllTime ?? 0
-                      ).toLocaleString()} unique positive reviews`}
-                      withinPortal
+                    <StatHoverCard
+                      label="Unique Reviews"
+                      value={model.rank?.thumbsUpCountAllTime ?? 0}
                     >
                       <div>
                         <LoginRedirect reason="favorite-model">
@@ -697,12 +705,17 @@ export default function ModelDetailsV2({
                           </IconBadge>
                         </LoginRedirect>
                       </div>
-                    </Tooltip>
-                    <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
-                      <Text className={classes.modelBadgeText}>
-                        {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
-                      </Text>
-                    </IconBadge>
+                    </StatHoverCard>
+                    <StatHoverCard
+                      label="Unique Downloads"
+                      value={model.rank?.downloadCountAllTime ?? 0}
+                    >
+                      <IconBadge radius="sm" size="lg" icon={<IconDownload size={18} />}>
+                        <Text className={classes.modelBadgeText}>
+                          {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
+                        </Text>
+                      </IconBadge>
+                    </StatHoverCard>
                     {/* TODO this isn't quite right, we need to check the other couldGenerate options */}
                     {latestGenerationVersion && (
                       <GenerateButton
@@ -721,42 +734,50 @@ export default function ModelDetailsV2({
                       </GenerateButton>
                     )}
                     {features.collections && (
-                      <LoginRedirect reason="add-to-collection">
-                        <IconBadge
-                          radius="sm"
-                          size="lg"
-                          icon={<IconBookmark size={18} />}
-                          className="cursor-pointer"
-                          onClick={handleCollect}
-                        >
-                          <Text className={classes.modelBadgeText}>
-                            {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
-                          </Text>
-                        </IconBadge>
-                      </LoginRedirect>
+                      <StatHoverCard
+                        label="Collections"
+                        value={model.rank?.collectedCountAllTime ?? 0}
+                      >
+                        <div>
+                          <LoginRedirect reason="add-to-collection">
+                            <IconBadge
+                              radius="sm"
+                              size="lg"
+                              icon={<IconBookmark size={18} />}
+                              className="cursor-pointer"
+                              onClick={handleCollect}
+                            >
+                              <Text className={classes.modelBadgeText}>
+                                {abbreviateNumber(model.rank?.collectedCountAllTime ?? 0)}
+                              </Text>
+                            </IconBadge>
+                          </LoginRedirect>
+                        </div>
+                      </StatHoverCard>
                     )}
                     {!model.poi && (
-                      <InteractiveTipBuzzButton
-                        toUserId={model.user.id}
-                        entityId={model.id}
-                        entityType="Model"
-                      >
-                        <IconBadge
-                          className="cursor-pointer"
-                          radius="sm"
-                          size="lg"
-                          icon={
-                            <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
-                          }
-                        >
-                          <Text
-                            className={classes.modelBadgeText}
-                            title={buzzEarned.toLocaleString()}
+                      <StatHoverCard label="Buzz Earned" value={buzzEarned}>
+                        <div>
+                          <InteractiveTipBuzzButton
+                            toUserId={model.user.id}
+                            entityId={model.id}
+                            entityType="Model"
                           >
-                            {abbreviateNumber(buzzEarned)}
-                          </Text>
-                        </IconBadge>
-                      </InteractiveTipBuzzButton>
+                            <IconBadge
+                              className="cursor-pointer"
+                              radius="sm"
+                              size="lg"
+                              icon={
+                                <IconBolt size={18} className="text-yellow-7" fill="currentColor" />
+                              }
+                            >
+                              <Text className={classes.modelBadgeText}>
+                                {abbreviateNumber(buzzEarned)}
+                              </Text>
+                            </IconBadge>
+                          </InteractiveTipBuzzButton>
+                        </div>
+                      </StatHoverCard>
                     )}
                     {inEarlyAccess && (
                       <Tooltip
@@ -833,16 +854,19 @@ export default function ModelDetailsV2({
                             Unpublish
                           </Menu.Item>
                         )}
-                        {currentUser && isCreator && model.status === ModelStatus.Unpublished && (
-                          <Menu.Item
-                            leftSection={<IconRepeat size={14} stroke={1.5} />}
-                            color="green"
-                            onClick={handlePublishModel}
-                            disabled={publishModelMutation.isLoading}
-                          >
-                            Republish
-                          </Menu.Item>
-                        )}
+                        {currentUser &&
+                          ((model.status === ModelStatus.Unpublished &&
+                            (isCreator || isModerator)) ||
+                            (model.status === ModelStatus.UnpublishedViolation && isModerator)) && (
+                            <Menu.Item
+                              leftSection={<IconRepeat size={14} stroke={1.5} />}
+                              color="green"
+                              onClick={handlePublishModel}
+                              disabled={publishModelMutation.isLoading}
+                            >
+                              Republish
+                            </Menu.Item>
+                          )}
                         {currentUser && isModerator && modelDeleted && (
                           <Menu.Item
                             leftSection={<IconRecycle size={14} stroke={1.5} />}
@@ -1269,6 +1293,7 @@ export default function ModelDetailsV2({
                 canDiscuss={canDiscuss}
                 onlyEarlyAccess={onlyEarlyAccess}
                 modelId={model.id}
+                modelUserId={model.user.id}
                 locked={model.locked || model.meta?.commentsLocked}
               />
             </Container>

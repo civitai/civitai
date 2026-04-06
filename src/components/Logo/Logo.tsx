@@ -61,7 +61,7 @@ export function Logo() {
     if (month === 11 && day >= 26) return null;
 
     // St. Patrick's Day
-    if (month === 2 && day >= 14 && day <= 17) return 'stpatty';
+    // if (month === 2 && day >= 14 && day <= 17) return 'stpatty';
 
     // Pride
     if (month === 5) return 'pride';

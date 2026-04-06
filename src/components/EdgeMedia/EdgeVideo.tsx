@@ -44,6 +44,8 @@ type VideoProps = Omit<
   threshold?: number;
   disableWebm?: boolean;
   disablePoster?: boolean;
+  /** Database image ID — included in drag data so drop targets can look up metadata server-side */
+  imageId?: number;
 };
 
 export type EdgeVideoRef = {
@@ -73,6 +75,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       thumbnailUrl,
       disableWebm,
       disablePoster,
+      imageId,
       onLoad,
       onError,
       onLoadedData,
@@ -93,6 +96,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       key: 'global-volume',
       defaultValue: state.muted ? 0 : 0.5,
     });
+
+    useEffect(() => {
+      const video = ref.current;
+      if (!video) return;
+      // When prop forces mute, always mute. When prop allows audio, respect user's volume preference.
+      const shouldMute = initialMuted || volume === 0;
+      video.muted = shouldMute;
+      setState((current) => ({ ...current, muted: shouldMute }));
+    }, [initialMuted]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useImperativeHandle(forwardedRef, () => ({
       stop: () => {
@@ -220,7 +232,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       if (isCurrentStack && (canPlay || props.autoPlay)) {
         videoElem.play().catch(() => {
           // Autoplay failed, user interaction required
-          console.log('auto play failed');
           setAutoplayFailed(true);
         });
       } else {
@@ -246,6 +257,16 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       <div
         ref={containerRef}
         {...wrapperProps}
+        draggable={!!imageId}
+        onDragStart={
+          imageId
+            ? (e) => {
+                e.dataTransfer.setData('text/uri-list', videoUrl);
+                e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
+                e.dataTransfer.setData('application/x-civitai-media-type', 'video');
+              }
+            : undefined
+        }
         className={clsx(
           styles.iosScroll,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',

@@ -20,7 +20,7 @@ export const serverSchema = z.object({
   DATABASE_SSL: zc.booleanString.default(true),
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
-  LOGICAL_REPLICA_DB_URL: z.url(),
+  DATAPACKET_DATABASE_RO_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
@@ -28,6 +28,8 @@ export const serverSchema = z.object({
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
   REDIS_URL: z.url(),
   REDIS_CLUSTER: z.preprocess((x) => x === 'true', z.boolean().default(false)),
+  REDIS_CLUSTER_NODES: z.string().optional(), // Comma-separated list of cluster node URLs for redundant discovery
+  REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000), // Topology refresh interval in ms (default 30s)
   REDIS_SYS_URL: z.url(),
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -39,6 +41,9 @@ export const serverSchema = z.object({
     // VERCEL_URL doesnt include `https` so it cant be validated as a URL
     process.env.VERCEL ? z.string() : z.url()
   ),
+  // Optional cookie domain override for cross-subdomain session sharing (e.g., PR previews)
+  // When set, session cookies will use this domain (e.g., ".civitaic.com") instead of the hostname
+  NEXTAUTH_COOKIE_DOMAIN: z.string().optional(),
   CLICKHOUSE_HOST: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_USERNAME: isProd ? z.string() : z.string().optional(),
   CLICKHOUSE_PASSWORD: isProd ? z.string() : z.string().optional(),
@@ -47,6 +52,7 @@ export const serverSchema = z.object({
   DISCORD_CLIENT_SECRET: z.string(),
   DISCORD_BOT_TOKEN: z.string().optional(),
   DISCORD_GUILD_ID: z.string().optional(),
+  DISCORD_WEBHOOK_MOD_ALERTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string(),
   GITHUB_CLIENT_SECRET: z.string(),
   GOOGLE_CLIENT_ID: z.string(),
@@ -69,6 +75,7 @@ export const serverSchema = z.object({
   S3_IMAGE_UPLOAD_REGION: z.string(),
   S3_IMAGE_UPLOAD_ENDPOINT: z.url(),
   S3_IMAGE_UPLOAD_BUCKET: z.string(),
+  S3_IMAGE_FORCE_PATH_STYLE: zc.booleanString.optional().default(false),
   S3_IMAGE_UPLOAD_OVERRIDE: z.string().optional(),
   S3_IMAGE_UPLOAD_BUCKET_OLD: z.string().optional(),
   S3_IMAGE_CACHE_BUCKET: z.string().default(''),
@@ -92,6 +99,8 @@ export const serverSchema = z.object({
   IMAGE_SCANNER_NEW: zc.booleanString.default(false),
   DELIVERY_WORKER_ENDPOINT: z.string().optional(),
   DELIVERY_WORKER_TOKEN: z.string().optional(),
+  STORAGE_RESOLVER_ENDPOINT: z.string().optional(), // URL for storage-resolver microservice
+  STORAGE_RESOLVER_AUTH: z.string().optional(), // Basic auth credentials (username:password)
   TRPC_ORIGINS: commaDelimitedStringArray().default([]),
   ORCHESTRATOR_ENDPOINT: isProd ? z.url() : z.url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
@@ -159,6 +168,7 @@ export const serverSchema = z.object({
       })
     )
     .optional(),
+  IS_DATAPACKET: zc.booleanString.default(false),
   REPLICATION_LAG_DELAY: z.coerce.number().default(0),
   RECAPTCHA_PROJECT_ID: z.string(),
   AIR_WEBHOOK: z.url().optional(),
@@ -172,6 +182,7 @@ export const serverSchema = z.object({
   FRESHDESK_JWT_URL: z.string().optional(),
   FRESHDESK_DOMAIN: z.string().optional(),
   FRESHDESK_TOKEN: z.string().optional(),
+  FRESHDESK_AGENT_ID: z.coerce.number().optional(),
   UPLOAD_PROHIBITED_EXTENSIONS: commaDelimitedStringArray().optional(),
   POST_INTENT_DETAILS_HOSTS: z.preprocess(stringToArray, z.array(z.url()).optional()),
   CHOPPED_TOKEN: z.string().optional(),
@@ -208,6 +219,8 @@ export const serverSchema = z.object({
   // OpenAI
   OPENAI_API_KEY: z.string().optional(),
 
+  // OpenRouter (unified LLM API)
+  OPENROUTER_API_KEY: z.string().optional(),
   // Youtube related:
   YOUTUBE_APP_CLIENT_ID: z.string().optional(),
   YOUTUBE_APP_CLIENT_SECRET: z.string().optional(),
@@ -230,6 +243,10 @@ export const serverSchema = z.object({
   NOW_PAYMENTS_API_URL: z.string().optional(),
   NOW_PAYMENTS_API_KEY: z.string().optional(),
   NOW_PAYMENTS_IPN_KEY: z.string().optional(),
+  NOW_PAYMENTS_EMAIL: z.string().optional(),
+  NOW_PAYMENTS_PASSWORD: z.string().optional(),
+  NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
+  NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
 
   // Coinbase Related:
   COINBASE_API_URL: z.string().optional(),
@@ -254,4 +271,26 @@ export const serverSchema = z.object({
 
   FLIPT_URL: z.string(),
   FLIPT_FETCHER_SECRET: z.string(),
+  FLIPT_DEPLOYMENT_ID: z.string().optional(),
+
+  // B2 Upload — model files (gated by Flipt flag B2_UPLOAD_DEFAULT)
+  S3_UPLOAD_B2_ENDPOINT: z.string().optional(),
+  S3_UPLOAD_B2_ACCESS_KEY: z.string().optional(),
+  S3_UPLOAD_B2_SECRET_KEY: z.string().optional(),
+  S3_UPLOAD_B2_BUCKET: z.string().optional(),
+  S3_UPLOAD_B2_REGION: z.string().optional(),
+
+  // B2 Upload — media/images (gated by Flipt flag B2_IMAGE_UPLOAD)
+  S3_IMAGE_B2_ENDPOINT: z.string().optional(),
+  S3_IMAGE_B2_ACCESS_KEY: z.string().optional(),
+  S3_IMAGE_B2_SECRET_KEY: z.string().optional(),
+  S3_IMAGE_B2_BUCKET: z.string().optional(),
+  S3_IMAGE_B2_REGION: z.string().optional(),
+
+  // Storage resolver internal API (for registering B2 uploads)
+  STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
+  STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
+
+  // BitDex
+  BITDEX_URL: z.string().optional().default(''),
 });

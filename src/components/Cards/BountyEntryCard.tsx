@@ -127,6 +127,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       src={image.url}
                       name={image.name ?? image.id.toString()}
                       type={image.type}
+                      imageId={image.id}
                       alt={
                         image.meta
                           ? truncate(image.meta.prompt, { length: constants.altTruncateLength })

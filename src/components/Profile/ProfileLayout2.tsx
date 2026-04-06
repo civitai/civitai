@@ -84,14 +84,14 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
             stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           images={user.profilePicture}
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/${pathname}`, rel: 'canonical' }]}
+          canonical={pathname}
           schema={metaSchema}
         />
       ) : (
         <Meta
-          title="Creator Profile | Civitai"
-          description="Learn more about this awesome creator on Civitai."
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL as string}/${pathname}`, rel: 'canonical' }]}
+          title={`${user?.username ?? username} Creator Profile | Civitai`}
+          description={`Learn more about ${user?.username ?? username} on Civitai.`}
+          canonical={pathname}
         />
       )}
       {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}

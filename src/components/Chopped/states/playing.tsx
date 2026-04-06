@@ -16,7 +16,7 @@ import type { Judge, RoundStatus, Theme } from '~/components/Chopped/chopped.sha
 import { useChoppedStore, useChoppedUserId, useIsHost } from '~/components/Chopped/chopped.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getRandom } from '~/utils/array-helpers';
 import { fetchBlob, getBase64 } from '~/utils/file-utils';
 import { resizeImage } from '~/shared/utils/canvas-utils';
@@ -208,12 +208,12 @@ function SubmissionCountdown(props: BoxProps) {
   const endingSoon = timeRemaining < 30 * 1000;
 
   useEffect(() => {
-    const timer = setInterval(() => {
+    const timer = window.setInterval(() => {
       const newTimeRemaining = end - Date.now();
       setTimeRemaining(newTimeRemaining > 0 ? newTimeRemaining : 0);
     }, 1000);
 
-    return () => clearInterval(timer);
+    return () => window.clearInterval(timer);
   }, [end]);
 
   return (
@@ -285,7 +285,7 @@ function SubmissionDropzone({
 function SubmissionCreateButton({ theme, minimized }: { theme: Theme; minimized?: boolean }) {
   const createSubmission = async () => {
     console.log('Creating submission for', theme.name);
-    generationPanel.open({
+    generationGraphPanel.open({
       type: 'modelVersions',
       ids: theme.resources?.map((air) => parseAIR(air).version) ?? [],
     });

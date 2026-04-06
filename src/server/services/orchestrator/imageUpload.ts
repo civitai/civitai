@@ -1,5 +1,5 @@
 import { NsfwLevel, handleError, invokeImageUploadStepTemplate } from '@civitai/client';
-import { createOrchestratorClient } from '~/server/services/orchestrator/client';
+import { createOrchestratorClientNew } from '~/server/services/orchestrator/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 
@@ -12,7 +12,7 @@ export async function imageUpload({
   token: string;
   allowMatureContent?: boolean;
 }) {
-  const client = createOrchestratorClient(token);
+  const client = createOrchestratorClientNew(token);
 
   const { data, error } = await invokeImageUploadStepTemplate({
     client,

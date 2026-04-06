@@ -459,22 +459,16 @@ export const collectionItemsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
-  // Safeguard against missing items that might be in collection but return null.
-  // due to preferences and/or other statuses.
-  const limit = 2 * input.limit;
   const features = getFeatureFlags({ user: ctx.user, req: ctx.req });
   const result = await getCollectionItemsByCollectionId({
-    input: { ...input, limit },
+    input,
     user: ctx.user,
-    useLogicalReplica: features.logicalReplica,
+    dbTarget: features.datapacketRead ? 'datapacket' : 'read',
   });
-
-  // Trim to requested limit and use the nextCursor from the service
-  const collectionItems = result.items.slice(0, input.limit);
 
   return {
     nextCursor: result.nextCursor,
-    collectionItems,
+    collectionItems: result.items,
   };
 };
 
@@ -544,6 +538,7 @@ export const addSimpleImagePostHandler = async ({
     return {
       post,
       permissions,
+      imageIds,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;

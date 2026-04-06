@@ -1,5 +1,4 @@
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { TwCard } from '~/components/TwCard/TwCard';
@@ -10,7 +9,7 @@ export default function Login() {
     <>
       <Meta
         title="Sign in to Civitai"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/login`, rel: 'canonical' }]}
+        canonical="/login"
       />
       <div className="container max-w-xs">
         <TwCard className="mt-6 border p-3 shadow">
@@ -27,10 +26,10 @@ export const getServerSideProps = createServerSideProps({
     if (session) {
       const { callbackUrl, error, reason } = ctx.query;
       if (reason !== 'switch-accounts') {
-        const destinationURL = new URL(
-          typeof callbackUrl === 'string' ? callbackUrl : '/',
-          getBaseUrl()
-        );
+        const rawCallback = typeof callbackUrl === 'string' ? callbackUrl : '/';
+        // Prevent recursive login redirects
+        const safeCallback = rawCallback.startsWith('/login') ? '/' : rawCallback;
+        const destinationURL = new URL(safeCallback, getBaseUrl());
         if (error) destinationURL.searchParams.set('error', error as string);
         const destination = `${destinationURL.pathname}${destinationURL.search}${destinationURL.hash}`;
 

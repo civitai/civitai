@@ -1,4 +1,4 @@
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import TosViolationDialog from '~/components/Dialog/Common/TosViolationDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { trpc } from '~/utils/trpc';
 import { imageStore } from '~/store/image.store';
@@ -16,15 +16,12 @@ export function useReportTosViolation() {
 
   return function ({ imageId }: { imageId: number }) {
     dialogStore.trigger({
-      component: ConfirmDialog,
+      component: TosViolationDialog,
       props: {
-        title: 'Report ToS Violation',
-        message:
-          'Are you sure you want to remove this image as a Terms of Service violation? The uploader will be notified.',
-        labels: { cancel: `Cancel`, confirm: `Yes` },
-        confirmProps: { color: 'red' },
-        onConfirm: async () => {
-          await mutateAsync({ id: imageId });
+        title: 'Remove as TOS Violation',
+        message: 'The uploader will be notified that their image was removed.',
+        onConfirm: async (violationType, violationDetails) => {
+          await mutateAsync({ id: imageId, violationType, violationDetails });
           imageStore.setImage(imageId, { tosViolation: true });
         },
       },

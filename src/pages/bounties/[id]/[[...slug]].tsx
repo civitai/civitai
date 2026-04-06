@@ -85,7 +85,6 @@ import { Collection } from '~/components/Collection/Collection';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { env } from '~/env/client';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -114,8 +113,23 @@ export const getServerSideProps = createServerSideProps({
     if (!result.success) return { notFound: true };
 
     if (ssg) {
-      await ssg.bounty.getById.prefetch({ id: result.data.id });
+      // Fetch bounty to check slug and prefetch for client hydration
+      const bounty = await ssg.bounty.getById.fetch({ id: result.data.id }).catch(() => null);
       await ssg.hiddenPreferences.getHidden.prefetch();
+
+      // Redirect to canonical slug URL if slug is missing or incorrect
+      if (bounty) {
+        const correctSlug = slugit(bounty.name);
+        const currentSlug = result.data.slug?.join('/');
+        if (correctSlug && currentSlug !== correctSlug) {
+          return {
+            redirect: {
+              destination: `/bounties/${result.data.id}/${correctSlug}`,
+              permanent: false,
+            },
+          };
+        }
+      }
     }
 
     return { props: removeEmpty(result.data) };
@@ -185,17 +199,10 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
       <Meta
         title={`Civitai | ${bounty?.name}`}
         images={bounty?.images}
+        ogEndpoint={`/api/og?type=bounty&id=${bounty.id}`}
         description={bounty?.description}
-        links={[
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
-            rel: 'canonical',
-          },
-          {
-            href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}`,
-            rel: 'alternate',
-          },
-        ]}
+        canonical={`/bounties/${bounty.id}/${slugit(bounty.name)}`}
+        alternate={`/bounties/${bounty.id}`}
         deIndex={bounty?.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={bounty.nsfwLevel}>

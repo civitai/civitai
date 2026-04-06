@@ -13,6 +13,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GiftNoticeAlert } from './GiftNoticeAlert';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
+import { GIFT_CARD_DISCLAIMER } from '~/utils/gift-cards/constants';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
@@ -186,7 +187,7 @@ export function RedeemCodeCard({
   return (
     <div className={clsx(classes.redeemSection, className)}>
       <div className={classes.contentSection}>
-        <Stack gap="sm">
+        <Stack gap="xs">
           <Group align="center">
             {/* Icon Section */}
             {showIcon && (
@@ -202,7 +203,7 @@ export function RedeemCodeCard({
               </div>
             )}
             <div>
-              <Text size="xl" fw={700} className={classes.redeemTitle}>
+              <Text size="lg" fw={700}>
                 {title}
               </Text>
               <Text size="sm" c="dimmed" className={classes.redeemDescription}>
@@ -239,9 +240,14 @@ export function RedeemCodeCard({
             </Button>
           </Group>
 
-          <Text size="xs" c="dimmed" className={classes.helpText}>
-            Case-insensitive • Spaces auto-removed • Instant processing
-          </Text>
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed" className={classes.helpText}>
+              Case-insensitive • Spaces auto-removed • Instant processing
+            </Text>
+            <Text size="xs" c="dimmed">
+              All redemptions are final and non-refundable.
+            </Text>
+          </Stack>
         </Stack>
       </div>
 

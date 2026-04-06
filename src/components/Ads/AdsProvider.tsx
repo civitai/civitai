@@ -74,7 +74,8 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     : !features.isGreen &&
       features.isBlue &&
       (allowAds || !isMember) &&
-      !blockedUrls.some((url) => router.asPath.includes(url));
+      !blockedUrls.some((url) => router.asPath.includes(url)) &&
+      !router.asPath.split('?')[0].endsWith('/edit');
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });

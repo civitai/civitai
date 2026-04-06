@@ -91,7 +91,7 @@ export const processBuzzOrder = async (orderId: string | number) => {
         amount: buzzAmount,
         type: TransactionType.Purchase,
         externalTransactionId: `PAYPAL_ORDER:${orderId}`,
-        description: 'Buzz purchase',
+        description: `Purchase of ${buzzAmount} Buzz via PayPal.`,
         details: { paypalOrderId: orderId },
       });
       if (!transactionId) {

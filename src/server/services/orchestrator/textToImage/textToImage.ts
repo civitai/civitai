@@ -13,7 +13,11 @@ import {
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
+import {
+  WORKFLOW_TAGS,
+  samplersToSchedulers,
+  getProcessTagFromWorkflow,
+} from '~/shared/constants/generation.constants';
 import { getHiDreamInput } from '~/shared/orchestrator/hidream.config';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
@@ -102,7 +106,6 @@ export async function createTextToImageStep(
           resources: input.resources,
           params: removeEmpty(inputParams),
           remixOfId: input.remixOfId,
-          maxNsfwLevel: isPrivateGeneration ? 'pG13' : undefined,
           isPrivateGeneration,
         }
       : undefined,
@@ -124,6 +127,7 @@ export async function createTextToImage(
   const { params, tips, user, experimental, isGreen, allowMatureContent, currencies } = args;
   const baseModel = 'baseModel' in params ? params.baseModel : undefined;
   const process = !!params.sourceImage ? 'img2img' : 'txt2img';
+  const processTag = getProcessTagFromWorkflow(params.workflow, !!params.sourceImage, 'image');
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
@@ -133,6 +137,7 @@ export async function createTextToImage(
         params.workflow,
         baseModel,
         process,
+        processTag,
         ...args.tags,
       ].filter(isDefined),
       steps: [step],
@@ -140,7 +145,7 @@ export async function createTextToImage(
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
       // Ensures private generation does not allow mature content
-      nsfwLevel: undefined,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? 'pg13' : undefined,
       allowMatureContent: step.metadata?.isPrivateGeneration ? false : allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,

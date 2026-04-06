@@ -1,11 +1,10 @@
 import { Avatar, Badge, Button, Card, Image, Text, ThemeIcon } from '@mantine/core';
-import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconTools } from '@tabler/icons-react';
 import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { generationPanel, generationStore } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import type { ToolGetAllModel } from '~/types/router';
 import { slugit } from '~/utils/string-helpers';
 
@@ -78,16 +77,7 @@ export function ToolCard({ data }: Props) {
               onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
-
-                const isVideo = data.type === ToolType.Video;
-                const engine = isVideo ? data.alias : undefined;
-                generationStore.setData({
-                  resources: [],
-                  params: {},
-                  type: isVideo ? 'video' : 'image',
-                  engine,
-                });
-                generationPanel.open();
+                generationGraphPanel.open();
               }}
               fullWidth
             >

@@ -17,8 +17,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { scanJobsSchema } from '~/server/schema/image.schema';
-import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import type { ImageMetadata, MediaMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { createImageTagsForReview } from '~/server/services/image-review.service';
 import {
@@ -33,6 +32,7 @@ import {
   insertTagsOnImageNew,
   upsertTagsOnImageNew,
 } from '~/server/services/tagsOnImageNew.service';
+import { isExemptFromAiVerification } from '~/server/services/image-scan-result.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
@@ -160,21 +160,11 @@ export default WebhookEndpoint(async (req, res) => {
         });
         break;
       case Status.Unscannable:
-        const image = await dbWrite.image.findUnique({
-          where: { id: data.id },
-          select: { scanJobs: true },
-        });
-
-        const scanJobs = scanJobsSchema.parse(image?.scanJobs ?? {});
-        scanJobs.retryCount = scanJobs.retryCount ?? 0;
-        scanJobs.retryCount++;
-
-        await dbWrite.image.updateMany({
-          where: { id: data.id, ingestion: { in: pendingStates } },
-          data: {
-            ingestion: ImageIngestionStatus.Error,
-            scanJobs: scanJobs as any,
-          },
+        await updateImageScanJobs({
+          id: data.id,
+          ingestion: ImageIngestionStatus.Error,
+          incrementRetryCount: true,
+          whereIngestionIn: pendingStates,
         });
         break;
       case Status.Success:
@@ -549,7 +539,11 @@ async function getTagsFromIncomingTags({
   if (prompt) {
     // Detect real person in prompt
     const realPersonName = includesPoi(prompt);
-    if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
+    if (realPersonName) {
+      const tagName =
+        typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;
+      incomingTags.push({ tag: tagName.toLowerCase(), confidence: 100 });
+    }
 
     // Detect tags from prompt
     const promptTags = getTagsFromPrompt(prompt);
@@ -751,19 +745,54 @@ async function updateImageScanJobs({
   ingestion,
   nsfwLevel,
   blockedFor,
+  incrementRetryCount,
+  whereIngestionIn,
 }: {
   id: number;
-  source: TagSource;
+  source?: TagSource;
   aiRating?: NsfwLevel;
   aiModel?: string;
   pHash?: bigint;
   ingestion?: ImageIngestionStatus;
   nsfwLevel?: NsfwLevel;
   blockedFor?: string;
+  incrementRetryCount?: boolean;
+  whereIngestionIn?: ImageIngestionStatus[];
 }) {
+  // Build scanJobs update SQL by composing jsonb operations
+  const scanJobsOps: { path: string; value: string }[] = [];
+  if (source) {
+    scanJobsOps.push({
+      path: `'{scans}'`,
+      value: `COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb`,
+    });
+  }
+  if (incrementRetryCount) {
+    scanJobsOps.push({
+      path: `'{retryCount}'`,
+      value: `to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)`,
+    });
+  }
+  if (!scanJobsOps.length) {
+    throw new Error('updateImageScanJobs requires either source or incrementRetryCount');
+  }
+  // Nest jsonb_set calls: jsonb_set(jsonb_set(base, path1, val1), path2, val2)
+  const scanJobsSql = scanJobsOps.reduce(
+    (acc, op) => `jsonb_set(${acc}, ${op.path}, ${op.value})`,
+    `COALESCE("scanJobs", '{}')`
+  );
+
+  // Build WHERE clause dynamically
+  const whereConditions = [`id = ${id}`];
+  if (whereIngestionIn?.length) {
+    whereConditions.push(`ingestion IN (${whereIngestionIn.map((s) => `'${s}'`).join(', ')})`);
+  }
+  const whereClause = whereConditions.join(' AND ');
+
   const result = await dbWrite.$queryRawUnsafe<
     {
       scanJobs: { scans?: Record<string, TagSource> };
+      type: MediaType;
     }[]
   >(`
       UPDATE "Image" SET
@@ -773,12 +802,14 @@ async function updateImageScanJobs({
       ${blockedFor ? `"blockedFor" = '${blockedFor}',` : ''}
       ${aiRating ? `"aiNsfwLevel" = ${aiRating},` : ''}
       ${aiModel ? `"aiModel" = '${aiModel}',` : ''}
-      "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{scans}', COALESCE("scanJobs"->'scans', '{}') || '{"${source}": ${Date.now()}}'::jsonb)
-      WHERE id = ${id}
-      RETURNING "scanJobs";
+      "scanJobs" = ${scanJobsSql}
+      WHERE ${whereClause}
+      RETURNING "scanJobs", type;
     `);
 
-  return getHasRequiredScans(result[0]?.scanJobs?.scans);
+  return result[0]?.type === 'video'
+    ? getHasRequiredVideoScans(result[0]?.scanJobs?.scans)
+    : getHasRequiredScans(result[0]?.scanJobs?.scans);
 }
 
 const requiredScans = imageScanTypes
@@ -786,6 +817,12 @@ const requiredScans = imageScanTypes
   .filter(isDefined);
 function getHasRequiredScans(scans: Record<string, TagSource> = {}) {
   return requiredScans.every((scan) => scan in scans);
+}
+function getHasRequiredVideoScans(scans: Record<string, TagSource> = {}) {
+  return [
+    ImageScanTypeTagSourceMap.get(ImageScanType.WD14),
+    ImageScanTypeTagSourceMap.get(ImageScanType.SpineRating),
+  ].every((scan) => scan! in scans);
 }
 
 async function processScanResult({
@@ -1013,10 +1050,18 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
   else if (flags.tagReview) reviewKey = 'tag';
   else if (flags.newUserReview) reviewKey = 'newUser';
 
+  let ingestion: ImageIngestionStatus | undefined;
+
+  if (image.type === 'video' && getHasRequiredVideoScans(image.scanJobs?.scans)) {
+    ingestion = ImageIngestionStatus.Scanned;
+  }
+
+  if (image.type !== 'video' && getHasRequiredScans(image.scanJobs?.scans)) {
+    ingestion = ImageIngestionStatus.Scanned;
+  }
+
   const data: Prisma.ImageUpdateInput = {
-    ingestion: getHasRequiredScans(image.scanJobs?.scans)
-      ? ImageIngestionStatus.Scanned
-      : undefined,
+    ingestion,
     updatedAt: new Date(),
   };
   if (!image.nsfwLevelLocked) data.nsfwLevel = nsfwLevel;
@@ -1031,7 +1076,11 @@ async function auditImageScanResults({ image }: { image: GetImageReturn }) {
     // Avoids blocking images that we know are AI generated with some resources.
     resources: hasResource ? [1] : [],
   });
-  if (flags.nsfw && !validAiGeneration) {
+  if (
+    flags.nsfw &&
+    !validAiGeneration &&
+    !(await isExemptFromAiVerification(image.id, image.metadata as MediaMetadata | null))
+  ) {
     data.ingestion = ImageIngestionStatus.Blocked;
     data.blockedFor = BlockedReason.AiNotVerified;
   }

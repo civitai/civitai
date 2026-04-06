@@ -268,25 +268,18 @@ type TimeframeRow = {
   userId: number;
   all_time: number;
 };
-const reactionTypes = `('Image_Create', 'Comment_Create', 'CommentV2_Create', 'Review_Create', 'Question_Create', 'Answer_Create', 'BountyEntry_Create', 'Article_Create')`;
 async function getReactionTasks(ctx: UserMetricContext) {
   const data = await ctx.ch.$query<TimeframeRow>`
     WITH targets AS (
-      SELECT
-        ownerId
-      FROM reactions
-      WHERE time > ${ctx.lastUpdate}
+        SELECT DISTINCT ownerId
+        FROM reactions
+        WHERE time > ${ctx.lastUpdate}
     )
     SELECT
-      ownerId as userId,
-      SUM(CASE
-        WHEN type IN ${reactionTypes} THEN 1
-        ELSE -1
-      END) as all_time
-    FROM reactions r
-    WHERE
-      (r.time < parseDateTimeBestEffort('2024-04-27') OR r.userId != r.ownerId)
-      AND r.ownerId IN (SELECT ownerId FROM targets)
+        ownerId as userId,
+        sum(score) as all_time
+    FROM reactions_owner_scores
+    WHERE ownerId IN (SELECT ownerId FROM targets)
     GROUP BY 1;
   `;
 

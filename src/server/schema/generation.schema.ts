@@ -5,9 +5,16 @@ import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { baseModels } from '~/shared/constants/base-model.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
+import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
+
+// All valid samplers: UI samplers + sdcpp samplers for ZImageBase/Flux2Klein
+const allValidSamplers = [
+  ...generationSamplers,
+  ...zImageSampleMethods,
+  ...flux2KleinSampleMethods,
+] as const;
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
@@ -25,10 +32,7 @@ export const getGenerationResourcesSchema = z.object({
   types: z.enum(ModelType).array().optional(),
   notTypes: z.enum(ModelType).array().optional(),
   ids: z.number().array().optional(),
-  baseModel: z
-    .string()
-    .refine((val) => baseModels.includes(val as BaseModel), 'Invalid base model')
-    .optional(),
+  baseModel: z.string().optional(),
   supported: z.boolean().optional(),
 });
 
@@ -141,7 +145,7 @@ const sharedGenerationParamsSchema = z.object({
     .max(1500, 'Prompt cannot be longer than 1500 characters'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30),
-  sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
+  sampler: z.string().refine((val) => allValidSamplers.includes(val as any), {
     error: 'Invalid sampler',
   }),
   seed: z.coerce.number().min(-1).max(generation.maxValues.seed).default(-1),
@@ -166,16 +170,16 @@ export const defaultsByTier: Record<UserTier, GenerationLimits> = {
   free: {
     quantity: 4,
     queue: 4,
-    steps: 40,
+    steps: 50,
     resources: 9,
   },
   founder: {
     quantity: 8,
     queue: 8,
-    steps: 60,
+    steps: 50,
     resources: 9,
   },
-  bronze: { quantity: 8, queue: 8, steps: 60, resources: 12 },
+  bronze: { quantity: 8, queue: 8, steps: 50, resources: 12 },
   silver: { quantity: 10, queue: 10, steps: 60, resources: 12 },
   gold: { quantity: 12, queue: 10, steps: 60, resources: 12 },
 };
@@ -252,7 +256,7 @@ export const generationRequestTestRunSchema = z.object({
   aspectRatio: z.string(),
   steps: z.coerce.number().min(1).max(100),
   quantity: z.coerce.number().min(1).max(20),
-  sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
+  sampler: z.string().refine((val) => allValidSamplers.includes(val as any), {
     error: 'Invalid sampler',
   }),
   resources: z.number().array().nullish(),
@@ -265,7 +269,10 @@ export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
 });
 
-const baseSchema = z.object({ generation: booleanString().default(true) });
+const baseSchema = z.object({
+  generation: booleanString().default(true),
+  withPreview: booleanString().default(false),
+});
 export type GetGenerationDataInput = z.input<typeof getGenerationDataSchema>;
 export type GetGenerationDataSchema = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
@@ -295,4 +302,15 @@ export const bulkDeleteGeneratedImagesSchema = z.object({
 export type PrepareModelInput = z.infer<typeof prepareModelSchema>;
 export const prepareModelSchema = z.object({
   id: z.number(),
+});
+
+export type GetResourceDataByIdsInput = z.infer<typeof getResourceDataByIdsSchema>;
+export const getResourceDataByIdsSchema = z.object({
+  ids: z.array(z.number()).min(1).max(100),
+});
+
+export type ResolveImageMetaInput = z.infer<typeof resolveImageMetaSchema>;
+export const resolveImageMetaSchema = z.object({
+  /** Raw EXIF metadata extracted from the image */
+  metadata: z.record(z.string(), z.unknown()),
 });

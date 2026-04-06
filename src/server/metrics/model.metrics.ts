@@ -30,7 +30,6 @@ const modelMetricKeys = [
   'thumbsUpCount',
   'thumbsDownCount',
   'commentCount',
-  'collectedCount',
   'tippedCount',
   'tippedAmountCount',
   'downloadCount',
@@ -49,7 +48,8 @@ type ModelMetricContext = MetricProcessorRunContext & {
     number,
     Partial<Record<ModelVersionMetricKey, number>> & { modelVersionId: number }
   >;
-  modelUpdates: Record<number, Partial<Record<ModelMetricKey, number>> & { modelId: number }>;
+  updates: Record<number, Record<string, number>>;
+  idKey: string;
 };
 
 export const modelMetrics = createMetricProcessor({
@@ -60,7 +60,8 @@ export const modelMetrics = createMetricProcessor({
     const ctx = ctxRaw as ModelMetricContext;
     ctx.queuedModelVersions = [];
     ctx.versionUpdates = {};
-    ctx.modelUpdates = {};
+    ctx.updates = {};
+    ctx.idKey = 'modelId';
     ctx.isBeginningOfDay = dayjs(ctx.lastUpdate).isSame(dayjs().subtract(1, 'day'), 'day');
     if (ctx.queue.length > 0) {
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
@@ -86,7 +87,6 @@ export const modelMetrics = createMetricProcessor({
     const modelTasks = await Promise.all([
       getModelRatingTasks(ctx),
       getCommentTasks(ctx),
-      getCollectionTasks(ctx),
       getBuzzTasks(ctx),
       getVersionAggregationTasks(ctx),
     ]);
@@ -103,9 +103,8 @@ export const modelMetrics = createMetricProcessor({
 
     // Bulk insert model metrics
     //---------------------------------------
-    await bulkInsertMetrics(ctx, Object.values(ctx.modelUpdates), modelMetricKeys, {
+    await bulkInsertMetrics(ctx, Object.values(ctx.updates), modelMetricKeys, {
       table: 'ModelMetric',
-      idColumn: 'modelId',
       logName: 'model metrics',
     });
 
@@ -152,11 +151,12 @@ async function bulkInsertMetrics<T extends readonly string[]>(
   metrics: T,
   options: {
     table: string;
-    idColumn: string;
+    idColumn?: string;
     logName: string;
   }
 ) {
-  const { table, idColumn } = options;
+  const { table } = options;
+  const idColumn = options.idColumn ?? ctx.idKey;
   const metricInsertColumns = metrics.map((key) => `"${key}" INT`).join(', ');
   const metricInsertKeys = metrics.map((key) => `"${key}"`).join(', ');
   const metricValues = metrics
@@ -173,13 +173,13 @@ async function bulkInsertMetrics<T extends readonly string[]>(
       WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("${idColumn}" INT, ${metricInsertColumns}))
       INSERT INTO "${options.table}" ("${idColumn}", "updatedAt", ${metricInsertKeys})
       SELECT
-        d."${options.idColumn}",
+        d."${idColumn}",
         NOW() as "updatedAt",
         ${metricValues}
       FROM data d
       LEFT JOIN "${table}" im ON im."${idColumn}" = d."${idColumn}"
       WHERE EXISTS (SELECT 1 FROM "${table.replace('Metric', '')}" WHERE id = d."${idColumn}")
-      ON CONFLICT ("${options.idColumn}") DO UPDATE
+      ON CONFLICT ("${idColumn}") DO UPDATE
         SET
           ${metricOverrides},
           "updatedAt" = NOW()
@@ -219,13 +219,13 @@ async function getModelMetrics(ctx: ModelMetricContext, sql: string, params: any
   if (!data.length) return;
 
   for (const row of data) {
-    const modelId = row.modelId;
-    ctx.modelUpdates[modelId] ??= { modelId };
+    const entityId = row.modelId;
+    ctx.updates[entityId] ??= { [ctx.idKey]: entityId };
     for (const key of Object.keys(row) as (keyof typeof row)[]) {
-      if (key === 'modelId') continue;
+      if (key === ctx.idKey) continue;
       const value = row[key];
       if (value == null) continue;
-      (ctx.modelUpdates[modelId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
+      (ctx.updates[entityId] as any)[key] = typeof value === 'string' ? parseInt(value) : value;
     }
   }
 }
@@ -277,7 +277,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
       SELECT
         arrayJoin(resourcesUsed) as modelVersionId
       FROM orchestration.jobs
-      WHERE jobType IN ('TextToImageV2', 'TextToImage', 'Comfy', 'falFlux2Image')
+      WHERE (jobType IN ('TextToImageV2', 'TextToImage', 'Comfy', 'falFlux2Image') OR jobType LIKE '%StableDiffusionCpp')
         AND createdAt >= ${ctx.lastUpdate}
     )
   `;
@@ -514,37 +514,6 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       [ids, ids[0], ids[ids.length - 1]]
     );
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
-  });
-
-  return tasks;
-}
-
-async function getCollectionTasks(ctx: ModelMetricContext) {
-  const affected = await getAffected(ctx, 'Model')`
-    -- Get recent model collects
-    SELECT DISTINCT "modelId" as id
-    FROM "CollectionItem"
-    WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
-    ORDER BY "modelId"
-  `;
-
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getCollectionTasks', i + 1, 'of', tasks.length);
-    await getModelMetrics(
-      ctx,
-      `-- get model collection metrics
-      SELECT
-        c."modelId",
-        COUNT(DISTINCT c."addedById") AS "collectedCount"
-      FROM "CollectionItem" c
-      JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
-      WHERE c."modelId" = ANY($1::int[])
-        AND c."modelId" BETWEEN $2 AND $3
-      GROUP BY c."modelId"`,
-      [ids, ids[0], ids[ids.length - 1]]
-    );
-    log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;

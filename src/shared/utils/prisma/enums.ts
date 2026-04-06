@@ -149,6 +149,7 @@ export const TrainingStatus = {
   InReview: 'InReview',
   Failed: 'Failed',
   Approved: 'Approved',
+  Expired: 'Expired',
 } as const;
 
 export type TrainingStatus = (typeof TrainingStatus)[keyof typeof TrainingStatus];
@@ -733,6 +734,8 @@ export const JobQueueType = {
   UpdateSearchIndex: 'UpdateSearchIndex',
   CleanIfEmpty: 'CleanIfEmpty',
   ModerationRequest: 'ModerationRequest',
+  BlockedImageDelete: 'BlockedImageDelete',
+  ImageScan: 'ImageScan',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
@@ -816,6 +819,46 @@ export const NewOrderRankType = {
 
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
 
+export const ChallengeSource = {
+  System: 'System',
+  Mod: 'Mod',
+  User: 'User',
+} as const;
+
+export type ChallengeSource = (typeof ChallengeSource)[keyof typeof ChallengeSource];
+
+export const ChallengeStatus = {
+  Scheduled: 'Scheduled',
+  Active: 'Active',
+  Completing: 'Completing',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+
+export type ChallengeStatus = (typeof ChallengeStatus)[keyof typeof ChallengeStatus];
+
+export const PrizeMode = {
+  Fixed: 'Fixed',
+  Dynamic: 'Dynamic',
+} as const;
+
+export type PrizeMode = (typeof PrizeMode)[keyof typeof PrizeMode];
+
+export const PoolTrigger = {
+  Entry: 'Entry',
+  User: 'User',
+} as const;
+
+export type PoolTrigger = (typeof PoolTrigger)[keyof typeof PoolTrigger];
+
+export const ChallengeReviewCostType = {
+  None: 'None',
+  PerEntry: 'PerEntry',
+  Flat: 'Flat',
+} as const;
+
+export type ChallengeReviewCostType = (typeof ChallengeReviewCostType)[keyof typeof ChallengeReviewCostType];
+
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;
@@ -833,3 +876,99 @@ export const EntityMetric_MetricType_Type = {
 } as const;
 
 export type EntityMetric_MetricType_Type = (typeof EntityMetric_MetricType_Type)[keyof typeof EntityMetric_MetricType_Type];
+
+export const ComicProjectStatus = {
+  Active: 'Active',
+  Deleted: 'Deleted',
+} as const;
+
+export type ComicProjectStatus = (typeof ComicProjectStatus)[keyof typeof ComicProjectStatus];
+
+export const ComicReferenceStatus = {
+  Pending: 'Pending',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+
+export type ComicReferenceStatus = (typeof ComicReferenceStatus)[keyof typeof ComicReferenceStatus];
+
+export const ComicPanelStatus = {
+  Pending: 'Pending',
+  Enqueued: 'Enqueued',
+  Generating: 'Generating',
+  AwaitingSelection: 'AwaitingSelection',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+
+export type ComicPanelStatus = (typeof ComicPanelStatus)[keyof typeof ComicPanelStatus];
+
+export const ComicChapterStatus = {
+  Draft: 'Draft',
+  Published: 'Published',
+  Scheduled: 'Scheduled',
+} as const;
+
+export type ComicChapterStatus = (typeof ComicChapterStatus)[keyof typeof ComicChapterStatus];
+
+export const ComicReferenceType = {
+  Character: 'Character',
+  Location: 'Location',
+  Item: 'Item',
+  Style: 'Style',
+} as const;
+
+export type ComicReferenceType = (typeof ComicReferenceType)[keyof typeof ComicReferenceType];
+
+export const ComicEngagementType = {
+  None: 'None',
+  Notify: 'Notify',
+  Hide: 'Hide',
+} as const;
+
+export type ComicEngagementType = (typeof ComicEngagementType)[keyof typeof ComicEngagementType];
+
+export const ComicGenre = {
+  Action: 'Action',
+  Adventure: 'Adventure',
+  Comedy: 'Comedy',
+  Drama: 'Drama',
+  Fantasy: 'Fantasy',
+  Horror: 'Horror',
+  Mystery: 'Mystery',
+  Romance: 'Romance',
+  SciFi: 'SciFi',
+  SliceOfLife: 'SliceOfLife',
+  Thriller: 'Thriller',
+  Other: 'Other',
+} as const;
+
+export type ComicGenre = (typeof ComicGenre)[keyof typeof ComicGenre];
+
+export const UserRestrictionStatus = {
+  Pending: 'Pending',
+  Upheld: 'Upheld',
+  Overturned: 'Overturned',
+} as const;
+
+export type UserRestrictionStatus = (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];
+
+export const StrikeReason = {
+  BlockedContent: 'BlockedContent',
+  RealisticMinorContent: 'RealisticMinorContent',
+  CSAMContent: 'CSAMContent',
+  TOSViolation: 'TOSViolation',
+  HarassmentContent: 'HarassmentContent',
+  ProhibitedContent: 'ProhibitedContent',
+  ManualModAction: 'ManualModAction',
+} as const;
+
+export type StrikeReason = (typeof StrikeReason)[keyof typeof StrikeReason];
+
+export const StrikeStatus = {
+  Active: 'Active',
+  Expired: 'Expired',
+  Voided: 'Voided',
+} as const;
+
+export type StrikeStatus = (typeof StrikeStatus)[keyof typeof StrikeStatus];

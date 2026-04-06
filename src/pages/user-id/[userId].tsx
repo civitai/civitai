@@ -5,10 +5,14 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx }) => {
+  resolver: async ({ session, ctx }) => {
+    if (!session?.user?.isModerator) return { redirect: { destination: '/', permanent: false } };
+
     const { userId } = ctx.params as { userId: string };
-    const user = await dbRead.user.findUnique({
-      where: { id: Number(userId) },
+    const isEmail = userId.includes('@');
+
+    const user = await dbRead.user.findFirst({
+      where: isEmail ? { email: userId } : { id: Number(userId) },
       select: {
         username: true,
       },
@@ -19,7 +23,7 @@ export const getServerSideProps = createServerSideProps({
     return {
       redirect: {
         destination: `/user/${user.username}`,
-        permanent: true,
+        permanent: false,
       },
     };
   },

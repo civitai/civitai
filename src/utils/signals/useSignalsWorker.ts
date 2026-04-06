@@ -1,14 +1,21 @@
 import SharedWorker from '@okikio/sharedworker';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDev } from '~/env/other';
 import { trpc } from '~/utils/trpc';
-import type { SignalConnectionState, SignalStatus, WorkerOutgoingMessage } from './types';
+import type {
+  SignalConnectionState,
+  SignalStatus,
+  SignalWorkerStatus,
+  WorkerOutgoingMessage,
+} from './types';
 import { Deferred, EventEmitter } from './utils';
 
 export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
 
 const logs: Record<string, boolean> = {};
 let logConnectionState = false;
+let pendingDumpResolve: ((status: SignalWorkerStatus) => void) | null = null;
 
 export function useSignalsWorker(options?: {
   onStateChange?: (args: SignalConnectionState) => void;
@@ -20,11 +27,13 @@ export function useSignalsWorker(options?: {
   const [connection, setConnection] = useState<SignalStatus>();
   const [ready, setReady] = useState(false);
   const [worker, setWorker] = useState<SharedWorker | null>(null);
+  const [reconnectCount, setReconnectCount] = useState(0);
   const shouldInitialize = connection === 'closed';
 
   const queryUtils = trpc.useUtils();
   const { data } = trpc.signals.getToken.useQuery(undefined, {
     enabled: !!userId && shouldInitialize,
+    retry: isDev ? false : 3,
   });
   const accessToken = data?.accessToken;
 
@@ -33,17 +42,27 @@ export function useSignalsWorker(options?: {
 
   // handle init worker
   useEffect(() => {
-    if (worker) return;
+    const emitter = emitterRef.current;
+    const newWorker = new SharedWorker(new URL('./worker.ts', import.meta.url), {
+      name: 'civitai-signals:2.1',
+      type: 'module',
+    });
     setReady(false);
-    setWorker(
-      (worker) =>
-        worker ??
-        new SharedWorker(new URL('./worker.ts', import.meta.url), {
-          name: 'civitai-signals:2',
-          type: 'module',
-        })
-    );
-  }, [worker]);
+    setWorker(newWorker);
+
+    function cleanup() {
+      newWorker.port.postMessage({ type: 'beforeunload' });
+      newWorker.port.close();
+      emitter.stop();
+    }
+
+    window.addEventListener('beforeunload', cleanup);
+    return () => {
+      window.removeEventListener('beforeunload', cleanup);
+      cleanup();
+      setWorker(null);
+    };
+  }, []);
 
   // handle register worker events
   useEffect(() => {
@@ -53,25 +72,20 @@ export function useSignalsWorker(options?: {
       if (data.type === 'worker:ready') setReady(true);
       else if (data.type === 'event:received') emitterRef.current.emit(data.target, data.payload);
       else if (data.type === 'pong') deferredRef.current.resolve();
-      else if (data.type === 'connection:state') {
+      else if (data.type === 'debug:dump') {
+        if (pendingDumpResolve) {
+          pendingDumpResolve(data.data);
+          pendingDumpResolve = null;
+        }
+      } else if (data.type === 'connection:state') {
         setConnection(data.state ?? 'closed');
         onStateChange?.({ state: data.state, message: data.message });
-        if (data.state === 'closed') queryUtils.signals.getToken.invalidate();
+        if (data.state === 'closed') {
+          queryUtils.signals.getToken.invalidate();
+          setReconnectCount((c) => c + 1);
+        }
         if (logConnectionState) console.log({ state: data.state }, new Date().toLocaleTimeString());
       }
-    };
-  }, [worker]);
-
-  // handle tab close
-  useEffect(() => {
-    function unload() {
-      worker?.port.postMessage({ type: 'beforeunload' });
-      emitterRef.current.stop();
-    }
-
-    window.addEventListener('beforeunload', unload);
-    return () => {
-      window.removeEventListener('beforeunload', unload);
     };
   }, [worker]);
 
@@ -83,7 +97,7 @@ export function useSignalsWorker(options?: {
         token: accessToken,
         userId,
       });
-  }, [worker, accessToken, ready, userId]);
+  }, [worker, accessToken, ready, userId, reconnectCount]);
 
   // ping
   useEffect(() => {
@@ -160,6 +174,80 @@ export function useSignalsWorker(options?: {
       window.ping = () => {
         worker?.port.postMessage({ type: 'ping' });
         logConnectionState = true;
+      };
+
+      window.signalsDump = () => {
+        if (!worker) {
+          console.log('[signals] No worker available');
+          return;
+        }
+        pendingDumpResolve = (status) => {
+          const { logEntries, recentSignals, ...summary } = status;
+          console.log('[signals] Status:', summary);
+          console.log(
+            `[signals] Last event: ${
+              status.lastEventReceivedAt
+                ? `${Math.round((Date.now() - status.lastEventReceivedAt) / 1000)}s ago`
+                : 'never'
+            }`
+          );
+          console.log(
+            `[signals] Last server pong: ${
+              status.lastServerPongAt
+                ? `${Math.round((Date.now() - status.lastServerPongAt) / 1000)}s ago`
+                : 'never'
+            }`
+          );
+          console.log(`[signals] Uptime: ${Math.round(status.uptime / 1000)}s`);
+          console.table(
+            logEntries.slice(-50).map((e) => ({
+              time: new Date(e.ts).toLocaleTimeString(),
+              type: e.type,
+              detail: e.detail ?? '',
+            }))
+          );
+          if (recentSignals.length) {
+            console.groupCollapsed(`[signals] Recent signals (${recentSignals.length})`);
+            for (const { ts, target, payload } of recentSignals) {
+              console.log(`${new Date(ts).toLocaleTimeString()} ${target}`, payload);
+            }
+            console.groupEnd();
+          } else {
+            console.log('[signals] No signals received yet');
+          }
+        };
+        worker.port.postMessage({ type: 'debug:dump' });
+      };
+
+      window.signalsStatus = () => {
+        if (!worker) {
+          console.log('[signals] No worker available');
+          return;
+        }
+        pendingDumpResolve = (status) => {
+          const { logEntries, ...summary } = status;
+          console.log('[signals] Status:', summary);
+          console.log(
+            `[signals] Last event: ${
+              status.lastEventReceivedAt
+                ? `${Math.round((Date.now() - status.lastEventReceivedAt) / 1000)}s ago`
+                : 'never'
+            }`
+          );
+          console.log(
+            `[signals] Last server pong: ${
+              status.lastServerPongAt
+                ? `${Math.round((Date.now() - status.lastServerPongAt) / 1000)}s ago`
+                : 'never'
+            }`
+          );
+        };
+        worker.port.postMessage({ type: 'debug:dump' });
+      };
+
+      window.signalsVerbose = () => {
+        worker?.port.postMessage({ type: 'debug:toggle-verbose' });
+        console.log('[signals] Toggled verbose logging in worker');
       };
     }
   }, [workerMethods]);

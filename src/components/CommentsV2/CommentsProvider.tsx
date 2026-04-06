@@ -25,6 +25,7 @@ type Props = CommentConnectorInput & {
   hidden?: boolean;
   children: (args: ChildProps) => React.ReactNode;
   forceLocked?: boolean;
+  hideWhenLocked?: boolean;
   level?: number;
 };
 
@@ -61,7 +62,7 @@ type RootThreadContext = {
   activeComment?: CommentV2Model;
 };
 
-const RootThreadCtx = createContext<RootThreadContext>({} as any);
+export const RootThreadCtx = createContext<RootThreadContext>({} as any);
 export const useRootThreadContext = () => {
   const context = useContext(RootThreadCtx);
   if (!context) throw new Error('useRootThreadContext can only be used inside RootThreadProvider');
@@ -144,7 +145,7 @@ type CommentsContext = CommentConnectorInput &
     level?: number;
   };
 
-const CommentsCtx = createContext<CommentsContext>({} as any);
+export const CommentsCtx = createContext<CommentsContext>({} as any);
 export const useCommentsContext = () => {
   const context = useContext(CommentsCtx);
   if (!context) throw new Error('useCommentsContext can only be used inside CommentsProvider');
@@ -160,6 +161,7 @@ export function CommentsProvider({
   badges,
   hidden,
   forceLocked,
+  hideWhenLocked,
   level = 1,
 }: Props) {
   const router = useRouter();
@@ -209,6 +211,7 @@ export function CommentsProvider({
   const isLocked = threadMeta?.locked ?? false;
   const isReadonly = !features.canWrite;
   const isMuted = currentUser?.muted ?? false;
+  const shouldHideComments = hideWhenLocked && isLocked;
 
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) {
@@ -219,7 +222,7 @@ export function CommentsProvider({
   return (
     <CommentsCtx.Provider
       value={{
-        data: comments,
+        data: shouldHideComments ? [] : comments,
         isLoading,
         isFetching: isRefetching,
         isFetchingNextPage,
@@ -228,10 +231,10 @@ export function CommentsProvider({
         isLocked,
         isMuted,
         isReadonly,
-        created,
+        created: shouldHideComments ? [] : created,
         badges,
         limit: initialLimit,
-        showMore: hasNextPage ?? false,
+        showMore: shouldHideComments ? false : hasNextPage ?? false,
         toggleShowMore: loadMore,
         highlighted,
         hiddenCount,
@@ -243,17 +246,17 @@ export function CommentsProvider({
       }}
     >
       {children({
-        data: comments,
+        data: shouldHideComments ? [] : comments,
         isLoading,
         isFetching: isRefetching,
         isFetchingNextPage,
         isLocked,
         isMuted,
         isReadonly,
-        created: createdComments,
+        created: shouldHideComments ? [] : createdComments,
         badges,
         limit: initialLimit,
-        showMore: hasNextPage ?? false,
+        showMore: shouldHideComments ? false : hasNextPage ?? false,
         toggleShowMore: loadMore,
         highlighted,
         hiddenCount,

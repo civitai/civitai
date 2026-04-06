@@ -2,16 +2,21 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import {
+  getChallengeById,
+  updateChallengeStatus,
+} from '~/server/games/daily-challenge/challenge-helpers';
+import {
+  challengeToLegacyFormat,
   endChallenge,
   getChallengeConfig,
-  getChallengeDetails,
   getCurrentChallenge,
-  setCurrentChallenge,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import {
   createUpcomingChallenge,
-  startNextChallenge,
+  startScheduledChallenge,
 } from '~/server/jobs/daily-challenge-processing';
+import { getChallengesReadyToStart } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -23,27 +28,28 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   let challenge: Awaited<ReturnType<typeof getCurrentChallenge>>;
   const { challengeId } = schema.parse(req.query);
   if (challengeId) {
-    challenge = await getChallengeDetails(challengeId);
-    if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
-  } else challenge = await getCurrentChallenge();
+    const challengeRecord = await getChallengeById(challengeId);
+    if (!challengeRecord) return res.status(404).json({ error: 'Challenge not found' });
+    challenge = challengeToLegacyFormat(challengeRecord);
+  } else {
+    challenge = await getCurrentChallenge();
+  }
 
   // End challenge if it's not complete
   let shouldStartChallenge = false;
-  if (challenge) {
-    const results = await dbWrite.$queryRaw<{ status: string }[]>`
-      SELECT
-        (metadata->>'status') as status
-      FROM "Article"
-      WHERE id = ${challenge.articleId}
+  if (challenge?.challengeId) {
+    const [result] = await dbWrite.$queryRaw<{ status: string }[]>`
+      SELECT status::text as status
+      FROM "Challenge"
+      WHERE id = ${challenge.challengeId}
     `;
-    if (results.length) {
-      const status = results[0].status;
-      shouldStartChallenge = status === 'active';
-      if (status !== 'complete') {
+    if (result) {
+      const status = result.status;
+      shouldStartChallenge = status === 'Active';
+      if (status !== 'Completed') {
         await endChallenge(challenge);
-        await dbWrite.$executeRaw`
-          DELETE FROM "Article" WHERE id = ${challenge.articleId}
-        `;
+        // Mark challenge as cancelled instead of deleting
+        await updateChallengeStatus(challenge.challengeId, ChallengeStatus.Cancelled);
       }
     }
   }
@@ -52,12 +58,14 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     const config = await getChallengeConfig();
     const newChallenge = await createUpcomingChallenge();
     if (shouldStartChallenge) {
-      await startNextChallenge(config);
-      await setCurrentChallenge(newChallenge.articleId);
+      const challengesToStart = await getChallengesReadyToStart();
+      for (const c of challengesToStart) {
+        await startScheduledChallenge(c, config);
+      }
     }
     res
       .status(200)
-      .json({ message: 'Cycle complete', challengeId: challenge?.articleId, newChallenge });
+      .json({ message: 'Cycle complete', challengeId: challenge?.challengeId, newChallenge });
   } catch (e) {
     console.error(e);
   }

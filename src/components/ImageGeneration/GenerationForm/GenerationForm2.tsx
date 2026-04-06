@@ -14,6 +14,7 @@ import {
   Notification,
   Paper,
   SegmentedControl,
+  Select,
   Stack,
   Text,
   useMantineTheme,
@@ -26,6 +27,7 @@ import {
   IconCheck,
   IconPlus,
   IconRestore,
+  IconSparkles,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -37,29 +39,30 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { triggerPromptEnhanceDialog } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { GenForm } from '~/components/Generation/Form/GenForm';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputRequestPriorityCompact } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   ResourceSelectHandler,
   useGenerationStatus,
   useUnstableResources,
-} from '~/components/ImageGeneration/GenerationForm/generation.utils';
+} from './generation.utils';
 import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import type { GenerationFormOutput } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
-import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { GenerationCostPopover } from './GenerationCostPopover';
+import type { GenerationFormOutput } from './GenerationFormProvider';
+import { useGenerationForm } from './GenerationFormProvider';
+import InputQuantity from './InputQuantity';
+import InputSeed from './InputSeed';
+import InputResourceSelect from './ResourceSelect';
+import InputResourceSelectMultiple from './ResourceSelectMultiple';
+import { useTextToImageWhatIfContext } from './TextToImageWhatIfProvider';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
+  useGenerateFromGraph,
   useInvalidateWhatIf,
-  useSubmitCreateImage,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -80,12 +83,7 @@ import { Watch } from '~/libs/form/components/Watch';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import {
-  generation,
-  generationConfig,
-  getGenerationConfig,
-  samplerOffsets,
-} from '~/server/common/constants';
+import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
@@ -105,9 +103,9 @@ import {
   fluxDraftAir,
   fluxKreaAir,
   getIsFluxKrea,
-  getIsQwen,
   getIsChroma,
   getIsZImageTurbo,
+  getIsZImageBase,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
 } from '~/shared/constants/generation.constants';
 import {
@@ -116,17 +114,45 @@ import {
 } from '~/shared/orchestrator/ImageGen/flux1-kontext.config';
 import { getIsImagen4 } from '~/shared/orchestrator/ImageGen/google.config';
 import {
+  getIsZImage,
+  zImageModelModeOptions,
+  zImageModelVersionToModelMap,
+  zImageSampleMethods,
+  zImageSchedules,
+} from '~/shared/orchestrator/ImageGen/zImage.config';
+import {
   flux2ModelModeOptions,
   getIsFlux2,
-  getIsFlux2ProOrFlex,
+  getIsFlux2Dev,
 } from '~/shared/orchestrator/ImageGen/flux2.config';
+import {
+  flux2KleinModelVariantOptions,
+  flux2KleinSampleMethods,
+  flux2KleinSchedules,
+  getFlux2KleinBaseModel,
+  getFlux2KleinDefaults,
+  getIsFlux2Klein,
+  getIsFlux2KleinDistilled,
+} from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import {
   getModelVersionUsesImageGen,
   imageGenModelVersionMap,
 } from '~/shared/orchestrator/ImageGen/imageGen.config';
+import {
+  getIsQwen,
+  qwenModelVersionToModelMap,
+  getIsQwenImageEditModel,
+  qwenGroupedOptions,
+} from '~/shared/orchestrator/ImageGen/qwen.config';
+import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { useGenerationStore, useRemixStore } from '~/store/generation.store';
+import { useGenerationGraphStore } from '~/store/generation-graph.store';
+import { useRemixStore } from '~/store/remix.store';
 import { useTipStore } from '~/store/tip.store';
+import {
+  mapDataToGraphInput,
+  splitResourcesByType,
+} from '~/server/services/orchestrator/legacy-metadata-mapper';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { ExifParser, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -135,22 +161,11 @@ import { capitalize, getDisplayName, hashify, parseAIR } from '~/utils/string-he
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
-  getHiDreamResourceFromPrecisionAndVariant,
-  getHiDreamResourceFromVersionId,
-  hiDreamPrecisions,
-  hiDreamVariants,
-  hiDreamVariantsPrecisionMap,
-} from '~/shared/orchestrator/hidream.config';
-import classes from './GenerationForm2.module.scss';
-import { StepProvider } from '~/components/Generation/Providers/StepProvider';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
-import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
-import {
   getGenerationBaseModelResourceOptions,
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
-} from '~/shared/constants/base-model.constants';
+  getBaseModelConfig,
+} from '~/shared/constants/basemodel.constants';
 import {
   geminiModelVersionMap,
   getIsNanoBanana,
@@ -160,12 +175,29 @@ import {
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
+  type ImageAnnotation,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
-import { getIsSeedream } from '~/shared/orchestrator/ImageGen/seedream.config';
+import {
+  getIsSeedream,
+  seedreamModelVersionToModelMap,
+} from '~/shared/orchestrator/ImageGen/seedream.config';
 import { useAppContext } from '~/providers/AppProvider';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { BaseModelSelect } from '~/components/ImageGeneration/GenerationForm/BaseModelSelect';
-import { InputPreferredImageFormat } from '~/components/Generation/Input/OutputFormat';
+import { InputPreferredImageFormatCompact } from '~/components/Generation/Input/OutputFormat';
+import { openaiModelVersionToModelMap } from '~/shared/orchestrator/ImageGen/openai.config';
+import {
+  getHiDreamResourceFromPrecisionAndVariant,
+  getHiDreamResourceFromVersionId,
+  hiDreamPrecisions,
+  hiDreamVariants,
+  hiDreamVariantsPrecisionMap,
+} from '~/shared/orchestrator/hidream.config';
+import classes from './GenerationForm2.module.scss';
+import { StepProvider } from '~/components/Generation/Providers/StepProvider';
+import type { GenerationResource } from '~/shared/types/generation.types';
+import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { ResetGenerationPanel } from '~/components/Generation/Error/ResetGenerationPanel';
 
 let total = 0;
 const tips = {
@@ -187,8 +219,8 @@ export function GenerationFormContent() {
     [status.message]
   );
   const { runTour, running, currentStep, helpers, setSteps, activeTour } = useTourContext();
-  const loadingGeneratorData = useGenerationStore((state) => state.loading);
-  const remixOfId = useRemixStore((state) => state.remixOfId);
+  const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
+  const remixOfId = useRemixStore((state) => state.data?.remixOfId);
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
     state.requestsLoading,
     state.hasGeneratedImages,
@@ -198,7 +230,6 @@ export function GenerationFormContent() {
   const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
-  const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -212,8 +243,13 @@ export function GenerationFormContent() {
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const baseModel = form.watch('baseModel');
   const model = form.watch('model');
+  const fluxMode = form.watch('fluxMode');
   const [sourceImage] = form.watch(['sourceImage']);
+  const [images, imageAnnotations] = form.watch(['images', 'imageAnnotations']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
+
+  const runsOnFalAI =
+    model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir && fluxMode !== fluxKreaAir;
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
   features.draft = features.draft && featureFlags.draftMode;
@@ -231,12 +267,7 @@ export function GenerationFormContent() {
 
   function handleReset() {
     form.reset();
-    useRemixStore.setState({
-      remixOf: undefined,
-      params: undefined,
-      resources: undefined,
-      remixOfId: undefined,
-    });
+    useRemixStore.getState().clearRemix();
     clearWarning();
   }
 
@@ -273,12 +304,11 @@ export function GenerationFormContent() {
     performTransactionOnPurchase: true,
   });
 
-  const { mutateAsync, isLoading } = useSubmitCreateImage();
+  const { mutateAsync, isPending: isLoading } = useGenerateFromGraph();
   const buyBuzz = useBuyBuzz();
 
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
-    // const { cost = 0 } = useCostStore.getState();
 
     const {
       model,
@@ -288,6 +318,7 @@ export function GenerationFormContent() {
       remixSimilarity,
       upscaleHeight,
       upscaleWidth,
+      imageAnnotations,
       ...params
     } = data;
     let additionalResources = formResources ?? [];
@@ -298,7 +329,7 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     const isFluxStandard = getIsFluxStandard(model.model.id);
-    const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
+    const isFlux2NotDev = getIsFlux2(model.id) && !getIsFlux2Dev(model.id);
     if (isFlux && isFluxStandard) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
@@ -309,7 +340,7 @@ export function GenerationFormContent() {
       delete params.fluxUltraAspectRatio;
     }
 
-    if (isFlux2ProOrFlex) additionalResources = []; // No additional resources allowed
+    if (isFlux2NotDev) additionalResources = []; // No additional resources allowed
 
     delete params.engine;
     if (isFluxStandard && params.fluxUltraRaw && params.fluxMode === fluxUltraAir)
@@ -318,30 +349,57 @@ export function GenerationFormContent() {
     const imageGenEngine = imageGenModelVersionMap.get(model.id);
     if (imageGenEngine) params.engine = imageGenEngine;
 
+    // Clear stale image fields based on which input the ecosystem uses.
+    // Ecosystems using multi-image input (Flux2, Qwen, etc.) should not send sourceImage,
+    // and ecosystems using single sourceImage should not send images.
     if (workflowDefinition?.type === 'txt2img') params.sourceImage = null;
+    if (showImg2ImgMultiple) params.sourceImage = null;
+    else params.images = null;
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.canGenerate !== false)
-      .map((r) => ({
-        ...r,
-        epochNumber: r.epochDetails?.epochNumber,
-      }));
+      .filter((x) => x.canGenerate !== false);
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
 
       const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
       setSubmitError(undefined);
+
+      // Convert legacy form data to graph input format
+      const graphInput = mapDataToGraphInput(
+        { ...params, disablePoi: browsingSettingsAddons.settings.disablePoi },
+        resources as GenerationResource[],
+        { stepType: workflowDefinition?.type }
+      );
+
+      // Add resource data for graph validation
+      // The graph uses model.id for mode switching (e.g., NanoBanana standard vs pro)
+      const split = splitResourcesByType(resources as GenerationResource[]);
+      const toGraphResource = (r: GenerationResource) => {
+        const epochNumber = r.epochDetails?.epochNumber ?? r.epochNumber;
+        return {
+          id: r.id,
+          baseModel: r.baseModel,
+          model: { type: r.model.type },
+          strength: r.strength,
+          ...(epochNumber != null ? { epochDetails: { epochNumber } } : {}),
+        };
+      };
+      if (split.model) {
+        graphInput.model = toGraphResource(split.model);
+      }
+      if (split.resources.length) {
+        graphInput.resources = split.resources.map(toGraphResource);
+      }
+      if (split.vae) {
+        graphInput.vae = toGraphResource(split.vae);
+      }
+
       await mutateAsync({
-        resources,
-        params: {
-          ...params,
-          // nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-          disablePoi: browsingSettingsAddons.settings.disablePoi,
-          experimental: data.enhancedCompatibility,
-        },
-        tips,
+        input: graphInput,
+        civitaiTip: tips.civitai,
+        creatorTip: tips.creators,
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
       }).catch((error: any) => {
         if (
@@ -373,17 +431,13 @@ export function GenerationFormContent() {
   const [hasMinorResources, setHasMinorResources] = useState(false);
 
   useEffect(() => {
-    const subscription = form.watch(({ model, resources, vae, fluxMode }, { name }) => {
+    const subscription = form.watch(({ model, resources, vae }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources(
           [model, ...(resources ?? []), vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor)
             .length > 0
         );
       }
-
-      setRunsOnFalAI(
-        model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir && fluxMode !== fluxKreaAir
-      );
     });
     return () => {
       subscription.unsubscribe();
@@ -451,9 +505,10 @@ export function GenerationFormContent() {
   const isSDXL = getIsSdxl(baseModel);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
-  const isQwen = getIsQwen(baseModel);
+  const isQwen = getIsQwen(model.id);
   const isChroma = getIsChroma(baseModel);
   const isZImageTurbo = getIsZImageTurbo(baseModel);
+  const isZImageBase = getIsZImageBase(baseModel);
   const isPonyV7 = getIsPonyV7(model.id);
 
   // HiDream
@@ -466,21 +521,30 @@ export function GenerationFormContent() {
   const isImagen4 = getIsImagen4(model.id);
   const isFluxKontext = getIsFluxKontext(model.id);
   const isFlux2 = getIsFlux2(model.id);
+  const isFlux2Klein = getIsFlux2Klein(model.id);
+  const isFlux2KleinDistilled = getIsFlux2KleinDistilled(model.id);
+  const flux2KleinDefaults = getFlux2KleinDefaults(model.id);
   const isNanoBanana = getIsNanoBanana(model.id);
   const isSeedream = getIsSeedream(model.id);
-  const showImg2ImgMultiple = isNanoBanana || isSeedream || isFlux2;
+  const isQwenImageEdit = getIsQwenImageEditModel(model.id);
+  const showImg2ImgMultiple =
+    isNanoBanana || isSeedream || isFlux2 || isFlux2Klein || isOpenAI || isQwenImageEdit;
   const isNanoBananaPro = getIsNanoBananaPro(model.id);
+  const isZImage = getIsZImage(model.id);
 
-  const disablePriority = runsOnFalAI || isOpenAI || isNanoBanana || isSeedream;
+  const disablePriority = false;
 
   // Model mode configuration - add new models here
   const modelModeConfig = useMemo(
     () => [
       { isActive: isFluxKontext, options: flux1ModelModeOptions },
       { isActive: isFlux2, options: flux2ModelModeOptions },
+      { isActive: isFlux2Klein, options: flux2KleinModelVariantOptions },
+      { isActive: isZImage, options: zImageModelModeOptions },
+      // { isActive: getIsQwenImageGen(model.id), options: qwenModelModeOptions },
       // Add future model modes here
     ],
-    [isFluxKontext, isFlux2]
+    [isFluxKontext, isFlux2, isFlux2Klein, isZImage]
   );
 
   const activeModelMode = modelModeConfig.find((config) => config.isActive);
@@ -494,11 +558,13 @@ export function GenerationFormContent() {
         onSubmit={handleSubmit}
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
-        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage']}>
-          {({ fluxMode, draft, workflow, sourceImage }) => {
+        <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage', 'images']}>
+          {({ fluxMode, draft, workflow, sourceImage, images }) => {
             // const isTxt2Img = workflow.startsWith('txt') || (isOpenAI && !sourceImage);
             const isImg2Img =
-              workflow?.startsWith('img') || (isImageGen && sourceImage) || isFluxKontext;
+              workflow?.startsWith('img') ||
+              (isImageGen && (sourceImage || !!images?.length)) ||
+              isFluxKontext;
             const isFluxStandard = getIsFluxStandard(model.model.id);
             const isDraft = isFluxStandard
               ? fluxMode === fluxDraftAir
@@ -511,7 +577,11 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
+                !isZImageBase &&
                 !isFlux2 &&
+                !isFlux2Klein &&
+                !isHiDream &&
+                !isNanoBanana &&
                 !isPonyV7;
             const minQuantity = !!isDraft ? 4 : 1;
             const maxQuantity = isOpenAI
@@ -524,7 +594,7 @@ export function GenerationFormContent() {
             const stepsDisabled = isDraft;
             let stepsMin = isDraft ? 3 : 10;
             let stepsMax = isDraft ? 12 : status.limits.steps;
-            if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isPonyV7) {
+            if (isFlux || isSD3 || isQwen || isChroma || isFlux2 || isFlux2Klein || isPonyV7) {
               stepsMin = isDraft ? 4 : 20;
               stepsMax = isDraft ? 4 : 50;
             }
@@ -534,10 +604,29 @@ export function GenerationFormContent() {
               stepsMax = 15;
             }
 
+            if (isZImageBase) {
+              stepsMin = 1;
+              stepsMax = 50;
+            }
+
+            if (isFlux2KleinDistilled) {
+              stepsMin = 4;
+              stepsMax = 12;
+            }
+
             let cfgScaleMin = 1;
             let cfgScaleMax = isSDXL ? 10 : 30;
             let cfgScaleStep = 0.5;
-            if (isFlux || isSD3 || isFluxKontext || isQwen || isChroma || isFlux2 || isPonyV7) {
+            if (
+              isFlux ||
+              isSD3 ||
+              isFluxKontext ||
+              isQwen ||
+              isChroma ||
+              isFlux2 ||
+              isFlux2Klein ||
+              isPonyV7
+            ) {
               cfgScaleMin = isDraft ? 1 : 2;
               cfgScaleMax = isDraft ? 1 : 20;
             }
@@ -548,9 +637,15 @@ export function GenerationFormContent() {
               cfgScaleStep = 0.1;
             }
 
+            if (isZImageBase) {
+              cfgScaleMin = 1;
+              cfgScaleMax = 10;
+            }
+
             const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
             const isFluxKrea = getIsFluxKrea({ modelId: model?.model.id, fluxMode });
-            const isFlux2ProOrFlex = getIsFlux2ProOrFlex(model.id);
+            const isFlux2NotDev = isFlux2 && !getIsFlux2Dev(model.id);
+
             const disableAdditionalResources =
               runsOnFalAI ||
               isOpenAI ||
@@ -558,13 +653,13 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isNanoBanana ||
               isSeedream ||
-              isFlux2ProOrFlex;
+              isFlux2NotDev;
             const disableAdvanced =
               isFluxUltra || isOpenAI || isImagen4 || isHiDream || isNanoBanana;
             const disableNegativePrompt =
               isFlux ||
               isFlux2 ||
-              isQwen ||
+              isFlux2Klein ||
               isOpenAI ||
               isFluxKontext ||
               (isHiDream && hiDreamResource?.variant !== 'full') ||
@@ -581,7 +676,9 @@ export function GenerationFormContent() {
               isNanoBanana ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
+              isFlux2Klein ||
               isSeedream ||
               isPonyV7;
             const disableDraft =
@@ -596,7 +693,9 @@ export function GenerationFormContent() {
               isNanoBanana ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
+              isFlux2Klein ||
               isSeedream ||
               isPonyV7;
             const enableImageInput =
@@ -606,10 +705,16 @@ export function GenerationFormContent() {
                 !isQwen &&
                 !isChroma &&
                 !isZImageTurbo &&
-                !isPonyV7) ||
-              isOpenAI ||
+                !isZImageBase &&
+                !isOpenAI &&
+                !isPonyV7 &&
+                !isNanoBanana &&
+                !isSeedream &&
+                !isFlux2 &&
+                !isFlux2Klein &&
+                !isQwenImageEdit) ||
               isFluxKontext;
-            const disableCfgScale = isFluxUltra;
+            const disableCfgScale = isFluxUltra || isFlux2KleinDistilled;
             const disableSampler =
               isFlux ||
               isQwen ||
@@ -619,7 +724,15 @@ export function GenerationFormContent() {
               isZImageTurbo ||
               isFlux2 ||
               isPonyV7 ||
-              isSeedream;
+              isSeedream ||
+              isFlux2KleinDistilled;
+
+            // ZImageBase and Flux2Klein use sdcpp samplers directly
+            const samplerOptions = isZImageBase
+              ? [...zImageSampleMethods]
+              : isFlux2Klein
+              ? [...flux2KleinSampleMethods]
+              : generation.samplers;
             const disableSteps = isFluxUltra || isFluxKontext || isSeedream;
             const disableClipSkip =
               isSDXL ||
@@ -629,24 +742,32 @@ export function GenerationFormContent() {
               isFluxKontext ||
               isChroma ||
               isZImageTurbo ||
+              isZImageBase ||
               isFlux2 ||
+              isFlux2Klein ||
               isPonyV7 ||
               isSeedream;
             const disableVae =
               isFlux ||
               isFlux2 ||
+              isFlux2Klein ||
               isQwen ||
               isSD3 ||
               isFluxKontext ||
               isPonyV7 ||
               isSeedream ||
-              isZImageTurbo;
-            const disableDenoise = !features.denoise || isFluxKontext;
+              isZImageTurbo ||
+              isZImageBase;
+            const disableDenoise = !features.denoise || isFluxKontext || isImageGen;
             const disableSafetyTolerance = !isFluxKontext;
             const disableAspectRatio =
-              isFluxUltra ||
-              isImg2Img ||
-              (showImg2ImgMultiple && !isSeedream && !isNanoBananaPro && !isFlux2);
+              (isFluxUltra || isImg2Img || showImg2ImgMultiple) &&
+              !isSeedream &&
+              !isNanoBananaPro &&
+              !isFlux2 &&
+              !isFlux2Klein &&
+              !isQwen &&
+              !isOpenAI;
 
             const resourceTypes = getGenerationBaseModelResourceOptions(baseModel);
             if (!resourceTypes)
@@ -673,9 +794,6 @@ export function GenerationFormContent() {
                                 limited workflows that cover some of the most important use cases.
                                 Community workflows coming soon.
                               </InfoPopover>
-                              <Badge color="yellow" size="xs">
-                                New
-                              </Badge>
                             </div>
                           }
                           className="flex-1"
@@ -767,9 +885,9 @@ export function GenerationFormContent() {
                                 })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                             }}
                             hideVersion={
-                              isFluxStandard || isFlux2 || isHiDream || (isImageGen && !isSeedream)
+                              isFluxStandard || isFlux2 || isFlux2Klein || isHiDream || isImageGen
                             }
-                            isPreview={isZImageTurbo || isFlux2}
+                            isPreview={isZImageTurbo || isZImageBase || isFlux2 || isFlux2Klein}
                             pb={
                               unstableResources.length ||
                               minorFlaggedResources.length ||
@@ -934,12 +1052,37 @@ export function GenerationFormContent() {
                             !isSD3 &&
                             !isChroma &&
                             !isZImageTurbo &&
+                            !isZImageBase &&
                             !isFlux2 &&
+                            !isFlux2Klein &&
                             !isPonyV7 && <ReadySection />}
                         </Card>
                       );
                     }}
                   </Watch>
+
+                  {isOpenAI && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...openaiModelVersionToModelMap.entries()].map(([key, { name }]) => ({
+                        value: String(key),
+                        label: name,
+                      }))}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {/* {isFlux2Klein && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={flux2KleinModelVariantOptions}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )} */}
 
                   {isNanoBanana && (
                     <SegmentedControl
@@ -950,6 +1093,41 @@ export function GenerationFormContent() {
                       }))}
                       onChange={(stringModelId) => {
                         form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {isSeedream && (
+                    <SegmentedControl
+                      value={model.id ? String(model.id) : undefined}
+                      data={[...seedreamModelVersionToModelMap.entries()].map(
+                        ([key, { name }]) => ({
+                          value: String(key),
+                          label: name,
+                        })
+                      )}
+                      onChange={(stringModelId) => {
+                        form.setValue('model', { ...model, id: Number(stringModelId) });
+                      }}
+                    />
+                  )}
+
+                  {isQwen && (
+                    <Select
+                      label="Mode"
+                      value={model.id ? String(model.id) : null}
+                      data={qwenGroupedOptions}
+                      onChange={(stringModelId) => {
+                        if (!stringModelId) return;
+                        const modelVersionId = Number(stringModelId);
+                        const selectedOption = qwenModelVersionToModelMap.get(modelVersionId);
+                        form.setValue('model', {
+                          ...model,
+                          id: modelVersionId,
+                          model: selectedOption
+                            ? { ...model.model, id: selectedOption.modelId }
+                            : model.model,
+                        });
                       }}
                     />
                   )}
@@ -966,14 +1144,67 @@ export function GenerationFormContent() {
                     <div className="-mx-2">
                       <InputSourceImageUploadMultiple
                         name="images"
-                        max={7}
-                        warnOnMissingAiMetadata
                         aspect="video"
+                        max={isQwen || isFlux2Klein ? 1 : 7}
+                        warnOnMissingAiMetadata
+                        enableDrawing
+                        annotations={imageAnnotations}
+                        onDrawingComplete={(compositeImage, index, lines) => {
+                          const currentImages = form.getValues('images') ?? [];
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+
+                          const currentImage = currentImages[index];
+                          if (!currentImage) return;
+
+                          // Check if this image is already annotated (re-editing)
+                          const existingAnnotation = currentAnnotations.find(
+                            (a: ImageAnnotation) => a.compositeUrl === currentImage.url
+                          );
+
+                          // The original is either from existing annotation or the current image
+                          const originalImage = existingAnnotation
+                            ? {
+                                url: existingAnnotation.originalUrl,
+                                width: existingAnnotation.originalWidth,
+                                height: existingAnnotation.originalHeight,
+                              }
+                            : currentImage;
+
+                          // 1. Replace image in array with composite
+                          const updatedImages = [...currentImages];
+                          updatedImages[index] = compositeImage;
+                          form.setValue('images', updatedImages);
+
+                          // 2. Update annotations - remove old if re-editing, add new
+                          const filteredAnnotations = currentAnnotations.filter(
+                            (a: ImageAnnotation) =>
+                              a.compositeUrl !== currentImage.url &&
+                              a.originalUrl !== originalImage.url
+                          );
+                          form.setValue('imageAnnotations', [
+                            ...filteredAnnotations,
+                            {
+                              originalUrl: originalImage.url,
+                              originalWidth: originalImage.width,
+                              originalHeight: originalImage.height,
+                              compositeUrl: compositeImage.url,
+                              lines,
+                            },
+                          ]);
+                        }}
+                        onRemove={(removedImage) => {
+                          // Remove annotation if this was a composite
+                          const currentAnnotations = form.getValues('imageAnnotations') ?? [];
+                          const filtered = currentAnnotations.filter(
+                            (a: ImageAnnotation) => a.compositeUrl !== removedImage.url
+                          );
+                          form.setValue('imageAnnotations', filtered);
+                        }}
                       >
                         {(previewItems) => (
                           <div className="grid grid-cols-2 gap-4 @xs:grid-cols-3 @sm:grid-cols-4">
                             {previewItems.map((item, i) => (
-                              <SourceImageUploadMultiple.Image key={i} index={i} {...item} />
+                              <SourceImageUploadMultiple.Image key={item.url} index={i} {...item} />
                             ))}
                             <SourceImageUploadMultiple.Dropzone />
                           </div>
@@ -997,8 +1228,30 @@ export function GenerationFormContent() {
                         data={activeModelMode.options}
                         onChange={(value) => {
                           const modelVersionId = Number(value);
-                          if (model.id !== modelVersionId)
-                            form.setValue('model', { ...model, id: modelVersionId });
+                          if (model.id !== modelVersionId) {
+                            // Update baseModel for Flux2Klein since each variant has its own group
+                            const kleinBaseModel = getFlux2KleinBaseModel(modelVersionId);
+                            if (kleinBaseModel) {
+                              form.setValue('baseModel', kleinBaseModel as any);
+                            }
+
+                            const zImageEntry = zImageModelVersionToModelMap.get(modelVersionId);
+                            if (zImageEntry) {
+                              form.setValue(
+                                'model',
+                                getGenerationConfig(zImageEntry.baseModel).checkpoint
+                              );
+                            } else {
+                              const baseModelName = kleinBaseModel
+                                ? getBaseModelConfig(kleinBaseModel).name
+                                : model.baseModel;
+                              form.setValue('model', {
+                                ...model,
+                                id: modelVersionId,
+                                baseModel: baseModelName,
+                              });
+                            }
+                          }
                         }}
                       />
                     </div>
@@ -1196,12 +1449,43 @@ export function GenerationFormContent() {
                     </Watch>
                     <Input.Wrapper
                       label={
-                        <div className="mb-1 flex items-center gap-1">
-                          <Input.Label required={!isImg2Img}>Prompt</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                            Type out what you&apos;d like to generate in the prompt, add aspects
-                            you&apos;d like to avoid in the negative prompt
-                          </InfoPopover>
+                        <div className="mb-1 flex items-center justify-between">
+                          <div className="flex items-center gap-1">
+                            <Input.Label required={!isImg2Img}>Prompt</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                              Type out what you&apos;d like to generate in the prompt, add aspects
+                              you&apos;d like to avoid in the negative prompt
+                            </InfoPopover>
+                          </div>
+                          {form.getValues('prompt') && (
+                            <Button
+                              variant="subtle"
+                              size="compact-xs"
+                              leftSection={<IconSparkles size={14} />}
+                              onClick={() => {
+                                const currentBaseModel = form.getValues('baseModel');
+                                let ecosystem = '';
+                                try {
+                                  ecosystem = getRootEcosystem(currentBaseModel).key;
+                                } catch {}
+                                const currentResources = form.getValues('resources') ?? [];
+                                triggerPromptEnhanceDialog({
+                                  prompt: form.getValues('prompt') ?? '',
+                                  negativePrompt: form.getValues('negativePrompt') ?? undefined,
+                                  ecosystem,
+                                  resources: currentResources,
+                                  onApply: (enhancedPrompt, enhancedNegativePrompt) => {
+                                    form.setValue('prompt', enhancedPrompt);
+                                    if (enhancedNegativePrompt) {
+                                      form.setValue('negativePrompt', enhancedNegativePrompt);
+                                    }
+                                  },
+                                });
+                              }}
+                            >
+                              Enhance
+                            </Button>
+                          )}
                         </div>
                       }
                       error={errors.prompt?.message}
@@ -1336,7 +1620,9 @@ export function GenerationFormContent() {
                       <Input.Label>Aspect Ratio</Input.Label>
                       <InputSegmentedControl
                         name="aspectRatio"
-                        data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
+                        data={getAspectRatioControls(
+                          getGenerationConfig(baseModel, model.id).aspectRatios
+                        )}
                       />
                     </div>
                   )}
@@ -1389,10 +1675,13 @@ export function GenerationFormContent() {
                   )}
 
                   {isFluxUltra && <InputSeed name="seed" label="Seed" />}
-                  {/* <InputPreferredImageFormat name="outputFormat" label="Preferred Image Format" /> */}
-                  {!disablePriority && (
-                    <InputRequestPriority name="priority" label="Request Priority" />
-                  )}
+                  <div className="flex flex-col gap-1">
+                    <Input.Label>Output Settings</Input.Label>
+                    <div className="flex items-center gap-2">
+                      <InputPreferredImageFormatCompact name="outputFormat" />
+                      {!disablePriority && <InputRequestPriorityCompact name="priority" />}
+                    </div>
+                  </div>
                   {!disableAdvanced && (
                     <PersistentAccordion
                       storeKey="generation-form-advanced"
@@ -1454,7 +1743,9 @@ export function GenerationFormContent() {
                                       isSD3 ||
                                       isChroma ||
                                       isZImageTurbo ||
+                                      isZImageBase ||
                                       isFlux2 ||
+                                      isFlux2Klein ||
                                       isPonyV7
                                         ? undefined
                                         : [
@@ -1472,6 +1763,7 @@ export function GenerationFormContent() {
                                   <InputSelect
                                     name="sampler"
                                     disabled={samplerDisabled}
+                                    allowDeselect={false}
                                     label={
                                       <div className="flex items-center gap-1">
                                         <Input.Label>Sampler</Input.Label>
@@ -1481,11 +1773,34 @@ export function GenerationFormContent() {
                                         </InfoPopover>
                                       </div>
                                     }
-                                    data={generation.samplers}
-                                    presets={[
-                                      { label: 'Fast', value: 'Euler a' },
-                                      { label: 'Popular', value: 'DPM++ 2M Karras' },
-                                    ]}
+                                    data={samplerOptions}
+                                    presets={
+                                      isZImageBase || isFlux2Klein
+                                        ? [{ label: 'Fast', value: 'euler' }]
+                                        : [
+                                            { label: 'Fast', value: 'Euler a' },
+                                            { label: 'Popular', value: 'DPM++ 2M Karras' },
+                                          ]
+                                    }
+                                  />
+                                )}
+                                {(isZImageBase || isFlux2Klein) && (
+                                  <InputSelect
+                                    name="scheduler"
+                                    allowDeselect={false}
+                                    label={
+                                      <div className="flex items-center gap-1">
+                                        <Input.Label>Scheduler</Input.Label>
+                                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                          Controls the noise schedule during generation, affecting
+                                          image quality and style.
+                                        </InfoPopover>
+                                      </div>
+                                    }
+                                    data={
+                                      isZImageBase ? [...zImageSchedules] : [...flux2KleinSchedules]
+                                    }
+                                    presets={[{ label: 'Default', value: 'simple' }]}
                                   />
                                 )}
                                 {!disableSteps && (
@@ -1524,7 +1839,9 @@ export function GenerationFormContent() {
                                             isSD3 ||
                                             isChroma ||
                                             isZImageTurbo ||
+                                            isZImageBase ||
                                             isFlux2 ||
+                                            isFlux2Klein ||
                                             isPonyV7
                                               ? undefined
                                               : [
@@ -1613,24 +1930,25 @@ export function GenerationFormContent() {
                                 }}
                               />
                             )}
-                            {EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
-                              getBaseModelGroup(baseModel)
-                            ) && (
-                              <InputSwitch
-                                name="enhancedCompatibility"
-                                labelPosition="left"
-                                label={
-                                  <div className="relative flex items-center gap-1">
-                                    <Input.Label>Enhanced Compatibility</Input.Label>
-                                    <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                                      {`We've updated our generation engine for better performance,
+                            {!isFlux &&
+                              EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(
+                                getBaseModelGroup(baseModel)
+                              ) && (
+                                <InputSwitch
+                                  name="enhancedCompatibility"
+                                  labelPosition="left"
+                                  label={
+                                    <div className="relative flex items-center gap-1">
+                                      <Input.Label>Enhanced Compatibility</Input.Label>
+                                      <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                                        {`We've updated our generation engine for better performance,
                                         but older prompts may look different. Turn this on to make
                                         new generations look more like your originals.`}
-                                    </InfoPopover>
-                                  </div>
-                                }
-                              />
-                            )}
+                                      </InfoPopover>
+                                    </div>
+                                  }
+                                />
+                              )}
                           </div>
                           {/* <Text variant="link" onClick={() => {
                           const {prompt = '', negativePrompt = ''}= useGenerationStore.getState().data?.originalParams ?? {};
@@ -1779,9 +2097,9 @@ export function GenerationFormContent() {
 
 // #region [ready section]
 function ReadySection() {
-  const { data } = useTextToImageWhatIfContext();
+  const { data, isLoading } = useTextToImageWhatIfContext();
 
-  return data?.ready === false ? (
+  return data.ready === false && !isLoading ? (
     <Card.Section m={0}>
       <Alert color="yellow" title="Potentially slow generation" radius={0}>
         <Text size="xs">
@@ -1814,15 +2132,16 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const [baseModel, model, resources, vae] = form.watch(['baseModel', 'model', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isFlux2 = getIsFlux2(model.id);
+  const isFlux2Klein = getIsFlux2Klein(model.id);
   const isSD3 = getIsSD3(baseModel);
-  const isQwen = getIsQwen(baseModel);
+  const isQwen = getIsQwen(model.id);
   const isOpenAI = baseModel === 'OpenAI';
   const checkpoint = model;
   const isSeedream = getIsSeedream(checkpoint.id);
   const isPonyV7 = getIsPonyV7(checkpoint.id);
 
   const hasCreatorTip =
-    (!isFlux && !isFlux2 && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
+    (!isFlux && !isFlux2 && !isFlux2Klein && !isQwen && !isSD3 && !isOpenAI && !isSeedream) ||
     [...(resources ?? []), vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
   const { creatorTip, civitaiTip } = useTipStore();
@@ -1834,9 +2153,9 @@ function SubmitButton(props: { isLoading?: boolean }) {
     tips.civitai = civitaiTip;
   }
 
-  const base = data?.cost?.base ?? 0;
+  const base = data.cost?.base ?? 0;
   const totalTip = Math.ceil(base * tips.creators) + Math.ceil(base * tips.civitai);
-  total = (data?.cost?.total ?? 0) + totalTip;
+  total = (data.cost?.total ?? 0) + totalTip;
 
   const generateButton = (
     <GenerateButton
@@ -1849,8 +2168,8 @@ function SubmitButton(props: { isLoading?: boolean }) {
       onClick={() => {
         if (running) helpers?.next();
       }}
-      transactions={data?.transactions}
-      allowMatureContent={data?.allowMatureContent}
+      transactions={data.transactions}
+      allowMatureContent={data.allowMatureContent}
     />
   );
 
@@ -1859,11 +2178,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   return (
     <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
       {generateButton}
-      <GenerationCostPopover
-        width={300}
-        workflowCost={data?.cost ?? {}}
-        hideCreatorTip={!hasCreatorTip}
-      />
+      <GenerationCostPopover width={300} workflowCost={data.cost} hideCreatorTip={!hasCreatorTip} />
     </div>
   );
 }

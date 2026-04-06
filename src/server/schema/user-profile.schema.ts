@@ -42,6 +42,7 @@ export const privacySettingsSchema = z.object({
   showFollowers: z.boolean().optional(),
   showFollowing: z.boolean().optional(),
   showRating: z.boolean().optional(),
+  showBadges: z.boolean().optional(),
 });
 
 export type UserProfileUpdateSchema = z.infer<typeof userProfileUpdateSchema>;

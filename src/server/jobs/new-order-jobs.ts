@@ -1,3 +1,4 @@
+import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -11,11 +12,13 @@ import {
   expCounter,
   fervorCounter,
   getActiveSlot,
+  pendingBuzzCounter,
   poolCounters,
+  recentlyGrantedBuzzCounter,
   setActiveSlot,
 } from '~/server/games/new-order/utils';
 import { createJob } from '~/server/jobs/job';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import {
   calculateFervor,
@@ -24,6 +27,7 @@ import {
   processFinalRatings,
 } from '~/server/services/games/new-order.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
@@ -48,63 +52,139 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
       SUM(grantedExp * multiplier) as totalExp
     FROM knights_new_order_image_rating FINAL
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
-      AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')
+      AND status IN ('${NewOrderImageRatingStatus.Correct}', '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId
   `;
 
-  if (!judgments.length) {
+  // Step 1: Grant buzz for judgments from 3 days ago
+  if (judgments.length) {
+    log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
+
+    // Get current player data for knights and templars only
+    const players = await dbRead.newOrderPlayer.findMany({
+      where: {
+        userId: { in: judgments.map((j) => j.userId) },
+        rankType: { not: NewOrderRankType.Acolyte },
+      },
+      select: { userId: true },
+    });
+
+    const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
+
+    if (validPlayers.length) {
+      // Create buzz transactions in batches
+      const batches = chunk(validPlayers, 100);
+      let loopCount = 1;
+      for (const batch of batches) {
+        log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
+
+        const grantedPlayers = batch.filter((player) => player.balance > 0);
+        const ungrantedPlayers = batch.filter((player) => player.balance <= 0);
+
+        const transactions = grantedPlayers.map((validPlayer) => ({
+          fromAccountId: 0,
+          toAccountId: validPlayer.userId,
+          amount: validPlayer.balance,
+          type: TransactionType.Reward,
+          description: 'Content Moderation Correct Judgment',
+          externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
+        }));
+
+        if (transactions.length > 0) await createBuzzTransactionMany(transactions);
+
+        // Deduct the actual EXP from the blessed buzz counter only for players who received buzz.
+        // Players with balance <= 0 (< 10 correct votes) keep their EXP so it rolls over
+        // and accumulates until the next payout threshold is reached.
+        // Counter stores EXP values, not converted buzz, so we deduct totalExp.
+        // Reset pending buzz counter so it recalculates the new day on next fetch.
+        await Promise.all(
+          grantedPlayers.map((player) => {
+            return Promise.all([
+              blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp }),
+              pendingBuzzCounter.reset({ id: player.userId }),
+              recentlyGrantedBuzzCounter.reset({ id: player.userId }),
+            ]);
+          })
+        );
+
+        // For ungranted players, only reset the pending buzz counter
+        // so it recalculates next cycle — but preserve their blessed buzz EXP
+        if (ungrantedPlayers.length > 0) {
+          await Promise.all(
+            ungrantedPlayers.map((player) => pendingBuzzCounter.reset({ id: player.userId }))
+          );
+        }
+        log(
+          `BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`
+        );
+        loopCount++;
+      }
+    } else {
+      log('BlessedBuzz :: No valid players found');
+    }
+  } else {
     log('BlessedBuzz :: No correct judgments found');
-    return;
-  }
-  log(`BlessedBuzz :: Found ${judgments.length} correct judgments`);
-
-  // Get current player data for knights and templars only
-  const players = await dbRead.newOrderPlayer.findMany({
-    where: {
-      userId: { in: judgments.map((j) => j.userId) },
-      rankType: { not: NewOrderRankType.Acolyte },
-    },
-    select: { userId: true },
-  });
-
-  const validPlayers = judgments.filter((j) => players.some((p) => p.userId === j.userId));
-
-  if (!validPlayers.length) {
-    log('BlessedBuzz :: No valid players found');
-    return;
-  }
-
-  // Create buzz transactions in batches
-  const batches = chunk(validPlayers, 100);
-  let loopCount = 1;
-  for (const batch of batches) {
-    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-
-    const transactions = batch
-      .filter((player) => player.balance > 0)
-      .map((validPlayer) => ({
-        fromAccountId: 0,
-        toAccountId: validPlayer.userId,
-        amount: validPlayer.balance,
-        type: TransactionType.Reward,
-        description: 'Content Moderation Correct Judgment',
-        externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
-      }));
-
-    if (transactions.length > 0) await createBuzzTransactionMany(transactions);
-
-    // Deduct the actual EXP from the blessed buzz counter
-    // Counter stores EXP values, not converted buzz, so we deduct totalExp
-    await Promise.all(
-      batch.map((player) => {
-        return blessedBuzzCounter.decrement({ id: player.userId, value: player.totalExp });
-      })
-    );
-    log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length} :: done`);
-    loopCount++;
   }
 
   log('BlessedBuzz :: Granting Blessed Buzz :: done');
+
+  // Step 2: Reconcile stale blessedBuzz counters for inactive users
+  // Only reset users with no voting activity in the last 3 days,
+  // so we don't interfere with in-flight increments from active voting.
+  // Wrapped in try/catch so a reconciliation failure doesn't mark the grant job as failed.
+  try {
+    log('BlessedBuzz :: Starting stale counter reconciliation');
+
+    const allBlessedBuzzEntries = await blessedBuzzCounter.getAll({ withCount: true });
+    const nonZeroUserIds = allBlessedBuzzEntries
+      .filter((entry) => entry.score > 0)
+      .map((entry) => Number(entry.value));
+
+    if (nonZeroUserIds.length > 0) {
+      log(`BlessedBuzz :: Found ${nonZeroUserIds.length} non-zero counters to check`);
+
+      // Find which of these users have had ANY activity in the last 3 days
+      const recentActivityUserIds = new Set<number>();
+      const userIdBatches = chunk(nonZeroUserIds, 500);
+
+      for (const batch of userIdBatches) {
+        const activeUsers = await clickhouse!.$query<{ userId: number }>`
+          SELECT DISTINCT userId
+          FROM knights_new_order_image_rating
+          WHERE userId IN (${batch.join(',')})
+            AND createdAt >= subtractDays(now(), 3)
+            AND status IN ('${NewOrderImageRatingStatus.Correct}', '${
+          NewOrderImageRatingStatus.Failed
+        }')
+        `;
+        for (const row of activeUsers) recentActivityUserIds.add(row.userId);
+      }
+
+      // Reset counters for users with NO recent activity — their Redis value is stale
+      const staleUserIds = nonZeroUserIds.filter((id) => !recentActivityUserIds.has(id));
+
+      if (staleUserIds.length > 0) {
+        log(
+          `BlessedBuzz :: Resetting ${staleUserIds.length} stale counters (no activity in 3 days)`
+        );
+        // reset() accepts an array of IDs and issues a single hDel call
+        const staleBatches = chunk(staleUserIds, 200);
+        for (const batch of staleBatches) {
+          await Promise.all([
+            blessedBuzzCounter.reset({ id: batch }),
+            pendingBuzzCounter.reset({ id: batch }),
+          ]);
+        }
+        log('BlessedBuzz :: Stale counter reconciliation complete');
+      } else {
+        log('BlessedBuzz :: No stale counters found');
+      }
+    } else {
+      log('BlessedBuzz :: No non-zero counters to reconcile');
+    }
+  } catch (error: unknown) {
+    log(`BlessedBuzz :: Stale counter reconciliation failed, will retry next run: ${error}`);
+  }
 });
 
 type DailyResetQueryResult = {
@@ -140,31 +220,36 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   for (const batch of batches) {
     log(`DailyReset:: Processing batch ${batchCount} of ${batches.length}`);
 
-    // Step 1: Recalculate fervor for each player using 7-day rolling window
-    const playerStats = await Promise.all(
-      batch.map(async (player) => {
-        // Fetch 7-day judgment counts from ClickHouse (via counters)
-        const [exp, correctJudgments, allJudgments, oldFervor] = await Promise.all([
-          expCounter.getCount(player.userId),
-          correctJudgmentsCounter.getCount(player.userId),
-          allJudgmentsCounter.getCount(player.userId),
-          fervorCounter.getCount(player.userId),
-        ]);
+    const batchUserIds = batch.map((p) => p.userId);
 
-        // Recalculate fervor using same formula as service
-        const newFervor = calculateFervor({ correctJudgments, allJudgments });
+    // Step 1: Batch fetch all counters efficiently (checks cache first, then batched DB queries)
+    const [correctCounts, allCounts, expCounts, fervorCounts] = await Promise.all([
+      correctJudgmentsCounter.getCountBatch(batchUserIds),
+      allJudgmentsCounter.getCountBatch(batchUserIds),
+      expCounter.getCountBatch(batchUserIds),
+      fervorCounter.getCountBatch(batchUserIds),
+    ]);
 
-        return {
-          userId: player.userId,
-          exp,
-          fervor: newFervor,
-          oldFervor,
-          needsUpdate: newFervor !== oldFervor,
-        };
-      })
-    );
+    // Step 2: Build player stats from the batch-fetched data
+    const playerStats = batch.map((player) => {
+      const correctJudgments = correctCounts.get(player.userId) ?? 0;
+      const allJudgments = allCounts.get(player.userId) ?? 0;
+      const exp = expCounts.get(player.userId) ?? 0;
+      const oldFervor = fervorCounts.get(player.userId) ?? 0;
 
-    // Step 2: Update Redis fervor counter for players whose fervor changed
+      // Recalculate fervor using same formula as service
+      const newFervor = calculateFervor({ correctJudgments, allJudgments });
+
+      return {
+        userId: player.userId,
+        exp,
+        fervor: newFervor,
+        oldFervor,
+        needsUpdate: newFervor !== oldFervor,
+      };
+    });
+
+    // Step 3: Update Redis fervor counter for players whose fervor changed
     await Promise.all(
       playerStats.map(async ({ userId, fervor, oldFervor, needsUpdate }) => {
         if (!needsUpdate) return;
@@ -185,7 +270,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       })
     );
 
-    // Step 3: Bulk update PostgreSQL with exp and recalculated fervor
+    // Step 4: Bulk update PostgreSQL with exp and recalculated fervor
     await dbWrite.$queryRaw`
       WITH affected AS (
         SELECT
@@ -202,7 +287,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
-    // Step 4: Clear rated images cache for all players in this batch
+    // Step 5: Clear rated images cache for all players in this batch
     await Promise.all(batch.map((player) => clearRatedImages(player.userId)));
 
     log(`DailyReset:: Batch ${batchCount} of ${batches.length} complete`);
@@ -408,6 +493,101 @@ const newOrderChangeRateTarget = createJob(
   }
 );
 
+// Periodic abuse detection: identify users with suspicious rating patterns
+// Runs every 6 hours, logs to Axiom for monitoring
+const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * *', async () => {
+  if (!clickhouse) return;
+  log('AbuseDetection :: Scanning for suspicious rating patterns');
+
+  const suspects = await clickhouse.$query<{
+    userId: number;
+    totalRatings: number;
+    uniqueRatings: number;
+    dominantRating: number;
+    dominantPct: number;
+    avgPerMinute: number;
+  }>`
+      WITH user_dominant AS (
+        SELECT
+          userId,
+          topK(1)(rating)[1] as dominantRating
+        FROM knights_new_order_image_rating
+        WHERE createdAt >= now() - INTERVAL 48 HOUR
+          AND rank != 'Acolyte'
+        GROUP BY userId
+      )
+      SELECT
+        r.userId,
+        count() as totalRatings,
+        uniq(r.rating) as uniqueRatings,
+        d.dominantRating,
+        countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
+        count() / greatest(dateDiff('minute', min(r.createdAt), max(r.createdAt)), 1) as avgPerMinute
+      FROM knights_new_order_image_rating r
+      JOIN user_dominant d ON r.userId = d.userId
+      WHERE r.createdAt >= now() - INTERVAL 48 HOUR
+        AND r.rank != 'Acolyte'
+      GROUP BY r.userId, d.dominantRating
+      HAVING totalRatings >= 200
+        AND (uniqueRatings = 1 OR dominantPct >= 90 OR avgPerMinute > 15)
+      ORDER BY totalRatings DESC
+      LIMIT 50
+    `;
+
+  if (suspects.length > 0) {
+    log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
+    await logToAxiom({
+      type: 'warning',
+      name: 'new-order-abuse-detection-scan',
+      details: {
+        suspectCount: suspects.length,
+        suspects: suspects.map((s) => ({
+          userId: s.userId,
+          totalRatings: s.totalRatings,
+          uniqueRatings: s.uniqueRatings,
+          dominantRating: s.dominantRating,
+          dominantPct: Math.round(s.dominantPct),
+          avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
+        })),
+      },
+      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 48 hours`,
+    }).catch(() => null);
+
+    // Alert moderators via Discord webhook
+    if (env.DISCORD_WEBHOOK_MOD_ALERTS) {
+      const suspectLines = suspects
+        .slice(0, 10) // Cap at 10 to keep the embed manageable
+        .map(
+          (s) =>
+            `• **User ${s.userId}** — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
+            `${Math.round(s.dominantPct)}% same value, ${(
+              Math.round(s.avgPerMinute * 10) / 10
+            ).toFixed(1)}/min`
+        )
+        .join('\n');
+
+      await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          embeds: [
+            {
+              title: `⚠️ KoN Abuse Detection — ${suspects.length} suspect(s)`,
+              description:
+                suspectLines +
+                (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),
+              color: 0xff9800,
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        }),
+      }).catch(() => null);
+    }
+  } else {
+    log('AbuseDetection :: No suspicious users found');
+  }
+});
+
 export const newOrderJobs = [
   newOrderGrantBlessedBuzz,
   newOrderDailyReset,
@@ -415,4 +595,5 @@ export const newOrderJobs = [
   // newOrderCleanupQueues,
   newOrderChangeFillTarget,
   newOrderChangeRateTarget,
+  newOrderAbuseDetection,
 ];

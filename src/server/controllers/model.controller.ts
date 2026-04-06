@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { type BaseModel, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
@@ -97,7 +97,11 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
-import { amIBlockedByUser, getUserSettings } from '~/server/services/user.service';
+import {
+  amIBlockedByUser,
+  bustUserDownloadsCache,
+  getUserSettings,
+} from '~/server/services/user.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -125,7 +129,7 @@ import {
   ModelUploadType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
-import { getDownloadUrl } from '~/utils/delivery-worker';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
@@ -203,7 +207,7 @@ export const getModelHandler = async ({
     });
 
     const recommendedResourceIds =
-      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.id)) ??
+      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.resource.id)) ??
       [];
     const generationResources = await getResourceData(recommendedResourceIds, ctx?.user);
 
@@ -223,7 +227,8 @@ export const getModelHandler = async ({
       canGenerate: filteredVersions.some(
         (version) =>
           !!version.generationCoverage?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1
+          unavailableGenResources.indexOf(version.id) === -1 &&
+          isBaseModelGenerationSupported(version.baseModel, model.type)
       ),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta
@@ -256,7 +261,8 @@ export const getModelHandler = async ({
 
         const canGenerate =
           !!version.generationCoverage?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1;
+          unavailableGenResources.indexOf(version.id) === -1 &&
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
@@ -797,6 +803,7 @@ export const getDownloadCommandHandler = async ({
         files: {
           where: fileWhere,
           select: {
+            id: true,
             url: true,
             name: true,
             type: true,
@@ -865,10 +872,17 @@ export const getDownloadCommandHandler = async ({
         nsfw: modelVersion.model.nsfw,
         time: now,
       });
+
+      // Bust the downloads cache so the user sees their download immediately
+      if (ctx.user?.id) {
+        bustUserDownloadsCache(ctx.user.id).catch(() => {
+          // ignore
+        });
+      }
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
-    const { url } = await getDownloadUrl(file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -898,7 +912,8 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await getDownloadUrl(additionalFile.url, additionalFileName)).url,
+          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
+            .url,
         },
       });
     }
@@ -1038,6 +1053,7 @@ export const getMyTrainingModelsHandler = async ({
             type: true,
             metadata: true,
             sizeKB: true,
+            dataPurged: true,
           },
           where: { type: { equals: 'Training Data' } },
         },
@@ -1377,7 +1393,10 @@ export const getAssociatedResourcesCardDataHandler = async ({
           (user?.isModerator || model.user.id === user?.id) &&
           (modelInput.user || modelInput.username);
         if (!versionImages.length && !showImageless) return null;
-        const canGenerate = !!version.covered && !unavailableGenResources.includes(version.id);
+        const canGenerate =
+          !!version.covered &&
+          !unavailableGenResources.includes(version.id) &&
+          isBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
           ...model,

@@ -1,13 +1,13 @@
 import type { WorkflowStepEvent } from '@civitai/client';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import type { InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { type InfiniteTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { createDebouncer } from '~/utils/debouncer';
-import { queryClient, trpc } from '~/utils/trpc';
+import { queryClient, trpc, trpcVanilla } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/common';
+import type { WorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
 import { COMPLETE_STATUSES, POLLABLE_STATUSES } from '~/shared/constants/orchestrator.constants';
 import { useEffect, useRef } from 'react';
 import { create } from 'zustand';
@@ -26,16 +26,6 @@ export function useTextToImageSignalUpdate() {
     }
     debouncer(() => updateSignaledWorkflows());
   });
-}
-
-async function fetchSignaledWorkflow(
-  workflowId: string
-): Promise<WorkflowStatusUpdate | undefined> {
-  const response = await fetch(`/api/generation/workflows/${workflowId}/status-update`);
-  if (response.ok) return await response.json();
-  else {
-    // TODO - handle errors
-  }
 }
 
 export async function updateWorkflowsStatus(workflowIds: string[]) {
@@ -98,10 +88,10 @@ async function updateSignaledWorkflows() {
 function usePollWorkflows() {
   const hasIds = usePollableWorkflowIdsStore(({ ids }) => ids.length > 0);
 
-  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const intervalRef = useRef<number | null>(null);
   function handleClearInterval() {
     if (intervalRef.current) {
-      clearInterval(intervalRef.current);
+      window.clearInterval(intervalRef.current);
       intervalRef.current = null;
     }
   }
@@ -112,7 +102,7 @@ function usePollWorkflows() {
     }
 
     if (!intervalRef.current) {
-      intervalRef.current = setInterval(async () => {
+      intervalRef.current = window.setInterval(async () => {
         const ids = usePollableWorkflowIdsStore.getState().ids;
         await updateWorkflowsStatus(ids);
       }, 60000);
@@ -120,4 +110,10 @@ function usePollWorkflows() {
 
     return handleClearInterval;
   }, [hasIds]);
+}
+
+export async function fetchSignaledWorkflow(
+  workflowId: string
+): Promise<WorkflowStatusUpdate | undefined> {
+  return await trpcVanilla.orchestrator.statusUpdate.query({ workflowId });
 }

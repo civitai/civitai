@@ -14,8 +14,8 @@ import { CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
 import { uniqBy } from 'lodash-es';
-import { dbRead } from '~/server/db/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -437,10 +437,11 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
 
     logger(`PullData :: Pulled collection images.`);
 
-    const tags = await dbRead.tagsOnImageDetails.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
-      select: { imageId: true, tagId: true },
-    });
+    // Use Redis cache for tag lookups (much faster than direct DB query)
+    const imageTagsCache = await tagIdsForImagesCache.fetch(imageIds);
+    const tags = Object.entries(imageTagsCache).flatMap(([imageId, cache]) =>
+      cache.tags.map((tagId) => ({ imageId: +imageId, tagId }))
+    );
 
     const profilePictures = await db.image.findMany({
       where: { id: { in: collections.map((c) => c.user.profilePictureId).filter(isDefined) } },

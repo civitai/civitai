@@ -120,9 +120,9 @@ function VirtualColumn<TData>({
       ref={ref}
       className={className}
       style={{
+        width: '100%',
         ...style,
         height: rowVirtualizer.getTotalSize(),
-        width: '100%',
         position: 'relative',
       }}
     >

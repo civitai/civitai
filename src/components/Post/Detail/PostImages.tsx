@@ -18,7 +18,7 @@ import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import type { PostContestCollectionItem } from '~/types/router';
 import classes from './PostImages.module.css';
 import clsx from 'clsx';
@@ -117,7 +117,7 @@ export function PostImages({
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            generationPanel.open({
+                            generationGraphPanel.open({
                               type: image.type,
                               id: image.id,
                             });
@@ -155,6 +155,7 @@ export function PostImages({
                           name={image.name}
                           alt={image.name ?? undefined}
                           type={image.type}
+                          imageId={image.id}
                           width={width < maxWidth ? width : maxWidth}
                           original={image.type === 'video'}
                           anim={safe}

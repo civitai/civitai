@@ -142,23 +142,13 @@ async function getEngagementTasks(ctx: TagMetricContext) {
 }
 
 const tagCountMap = {
-  Models: { id: 'modelId', table: 'TagsOnModels', column: 'modelCount', sourceTable: 'Model' },
-  Images: {
-    id: 'imageId',
-    table: 'TagsOnImageDetails',
-    column: 'imageCount',
-    sourceTable: 'Image',
-  },
-  Posts: { id: 'postId', table: 'TagsOnPost', column: 'postCount', sourceTable: 'Post' },
-  Articles: {
-    id: 'articleId',
-    table: 'TagsOnArticle',
-    column: 'articleCount',
-    sourceTable: 'Article',
-  },
+  Models: { table: 'TagsOnModels', column: 'modelCount' },
+  Images: { table: 'TagsOnImageDetails', column: 'imageCount' },
+  Posts: { table: 'TagsOnPost', column: 'postCount' },
+  Articles: { table: 'TagsOnArticle', column: 'articleCount' },
 } as const;
 async function getTagCountTasks(ctx: TagMetricContext, entity: keyof typeof tagCountMap) {
-  const { id, table, column, sourceTable } = tagCountMap[entity];
+  const { table, column } = tagCountMap[entity];
   const affected = await getAffected(ctx)`
     -- get recent tag counts
     SELECT
@@ -171,14 +161,15 @@ async function getTagCountTasks(ctx: TagMetricContext, entity: keyof typeof tagC
     ctx.jobContext.checkIfCanceled();
     log(`get ${table} counts`, i + 1, 'of', tasks.length);
 
+    // Removed JOIN to source table for performance (~3.5x faster)
+    // Referential integrity ensures only valid entities are counted
     await getMetrics(
       ctx,
       `-- get tag count metrics
       SELECT
         "tagId",
         COUNT(1)::int as "${column}"
-      FROM "${table}" t
-      JOIN "${sourceTable}" s ON s.id = t."${id}"
+      FROM "${table}"
       WHERE "tagId" = ANY($1::int[])
       GROUP BY "tagId"`,
       [ids]

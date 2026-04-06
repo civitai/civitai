@@ -14,7 +14,7 @@ import {
   ActionIcon,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconEdit } from '@tabler/icons-react';
+import { IconEdit, IconRosette } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 
 export default function Rewards() {
@@ -28,16 +28,27 @@ export default function Rewards() {
             Manage products and sections for the Cosmetic Shop.
           </Text>
         </Stack>
-        <Group mb="md" grow>
-          <Button component={Link} href="/moderator/cosmetic-store/products">
-            <IconEdit />
-            Manage Products
+        <Stack mb="md" gap="sm">
+          <Group grow>
+            <Button component={Link} href="/moderator/cosmetic-store/products">
+              <IconEdit />
+              Manage Products
+            </Button>
+            <Button component={Link} href="/moderator/cosmetic-store/sections">
+              <IconEdit />
+              Manage Sections
+            </Button>
+          </Group>
+          <Button
+            component={Link}
+            href="/moderator/cosmetic-store/badges"
+            variant="light"
+            fullWidth
+          >
+            <IconRosette />
+            Manage Product Badges
           </Button>
-          <Button component={Link} href="/moderator/cosmetic-store/sections">
-            <IconEdit />
-            Manage Sections
-          </Button>
-        </Group>
+        </Stack>
       </Container>
     </>
   );

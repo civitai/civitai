@@ -84,8 +84,8 @@ export async function populateEntityMetrics(
         SELECT
           entityId,
           metricType,
-          SUM(metricValue) as total
-        FROM entityMetricEvents
+          sum(total) as total
+        FROM entityMetricDailyAgg
         WHERE entityType = '${entityType}'
           AND entityId IN (${batchIds.join(',')})
         GROUP BY entityId, metricType
@@ -140,9 +140,9 @@ export async function preWarmEntityMetrics(
     // Get the most accessed entities from the last 24 hours
     const recentEntities = await clickhouse.$query<{ entityId: number }>(`
       SELECT DISTINCT entityId
-      FROM entityMetricEvents
+      FROM entityMetricDailyAgg
       WHERE entityType = '${entityType}'
-        AND createdAt > now() - INTERVAL 1 DAY
+        AND day >= today() - 1
       ORDER BY entityId DESC
       LIMIT ${limit}
     `);

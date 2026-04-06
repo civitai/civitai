@@ -38,6 +38,8 @@ import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
+import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
 import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
@@ -45,7 +47,11 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type {
+  SubscriptionProductMetadata,
+  SubscriptionMetadata,
+} from '~/server/schema/subscriptions.schema';
+import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
@@ -66,7 +72,9 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    if (!session.user.subscriptionId)
+    // Allow users with subscriptionId OR users in memberInBadState to access the page
+    // Users in bad state need to be able to manage/cancel their subscription
+    if (!session.user.subscriptionId && !session.user.memberInBadState)
       return {
         redirect: {
           destination: '/pricing',
@@ -291,29 +299,40 @@ export default function UserMembership() {
                   iconSize="lg"
                   py={11}
                 >
-                  <Stack gap={0}>
-                    <Text lh={1.2}>
-                      Uh oh! It looks like there was an issue with your membership. You can update
-                      your payment method or renew your membership now by clicking{' '}
+                  <Stack gap="xs">
+                    <Text lh={1.2} fw={600}>
+                      Payment failed - your membership is on hold
+                    </Text>
+                    <Text lh={1.2} size="sm">
+                      Your recent payment didn&apos;t go through. Your membership benefits are
+                      currently paused until this is resolved.
+                    </Text>
+                    <Group gap="xs" mt={4}>
                       {isStripe ? (
                         <SubscribeButton
                           priceId={subscription.price.id}
                           disabled={features.disablePayments}
                         >
-                          <Anchor component="button" type="button">
-                            here
-                          </Anchor>
+                          <Button size="xs" color="red">
+                            Update Payment Method
+                          </Button>
                         </SubscribeButton>
                       ) : (
-                        <Anchor
+                        <Button
+                          size="xs"
+                          color="red"
+                          component="a"
                           href={managementUrls?.updatePaymentMethod as string}
                           target="_blank"
                         >
-                          here
-                        </Anchor>
+                          Update Payment Method
+                        </Button>
                       )}
-                      .
-                    </Text>
+                      <CancelMembershipAction
+                        variant="button"
+                        buttonProps={{ size: 'xs', color: 'gray', variant: 'outline' }}
+                      />
+                    </Group>
                   </Stack>
                 </AlertWithIcon>
               )}
@@ -378,16 +397,28 @@ export default function UserMembership() {
                             )}
                           </>
                         )}
-                        {canUpgrade && (
+                        {canUpgrade && !subscription.isBadState && (
                           <Button component={Link} href="/pricing" radius="xl">
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt && !isCivitaiProvider && (
-                          <CancelMembershipAction
-                            variant="button"
-                            buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
-                          />
+                        {!subscription.cancelAt &&
+                          !isCivitaiProvider &&
+                          !subscription.isBadState && (
+                            <CancelMembershipAction
+                              variant="button"
+                              buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
+                            />
+                          )}
+                        {subscription.isBadState && isStripe && (
+                          <SubscribeButton
+                            priceId={subscription.price.id}
+                            disabled={features.disablePayments}
+                          >
+                            <Button radius="xl" color="red">
+                              Update Payment
+                            </Button>
+                          </SubscribeButton>
                         )}
                       </Group>
                       {!subscription.cancelAt &&
@@ -412,14 +443,35 @@ export default function UserMembership() {
                   )}
                   {isCivitaiProvider && (
                     <Text c="yellow">
-                      You are currently in a pre-paid membership. No subsequent charges will be made
-                      to your account.
+                      You are on a prepaid membership. Tokens unlock monthly — claim them to receive
+                      your Buzz.
                     </Text>
                   )}
                 </Stack>
               </Paper>
 
-              <PrepaidTimelineProgress subscription={subscription} />
+              {isCivitaiProvider && (
+                <PrepaidTimelineProgress subscription={subscription} />
+              )}
+
+              {isCivitaiProvider && (() => {
+                const prepaidTokens = getPrepaidTokens({
+                  metadata: subscription.metadata as SubscriptionMetadata,
+                });
+                const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
+                // Always render for Civitai members — even with 0 tokens,
+                // the component fetches historical deliveries from the buzz service
+                return (
+                  <PrepaidTokenOverview
+                    tokens={prepaidTokens}
+                    nextUnlockDate={nextUnlockDate}
+                    defaultExpanded
+                    subscription={subscription}
+                  />
+                );
+              })()}
+
+              {isCivitaiProvider && <PurchasedCodesCard defaultFilter="Membership" />}
 
               {benefits && (
                 <div

@@ -9,9 +9,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  imageMetaCache,
+  imageResourcesCache,
   modelVersionAccessCache,
   postStatCache,
   thumbnailCache,
+  imageMetadataCache,
   userBasicCache,
   userPostCountCache,
 } from '~/server/redis/caches';
@@ -24,19 +27,23 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
+  removeEntityFromAllCollections,
 } from '~/server/services/collection.service';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
   createImageResources,
-  deleteImageById,
+  deleteImageFromS3,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   ingestImage,
+  invalidateManyImageExistence,
   purgeImageGenerationDataCache,
   purgeResizeCache,
   queueImageSearchIndexUpdate,
@@ -313,33 +320,65 @@ export const getPostsInfinite = async ({
     )`);
   }
 
-  if (excludedUserIds?.length) {
-    AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.join(excludedUserIds)})`);
+  if (excludedUserIds && targetUser && excludedUserIds.includes(targetUser)) {
+    return { items: [] }; // No need to make the query.
   }
 
-  // sorting
-  let orderBy = draftOnly ? 'p."createdAt" DESC' : 'p."publishedAt" DESC';
+  if (!targetUser && excludedUserIds?.length) {
+    // first, make sure these are all numbers:
+    const excluded: number[] = excludedUserIds?.map(Number).filter((x) => !isNaN(x)) ?? [];
+    AND.push(Prisma.sql`p."userId" NOT IN (${Prisma.raw(`${excluded.join(',')}`)})`);
+  }
+
+  // sorting - always include id as tiebreaker for stable pagination
+  let orderBy = draftOnly ? 'p."createdAt" DESC, p.id DESC' : 'p."publishedAt" DESC, p.id DESC';
+  let primarySortProp = draftOnly ? 'p."createdAt"' : 'p."publishedAt"';
+  let isDateSort = true;
+
   if (sort === PostSort.MostComments) {
-    orderBy = `p."commentCount" DESC`;
+    orderBy = `p."commentCount" DESC, p.id DESC`;
+    primarySortProp = 'p."commentCount"';
+    isDateSort = false;
     AND.push(Prisma.sql`p."commentCount" > 0`);
   } else if (sort === PostSort.MostReactions) {
-    orderBy = `p."reactionCount" DESC`;
+    orderBy = `p."reactionCount" DESC, p.id DESC`;
+    primarySortProp = 'p."reactionCount"';
+    isDateSort = false;
     AND.push(Prisma.sql`p."reactionCount" > 0`);
   } else if (sort === PostSort.MostCollected) {
-    orderBy = `p."collectedCount" DESC`;
+    orderBy = `p."collectedCount" DESC, p.id DESC`;
+    primarySortProp = 'p."collectedCount"';
+    isDateSort = false;
     AND.push(Prisma.sql`p."collectedCount" > 0`);
   }
 
-  // cursor
-  const [cursorProp, cursorDirection] = orderBy?.split(' ');
+  // cursor - supports composite cursor format "value|id" for keyset pagination
   if (cursor) {
-    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    const cursorValue =
-      cursorProp === 'p."publishedAt"' || cursorProp === 'p."createdAt"'
-        ? new Date(cursor)
-        : Number(cursor);
-    if (cursorProp)
-      AND.push(Prisma.sql`${Prisma.raw(cursorProp + ' ' + cursorOperator)} ${cursorValue}`);
+    let primaryValue: Date | number;
+    let cursorId: number | null = null;
+
+    // Parse composite cursor (format: "value|id") or legacy single value
+    if (typeof cursor === 'string' && cursor.includes('|')) {
+      const [valueStr, idStr] = cursor.split('|');
+      primaryValue = isDateSort ? new Date(valueStr) : Number(valueStr);
+      cursorId = Number(idStr);
+    } else {
+      // Legacy single-value cursor (backward compatibility)
+      primaryValue = isDateSort ? new Date(cursor) : Number(cursor);
+    }
+
+    if (cursorId !== null) {
+      // Composite cursor: use keyset pagination for stable results
+      // (primary < cursor) OR (primary = cursor AND id < cursor_id)
+      AND.push(
+        Prisma.sql`(${Prisma.raw(primarySortProp)} < ${primaryValue} OR (${Prisma.raw(
+          primarySortProp
+        )} = ${primaryValue} AND p.id <= ${cursorId}))`
+      );
+    } else {
+      // Legacy single cursor
+      AND.push(Prisma.sql`${Prisma.raw(primarySortProp)} < ${primaryValue}`);
+    }
   }
 
   if (clubId) {
@@ -368,7 +407,6 @@ export const getPostsInfinite = async ({
   }
 
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
-
   const postsRawQuery = Prisma.sql`
     ${queryWith}
     SELECT
@@ -380,7 +418,7 @@ export const getPostsInfinite = async ({
       p."modelVersionId",
       p."collectionId",
       ${include?.includes('detail') ? Prisma.sql`p."detail",` : Prisma.sql``}
-      ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
+      ${Prisma.raw(primarySortProp)} "cursorId"
     FROM "Post" p
     ${Prisma.raw(joins.join('\n'))}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -403,10 +441,17 @@ export const getPostsInfinite = async ({
     tag: cacheTags,
   });
 
-  let nextCursor: number | Date | undefined | null;
+  let nextCursor: string | undefined;
   if (postsRaw.length > limit) {
     const nextItem = postsRaw.pop();
-    nextCursor = nextItem?.cursorId;
+    if (nextItem?.cursorId !== null && nextItem?.cursorId !== undefined) {
+      // Return composite cursor format: "value|id"
+      const cursorValue =
+        nextItem.cursorId instanceof Date
+          ? nextItem.cursorId.toISOString()
+          : String(nextItem.cursorId);
+      nextCursor = `${cursorValue}|${nextItem.id}`;
+    }
   }
 
   // Filter to published model versions:
@@ -414,31 +459,35 @@ export const getPostsInfinite = async ({
   const modelVersionIds = postsRaw.map((p) => p.modelVersionId).filter(isDefined);
   // Get user data
   const userIds = postsRaw.map((i) => i.userId);
-  const [images, postStats, userData, cosmetics, modelVersions] = await Promise.all([
-    postsRaw.length
-      ? await getImagesForPosts({
-          postIds: postsRaw.map((x) => x.id),
-          // excludedIds: excludedImageIds,
-          user,
-          browsingLevel,
-          pending,
-          disablePoi,
-          disableMinor,
-          poiOnly,
-          minorOnly,
-        })
-      : Promise.resolve([]),
-    postsRaw.length > 0
-      ? getPostStatsObject(postsRaw)
-      : Promise.resolve({} as ReturnType<typeof getPostStatsObject>),
-    userBasicCache.fetch(userIds),
-    includeCosmetics
-      ? getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
-      : Promise.resolve({} as ReturnType<typeof getCosmeticsForEntity>),
-    modelVersionIds.length > 0 && filterByPermissionContent
-      ? modelVersionAccessCache.fetch(modelVersionIds)
-      : Promise.resolve({} as ReturnType<typeof modelVersionAccessCache.fetch>),
-  ]);
+  const [images, postStats, userData, cosmetics, modelVersions] = await withSpan(
+    'post:getInfinite:parallelFetch',
+    () =>
+      Promise.all([
+        postsRaw.length
+          ? getImagesForPosts({
+              postIds: postsRaw.map((x) => x.id),
+              // excludedIds: excludedImageIds,
+              user,
+              browsingLevel,
+              pending,
+              disablePoi,
+              disableMinor,
+              poiOnly,
+              minorOnly,
+            })
+          : Promise.resolve([]),
+        postsRaw.length > 0
+          ? getPostStatsObject(postsRaw)
+          : Promise.resolve({} as ReturnType<typeof getPostStatsObject>),
+        userBasicCache.fetch(userIds),
+        includeCosmetics
+          ? getCosmeticsForEntity({ ids: postsRaw.map((p) => p.id), entity: 'Post' })
+          : Promise.resolve({} as ReturnType<typeof getCosmeticsForEntity>),
+        modelVersionIds.length > 0 && filterByPermissionContent
+          ? modelVersionAccessCache.fetch(modelVersionIds)
+          : Promise.resolve({} as ReturnType<typeof modelVersionAccessCache.fetch>),
+      ])
+  );
 
   // Filter to collections with permissions:
   const collectionIds = postsRaw.map((p) => p.collectionId).filter(isDefined);
@@ -458,55 +507,59 @@ export const getPostsInfinite = async ({
 
   return {
     nextCursor,
-    items: postsRaw
-      // remove unlisted resources the user has no access to:
-      .filter((p) => {
-        // Allow mods and owners to view all.
-        if (user?.isModerator || p.userId === user?.id) return true;
+    items: withSpan('post:getInfinite:transform', () =>
+      postsRaw
+        // remove unlisted resources the user has no access to:
+        .filter((p) => {
+          // Allow mods and owners to view all.
+          if (user?.isModerator || p.userId === user?.id) return true;
 
-        // Hide posts from unpublished model versions:
-        if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
-          return false;
-        }
-
-        // Hide posts from collections the user has no access to:
-        if (p.collectionId) {
-          const collection = collections.find((x) => x.id === p.collectionId);
-          if (!collection) return false;
-
-          if (
-            collection.read !== CollectionReadConfiguration.Public &&
-            !collection?.contributors[0]?.permissions.includes(CollectionContributorPermission.VIEW)
-          ) {
+          // Hide posts from unpublished model versions:
+          if (p.modelVersionId && modelVersions[p.modelVersionId]?.status !== 'Published') {
             return false;
           }
-        }
 
-        return true;
-      })
-      .map(({ userId: creatorId, ...post }) => {
-        const _images = images.filter((x) => x.postId === post.id);
-        const { username, image, deletedAt } = userData[creatorId] || {};
+          // Hide posts from collections the user has no access to:
+          if (p.collectionId) {
+            const collection = collections.find((x) => x.id === p.collectionId);
+            if (!collection) return false;
 
-        return {
-          ...post,
-          imageCount: _images.length,
-          user: {
-            id: creatorId,
-            username,
-            image,
-            deletedAt,
-            cosmetics: [] as Awaited<ReturnType<typeof getCosmeticsForUsers>>[string],
-            profilePicture: null as
-              | Awaited<ReturnType<typeof getProfilePicturesForUsers>>[string]
-              | null,
-          },
-          stats: postStats[post.id] ?? null,
-          images: _images,
-          cosmetic: cosmetics[post.id] ?? null,
-        };
-      })
-      .filter((x) => x.imageCount !== 0),
+            if (
+              collection.read !== CollectionReadConfiguration.Public &&
+              !collection?.contributors[0]?.permissions.includes(
+                CollectionContributorPermission.VIEW
+              )
+            ) {
+              return false;
+            }
+          }
+
+          return true;
+        })
+        .map(({ userId: creatorId, ...post }) => {
+          const _images = images.filter((x) => x.postId === post.id);
+          const { username, image, deletedAt } = userData[creatorId] || {};
+
+          return {
+            ...post,
+            imageCount: _images.length,
+            user: {
+              id: creatorId,
+              username,
+              image,
+              deletedAt,
+              cosmetics: [] as Awaited<ReturnType<typeof getCosmeticsForUsers>>[string],
+              profilePicture: null as
+                | Awaited<ReturnType<typeof getProfilePicturesForUsers>>[string]
+                | null,
+            },
+            stats: postStats[post.id] ?? null,
+            images: _images,
+            cosmetic: cosmetics[post.id] ?? null,
+          };
+        })
+        .filter((x) => x.imageCount !== 0)
+    ),
   };
 };
 
@@ -727,24 +780,60 @@ export const updatePost = async ({
 };
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
-  const images = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT i.id
-    FROM "Image" i
-    JOIN "Post" p ON p.id = "postId"
-    WHERE i."postId" = ${id}
-      AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
-  `;
-  if (images.length) {
-    for (const image of images) await deleteImageById({ id: image.id, updatePost: false });
+  // Phase 1: Atomic DB operations in a single transaction
+  const { post, deletedImages } = await dbWrite.$transaction(
+    async (tx) => {
+      // Find images belonging to this post
+      const images = await tx.$queryRaw<{ id: number; url: string }[]>`
+        SELECT i.id, i.url
+        FROM "Image" i
+        JOIN "Post" p ON p.id = i."postId"
+        WHERE i."postId" = ${id}
+          AND ${Prisma.raw(isModerator ? '1 = 1' : 'i."userId" = p."userId"')}
+      `;
+
+      let deletedImages: { id: number; url: string }[] = [];
+      if (images.length) {
+        // Remove images from collections before deleting
+        await Promise.all(images.map((img) => removeEntityFromAllCollections('image', img.id)));
+
+        deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
+          DELETE FROM "Image"
+          WHERE id IN (${Prisma.join(images.map((i) => i.id))})
+          RETURNING id, url
+        `;
+      }
+
+      // Delete the post
+      const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+        DELETE FROM "Post"
+        WHERE id = ${id}
+        RETURNING id, "nsfwLevel"
+      `;
+
+      return { post, deletedImages };
+    },
+    { timeout: 10000 }
+  );
+
+  // Phase 2: Side effects after successful transaction
+  if (deletedImages.length) {
+    const imageIds = deletedImages.map((img) => img.id);
+
+    await Promise.all([
+      queueImageSearchIndexUpdate({ ids: imageIds, action: SearchIndexUpdateQueueAction.Delete }),
+      invalidateManyImageExistence(imageIds),
+    ]);
+
+    // S3 deletion with concurrency limit
+    await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
+      Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
+    );
   }
 
   await bustCachesForPosts(id);
-  const [result] = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-    DELETE FROM "Post"
-    WHERE id = ${id}
-    RETURNING id, "nsfwLevel"
-  `;
-  return result;
+
+  return post;
 };
 
 type PostQueryResult = { id: number; name: string; isCategory: boolean }[];
@@ -1011,6 +1100,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true, url: true, userId: true },
   });
+  await imageMetadataCache.bust(image.id);
+  await imageMetaCache.bust(image.id);
 
   if (shouldIngest) {
     // Ensures a proper rescan of this image.
@@ -1136,13 +1227,10 @@ export const addResourceToPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
+  await imageResourcesCache.bust(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
-
-  // for (const imageId of imageIds) {
-  //   purgeImageGenerationDataCache(imageId);
-  // }
 
   for (const image of images) {
     if (!!image.postId) {
@@ -1184,13 +1272,9 @@ export const removeResourceFromPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
+  await imageResourcesCache.bust(imageId);
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-  // await bustCacheTag(`images-model:${modelVersion.model.id}`);
-
-  // for (const imageId of imageIds) {
-  //   purgeImageGenerationDataCache(imageId);
-  // }
 
   if (!!image.postId) {
     await preventReplicationLag('postImages', image.postId);

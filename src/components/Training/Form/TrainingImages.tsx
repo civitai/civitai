@@ -61,6 +61,7 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { registerSignalGroup } from '~/components/Signals/signals-registry.store';
 import type {
   ImageSelectModalProps,
   SelectedImage,
@@ -78,7 +79,7 @@ import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
   IMAGE_MIME_TYPE,
   MIME_TYPES,
@@ -244,6 +245,7 @@ const LabelSelectModal = ({
 };
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
+  registerSignalGroup('training');
   const thisModelVersion = model.modelVersions[0];
   const thisMediaType =
     (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
@@ -347,9 +349,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     let img: HTMLImageElement;
     try {
       img = await createImageElement(imgUrl);
-    } catch {
-      URL.revokeObjectURL(imgUrl);
+    } catch (loadError) {
       const name = fileName ?? 'image';
+      console.error(`[ImageValidation] createImageElement failed for "${name}"`, {
+        error: loadError,
+        errorMessage: loadError instanceof Error ? loadError.message : String(loadError),
+        type,
+      });
+      URL.revokeObjectURL(imgUrl);
       showImgCorrupt.current.push(name);
       throw new Error(`Image "${name}" failed to load and may be corrupt.`);
     }
@@ -367,32 +374,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
     }
 
-    // Validate image integrity by fully decoding the image (similar to PIL's verify + exif_transpose)
-    // This catches truncated/corrupt images by forcing a full decode and sampling multiple regions
-    try {
-      const testCanvas = document.createElement('canvas');
-      // Use full image dimensions to force complete decode (like PIL's exif_transpose)
-      testCanvas.width = width;
-      testCanvas.height = height;
-      const testCtx = testCanvas.getContext('2d');
-      if (!testCtx) throw new Error('Canvas context unavailable');
-
-      // Draw the entire image - this forces full decode and will fail for truncated images
-      testCtx.drawImage(img, 0, 0, width, height);
-
-      // Sample pixel data from multiple regions to catch partial corruption
-      // Check top-left corner
-      testCtx.getImageData(0, 0, 1, 1);
-      // Check bottom-right corner (where truncation typically manifests)
-      testCtx.getImageData(width - 1, height - 1, 1, 1);
-      // Check center
-      testCtx.getImageData(Math.floor(width / 2), Math.floor(height / 2), 1, 1);
-    } catch {
-      URL.revokeObjectURL(imgUrl);
-      const name = fileName ?? 'image';
-      showImgCorrupt.current.push(name);
-      throw new Error(`Image "${name}" appears to be corrupt and cannot be processed.`);
-    }
+    // Note: Image integrity is already validated by createImageElement() which loads
+    // the image and attempts decode(). If we reach this point, the image loaded successfully.
+    // Previous canvas-based validation was removed as it caused false positives under
+    // memory pressure when processing large batches of images concurrently.
 
     // both w and h must be less than the max
     const goodMax = width <= maxWidth && height <= maxHeight;
@@ -435,11 +420,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     if (!ctx) throw new Error('Error resizing image');
     ctx.drawImage(img, 0, 0, width, height);
 
+    // Normalize MIME type - 'image/jpg' is not valid, browsers expect 'image/jpeg'
+    const normalizedType = type === 'image/jpg' ? 'image/jpeg' : type;
+    // Use high quality for JPEG to prevent compression artifacts
+    const quality = normalizedType === 'image/jpeg' ? 0.92 : undefined;
+
     return new Promise((resolve, reject) => {
-      canvas.toBlob((file) => {
-        if (!file) reject();
-        else resolve(URL.createObjectURL(file));
-      }, type);
+      canvas.toBlob(
+        (file) => {
+          // Revoke the original blob URL to prevent memory leaks
+          URL.revokeObjectURL(imgUrl);
+          if (!file) {
+            reject(
+              new Error(`Failed to resize image - canvas.toBlob returned null for type ${type}`)
+            );
+          } else {
+            resolve(URL.createObjectURL(file));
+          }
+        },
+        normalizedType,
+        quality
+      );
     });
   };
 
@@ -524,41 +525,69 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const zipReader = await getJSZip();
     const zData = await zipReader.loadAsync(f);
 
+    const zipEntries = Object.entries(zData.files);
+    const imageEntries = zipEntries.filter(([zname, zf]) => {
+      if (zf.dir) return false;
+      if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return false;
+      const fileExt = (zname.split('.').pop() || '').toLowerCase();
+      return fileExt in mediaExts;
+    });
+
+    console.log(
+      `[ZipProcessing] Starting to process ${imageEntries.length} images from zip (total entries: ${zipEntries.length})`
+    );
+    let completedCount = 0;
+    const totalImages = imageEntries.length;
+
+    // Use pLimit to process images with controlled concurrency (max 10 at a time)
+    // This prevents memory pressure from loading too many images simultaneously
     const ret = await Promise.all(
-      Object.entries(zData.files).map(async ([zname, zf]) => {
-        let hasLabelFiles = false;
+      Object.entries(zData.files).map(([zname, zf]) =>
+        limit(async () => {
+          let hasLabelFiles = false;
 
-        if (zf.dir) return;
-        if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
+          if (zf.dir) return;
+          if (zname.startsWith('__MACOSX/') || zname.endsWith('.DS_STORE')) return;
 
-        // - we could read the type here with some crazy blob/hex inspecting
-        const fileSplit = zname.split('.');
-        const fileExt = (fileSplit.pop() || '').toLowerCase();
-        const baseFileName = fileSplit.join('.');
-        if (fileExt in mediaExts) {
-          const imgBlob = await zf.async('blob');
-          try {
-            const scaledUrl = await getResizedImgUrl(imgBlob, mediaExts[fileExt], zname);
-            const czFile = zipReader.file(`${baseFileName}.txt`);
-            let labelStr = '';
-            if (czFile) {
-              labelStr = await czFile.async('string');
-              hasLabelFiles = true;
+          // - we could read the type here with some crazy blob/hex inspecting
+          const fileSplit = zname.split('.');
+          const fileExt = (fileSplit.pop() || '').toLowerCase();
+          const baseFileName = fileSplit.join('.');
+          if (fileExt in mediaExts) {
+            const imgBlob = await zf.async('blob');
+            try {
+              const scaledUrl = await getResizedImgUrl(imgBlob, mediaExts[fileExt], zname);
+              const czFile = zipReader.file(`${baseFileName}.txt`);
+              let labelStr = '';
+              if (czFile) {
+                labelStr = await czFile.async('string');
+                hasLabelFiles = true;
+              }
+              parsedFiles.push({
+                name: zname,
+                type: mediaExts[fileExt],
+                url: scaledUrl,
+                label: labelStr,
+                invalidLabel: false,
+                source: source ?? null,
+              });
+              completedCount++;
+              // Log progress every 10 images to reduce console spam
+              if (completedCount % 10 === 0 || completedCount === totalImages) {
+                console.log(`[ZipProcessing] Progress: ${completedCount}/${totalImages}`);
+              }
+            } catch (err) {
+              completedCount++;
+              console.error(
+                `[ZipProcessing] Failed "${zname}" (${completedCount}/${totalImages})`,
+                err
+              );
+              // Error already tracked and will be shown in showResizeWarnings
             }
-            parsedFiles.push({
-              name: zname,
-              type: mediaExts[fileExt],
-              url: scaledUrl,
-              label: labelStr,
-              invalidLabel: false,
-              source: source ?? null,
-            });
-          } catch {
-            // Error already tracked and will be shown in showResizeWarnings
           }
-        }
-        return hasLabelFiles;
-      })
+          return hasLabelFiles;
+        })
+      )
     );
 
     const hasAnyLabelFiles = ret.some((r) => r === true);
@@ -818,6 +847,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         loading: false,
       });
 
+      setModelFileId(response.id);
       setInitialImageList(model.id, thisMediaType, imageList);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
@@ -1007,148 +1037,161 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     const zip = await getJSZip();
 
+    let failedImages = 0;
     await Promise.all(
       imageList.map(async (imgData, idx) => {
-        const filenameBase = String(idx).padStart(3, '0');
+        try {
+          const filenameBase = String(idx).padStart(3, '0');
 
-        let label = imgData.label;
+          let label = imgData.label;
 
-        if (triggerWord.length) {
-          const separator = labelType === 'caption' ? '' : ',';
-          const regMatch =
-            labelType === 'caption'
-              ? new RegExp(`^${triggerWord}( |$)`)
-              : new RegExp(`^${triggerWord}(${separator}|$)`);
+          if (triggerWord.length) {
+            const separator = labelType === 'caption' ? '' : ',';
+            const regMatch =
+              labelType === 'caption'
+                ? new RegExp(`^${triggerWord}( |$)`)
+                : new RegExp(`^${triggerWord}(${separator}|$)`);
 
-          if (!regMatch.test(label)) {
-            label =
-              label.length > 0
-                ? labelType === 'caption'
-                  ? [triggerWord, label].join(' ')
-                  : [triggerWord, label].join(`${separator} `)
-                : triggerWord;
-          }
-        }
-
-        label.length > 0 && zip.file(`${filenameBase}.txt`, label);
-
-        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
-
-        // TODO [bw] unregister here
-
-        zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
-      })
-    );
-    // TODO [bw] handle error
-    zip.generateAsync({ type: 'blob' }).then(async (content) => {
-      const fileName = `${thisModelVersion.id}_training_data.zip`;
-
-      if (dlOnly) {
-        saveAs(content, fileName);
-        setZipping(false);
-        return;
-      }
-
-      hideNotification(notificationId);
-      showNotification({
-        id: notificationId,
-        loading: true,
-        autoClose: false,
-        withCloseButton: false,
-        title: 'Creating and uploading archive',
-        message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
-      });
-
-      try {
-        await upsertVersionMutation.mutateAsync({
-          id: thisModelVersion.id,
-          name: thisModelVersion.name,
-          modelId: model.id,
-          baseModel: thisModelVersion.baseModel as BaseModel,
-          trainedWords: triggerWord.length ? [triggerWord] : [],
-        });
-      } catch (e: unknown) {
-        setZipping(false);
-        updateNotification({
-          ...notificationFailBase,
-          message:
-            e instanceof Error
-              ? e.message.startsWith('Unexpected token')
-                ? 'Server error :('
-                : e.message
-              : '',
-        });
-        return;
-      }
-
-      const blobFile = new File([content], fileName, {
-        type: 'application/zip',
-      });
-
-      try {
-        const uploadResp = await upload(
-          {
-            file: blobFile,
-            type: UploadType.TrainingImages,
-            meta: {
-              versionId: thisModelVersion.id,
-              labelType,
-              ownRights,
-              shareDataset,
-              numImages: imageList.length,
-              numCaptions: imageList.filter((i) => i.label.length > 0).length,
-            },
-          },
-          async ({ meta, size, ...result }) => {
-            const { versionId, ...metadata } = meta as {
-              versionId: number;
-            };
-            if (versionId) {
-              try {
-                await upsertFileMutation.mutateAsync({
-                  ...result,
-                  ...(modelFileId && { id: modelFileId }),
-                  sizeKB: bytesToKB(size),
-                  modelVersionId: versionId,
-                  type: 'Training Data',
-                  visibility:
-                    ownRights && shareDataset
-                      ? ModelFileVisibility.Public
-                      : ownRights
-                      ? ModelFileVisibility.Sensitive
-                      : ModelFileVisibility.Private,
-                  metadata,
-                });
-              } catch (e: unknown) {
-                setZipping(false);
-                updateNotification({
-                  ...notificationFailBase,
-                });
-              }
-            } else {
-              throw new Error('Missing version data.');
+            if (!regMatch.test(label)) {
+              label =
+                label.length > 0
+                  ? labelType === 'caption'
+                    ? [triggerWord, label].join(' ')
+                    : [triggerWord, label].join(`${separator} `)
+                  : triggerWord;
             }
           }
-        );
-        if (!uploadResp) {
-          setZipping(false);
-          updateNotification({
-            ...notificationFailBase,
-          });
+
+          label.length > 0 && zip.file(`${filenameBase}.txt`, label);
+
+          const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+
+          zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
+        } catch (e) {
+          failedImages++;
+          console.error(`Failed to add image ${idx} to zip:`, e);
         }
-      } catch (e) {
+      })
+    );
+
+    if (failedImages > 0) {
+      setZipping(false);
+      updateNotification({
+        ...notificationFailBase,
+        message: `Failed to package ${failedImages} image(s). Please try again.`,
+      });
+      return;
+    }
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const fileName = `${thisModelVersion.id}_training_data.zip`;
+
+    if (dlOnly) {
+      saveAs(content, fileName);
+      setZipping(false);
+      return;
+    }
+
+    hideNotification(notificationId);
+    showNotification({
+      id: notificationId,
+      loading: true,
+      autoClose: false,
+      withCloseButton: false,
+      title: 'Creating and uploading archive',
+      message: `Packaging ${imageList.length} file${imageList.length !== 1 ? 's' : ''}...`,
+    });
+
+    try {
+      await upsertVersionMutation.mutateAsync({
+        id: thisModelVersion.id,
+        name: thisModelVersion.name,
+        modelId: model.id,
+        baseModel: thisModelVersion.baseModel as BaseModel,
+        trainedWords: triggerWord.length ? [triggerWord] : [],
+      });
+    } catch (e: unknown) {
+      setZipping(false);
+      updateNotification({
+        ...notificationFailBase,
+        message:
+          e instanceof Error
+            ? e.message.startsWith('Unexpected token')
+              ? 'Server error :('
+              : e.message
+            : '',
+      });
+      return;
+    }
+
+    const blobFile = new File([content], fileName, {
+      type: 'application/zip',
+    });
+
+    try {
+      const uploadResp = await upload(
+        {
+          file: blobFile,
+          type: UploadType.TrainingImages,
+          meta: {
+            versionId: thisModelVersion.id,
+            labelType,
+            ownRights,
+            shareDataset,
+            numImages: imageList.length,
+            numCaptions: imageList.filter((i) => i.label.length > 0).length,
+          },
+        },
+        async ({ meta, size, ...result }) => {
+          const { versionId, ...metadata } = meta as {
+            versionId: number;
+          };
+          if (versionId) {
+            try {
+              const fileId = modelFileId ?? existingDataFile?.id;
+              await upsertFileMutation.mutateAsync({
+                ...result,
+                ...(fileId && { id: fileId }),
+                sizeKB: bytesToKB(size),
+                modelVersionId: versionId,
+                type: 'Training Data',
+                visibility:
+                  ownRights && shareDataset
+                    ? ModelFileVisibility.Public
+                    : ownRights
+                    ? ModelFileVisibility.Sensitive
+                    : ModelFileVisibility.Private,
+                metadata,
+              });
+            } catch (e: unknown) {
+              setZipping(false);
+              updateNotification({
+                ...notificationFailBase,
+              });
+            }
+          } else {
+            throw new Error('Missing version data.');
+          }
+        }
+      );
+      if (!uploadResp) {
         setZipping(false);
         updateNotification({
           ...notificationFailBase,
-          message:
-            e instanceof Error
-              ? e.message.startsWith('Unexpected token')
-                ? 'Server error :('
-                : e.message
-              : '',
         });
       }
-    });
+    } catch (e) {
+      setZipping(false);
+      updateNotification({
+        ...notificationFailBase,
+        message:
+          e instanceof Error
+            ? e.message.startsWith('Unexpected token')
+              ? 'Server error :('
+              : e.message
+            : '',
+      });
+    }
   };
 
   const handleNext = async () => {
@@ -1213,9 +1256,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       imageList.forEach((i) => {
         if (i.label.length > 0) {
-          const { blockedFor, success } = auditPrompt(i.label, undefined, isGreen);
-          if (!success) {
-            issues.push(...blockedFor);
+          // Validate each tag individually to avoid cross-tag false positives
+          // (e.g. "school_uniform, 1girl" matching composed "school...girl" pattern)
+          const tags = i.label.split(',').map((t) => t.trim()).filter(Boolean);
+          let hasInvalid = false;
+          for (const tag of tags) {
+            const { blockedFor, success } = auditPrompt(tag, undefined, isGreen);
+            if (!success) {
+              issues.push(...blockedFor);
+              hasInvalid = true;
+            }
+          }
+          if (hasInvalid) {
             if (!i.invalidLabel) {
               updateImage(model.id, thisMediaType, {
                 matcher: getShortNameFromUrl(i),

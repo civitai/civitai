@@ -129,6 +129,7 @@ export enum SignalMessages {
   ChatTypingStatus = 'chat:typing-status',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
+  WorkflowUpdate = 'orchestrator:workflow-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ModelVersionPopularityUpdate = 'model-version:popularity:update',
@@ -139,6 +140,10 @@ export enum SignalMessages {
   TopicUpdate = 'topic:connections',
   NewOrderQueueUpdate = 'new-order:queue-update',
   NewOrderPlayerUpdate = 'new-order:player-update',
+  MetricUpdate = 'metric:update',
+  SessionRefresh = 'session:refresh',
+  CryptoDepositUpdate = 'crypto-deposit:update',
+  ComicPanelUpdate = 'comic:panel-update',
 }
 
 export enum BountySort {
@@ -186,6 +191,28 @@ export enum BlockedReason {
   Moderated = 'moderated',
   CSAM = 'CSAM',
   AiNotVerified = 'AiNotVerified',
+}
+
+export enum ViolationType {
+  RealPerson = 'realPerson',
+  RealPersonNsfw = 'realPersonNsfw',
+  RealisticMinor = 'realisticMinor',
+  RealisticMinorNsfw = 'realisticMinorNsfw',
+  AnimatedMinorNsfw = 'animatedMinorNsfw',
+  SchoolNsfw = 'schoolNsfw',
+  Bestiality = 'bestiality',
+  SexualViolence = 'sexualViolence',
+  MindAlteredNsfw = 'mindAlteredNsfw',
+  FecalMatter = 'fecalMatter',
+  Gore = 'gore',
+  Diaper = 'diaper',
+  Anorexia = 'anorexia',
+  BodilyFluids = 'bodilyFluids',
+  Incest = 'incest',
+  Hate = 'hate',
+  NonAi = 'non-ai',
+  Spam = 'spam',
+  Other = 'other',
 }
 
 export enum ThreadSort {
@@ -297,6 +324,7 @@ export enum BanReasonCode {
   Harassment = 'Harassment',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
+  RRDViolation = 'RRDViolation',
   Other = 'Other',
 }
 
@@ -334,6 +362,9 @@ export enum OrchEngineTypes {
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
   LinkDomain = 'LinkDomain',
+  MessagePattern = 'MessagePattern',
+  UsernameExact = 'UsernameExact',
+  UsernamePartial = 'UsernamePartial',
 }
 
 export enum ToolSort {
@@ -356,6 +387,7 @@ export enum SignalTopic {
   ModelVersion = 'model-version', // with :modelVersionId
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
+  Metric = 'metrics', // with :entityType:entityId
 }
 
 export enum NewOrderImageRatingStatus {
@@ -396,6 +428,7 @@ export enum ModReviewType {
   NewUsers = 'newUser',
   Appeals = 'appeal',
   RuleViolations = 'modRule',
+  RemixSource = 'remixSource',
 }
 
 export enum MarketplacePaymentMethod {

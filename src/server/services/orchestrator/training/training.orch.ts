@@ -25,12 +25,13 @@ import type { TrainingRequest } from '~/server/services/training.service';
 import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { throwBadRequestError, throwInternalServerError } from '~/server/utils/errorHandling';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
-import { getGetUrl } from '~/utils/s3-utils';
+import { getGetUrl, getB2S3Client, isB2Url } from '~/utils/s3-utils';
 import { parseAIRSafe } from '~/utils/string-helpers';
 import {
   getTrainingFields,
   isInvalidRapid,
   isInvalidAiToolkit,
+  isAiToolkitEnabled,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -152,6 +153,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     model,
     priority,
     loraName,
+    triggerWord,
     trainingData,
     trainingDataImagesCount,
     samplePrompts,
@@ -165,7 +167,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
 
   let trainingInput: AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
-    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma) until @civitai/client is updated
+    ecosystem: aiToolkitParams.ecosystem as any, // Type assertion for new ecosystems (qwen, chroma, zimageturbo, zimagebase) until @civitai/client is updated
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
     trainingData: {
@@ -177,7 +179,6 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       prompts: samplePrompts,
     },
     epochs: aiToolkitParams.epochs,
-    resolution: aiToolkitParams.resolution ?? undefined,
     lr: aiToolkitParams.lr,
     textEncoderLr: aiToolkitParams.textEncoderLr ?? undefined,
     trainTextEncoder: aiToolkitParams.trainTextEncoder,
@@ -189,7 +190,9 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     flipAugmentation: aiToolkitParams.flipAugmentation,
     shuffleTokens: aiToolkitParams.shuffleTokens,
     keepTokens: aiToolkitParams.keepTokens,
-  };
+    numberOfRepeats: aiToolkitParams.numRepeats ?? undefined,
+    triggerWord,
+  } as AiToolkitTrainingInput & { triggerWord: string };
 
   if (aiToolkitParams.ecosystem === 'sd1') {
     trainingInput = {
@@ -231,6 +234,7 @@ export const createTrainingWorkflow = async ({
   modelVersionId,
   token,
   user,
+  features,
   currencies,
 }: ImageTrainingWorkflowSchema) => {
   if (!env.WEBHOOK_URL) throw throwInternalServerError('Missing webhook URL');
@@ -243,6 +247,7 @@ export const createTrainingWorkflow = async ({
   const modelVersions = await dbWrite.$queryRaw<TrainingRequest[]>`
     SELECT mv."trainingDetails",
            m.name      "modelName",
+           mv."trainedWords",
            m."userId",
            mf.url      "trainingUrl",
            mf.id       "fileId",
@@ -254,6 +259,8 @@ export const createTrainingWorkflow = async ({
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
     WHERE mv.id = ${modelVersionId}
       AND m."deletedAt" is null
+    ORDER BY mf.id DESC
+    LIMIT 1
   `;
 
   if (modelVersions.length === 0) throw throwBadRequestError('Invalid model version');
@@ -286,7 +293,12 @@ export const createTrainingWorkflow = async ({
   if (isInvalidAiToolkit(baseModelType, trainingParams.engine))
     throw throwBadRequestError('AI Toolkit training is not supported for this model.');
 
-  const { url: trainingData } = await getGetUrl(modelVersion.trainingUrl);
+  if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
+    throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
+
+  const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
+    ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
+    : await getGetUrl(modelVersion.trainingUrl);
 
   if (!(baseModel in trainingModelInfo)) {
     const customCheck = await checkCustomModel(baseModel);
@@ -299,6 +311,7 @@ export const createTrainingWorkflow = async ({
   const priority = getTrainingFields.getPriority(isPriority);
   const engine = getTrainingFields.getEngine(trainingParams.engine);
   const loraName = modelVersion.modelName;
+  const triggerWord = modelVersion.trainedWords?.[0] ?? '';
   const modelFileId = modelVersion.fileId;
 
   // Don't override the engine field in params - it needs to remain as the literal type
@@ -312,6 +325,7 @@ export const createTrainingWorkflow = async ({
     trainingDataImagesCount,
     engine, // This uses the OrchEngineTypes enum
     loraName,
+    triggerWord,
     samplePrompts,
     negativePrompt,
     modelFileId,
@@ -323,7 +337,7 @@ export const createTrainingWorkflow = async ({
   const workflow = await submitWorkflow({
     token,
     body: {
-      tags: ['training'],
+      tags: ['training', `modelVersion:${modelVersionId}`],
       steps: [stepRun],
       callbacks: [
         {
@@ -399,6 +413,7 @@ export const createTrainingWhatIfWorkflow = async ({
     params,
     trainingData: 'https://fake',
     loraName: '',
+    triggerWord: '',
     samplePrompts: ['', '', ''],
     modelFileId: -1,
     negativePrompt: '',

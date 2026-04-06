@@ -21,56 +21,72 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
       'rewards-ad-impressions',
       new Date(defaultLastRun)
     );
-    const now = new Date();
-    const millisecondsSinceLastRun = now.getTime() - lastRun.getTime();
-    const hours = Math.max(Math.floor((millisecondsSinceLastRun / (1000 * 60 * 60)) % 24), 1);
 
+    // Query impressions grouped by hour to ensure proper hourly caps are applied
+    // even when the job catches up on multiple hours after a failure
     const results = await clickhouse.$query<Impression>`
       SELECT
-      userId,
-      0 as deviceId, -- Disable deviceIds for now
-      -- deviceId,
-      sum(impressions) as totalAdImpressions,
-      sum(duration) as totalAdDuration
+        userId,
+        toStartOfHour(time) as hour,
+        sum(impressions) as totalAdImpressions
       FROM adImpressions
       WHERE
         time >= toStartOfHour(${lastRun})
         AND time < toStartOfHour(now())
-      GROUP BY userId, deviceId;
+      GROUP BY userId, hour
+      ORDER BY hour ASC;
     `;
 
     if (!!results?.length) {
+      // Get unique users for cache lookup
+      const uniqueUserIds = [...new Set(results.map(({ userId }) => userId))];
+
       const cachedAmounts = await BuzzEventsCache.getMany(
-        results.map(({ userId, deviceId }) => ({ userId, deviceId, type }))
+        uniqueUserIds.map((userId) => ({ userId, deviceId: '0', type }))
       );
 
-      const transactions = results
-        .map(({ userId, totalAdImpressions, deviceId }, i): Transaction => {
-          const adImpressionAmount = Math.floor(totalAdImpressions * buzzPerAd);
-          const cachedAmount = cachedAmounts[i];
-          const remaining = cap - cachedAmount;
-          const amount = Math.min(adImpressionAmount, remaining, hourlyCap * hours);
+      // Create a map of userId -> cached amount for quick lookup
+      const cachedAmountMap = new Map(uniqueUserIds.map((userId, i) => [userId, cachedAmounts[i]]));
 
-          return {
+      // Track running totals per user to properly apply both hourly and daily caps
+      const userTotals = new Map<number, number>();
+
+      const transactions: Transaction[] = [];
+
+      // Process each hour's impressions individually to apply per-hour caps correctly
+      for (const { userId, totalAdImpressions, hour } of results) {
+        const adImpressionAmount = Math.floor(totalAdImpressions * buzzPerAd);
+        const cachedAmount = cachedAmountMap.get(userId) ?? 0;
+        const runningTotal = userTotals.get(userId) ?? 0;
+
+        // Calculate remaining daily cap (total cap minus already earned today minus earned in this job run)
+        const remainingDailyCap = cap - cachedAmount - runningTotal;
+
+        // Apply both hourly cap and remaining daily cap
+        const amount = Math.min(adImpressionAmount, hourlyCap, remainingDailyCap);
+
+        if (amount > 0) {
+          userTotals.set(userId, runningTotal + amount);
+          transactions.push({
             fromAccountId: 0,
             toAccountId: userId,
             toAccountType: 'blue',
             amount,
-            deviceId,
             type: TransactionType.Reward,
-            externalTransactionId: `${userId}:${deviceId}:${type}:${lastRun.getTime()}`,
-          };
-        })
-        .filter((x) => x.amount > 0);
+            externalTransactionId: `${userId}:${type}:${new Date(hour).getTime()}`,
+          });
+        }
+      }
 
       if (transactions.length > 0) {
         const tasks = chunk(transactions, 500).map((chunk) => async () => {
           await createBuzzTransactionMany(chunk);
           await BuzzEventsCache.incrManyBy(
             chunk.map((transaction) => ({
-              ...transaction,
-              type,
               userId: transaction.toAccountId!,
+              deviceId: '0',
+              type,
+              amount: transaction.amount,
             }))
           );
         });
@@ -88,13 +104,11 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
 
 type Impression = {
   userId: number;
-  deviceId: string;
+  hour: Date;
   totalAdImpressions: number;
-  totalAdDuration: number;
 };
 
 type Transaction = CreateBuzzTransactionInput & {
   fromAccountId: number;
   externalTransactionId: string;
-  deviceId: string;
 };

@@ -1,22 +1,51 @@
 import {
-  getStatus,
-  getPriceEstimate,
-  createPaymentInvoice,
+  getDepositAddressHandler,
+  getBuzzConversionRateHandler,
+  getDepositHistoryHandler,
+  getMinAmountHandler,
+  getSupportedCurrenciesHandler,
+  reconcileUserDepositsHandler,
 } from '~/server/controllers/nowpayments.controller';
 import {
-  transactionCreateSchema,
-  priceEstimateInputSchema,
-  createPaymentInvoiceInputSchema,
+  depositHistoryInputSchema,
+  getDepositAddressInputSchema,
+  getBuzzConversionRateInputSchema,
+  getMinAmountInputSchema,
 } from '~/server/schema/nowpayments.schema';
-import { protectedProcedure, router } from '~/server/trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
+import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import * as z from 'zod';
 
 export const nowPaymentsRouter = router({
-  getStatus: protectedProcedure.query(getStatus),
-  getPriceEstimate: protectedProcedure.input(priceEstimateInputSchema).mutation(getPriceEstimate),
-  createPaymentInvoice: protectedProcedure
-    .input(createPaymentInvoiceInputSchema)
-    .mutation(createPaymentInvoice),
-  // createBuzzPurchaseTransaction: protectedProcedure
-  //   .input(transactionCreateSchema)
-  //   .mutation(createBuzzPurchaseTransactionHandler),
+  // NOTE: This is a query with write side effects (creates address on first call).
+  // Safe because the service layer uses distributed lock + DB dedup, so retries are idempotent.
+  // Consider migrating to .mutation() with corresponding client-side useMutation() call.
+  getDepositAddress: protectedProcedure
+    .input(getDepositAddressInputSchema)
+    .query(getDepositAddressHandler),
+  getDepositHistory: protectedProcedure
+    .input(depositHistoryInputSchema)
+    .query(getDepositHistoryHandler),
+  getSupportedCurrencies: protectedProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(getSupportedCurrenciesHandler),
+  getMinAmount: protectedProcedure
+    .input(getMinAmountInputSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(getMinAmountHandler),
+  getBuzzConversionRate: protectedProcedure
+    .input(getBuzzConversionRateInputSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(getBuzzConversionRateHandler),
+  reconcileMyDeposits: protectedProcedure
+    .use(rateLimit({ limit: 1, period: 60 }))
+    .mutation(reconcileUserDepositsHandler),
+  reconcileUserDeposits: moderatorProcedure
+    .input(z.object({ userId: z.number() }))
+    .mutation(({ input }) =>
+      import('~/server/services/nowpayments.service').then((m) =>
+        m.reconcileUserDeposits(input.userId)
+      )
+    ),
 });

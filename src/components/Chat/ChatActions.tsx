@@ -15,7 +15,7 @@ import React from 'react';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';

@@ -84,6 +84,10 @@ function DragLoader() {
 
     const pull = (e: TouchEvent) => {
       if (!startPointRef.current) return;
+      if (node.scrollTop > 0) {
+        reset();
+        return;
+      }
       const startPoint = startPointRef.current;
       if (!startPoint) return;
       /**

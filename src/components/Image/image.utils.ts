@@ -11,7 +11,7 @@ import type { FilterKeys } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -38,10 +38,12 @@ export const imagesQueryParamSchema = z
     followed: booleanString(),
     fromPlatform: booleanString(),
     hidden: booleanString(),
+    includeBaseModel: booleanString(),
     limit: numericString(),
     modelId: numericString(),
     modelVersionId: numericString(),
     notPublished: booleanString(),
+    publishedOnly: booleanString(),
     period: z.enum(MetricTimeframe),
     periodMode: z.enum(['stats', 'published']).optional(),
     postId: numericString(),
@@ -123,7 +125,22 @@ export const useQueryImages = (
     }
   );
 
-  const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
+  // Deduplicate items to prevent duplicates from offset pagination drift
+  const flatData = useMemo(() => {
+    const allItems = data?.pages.flatMap((x) => (!!x ? x.items : [])) ?? [];
+
+    // Track IDs within this render to filter duplicates that appear across pages
+    const seenIds = new Set<number>();
+    const dedupedItems: typeof allItems = [];
+    for (const item of allItems) {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        dedupedItems.push(item);
+      }
+    }
+
+    return dedupedItems;
+  }, [data]);
   const { items, loadingPreferences, hiddenCount } = useApplyHiddenPreferences({
     type: 'images',
     data: flatData,

@@ -1,3 +1,4 @@
+import dayjs from '~/shared/utils/dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, newOrderConfig } from '~/server/common/constants';
@@ -22,6 +23,8 @@ import {
   fervorCounter,
   getActiveSlot,
   getImageRatingsCounter,
+  pendingBuzzCounter,
+  recentlyGrantedBuzzCounter,
   poolCounters,
   sanityCheckFailuresCounter,
   smitesCounter,
@@ -37,7 +40,7 @@ import type {
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
 import { handleBlockImages, updateImageNsfwLevel } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -52,12 +55,14 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import {
   MediaType,
   NewOrderRankType,
   ReportReason,
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
+import { Flags } from '~/shared/utils/flags';
 import { getRandom, shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
@@ -121,7 +126,19 @@ export async function joinGame({ userId }: { userId: number }) {
   }).catch(() => null); // Ignore if it fails
 
   const { user: userInfo, ...playerData } = player;
-  return { ...playerData, ...userInfo, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
+  return {
+    ...playerData,
+    ...userInfo,
+    stats: {
+      exp: 0,
+      fervor: 0,
+      smites: 0,
+      blessedBuzz: 0,
+      pendingBlessedBuzz: 0,
+      recentlyGrantedBuzz: 0,
+      nextGrantDate: dayjs().add(1, 'day').startOf('day').toDate(),
+    },
+  };
 }
 
 export async function getPlayerById({ playerId }: { playerId: number }) {
@@ -138,14 +155,26 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
-  const [exp, fervor, smites, blessedBuzz] = await Promise.all([
-    expCounter.getCount(playerId),
-    fervorCounter.getCount(playerId),
-    smitesCounter.getCount(playerId),
-    blessedBuzzCounter.getCount(playerId),
-  ]);
+  const [exp, fervor, smites, blessedBuzz, pendingBlessedBuzz, recentlyGrantedBuzz] =
+    await Promise.all([
+      expCounter.getCount(playerId),
+      fervorCounter.getCount(playerId),
+      smitesCounter.getCount(playerId),
+      blessedBuzzCounter.getCount(playerId),
+      pendingBuzzCounter.getCount(playerId),
+      recentlyGrantedBuzzCounter.getCount(playerId),
+    ]);
+  const nextGrantDate = dayjs().add(1, 'day').startOf('day').toDate(); // Next 00:00 UTC
 
-  return { exp, fervor, smites, blessedBuzz };
+  return {
+    exp,
+    fervor,
+    smites,
+    blessedBuzz,
+    pendingBlessedBuzz,
+    recentlyGrantedBuzz,
+    nextGrantDate,
+  };
 }
 
 export async function smitePlayer({
@@ -194,7 +223,7 @@ export async function smitePlayer({
     .catch((e) => handleLogError(e, 'signals:new-order-smite-player'));
 
   createNotification({
-    category: NotificationCategory.Other,
+    category: NotificationCategory.System,
     type: 'new-order-smite-received',
     key: `new-order-smite-received:${playerId}:${smite.id}`,
     userId: playerId,
@@ -214,7 +243,6 @@ export async function cleanseAllSmites({
   });
 
   await smitesCounter.reset({ id: playerId });
-  await sanityCheckFailuresCounter.reset({ id: playerId });
 
   if (data.count === 0) return; // Nothing done :shrug:
 
@@ -227,7 +255,7 @@ export async function cleanseAllSmites({
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed-all'));
 
   createNotification({
-    category: NotificationCategory.Other,
+    category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:all:${new Date().getTime()}`,
     userId: playerId,
@@ -242,7 +270,6 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   });
 
   const smiteCount = await smitesCounter.decrement({ id: playerId });
-  await sanityCheckFailuresCounter.reset({ id: playerId });
 
   await signalClient
     .send({
@@ -262,7 +289,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
     .catch((e) => handleLogError(e, 'signals:new-order-smite-cleansed'));
 
   createNotification({
-    category: NotificationCategory.Other,
+    category: NotificationCategory.System,
     type: 'new-order-smite-cleansed',
     key: `new-order-smite-cleansed:${playerId}:${id}`,
     userId: playerId,
@@ -283,23 +310,25 @@ export async function addImageRating({
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   // Use distributed lock to prevent race conditions
-  const result = await withDistributedLock(
-    {
-      key: `image-rating:${imageId}`,
-      ttl: 30, // 30 second lock
-      maxRetries: 5,
-      retryDelay: 200,
-    },
-    async () => {
-      return await processImageRating({
-        playerId,
-        imageId,
-        rating,
-        damnedReason,
-        chTracker,
-        isModerator,
-      });
-    }
+  const result = await withSpan('games:newOrder:addRating', () =>
+    withDistributedLock(
+      {
+        key: `image-rating:${imageId}`,
+        ttl: 30, // 30 second lock
+        maxRetries: 5,
+        retryDelay: 200,
+      },
+      async () => {
+        return await processImageRating({
+          playerId,
+          imageId,
+          rating,
+          damnedReason,
+          chTracker,
+          isModerator,
+        });
+      }
+    )
   );
 
   if (result === null) {
@@ -318,38 +347,36 @@ async function processImageRating({
   chTracker,
   isModerator,
 }: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
-  // Check player existence
+  // Validate player and image existence before consuming rate limit budget
   const player = await getPlayerById({ playerId });
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
-  // Check image existence
   const image = await dbRead.image.findUnique({
     where: { id: imageId },
     select: { id: true, nsfwLevel: true, metadata: true },
   });
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
-  // Skip rate limiting for moderators
+  // Rate limiting — before sanity check detection so that all votes
+  // (regular and sanity) are counted and rate-limited uniformly
   if (!isModerator) {
-    const rateLimitResult = await checkVotingRateLimit(playerId);
+    const rateLimitResult = await withSpan('games:newOrder:rateLimit', () =>
+      checkVotingRateLimit(playerId)
+    );
 
     // If abuse threshold exceeded, reset player career
     if (rateLimitResult.isAbuse) {
-      // Log abuse detection for monitoring
-      logToAxiom(
-        {
-          type: 'warning',
-          name: 'new-order-abuse-detection',
-          details: {
-            playerId,
-            imageId,
-            action: 'career-reset',
-            reason: 'excessive-voting',
-          },
-          message: `Player ${playerId} exceeded abuse threshold and was reset`,
+      logToAxiom({
+        type: 'warning',
+        name: 'new-order-abuse-detection',
+        details: {
+          playerId,
+          imageId,
+          action: 'career-reset',
+          reason: 'excessive-voting',
         },
-        'new-order'
-      ).catch(() => null);
+        message: `Player ${playerId} exceeded abuse threshold and was reset`,
+      }).catch(() => null);
 
       await resetPlayer({
         playerId,
@@ -363,22 +390,17 @@ async function processImageRating({
 
     // Standard rate limiting
     if (!rateLimitResult.allowed) {
-      // Log rate limit hits for monitoring (but only occasionally to avoid spam)
       if (Math.random() < 0.1) {
-        // 10% sampling
-        logToAxiom(
-          {
-            type: 'info',
-            name: 'new-order-rate-limit',
-            details: {
-              playerId,
-              remaining: rateLimitResult.remaining,
-              resetTime: rateLimitResult.resetTime,
-            },
-            message: `Player ${playerId} hit rate limit`,
+        logToAxiom({
+          type: 'info',
+          name: 'new-order-rate-limit',
+          details: {
+            playerId,
+            remaining: rateLimitResult.remaining,
+            resetTime: rateLimitResult.resetTime,
           },
-          'new-order'
-        ).catch(() => null);
+          message: `Player ${playerId} hit rate limit`,
+        }).catch(() => null);
       }
 
       throw throwBadRequestError(
@@ -386,6 +408,37 @@ async function processImageRating({
           (rateLimitResult.resetTime - Date.now()) / 1000
         )} seconds before voting again.`
       );
+    }
+  }
+
+  // Intercept sanity check images — the client doesn't know which images are sanity checks,
+  // so we detect it server-side and route to the sanity check handler transparently
+  if (sysRedis) {
+    const exactMatch = await sysRedis.sIsMember(
+      REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL,
+      `${imageId}:${rating}`
+    );
+    let isSanityImage = !!exactMatch;
+    // Also check if imageId exists with ANY level (in case the rating is wrong)
+    if (!isSanityImage) {
+      const possibleLevels = [
+        NsfwLevel.PG,
+        NsfwLevel.PG13,
+        NsfwLevel.R,
+        NsfwLevel.X,
+        NsfwLevel.XXX,
+      ];
+      const memberChecks = await Promise.all(
+        possibleLevels.map((level) =>
+          sysRedis.sIsMember(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL, `${imageId}:${level}`)
+        )
+      );
+      isSanityImage = memberChecks.some(Boolean);
+    }
+
+    if (isSanityImage) {
+      await addSanityCheckRating({ playerId, imageId, rating });
+      return { stats: player.stats };
     }
   }
 
@@ -457,23 +510,59 @@ async function processImageRating({
     const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
     const hitMaxVotes = newVoteCount >= newOrderConfig.limits.maxKnightVotes;
     if (consensus || hitMaxVotes) {
-      // Apply the consensus decision
-      if (consensus) {
-        currentNsfwLevel = await updateImageNsfwLevel({
-          id: imageId,
-          nsfwLevel: consensus,
-          userId: playerId,
-          isModerator: true,
-          activity: 'setNsfwLevelKono',
-          status: 'Actioned',
+      // Guard against excessive down-rating: allow down-rating by at most 1 level,
+      // escalate to Inquisitor (mod) queue if the distance is greater
+      const isExcessiveDownRating =
+        consensus && consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
+
+      if (isExcessiveDownRating) {
+        // No decision made yet — keep all votes (including this one) Pending until mod acts
+        currentNsfwLevel = undefined;
+
+        // Remove from Knight queue and escalate to Inquisitor queue for mod review
+        await removeImageFromQueue({ imageId, valueInQueue });
+        await addImageToQueue({
+          imageIds: imageId,
+          rankType: 'Inquisitor' as NewOrderHighRankType,
+          priority: 1,
         });
+
+        logToAxiom({
+          type: 'info',
+          name: 'new-order-down-rating-escalated',
+          details: {
+            imageId,
+            currentLevel: image.nsfwLevel,
+            consensusLevel: consensus,
+            distance: Flags.distance(image.nsfwLevel, consensus),
+            voteCount: newVoteCount,
+          },
+          message: `Image ${imageId} down-rating consensus (${
+            image.nsfwLevel
+          } → ${consensus}, distance ${Flags.distance(
+            image.nsfwLevel,
+            consensus
+          )}) escalated to Inquisitor queue`,
+        }).catch(() => null);
+      } else {
+        // Apply the consensus decision (same level, up-rating, or down-rating by 1 level)
+        if (consensus) {
+          currentNsfwLevel = await updateImageNsfwLevel({
+            id: imageId,
+            nsfwLevel: consensus,
+            userId: playerId,
+            isModerator: true,
+            activity: 'setNsfwLevelKono',
+            status: 'Actioned',
+          });
+        }
+
+        // Update pending ratings
+        await updatePendingImageRatings({ imageId, rating: consensus });
+
+        // Clear image from the pool
+        await removeImageFromQueue({ imageId, valueInQueue });
       }
-
-      // Update pending ratings
-      await updatePendingImageRatings({ imageId, rating: consensus });
-
-      // Clear image from the pool
-      await removeImageFromQueue({ imageId, valueInQueue });
     }
   }
 
@@ -627,12 +716,14 @@ async function processImageRating({
   addRatedImage(playerId, imageId);
 
   // Increase all counters
-  const stats = await updatePlayerStats({
-    playerId,
-    status,
-    exp: newOrderConfig.baseExp * multiplier,
-    updateAll: player.rankType !== NewOrderRankType.Acolyte,
-  });
+  const stats = await withSpan('games:newOrder:updateStats', () =>
+    updatePlayerStats({
+      playerId,
+      status,
+      exp: newOrderConfig.baseExp * multiplier,
+      updateAll: player.rankType !== NewOrderRankType.Acolyte,
+    })
+  );
 
   // Check if player should be promoted
   const knightRank = await getNewOrderRanks({ name: 'Knight' });
@@ -652,7 +743,8 @@ async function processImageRating({
       userId: playerId,
     }).catch(() => null); // Ignore if it fails
 
-    await signalClient
+    // Fire-and-forget: don't block the response waiting for signal delivery
+    signalClient
       .send({
         userId: playerId,
         target: SignalMessages.NewOrderPlayerUpdate,
@@ -691,15 +783,20 @@ export async function updatePendingImageRatings({
 }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
-  // Get players that rated this image:
+  // Get players that rated this image (uses by_imageId projection via GROUP BY pattern)
   const votes = await clickhouse.$query<{ userId: number; createdAt: Date; rating: number }>`
-    SELECT
-      DISTINCT "userId",
-      ir."createdAt",
-      ir.rating
-    FROM knights_new_order_image_rating ir
-    WHERE "imageId" = ${imageId}
-      AND status = '${NewOrderImageRatingStatus.Pending}'
+    SELECT userId, lastCreatedAt as createdAt, latestRating as rating
+    FROM (
+      SELECT
+        userId,
+        max(createdAt) as lastCreatedAt,
+        argMax(rating, createdAt) as latestRating,
+        argMax(status, createdAt) as latestStatus
+      FROM knights_new_order_image_rating
+      WHERE imageId = ${imageId}
+      GROUP BY imageId, userId
+    )
+    WHERE latestStatus = '${NewOrderImageRatingStatus.Pending}'
   `;
 
   await clickhouse.$exec`
@@ -935,7 +1032,15 @@ export async function updatePlayerStats({
     exp < 0
       ? await expCounter.decrement({ id: playerId, value: exp })
       : await expCounter.increment({ id: playerId, value: exp });
-  let stats = { exp: newExp, fervor: 0, smites: 0, blessedBuzz: 0 };
+  let stats = {
+    exp: newExp,
+    fervor: 0,
+    smites: 0,
+    blessedBuzz: 0,
+    pendingBlessedBuzz: 0,
+    recentlyGrantedBuzz: 0,
+    nextGrantDate: new Date(),
+  };
 
   if (updateAll) {
     const allJudgments = await allJudgmentsCounter.increment({ id: playerId });
@@ -949,10 +1054,25 @@ export async function updatePlayerStats({
     const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
     const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
 
-    stats = { ...stats, fervor: newFervor, blessedBuzz };
+    // Get pending buzz and recently granted from Redis counters (auto-query ClickHouse on cache miss)
+    const [pendingBlessedBuzz, recentlyGrantedBuzz] = await Promise.all([
+      pendingBuzzCounter.getCount(playerId),
+      recentlyGrantedBuzzCounter.getCount(playerId),
+    ]);
+    const nextGrantDate = dayjs().add(1, 'day').startOf('day').toDate();
+
+    stats = {
+      ...stats,
+      fervor: newFervor,
+      blessedBuzz,
+      pendingBlessedBuzz,
+      recentlyGrantedBuzz,
+      nextGrantDate,
+    };
   }
 
-  await signalClient
+  // Fire-and-forget: don't block the response waiting for signal delivery
+  signalClient
     .send({
       userId: playerId,
       target: SignalMessages.NewOrderPlayerUpdate,
@@ -970,9 +1090,16 @@ export function calculateFervor({
   correctJudgments: number;
   allJudgments: number;
 }) {
-  // New formula: number_of_ratings + (number_correct_ratings * 100)
-  // This rewards both activity (total ratings) and accuracy (correct ratings)
-  return allJudgments + correctJudgments * 100;
+  // Formula: correct_ratings * 100 * accuracy_ratio
+  // The accuracy multiplier penalizes spammers: a user with 20% accuracy gets only 20% of
+  // the fervor they would otherwise earn. Legitimate users with 80%+ correct barely notice.
+  // Floor at 0.1 to avoid zeroing out completely.
+  // Examples:
+  //   Legitimate (500 total, 400 correct, 80%): 400 * 100 * 0.8 = 32,000
+  //   Spammer (5000 total, 1000 correct, 20%): 1000 * 100 * 0.2 = 20,000
+  const accuracyRatio = allJudgments > 0 ? correctJudgments / allJudgments : 0;
+  const accuracyMultiplier = Math.max(0.1, accuracyRatio);
+  return Math.floor(correctJudgments * 100 * accuracyMultiplier);
 }
 
 export function calculateVoteWeight({ level, smites }: { level: number; smites: number }): number {
@@ -1032,17 +1159,32 @@ export async function getSanityCheckImage(): Promise<SanityCheck | null> {
   }
 }
 
-export async function handleSanityCheckFailure(playerId: number, imageId: number) {
+export async function handleSanityCheckFailure({
+  playerId,
+  imageId,
+  submittedRating,
+  correctNsfwLevel,
+}: {
+  playerId: number;
+  imageId: number;
+  submittedRating: NsfwLevel;
+  correctNsfwLevel: NsfwLevel;
+}) {
   if (!sysRedis) return;
 
   try {
     // Increment failure counter (auto-expires after 24 hours from first failure)
     const failureCount = await sanityCheckFailuresCounter.increment({ id: playerId });
 
-    if (failureCount === 1) {
-      // First failure - warning only
+    // Severe under-rating: rating content 2+ levels below its actual level (e.g., XXX→PG)
+    // Uses Flags.distance() for safe bitwise-flag comparison
+    const isSevereUnderRating =
+      submittedRating < correctNsfwLevel && Flags.distance(correctNsfwLevel, submittedRating) >= 2;
+
+    if (failureCount === 1 && !isSevereUnderRating) {
+      // First failure (non-severe) - warning only
       await createNotification({
-        category: NotificationCategory.Other,
+        category: NotificationCategory.System,
         type: 'new-order-sanity-warning',
         key: `new-order-sanity-warning:${playerId}:${Date.now()}`,
         userId: playerId,
@@ -1069,12 +1211,13 @@ export async function handleSanityCheckFailure(playerId: number, imageId: number
         })
         .catch((e) => handleLogError(e, 'signals:new-order-sanity-warning'));
     } else {
-      // Additional failure - apply smite
+      // Severe under-rating OR additional failure - apply smite immediately
       await smitePlayer({
         playerId,
         modId: -1, // System
-        reason:
-          'You failed another sanity check within 24 hours. A smite penalty has been applied, reducing your vote weight.',
+        reason: isSevereUnderRating
+          ? 'You severely under-rated a sanity check image. A smite penalty has been applied.'
+          : 'You failed another sanity check within 24 hours. A smite penalty has been applied, reducing your vote weight.',
         size: newOrderConfig.smiteSize * 10,
       });
     }
@@ -1112,8 +1255,25 @@ export async function addSanityCheckRating({
     `${imageId}:${rating}`
   );
 
-  // Handle failure if incorrect
-  if (!isCorrect) await handleSanityCheckFailure(playerId, imageId);
+  // Handle failure if incorrect — look up the correct level for penalty severity
+  if (!isCorrect) {
+    // Probe all possible NSFW levels via O(1) sIsMember checks instead of fetching the whole set
+    const possibleLevels = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX];
+    const memberChecks = await Promise.all(
+      possibleLevels.map((level) =>
+        sysRedis.sIsMember(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL, `${imageId}:${level}`)
+      )
+    );
+    const matchIndex = memberChecks.findIndex(Boolean);
+    const correctNsfwLevel = matchIndex >= 0 ? possibleLevels[matchIndex] : rating; // fallback to submitted rating (won't trigger severe penalty)
+
+    await handleSanityCheckFailure({
+      playerId,
+      imageId,
+      submittedRating: rating,
+      correctNsfwLevel,
+    });
+  }
 
   // Return result (no XP, no stats update, no ClickHouse tracking)
   return { isCorrect };
@@ -1174,11 +1334,14 @@ export async function resetPlayer({
   // Reset all counters for player
   await Promise.all([
     smitesCounter.reset({ id: playerId }),
+    sanityCheckFailuresCounter.reset({ id: playerId }),
     correctJudgmentsCounter.reset({ id: playerId }),
     allJudgmentsCounter.reset({ id: playerId }),
     expCounter.reset({ id: playerId }),
     fervorCounter.reset({ id: playerId }),
     blessedBuzzCounter.reset({ id: playerId }),
+    pendingBuzzCounter.reset({ id: playerId }),
+    recentlyGrantedBuzzCounter.reset({ id: playerId }),
   ]);
 
   // Clear rated images cache when player is reset
@@ -1198,6 +1361,8 @@ export async function resetPlayer({
           fervor: 0,
           smites: 0,
           blessedBuzz: 0,
+          pendingBlessedBuzz: 0,
+          recentlyGrantedBuzz: 0,
         },
         notification: {
           type: 'reset',
@@ -1210,7 +1375,7 @@ export async function resetPlayer({
 
   if (withNotification)
     createNotification({
-      category: NotificationCategory.Other,
+      category: NotificationCategory.System,
       type: 'new-order-game-over',
       key: `new-order-game-over:${playerId}:${new Date().getTime()}`,
       userId: playerId,
@@ -1238,7 +1403,15 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
-async function getRatedImages({
+/**
+ * Ensures the rated images cache is populated for a user.
+ * On cache miss, fetches from ClickHouse and populates the Redis set.
+ * Returns the Redis key for subsequent SMISMEMBER checks.
+ *
+ * Uses a sentinel member '0' (no real image has ID 0) to distinguish
+ * "cache populated but user has no ratings" from "cache not populated".
+ */
+async function ensureRatedImagesCache({
   userId,
   startAt,
   rankType,
@@ -1251,13 +1424,9 @@ async function getRatedImages({
 
   const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
 
-  // Try to get from Redis Set first
-  const cachedImageIds = await redis.sMembers(key);
-
-  // If cache exists, return the cached image IDs as numbers
-  if (cachedImageIds && cachedImageIds.length > 0) {
-    return cachedImageIds.map(Number);
-  }
+  // Check if cache is already populated (O(1))
+  const exists = await redis.exists(key);
+  if (exists) return key;
 
   // Cache miss - fetch from ClickHouse
   const AND = [
@@ -1274,12 +1443,23 @@ async function getRatedImages({
 
   const imageIds = results.map((r) => r.imageId);
 
-  // Store in Redis Set (only if we have results to avoid empty sets)
-  if (imageIds.length > 0) {
-    await redis.multi().sAdd(key, imageIds.map(String)).expire(key, CacheTTL.day).exec();
-  }
+  // Always populate the set with a sentinel '0' so EXISTS returns true on next call.
+  // Real image IDs are always > 0, so the sentinel never interferes with SMISMEMBER checks.
+  const members = imageIds.length > 0 ? ['0', ...imageIds.map(String)] : ['0'];
+  await redis.multi().sAdd(key, members).expire(key, CacheTTL.day).exec();
 
-  return imageIds;
+  return key;
+}
+
+/**
+ * Check which image IDs have already been rated using SMISMEMBER (O(N) where N = candidates).
+ * This replaces the old SMEMBERS approach which was O(M) where M = total rated images (up to 141K).
+ */
+async function filterUnratedImages(key: string, imageIds: number[]): Promise<number[]> {
+  if (!redis || imageIds.length === 0) return imageIds;
+
+  const membership = await redis.smIsMember(key, imageIds.map(String));
+  return imageIds.filter((_, i) => !membership[i]);
 }
 
 // Helper function to add a newly rated image to the cache
@@ -1356,7 +1536,7 @@ export async function getImagesQueue({
     id: number;
     url: string;
     nsfwLevel?: number;
-    metadata: ImageMetadata & { isSanityCheck?: boolean };
+    metadata: ImageMetadata;
   }> = [];
 
   // Moderators can specify queueType to test different queues (Acolyte or Knight only)
@@ -1367,12 +1547,15 @@ export async function getImagesQueue({
   const activeSlot = await getActiveSlot(effectiveRankType, 'rating');
   const rankPools = poolCounters[effectiveRankType][activeSlot];
 
-  const ratedImages = await getRatedImages({
+  // Ensure the rated images cache is populated (O(1) EXISTS check, ClickHouse on miss).
+  // Uses SMISMEMBER per-batch instead of SMEMBERS on the full set (which was 39K-141K members
+  // for active users, taking 10-38ms and blocking the Redis shard).
+  const ratedKey = await ensureRatedImagesCache({
     userId: playerId,
     startAt: player.startAt,
     rankType: player.rankType,
   });
-  const seenImageIds = new Set<number>(ratedImages);
+  const seenImageIds = new Set<number>();
   const isKnight = effectiveRankType === NewOrderRankType.Knight;
 
   const overflowLimit = imageCount * 2;
@@ -1393,8 +1576,15 @@ export async function getImagesQueue({
         .filter(({ score }) => (isKnight ? score < newOrderConfig.limits.knightVotes : true))
         .map(({ value }) => Number(value));
 
-      // Filter out already rated images and previously seen images before doing the DB query
-      const unratedImageIds = imageIds.filter((id) => !seenImageIds.has(id));
+      // Filter out images already seen in this request
+      const unseenImageIds = imageIds.filter((id) => !seenImageIds.has(id));
+      if (unseenImageIds.length === 0) {
+        offset += overflowLimit;
+        continue;
+      }
+
+      // Filter out already rated images using SMISMEMBER (O(N) where N = candidates, single command)
+      const unratedImageIds = await filterUnratedImages(ratedKey, unseenImageIds);
       if (unratedImageIds.length === 0) {
         offset += overflowLimit;
         continue;
@@ -1412,7 +1602,7 @@ export async function getImagesQueue({
         select: { id: true, url: true, nsfwLevel: true, metadata: true },
       });
 
-      // Add new image IDs to the seen set
+      // Add new image IDs to the seen set (for dedup within this request)
       images.forEach((image) => seenImageIds.add(image.id));
 
       validatedImages.push(
@@ -1443,29 +1633,53 @@ export async function getImagesQueue({
       const allSanityChecks = await sysRedis!.sMembers(REDIS_SYS_KEYS.NEW_ORDER.SANITY_CHECKS.POOL);
 
       if (allSanityChecks && allSanityChecks.length > 0) {
-        // Randomly select N sanity checks
-        const selectedCheck = getRandom(allSanityChecks);
-        // Extract image IDs for batch DB query
-        const [sanityImageId, sanityImageNsfwLevel] = selectedCheck.split(':').map(Number);
+        // Insert sanity checks scaled to queue size (~2 per 20 images, ~10 per 100)
+        // At least 1 even if the queue is tiny, scaling up for larger fetches
+        const sanityCheckCount = Math.max(1, Math.ceil(finalImages.length / 10));
 
-        // Batch fetch image data from database
-        const sanityImageData = await dbRead.image.findUnique({
-          where: { id: sanityImageId },
+        // Stratify selection: bias toward non-PG sanity images to catch under-raters
+        const pgChecks: string[] = [];
+        const nonPgChecks: string[] = [];
+        for (const entry of allSanityChecks) {
+          const nsfwLevel = Number(entry.split(':')[1]);
+          if (nsfwLevel <= NsfwLevel.PG13) {
+            pgChecks.push(entry);
+          } else {
+            nonPgChecks.push(entry);
+          }
+        }
+
+        // Select with bias: at least 40% non-PG if available
+        const shuffledNonPg = shuffle(nonPgChecks);
+        const shuffledPg = shuffle(pgChecks);
+        const minNonPg = Math.min(Math.ceil(sanityCheckCount * 0.4), shuffledNonPg.length);
+        const selectedChecks = [
+          ...shuffledNonPg.slice(0, minNonPg),
+          ...shuffle([...shuffledNonPg.slice(minNonPg), ...shuffledPg]),
+        ].slice(0, sanityCheckCount);
+
+        // Batch fetch image data for all selected sanity checks
+        const sanityImageIds = selectedChecks.map((entry) => Number(entry.split(':')[0]));
+        const sanityImagesData = await dbRead.image.findMany({
+          where: { id: { in: sanityImageIds } },
           select: { id: true, url: true, metadata: true },
         });
+        const sanityImageMap = new Map(sanityImagesData.map((img) => [img.id, img]));
 
-        if (sanityImageData) {
+        for (const entry of selectedChecks) {
+          const [imageIdStr] = entry.split(':');
+          const sanityImageId = Number(imageIdStr);
+          const imageData = sanityImageMap.get(sanityImageId);
+          if (!imageData) continue;
+
           const sanityCheckImage = {
             id: sanityImageId,
-            url: sanityImageData.url,
-            nsfwLevel: sanityImageNsfwLevel as NsfwLevel,
-            metadata: {
-              ...(sanityImageData.metadata as ImageMetadata),
-              isSanityCheck: true,
-            } as ImageMetadata,
+            url: imageData.url,
+            nsfwLevel: undefined, // Never leak correct level to the client
+            metadata: imageData.metadata as ImageMetadata,
           };
 
-          const randomPosition = Math.floor(Math.random() * finalImages.length);
+          const randomPosition = Math.floor(Math.random() * (finalImages.length + 1));
           finalImages.splice(randomPosition, 0, sanityCheckImage);
         }
       }
@@ -1482,24 +1696,20 @@ export async function getImageRaters({ imageIds }: { imageIds: number[] }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
   if (imageIds.length === 0) return {};
 
+  // Uses by_imageId projection via GROUP BY pattern (rank filter in HAVING to enable projection)
   const ratings = await clickhouse.$query<{
     userId: number;
     imageId: number;
     rating: NsfwLevel;
   }>`
-    SELECT "userId", "imageId", any("rating") as "rating"
-    FROM (
-      SELECT
-        "userId",
-        "imageId",
-        "rating",
-        row_number() OVER (PARTITION BY "imageId" ORDER BY "createdAt" DESC) as rn
-      FROM knights_new_order_image_rating
-      WHERE "imageId" IN (${imageIds})
-        AND rank = '${NewOrderRankType.Knight}'
-    )
-    WHERE rn <= ${newOrderConfig.limits.maxKnightVotes}
-    GROUP BY "userId", "imageId"
+    SELECT
+      userId,
+      imageId,
+      argMax(rating, createdAt) as rating
+    FROM knights_new_order_image_rating
+    WHERE imageId IN (${imageIds})
+    GROUP BY imageId, userId
+    HAVING argMax(rank, createdAt) = '${NewOrderRankType.Knight}'
   `;
 
   const raters: Record<
@@ -1921,17 +2131,31 @@ export async function submitTestVote({
       // Check for consensus
       const consensus = await checkWeightedConsensus({ imageId, voteCount: newVoteCount });
       if (consensus !== undefined) {
-        // Consensus reached - update image and remove from queue
-        await updateImageNsfwLevel({
-          id: imageId,
-          nsfwLevel: consensus,
-          userId: votingUserId,
-          isModerator: false,
-          status: 'Actioned',
-        });
-        await updatePendingImageRatings({ imageId, rating: consensus });
-        await valueInQueue!.pool.reset({ id: imageId });
-        await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
+        const isExcessiveDownRating =
+          consensus < image.nsfwLevel && Flags.distance(image.nsfwLevel, consensus) > 1;
+
+        if (isExcessiveDownRating) {
+          // Excessive down-rating: escalate to Inquisitor queue instead of applying
+          await valueInQueue!.pool.reset({ id: imageId });
+          await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
+          await addImageToQueue({
+            imageIds: imageId,
+            rankType: 'Inquisitor' as NewOrderHighRankType,
+            priority: 1,
+          });
+        } else {
+          // Same level, up-rating, or down-rating by 1 level: apply consensus
+          await updateImageNsfwLevel({
+            id: imageId,
+            nsfwLevel: consensus,
+            userId: votingUserId,
+            isModerator: false,
+            status: 'Actioned',
+          });
+          await updatePendingImageRatings({ imageId, rating: consensus });
+          await valueInQueue!.pool.reset({ id: imageId });
+          await notifyQueueUpdate(valueInQueue!.rank, imageId, NewOrderSignalActions.RemoveImage);
+        }
       } else if (newVoteCount >= newOrderConfig.limits.knightVotes) {
         // Max votes reached without consensus - remove from queue
         await valueInQueue!.pool.reset({ id: imageId });

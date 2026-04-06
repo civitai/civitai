@@ -61,6 +61,13 @@ export default defineNextConfig(
 
     //   return config;
     // },
+    webpack: (config) => {
+      config.ignoreWarnings = [
+        { module: /require-in-the-middle/ },
+        { module: /@opentelemetry\/instrumentation/ },
+      ];
+      return config;
+    },
     reactStrictMode: true,
     productionBrowserSourceMaps: true,
     // Next.js i18n docs: https://nextjs.org/docs/advanced-features/i18n-routing
@@ -96,15 +103,23 @@ export default defineNextConfig(
             // removeConsole: true,
           }
         : {},
-    transpilePackages: ['lodash', 'lodash-es', 'prisma'],
+    transpilePackages: [],
     experimental: {
       // scrollRestoration: true,
+      cpus: 8,
+      serverSourceMaps: true,
+      instrumentationHook: true, // Enable instrumentation.ts for OTEL
       largePageDataBytes: 512 * 100000,
+      serverComponentsExternalPackages: [
+        'redis', '@redis/client', '@redis/bloom', '@redis/json', '@redis/search', '@redis/time-series',
+        '@opentelemetry/sdk-node', '@opentelemetry/instrumentation', '@opentelemetry/instrumentation-http',
+        '@opentelemetry/instrumentation-redis', '@prisma/instrumentation',
+      ],
       optimizePackageImports: [
         '@civitai/client',
         './src/libs/form',
         'lodash-es',
-        '@tabler-icons-react',
+        '@tabler/icons-react',
         '@headlessui/react',
       ],
     },
@@ -138,15 +153,15 @@ export default defineNextConfig(
       headers.push({
         source: '/gift-cards',
         headers: [
-          { 
-            key: 'Content-Security-Policy', 
-            value: "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;" 
+          {
+            key: 'Content-Security-Policy',
+            value: "frame-src 'self' https://www.kinguin.net https://sandbox.kinguin.net https://gateway.kinguin.net https://*.kinguin.net;"
           }
           // NOTE: Intentionally NO X-Frame-Options header as per Kinguin's documentation
           // NOTE: Only setting frame-src, letting other resources use browser defaults
         ],
       });
-      
+
       // Apply X-Frame-Options to all pages EXCEPT gift-cards
       headers.push({
         source: '/((?!gift-cards).*)',

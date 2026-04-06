@@ -5,6 +5,7 @@ import {
   deleteUserHandler,
   deleteUserPaymentMethodHandler,
   dismissAlertHandler,
+  restoreAlertHandler,
   getAllUsersHandler,
   getCreatorsHandler,
   getLeaderboardHandler,
@@ -24,7 +25,6 @@ import {
   getUserPurchasedRewardsHandler,
   getUserSettingsHandler,
   getUserTagsHandler,
-  reportProhibitedRequestHandler,
   setLeaderboardEligibilityHandler,
   setUserSettingHandler,
   toggleArticleEngagementHandler,
@@ -46,13 +46,13 @@ import {
   computeDeviceFingerprintSchema,
   deleteUserSchema,
   dismissAlertSchema,
+  restoreAlertSchema,
   getAllUsersInput,
   getByUsernameSchema,
   getUserByUsernameSchema,
   getUserCosmeticsSchema,
   getUserListSchema,
   getUserTagsSchema,
-  reportProhibitedRequestSchema,
   setLeaderboardEligbilitySchema,
   setUserSettingsInput,
   toggleBanUserSchema,
@@ -98,10 +98,24 @@ import {
   router,
   verifiedProcedure,
 } from '~/server/trpc';
+import { CacheTTL } from '~/server/common/constants';
+import { edgeCacheIt } from '~/server/middleware.trpc';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
 export const userRouter = router({
-  getCreator: publicProcedure.input(getUserByUsernameSchema).query(getUserCreatorHandler),
+  getCreator: publicProcedure
+    .input(getUserByUsernameSchema)
+    .use(
+      edgeCacheIt({
+        ttl: CacheTTL.sm,
+        tags: (input) =>
+          [
+            input?.id ? `user-creator-${input.id}` : undefined,
+            input?.username ? `user-creator-${input.username}` : undefined,
+          ].filter(Boolean) as string[],
+      })
+    )
+    .query(getUserCreatorHandler),
   getAll: publicProcedure.input(getAllUsersInput).query(getAllUsersHandler),
   usernameAvailable: protectedProcedure
     .input(getByUsernameSchema)
@@ -187,9 +201,6 @@ export const userRouter = router({
   toggleBountyEngagement: verifiedProcedure
     .input(toggleUserBountyEngagementSchema)
     .mutation(toggleBountyEngagementHandler),
-  reportProhibitedRequest: protectedProcedure
-    .input(reportProhibitedRequestSchema)
-    .mutation(reportProhibitedRequestHandler),
   userByReferralCode: publicProcedure
     .input(userByReferralCodeSchema)
     .query(userByReferralCodeHandler),
@@ -212,6 +223,7 @@ export const userRouter = router({
   getSettings: protectedProcedure.query(getUserSettingsHandler),
   setSettings: protectedProcedure.input(setUserSettingsInput).mutation(setUserSettingHandler),
   dismissAlert: protectedProcedure.input(dismissAlertSchema).mutation(dismissAlertHandler),
+  restoreAlert: protectedProcedure.input(restoreAlertSchema).mutation(restoreAlertHandler),
   getBookmarkCollections: protectedProcedure.query(getUserBookmarkCollectionsHandler),
   getUserPurchasedRewards: protectedProcedure.query(getUserPurchasedRewardsHandler),
   setLeaderboardEligibility: moderatorProcedure

@@ -13,8 +13,8 @@ import {
   wanDuration,
 } from '~/server/orchestrator/wan/wan.schema';
 import { InputVideoProcess } from '~/components/Generation/Input/VideoProcess';
-import type { BaseModelGroup } from '~/shared/constants/base-model.constants';
-import { getGenerationBaseModelResourceOptions } from '~/shared/constants/base-model.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemodel.constants';
 import {
   InputSourceImageUploadMultiple,
   SourceImageUploadMultiple,
@@ -84,7 +84,7 @@ export function Wan22FormInput() {
         />
       )}
       <InputSwitch
-        name="turbo"
+        name="draft"
         className="my-2"
         labelPosition="left"
         label={

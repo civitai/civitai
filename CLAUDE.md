@@ -38,29 +38,39 @@ Occasionally, we comment back and forth as we make plans. Comments from us, are 
 ## Build Commands
 
 ### Development
-```bash
-npm run dev               # Start development server
-npm run prod             # Run in production mode locally
-```
+**Always use the `/dev-server` skill** to manage dev servers. Never use `pnpm run dev` directly.
 
 ### Build & Deploy
 ```bash
-npm run build            # Production build
+pnpm run build            # Production build
 ```
 
 ### Code Quality
 ```bash
-npm run typecheck        # Run TypeScript type checking
-npm run lint             # Run ESLint
-npm run prettier:check   # Check Prettier formatting
-npm run prettier:write   # Auto-fix Prettier formatting
+pnpm run typecheck        # Run TypeScript type checking
+pnpm run lint             # Run ESLint
+pnpm run prettier:check   # Check Prettier formatting
+pnpm run prettier:write   # Auto-fix Prettier formatting
 ```
 
 ### Testing
 ```bash
-npm test                 # Run Playwright tests
-npm run test:ui          # Run tests with UI
+pnpm test                 # Run Playwright tests
+pnpm run test:ui          # Run tests with UI
 ```
+
+### Database
+```bash
+pnpm run db:migrate:empty  # Create an empty migration file
+```
+
+### Release (requires user permission)
+```bash
+pnpm run release          # Patch release (0.0.x) - default
+pnpm run release:minor    # Minor release (0.x.0)
+pnpm run release:major    # Major release (x.0.0)
+```
+**IMPORTANT**: Never run release commands without explicit user approval. These commands bump the version, push tags, and rebase the release branch.
 
 ## Component Standards
 
@@ -145,10 +155,9 @@ const currentUser = useCurrentUser();
 - Search service endpoints
 
 ### Local Development
-1. Install dependencies: `npm install`
-2. Generate Prisma client: `npm run db:generate`
-3. Run migrations: `npm run db:migrate`
-4. Start dev server: `npm run dev`
+1. Install dependencies: `pnpm install`
+2. Generate Prisma client: `pnpm run db:generate`
+3. Start dev server: Use `/dev-server` skill
 
 ## Important Notes
 
@@ -164,9 +173,9 @@ const currentUser = useCurrentUser();
 - Follow authentication best practices
 
 ### Before Committing
-1. Run type checking: `npm run typecheck`
-2. Run linting: `npm run lint`
-3. Format code: `npm run prettier:write`
+1. Run type checking: `pnpm run typecheck`
+2. Run linting: `pnpm run lint`
+3. Format code: `pnpm run prettier:write`
 4. Test changes locally
 
 ## Common Patterns
@@ -193,12 +202,26 @@ Use the S3 upload hooks and providers in the codebase.
 ### Image Handling
 Use EdgeImage component for optimized image loading with CDN support.
 
+## Feature Documentation
+
+Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists:
+
+### Core Systems Reference
+| System | Documentation |
+|--------|--------------|
+| Image Resources | [docs/features/image-resources.md](docs/features/image-resources.md) |
+| NSFW Filtering | [docs/features/nsfw-filtering.md](docs/features/nsfw-filtering.md) |
+| Buzz Accounts | [docs/features/buzz-accounts.md](docs/features/buzz-accounts.md) |
+| Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
+| Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
+| Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
+
 ## Troubleshooting
 
 ### Memory Issues
 Use cross-env NODE_OPTIONS with increased memory:
 ```bash
-npm run dev-debug  # Includes --max_old_space_size=8192
+pnpm run dev-debug  # Includes --max_old_space_size=8192
 ```
 
 ### Build Failures
@@ -209,5 +232,5 @@ npm run dev-debug  # Includes --max_old_space_size=8192
 
 ### Database Issues
 1. Check connection string
-2. Run migrations: `npm run db:migrate`
-3. Regenerate client: `npm run db:generate`
+2. Run migrations: `pnpm run db:migrate`
+3. Regenerate client: `pnpm run db:generate`

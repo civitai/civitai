@@ -64,12 +64,17 @@ function getClickHouse() {
 
     log('$query', query);
 
-    const response = await client.query({
-      query,
-      format: 'JSONEachRow',
-    });
-    const data = await response?.json<T>();
-    return data;
+    try {
+      const response = await client.query({
+        query,
+        format: 'JSONEachRow',
+      });
+      const data = await response?.json<T>();
+      return data;
+    } catch (e) {
+      const error = e as Error;
+      throw new Error(`ClickHouse query failed: ${error.message}\nQuery: ${query}`);
+    }
   };
 
   client.$exec = async function (query: TemplateStringsArray | string, ...values: any[]) {
@@ -224,6 +229,21 @@ export type TrackRequest = {
   userAgent: string;
   fingerprint?: string;
 };
+
+/** Track a webhook event to ClickHouse (fire and forget) */
+export async function trackWebhookEvent(type: string, payload: string) {
+  if (!clickhouse) return;
+
+  try {
+    await clickhouse.insert({
+      table: 'webhook_events_buffer',
+      values: [{ type, payload }],
+      format: 'JSONEachRow',
+    });
+  } catch (error: any) {
+    console.error(`Failed to track ${type} webhook to ClickHouse:`, error.message);
+  }
+}
 
 export class Tracker {
   private actor: TrackRequest = {
@@ -394,7 +414,12 @@ export class Tracker {
   }
 
   public action(values: { type: ActionType; details?: any }) {
-    return this.track('actions', values);
+    const { details, ...rest } = values;
+    return this.track('actions', {
+      ...rest,
+      details:
+        details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
+    });
   }
 
   public activity(activity: string) {
@@ -416,6 +441,7 @@ export class Tracker {
     nsfw: boolean;
     earlyAccess?: boolean;
     time?: Date;
+    fileId?: number;
   }) {
     return this.track('modelVersionEvents', values);
   }
@@ -491,6 +517,8 @@ export class Tracker {
       tags: string[];
       ownerId: number;
       tosReason?: string;
+      violationType?: string;
+      violationDetails?: string;
       resources?: number[];
       userId?: number;
     }[]
@@ -549,6 +577,7 @@ export class Tracker {
     prompt: string;
     negativePrompt: string;
     source?: ProhibitedSources;
+    remixOfId?: number;
   }) {
     return this.track('prohibitedRequests', values);
   }
@@ -572,7 +601,12 @@ export class Tracker {
   }
 
   public search(values: { query: string; index: string; filters?: any }) {
-    return this.track('search', values);
+    const { filters, ...rest } = values;
+    return this.track('search', {
+      ...rest,
+      filters:
+        filters != null ? (typeof filters === 'string' ? filters : JSON.stringify(filters)) : '',
+    });
   }
 
   public newOrderImageRating(

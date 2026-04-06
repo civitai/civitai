@@ -1,5 +1,10 @@
 .htmlRenderer {
 
+  // Remove margin from the first child (prevents large gap when content starts with a header)
+  & > div > :first-child {
+    margin-top: 0;
+  }
+
   // Remove margin from the last paragraph
   & p:last-of-type {
     margin-bottom: 0;

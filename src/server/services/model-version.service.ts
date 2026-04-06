@@ -12,6 +12,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   dataForModelsCache,
@@ -72,8 +73,8 @@ import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
-import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -94,6 +95,33 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
   const db = await getDbWithoutLag('modelVersion', id);
   const result = await db.modelVersion.findUnique({ where: { id }, select });
   return result;
+};
+
+export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
+  if (ids.length === 0) return [];
+
+  const results = await dbRead.modelVersion.findMany({
+    where: { id: { in: ids } },
+    select: {
+      id: true,
+      name: true,
+      baseModel: true,
+      model: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+
+  return results.map((v) => ({
+    id: v.id,
+    name: v.name,
+    baseModel: v.baseModel,
+    modelId: v.model.id,
+    modelName: v.model.name,
+  }));
 };
 
 export const getDefaultModelVersion = async ({
@@ -583,12 +611,14 @@ export const publishModelVersionsWithEarlyAccess = async ({
   meta,
   tx,
   continueOnError = false,
+  republishing = false,
 }: {
   modelVersionIds: number[];
   publishedAt?: Date;
   meta?: ModelVersionMeta;
   tx?: Prisma.TransactionClient;
   continueOnError?: boolean;
+  republishing?: boolean;
 }) => {
   if (modelVersionIds.length === 0) return [];
   const dbClient = tx ?? dbWrite;
@@ -663,7 +693,7 @@ export const publishModelVersionsWithEarlyAccess = async ({
           where: { id: currentVersion.id },
           data: {
             status: ModelStatus.Published,
-            publishedAt: publishedAt,
+            publishedAt: !republishing ? publishedAt : undefined,
             earlyAccessConfig: earlyAccessConfig ?? undefined,
             meta,
             // Will be overwritten anyway by EA.
@@ -734,7 +764,7 @@ export const publishModelVersionById = async ({
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
   else publishedAt = new Date();
 
-  const currentVersion = await dbRead.modelVersion.findUniqueOrThrow({
+  const versionFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -752,7 +782,13 @@ export const publishModelVersionById = async ({
         },
       },
     },
-  });
+  } as const;
+  const currentVersion = await dbRead.modelVersion
+    .findUniqueOrThrow(versionFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
+      return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
+    });
 
   // Validate NSFW + restricted base model combination
   if (
@@ -787,6 +823,7 @@ export const publishModelVersionById = async ({
           publishedAt,
           meta,
           tx,
+          republishing,
         });
 
         if (!updated) {
@@ -819,7 +856,7 @@ export const publishModelVersionById = async ({
         SET
           "publishedAt" = CASE
             WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
-            THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
+            THEN ("metadata"->>'prevPublishedAt')::timestamptz
             ELSE ${publishedAt}
           END,
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
@@ -1450,7 +1487,7 @@ export const modelVersionDonationGoals = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  const version = await dbRead.modelVersion.findFirstOrThrow({
+  const donationFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -1462,7 +1499,13 @@ export const modelVersionDonationGoals = async ({
         },
       },
     },
-  });
+  } as const;
+  const version = await dbRead.modelVersion
+    .findFirstOrThrow(donationFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+    });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 

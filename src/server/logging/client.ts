@@ -18,6 +18,8 @@ export async function logToAxiom(data: MixedObject, datastream?: string) {
     if (!datastream) return;
 
     await axiom.ingestEvents(datastream, sendData);
+    if (process.env.LOG_ERRORS_TO_STDOUT === 'true')
+      console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
   } else {
     console.log('logToAxiom', sendData);
   }

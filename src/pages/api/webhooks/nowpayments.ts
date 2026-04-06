@@ -1,9 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import { trackWebhookEvent } from '~/server/clickhouse/client';
 import client from '~/server/http/nowpayments/nowpayments.caller';
 import { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 import { logToAxiom } from '~/server/logging/client';
-import { processBuzzOrder } from '~/server/services/nowpayments.service';
+import { processDeposit } from '~/server/services/nowpayments.service';
 
 export const config = {
   api: {
@@ -11,65 +12,77 @@ export const config = {
   },
 };
 
-// Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
-  logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data }).catch();
+  logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data }).catch(() => null);
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method === 'POST') {
-    const sig = req.headers['x-nowpayments-sig'];
-
-    const webhookSecret = env.NOW_PAYMENTS_IPN_KEY;
-
-    try {
-      if (!sig || !webhookSecret) {
-        await log({
-          message: 'Invalid request: Missing signature or secret',
-        });
-        // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
-        return res.status(400).send({
-          error: 'Invalid Request. Signature or Secret not found',
-          sig,
-        });
-      }
-
-      const { isValid, ...data } = client.validateWebhookEvent(sig as string, req.body);
-      if (!isValid) {
-        await log({
-          message: 'Invalid signature',
-          sig,
-          webhookSecret,
-          data,
-        });
-        console.log('❌ Invalid signature');
-        return res.status(400).send({
-          error: 'Invalid Request. Could not validate Webhook signature',
-          data,
-        });
-      }
-
-      const event = NOWPayments.webhookSchema.parse(req.body);
-
-      switch (event.payment_status) {
-        case 'finished':
-        case 'partially_paid':
-        default: // temporary as we test
-          await processBuzzOrder(
-            event.payment_id as string | number,
-            event.payment_status as string
-          );
-          break;
-        // throw new Error('Unhandled relevant event!');
-      }
-    } catch (error: any) {
-      console.log(`❌ Error message: ${error.message}`);
-      return res.status(400).send(`Webhook Error: ${error.message}`);
-    }
-
-    return res.status(200).json({ received: true });
-  } else {
+  if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).end('Method Not Allowed');
   }
+
+  const sig = req.headers['x-nowpayments-sig'];
+  const webhookSecret = env.NOW_PAYMENTS_IPN_KEY;
+
+  // Track to ClickHouse (fire and forget, never throws)
+  trackWebhookEvent('nowpayments', JSON.stringify(req.body)).catch(() => null);
+
+  try {
+    if (!sig || !webhookSecret) {
+      log({
+        message: 'Invalid request: Missing signature or secret',
+      });
+      return res.status(400).send({
+        error: 'Invalid Request. Signature or Secret not found',
+        sig,
+      });
+    }
+
+    const { isValid, ...data } = client.validateWebhookEvent(sig as string, req.body);
+    if (!isValid) {
+      log({
+        message: 'Invalid signature',
+        sig,
+        data,
+      });
+      return res.status(400).send({
+        error: 'Invalid Request. Could not validate Webhook signature',
+        data,
+      });
+    }
+
+    const event = NOWPayments.webhookSchema.parse(req.body);
+    const paymentStatus = event.payment_status;
+
+    if (!paymentStatus || !event.payment_id) {
+      log({
+        message: 'Webhook missing payment_status or payment_id',
+        event,
+      });
+      return res.status(400).send({ error: 'Missing payment_status or payment_id' });
+    }
+
+    // Process actionable statuses (partially_paid treated like finished for buzz grant)
+    if (['confirming', 'finished', 'partially_paid'].includes(paymentStatus)) {
+      await processDeposit(event.payment_id, paymentStatus, event);
+    }
+  } catch (error: any) {
+    const body = req.body ?? {};
+    log({
+      message: `Webhook error: ${error.message}`,
+      error: error.stack,
+      payload: {
+        payment_id: body.payment_id,
+        payment_status: body.payment_status,
+        order_id: body.order_id,
+        pay_currency: body.pay_currency,
+        actually_paid: body.actually_paid,
+        outcome_amount: body.outcome_amount,
+      },
+    });
+    return res.status(400).send(`Webhook Error: ${error.message}`);
+  }
+
+  return res.status(200).json({ received: true });
 }

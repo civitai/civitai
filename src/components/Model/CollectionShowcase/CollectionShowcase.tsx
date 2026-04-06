@@ -26,7 +26,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { slugit } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -51,7 +51,9 @@ export function CollectionShowcase({ modelId, loading }: Props) {
         ) : items.length > 0 ? (
           <>
             {items.map((model) => (
-              <ShowcaseItem key={model.id} {...model} />
+              <MetricSubscriptionProvider key={model.id} entityType="Model" entityId={model.id}>
+                <ShowcaseItem {...model} />
+              </MetricSubscriptionProvider>
             ))}
             {hasNextPage && (
               <InViewLoader
@@ -81,6 +83,13 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
   const router = useRouter();
   const [image] = images;
   const theme = useMantineTheme();
+
+  // Live metrics for showcase model stats
+  const liveMetrics = useLiveMetrics('Model', id, {
+    downloadCount: rank?.downloadCount ?? 0,
+    collectedCount: rank?.collectedCount ?? 0,
+    commentCount: rank?.commentCount ?? 0,
+  });
 
   const activeItem = router.query.id === id.toString();
 
@@ -165,15 +174,21 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
             >
               <Group gap={2}>
                 <IconDownload size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(rank?.downloadCount ?? 0)}</Text>
+                <Text size="xs">
+                  <AnimatedCount value={liveMetrics.downloadCount} />
+                </Text>
               </Group>
               <Group gap={2}>
                 <IconBookmark size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(rank?.collectedCount ?? 0)}</Text>
+                <Text size="xs">
+                  <AnimatedCount value={liveMetrics.collectedCount} />
+                </Text>
               </Group>
               <Group gap={2}>
                 <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                <Text size="xs">{abbreviateNumber(rank?.commentCount ?? 0)}</Text>
+                <Text size="xs">
+                  <AnimatedCount value={liveMetrics.commentCount} />
+                </Text>
               </Group>
             </Badge>
           </Group>

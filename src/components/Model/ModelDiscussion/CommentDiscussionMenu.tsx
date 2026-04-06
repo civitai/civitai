@@ -19,7 +19,7 @@ import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import type { CommentGetAllItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -28,6 +28,7 @@ export function CommentDiscussionMenu({
   comment,
   size = 'xs',
   hideLockOption = false,
+  modelUserId,
   ...props
 }: Props) {
   const queryUtils = trpc.useUtils();
@@ -37,8 +38,7 @@ export function CommentDiscussionMenu({
   const isMod = user?.isModerator ?? false;
   const isOwner = comment.user.id === user?.id;
   const isMuted = user?.muted ?? false;
-  const { data: model } = trpc.model.getById.useQuery({ id: comment.modelId });
-  const isModelOwner = model && user && model.user.id === user.id;
+  const isModelOwner = modelUserId != null && user != null && modelUserId === user.id;
 
   const deleteMutation = trpc.comment.delete.useMutation({
     async onSuccess() {
@@ -239,4 +239,5 @@ type Props = MenuProps & {
   comment: Pick<CommentGetAllItem, 'id' | 'user' | 'locked' | 'hidden' | 'modelId'>;
   size?: MantineSpacing;
   hideLockOption?: boolean;
+  modelUserId?: number;
 };

@@ -12,6 +12,7 @@ import {
   Paper,
   Popover,
   Stack,
+  Switch,
   Text,
   Modal,
 } from '@mantine/core';
@@ -29,7 +30,10 @@ import {
   InputCosmeticSelect,
   InputChipGroup,
 } from '~/libs/form';
-import type { ProfileSectionSchema } from '~/server/schema/user-profile.schema';
+import type {
+  ProfileSectionSchema,
+  PrivacySettingsSchema,
+} from '~/server/schema/user-profile.schema';
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -66,20 +70,18 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InputProfileSectionsSettingsInput } from '~/components/Profile/ProfileSectionsSettingsInput';
 import { InputShowcaseItemsInput } from '~/components/Profile/ShowcaseItemsInput';
 
-const schema = userProfileUpdateSchema.merge(
-  userUpdateSchema
-    .pick({
-      profilePicture: true,
-      nameplateId: true,
-      leaderboardShowcase: true,
-    })
-    .extend({
-      badge: cosmeticInputSchema.nullish(),
-      profileImage: z.string().nullish(),
-      profileDecoration: cosmeticInputSchema.nullish(),
-      profileBackground: cosmeticInputSchema.nullish(),
-    })
-);
+const schema = z.object({
+  ...userProfileUpdateSchema.shape,
+  ...userUpdateSchema.pick({
+    profilePicture: true,
+    nameplateId: true,
+    leaderboardShowcase: true,
+  }).shape,
+  badge: cosmeticInputSchema.nullish(),
+  profileImage: z.string().nullish(),
+  profileDecoration: cosmeticInputSchema.nullish(),
+  profileBackground: cosmeticInputSchema.nullish(),
+});
 
 const chipProps: Partial<ChipProps> = {
   size: 'sm',
@@ -125,7 +127,8 @@ export default function UserProfileEditModal() {
     onSuccess: async () => {
       if (currentUser) {
         await currentUser?.refresh();
-        await utils.userProfile.get.invalidate({ username: currentUser.username });
+        // Invalidate all userProfile queries since username may have changed
+        await utils.userProfile.get.invalidate();
       }
       dialog.onClose();
     },
@@ -221,10 +224,7 @@ export default function UserProfileEditModal() {
     [leaderboards]
   );
 
-  const form = useForm({
-    schema,
-    shouldUnregister: false,
-  });
+  const form = useForm({ schema, shouldUnregister: false });
 
   const [
     badge,
@@ -238,6 +238,7 @@ export default function UserProfileEditModal() {
     profilePicture,
     profileSectionsSettings,
     creatorCardStatsPreferences,
+    privacySettings,
   ] = form.watch([
     'badge',
     'nameplateId',
@@ -250,6 +251,7 @@ export default function UserProfileEditModal() {
     'profilePicture',
     'profileSectionsSettings',
     'creatorCardStatsPreferences',
+    'privacySettings',
   ]);
   const displayShowcase = useMemo(() => {
     const sections = (profileSectionsSettings ?? []) as ProfileSectionSchema[];
@@ -302,6 +304,7 @@ export default function UserProfileEditModal() {
           : null,
         creatorCardStatsPreferences:
           publicSettings?.creatorCardStatsPreferences ?? creatorCardStatsDefaults,
+        privacySettings: user.profile.privacySettings as PrivacySettingsSchema,
       };
 
       if (!previousData.current) previousData.current = formData;
@@ -499,6 +502,16 @@ export default function UserProfileEditModal() {
                 </>
               )}
 
+              <Switch
+                label="Show badges on profile"
+                checked={privacySettings?.showBadges !== false}
+                onChange={(e) =>
+                  form.setValue('privacySettings', {
+                    ...privacySettings,
+                    showBadges: e.currentTarget.checked,
+                  })
+                }
+              />
               <InputCosmeticSelect
                 name="badge"
                 label="Featured Badge"

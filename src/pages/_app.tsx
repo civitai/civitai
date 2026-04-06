@@ -47,13 +47,13 @@ import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { IsClientProvider } from '~/providers/IsClientProvider';
-import { PaddleProvider } from '~/providers/PaddleProvider';
+// import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
+import { serverDomainMap } from '~/shared/utils/server-domain';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
@@ -110,27 +110,39 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
-  const getLayout = (page: ReactElement) => (
-    <FeatureLayout conditional={Component?.features}>
-      <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
-        <BrowsingSettingsAddonsProvider>
-          {Component.getLayout?.(page) ?? (
-            <AppLayout
-              left={Component.left}
-              right={Component.right}
-              subNav={Component.subNav}
-              scrollable={Component.scrollable}
-              header={Component.header}
-              footer={Component.footer}
-              announcements={Component.announcements}
-            >
-              {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-            </AppLayout>
-          )}
-        </BrowsingSettingsAddonsProvider>
-      </BrowsingLevelProviderOptional>
-    </FeatureLayout>
-  );
+  // // Standalone pages bypass all providers and render directly
+  // if ('standalone' in Component && Component.standalone) {
+  //   return <Component {...pageProps} />;
+  // }
+
+  const getLayout = (page: ReactElement) =>
+    'standalone' in Component && Component.standalone ? (
+      <Component {...pageProps} />
+    ) : (
+      <FeatureLayout conditional={Component?.features}>
+        <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
+          <BrowsingSettingsAddonsProvider>
+            {Component.getLayout?.(page) ?? (
+              <AppLayout
+                left={Component.left}
+                right={Component.right}
+                subNav={Component.subNav}
+                scrollable={Component.scrollable}
+                header={Component.header}
+                footer={Component.footer}
+                announcements={Component.announcements}
+              >
+                {Component.InnerLayout ? (
+                  <Component.InnerLayout>{page}</Component.InnerLayout>
+                ) : (
+                  page
+                )}
+              </AppLayout>
+            )}
+          </BrowsingSettingsAddonsProvider>
+        </BrowsingLevelProviderOptional>
+      </FeatureLayout>
+    );
 
   return (
     <AppProvider
@@ -145,17 +157,17 @@ function MyApp(props: CustomAppProps) {
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
         {/* <ErrorBoundary> */}
-        <UpdateRequiredWatcher>
-          <IsClientProvider>
-            <ClientHistoryStore />
-            <RegisterCatchNavigation />
-            <RouterTransition />
-            {/* <ChadGPT isAuthed={!!session} /> */}
-            <SessionProvider
-              session={session ? session : !hasAuthCookie ? null : undefined}
-              refetchOnWindowFocus={false}
-              refetchWhenOffline={false}
-            >
+        <SessionProvider
+          session={session ? session : !hasAuthCookie ? null : undefined}
+          refetchOnWindowFocus={false}
+          refetchWhenOffline={false}
+        >
+          <UpdateRequiredWatcher>
+            <IsClientProvider>
+              <ClientHistoryStore />
+              <RegisterCatchNavigation />
+              <RouterTransition />
+              {/* <ChadGPT isAuthed={!!session} /> */}
               <FeatureFlagsProvider flags={flags}>
                 <GoogleAnalytics />
                 <AccountProvider>
@@ -169,29 +181,27 @@ function MyApp(props: CustomAppProps) {
                                 <ReferralsProvider {...cookies.referrals}>
                                   <FiltersProvider>
                                     <AdsProvider>
-                                      <PaddleProvider>
-                                        <HiddenPreferencesProvider>
-                                          <CivitaiLinkProvider>
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <ToursProvider>
-                                                  <AuctionContextProvider>
-                                                    <BaseLayout>
-                                                      {isProd && <TrackPageView />}
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </BaseLayout>
-                                                  </AuctionContextProvider>
-                                                </ToursProvider>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </CivitaiLinkProvider>
-                                        </HiddenPreferencesProvider>
-                                      </PaddleProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <BrowserRouterProvider>
+                                            <IntersectionObserverProvider>
+                                              <ToursProvider>
+                                                <AuctionContextProvider>
+                                                  <BaseLayout>
+                                                    {isProd && <TrackPageView />}
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      {/* <StripeSetupSuccessProvider /> */}
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </BaseLayout>
+                                                </AuctionContextProvider>
+                                              </ToursProvider>
+                                            </IntersectionObserverProvider>
+                                          </BrowserRouterProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
                                     </AdsProvider>
                                   </FiltersProvider>
                                 </ReferralsProvider>
@@ -204,13 +214,13 @@ function MyApp(props: CustomAppProps) {
                   </CivitaiSessionProvider>
                 </AccountProvider>
               </FeatureFlagsProvider>
-            </SessionProvider>
-          </IsClientProvider>
-        </UpdateRequiredWatcher>
+            </IsClientProvider>
+          </UpdateRequiredWatcher>
+        </SessionProvider>
         {/* </ErrorBoundary> */}
       </ThemeProvider>
 
-      {isDev && <ReactQueryDevtools />}
+      {isDev && <ReactQueryDevtools position="bottom-right" />}
     </AppProvider>
   );
 }
@@ -281,7 +291,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     return data;
   });
   // Pass this via the request so we can use it in SSR
-  const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host, req: request });
+  const { getFeatureFlagsAsync } = await import('~/server/services/feature-flags.service');
+  const flags = await getFeatureFlagsAsync({
+    user: session?.user,
+    host: request?.headers.host,
+    req: request,
+  });
 
   if (session) {
     (appContext.ctx.req as any)['session'] = session;

@@ -73,7 +73,7 @@ export const ModelVersionPopularity = ({
   );
 
   const configKey = getImageGenConfigKey(versionId);
-  if (configKey && configKey !== 'flux2') return <></>;
+  if (configKey && configKey !== 'flux2' && configKey !== 'qwen') return <></>;
 
   if (!features.modelVersionPopularity) return <></>;
   // if we want to show this for non checkpoints, simply remove this line

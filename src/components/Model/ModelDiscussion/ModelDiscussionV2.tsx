@@ -1,6 +1,6 @@
 import { Group, LoadingOverlay, Paper, Stack, Text } from '@mantine/core';
 import { IconMessageCancel } from '@tabler/icons-react';
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 
 import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
@@ -9,8 +9,9 @@ import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import type { CommentGetAllItem } from '~/types/router';
 
-export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden }: Props) {
+export function ModelDiscussionV2({ modelId, modelUserId, limit: initialLimit = 8, onlyHidden }: Props) {
   const isMobile = useContainerSmallerThan('sm');
   const limit = isMobile ? initialLimit / 2 : initialLimit;
   const filters = { modelId, limit, sort: ReviewSort.Newest, hidden: onlyHidden };
@@ -32,6 +33,13 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
   );
   const hasHiddenComments = hiddenCommentsCount > 0;
 
+  const renderItem = useCallback(
+    (props: { data: CommentGetAllItem }) => (
+      <CommentDiscussionItem {...props} modelUserId={modelUserId} />
+    ),
+    [modelUserId]
+  );
+
   return (
     <ContainerGrid2 gutter="xl">
       <ContainerGrid2.Col span={12} style={{ position: 'relative' }}>
@@ -40,7 +48,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
           <Stack gap={8}>
             <MasonryGrid2
               data={comments}
-              render={CommentDiscussionItem}
+              render={renderItem}
               isRefetching={isRefetching}
               isFetchingNextPage={isFetchingNextPage}
               hasNextPage={hasNextPage}
@@ -48,6 +56,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
               filters={filters}
               columnWidth={300}
               autoFetch={false}
+              overscanBy={2}
             />
             {hasHiddenComments && !onlyHidden && (
               <RoutedDialogLink
@@ -91,7 +100,7 @@ export function ModelDiscussionV2({ modelId, limit: initialLimit = 8, onlyHidden
 
 type Props = {
   modelId: number;
+  modelUserId?: number;
   limit?: number;
   onlyHidden?: boolean;
-  // filters: { filterBy: ReviewFilter[]; sort: ReviewSort };
 };

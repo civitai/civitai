@@ -3,7 +3,7 @@ import { Badge, Divider, Text } from '@mantine/core';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { getDisplayName } from '~/utils/string-helpers';
 
 const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> = {
@@ -44,6 +44,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   HiDream: 'HID',
   Chroma: 'CHR',
   ZImageTurbo: 'ZIT',
+  Qwen: 'QW',
 };
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {

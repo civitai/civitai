@@ -36,7 +36,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const { nextCursor, items } = await queryWorkflows({
     token,
     take: 1000,
-    tags: ['gen'],
+    tags: [],
     hideMatureContent: false,
   });
 

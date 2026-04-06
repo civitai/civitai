@@ -5,8 +5,9 @@ import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { colorDomains, getRequestDomainColor } from '~/shared/constants/domain.constants';
 import { dbRead } from '~/server/db/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { getFileForModelVersion } from '~/server/services/file.service';
+import { bustUserDownloadsCache } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { createLimiter } from '~/server/utils/rate-limiting';
@@ -22,7 +23,7 @@ const schema = z.object({
 });
 
 const downloadLimiter = createLimiter({
-  counterKey: REDIS_KEYS.DOWNLOAD.COUNT,
+  counterKey: REDIS_SYS_KEYS.DOWNLOAD.COUNT,
   limitKey: REDIS_SYS_KEYS.DOWNLOAD.LIMITS,
   fetchCount: async (userKey) => {
     const isIP = userKey.includes(':') || userKey.includes('.');
@@ -157,10 +158,18 @@ export default PublicEndpoint(
         type: 'Download',
         modelId: fileResult.modelId,
         modelVersionId,
+        fileId: fileResult.fileId,
         nsfw: fileResult.nsfw,
         earlyAccess: fileResult.inEarlyAccess,
         time: now,
       });
+
+      // Bust the downloads cache so the user sees their download immediately
+      if (session?.user?.id) {
+        bustUserDownloadsCache(session.user.id).catch(() => {
+          // ignore
+        });
+      }
 
       // Increment download count for user
       await downloadLimiter.increment(userKey);

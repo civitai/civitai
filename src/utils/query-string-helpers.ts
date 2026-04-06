@@ -16,3 +16,13 @@ export function parseNumericStringArray(value: unknown) {
     : undefined;
   return parsed ? parsed.filter(isDefined) : undefined;
 }
+
+export function parseStringArray(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    return value.filter((v): v is string => typeof v === 'string');
+  }
+  if (typeof value === 'string') {
+    return value.split(',').filter(Boolean);
+  }
+  return undefined;
+}

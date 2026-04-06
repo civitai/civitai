@@ -73,7 +73,7 @@ export function GetPaid() {
   return (
     <Paper className={classes.tileCard} h="100%">
       <Stack p="md" gap="lg">
-        <Title order={3}>Get Paid</Title>
+        <h3 className="text-xl font-bold">Get Paid</h3>
 
         <Grid gutter="md">
           {instructionalSteps.map((step) => (

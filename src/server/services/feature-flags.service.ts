@@ -2,23 +2,17 @@ import type { IncomingMessage } from 'http';
 import { camelCase } from 'lodash-es';
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from 'next-auth';
-import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
+import { serverDomainMap, type ServerAvailability } from '~/shared/utils/server-domain';
 
 // --------------------------
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
 const regionAvailability = ['restricted', 'nonRestricted'] as const;
-type ServerAvailability = keyof typeof serverDomainMap;
-export const serverDomainMap = {
-  green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
-} as const;
 const serverAvailability = Object.keys(serverDomainMap) as ServerAvailability[];
 export const userTiers = ['free', 'founder', 'bronze', 'silver', 'gold'] as const;
 const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTiers] as const;
@@ -29,26 +23,35 @@ const featureAvailability = [
   ...serverAvailability,
   ...roleAvailablity,
 ] as const;
+// Tracks which flags have ENV overrides so Flipt is skipped for those
+const envOverriddenFlags = new Set<string>();
 const featureFlags = createFeatureFlags({
   canWrite: ['public'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
-  ambientCard: ['public'],
-  gallery: ['public'],
-  posts: ['mod', 'member'],
   articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
-  stripe: ['mod'],
-  imageTraining: ['user'],
-  videoTraining: ['mod', 'bronze', 'silver', 'gold'],
-  aiToolkitTraining: ['mod'],
-  qwenTraining: ['mod'],
-  flux2Training: ['public'],
-  zimageturboTraining: ['public'],
-  imageTrainingResults: ['user'],
-  sdxlGeneration: ['public'],
+  imageTraining: { availability: ['user'], fliptKey: 'image-training' },
+  videoTraining: { availability: ['public'], fliptKey: 'video-training' },
+  aiToolkitSd15: { availability: ['mod'], fliptKey: 'ai-toolkit-sd15' },
+  aiToolkitSdxl: { availability: ['mod'], fliptKey: 'ai-toolkit-sdxl' },
+  aiToolkitFlux: { availability: ['mod'], fliptKey: 'ai-toolkit-flux' },
+  aiToolkitSd35: { availability: ['mod'], fliptKey: 'ai-toolkit-sd35' },
+  aiToolkitHunyuan: { availability: ['mod'], fliptKey: 'ai-toolkit-hunyuan' },
+  aiToolkitWan: { availability: ['mod'], fliptKey: 'ai-toolkit-wan' },
+  aiToolkitChroma: { availability: ['mod'], fliptKey: 'ai-toolkit-chroma' },
+  aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
+  qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
+  flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
+  zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
+  zimagebaseTraining: { availability: ['mod'], fliptKey: 'zimage-base-training' },
+  fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
+  ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
+  ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
+  imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
+  wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
@@ -58,7 +61,6 @@ const featureFlags = createFeatureFlags({
     description: `Images displayed in the generator will be larger on small screens`,
     availability: ['public'],
   },
-  enhancedSearch: ['public'],
   alternateHome: ['public'],
   collections: ['public'],
   air: {
@@ -80,7 +82,7 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   assistantPersonality: ['bronze', 'silver', 'gold'],
-  bounties: ['public'],
+  bounties: ['blue', 'red', 'public'],
   newsroom: ['public'],
   safety: ['public'],
   csamReports: isDev ? ['mod'] : ['granted'],
@@ -105,15 +107,13 @@ const featureFlags = createFeatureFlags({
   impersonation: isDev ? ['mod'] : ['granted'],
   donationGoals: ['public'],
   creatorComp: ['public'],
-  experimentalGen: ['mod'],
   imageIndex: ['public'],
-  imageIndexFeed: ['public'],
+  imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
-  isRestrictedRegion: ['restricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   // #endregion
@@ -122,6 +122,7 @@ const featureFlags = createFeatureFlags({
   announcements: ['granted'],
   blocklists: ['granted'],
   toolSearch: ['public'],
+  comicSearch: ['public'],
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
   privateModels: ['public'],
@@ -132,16 +133,22 @@ const featureFlags = createFeatureFlags({
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],
-  coinbasePayments: ['public'],
-  coinbaseOnramp: ['mod'],
+  coinbasePayments: [],
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   kontextAds: ['mod', 'granted'],
-  logicalReplica: ['public'],
+  datapacketRead: ['public'],
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
+  cashManagement: ['granted'],
+  auctionsMod: ['granted'],
+  challengePlatform: ['blue', 'red', 'public'],
+  comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
+  liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
+  strikes: ['dev', 'granted'],
+  prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
   articleImageScanning: ['public'],
 });
 
@@ -235,6 +242,50 @@ function checkRegionAccess(
   return true;
 }
 
+// Lazy-loaded flipt module (server-only — avoids pulling ~/env/server into client bundle)
+type FliptModule = typeof import('~/server/flipt/client');
+let _fliptModule: FliptModule | null = null;
+let _fliptLoading: Promise<FliptModule | null> | null = null;
+
+function loadFliptModule(): Promise<FliptModule | null> {
+  if (_fliptModule) return Promise.resolve(_fliptModule);
+  if (typeof window !== 'undefined') return Promise.resolve(null);
+  if (!_fliptLoading) {
+    _fliptLoading = import('~/server/flipt/client')
+      .then((mod) => {
+        _fliptModule = mod;
+        return mod;
+      })
+      .catch((err) => {
+        console.error('[Flipt] Module load failed:', err?.message ?? err);
+        // Allow retry on next call by clearing the cached promise
+        _fliptLoading = null;
+        return null;
+      });
+  }
+  return _fliptLoading;
+}
+
+// Kick off loading immediately on server (non-blocking, just warms the import)
+if (typeof window === 'undefined') {
+  loadFliptModule();
+}
+
+export function buildFliptContext(user?: SessionUser): Record<string, string> {
+  const ctx: Record<string, string> = {};
+  if (user) {
+    ctx.userId = String(user.id);
+    ctx.isModerator = String(!!user.isModerator);
+    ctx.tier = user.tier ?? 'free';
+    ctx.isLoggedIn = 'true';
+  } else {
+    ctx.isLoggedIn = 'false';
+  }
+  const deploymentId = process.env.FLIPT_DEPLOYMENT_ID;
+  if (deploymentId) ctx.deploymentId = deploymentId;
+  return ctx;
+}
+
 const hasFeature = (
   key: FeatureFlagKey,
   { user, req, host = req?.headers.host }: FeatureAccessContext
@@ -242,10 +293,19 @@ const hasFeature = (
   const feature = featureFlags[key];
   const { availability } = feature;
 
-  // Check environment availability
-  const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
+  // Region restrictions always apply — Flipt cannot override them.
+  // Mods and granted users bypass region restrictions as before.
+  const isMod = user?.isModerator;
+  const hasGrantedPermission = availability.includes('granted')
+    ? !!user?.permissions?.includes(key)
+    : false;
 
-  // Check server availability
+  if (!(isMod || hasGrantedPermission)) {
+    const regionAccess = checkRegionAccess(feature, availability, req);
+    if (!regionAccess) return false;
+  }
+
+  // Server/domain restrictions always apply — Flipt cannot override them
   let serverMatch = true;
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
@@ -264,12 +324,36 @@ const hasFeature = (
         key !== 'isBlue'
       )
         return true;
-      return host === domain;
+      if (host === domain) return true;
+      // Match any localhost port against a localhost domain
+      if (host.startsWith('localhost:') && domain?.startsWith('localhost:')) return true;
+      return false;
     });
 
-    // if server doesn't match, return false regardless of other availability flags
     if (!serverMatch) return false;
   }
+
+  // Flipt overrides role checks (both enable AND disable) — but not ENV, region, or domain.
+  // When Flipt is unavailable, fall through to static evaluation.
+  if (feature.fliptKey && !envOverriddenFlags.has(key) && _fliptModule) {
+    const fliptResult = _fliptModule.isFliptSync(
+      feature.fliptKey,
+      user ? String(user.id) : 'anonymous',
+      buildFliptContext(user)
+    );
+    if (fliptResult !== null) {
+      if (isDev) {
+        console.log(`[Flipt] ${key} (${feature.fliptKey}) => ${fliptResult}`);
+      }
+      return fliptResult;
+    }
+    // Flipt unavailable — fall through to static evaluation below
+  }
+
+  // --- Static evaluation (used when no Flipt override or Flipt unavailable) ---
+
+  // Check environment availability
+  const envRequirement = availability.includes('dev') ? isDev : availability.length > 0;
 
   // Check granted access
   const grantedAccess = availability.includes('granted')
@@ -288,22 +372,9 @@ const hasFeature = (
     }
   }
 
-  // Check basic access (env, server, roles) before region checks
+  // Check basic access (env, server, roles)
   const hasBasicAccess = envRequirement && serverMatch && (grantedAccess || roleAccess);
   if (!hasBasicAccess) return false;
-
-  // Mod and granted users bypass region restrictions
-  const isMod = user?.isModerator;
-  const hasGrantedPermission = grantedAccess;
-
-  if (isMod || hasGrantedPermission) {
-    // Avoids the double region check for mods/granted users
-    return true;
-  }
-
-  // Check region access for regular users
-  const regionAccess = checkRegionAccess(feature, availability, req);
-  if (!regionAccess) return false;
 
   return true;
 };
@@ -334,6 +405,15 @@ export function getFeatureFlagsLazy(ctx: FeatureAccessContext) {
   return obj as FeatureAccess;
 }
 
+export async function getFeatureFlagsAsync(ctx: FeatureAccessContext) {
+  // Ensure Flipt module is loaded and initialized (timeout + circuit breaker in FliptSingleton)
+  const flipt = await loadFliptModule();
+  if (flipt) {
+    await flipt.ensureFliptInitialized();
+  }
+  return getFeatureFlags(ctx);
+}
+
 export const toggleableFeatures = Object.entries(featureFlags)
   .filter(([, value]) => value.toggleable)
   .map(([key, value]) => ({
@@ -342,6 +422,18 @@ export const toggleableFeatures = Object.entries(featureFlags)
     description: value.description,
     default: value.default ?? true,
   }));
+
+export const domainRestrictedToggleableKeys = new Set(
+  Object.entries(featureFlags)
+    .filter(([, value]) => {
+      if (!value.toggleable) return false;
+      const servers = value.availability.filter((x) =>
+        serverAvailability.includes(x as ServerAvailability)
+      );
+      return servers.length > 0;
+    })
+    .map(([key]) => key as FeatureFlagKey)
+);
 
 type FeatureAvailability = (typeof featureAvailability)[number];
 export type FeatureFlagKey = keyof typeof featureFlags;
@@ -358,6 +450,7 @@ type FeatureFlag = {
   toggleable: boolean;
   default?: boolean;
   regions?: GeoRestrictions; // Optional geo restrictions
+  fliptKey?: string; // Optional Flipt flag key for remote toggling
 };
 
 // Simplified: Support either simple arrays or objects with any FeatureFlag properties
@@ -382,7 +475,10 @@ function createFeatureFlags<T extends Record<string, FeatureFlagInput>>(flags: T
 
     // Apply ENV overrides
     const override = envOverrides[key as FeatureFlagKey];
-    if (override) features[key as keyof T].availability = override;
+    if (override) {
+      features[key as keyof T].availability = override;
+      envOverriddenFlags.add(key);
+    }
   }
 
   return features;

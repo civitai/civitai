@@ -42,10 +42,18 @@ export const soraGenerationConfig = VideoGenerationConfig2({
 
     return {
       ...data,
+      baseModel: 'Sora2',
       resources: [{ id: 2320065, air: 'urn:air:sora:checkpoint:civitai:2049999@2320065' }],
     };
   },
   superRefine: ({ resources, ...data }, ctx) => {
+    if (data.process === 'img2vid' && !data.images?.length) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Image is required',
+        path: ['images'],
+      });
+    }
     if (!data.images?.length && !data.prompt?.length) {
       ctx.addIssue({
         code: 'custom',

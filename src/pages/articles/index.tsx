@@ -6,7 +6,6 @@ import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategori
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -30,7 +29,7 @@ function ArticlesPage() {
       <Meta
         title="Civitai Articles | Community Guides and Insights"
         description="Learn, innovate, and draw inspiration from generative AI articles written by the Civitai community"
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/articles`, rel: 'canonical' }]}
+        canonical="/articles"
       />
 
       <MasonryContainer>

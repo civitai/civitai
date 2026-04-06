@@ -48,10 +48,14 @@ export function DownloadImage({
       cleanFilename = cleanFilename.split('?')[0].split('#')[0];
 
       // Handle cases where the extension appears multiple times due to token appending
-      // Extract just the first part with the original extension
-      const extensionMatch = cleanFilename.match(/^([^.]+\.[a-zA-Z0-9]{2,5})/);
-      if (extensionMatch) {
-        cleanFilename = extensionMatch[1];
+      // e.g. "file.mp4.mp4" -> "file.mp4", but preserve dots in the base name
+      // e.g. "video-ttget.com.mp4" should stay as "video-ttget.com.mp4"
+      const extMatch = cleanFilename.match(/\.([a-zA-Z0-9]{2,5})$/);
+      if (extMatch) {
+        const ext = extMatch[1];
+        // Strip trailing duplicate extensions (e.g. ".mp4.mp4" -> ".mp4")
+        const dupePattern = new RegExp(`(\\.${ext})+$`);
+        cleanFilename = cleanFilename.replace(dupePattern, `.${ext}`);
       }
 
       a.download = cleanFilename;

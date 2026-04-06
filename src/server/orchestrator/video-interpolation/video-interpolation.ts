@@ -13,12 +13,16 @@ export async function createVideoInterpolationStep({
   interpolationFactor,
   metadata,
 }: VideoInterpolationSchema): Promise<VideoInterpolationStepTemplate> {
+  const transformations = [
+    ...(metadata?.transformations ?? []),
+    { workflow: 'vid2vid:interpolate', video: videoUrl, interpolationFactor },
+  ];
   return {
     $type: 'videoInterpolation',
     input: {
       video: videoUrl,
       interpolationFactor,
     },
-    metadata,
+    metadata: { ...metadata, transformations },
   };
 }

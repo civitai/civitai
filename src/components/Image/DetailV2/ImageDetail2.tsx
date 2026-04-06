@@ -65,6 +65,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -72,14 +73,13 @@ import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
-import { env } from '~/env/client';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
-import { ReportEntity } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 
@@ -113,8 +113,18 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index, collection } =
-    useImageDetailContext();
+  const {
+    images,
+    active,
+    close,
+    toggleInfo,
+    shareUrl,
+    connect,
+    navigate,
+    index,
+    collection,
+    hideReactions,
+  } = useImageDetailContext();
 
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
     key: `image-detail-open`,
@@ -174,7 +184,7 @@ export function ImageDetail2() {
         <Button
           {...sharedButtonProps}
           color="blue"
-          onClick={() => generationPanel.open({ type: image.type, id: image.id })}
+          onClick={() => generationGraphPanel.open({ type: image.type, id: image.id })}
           data-activity="remix:image"
         >
           <Group gap={4} wrap="nowrap">
@@ -234,9 +244,8 @@ export function ImageDetail2() {
       <Meta
         title={title}
         images={image}
-        links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL as string}/images/${image.id}`, rel: 'canonical' },
-        ]}
+        ogEndpoint={`/api/og?type=image&id=${image.id}`}
+        canonical={`/images/${image.id}`}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
@@ -259,12 +268,12 @@ export function ImageDetail2() {
                           <div className="flex flex-1 flex-wrap justify-between gap-1">
                             {/* Placeholder */}
                             <div className="@md:hidden" />
-                            <div className="flex gap-1 @max-md:hidden">
+                            <div className="flex items-center gap-1 @max-md:hidden">
                               <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                               {LeftImageControls}
                             </div>
 
-                            <div className="flex gap-1">
+                            <div className="flex items-center gap-1">
                               <ImageGuard2.BlurToggle
                                 {...sharedBadgeProps}
                                 className={clsx('@md:hidden', sharedBadgeProps.className)}
@@ -341,9 +350,11 @@ export function ImageDetail2() {
                             <ReactionSettingsProvider
                               settings={{
                                 hideReactionCount: false,
-                                hideReactions: collectionItems.some((ci) =>
-                                  contestCollectionReactionsHidden(ci.collection)
-                                ),
+                                hideReactions:
+                                  hideReactions ||
+                                  collectionItems.some((ci) =>
+                                    contestCollectionReactionsHidden(ci.collection)
+                                  ),
                                 buttonStyling: (reaction, hasReacted) => ({
                                   radius: 'xl',
                                   variant: 'light',
@@ -361,21 +372,12 @@ export function ImageDetail2() {
                                 }),
                               }}
                             >
-                              <Reactions
+                              <MetricSubscriptionProvider
+                                entityType="Image"
                                 entityId={image.id}
-                                entityType="image"
-                                reactions={image.reactions}
-                                metrics={{
-                                  likeCount: image.stats?.likeCountAllTime,
-                                  dislikeCount: image.stats?.dislikeCountAllTime,
-                                  heartCount: image.stats?.heartCountAllTime,
-                                  laughCount: image.stats?.laughCountAllTime,
-                                  cryCount: image.stats?.cryCountAllTime,
-                                  tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                                }}
-                                targetUserId={image.user.id}
-                                disableBuzzTip={image.poi}
-                              />
+                              >
+                                <ImageDetailReactions image={image} />
+                              </MetricSubscriptionProvider>
                             </ReactionSettingsProvider>
                           </div>
                           <CarouselIndicators {...carouselNavigation} />
@@ -554,5 +556,27 @@ export function ImageDetail2() {
         </BrowsingLevelProvider>
       </SensitiveShield>
     </>
+  );
+}
+
+function ImageDetailReactions({ image }: { image: ReturnType<typeof useImageDetailContext>['images'][number] }) {
+  const reactionMetrics = useLiveMetrics('Image', image.id, {
+    likeCount: image.stats?.likeCountAllTime ?? 0,
+    dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+    heartCount: image.stats?.heartCountAllTime ?? 0,
+    laughCount: image.stats?.laughCountAllTime ?? 0,
+    cryCount: image.stats?.cryCountAllTime ?? 0,
+    tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
+  });
+
+  return (
+    <Reactions
+      entityId={image.id}
+      entityType="image"
+      reactions={image.reactions}
+      metrics={reactionMetrics}
+      targetUserId={image.user.id}
+      disableBuzzTip={image.poi}
+    />
   );
 }

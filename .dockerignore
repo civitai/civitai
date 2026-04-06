@@ -8,3 +8,12 @@ nginx
 .gitignore
 .next
 .dockerignore
+docs
+tests
+.claude
+.github
+.vscode
+playwright.config.ts
+prisma/migrations
+prisma/programmability
+prisma/seed.ts

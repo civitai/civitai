@@ -3,7 +3,7 @@ import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { KontextProvider } from '~/components/Ads/Kontext/KontextProvider';
@@ -15,6 +15,7 @@ export function Queue() {
 
   const {
     data = [],
+    markerTags,
     isLoading,
     fetchNextPage,
     hasNextPage,
@@ -23,15 +24,6 @@ export function Queue() {
     isError,
     error,
   } = useGetTextToImageRequests();
-
-  const kontextMessages = useMemo(
-    () =>
-      data.map((request) => ({
-        content: request.steps.map((step) => step.params.prompt).join(', '),
-        createdAt: request.createdAt,
-      })),
-    [data]
-  );
 
   if (isError)
     return (
@@ -74,7 +66,7 @@ export function Queue() {
                 Try{' '}
                 <Text
                   c="blue.4"
-                  onClick={() => generationPanel.setView('generate')}
+                  onClick={() => generationGraphPanel.setView('generate')}
                   style={{ cursor: 'pointer' }}
                   span
                 >
@@ -83,8 +75,7 @@ export function Queue() {
                 new images with our resources
               </Text>
               <Text size="sm" c="dimmed">
-                Images generated prior to 10/13/2025 are now visible on{' '}
-                <Anchor href="https://civitai.com/generate">civitai.com</Anchor>
+                {`Some new filtering options don't apply retroactively.`}
               </Text>
             </div>
           )}
@@ -101,20 +92,18 @@ export function Queue() {
         Creations are kept in the Generator for 30 days. Download or Post them to your Profile to
         save them!
       </Text>
-      <KontextProvider messages={kontextMessages}>
-        <div className="flex flex-col gap-2">
-          {data.map((request, index) => {
-            return (
-              <Fragment key={request.id}>
-                {index !== 0 && (index + 4) % 5 === 0 && (
-                  <KontextAd key={index} index={index} className="p-3" />
-                )}
-                <QueueItem id={request.id.toString()} request={request} />
-              </Fragment>
-            );
-          })}
-        </div>
-      </KontextProvider>
+      <div className="flex flex-col gap-2">
+        {data.map((request, index) => {
+          return (
+            <QueueItem
+              key={request.id}
+              id={request.id.toString()}
+              request={request}
+              markerTags={markerTags}
+            />
+          );
+        })}
+      </div>
       {hasNextPage ? (
         <InViewLoader
           loadFn={fetchNextPage}

@@ -42,7 +42,7 @@ export function createMultipartUpload({
       const data = await res.json();
       if (data.error) throw data.error;
 
-      const { bucket, key, uploadId, urls } = data as ApiUploadResponse;
+      const { bucket, key, uploadId, urls, backend } = data as ApiUploadResponse & { backend?: string };
 
       const uploadStart = Date.now();
       const partsCount = urls.length;
@@ -100,6 +100,7 @@ export function createMultipartUpload({
             key,
             type,
             uploadId,
+            backend,
           }),
         });
 
@@ -113,6 +114,7 @@ export function createMultipartUpload({
             type,
             uploadId,
             parts,
+            backend,
           }),
         });
 

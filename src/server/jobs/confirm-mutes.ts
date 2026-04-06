@@ -4,6 +4,7 @@ import { refreshSession } from '~/server/auth/session-invalidation';
 import { createJob, getJobDate } from './job';
 import { cancelSubscriptionPlan } from '~/server/services/paddle.service';
 
+// TODO - cancel subscriptions for any users where mutedAt is not null, as this signifies that the user has been confirmed as muted.
 export const confirmMutes = createJob('confirm-mutes', '0 1 * * *', async () => {
   // Get all recently confirmed mutes
   const [lastRan, setLastRan] = await getJobDate('confirm-mutes');

@@ -8,6 +8,9 @@
   display: block;
   overflow: visible;
   transition: margin-left 500ms;
+  position: sticky;
+  top: var(--header-height, 80px);
+  align-self: flex-start;
 
   @container (max-width: theme('screens.sm')) {
     display: none;

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -11,8 +12,12 @@ import type {
 } from '~/server/schema/model-file.schema';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { createCachedObject } from '~/server/utils/cache-helpers';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { ModelUploadType } from '~/shared/utils/prisma/enums';
+import {
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { prepareFile } from '~/utils/file-helpers';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
@@ -36,7 +41,7 @@ async function fetchModelFilesForCache(ids: number[]) {
 export const filesForModelVersionCache = createCachedObject({
   key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
-  ttl: CacheTTL.sm,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
   async lookupFn(ids) {
     const files = await fetchModelFilesForCache(ids);
 
@@ -129,6 +134,34 @@ export async function deleteFile({
   userId,
   isModerator,
 }: GetByIdInput & { userId: number; isModerator?: boolean }) {
+  // Check if deleting a training file for a model still in draft/training state
+  const file = await dbWrite.modelFile.findFirst({
+    where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
+    select: {
+      type: true,
+      modelVersion: {
+        select: {
+          model: {
+            select: { status: true },
+          },
+        },
+      },
+    },
+  });
+
+  if (!file) throw throwNotFoundError();
+
+  const modelStatus = file.modelVersion.model.status;
+  const isTrainingFile = file.type === 'Training Data';
+  const isUnpublished = modelStatus === ModelStatus.Draft || modelStatus === ModelStatus.Training;
+
+  if (isTrainingFile && isUnpublished) {
+    throw throwBadRequestError(
+      'Cannot delete training data for a model that is still in draft or training. ' +
+        'This would prevent the model from being published.'
+    );
+  }
+
   const rows = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m

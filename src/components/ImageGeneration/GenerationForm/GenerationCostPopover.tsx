@@ -14,9 +14,7 @@ import classes from './GenerationCostPopover.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
-import { useMainBuzzAccountType, useQueryBuzz } from '~/components/Buzz/useBuzz';
-import { getBuzzTypeDistribution } from '~/utils/buzz';
+import { useMainBuzzAccountType } from '~/components/Buzz/useBuzz';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 const getEmojiByValue = (value: number) => {
@@ -95,10 +93,18 @@ function GenerationCostPopoverDetail({
   hideCivitaiTip,
   buzzAccountType,
 }: Props) {
-  const { civitaiTip, creatorTip } = useTipStore((state) => ({
+  const { creatorTip, civitaiTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
     civitaiTip: state.civitaiTip * 100,
   }));
+
+  const handleCreatorTipChange = (value: number | string = 0) => {
+    useTipStore.setState({ creatorTip: Number(value) / 100 });
+  };
+
+  const handleCivitaiTipChange = (value: number | string = 0) => {
+    useTipStore.setState({ civitaiTip: Number(value) / 100 });
+  };
 
   const handleShowExplanationClick: React.MouseEventHandler<HTMLButtonElement> = (e) => {
     e.preventDefault();
@@ -185,12 +191,23 @@ function GenerationCostPopoverDetail({
       className: classes.tableCell,
     },
     {
+      label: 'Output Format',
+      value: (
+        <Group gap={4} justify="flex-end" wrap="nowrap">
+          {workflowCost.fixed?.format}
+          <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
+        </Group>
+      ),
+      visible: !!workflowCost.fixed?.format,
+      className: classes.tableCell,
+    },
+    {
       label: (
         <div className="flex items-center justify-between">
           Creator Tip{' '}
           <NumberInput
             value={creatorTip}
-            onChange={(value = 0) => useTipStore.setState({ creatorTip: Number(value) / 100 })}
+            onChange={handleCreatorTipChange}
             min={0}
             max={100}
             w={110}
@@ -228,7 +245,7 @@ function GenerationCostPopoverDetail({
           Civitai Tip{' '}
           <NumberInput
             value={civitaiTip}
-            onChange={(value = 0) => useTipStore.setState({ civitaiTip: Number(value) / 100 })}
+            onChange={handleCivitaiTipChange}
             min={0}
             max={100}
             w={110}
@@ -254,7 +271,7 @@ function GenerationCostPopoverDetail({
       label: 'Civitai Tip',
       value: (
         <Group gap={4} justify="flex-end" wrap="nowrap">
-          {baseCost ?? '0'}
+          {workflowCost.tips?.civitai ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} type={buzzAccountType} />
         </Group>
       ),

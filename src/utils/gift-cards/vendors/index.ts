@@ -1,10 +1,18 @@
 import type { Vendor, VendorRegistry } from './types';
 import { kinguinVendor } from './kinguin';
 import { buybuzzVendor } from './buybuzz';
+import { waifuWayVendor } from './waifu-way';
+import { lewtDropVendor } from './lewt-drop';
+import { royalCdKeysVendor } from './royal-cd-keys';
+import { cryptoVendor } from './crypto';
 
 const vendorRegistry: VendorRegistry = {
+  crypto: cryptoVendor,
   kinguin: kinguinVendor,
   buybuzz: buybuzzVendor,
+  'waifu-way': waifuWayVendor,
+  'lewt-drop': lewtDropVendor,
+  'royal-cd-keys': royalCdKeysVendor,
 };
 
 export function getEnabledVendors(): Vendor[] {

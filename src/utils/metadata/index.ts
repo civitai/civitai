@@ -31,11 +31,22 @@ export async function ExifParser(file: File | string) {
     exif.userComment = Int32Array.from(exif.UserComment);
   }
 
-  const [name, parser] = Object.entries(parsers).find(([name, x]) => x.canParse(exif)) ?? [];
+  // Clone exif before each canParse to prevent cross-parser mutation
+  let matchedExif = exif;
+  let matchedParser: (typeof parsers)[keyof typeof parsers] | undefined;
+  for (const [, p] of Object.entries(parsers)) {
+    const exifCopy = { ...exif };
+    if (p.canParse(exifCopy)) {
+      matchedParser = p;
+      matchedExif = exifCopy;
+      break;
+    }
+  }
+  const parser = matchedParser;
 
   function parse() {
     try {
-      return parser?.parse(exif);
+      return parser?.parse(matchedExif);
     } catch (e) {
       console.error('Error parsing metadata', e);
     }
@@ -82,3 +93,46 @@ export function encodeMetadata(meta: ImageMetaProps, type: keyof typeof parsers 
 export const parsePromptMetadata = (generationDetails: string) => {
   return automaticMetadataProcessor.parse({ generationDetails });
 };
+
+// #region [clipboard utilities]
+const CIVITAI_META_ATTR = 'data-civitai-metadata';
+
+/** Copies metadata to clipboard with both text/plain (A1111 format) and text/html (lossless JSON) */
+export async function copyMetadataToClipboard(meta: ImageMetaProps): Promise<boolean> {
+  const textPlain = encodeMetadata(meta);
+  const jsonMeta = JSON.stringify(meta);
+  const escapedText = textPlain.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const textHtml = `<div ${CIVITAI_META_ATTR}="${encodeURIComponent(
+    jsonMeta
+  )}">${escapedText}</div>`;
+
+  try {
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        'text/plain': new Blob([textPlain], { type: 'text/plain' }),
+        'text/html': new Blob([textHtml], { type: 'text/html' }),
+      }),
+    ]);
+    return true;
+  } catch {
+    // Fallback to text-only for older browsers
+    try {
+      await navigator.clipboard.writeText(textPlain);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
+/** Extracts structured Civitai metadata from clipboard HTML content */
+export function extractCivitaiMetadata(html: string): Record<string, unknown> | null {
+  const match = html.match(new RegExp(`${CIVITAI_META_ATTR}="([^"]*)"`));
+  if (!match?.[1]) return null;
+  try {
+    return JSON.parse(decodeURIComponent(match[1]));
+  } catch {
+    return null;
+  }
+}
+// #endregion

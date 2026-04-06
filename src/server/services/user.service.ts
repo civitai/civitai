@@ -1,10 +1,12 @@
 import { Prisma } from '@prisma/client';
+import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import {
   BanReasonCode,
   BlockedReason,
+  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -12,9 +14,10 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
-import { userUpdateCounter } from '~/server/prom/client';
+import { dbReadFallbackCounter, userUpdateCounter } from '~/server/prom/client';
 import {
   articleMetrics,
   imageMetrics,
@@ -23,12 +26,14 @@ import {
   userMetrics,
 } from '~/server/metrics';
 import type { NotifDetailsFollowedBy } from '~/server/notifications/follow.notifications';
+import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import {
   cosmeticCache,
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
+  userDownloadsCache,
   userFollowsCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -60,8 +65,11 @@ import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/us
 import { deleteBidsForModel } from '~/server/services/auction.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
-import { unpublishModelById } from '~/server/services/model.service';
+import { userModelCountCache } from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { TransactionType } from '~/shared/constants/buzz.constants';
+import { formatDate } from '~/utils/date-helpers';
 import {
   cancelAllPaddleSubscriptions,
   cancelSubscriptionPlan,
@@ -97,6 +105,7 @@ import {
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
+import { getBlocklistData } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -107,7 +116,6 @@ import type {
   UserSettingsSchema,
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
-import { clickhouse } from '~/server/clickhouse/client';
 import { cancelSubscription } from '~/server/services/stripe.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
@@ -145,75 +153,79 @@ export const getUserCreator = async ({
   leaderboardId?: string;
   isModerator?: boolean;
 }) => {
-  const user = await dbRead.user.findFirst({
-    where: {
-      ...where,
-      deletedAt: null,
-      AND: [
-        { id: { not: constants.system.user.id } },
-        { username: { not: constants.system.user.username } },
-      ],
-    },
-    select: {
-      id: true,
-      image: true,
-      username: true,
-      muted: true,
-      bannedAt: true,
-      deletedAt: true,
-      createdAt: true,
-      publicSettings: true,
-      excludeFromLeaderboards: true,
-      links: {
-        select: {
-          url: true,
-          type: true,
-        },
+  const user = await withSpan('user:getCreator:findUser', () =>
+    dbRead.user.findFirst({
+      where: {
+        ...where,
+        deletedAt: null,
+        AND: [
+          { id: { not: constants.system.user.id } },
+          { username: { not: constants.system.user.username } },
+        ],
       },
-      stats: {
-        select: {
-          downloadCountAllTime: true,
-          thumbsUpCountAllTime: true,
-          followerCountAllTime: true,
-          reactionCountAllTime: true,
-          uploadCountAllTime: true,
-          generationCountAllTime: true,
-        },
-      },
-      rank: {
-        select: {
-          leaderboardRank: true,
-          leaderboardId: true,
-          leaderboardTitle: true,
-          leaderboardCosmetic: true,
-        },
-      },
-      cosmetics: {
-        where: { equippedAt: { not: null } },
-        select: {
-          data: true,
-          cosmetic: {
-            select: simpleCosmeticSelect,
+      select: {
+        id: true,
+        image: true,
+        username: true,
+        muted: true,
+        bannedAt: true,
+        deletedAt: true,
+        createdAt: true,
+        publicSettings: true,
+        excludeFromLeaderboards: true,
+        links: {
+          select: {
+            url: true,
+            type: true,
           },
         },
+        stats: {
+          select: {
+            downloadCountAllTime: true,
+            thumbsUpCountAllTime: true,
+            followerCountAllTime: true,
+            reactionCountAllTime: true,
+            uploadCountAllTime: true,
+            generationCountAllTime: true,
+          },
+        },
+        rank: {
+          select: {
+            leaderboardRank: true,
+            leaderboardId: true,
+            leaderboardTitle: true,
+            leaderboardCosmetic: true,
+          },
+        },
+        cosmetics: {
+          where: { equippedAt: { not: null } },
+          select: {
+            data: true,
+            cosmetic: {
+              select: simpleCosmeticSelect,
+            },
+          },
+        },
+        profilePicture: {
+          select: profileImageSelect,
+        },
       },
-      profilePicture: {
-        select: profileImageSelect,
-      },
-    },
-  });
+    })
+  );
   if (!user) return null;
 
   /**
    * TODO: seems to be deprecated, we are getting model count from the stats
    * though it might be bugged since we are not updating stats if user deletes/unpublishes models
    */
-  const modelCount = await dbRead.model.count({
-    where: {
-      userId: user?.id,
-      status: 'Published',
-    },
-  });
+  const modelCount = await withSpan('user:getCreator:countModels', () =>
+    dbRead.model.count({
+      where: {
+        userId: user?.id,
+        status: 'Published',
+      },
+    })
+  );
 
   return {
     ...user,
@@ -343,14 +355,22 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   });
 };
 
-export const isUsernamePermitted = (username: string) => {
+export const isUsernamePermitted = async (username: string): Promise<boolean> => {
   const lower = username.toLowerCase();
-  const isPermitted = !(
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x)
-  );
 
-  return isPermitted;
+  // Static JSON baseline (always enforced, can't be removed via UI)
+  const staticBlocked =
+    blockedUsernames.partial.some((x) => lower.includes(x)) ||
+    blockedUsernames.exact.some((x) => lower === x);
+  if (staticBlocked) return false;
+
+  // Dynamic blocklist from DB/Redis/in-memory cache
+  const [dynamicExact, dynamicPartial] = await Promise.all([
+    getBlocklistData(BlocklistType.UsernameExact),
+    getBlocklistData(BlocklistType.UsernamePartial),
+  ]);
+
+  return !(dynamicExact.some((x) => lower === x) || dynamicPartial.some((x) => lower.includes(x)));
 };
 
 export const updateUserById = async ({
@@ -425,37 +445,36 @@ export async function getUserDownloadedModelVersions({
   userId: number;
   modelVersionIds?: number | number[];
 }) {
-  if (!clickhouse) {
-    return [];
-  }
-
   const versionIds = modelVersionIds
     ? Array.isArray(modelVersionIds)
       ? modelVersionIds
       : [modelVersionIds]
     : null;
 
-  const { hideDownloadsSince } = await getUserSettings(userId);
+  // Fetch cached downloads and user settings in parallel
+  const [cached, { hideDownloadsSince }] = await Promise.all([
+    userDownloadsCache.fetch([userId]),
+    getUserSettings(userId),
+  ]);
 
-  // Build WHERE conditions
-  const conditions: string[] = [`userId = ${userId}`];
-  if (versionIds && versionIds.length > 0) {
-    conditions.push(`modelVersionId IN (${versionIds.join(', ')})`);
-  }
+  let downloads = cached[userId]?.downloads ?? [];
+
+  // Filter by hideDownloadsSince if set
   if (hideDownloadsSince) {
-    const sinceDate = new Date(hideDownloadsSince).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    conditions.push(`lastDownloaded > parseDateTime64BestEffort('${sinceDate}')`);
+    downloads = downloads.filter((d) => d.lastDownloaded > hideDownloadsSince);
   }
 
-  const whereClause = conditions.join(' AND ');
+  // Filter by requested modelVersionIds if provided
+  if (versionIds && versionIds.length > 0) {
+    const versionIdSet = new Set(versionIds);
+    downloads = downloads.filter((d) => versionIdSet.has(d.modelVersionId));
+  }
 
-  const results = await clickhouse.$query<{ modelVersionId: number }>`
-    SELECT DISTINCT modelVersionId
-    FROM userModelDownloads
-    WHERE ${whereClause}
-  `;
+  return downloads.map((d) => ({ modelVersionId: d.modelVersionId }));
+}
 
-  return results;
+export async function bustUserDownloadsCache(userId: number) {
+  await userDownloadsCache.bust([userId]);
 }
 
 export const getUserEngagedModelByModelId = ({
@@ -1073,6 +1092,207 @@ export const updateLeaderboardRank = async ({
   ]);
 };
 
+/**
+ * Bulk unpublish all models for a banned user using efficient SQL operations.
+ * This replaces individual unpublishModelById calls with bulk operations.
+ * Also handles bulk bid deletion and refunds in minimal queries.
+ */
+async function bulkUnpublishModelsForBannedUser({
+  odRef,
+  odRefuserId,
+}: {
+  odRef: number;
+  odRefuserId: number;
+}) {
+  const now = new Date();
+  const unpublishedAt = now.toISOString();
+  const unpublishedMeta = JSON.stringify({
+    unpublishedReason: 'other',
+    customMessage: 'User banned',
+    unpublishedAt,
+    unpublishedBy: odRefuserId,
+  });
+
+  // Get all models and their versions that need to be unpublished
+  const modelsToUnpublish = await dbRead.model.findMany({
+    where: {
+      userId: odRef,
+      status: { in: [ModelStatus.Published, ModelStatus.Scheduled] },
+    },
+    select: {
+      id: true,
+      modelVersions: {
+        where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
+        select: { id: true },
+      },
+    },
+  });
+
+  if (modelsToUnpublish.length === 0) {
+    return { modelsUnpublished: 0, versionsUnpublished: 0, bidsRefunded: 0 };
+  }
+
+  const modelIds = modelsToUnpublish.map((m) => m.id);
+  const versionIds = modelsToUnpublish.flatMap((m) => m.modelVersions.map((v) => v.id));
+
+  // Bulk update models and versions in a transaction
+  await dbWrite.$transaction(
+    async (tx) => {
+      // Update all models to Unpublished status
+      await tx.$executeRaw`
+        UPDATE "Model"
+        SET
+          status = ${ModelStatus.UnpublishedViolation}::"ModelStatus",
+          meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+        WHERE id IN (${Prisma.join(modelIds)})
+      `;
+
+      // Update all model versions to Unpublished status
+      if (versionIds.length > 0) {
+        await tx.$executeRaw`
+          UPDATE "ModelVersion"
+          SET
+            status = ${ModelStatus.Unpublished}::"ModelStatus",
+            meta = COALESCE(meta, '{}'::jsonb) || ${unpublishedMeta}::jsonb
+          WHERE id IN (${Prisma.join(versionIds)})
+        `;
+
+        // Update posts to unpublish them
+        await tx.$executeRaw`
+          UPDATE "Post"
+          SET
+            metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+              'unpublishedAt', ${unpublishedAt},
+              'unpublishedBy', ${odRefuserId},
+              'prevPublishedAt', "publishedAt"
+            ),
+            "publishedAt" = NULL
+          WHERE
+            "publishedAt" IS NOT NULL
+            AND "userId" = ${odRef}
+            AND "modelVersionId" IN (${Prisma.join(versionIds)})
+        `;
+      }
+    },
+    { timeout: 60000 }
+  );
+
+  // Bust user model count cache
+  await userModelCountCache.bust(odRef);
+
+  // === Bulk bid deletion and refund ===
+  let bidsRefunded = 0;
+
+  if (versionIds.length > 0) {
+    // Get active auctions
+    const activeAuctions = await dbRead.auction.findMany({
+      where: { startAt: { lte: now }, endAt: { gt: now } },
+      select: { id: true },
+    });
+    const auctionIds = activeAuctions.map((a) => a.id);
+
+    if (auctionIds.length > 0) {
+      // Get all bids to refund (not already refunded)
+      const bidsToRefund = await dbRead.bid.findMany({
+        where: {
+          auctionId: { in: auctionIds },
+          entityId: { in: versionIds },
+          isRefunded: false,
+          deleted: false,
+        },
+        select: { id: true, userId: true, amount: true },
+      });
+
+      if (bidsToRefund.length > 0) {
+        // Bulk refund all bids - chunk to avoid payload size limits
+        const REFUND_BATCH_SIZE = 500;
+        const refundTransactions = bidsToRefund.map((bid) => ({
+          fromAccountId: 0, // Central bank
+          toAccountId: bid.userId,
+          amount: bid.amount,
+          type: TransactionType.Refund,
+          description: 'Bid refund - user banned',
+          externalTransactionId: `bid-refund-ban-${odRef}-${bid.id}`,
+        }));
+
+        // Process refunds in batches
+        for (let i = 0; i < refundTransactions.length; i += REFUND_BATCH_SIZE) {
+          const batch = refundTransactions.slice(i, i + REFUND_BATCH_SIZE);
+          try {
+            await createBuzzTransactionMany(batch);
+          } catch (error) {
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-bulk-refund',
+              message: error instanceof Error ? error.message : String(error),
+              userId: odRef,
+              bidCount: batch.length,
+              batchIndex: i / REFUND_BATCH_SIZE,
+            });
+          }
+        }
+
+        // Mark all bids as deleted and refunded
+        await dbWrite.bid.updateMany({
+          where: { id: { in: bidsToRefund.map((b) => b.id) } },
+          data: { deleted: true, isRefunded: true },
+        });
+
+        // Send ONE notification to all affected users
+        const affectedUserIds = uniq(bidsToRefund.map((b) => b.userId));
+        const bidDetails: DetailsCanceledBid = {
+          name: null, // Multiple models affected
+          reason: 'User banned',
+          recurring: false,
+        };
+        await createNotification({
+          userIds: affectedUserIds,
+          category: NotificationCategory.System,
+          type: 'canceled-bid-auction',
+          key: `canceled-bid-auction:ban:${odRef}:${formatDate(now, 'YYYY-MM-DD')}`,
+          details: bidDetails,
+        });
+
+        bidsRefunded = bidsToRefund.length;
+      }
+    }
+
+    // Handle recurring bids - get users first for notification
+    const recurringBids = await dbRead.bidRecurring.findMany({
+      where: { entityId: { in: versionIds } },
+      select: { id: true, userId: true },
+    });
+
+    if (recurringBids.length > 0) {
+      // Delete all recurring bids
+      await dbWrite.bidRecurring.deleteMany({
+        where: { id: { in: recurringBids.map((r) => r.id) } },
+      });
+
+      // Send ONE notification for recurring bid cancellations
+      const recurringUserIds = uniq(recurringBids.map((r) => r.userId));
+      const recurringDetails: DetailsCanceledBid = {
+        name: null,
+        reason: 'User banned',
+        recurring: true,
+      };
+      await createNotification({
+        userIds: recurringUserIds,
+        category: NotificationCategory.System,
+        type: 'canceled-bid-auction',
+        key: `canceled-bid-auction:recurring:ban:${odRef}:${formatDate(now, 'YYYY-MM-DD')}`,
+        details: recurringDetails,
+      });
+    }
+  }
+
+  return {
+    modelsUnpublished: modelIds.length,
+    versionsUnpublished: versionIds.length,
+    bidsRefunded,
+  };
+}
+
 export const toggleBan = async ({
   id,
   reasonCode,
@@ -1082,7 +1302,8 @@ export const toggleBan = async ({
   isModerator,
   force,
 }: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
-  const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
+  // Get user with username for search index deletion
+  const user = await getUserById({ id, select: { bannedAt: true, meta: true, username: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
@@ -1111,43 +1332,39 @@ export const toggleBan = async ({
   await invalidateSession(id);
 
   if (!bannedAt) {
-    // Unpublish their models
-    const models = await dbRead.model.findMany({
-      where: { userId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
-    });
-
-    if (models.length) {
-      for (const model of models) {
-        await unpublishModelById({
-          id: model.id,
-          reason: 'other',
-          customMessage: 'User banned',
-          userId,
-          isModerator,
-        }).catch((error) => {
-          logToAxiom({
-            type: 'error',
-            name: 'ban-user-unpublish-model',
-            message: error.message,
-            error,
-          });
+    // Run cleanup operations in parallel groups
+    // Group A: DB-heavy operations (run together)
+    // Group B: External API operations (run together)
+    await Promise.all([
+      // Group A: Bulk unpublish models and handle bids
+      bulkUnpublishModelsForBannedUser({ odRef: id, odRefuserId: userId }).catch((error) => {
+        logToAxiom({
+          type: 'error',
+          name: 'ban-user-bulk-unpublish',
+          message: error.message,
+          error,
         });
-      }
-    }
+      }),
 
-    // Cancel their subscription
-    await cancelSubscriptionPlan({ userId: id }).catch((error) =>
-      logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
-    );
+      // Group B: External operations (subscription + search indexes)
+      Promise.all([
+        // Cancel their subscription
+        cancelSubscriptionPlan({ userId: id }).catch((error) =>
+          logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
+        ),
 
-    await removeUserContentFromSearchIndex(id).catch((error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'ban-user-remove-content-search-index',
-        message: error.message,
-        error,
-      })
-    );
+        // Remove from search indexes (filter-based deletion, no DB queries)
+        removeUserContentFromSearchIndex({ userId: id, username: user.username ?? '' }).catch(
+          (error) =>
+            logToAxiom({
+              type: 'error',
+              name: 'ban-user-remove-content-search-index',
+              message: error.message,
+              error,
+            })
+        ),
+      ]),
+    ]);
   }
 
   return updatedUser;
@@ -1434,9 +1651,13 @@ export const createUserReferral = async ({
   loginRedirectReason?: string;
   ip?: string;
 }) => {
-  const user = await dbRead.user.findUniqueOrThrow({
+  const findArgs = {
     where: { id },
     select: { id: true, referral: { select: { id: true, userReferralCodeId: true } } },
+  } as const;
+  const user = await dbRead.user.findUniqueOrThrow(findArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'user', caller: 'createUserReferral' });
+    return dbWrite.user.findUniqueOrThrow(findArgs);
   });
 
   if (!!user.referral?.userReferralCodeId || (!!user.referral && !userReferralCode)) {
@@ -1721,7 +1942,9 @@ export async function updateContentSettings({
 
     await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
   }
-  await refreshSession(userId);
+  refreshSession(userId).catch((err) => {
+    console.error('Failed to refresh session for user', userId, err);
+  });
 }
 
 export const getUserByPaddleCustomerId = async ({
@@ -1783,6 +2006,15 @@ export async function setUserSetting(userId: number, settings: UserSettingsInput
     userUpdateCounter?.inc({ location: 'user.service:setUserSetting:remove' });
   }
 
+  await userSettingsCache.bust([userId]);
+}
+
+export async function setDismissedAlerts(userId: number, alertIds: string[]) {
+  await dbWrite.$executeRawUnsafe(
+    `UPDATE "User" SET settings = jsonb_set(COALESCE(settings, '{}'), '{dismissedAlerts}', $1::jsonb) WHERE id = $2`,
+    JSON.stringify(alertIds),
+    userId
+  );
   await userSettingsCache.bust([userId]);
 }
 // #endregion

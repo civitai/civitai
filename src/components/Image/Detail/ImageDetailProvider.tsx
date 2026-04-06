@@ -32,6 +32,7 @@ type ImageDetailState = {
   navigate: (id: number) => void;
   updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
   collection?: CollectionByIdModel;
+  hideReactions?: boolean;
 };
 
 const ImageDetailContext = createContext<ImageDetailState | null>(null);
@@ -46,15 +47,19 @@ export function ImageDetailProvider({
   imageId,
   images: initialImages = [],
   hideReactionCount,
+  hideReactions,
   filters,
   collectionId,
+  withoutPost,
 }: {
   children: React.ReactElement;
   imageId: number;
   images?: ImagesInfiniteModel[];
   hideReactionCount?: boolean;
+  hideReactions?: boolean;
   filters: ImagesQueryParamSchema;
   collectionId?: number;
+  withoutPost?: boolean;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
@@ -89,7 +94,7 @@ export function ImageDetailProvider({
   // TODO - this needs to return the data as `ImagesInfiniteModel`
   // alternatively, we always query multiple images, with the cursor starting at `imageId`
   const { data: prefetchedImage, isInitialLoading: imageLoading } = trpc.image.get.useQuery(
-    { id: imageId },
+    { id: imageId, withoutPost },
     { enabled: shouldFetchImage }
   );
 
@@ -214,6 +219,7 @@ export function ImageDetailProvider({
         index,
         updateImage,
         collection,
+        hideReactions,
       }}
     >
       {children}

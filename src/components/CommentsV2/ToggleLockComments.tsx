@@ -1,5 +1,4 @@
 import type { CommentConnectorInput } from '~/server/schema/commentv2.schema';
-import produce from 'immer';
 import { trpc } from '~/utils/trpc';
 
 type ToggleLockCommentsProps = CommentConnectorInput & {
@@ -31,31 +30,25 @@ export function ToggleLockComments({
 
   const { mutate, isLoading } = trpc.commentv2.toggleLockThread.useMutation({
     onMutate: async () => {
-      // Update the dedicated threadMeta cache
-      queryUtils.commentv2.getThreadDetails.setData(
-        { entityId, entityType },
-        produce((old) => {
-          if (!old) return old;
-          old.locked = !old.locked;
-        })
-      );
+      queryUtils.commentv2.getThreadDetails.setData({ entityId, entityType }, (old) => {
+        if (!old) return { id: -1, locked: true, hiddenCount: 0 };
+        return { ...old, locked: !old.locked };
+      });
     },
-    onSuccess,
+    onSuccess: () => {
+      queryUtils.commentv2.getThreadDetails.invalidate({ entityId, entityType });
+      onSuccess?.();
+    },
     onError: () => {
-      // Revert cache on error
-      queryUtils.commentv2.getThreadDetails.setData(
-        { entityType, entityId },
-        produce((old) => {
-          if (!old) return old;
-          old.locked = !old.locked;
-        })
-      );
+      queryUtils.commentv2.getThreadDetails.setData({ entityType, entityId }, (old) => {
+        if (!old || old.id === -1) return null;
+        return { ...old, locked: !old.locked };
+      });
     },
   });
 
   const handleClick = () => mutate({ entityId, entityType });
+  const locked = threadMeta?.locked ?? false;
 
-  if (!threadMeta) return null;
-
-  return children({ toggle: handleClick, isLoading, locked: threadMeta.locked });
+  return children({ toggle: handleClick, isLoading, locked });
 }

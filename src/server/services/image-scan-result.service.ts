@@ -38,11 +38,33 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { updateComicNsfwLevelsForImage } from '~/server/services/nsfwLevels.service';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
+
+export async function isExemptFromAiVerification(
+  imageId: number,
+  metadata?: MediaMetadata | null
+): Promise<boolean> {
+  // Fast path: check metadata flags (no DB query needed)
+  if (metadata?.profilePicture) return true;
+  if (metadata?.coverImage) return true;
+
+  // DB fallback: check relationships for existing images without metadata flags
+  const [result] = await dbWrite.$queryRaw<{ exempt: boolean }[]>`
+    SELECT (
+      EXISTS(SELECT 1 FROM "User" WHERE "profilePictureId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR
+      EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty'))
+    ) AS exempt
+  `;
+  return result?.exempt ?? false;
+}
 
 type WdTaggingStep = {
   $type: 'wdTagging';
@@ -95,24 +117,22 @@ export async function processImageScanResult(req: NextApiRequest) {
   if (!imageId) throw new Error(`missing workflow metadata.imageId - ${event.workflowId}`);
 
   if (event.status !== 'succeeded') {
-    const image = await dbWrite.image.findUnique({
-      where: { id: imageId },
-      select: { id: true, scanJobs: true },
-    });
-    if (image) {
-      const scanJobs = (image.scanJobs ?? {}) as { retryCount?: number; workflowId?: string };
-      scanJobs.retryCount = scanJobs.retryCount ?? 0;
-      scanJobs.retryCount++;
-      scanJobs.workflowId = event.workflowId;
-
-      await dbWrite.image.updateMany({
-        where: { id: image.id },
-        data: {
-          ingestion: ImageIngestionStatus.Error,
-          scanJobs: scanJobs as any,
-        },
-      });
-    }
+    // Atomically increment retryCount and set workflowId without clobbering other scanJobs fields
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET
+        "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
+        "scanJobs" = jsonb_set(
+          jsonb_set(
+            COALESCE("scanJobs", '{}'),
+            '{retryCount}',
+            to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
+          ),
+          '{workflowId}',
+          ${JSON.stringify(event.workflowId)}::jsonb
+        )
+      WHERE id = ${imageId}
+    `;
   } else {
     const steps = (data.steps ?? []) as unknown as ScanResultStep[];
 
@@ -227,16 +247,20 @@ export async function processImageScanResult(req: NextApiRequest) {
 
     const validAiGeneration = isValidAIGeneration({ ...image, tags, meta: image.meta as any });
 
+    // Build update data - scanJobs will be updated atomically via raw SQL
     const toUpdate: Prisma.ImageUpdateInput = {
       updatedAt: new Date(),
       pHash,
-      scanJobs: { ...(image.scanJobs as Record<string, unknown>), workflowId: event.workflowId },
     };
     if (audit.blockedFor) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = audit.blockedFor;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
-    } else if (audit.nsfw && !validAiGeneration) {
+    } else if (
+      audit.nsfw &&
+      !validAiGeneration &&
+      !(await isExemptFromAiVerification(image.id, image.metadata as MediaMetadata | null))
+    ) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
       toUpdate.blockedFor = BlockedReason.AiNotVerified;
       toUpdate.nsfwLevel = audit.nsfwLevel;
@@ -251,7 +275,24 @@ export async function processImageScanResult(req: NextApiRequest) {
       toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
     }
 
-    await dbWrite.image.update({ where: { id: image.id }, data: toUpdate });
+    // Use atomic update for scanJobs to avoid clobbering concurrent changes to scans field
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET
+        "updatedAt" = ${toUpdate.updatedAt},
+        "pHash" = ${pHash ?? null},
+        "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
+        "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
+        "nsfwLevel" = ${toUpdate.nsfwLevel as number},
+        "needsReview" = ${(toUpdate.needsReview as string) ?? null},
+        "minor" = ${(toUpdate.minor as boolean) ?? false},
+        "poi" = ${(toUpdate.poi as boolean) ?? false},
+        "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
+        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
+          event.workflowId
+        )}::jsonb)
+      WHERE id = ${image.id}
+    `;
 
     // handle blocked image updates
     if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {
@@ -271,6 +312,7 @@ export async function processImageScanResult(req: NextApiRequest) {
       }
 
       if (image.postId) await updatePostNsfwLevel(image.postId);
+      await updateComicNsfwLevelsForImage(image.id);
 
       // NEW: Debounced article updates (prevents N+1 issue)
       // Only process if feature flag is enabled
@@ -337,12 +379,15 @@ async function processTags({
   if (prompt) {
     // Detect real person in prompt
     const realPersonName = includesPoi(prompt);
-    if (realPersonName)
+    if (realPersonName) {
+      const tagName =
+        typeof realPersonName === 'object' ? realPersonName.matchedText : realPersonName;
       normalized.push({
-        name: realPersonName.toLowerCase(),
+        name: tagName.toLowerCase(),
         confidence: 100,
         source: TagSource.Computed,
       });
+    }
 
     // Detect tags from prompt
     const promptTags = getTagsFromPrompt(prompt);

@@ -2,6 +2,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { MembershipTypeSelector } from '~/components/Purchase/MembershipTypeSelector';
 import { RedMembershipUnavailable } from '~/components/Purchase/RedMembershipUnavailable';
+import { YellowMembershipUnavailable } from '~/components/Purchase/YellowMembershipUnavailable';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { MembershipPlans } from '~/components/Purchase/MembershipPlans';
 import { MembershipPageWrapper } from '~/components/Purchase/MembershipPageWrapper';
@@ -25,8 +26,10 @@ export default function Pricing() {
   const paymentProvider = usePaymentProvider();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
+  // On green site: default to green
+  // On yellow site: default to yellow (skip the selector entirely)
   const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
-    features.isGreen ? 'green' : queryBuzzType
+    features.isGreen ? 'green' : queryBuzzType ?? 'yellow'
   );
   const buzzConfig = useBuzzCurrencyConfig(selectedBuzzType);
   const { subscription, subscriptionPaymentProvider, isFreeTier } = useActiveSubscription({
@@ -80,6 +83,21 @@ export default function Pricing() {
           }}
           onGoBack={() => setSelectedBuzzType(undefined)}
         />
+      </MembershipPageWrapper>
+    );
+  }
+
+  // Yellow memberships are no longer available — show purchase options
+  if (!features.isGreen && selectedBuzzType === 'yellow') {
+    return (
+      <MembershipPageWrapper
+        title="Yellow Memberships"
+        introText=""
+        reason={reason}
+        containerSize="sm"
+        buzzType={selectedBuzzType}
+      >
+        <YellowMembershipUnavailable />
       </MembershipPageWrapper>
     );
   }

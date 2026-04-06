@@ -22,6 +22,41 @@ const log = (event: BuzzEventLog, data: MixedObject) => {
   }).catch();
 };
 
+// Lua script for atomic on-demand reward processing.
+// Eliminates race conditions by performing read-check-write in a single atomic Redis operation.
+// KEYS[1] = hash key (buzz-events)
+// ARGV[1] = hash field (userId:type)
+// ARGV[2] = cache key (hashed event key for dedup)
+// ARGV[3] = effective award amount (already multiplied)
+// ARGV[4] = effective cap (already multiplied)
+// ARGV[5] = timestamp for cache entry
+// ARGV[6] = end-of-day unix timestamp for hash expiry
+const ON_DEMAND_REWARD_SCRIPT = `
+  local cacheJson = redis.call('HGET', KEYS[1], ARGV[1])
+  local cache = cjson.decode(cacheJson or '{}')
+
+  -- Check if already awarded (dedup by cache key)
+  if cache[ARGV[2]] then
+    return -1
+  end
+
+  -- Count entries and enforce cap
+  local count = 0
+  for _ in pairs(cache) do count = count + 1 end
+  local awarded = count * tonumber(ARGV[3])
+  local remaining = math.max(tonumber(ARGV[4]) - awarded, 0)
+  local toAward = math.min(tonumber(ARGV[3]), remaining)
+
+  -- Update cache with new entry
+  cache[ARGV[2]] = ARGV[5]
+  redis.call('HSET', KEYS[1], ARGV[1], cjson.encode(cache))
+
+  -- Set hash expiry to end of UTC day
+  redis.call('EXPIREAT', KEYS[1], tonumber(ARGV[6]))
+
+  return toAward
+`;
+
 export function createBuzzEvent<T>({
   type,
   description,
@@ -139,30 +174,30 @@ export function createBuzzEvent<T>({
     );
   };
 
-  const processOnDemand = async (key: BuzzEventKey) => {
+  const processOnDemand = async (key: BuzzEventKey, multiplier: number) => {
     if (!isOnDemand) return false;
 
-    // Get daily cache for user
-    const typeCacheJson =
-      (await redis.hGet(REDIS_KEYS.BUZZ_EVENTS, `${key.toUserId}:${type}`)) ?? '{}';
-    const typeCache = JSON.parse(typeCacheJson);
-    const cacheKey = hashifyObject(key);
+    const hashField = `${key.toUserId}:${type}`;
+    const cacheKey = String(hashifyObject(key));
+    const effectiveAward = Math.ceil(awardAmount * multiplier);
+    const effectiveCap = Math.ceil((buzzEvent.cap ?? Infinity) * multiplier);
+    const now = Date.now().toString();
+    const endOfDay = Math.floor(new Date().setUTCHours(23, 59, 59, 999) / 1000);
 
-    // Check if already awarded
-    const hasAlreadyAwarded = typeCache[cacheKey];
-    if (hasAlreadyAwarded) return false;
+    const result = (await redis.eval(ON_DEMAND_REWARD_SCRIPT, {
+      keys: [REDIS_KEYS.BUZZ_EVENTS],
+      arguments: [
+        hashField,
+        cacheKey,
+        String(effectiveAward),
+        String(effectiveCap),
+        now,
+        String(endOfDay),
+      ],
+    })) as number;
 
-    // Determine amount to award
-    const awarded = Object.keys(typeCache).length * awardAmount;
-    const cap = buzzEvent.cap ?? Infinity;
-    const remaining = Math.max(cap - awarded, 0);
-    const toAward = Math.min(awardAmount, remaining);
-
-    // Update cache
-    typeCache[cacheKey] = Date.now().toString();
-    await redis.hSet(REDIS_KEYS.BUZZ_EVENTS, `${key.toUserId}:${type}`, JSON.stringify(typeCache));
-
-    return toAward;
+    if (result === -1) return false; // Already awarded
+    return result; // 0 (capped) or effectiveAward
   };
 
   const apply = async (input: T, tracking?: { ip?: string; fingerprint?: Fingerprint }) => {
@@ -189,11 +224,13 @@ export function createBuzzEvent<T>({
     };
 
     if (isOnDemand) {
-      const toAward = await processOnDemand(key);
+      const toAward = await processOnDemand(key, rewardsMultiplier);
       if (toAward === false) return; // already awarded
 
       event.status = toAward > 0 ? 'awarded' : 'capped';
-      event.awardAmount = toAward;
+      // Keep base awardAmount and multiplier for ClickHouse storage consistency.
+      // processOnDemand already enforced the cap using multiplied values.
+      if (event.status === 'capped') event.awardAmount = 0;
     }
 
     try {

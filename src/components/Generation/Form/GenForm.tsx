@@ -20,7 +20,7 @@ export function GenForm<
             message:
               snapshot.requestsRemaining === 0
                 ? `You are already generating at your limit: ${snapshot.queued.length}`
-                : 'Generator is currently unavailable',
+                : 'Request queued. Your generation request will begin shortly.',
           });
           return;
         }

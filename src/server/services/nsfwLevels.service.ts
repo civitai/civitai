@@ -36,6 +36,11 @@ async function getImageConnectedEntities(imageIds: number[]) {
     // }),
   ]);
 
+  const comicPanels = await dbRead.comicPanel.findMany({
+    where: { imageId: { in: imageIds } },
+    select: { projectId: true },
+  });
+
   return {
     postIds: images.map((x) => x.postId).filter(isDefined),
     articleIds: [
@@ -52,6 +57,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
     bountyEntryIds: connections
       .filter((x) => x.entityType === ImageConnectionType.BountyEntry)
       .map((x) => x.entityId),
+    comicProjectIds: comicPanels.map((x) => x.projectId),
     // collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
@@ -116,6 +122,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   collectionIds?: number[];
   modelIds?: number[];
   modelVersionIds?: number[];
+  comicProjectIds?: number[];
 }) {
   let postIds: number[] = [];
   let articleIds: number[] = [];
@@ -124,6 +131,7 @@ export async function getNsfwLevelRelatedEntities(source: {
   let collectionIds: number[] = [];
   let modelIds: number[] = [];
   let modelVersionIds: number[] = [];
+  let comicProjectIds: number[] = [];
 
   function mergeRelated(
     data: Partial<{
@@ -134,6 +142,7 @@ export async function getNsfwLevelRelatedEntities(source: {
       collectionIds: number[];
       modelIds: number[];
       modelVersionIds: number[];
+      comicProjectIds: number[];
     }>
   ) {
     if (data.postIds) postIds = uniq(postIds.concat(data.postIds));
@@ -143,6 +152,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     if (data.collectionIds) collectionIds = uniq(collectionIds.concat(data.collectionIds));
     if (data.modelIds) modelIds = uniq(modelIds.concat(data.modelIds));
     if (data.modelVersionIds) modelVersionIds = uniq(modelVersionIds.concat(data.modelVersionIds));
+    if (data.comicProjectIds) comicProjectIds = uniq(comicProjectIds.concat(data.comicProjectIds));
   }
 
   if (source.imageIds?.length) {
@@ -187,6 +197,7 @@ export async function getNsfwLevelRelatedEntities(source: {
     collectionIds,
     modelIds,
     modelVersionIds,
+    comicProjectIds: uniq([...(source.comicProjectIds ?? []), ...comicProjectIds]),
   };
 }
 
@@ -213,6 +224,7 @@ export async function updateNsfwLevels({
   collectionIds,
   modelIds,
   modelVersionIds,
+  comicProjectIds = [],
 }: {
   postIds: number[];
   articleIds: number[];
@@ -221,6 +233,7 @@ export async function updateNsfwLevels({
   collectionIds: number[];
   modelIds: number[];
   modelVersionIds: number[];
+  comicProjectIds?: number[];
 }) {
   const updatePosts = batcher(postIds, updatePostNsfwLevels);
   const updateArticles = batcher(articleIds, updateArticleNsfwLevels);
@@ -228,12 +241,14 @@ export async function updateNsfwLevels({
   const updateBountyEntries = batcher(bountyEntryIds, updateBountyEntryNsfwLevels);
   const updateModelVersions = batcher(modelVersionIds, updateModelVersionNsfwLevels);
   const updateModels = batcher(modelIds, updateModelNsfwLevels);
+  const updateComicChapters = batcher(comicProjectIds, updateComicChapterNsfwLevels);
+  const updateComicProjects = batcher(comicProjectIds, updateComicProjectNsfwLevels);
   // Collections are processed by separate optimized job
   // const updateCollections = batcher(collectionIds, updateCollectionsNsfwLevels);
 
   const nsfwLevelChangeBatches = [
-    [updatePosts, updateArticles, updateBounties, updateBountyEntries],
-    [updateModelVersions],
+    [updatePosts, updateArticles, updateBounties, updateBountyEntries, updateComicChapters],
+    [updateModelVersions, updateComicProjects],
     [updateModels],
     // Collections handled by dedicated job for performance
     // [updateCollections],
@@ -485,4 +500,55 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
     WHERE level.id = mv.id AND level."nsfwLevel" != mv."nsfwLevel"
     RETURNING mv.id;
   `);
+}
+
+export async function updateComicChapterNsfwLevels(projectIds: number[]) {
+  if (!projectIds.length) return;
+  // Use LEFT JOINs so chapters with no remaining panels (or no panel images)
+  // get their nsfwLevel reset to 0 instead of being silently skipped.
+  await dbWrite.$queryRaw(Prisma.sql`
+    WITH level AS (
+      SELECT ch."projectId", ch."position" AS "chapterPosition",
+             COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
+      FROM "ComicChapter" ch
+      LEFT JOIN "ComicPanel" p ON p."projectId" = ch."projectId"
+        AND p."chapterPosition" = ch."position"
+      LEFT JOIN "Image" i ON i.id = p."imageId"
+      WHERE ch."projectId" IN (${Prisma.join(projectIds)})
+      GROUP BY ch."projectId", ch."position"
+    )
+    UPDATE "ComicChapter" ch
+    SET "nsfwLevel" = level."nsfwLevel"
+    FROM level
+    WHERE ch."projectId" = level."projectId"
+      AND ch."position" = level."chapterPosition"
+      AND ch."nsfwLevel" != level."nsfwLevel";
+  `);
+}
+
+export async function updateComicProjectNsfwLevels(projectIds: number[]) {
+  if (!projectIds.length) return;
+  await dbWrite.$queryRaw(Prisma.sql`
+    WITH level AS (
+      SELECT "projectId" as id, COALESCE(bit_or("nsfwLevel"), 0) "nsfwLevel"
+      FROM "ComicChapter"
+      WHERE "projectId" IN (${Prisma.join(projectIds)})
+      GROUP BY "projectId"
+    )
+    UPDATE "ComicProject" cp
+    SET "nsfwLevel" = level."nsfwLevel"
+    FROM level
+    WHERE level.id = cp.id AND level."nsfwLevel" != cp."nsfwLevel";
+  `);
+}
+
+export async function updateComicNsfwLevelsForImage(imageId: number) {
+  const panels = await dbRead.comicPanel.findMany({
+    where: { imageId },
+    select: { projectId: true },
+  });
+  if (!panels.length) return;
+  const projectIds = [...new Set(panels.map((p) => p.projectId))];
+  await updateComicChapterNsfwLevels(projectIds);
+  await updateComicProjectNsfwLevels(projectIds);
 }

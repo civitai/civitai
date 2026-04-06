@@ -4,7 +4,7 @@ import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
@@ -28,7 +28,6 @@ import {
   optimizerTypes,
   trainingBaseModelType,
 } from '~/utils/training';
-import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
@@ -68,7 +67,10 @@ export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
 export const trainingDetailsBaseModelsWan = ['wan_2_1_i2v_14b_720p', 'wan_2_1_t2v_14b'] as const;
 export const trainingDetailsBaseModelsChroma = ['chroma'] as const;
 export const trainingDetailsBaseModelsQwen = ['qwen_image'] as const;
-export const trainingDetailsBaseModelsZImageTurbo = ['zimageturbo'] as const;
+export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as const;
+export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
+export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
+export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -76,13 +78,16 @@ const trainingDetailsBaseModelsImage = [
   // ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
   ...trainingDetailsBaseModelsFlux2,
+  ...trainingDetailsBaseModelsFlux2Klein,
   ...trainingDetailsBaseModelsChroma,
   ...trainingDetailsBaseModelsQwen,
-  ...trainingDetailsBaseModelsZImageTurbo,
+  ...trainingDetailsBaseModelsZImage,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
   ...trainingDetailsBaseModelsWan,
+  ...trainingDetailsBaseModelsLtx2,
+  ...trainingDetailsBaseModelsLtx23,
 ] as const;
 
 const trainingDetailsBaseModels = [
@@ -142,7 +147,6 @@ const aiToolkitTrainingDetailsParams = z.object({
   trainTextEncoder: z.boolean(),
   lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
   optimizerType: z.enum([
-    'adam',
     'adamw',
     'adamw8bit',
     'adam8bit',
@@ -152,6 +156,7 @@ const aiToolkitTrainingDetailsParams = z.object({
     'adagrad',
     'prodigy',
     'prodigy8bit',
+    'automagic',
   ]),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
@@ -160,6 +165,7 @@ const aiToolkitTrainingDetailsParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  numRepeats: z.number().optional(),
   maxTrainEpochs: z.number().nullable().optional(),
 });
 
@@ -191,7 +197,7 @@ export const trainingDetailsObj = z.object({
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(baseModels),
+  baseModel: z.string(),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -250,7 +256,7 @@ export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(baseModels),
+  baseModel: z.string(),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -384,4 +390,9 @@ export const getModelVersionPopularityInput = z.object({
 export type GetModelVersionsPopularityInput = z.infer<typeof getModelVersionsPopularityInput>;
 export const getModelVersionsPopularityInput = z.object({
   ids: z.array(z.number()),
+});
+
+export type GetModelVersionsByIdsInput = z.infer<typeof getModelVersionsByIdsInput>;
+export const getModelVersionsByIdsInput = z.object({
+  ids: z.array(z.number()).max(50),
 });

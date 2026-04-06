@@ -35,7 +35,7 @@ import {
   ToolType,
 } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
@@ -162,6 +162,11 @@ const generationFilterSchema = z.object({
   sort: z.enum(GenerationSort).default(GenerationSort.Newest),
   marker: z.enum(GenerationReactType).optional(),
   tags: z.string().array().optional(),
+  baseModel: z.string().optional(),
+  processType: z.string().optional(),
+  fromDate: z.date().optional(),
+  toDate: z.date().optional(),
+  excludeFailed: z.boolean().optional(),
 });
 
 type ToolFilterSchema = z.infer<typeof toolFilterSchema>;

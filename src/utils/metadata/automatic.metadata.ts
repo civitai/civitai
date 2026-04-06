@@ -14,9 +14,9 @@ type CivitaiResource = {
 };
 
 // #region [helpers]
-const hashesRegex = /, Hashes:\s*({[^}]+})/;
+const hashesPrefix = ', Hashes: ';
 const civitaiResources = /, Civitai resources:\s*(\[\{.*?\}\])/;
-const civitaiMetadata = /, Civitai metadata:\s*(\{.*?\})/;
+const civitaiMetadataPrefix = ', Civitai metadata: ';
 const badExtensionKeys = ['Resources: ', 'Hashed prompt: ', 'Hashed Negative prompt: '];
 const templateKeys = ['Template: ', 'Negative Template: '] as const;
 const automaticExtraNetsRegex = /<(lora|hypernet):([a-zA-Z0-9_\.\-]+):([0-9.]+)>/g;
@@ -47,6 +47,48 @@ const excludedKeys = [
   'other',
   'external',
 ];
+/** Extract a balanced JSON object from a string, handling nested braces. */
+function extractBalancedJson(
+  str: string,
+  prefix: string
+): { json: string; start: number; end: number } | null {
+  const prefixIndex = str.indexOf(prefix);
+  if (prefixIndex === -1) return null;
+
+  const jsonStart = str.indexOf('{', prefixIndex + prefix.length);
+  if (jsonStart === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = jsonStart; i < str.length; i++) {
+    const char = str[i];
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (char === '\\') {
+      escape = true;
+      continue;
+    }
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (char === '{') depth++;
+    else if (char === '}') {
+      depth--;
+      if (depth === 0) {
+        return { json: str.substring(jsonStart, i + 1), start: prefixIndex, end: i + 1 };
+      }
+    }
+  }
+
+  return null;
+}
+
 function isPartialDate(date: string) {
   return date.length === 14 && date[11] === 'T';
 }
@@ -136,10 +178,10 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     }
 
     // Extract Hashes
-    const hashes = detailsLine?.match(hashesRegex)?.[1];
-    if (hashes && detailsLine) {
-      metadata.hashes = JSON.parse(hashes);
-      detailsLine = detailsLine.replace(hashesRegex, '');
+    const hashesResult = detailsLine ? extractBalancedJson(detailsLine, hashesPrefix) : null;
+    if (hashesResult && detailsLine) {
+      metadata.hashes = JSON.parse(hashesResult.json);
+      detailsLine = detailsLine.slice(0, hashesResult.start) + detailsLine.slice(hashesResult.end);
     }
 
     // Extract Civitai Resources
@@ -158,12 +200,16 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       detailsLine = detailsLine.replace(civitaiResources, '');
     }
 
-    // Extract Civitai Metadata
-    const civitaiMetadataMatch = detailsLine?.match(civitaiMetadata)?.[1];
+    // Extract Civitai Metadata (uses balanced brace extraction to handle nested JSON)
+    const civitaiMetadataMatch = detailsLine
+      ? extractBalancedJson(detailsLine, civitaiMetadataPrefix)
+      : null;
     if (civitaiMetadataMatch && detailsLine) {
-      const data = JSON.parse(civitaiMetadataMatch) as Record<string, any>;
+      const data = JSON.parse(civitaiMetadataMatch.json) as Record<string, any>;
       if (Object.keys(data).length !== 0) metadata.extra = data;
-      detailsLine = detailsLine.replace(civitaiMetadata, '');
+      detailsLine =
+        detailsLine.slice(0, civitaiMetadataMatch.start) +
+        detailsLine.slice(civitaiMetadataMatch.end);
     }
 
     // Extract fine details
@@ -221,6 +267,29 @@ export const automaticMetadataProcessor = createMetadataProcessor({
       });
     }
 
+    // Extract Refiner hash
+    if (metadata['Refiner'] && metadata['Refiner hash']) {
+      if (!metadata.hashes) metadata.hashes = {};
+      if (!metadata.hashes['refiner'])
+        metadata.hashes['refiner'] = metadata['Refiner hash'] as string;
+
+      resources.push({
+        type: 'model',
+        name: (metadata['Refiner'] as string).replace(/\.[^/.]+$/, ''),
+        hash: metadata['Refiner hash'] as string,
+      });
+    }
+
+    // Extract Size into width/height
+    if (metadata['Size'] && typeof metadata['Size'] === 'string') {
+      const [w, h] = (metadata['Size'] as string).split('x').map(Number);
+      if (w && h) {
+        metadata.width = w;
+        metadata.height = h;
+      }
+      delete metadata['Size'];
+    }
+
     // Extract hypernetwork details
     if (metadata['Hypernet'] && metadata['Hypernet strength'])
       resources.push({
@@ -256,6 +325,7 @@ export const automaticMetadataProcessor = createMetadataProcessor({
     const fineDetails = [];
     if (steps) fineDetails.push(`Steps: ${steps}`);
     for (const [k, v] of Object.entries(other)) {
+      if (v == null || typeof v === 'object') continue;
       const key = automaticSDEncodeMap.get(k) ?? k;
       if (excludedKeys.includes(key)) continue;
       fineDetails.push(`${key}: ${v}`);

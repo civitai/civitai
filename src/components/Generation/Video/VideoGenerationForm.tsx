@@ -4,7 +4,6 @@ import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generat
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { hashify } from '~/utils/string-helpers';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { numberWithCommas } from '~/utils/number-helpers';
 
@@ -29,8 +28,13 @@ import { MinimaxFormInput } from '~/components/Generation/Video/MinimaxFormInput
 import { HaiperFormInput } from '~/components/Generation/Video/HaiperFormInput';
 import { MochiFormInput } from '~/components/Generation/Video/MochiFormInput';
 import { LightricksFormInput } from '~/components/Generation/Video/LightricksFormInput';
+import { Ltx2FormInput } from '~/components/Generation/Video/Ltx2FormInput';
 import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
-import { generationStore, useGenerationStore } from '~/store/generation.store';
+import { generationGraphStore, useGenerationGraphStore } from '~/store/generation-graph.store';
+import { isNewFormOnly } from '~/shared/data-graph/generation/config/workflows';
+import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { openSwitchToNewFormModal } from '~/components/generation_v2/SwitchToNewFormModal';
+import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { StepProvider } from '~/components/Generation/Providers/StepProvider';
 import { useDebouncer } from '~/utils/debouncer';
@@ -39,11 +43,44 @@ import { useImagesUploadingStore } from '~/components/Generation/Input/SourceIma
 import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
 import { SoraFormInput } from '~/components/Generation/Video/SoraFormInput';
 import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
+import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  mapDataToGraphInput,
+  mapGraphToLegacyParams,
+  splitResourcesByType,
+} from '~/server/services/orchestrator/legacy-metadata-mapper';
+import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
+import { removeEmpty } from '~/utils/object-helpers';
+import { parseAIR, urnToModelType } from '~/shared/utils/air';
+import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
+
+/**
+ * Keys excluded from whatIf queries — these don't affect cost estimation.
+ * All other form values are passed through to the generation graph.
+ */
+const WHATIF_EXCLUDE_KEYS = new Set(['prompt', 'negativePrompt', 'seed', 'cfgScale']);
+
+
+/** Build external context for generation graph from status */
+function buildGraphContext(status: {
+  limits: { quantity: number; resources: number };
+  tier: string;
+}): GenerationCtx {
+  return {
+    limits: {
+      maxQuantity: status.limits.quantity,
+      maxResources: status.limits.resources,
+    },
+    user: {
+      isMember: status.tier !== 'free',
+      tier: status.tier as GenerationCtx['user']['tier'],
+    },
+  };
+}
 
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
-  // const engine = useVideoGenerationStore((state) => state.engine);
-  const storeData = useGenerationStore((state) => state.data);
+  const storeData = useGenerationGraphStore((state) => state.data);
 
   const config = useMemo(() => videoGenerationConfig2[engine], [engine]);
   const status = useGenerationStatus();
@@ -72,7 +109,8 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     storage: localStorage,
   });
 
-  const { mutate, isLoading } = useGenerate({
+  // Use shared hook with optimistic cache updates for queryGeneratedImages
+  const { mutate, isPending: isLoading } = useGenerateFromGraph({
     onError: (error) => {
       if (error.message && error.message.startsWith('Your prompt was flagged')) {
         form.setError('prompt', { type: 'custom', message: error.message }, { shouldFocus: true });
@@ -91,15 +129,49 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
   function handleSubmit(data: Record<string, unknown>) {
     if (isLoading || isLoadingDebounced) return;
     setError(undefined);
-    // will we ever have free generation again?
     const { cost = 0 } = getState();
     try {
       const validated = config.validate(data);
       setIsLoadingDebounced(true);
+
+      // Transform via metadataFn (applies transformFn which sets correct baseModel/ecosystem)
+      // then mapDataToGraphInput to convert to graph-compatible format
+      const metadata = config.metadataFn(validated as any);
+      const graphInput = mapDataToGraphInput(metadata as Record<string, unknown>, []);
+      const parsedResources =
+        'resources' in metadata && Array.isArray((metadata as any).resources)
+          ? (metadata as any).resources.map((r: any) => {
+              const parsed = parseAIR(r.air);
+              return removeEmpty({
+                id: r.id,
+                model: { type: urnToModelType(parsed.type) },
+                strength: r.strength,
+              });
+            })
+          : [];
+
+      const { model, resources: splitResources } = splitResourcesByType(parsedResources);
+      graphInput.model = model;
+      graphInput.resources = splitResources;
+
+      // Clone generation graph, initialize with mapped data, and validate
+      const graph = generationGraph.clone();
+      const externalCtx = buildGraphContext(status);
+      graph.init(removeEmpty(graphInput) as any, externalCtx);
+      const result = graph.validate();
+
+      if (!result.success) {
+        console.error('Graph validation failed:', result.errors);
+        setError('Validation failed. Please check your inputs.');
+        setIsLoadingDebounced(false);
+        return;
+      }
+
+      const graphData = result.data;
+
       conditionalPerformTransaction(cost, () => {
         mutate({
-          $type: 'videoGen',
-          data: validated,
+          input: graphData,
         });
       });
     } catch (e: any) {
@@ -112,17 +184,38 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
 
   useEffect(() => {
     if (storeData && config) {
-      // const registered = Object.keys(form.getValues());
       const { params, resources, runType } = storeData;
-      let data = params;
+
+      // Check if this data requires the new generation form
+      const workflowKey = params.workflow as string | undefined;
+      const ecosystemKey = params.ecosystem as string | undefined;
+      const ecosystemId = ecosystemKey ? ecosystemByKey.get(ecosystemKey)?.id : undefined;
+      const checkpointModelId = (resources as { id: number; model: { type: string } }[]).find(
+        (r) => r.model.type === 'Checkpoint'
+      )?.id;
+      if (workflowKey && isNewFormOnly(workflowKey, ecosystemId, checkpointModelId)) {
+        openSwitchToNewFormModal({
+          onConfirm: () => {
+            useLegacyGeneratorStore.getState().switchToNew();
+          },
+          onCancel: () => {
+            generationGraphStore.clearData();
+          },
+        });
+        return;
+      }
+
+      // Store params are in graph format (workflow, ecosystem, wanVersion).
+      // Convert to legacy format (process, engine, version) for softValidate.
+      let data = mapGraphToLegacyParams(params);
       if (runType === 'patch') {
         const formData = form.getValues();
-        data = { ...formData, ...params };
+        data = { ...formData, ...data };
       }
       const validated = config.softValidate(data);
       form.reset({ ...validated, resources }, { keepDefaultValues: true });
 
-      generationStore.clearData();
+      generationGraphStore.clearData();
     }
   }, [storeData, config]);
 
@@ -196,29 +289,35 @@ function SubmitButton2({
   engine: OrchestratorEngine2;
   setError: (error?: string) => void;
 }) {
-  // const engine = useVideoGenerationStore((state) => state.engine);
   const setState = useVideoGenerationStore((state) => state.setState);
+  const status = useGenerationStatus();
   const config = videoGenerationConfig2[engine];
   const [query, setQuery] = useState<Record<string, any> | null>(null);
   const [canQuery, setCanQuery] = useState(false);
   const { getValues, watch } = useFormContext();
-  // const [error, setError] = useState<string | null>(null);
   const isUploadingImageValue = useIsMutating({
     mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
   });
   const isUploadingMultiple = useImagesUploadingStore((state) => state.uploading.length > 0);
   const isUploadingImage = isUploadingImageValue === 1 || isUploadingMultiple;
-  const { data, isFetching, error } = trpc.orchestrator.whatIf.useQuery(
-    { $type: 'videoGen', data: query as Record<string, any> },
-    { keepPreviousData: false, enabled: !!query && !isUploadingImage && canQuery }
+
+  // Use whatIfFromGraph instead of legacy whatIf route
+  const { data: queryData, isFetching, error } = trpc.orchestrator.whatIfFromGraph.useQuery(
+    query!,
+    { enabled: !!query && !isUploadingImage && canQuery }
+  );
+
+  const data = useMemo(
+    () => queryData ?? { cost: defaultWorkflowCost, ready: false, allowMatureContent: false, transactions: undefined },
+    [queryData]
   );
 
   useEffect(() => {
     setError(error?.message);
   }, [error]);
 
-  const cost = data?.cost?.total ?? 0;
-  const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
+  const cost = data.cost?.total ?? 0;
+  const totalCost = cost;
   const debouncer = useDebouncer(150);
 
   const promptRef = useRef('');
@@ -228,27 +327,57 @@ function SubmitButton2({
     function handleFormData() {
       debouncer(() => {
         const formData = getValues();
-        const whatIfData = config.whatIfProps.reduce<Record<string, unknown>>(
-          (acc, prop) => ({ ...acc, [prop]: formData[prop] }),
-          {}
+        // Pass all form values except keys that don't affect cost/validation
+        const whatIfData = Object.fromEntries(
+          Object.entries(formData).filter(([key]) => !WHATIF_EXCLUDE_KEYS.has(key))
         );
 
         try {
-          const result = config.getWhatIfValues({
-            ...whatIfData,
-            priority: formData.priority,
-            prompt: formData['prompt'],
-          });
+          const result = config.getWhatIfValues(whatIfData);
+
+          // Strip image data from resources (not needed for whatIf)
           if ('resources' in result && !!result.resources)
             result.resources = (result.resources! as Record<string, any>[]).map(
               ({ image, ...resource }) => resource
             ) as any;
 
-          if (!promptFocused && result.prompt !== undefined) {
-            promptRef.current = result.prompt!;
+          // Read prompt from form data directly — result.prompt is always empty
+          // since prompt is excluded from whatIfData via WHATIF_EXCLUDE_KEYS
+          if (!promptFocused) {
+            promptRef.current = formData.prompt ?? '';
           }
 
-          setQuery({ ...result, prompt: promptRef.current });
+          // Transform via metadataFn (applies transformFn which sets correct baseModel/ecosystem)
+          // then mapDataToGraphInput to convert to graph-compatible format
+          const metadata = config.metadataFn({
+            ...result,
+            prompt: promptRef.current,
+          } as any);
+          const graphInput = mapDataToGraphInput(metadata as Record<string, unknown>, []);
+          const parsedResources =
+            'resources' in metadata && Array.isArray((metadata as any).resources)
+              ? (metadata as any).resources.map((r: any) => {
+                  const parsed = parseAIR(r.air);
+                  return removeEmpty({
+                    id: r.id,
+                    model: { type: urnToModelType(parsed.type) },
+                    strength: r.strength,
+                  });
+                })
+              : [];
+
+          const { model, resources: splitResources } = splitResourcesByType(parsedResources);
+          graphInput.model = model;
+          graphInput.resources = splitResources;
+
+          // Clone generation graph, initialize with mapped data, and validate partial
+          // validatePartial returns valid data even if some nodes fail (useful for whatIf)
+          const graph = generationGraph.clone();
+          const externalCtx = buildGraphContext(status);
+          graph.init(removeEmpty(graphInput) as any, externalCtx);
+          const { data: graphData } = graph.validatePartial();
+
+          setQuery(graphData);
         } catch (e: any) {
           console.log({ e });
           setQuery(null);
@@ -269,7 +398,7 @@ function SubmitButton2({
   }, []);
 
   useEffect(() => {
-    setState({ cost: data?.cost?.base ?? undefined });
+    setState({ cost: data.cost?.base ?? undefined });
   }, [data]);
 
   return (
@@ -277,17 +406,17 @@ function SubmitButton2({
       <GenerateButton
         type="submit"
         className="flex-1"
-        disabled={!data || !query || isUploadingImage}
+        disabled={!query || isUploadingImage}
         loading={isFetching || loading}
         cost={totalCost}
-        transactions={data?.transactions}
-        allowMatureContent={data?.allowMatureContent}
+        transactions={data.transactions}
+        allowMatureContent={data.allowMatureContent}
       >
         Generate
       </GenerateButton>
       <GenerationCostPopover
         width={300}
-        workflowCost={data?.cost ?? {}}
+        workflowCost={data.cost ?? defaultWorkflowCost}
         hideCreatorTip
         hideCivitaiTip
       />
@@ -295,7 +424,7 @@ function SubmitButton2({
   );
 }
 
-const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
+const inputDictionary: Partial<Record<OrchestratorEngine2, () => JSX.Element>> = {
   veo3: Veo3FormInput,
   vidu: ViduFormInput,
   wan: WanFormInput,
@@ -305,5 +434,6 @@ const inputDictionary: Record<OrchestratorEngine2, () => JSX.Element> = {
   haiper: HaiperFormInput,
   mochi: MochiFormInput,
   lightricks: LightricksFormInput,
+  ltx2: Ltx2FormInput,
   sora: SoraFormInput,
 };

@@ -10,7 +10,7 @@ import {
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
 
 type Flux2Model = (typeof flux2Models)[number];
-export const flux2Models = ['dev', 'flex', 'pro'] as const;
+export const flux2Models = ['dev', 'flex', 'pro', 'max'] as const;
 const engine = 'flux2';
 
 export const flux2ModelId = 983611;
@@ -19,16 +19,17 @@ export const flux2ModelVersionToModelMap = new Map<number, Flux2Model>([
   [2439067, 'dev'],
   [2439442, 'pro'],
   [2439047, 'flex'],
+  [2547175, 'max'],
 ]);
 
 export function getIsFlux2(modelVersionId?: number) {
   return modelVersionId ? !!flux2ModelVersionToModelMap.get(modelVersionId) : false;
 }
 
-export function getIsFlux2ProOrFlex(modelVersionId?: number) {
+export function getIsFlux2Dev(modelVersionId?: number) {
   if (!modelVersionId) return false;
   const model = flux2ModelVersionToModelMap.get(modelVersionId);
-  return model === 'pro' || model === 'flex';
+  return model === 'dev';
 }
 
 export function getIsFlux2FromResources(resources: { id: number }[]) {

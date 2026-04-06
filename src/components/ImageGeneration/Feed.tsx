@@ -1,18 +1,30 @@
 import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
+import { useMemo } from 'react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
-import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  matchesMarkerTags,
+  useGetTextToImageRequestsImages,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { generationPanel } from '~/store/generation.store';
-import { isDefined } from '~/utils/type-guards';
+import { generationGraphPanel } from '~/store/generation-graph.store';
+
 import classes from './Feed.module.scss';
 
 export function Feed() {
   const filters = useFiltersContext((state) => state.generation);
 
-  const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
+  const { requests, markerTags, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
     useGetTextToImageRequestsImages();
+
+  const images = useMemo(
+    () =>
+      requests.flatMap((r) =>
+        r.succeededImages.filter((img) => matchesMarkerTags(img, markerTags))
+      ),
+    [requests, markerTags]
+  );
 
   if (isError)
     return (
@@ -28,7 +40,7 @@ export function Feed() {
       </Center>
     );
 
-  if (!steps.flatMap((x) => x.images).length)
+  if (!images.length)
     return (
       <Center h="100%">
         <Stack gap="xs" align="center" py="16">
@@ -50,7 +62,7 @@ export function Feed() {
                 Try{' '}
                 <Text
                   c="blue.4"
-                  onClick={() => generationPanel.setView('generate')}
+                  onClick={() => generationGraphPanel.setView('generate')}
                   style={{ cursor: 'pointer' }}
                   span
                 >
@@ -59,8 +71,7 @@ export function Feed() {
                 new images with our resources
               </Text>
               <Text size="sm" c="dimmed">
-                Images generated prior to 10/13/2025 are now visible on{' '}
-                <Anchor href="https://civitai.com/generate">civitai.com</Anchor>
+                Some new filtering options don&rsquo;t apply retroactively.
               </Text>
             </Stack>
           )}
@@ -72,24 +83,9 @@ export function Feed() {
     <div className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
       <div className={classes.grid} data-testid="generation-feed-list">
-        {steps.map((step) =>
-          step.images
-            .filter((x) => x.status === 'succeeded')
-            .map((image) => {
-              const request = requests.find((request) => request.id === image.workflowId);
-              if (!request) return null;
-
-              return (
-                <GeneratedImage
-                  key={`${image.workflowId}_${image.id}`}
-                  request={request}
-                  step={step}
-                  image={image}
-                />
-              );
-            })
-            .filter(isDefined)
-        )}
+        {images.map((image) => (
+          <GeneratedImage key={`${image.workflow.id}_${image.id}`} image={image} />
+        ))}
       </div>
 
       {hasNextPage && (

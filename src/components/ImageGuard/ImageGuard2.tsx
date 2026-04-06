@@ -3,7 +3,7 @@ import { Alert, Badge, Button, Text } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Router from 'next/router';
-import React, { createContext, useCallback, useContext } from 'react';
+import React, { createContext, useCallback, useContext, useMemo } from 'react';
 import { create } from 'zustand';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
@@ -27,6 +27,8 @@ type ImageProps = {
   userId?: number;
   user?: { id: number };
   url?: string | null;
+  minor?: boolean;
+  poi?: boolean;
 };
 
 type ConnectId = string | number;
@@ -41,7 +43,8 @@ export type ConnectType =
   | 'bounty'
   | 'bountyEntry'
   | 'club'
-  | 'article';
+  | 'article'
+  | 'comicChapter';
 
 export type ImageGuardConnect = { connectType: ConnectType; connectId: ConnectId };
 
@@ -72,6 +75,7 @@ const ImageGuardCtx = createContext<{
   key: string | null;
   nsfw: boolean;
   userId?: number;
+  imageFlag?: string;
 } | null>(null);
 
 function useImageGuardContext() {
@@ -89,7 +93,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const { blurLevels } = useBrowsingLevelContext();
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
-  const { nsfwLevel = 0, ...rest } = useImageStore(image);
+  const { nsfwLevel = 0, tosViolation } = useImageStore(image);
   const blurNsfw = Flags.hasFlag(blurLevels, nsfwLevel);
 
   const showConnect = useShowConnectionStore(
@@ -103,16 +107,20 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const safe = !nsfw ? true : !shouldBlur;
   const show = safe || (showConnect ?? showImage);
 
-  return {
-    safe,
-    show,
-    browsingLevel: nsfwLevel,
-    imageId: image.id,
-    key,
-    nsfw,
-    userId,
-    ...rest,
-  };
+  return useMemo(
+    () => ({
+      safe,
+      show,
+      browsingLevel: nsfwLevel,
+      imageId: image.id,
+      key,
+      nsfw,
+      userId,
+      imageFlag: image.minor ? 'Minor' : image.poi ? 'POI' : undefined,
+      tosViolation,
+    }),
+    [safe, show, nsfwLevel, image.id, key, nsfw, userId, image.minor, image.poi, tosViolation]
+  );
 }
 
 export function ImageGuard2({
@@ -198,6 +206,29 @@ function ImageGuardContentInner({
   );
 }
 
+const imageFlagSectionStyles: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  marginRight: 'calc(var(--badge-padding-x) * -1)',
+  paddingLeft: 'var(--badge-padding-x-xs)',
+  paddingRight: 'var(--badge-padding-x)',
+  borderTopRightRadius: 'var(--badge-radius)',
+  borderBottomRightRadius: 'var(--badge-radius)',
+  backgroundColor: 'var(--mantine-color-yellow-filled)',
+  color: 'var(--mantine-color-black)',
+  height: '100%',
+};
+
+function ImageFlagSection({ label }: { label: string }) {
+  return <span style={imageFlagSectionStyles}>{label}</span>;
+}
+
+const imageFlagRightSectionStyles: React.CSSProperties = {
+  height: '100%',
+  maxHeight: 'none',
+  marginInlineStart: 'var(--badge-padding-x)',
+};
+
 function BlurToggle({
   className,
   classNames,
@@ -214,10 +245,17 @@ function BlurToggle({
   alwaysVisible?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const { safe, show, browsingLevel, imageId, key, nsfw, userId } = useImageGuardContext();
+  const { safe, show, browsingLevel, imageId, key, nsfw, userId, imageFlag } =
+    useImageGuardContext();
 
   const toggle = (event: React.MouseEvent<HTMLElement, MouseEvent>) =>
     toggleShow({ event, isAuthed: !!currentUser, key, imageId });
+
+  const handleBrowsingLevelClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
+  };
 
   if (children) {
     return children(toggle);
@@ -230,27 +268,42 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
+  const showImageFlag = currentUser?.isModerator && imageFlag;
+  const imageFlagRight = showImageFlag ? <ImageFlagSection label={imageFlag} /> : undefined;
+  const imageFlagStyles = showImageFlag ? { section: imageFlagRightSectionStyles } : undefined;
+
   if (safe || alwaysVisible) {
     const isOwnerOrModerator = currentUser?.isModerator || (userId && currentUser?.id === userId);
-    return isOwnerOrModerator || alwaysVisible ? (
-      <Badge
-        classNames={{ root: getBrowsingLevelClass(classes.root, browsingLevel) }}
-        className={badgeClass}
-        onClick={
-          isOwnerOrModerator
-            ? (e: React.MouseEvent) => {
-                e.preventDefault();
-                e.stopPropagation();
-                openSetBrowsingLevelModal({ imageId, nsfwLevel: browsingLevel });
-              }
-            : undefined
-        }
-        color={!nsfw ? color : undefined}
-        {...badgeProps}
-      >
-        {browsingLevelLabels[browsingLevel]}
-      </Badge>
-    ) : null;
+    if (isOwnerOrModerator || alwaysVisible) {
+      return (
+        <Badge
+          classNames={{ root: getBrowsingLevelClass(classes.root, browsingLevel) }}
+          className={badgeClass}
+          onClick={isOwnerOrModerator ? handleBrowsingLevelClick : undefined}
+          color={!nsfw ? color : undefined}
+          rightSection={imageFlagRight}
+          styles={imageFlagStyles}
+          {...badgeProps}
+        >
+          {browsingLevelLabels[browsingLevel]}
+        </Badge>
+      );
+    }
+    if (showImageFlag) {
+      return (
+        <Badge
+          classNames={{ root: getBrowsingLevelClass(classes.root, browsingLevel) }}
+          className={badgeClass}
+          color={!nsfw ? color : undefined}
+          rightSection={imageFlagRight}
+          styles={imageFlagStyles}
+          {...badgeProps}
+        >
+          {browsingLevelLabels[browsingLevel]}
+        </Badge>
+      );
+    }
+    return null;
   }
 
   return (
@@ -258,6 +311,8 @@ function BlurToggle({
       component="button"
       classNames={{ ...classNames, root: getBrowsingLevelClass(classes.root, browsingLevel) }}
       className={clsx(badgeClass, 'pointer-events-auto cursor-pointer')}
+      rightSection={imageFlagRight}
+      styles={imageFlagStyles}
       {...badgeProps}
       onClick={toggle}
     >

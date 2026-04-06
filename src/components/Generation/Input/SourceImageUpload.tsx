@@ -1,6 +1,9 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Input, CloseButton, Alert } from '@mantine/core';
-import { trpc } from '~/utils/trpc';
+import { Input, CloseButton, Alert, ActionIcon, Tooltip } from '@mantine/core';
+import { IconPalette } from '@tabler/icons-react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
+import type { DrawingElement } from './DrawingEditor/drawing.types';
 import { forwardRef, useEffect, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import {
@@ -9,7 +12,8 @@ import {
   minUploadSize,
 } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
-import { fetchBlobAsFile, getBase64 } from '~/utils/file-utils';
+import { fetchBlobAsFile } from '~/utils/file-utils';
+import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
 import { getImageDimensions } from '~/utils/image-utils';
@@ -28,6 +32,10 @@ export type SourceImageUploadProps = {
   iconSize?: number;
   warnOnMissingAiMetadata?: boolean;
   onWarnMissingAiMetadata?: (Warning: JSX.Element | null) => void;
+  /** Enable drawing overlay tools */
+  enableDrawing?: boolean;
+  /** Called when user completes a drawing overlay */
+  onDrawingComplete?: (value: SourceImageProps) => void;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>;
 
 export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadProps>(
@@ -42,6 +50,8 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       error: inputError,
       warnOnMissingAiMetadata,
       onWarnMissingAiMetadata,
+      enableDrawing = false,
+      onDrawingComplete,
       ...inputWrapperProps
     },
     ref
@@ -51,19 +61,8 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     const [error, setError] = useState<string | null>(null);
     // const [warning, setWarning] = useState<string | null>(null);
     const [Warning, setWarning] = useState<JSX.Element | null>(null);
-    const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
-      onSettled: () => {
-        setLoading(false);
-      },
-      onError: (error) => {
-        setError(error.message);
-        setLoading(false);
-      },
-      onSuccess: ({ blob }) => {
-        if (blob.url) handleUrlChange(blob.url);
-        setLoading(false);
-      },
-    });
+    // Store drawing elements for re-editing
+    const [drawingLines, setDrawingLines] = useState<DrawingElement[]>([]);
 
     function handleWarnOnMissingAiMetadata(Warning: JSX.Element | null) {
       setWarning(Warning);
@@ -78,11 +77,10 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
       });
     }
 
-    function handleChange(value?: string) {
+    function handleClear() {
       setError(null);
       handleWarnOnMissingAiMetadata(null);
-      if (!value) onChange?.(null);
-      else mutate({ sourceImage: value });
+      onChange?.(null);
     }
 
     async function handleDrop(files: File[]) {
@@ -91,6 +89,9 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
 
     async function handleDropCapture(src: File | Blob | string) {
       setLoading(true);
+      setError(null);
+      handleWarnOnMissingAiMetadata(null);
+
       try {
         const resized = await resizeImage(src, {
           maxHeight: maxUpscaleSize,
@@ -99,11 +100,15 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
           minHeight: minUploadSize,
         });
         const jpegBlob = await imageToJpegBlob(resized);
-        const base64 = await getBase64(jpegBlob);
-        if (base64) handleChange(base64);
+        const blob = await uploadConsumerBlob(jpegBlob);
+
+        if (blob.url) {
+          handleUrlChange(blob.url);
+        }
       } catch (e) {
         console.log({ dropzoneError: e });
         setError((e as Error).message);
+      } finally {
         setLoading(false);
       }
     }
@@ -119,6 +124,11 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     }, [value, error]);
 
     const _value = value instanceof Blob ? null : value;
+
+    // Clear drawing lines when source image changes
+    useEffect(() => {
+      setDrawingLines([]);
+    }, [_value?.url]);
 
     function getHistory() {
       const stored = localStorage.getItem(key);
@@ -159,13 +169,47 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
     }, [_value, warnOnMissingAiMetadata, loaded]);
 
     function handleRemoveItem() {
-      handleChange();
+      handleClear();
     }
 
     function handleError() {
       handleRemoveItem();
       setError('Failed to load image');
       if (_value) removeFromHistory(_value.url);
+    }
+
+    async function handleDrawingComplete(drawingBlob: Blob, elements: DrawingElement[]) {
+      if (!onDrawingComplete) return;
+
+      // Store elements for re-editing
+      setDrawingLines(elements);
+
+      setLoading(true);
+      try {
+        const blob = await uploadConsumerBlob(drawingBlob);
+        if (blob.url) {
+          const { width, height } = await getImageDimensions(blob.url);
+          onDrawingComplete({ url: blob.url, width, height });
+        }
+      } catch (e) {
+        console.error('Failed to upload drawing:', e);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    function handleOpenDrawingEditor() {
+      if (!_value) return;
+
+      dialogStore.trigger({
+        id: 'drawing-editor-modal',
+        component: DrawingEditorModal,
+        props: {
+          sourceImage: _value,
+          onConfirm: handleDrawingComplete,
+          initialLines: drawingLines,
+        },
+      });
     }
 
     const _error = error ?? inputError;
@@ -192,7 +236,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                 maxSize={maxOrchestratorImageFileSize}
                 label="Drag image here or click to select a file"
                 onDropCapture={handleDropCapture}
-                loading={(loading || isLoading) && !isError}
+                loading={loading}
                 iconSize={iconSize}
                 // onMissingAiMetadata={warnOnMissingAiMetadata ? handleMissingAiMetadata : undefined}
               >
@@ -211,7 +255,7 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                 src={_value.url}
                 alt="image to refine"
                 className="mx-auto max-h-full"
-                onLoad={(e) => {
+                onLoad={() => {
                   setLoaded(true);
                 }}
                 onError={handleError}
@@ -223,6 +267,18 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
                   className="absolute right-0 top-0 rounded-md"
                   onClick={handleRemoveItem}
                 />
+              )}
+              {loaded && enableDrawing && (
+                <Tooltip label="Sketch Edit" withArrow>
+                  <ActionIcon
+                    variant="filled"
+                    size="sm"
+                    className="absolute left-0 top-0 m-1 rounded-md"
+                    onClick={handleOpenDrawingEditor}
+                  >
+                    <IconPalette size={16} />
+                  </ActionIcon>
+                </Tooltip>
               )}
               {loaded && (
                 <div className="absolute bottom-0 right-0 rounded-br-md rounded-tl-md bg-dark-9/50 px-2 text-white">
@@ -239,21 +295,6 @@ export const SourceImageUpload = forwardRef<HTMLDivElement, SourceImageUploadPro
 );
 
 SourceImageUpload.displayName = 'SourceImageUpload';
-
-// export function SourceImageUpload({
-//   value,
-//   onChange,
-//   removable = true,
-//   label,
-//   children,
-//   iconSize,
-//   error: inputError,
-//   warnOnMissingAiMetadata,
-//   onWarnMissingAiMetadata,
-//   ...inputWrapperProps
-// }: SourceImageUploadProps) {
-
-// }
 
 export const InputSourceImageUpload = withController(SourceImageUpload, ({ field }) => ({
   value: field.value,

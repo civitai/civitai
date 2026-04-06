@@ -14,6 +14,7 @@ import {
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
+import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -23,6 +24,82 @@ const missingEnvs = (): string[] => {
   if (!env.S3_UPLOAD_BUCKET) keys.push('S3_UPLOAD_BUCKET');
   return keys;
 };
+
+export type UploadBackend = 'default' | 'b2';
+
+export function getB2S3Client() {
+  if (!env.S3_UPLOAD_B2_ACCESS_KEY || !env.S3_UPLOAD_B2_SECRET_KEY || !env.S3_UPLOAD_B2_ENDPOINT) {
+    throw new Error('B2 upload credentials not configured');
+  }
+  return new S3Client({
+    credentials: {
+      accessKeyId: env.S3_UPLOAD_B2_ACCESS_KEY,
+      secretAccessKey: env.S3_UPLOAD_B2_SECRET_KEY,
+    },
+    region: env.S3_UPLOAD_B2_REGION ?? 'us-west-004',
+    endpoint: env.S3_UPLOAD_B2_ENDPOINT,
+    forcePathStyle: true,
+  });
+}
+
+export function getUploadS3Client(backend: UploadBackend = 'default') {
+  if (backend === 'b2') return getB2S3Client();
+  return getS3Client();
+}
+
+export function getUploadBucket(backend: UploadBackend = 'default') {
+  if (backend === 'b2') return env.S3_UPLOAD_B2_BUCKET ?? 'civitai-modelfiles';
+  return env.S3_UPLOAD_BUCKET;
+}
+
+export type ImageUploadBackend = 'cloudflare' | 'backblaze';
+
+let _b2ImageS3Client: S3Client | null = null;
+export function getB2ImageS3Client(): S3Client {
+  if (!env.S3_IMAGE_B2_ACCESS_KEY || !env.S3_IMAGE_B2_SECRET_KEY || !env.S3_IMAGE_B2_ENDPOINT) {
+    throw new Error('B2 image upload credentials not configured');
+  }
+  if (!_b2ImageS3Client) {
+    _b2ImageS3Client = new S3Client({
+      credentials: {
+        accessKeyId: env.S3_IMAGE_B2_ACCESS_KEY,
+        secretAccessKey: env.S3_IMAGE_B2_SECRET_KEY,
+      },
+      region: env.S3_IMAGE_B2_REGION ?? 'us-west-004',
+      endpoint: env.S3_IMAGE_B2_ENDPOINT,
+      forcePathStyle: true,
+    });
+  }
+  return _b2ImageS3Client;
+}
+
+export async function getImageUploadBackend(userId?: number): Promise<{
+  s3: S3Client;
+  bucket: string;
+  backend: ImageUploadBackend;
+}> {
+  // Server-side paths (orchestrator, comics) pass no userId and default to DO Spaces.
+  // This is intentional for Phase 1 — migrate user-facing uploads first, then flip server-side.
+  const useB2 =
+    env.S3_IMAGE_B2_ACCESS_KEY &&
+    (userId
+      ? await isFlipt(FLIPT_FEATURE_FLAGS.B2_IMAGE_UPLOAD, String(userId))
+      : false);
+
+  if (useB2) {
+    return {
+      s3: getB2ImageS3Client(),
+      bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+      backend: 'backblaze',
+    };
+  }
+
+  return {
+    s3: getS3Client('image'),
+    bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+    backend: 'cloudflare',
+  };
+}
 
 type S3Clients = 'model' | 'image';
 export function getS3Client(destination: S3Clients = 'model') {
@@ -37,6 +114,7 @@ export function getS3Client(destination: S3Clients = 'model') {
       },
       region: env.S3_IMAGE_UPLOAD_REGION,
       endpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
+      forcePathStyle: env.S3_IMAGE_FORCE_PATH_STYLE,
     });
   }
 
@@ -169,6 +247,8 @@ type GetObjectOptions = {
 };
 
 const s3Host = new URL(env.S3_UPLOAD_ENDPOINT).host;
+const b2Host = env.S3_UPLOAD_B2_ENDPOINT ? new URL(env.S3_UPLOAD_B2_ENDPOINT).host : null;
+
 export function parseKey(fileUrl: string) {
   let url: URL;
   try {
@@ -177,7 +257,7 @@ export function parseKey(fileUrl: string) {
     return { key: fileUrl };
   }
 
-  const bucketInPath = url.hostname === s3Host;
+  const bucketInPath = url.hostname === s3Host || (b2Host !== null && url.hostname === b2Host);
   if (bucketInPath) {
     const pathParts = url.pathname.split('/');
     return {
@@ -190,6 +270,15 @@ export function parseKey(fileUrl: string) {
     key: url.pathname.split('/').slice(1).join('/'),
     bucket: url.hostname.replace('.' + s3Host, ''),
   };
+}
+
+export function isB2Url(url: string): boolean {
+  if (!b2Host) return false;
+  try {
+    return new URL(url).hostname === b2Host;
+  } catch {
+    return false;
+  }
 }
 
 export async function getGetUrl(

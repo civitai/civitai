@@ -1,20 +1,30 @@
 import {
   createBidInput,
   deleteBidInput,
+  getAuctionBasesInput,
   getAuctionBySlugInput,
   togglePauseRecurringBidInput,
+  updateAuctionBaseInput,
 } from '~/server/schema/auction.schema';
 import {
   createBid,
   deleteBid,
   deleteRecurringBid,
   getAllAuctions,
+  getAuctionBases,
   getAuctionBySlug,
   getMyBids,
   getMyRecurringBids,
   togglePauseRecurringBid,
+  updateAuctionBase,
 } from '~/server/services/auction.service';
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
+import {
+  isFlagProtected,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
 
 const auctionProcedure = protectedProcedure.use(isFlagProtected('auctions'));
 
@@ -41,4 +51,10 @@ export const auctionRouter = router({
   togglePauseRecurringBid: auctionProcedure
     .input(togglePauseRecurringBidInput)
     .mutation(({ input, ctx }) => togglePauseRecurringBid({ ...input, userId: ctx.user.id })),
+  modGetAuctionBases: moderatorProcedure
+    .input(getAuctionBasesInput)
+    .query(({ input }) => getAuctionBases(input)),
+  modUpdateAuctionBase: moderatorProcedure
+    .input(updateAuctionBaseInput)
+    .mutation(({ input }) => updateAuctionBase(input)),
 });

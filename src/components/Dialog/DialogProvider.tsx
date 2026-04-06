@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
-import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+import { dialogStore, useDialogStore, useIsLevelFocused } from '~/components/Dialog/dialogStore';
 import trieMemoize from 'trie-memoize';
 
 type DialogState = {
@@ -9,6 +9,7 @@ type DialogState = {
   zIndex?: number;
   target?: string | HTMLElement;
   focused?: 'true';
+  closeOnEscape?: boolean;
 };
 
 const DialogContext = createContext<DialogState>({
@@ -19,6 +20,7 @@ export const useDialogContext = () => useContext(DialogContext);
 
 const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number }) => {
   const [opened, setOpened] = useState(false);
+  const isTopLevel = useIsLevelFocused();
 
   const Dialog = dialog.component;
 
@@ -40,6 +42,7 @@ const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number 
         onClose,
         zIndex: 300 + index,
         target: dialog.target,
+        closeOnEscape: isTopLevel,
       }}
     >
       <Dialog {...dialog.props} />

@@ -23,8 +23,8 @@ const getAllMetricsFromClickHouse = async (
   }
 
   const cData = await clickhouse.$query<{ metricType: string; total: number }>`
-    SELECT metricType, sum(metricValue) as total
-    FROM entityMetricEvents
+    SELECT metricType, sum(total) as total
+    FROM entityMetricDailyAgg
     WHERE entityType = '${entityType}' AND entityId = ${entityId}
     GROUP BY metricType
   `;

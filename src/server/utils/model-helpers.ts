@@ -31,7 +31,7 @@ export function getPrimaryFile<T extends FileFormatType>(
 
   const getScore = (file: FileFormatType) => {
     let score = 1000;
-    for (const [key, value] of Object.entries(file.metadata)) {
+    for (const [key, value] of Object.entries(file.metadata ?? {})) {
       const weight = preferenceWeight[key as FileMetaKey];
       if (!weight) continue;
       if (value === preferredMetadata[key as FileMetaKey]) score += weight;
@@ -69,7 +69,6 @@ export const getFileDisplayName = ({
 };
 
 export const getEpochJobAndFileName = (downloadUrl: string) => {
-
   let jobFileUrl; // Leaves you with: ${jobId}/assets/${fileName}
   let jobId;
   let fileName;
@@ -91,19 +90,16 @@ export const getEpochJobAndFileName = (downloadUrl: string) => {
   }
 
   return { jobId, fileName };
-  
-}
+};
 
 export const getTrainingFileEpochNumberDetails = (
   file: { type: string | ModelFileType; metadata: FileMetadata },
   epochNumber?: number
 ) => {
-  console.log('getTrainingFileEpochNumberDetails');
   const epoch =
     file.metadata.trainingResults?.epochs?.find((e) =>
       'epoch_number' in e ? e.epoch_number === epochNumber : e.epochNumber === epochNumber
-    ) ?? file.metadata.trainingResults?.epochs?.pop();
-  
+    ) ?? file.metadata.trainingResults?.epochs?.at(-1);
 
   if (!epoch) return null;
 

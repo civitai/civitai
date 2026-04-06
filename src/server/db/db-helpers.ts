@@ -43,14 +43,14 @@ type ClientInstanceType =
   | 'primaryReadLong'
   | 'notification'
   | 'notificationRead'
-  | 'logicalReplica';
+  | 'datapacketRead';
 const instanceUrlMap: Record<ClientInstanceType, string> = {
   notification: env.NOTIFICATION_DB_URL,
   notificationRead: env.NOTIFICATION_DB_REPLICA_URL ?? env.NOTIFICATION_DB_URL,
   primary: env.DATABASE_URL,
   primaryRead: env.DATABASE_REPLICA_URL ?? env.DATABASE_URL,
   primaryReadLong: env.DATABASE_REPLICA_LONG_URL ?? env.DATABASE_URL,
-  logicalReplica: env.LOGICAL_REPLICA_DB_URL ?? env.DATABASE_URL,
+  datapacketRead: env.DATAPACKET_DATABASE_RO_URL ?? env.DATABASE_URL,
 };
 
 export function getClient(
@@ -68,33 +68,61 @@ export function getClient(
   const isNotification = instance === 'notification' || instance === 'notificationRead';
   const appBaseName = isNotification
     ? 'notif-pg'
-    : instance === 'logicalReplica'
-    ? 'logical-pg'
+    : instance === 'datapacketRead'
+    ? 'dp-read-pg'
     : 'node-pg';
+
+  // DO managed Postgres PgBouncer rejects statement_timeout as a startup parameter.
+  // For notification instances, we set it per-connection via SET instead.
+  const notifStatementTimeout =
+    instance === 'notificationRead'
+      ? (env.IS_DATAPACKET ? env.DATABASE_READ_TIMEOUT ?? 10000 : undefined)
+      : instance === 'notification'
+      ? env.DATABASE_WRITE_TIMEOUT
+      : undefined;
 
   const pool = new Pool({
     connectionString,
-    connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
+    connectionTimeoutMillis: env.IS_DATAPACKET
+      ? env.DATABASE_CONNECTION_TIMEOUT || 5000
+      : env.DATABASE_CONNECTION_TIMEOUT,
     min: 0,
     max: env.DATABASE_POOL_MAX,
     // trying this for leaderboard job
     idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
-      instance === 'notificationRead'
-        ? undefined // standby seems to not support this
+      (isNotification || instance === 'datapacketRead') && env.IS_DATAPACKET
+        ? undefined // DP: set per-connection below (PgBouncer ignores startup params)
+        : instance === 'notificationRead'
+        ? undefined // DOKS: standby doesn't support this
         : instance === 'primaryRead'
         ? env.DATABASE_READ_TIMEOUT
         : env.DATABASE_WRITE_TIMEOUT,
     application_name: `${appBaseName}${env.PODNAME ? '-' + env.PODNAME : ''}`,
   }) as AugmentedPool;
 
+  // Set statement_timeout per-connection on DP instances that go through PgBouncer
+  // (PgBouncer ignores statement_timeout as a startup parameter)
+  if (env.IS_DATAPACKET && isNotification && notifStatementTimeout) {
+    pool.on('connect', (client) => {
+      client.query(`SET statement_timeout = ${Number(notifStatementTimeout)}`).catch(() => {});
+    });
+  }
+  if (env.IS_DATAPACKET && instance === 'datapacketRead') {
+    const readTimeout = env.DATABASE_READ_TIMEOUT ?? 120000; // 2 minutes default
+    pool.on('connect', (client) => {
+      client.query(`SET statement_timeout = ${Number(readTimeout)}`).catch(() => {});
+    });
+  }
+
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
     sql: Prisma.Sql | string,
     params?: any[]
   ) {
     const connection = await pool.connect();
-    const pidQuery = await connection.query('SELECT pg_backend_pid()');
-    const pid = pidQuery.rows[0].pg_backend_pid;
+    // Use the connection's processID property instead of an extra query
+    // This is set when the connection is established by the pg library
+    const pid = (connection as any).processID as number;
 
     let queryText: string;
     let queryParams: any[] | undefined;
@@ -398,7 +426,7 @@ export const dbKV = {
     return stored ? (stored.value as T) : defaultValue;
   },
   set: async function <T>(key: string, value: T) {
-    const json = JSON.stringify(value);
+    const json = JSON.stringify(value).replace(/'/g, "''");
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "KeyValue" ("key", "value")
       VALUES ('${key}', '${json}'::jsonb)

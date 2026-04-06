@@ -38,7 +38,11 @@ export const getUserSubscriptionHandler = async ({
   input?: Partial<GetUserSubscriptionInput>;
 }) => {
   if (!ctx.user?.id) return null;
-  return await getUserSubscription({ userId: ctx.user.id, buzzType: input?.buzzType });
+  return await getUserSubscription({
+    userId: ctx.user.id,
+    buzzType: input?.buzzType,
+    includeBadState: input?.includeBadState,
+  });
 };
 
 export const getAllUserSubscriptionsHandler = async ({ ctx }: { ctx: Context }) => {

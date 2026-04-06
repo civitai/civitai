@@ -20,11 +20,11 @@ export const baseModelFamilyConfig: Record<
   { name: string; description: string; disabled?: boolean }
 > = {
   Flux: {
-    name: 'Flux',
+    name: 'Black Forest Labs',
     description: "Black Forest Labs' family of state-of-the-art image generation models",
   },
   StableDiffusion: {
-    name: 'Stable Diffusion',
+    name: 'Stability AI',
     description: "Stability AI's foundational open-source diffusion models",
   },
   SDXLCommunity: {
@@ -32,11 +32,11 @@ export const baseModelFamilyConfig: Record<
     description: 'Community-trained models built on the SDXL architecture',
   },
   Hunyuan: {
-    name: 'Hunyuan',
+    name: 'Tencent',
     description: "Tencent's family of image and video generation models",
   },
   WanVideo: {
-    name: 'Wan Video',
+    name: 'Alibaba',
     description: "Alibaba's video generation model series with various sizes and modes",
   },
   PixArt: {
@@ -56,13 +56,13 @@ export const baseModelFamilyConfig: Record<
     description: 'Community models with extensive tag-based prompt support',
   },
   Qwen: {
-    name: 'Qwen',
+    name: 'Alibaba',
     description: "Alibaba's multimodal model family with image generation capabilities",
     disabled: true,
   },
-  ZImageTurbo: {
-    name: 'ZImageTurbo',
-    description: 'Fast turbo-optimized image generation models',
+  ZImage: {
+    name: 'Alibaba - Tongyi Lab',
+    description: 'Z Image generation models',
   },
 };
 
@@ -70,6 +70,7 @@ export type BaseModelFamily = keyof typeof baseModelFamilyConfig;
 
 // type BaseModel
 const baseModelConfig = [
+  { name: 'Anima', type: 'image', group: 'Anima' },
   { name: 'AuraFlow', type: 'image', group: 'AuraFlow' },
   { name: 'Chroma', type: 'image', group: 'Chroma' },
   { name: 'CogVideoX', type: 'image', group: 'CogVideoX' },
@@ -78,13 +79,20 @@ const baseModelConfig = [
   { name: 'Flux.1 Krea', type: 'image', group: 'FluxKrea' },
   { name: 'Flux.1 Kontext', type: 'image', group: 'Flux1Kontext' },
   { name: 'Flux.2 D', type: 'image', group: 'Flux2' },
+  { name: 'Flux.2 Klein 9B', type: 'image', group: 'Flux2Klein_9B', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 9B-base', type: 'image', group: 'Flux2Klein_9B_base', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B', type: 'image', group: 'Flux2Klein_4B', ecosystem: 'flux2' },
+  { name: 'Flux.2 Klein 4B-base', type: 'image', group: 'Flux2Klein_4B_base', ecosystem: 'flux2' },
   { name: 'HiDream', type: 'image', group: 'HiDream' },
   { name: 'Hunyuan 1', type: 'image', group: 'HyDit1' },
   { name: 'Hunyuan Video', type: 'video', group: 'HyV1', engine: 'hunyuan' },
   { name: 'Illustrious', type: 'image', group: 'Illustrious', ecosystem: 'sdxl' },
   { name: 'Imagen4', type: 'image', group: 'Imagen4', hidden: true },
+  { name: 'Kling', type: 'video', group: 'Kling', hidden: true, engine: 'kling' },
   { name: 'Kolors', type: 'image', group: 'Kolors' },
   { name: 'LTXV', type: 'video', group: 'LTXV', engine: 'lightricks' },
+  { name: 'LTXV2', type: 'video', group: 'LTXV2', engine: 'ltx2' },
+  { name: 'LTXV 2.3', type: 'video', group: 'LTXV23', engine: 'ltx2' },
   { name: 'Lumina', type: 'image', group: 'Lumina' },
   { name: 'Mochi', type: 'image', group: 'Mochi' },
   { name: 'Nano Banana', type: 'image', group: 'NanoBanana', hidden: true },
@@ -136,10 +144,12 @@ const baseModelConfig = [
     group: 'SDXLDistilled',
     hidden: true,
   },
+  { name: 'Seedance', type: 'video', group: 'Seedance', hidden: true, engine: 'seedance' },
   { name: 'Seedream', type: 'image', group: 'Seedream', family: 'Bytedance', hidden: true },
   { name: 'SVD', type: 'image', group: 'SVD', hidden: true },
   { name: 'SVD XT', type: 'image', group: 'SVD', hidden: true },
   { name: 'Veo 3', type: 'video', group: 'Veo3', hidden: true, engine: 'veo3' },
+  { name: 'Vidu Q1', type: 'video', group: 'Vidu', hidden: true, engine: 'vidu' },
   { name: 'Wan Video', type: 'video', group: 'WanVideo', hidden: true, engine: 'wan' },
   { name: 'Wan Video 1.3B t2v', type: 'video', group: 'WanVideo1_3B_T2V', engine: 'wan' },
   { name: 'Wan Video 14B t2v', type: 'video', group: 'WanVideo14B_T2V', engine: 'wan' },
@@ -151,15 +161,22 @@ const baseModelConfig = [
   { name: 'Wan Video 2.5 T2V', type: 'video', group: 'WanVideo-25-T2V', engine: 'wan' },
   { name: 'Wan Video 2.5 I2V', type: 'video', group: 'WanVideo-25-I2V', engine: 'wan' },
   { name: 'ZImageTurbo', type: 'image', group: 'ZImageTurbo', ecosystem: 'zimageturbo' },
+  { name: 'ZImageBase', type: 'image', group: 'ZImageBase', ecosystem: 'zimagebase' },
 ] as const satisfies BaseModelConfigToSatisfy[];
 
 type BaseModelGroupConfigEntry = {
   name: string;
   description: string;
   family?: BaseModelFamily;
+  selector?: string;
 };
 
 export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEntry> = {
+  Anima: {
+    name: 'Anima',
+    description:
+      'Anima is an open-source image generation model with strong foundational capabilities, designed to provide high-quality outputs across a wide range of prompts and styles.',
+  },
   AuraFlow: {
     name: 'AuraFlow',
     description: 'Open-source text-to-image model from Fal.ai with strong prompt adherence',
@@ -192,6 +209,30 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     family: 'Flux',
     description: 'Next-generation Flux with enhanced capabilities',
   },
+  Flux2Klein_9B: {
+    name: 'Flux.2 Klein 9B',
+    family: 'Flux',
+    description: 'Distilled 9B parameter Flux.2 model for faster generation',
+    selector: 'Flux.2 Klein',
+  },
+  Flux2Klein_9B_base: {
+    name: 'Flux.2 Klein 9B-base',
+    family: 'Flux',
+    description: 'Base 9B parameter Flux.2 Klein model',
+    selector: 'Flux.2 Klein',
+  },
+  Flux2Klein_4B: {
+    name: 'Flux.2 Klein 4B',
+    family: 'Flux',
+    description: 'Distilled 4B parameter Flux.2 model for efficient generation',
+    selector: 'Flux.2 Klein',
+  },
+  Flux2Klein_4B_base: {
+    name: 'Flux.2 Klein 4B-base',
+    family: 'Flux',
+    description: 'Base 4B parameter Flux.2 Klein model',
+    selector: 'Flux.2 Klein',
+  },
   HiDream: {
     name: 'HiDream',
     description: 'High-resolution image generation model optimized for detailed outputs',
@@ -216,6 +257,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     family: 'Google',
     description: 'Text-to-image model with photorealistic capabilities',
   },
+  Kling: {
+    name: 'Kling',
+    description: "Kuaishou's video generation model",
+  },
   Kolors: {
     name: 'Kolors',
     description: "Kuaishou's bilingual image generation model with vibrant color output",
@@ -223,6 +268,14 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
   LTXV: {
     name: 'LTX Video',
     description: "Lightricks' efficient video generation model for fast rendering",
+  },
+  LTXV2: {
+    name: 'LTX Video 2',
+    description: "Lightricks' next-generation video model with improved quality and LoRA support",
+  },
+  LTXV23: {
+    name: 'LTX Video 2.3',
+    description: "Lightricks' LTX Video 2.3 with higher resolution and extended video support",
   },
   Lumina: {
     name: 'Lumina',
@@ -319,6 +372,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     family: 'StableDiffusion',
     description: 'Faster SDXL variants with reduced inference steps',
   },
+  Seedance: {
+    name: 'Seedance',
+    description: "ByteDance's video generation model",
+  },
   Seedream: {
     name: 'Seedream',
     description: "ByteDance's image generation model",
@@ -337,6 +394,10 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
     name: 'Veo 3',
     family: 'Google',
     description: 'Latest video generation model from DeepMind',
+  },
+  Vidu: {
+    name: 'Vidu Q1',
+    description: 'High-quality video generation model from Vidu',
   },
   WanVideo: {
     name: 'Wan Video',
@@ -390,8 +451,13 @@ export const baseModelGroupConfig: Record<BaseModelGroup, BaseModelGroupConfigEn
   },
   ZImageTurbo: {
     name: 'ZImageTurbo',
-    family: 'ZImageTurbo',
+    family: 'ZImage',
     description: 'Fast turbo-optimized image generation model',
+  },
+  ZImageBase: {
+    name: 'ZImageBase',
+    family: 'ZImage',
+    description: 'Base image generation model',
   },
 };
 
@@ -428,12 +494,6 @@ export const baseModelGroups = [...new Set(baseModelConfig.map((x) => x.group))]
 export const activeBaseModels = baseModelConfig
   .filter((x) => !('hidden' in x) || !x.hidden)
   .map((x) => x.name);
-
-export function getActiveBaseModels(isModerator?: boolean) {
-  return isModerator
-    ? baseModelConfig
-    : baseModelConfig.filter((x) => !('hidden' in x) || !x.hidden);
-}
 
 export function getBaseModelConfig(baseModel: string) {
   const config = baseModelConfig.find((x) => x.name === baseModel || x.group === baseModel);
@@ -671,8 +731,8 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.1 S', 'Flux.1 D'],
       },
+      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Flux.1 Krea'] },
     ],
-    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Flux.1 Krea'] }],
   },
   {
     group: 'FluxKrea',
@@ -681,8 +741,8 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.1 Krea'],
       },
+      { modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['Flux.1 D'] },
     ],
-    partialSupport: [{ modelTypes: [ModelType.LORA], baseModels: ['Flux.1 D'] }],
   },
   {
     group: 'Flux1Kontext',
@@ -694,6 +754,66 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['Flux.2 D'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_9B',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B-base'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_9B_base',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B-base'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 9B'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_4B',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B-base'],
+      },
+    ],
+  },
+  {
+    group: 'Flux2Klein_4B_base',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B-base'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['Flux.2 Klein 4B'],
       },
     ],
   },
@@ -842,11 +962,46 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Veo 3'] }],
   },
   {
+    group: 'Vidu',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Vidu Q1'] }],
+  },
+  {
+    group: 'Kling',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['Kling'] }],
+  },
+  {
+    group: 'LTXV',
+    support: [{ modelTypes: [ModelType.Checkpoint], baseModels: ['LTXV'] }],
+  },
+  {
+    group: 'LTXV2',
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['LTXV2'] }],
+  },
+  {
+    group: 'LTXV23',
+    support: [{ modelTypes: [ModelType.Checkpoint, ModelType.LORA], baseModels: ['LTXV 2.3'] }],
+  },
+  {
     group: 'ZImageTurbo',
     support: [
       {
         modelTypes: [ModelType.Checkpoint, ModelType.LORA],
         baseModels: ['ZImageTurbo'],
+      },
+    ],
+    partialSupport: [
+      {
+        modelTypes: [ModelType.LORA],
+        baseModels: ['ZImageBase'],
+      },
+    ],
+  },
+  {
+    group: 'ZImageBase',
+    support: [
+      {
+        modelTypes: [ModelType.Checkpoint, ModelType.LORA],
+        baseModels: ['ZImageBase'],
       },
     ],
   },
@@ -966,3 +1121,9 @@ export const DEPRECATED_BASE_MODELS = [
   'SVD',
   'SVD XT',
 ] as const satisfies BaseModel[];
+
+export function getCanAuctionForGeneration(baseModel?: string) {
+  if (!baseModel) return false;
+  const group = getGenerationBaseModelGroup(baseModel);
+  return group ? !['Qwen', 'ZImageTurbo', 'ZImageBase', 'Other'].includes(group.group) : false;
+}

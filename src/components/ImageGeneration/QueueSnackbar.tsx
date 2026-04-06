@@ -14,7 +14,7 @@ import { useGenerationContext } from '~/components/ImageGeneration/GenerationPro
 import { IconHandStop } from '@tabler/icons-react';
 import { generationStatusColors } from '~/shared/constants/generation.constants';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useRouter } from 'next/router';
 import type { WorkflowStatus } from '@civitai/client';
 import React from 'react';
@@ -69,7 +69,7 @@ export function QueueSnackbar() {
             inline
             c="blue.4"
             className="cursor-pointer"
-            onClick={() => generationPanel.setView('queue')}
+            onClick={() => generationGraphPanel.setView('queue')}
           >
             queue
           </Text>
@@ -129,7 +129,7 @@ export function QueueSnackbar() {
                 c="blue.4"
                 size="sm"
                 className="cursor-pointer"
-                onClick={() => generationPanel.setView('queue')}
+                onClick={() => generationGraphPanel.setView('queue')}
               >
                 View generation queue
               </Text>
@@ -181,7 +181,7 @@ export function QueueSnackbar() {
       {requestsRemaining <= 0 && userTier === 'free' && (
         <Badge color="yellow" h={'auto'} w="100%" p={0} radius="xl" classNames={classes}>
           <div className="flex w-full flex-wrap items-center justify-between gap-2 p-0.5">
-            <Text>
+            <Text component="div">
               <div className="flex items-center gap-1 pl-1">
                 <IconHandStop size={16} />
                 You can queue {requestLimit} jobs at once

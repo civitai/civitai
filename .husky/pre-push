@@ -1,3 +1,4 @@
+#!/bin/sh
 # To skip this check, do one of these:
 #   HUSKY=0 git push (skip once)
 #   export HUSKY=0 (always skip....briant)

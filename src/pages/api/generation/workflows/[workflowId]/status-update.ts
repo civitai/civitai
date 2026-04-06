@@ -1,4 +1,4 @@
-import { getWorkflowStatusUpdate } from '~/server/services/orchestrator/common';
+import { getWorkflowStatusUpdate } from '~/server/services/orchestrator/orchestration-new.service';
 import { OrchestratorEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default OrchestratorEndpoint(

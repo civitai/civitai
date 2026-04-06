@@ -1,7 +1,7 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
-/node_modules
+node_modules
 /.pnp
 .pnp.js
 
@@ -18,6 +18,9 @@ prisma/schema.prisma
 # next.js
 /.next/
 /out/
+
+# ladle
+.ladle/stubs/
 
 # production
 /build
@@ -36,6 +39,7 @@ yarn-error.log*
 .env
 .env*
 !.env-example
+!.env.example
 
 # vercel
 .vercel
@@ -47,6 +51,11 @@ yarn-error.log*
 /postgres*
 /redis
 /minio
+
+# browser automation (local session/profile data)
+.browser/sessions/
+.browser/profiles/
+.browser/storage/
 /clickhouse*
 /undefined
 /.docker
@@ -86,6 +95,9 @@ trace/types.json
 src/pages/api/dev-local/*
 /.playwright-mcp/
 
+# Ladle (local dev artifacts)
+.ladle/stubs/
+
 # LLM
 /.serena/
 
@@ -96,3 +108,9 @@ local/
 nul
 
 scripts/local-dev/
+.direnv
+
+# Claude agent temp directories
+tmpclaude-*-cwd
+.claude/skills/flipt/.env
+.claude/skills/freshdesk/.env

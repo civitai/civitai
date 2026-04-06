@@ -74,7 +74,7 @@ import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import classes from './BountyCreateForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 

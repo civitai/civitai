@@ -13,6 +13,7 @@ import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import classes from './RedeemCodeModal.module.scss';
 import { GiftNoticeAlert } from '~/components/RedeemCode/GiftNoticeAlert';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
+import { GIFT_CARD_DISCLAIMER } from '~/utils/gift-cards/constants';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
@@ -143,6 +144,9 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
               maxLength={12}
               autoFocus
             />
+            <Text size="xs" c="dimmed">
+              {GIFT_CARD_DISCLAIMER.redemption}
+            </Text>
             <Group justify="flex-end">
               <Button
                 className={classes.cancelButton}

@@ -1,169 +1,31 @@
 import { chunk } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
-import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from './job';
-import { TransactionType } from '~/shared/constants/buzz.constants';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { deliverMonthlyCosmetics } from '../services/subscriptions.service';
+import {
+  deliverMonthlyCosmetics,
+  unlockPrepaidTokensForDate,
+} from '../services/subscriptions.service';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
-import { withRetries } from '~/utils/errorHandling';
 
-const schema = z.object({
-  date: z.coerce.date().optional(),
-});
+/**
+ * Unlock prepaid tokens based on the subscription's currentPeriodStart day-of-month matching today.
+ * On a matching day, unlocks ONE locked token per subscription matching the user's current tier.
+ * Users must claim unlocked tokens manually via the membership page.
+ */
+export const unlockPrepaidTokens = createJob(
+  'unlock-prepaid-tokens',
+  '0 1 * * *', // Run daily at 1 AM UTC (same schedule as before)
+  async () => {
+    const result = await unlockPrepaidTokensForDate({ date: new Date() });
+    console.log(result.message);
 
-export const deliverPrepaidMembershipBuzz = createJob(
-  'deliver-civitai-membership-buzz',
-  '0 1 * * *', // We should run this after the expire not before.
-  async (ctx) => {
-    const now = dayjs();
-    const date = now.format('YYYY-MM');
-
-    // Get the current day of the month
-    let currentDay = now.date();
-    const parseResult = schema.safeParse(ctx.req?.query);
-    const dateOverride =
-      parseResult.success && parseResult.data.date ? parseResult.data.date : undefined;
-    if (dateOverride) {
-      // Override currentDay with the parsed date's day
-      currentDay = dateOverride.getDate();
-    }
-
-    const data = await dbWrite.$queryRaw<
-      {
-        id: string;
-        userId: number;
-        buzzAmount: number | string;
-        productId: string;
-        priceId: string;
-        interval: string;
-        tier: string;
-        buzzType: string | null;
-      }[]
-    >`
-      SELECT
-        cs.id as "id",
-        "userId",
-        pr.metadata->>'monthlyBuzz' as "buzzAmount",
-        pr.id as "productId",
-        p.id as "priceId",
-        p.interval as "interval",
-        pr.metadata->>'tier' as "tier",
-        pr.metadata->>'buzzType' as "buzzType"
-      FROM "CustomerSubscription" cs
-      JOIN "Product" pr ON pr.id = cs."productId"
-      JOIN "Price" p ON p.id = cs."priceId"
-      WHERE (
-        -- Exact day match (normal case)
-        EXTRACT(day from cs."currentPeriodStart") = ${currentDay}
-        OR
-        -- Handle month-end edge cases (e.g., Jan 30th -> Feb 28th, Jan 31st -> Apr 30th)
-        (
-          EXTRACT(day from cs."currentPeriodStart") > EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-          AND ${currentDay} = EXTRACT(day from (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-        )
-      )
-      AND cs."createdAt" < NOW()::date -- Don't grant on the first day (already granted when membership started)
-      AND cs.status = 'active'
-      AND cs."currentPeriodEnd" > NOW()
-      AND cs."currentPeriodEnd"::date > NOW()::date -- Don't grant buzz on the expiration day
-      AND pr.provider = 'Civitai'
-      AND pr.metadata->>'monthlyBuzz' IS NOT NULL
-      AND COALESCE((cs.metadata->'prepaids'->(pr.metadata->>'tier'))::int, 0) > 0
-    `;
-
-    if (!data.length) {
-      console.log('No Civitai membership holders found for buzz delivery today');
-      return;
-    }
-
-    const buzzTransactions = data
-      .map((d) => {
-        const buzzAmount = Number(d.buzzAmount);
-
-        // For yearly subscriptions, we grant monthly buzz, not the full year amount
-        // Monthly subscriptions get their full monthly buzz
-        const amount = d.interval === 'year' ? buzzAmount : buzzAmount;
-
-        return {
-          fromAccountId: 0,
-          toAccountId: d.userId,
-          toAccountType: (d.buzzType as any) ?? 'yellow', // Default to yellow if not specified
-          type: TransactionType.Purchase,
-          externalTransactionId: `civitai-membership:${date}:${d.userId}:${d.productId}:v3`,
-          amount: amount,
-          description: `Membership Bonus`,
-          details: {
-            type: 'civitai-membership-payment',
-            date: date,
-            productId: d.productId,
-            interval: d.interval,
-            tier: d.tier,
-            subscriptionId: d.id, // Include subscription ID for prepaid decrement
-          },
-        };
-      })
-      .filter((d) => d.amount > 0);
-
-    // Process in batches to avoid overwhelming the database
-    const batches = chunk(buzzTransactions, 100);
-    for (const batch of batches) {
-      await withRetries(
-        async () => {
-          await createBuzzTransactionMany(batch);
-          const userData = batch.map((b) => ({
-            id: (b.details as any).subscriptionId, // Use subscription ID, not user ID
-            tier: (b.details as any).tier,
-            externalTransactionId: b.externalTransactionId,
-          }));
-
-          // Decrement prepaid counts for each user who received buzz
-          if (userData.length > 0) {
-            console.log(`Decrementing prepaid counts for ${userData.length} users`);
-
-            await dbWrite.$executeRaw`
-              UPDATE "CustomerSubscription"
-              SET
-                "metadata" = jsonb_set(
-                  jsonb_set(
-                    "metadata",
-                    ARRAY['prepaids', (updates.data ->> 'tier')],
-                    (COALESCE(("metadata"->'prepaids'->>(updates.data ->> 'tier'))::int, 0) - 1)::text::jsonb
-                  ),
-                  ARRAY['buzzTransactionIds'],
-                  COALESCE("metadata"->'buzzTransactionIds', '[]'::jsonb) || jsonb_build_array(updates.data ->> 'externalTransactionId')
-                ),
-                "updatedAt" = NOW()
-              FROM (
-                SELECT
-                  (value ->> 'id')::text AS "id",
-                  value AS data
-                FROM json_array_elements(${JSON.stringify(
-                  userData.map((d) => ({
-                    id: d.id,
-                    tier: d.tier,
-                    externalTransactionId: d.externalTransactionId,
-                  }))
-                )}::json)
-              ) AS updates
-              WHERE "CustomerSubscription"."id" = updates."id"
-            `;
-          }
-        },
-        3,
-        1000
-      );
-    }
-
-    // Grant cosmetics for Civitai membership holders
-    await deliverMonthlyCosmetics({ dateOverride });
-
-    console.log(`Delivered buzz to ${data.length} Civitai membership holders`);
+    // Still deliver monthly cosmetics on the same schedule
+    await deliverMonthlyCosmetics({});
   }
 );
 
@@ -171,6 +33,7 @@ export const processPrepaidMembershipTransitions = createJob(
   'process-prepaid-membership-transitions',
   '0 0 * * *', // Run daily at midnight
   async () => {
+    const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
     const now = dayjs();
 
     // Pre-fetch all tier products to avoid repeated queries
@@ -238,7 +101,6 @@ export const processPrepaidMembershipTransitions = createJob(
 
     console.log(`Processing ${expiringMemberships.length} expiring memberships`);
 
-    // Process memberships and prepare updates for batching
     const membershipUpdates: Array<{
       id: string;
       productId?: string;
@@ -257,39 +119,18 @@ export const processPrepaidMembershipTransitions = createJob(
         const productMeta = (membership.product.metadata as SubscriptionProductMetadata) || {};
         const currentTier = productMeta.tier;
 
-        // Get prepaid memberships and prorated days
-        const prepaids = subscriptionMeta.prepaids || {};
+        // Use getPrepaidTokens for backwards compat — handles both new tokens and legacy prepaids
+        const allTokens = getPrepaidTokens({ metadata: subscriptionMeta });
+        // Only locked tokens count as future months. Unlocked tokens represent already-occurred
+        // months (buzz available to claim) and should NOT extend the new period.
+        const futureTokens = allTokens.filter((t) => t.status === 'locked');
         const proratedDays = subscriptionMeta.proratedDays || {};
+        const hasAnyProratedDays = Object.values(proratedDays).some((v) => (v ?? 0) > 0);
 
-        // Find the best available prepaid membership tier
-        let nextTier: string | null = null;
-        let nextMonths = 0;
-        let nextProratedDays = 0;
-
-        // Check all paid tiers in order of priority (best to lowest: gold → silver → bronze)
-        // Only check paid tiers that can have prepaid months
-        // Example: If user has { bronze: 2, silver: 1 }, they get silver (better tier)
-        const paidTiers = ['bronze', 'silver', 'gold'];
-        for (let i = paidTiers.length - 1; i >= 0; i--) {
-          const tier = paidTiers[i];
-          const remainingMonths = prepaids[tier as keyof typeof prepaids] || 0;
-          const proratedDaysForTier = proratedDays[tier as keyof typeof proratedDays] || 0;
-          console.log({ proratedDaysForTier });
-
-          if (remainingMonths > 0 || proratedDaysForTier > 0) {
-            nextTier = tier;
-            nextMonths = remainingMonths;
-            nextProratedDays = proratedDaysForTier;
-            break; // Take the first (best) tier found
-          }
-        }
-
-        if (!nextTier || (nextMonths <= 0 && nextProratedDays <= 0)) {
-          // No prepaid memberships left, cancel the subscription
+        if (futureTokens.length === 0 && !hasAnyProratedDays) {
           console.log(
-            `User ${membership.userId}: No prepaid memberships left, canceling subscription`
+            `User ${membership.userId}: No remaining tokens or prorated days, canceling subscription`
           );
-
           membershipUpdates.push({
             id: membership.id,
             status: 'canceled',
@@ -299,41 +140,74 @@ export const processPrepaidMembershipTransitions = createJob(
           continue;
         }
 
-        // Find the product for the next tier (from pre-fetched products)
-        const nextTierProduct = productsByTier.get(nextTier);
+        // For tier TRANSITIONS (period expired), find the best available tier to switch to.
+        // Check both tokens AND prorated days per tier — a tier with only prorated days
+        // still wins over a lower tier with tokens (e.g., 10 Silver prorated days > 2 Bronze tokens).
+        const paidTiers = ['bronze', 'silver', 'gold'];
+        let nextTier: string | null = null;
+        let nextMonths = 0;
+        let nextProratedDays = 0;
 
+        for (let i = paidTiers.length - 1; i >= 0; i--) {
+          const tier = paidTiers[i];
+          const tierTokenCount = futureTokens.filter((t) => t.tier === tier).length;
+          const tierProratedDays = proratedDays[tier as keyof typeof proratedDays] || 0;
+
+          if (tierTokenCount > 0 || tierProratedDays > 0) {
+            nextTier = tier;
+            nextMonths = tierTokenCount;
+            nextProratedDays = tierProratedDays;
+            break;
+          }
+        }
+
+        if (!nextTier || (nextMonths <= 0 && nextProratedDays <= 0)) {
+          console.log(
+            `User ${membership.userId}: No prepaid tokens left, canceling subscription`
+          );
+          membershipUpdates.push({
+            id: membership.id,
+            status: 'canceled',
+            canceledAt: now.toDate(),
+            endedAt: now.toDate(),
+          });
+          continue;
+        }
+
+        const nextTierProduct = productsByTier.get(nextTier);
         if (!nextTierProduct || !nextTierProduct.prices.length) {
           console.log(`User ${membership.userId}: Could not find product for tier ${nextTier}`);
           continue;
         }
 
-        // Calculate the new period end date
         const newPeriodStart = now;
-        const newPeriodEnd = newPeriodStart.add(nextMonths, 'month').add(nextProratedDays, 'day');
+        const newPeriodEnd = newPeriodStart
+          .add(nextMonths, 'month')
+          .add(nextProratedDays, 'day');
 
         // Clear prorated days for this tier since we're using them
         const updatedProratedDays = { ...proratedDays };
         delete updatedProratedDays[nextTier as keyof typeof updatedProratedDays];
 
-        // Prepare the subscription update
+        // Persist the tokens array (migrates legacy prepaids to new format on transition)
+        const updatedMeta = {
+          ...subscriptionMeta,
+          tokens: allTokens, // Write full token array so future runs use new format
+          proratedDays: updatedProratedDays,
+        };
+
         membershipUpdates.push({
           id: membership.id,
           productId: nextTierProduct.id,
           priceId: nextTierProduct.prices[0].id,
           currentPeriodStart: newPeriodStart.toDate(),
           currentPeriodEnd: newPeriodEnd.toDate(),
-          metadata: {
-            ...subscriptionMeta,
-            // We do not update prepaids here, they are decremented in the buzz processing job above.
-            proratedDays: updatedProratedDays,
-          },
+          metadata: updatedMeta,
         });
 
         console.log(
           `User ${membership.userId}: Transitioned from ${currentTier} to ${nextTier} tier. ` +
-            `New period ends: ${newPeriodEnd.format(
-              'YYYY-MM-DD'
-            )}. Prepaid ${nextTier} months will be decremented by buzz delivery job.`
+            `New period ends: ${newPeriodEnd.format('YYYY-MM-DD')}.`
         );
       } catch (error) {
         console.error(
@@ -421,12 +295,13 @@ export const cancelExpiredPrepaidMemberships = createJob(
   'cancel-expired-prepaid-memberships',
   '0 2 * * *', // Run daily at 2:00 AM
   async () => {
+    const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
     const now = dayjs();
 
     // Find all active Civitai memberships where currentPeriodEnd has passed
     const expiredMemberships = await dbWrite.customerSubscription.findMany({
       where: {
-        status: 'active',
+        status: { in: ['active', 'expired_claimable'] },
         currentPeriodEnd: {
           lt: now.toDate(),
         },
@@ -437,44 +312,105 @@ export const cancelExpiredPrepaidMemberships = createJob(
       select: {
         id: true,
         userId: true,
+        status: true,
+        metadata: true,
         currentPeriodEnd: true,
       },
     });
 
     if (!expiredMemberships.length) {
-      console.log('No expired prepaid memberships to cancel');
+      console.log('No expired prepaid memberships to process');
       return;
     }
 
-    console.log(`Canceling ${expiredMemberships.length} expired prepaid memberships`);
+    // Split into two groups:
+    // 1. Has unclaimed tokens (locked or unlocked) → set to 'expired_claimable'
+    //    Also unlock all locked tokens since the unlock job won't run for non-active subs.
+    // 2. No unclaimed tokens → fully cancel
+    const toExpireClaimable: Array<{ id: string; userId: number; metadata: SubscriptionMetadata }> = [];
+    const toCancel: string[] = [];
+    const allUserIds: number[] = [];
 
-    // Batch update all expired memberships to canceled status
-    const updated = await dbWrite.customerSubscription.updateManyAndReturn({
-      select: { userId: true },
-      where: {
-        id: {
-          in: expiredMemberships.map((m) => m.id),
+    for (const m of expiredMemberships) {
+      const meta = (m.metadata ?? {}) as SubscriptionMetadata;
+      const tokens = getPrepaidTokens({ metadata: meta });
+      const hasUnclaimedTokens = tokens.some(
+        (t) => t.status === 'locked' || t.status === 'unlocked'
+      );
+
+      if (hasUnclaimedTokens) {
+        // Only transition active → expired_claimable (don't re-process ones already in that state)
+        if (m.status !== 'expired_claimable') {
+          // Unlock all locked tokens so the user can claim them — the unlock job
+          // won't run for non-active subscriptions, so we must do it here.
+          const nowIso = now.toISOString();
+          const updatedTokens = tokens.map((t) => {
+            if (t.status === 'locked') {
+              return { ...t, status: 'unlocked' as const, unlockedAt: nowIso };
+            }
+            return t;
+          });
+
+          toExpireClaimable.push({
+            id: m.id,
+            userId: m.userId,
+            metadata: { ...meta, tokens: updatedTokens },
+          });
+          allUserIds.push(m.userId);
+        }
+      } else {
+        toCancel.push(m.id);
+        allUserIds.push(m.userId);
+      }
+    }
+
+    // Set expired_claimable and unlock all locked tokens for each membership
+    for (const m of toExpireClaimable) {
+      await dbWrite.customerSubscription.update({
+        where: { id: m.id },
+        data: {
+          status: 'expired_claimable',
+          metadata: m.metadata as any,
+          updatedAt: now.toDate(),
         },
-      },
-      data: {
-        status: 'canceled',
-        canceledAt: now.toDate(),
-        endedAt: now.toDate(),
-        updatedAt: now.toDate(),
-      },
-    });
+      });
+    }
+    if (toExpireClaimable.length > 0) {
+      console.log(
+        `Set ${toExpireClaimable.length} memberships to expired_claimable (all locked tokens unlocked)`
+      );
+    }
+
+    // Fully cancel memberships with no unclaimed tokens
+    if (toCancel.length > 0) {
+      console.log(`Canceling ${toCancel.length} expired prepaid memberships`);
+      await dbWrite.customerSubscription.updateMany({
+        where: { id: { in: toCancel } },
+        data: {
+          status: 'canceled',
+          canceledAt: now.toDate(),
+          endedAt: now.toDate(),
+          updatedAt: now.toDate(),
+        },
+      });
+    }
 
     // Invalidate sessions for all affected users
-    const updatedUserIds = [...new Set(updated.map((m) => m.userId))];
-    console.log(`Invalidating sessions for ${updatedUserIds.length} users`);
-    await Promise.all(updatedUserIds.map((userId) => refreshSession(userId)));
+    const uniqueUserIds = [...new Set(allUserIds)];
+    if (uniqueUserIds.length > 0) {
+      console.log(`Invalidating sessions for ${uniqueUserIds.length} users`);
+      await Promise.all(uniqueUserIds.map((userId) => refreshSession(userId)));
+    }
 
-    console.log(`Canceled ${expiredMemberships.length} expired prepaid memberships`);
+    console.log(
+      `Processed ${expiredMemberships.length} expired memberships: ` +
+        `${toExpireClaimable.length} set to expired_claimable, ${toCancel.length} canceled`
+    );
   }
 );
 
 export const prepaidMembershipJobs = [
-  deliverPrepaidMembershipBuzz,
+  unlockPrepaidTokens,
   processPrepaidMembershipTransitions,
   cancelExpiredPrepaidMemberships,
 ];

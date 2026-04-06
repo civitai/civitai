@@ -20,7 +20,7 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowBackUp,
-  IconArrowFork,
+  IconCopyPlus,
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
@@ -72,7 +72,7 @@ import {
   getBaseModelGroup,
   getGenerationBaseModelAssociatedGroups,
   getGenerationBaseModelResourceOptions,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
@@ -370,7 +370,7 @@ const ResourceHeader = () => {
           create this image.
         </InfoPopover>
       </div>
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         {canAdd ? (
           <>
             <Box className="hidden group-hover:block">
@@ -441,35 +441,21 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   const status = useGenerationStatus();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
-  const {
-    modelId,
-    modelName,
-    modelType,
-    modelVersionId,
-    modelVersionName,
-    modelVersionBaseModel,
-    detected,
-  } = resource;
+  const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
 
   const otherAvailableIDs = useMemo(() => {
     return otherImages
       .map((oi) => {
-        if (!oi.resourceHelper.length) return oi.id;
+        // Skip if target image is at resource limit
         if (oi.resourceHelper.length >= status.limits.resources) return null;
+        // Skip if target image already has this exact resource
         if (oi.resourceHelper.some((rh) => rh.modelVersionId === modelVersionId)) return null;
 
-        const otherAllowed = getAllowedResources(oi.resourceHelper);
-        const resourceMatch = otherAllowed.find((oa) => oa.type === modelType);
-        if (
-          resourceMatch &&
-          modelVersionBaseModel &&
-          resourceMatch.baseModels.includes(modelVersionBaseModel)
-        ) {
-          return oi.id;
-        }
+        // Allow copy to eligible images
+        return oi.id;
       })
       .filter(isDefined);
-  }, [modelType, modelVersionBaseModel, modelVersionId, otherImages, status.limits.resources]);
+  }, [modelVersionId, otherImages, status.limits.resources]);
 
   const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {
@@ -521,7 +507,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   };
 
   const handleCopyResource = () => {
-    if (!otherAvailableIDs.length || !modelVersionId || detected) return;
+    if (!otherAvailableIDs.length || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Copy to All',
@@ -550,51 +536,45 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         className="grow"
       >
         <Box className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5">
-          <Text>
-            {modelName} -{' '}
-            <Text span c="dimmed" size="sm">
+          <Stack gap={0}>
+            <Text lineClamp={1}>{modelName}</Text>
+            <Text span c="dimmed" size="sm" lineClamp={1}>
               {modelVersionName}
             </Text>
-          </Text>
-          <Group gap={2}>
-            <Badge color="gray" size="md" variant="filled">
-              {getDisplayName(modelType ?? 'unknown')}
-            </Badge>
-          </Group>
+          </Stack>
+          <Badge color="gray" size="md" variant="filled">
+            {getDisplayName(modelType ?? 'unknown')}
+          </Badge>
         </Box>
       </Link>
 
-      {!detected && (
-        <Group gap={4} wrap="nowrap">
-          {!otherAvailableIDs.length ? (
-            <></>
-          ) : (
-            <Tooltip label="Copy to All">
-              <LegacyActionIcon
-                color="violet"
-                size="sm"
-                onClick={handleCopyResource}
-                loading={copyResourceMutation.isLoading}
-              >
-                <IconArrowFork size={16} />
-              </LegacyActionIcon>
-            </Tooltip>
-          )}
-          {!canAdd ? (
-            <></>
-          ) : (
-            <Tooltip label="Delete">
-              <LegacyActionIcon
-                color="red"
-                size="sm"
-                onClick={handleRemoveResource}
-                loading={removeResourceMutation.isLoading}
-              >
-                <IconTrash size={16} />
-              </LegacyActionIcon>
-            </Tooltip>
-          )}
-        </Group>
+      {!otherAvailableIDs.length ? (
+        <></>
+      ) : (
+        <Tooltip label="Copy to All">
+          <LegacyActionIcon
+            color="violet"
+            size="sm"
+            onClick={handleCopyResource}
+            loading={copyResourceMutation.isLoading}
+          >
+            <IconCopyPlus size={16} />
+          </LegacyActionIcon>
+        </Tooltip>
+      )}
+      {!canAdd || detected ? (
+        <></>
+      ) : (
+        <Tooltip label="Delete">
+          <LegacyActionIcon
+            color="red"
+            size="sm"
+            onClick={handleRemoveResource}
+            loading={removeResourceMutation.isLoading}
+          >
+            <IconTrash size={16} />
+          </LegacyActionIcon>
+        </Tooltip>
       )}
     </Group>
   ) : (
@@ -636,6 +616,25 @@ function EditDetail() {
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
   const resourcesSorted = sortByModelTypes(resources);
+  const unmatchedResources = useMemo(() => {
+    const metaResources = (meta?.resources ?? []) as {
+      type: string;
+      name?: string;
+      hash?: string;
+      unmatched?: boolean;
+    }[];
+    return metaResources.filter((r) => r.unmatched && r.name);
+  }, [meta?.resources]);
+  const hasLegacyUnmatched = useMemo(() => {
+    if (unmatchedResources.length > 0) return false; // new-style flags take precedence
+    const metaResources = (meta?.resources ?? []) as { hash?: string; unmatched?: boolean }[];
+    const resourcesWithHashes = metaResources.filter((r) => !!r.hash);
+    // If no resources have the unmatched flag at all (legacy image), fall back to count comparison
+    const hasAnyFlags = metaResources.some((r) => r.unmatched !== undefined);
+    if (hasAnyFlags) return false;
+    const detectedCount = resources.filter((r) => r.detected).length;
+    return resourcesWithHashes.length > detectedCount;
+  }, [meta?.resources, resources, unmatchedResources.length]);
   const cannotVerifyAi =
     !isValidAIGeneration({
       id: image.id,
@@ -782,10 +781,9 @@ function EditDetail() {
             {/*
           // #region [resources]
           */}
-            {!!resources?.length && (
+            {(!!resources?.length || unmatchedResources.length > 0 || hasLegacyUnmatched) && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                {/* TODO check if these ever dont have modelIds */}
                 {resourcesSorted
                   .filter((x) => !!x.modelName)
                   .slice(0, !showMoreResources ? 3 : resources.length)
@@ -815,14 +813,38 @@ function EditDetail() {
                     </Button>
                   </div>
                 )}
+                {unmatchedResources.length > 0 && (
+                  <Alert color="yellow" radius={0} className="-mx-3 -mb-3">
+                    <Text size="sm">
+                      The following resources could not be matched to models on Civitai:
+                    </Text>
+                    {unmatchedResources.map((r, i) => {
+                      const displayName = r.name?.replace(/.*[/\\]/, '').replace(/\.[^/.]+$/, '');
+                      return (
+                        <Group key={i} gap="xs" wrap="nowrap" mt={4}>
+                          <Text size="sm" lineClamp={1}>
+                            {displayName}
+                          </Text>
+                          <Badge color="gray" size="sm" variant="filled">
+                            {getDisplayName(r.type)}
+                          </Badge>
+                        </Group>
+                      );
+                    })}
+                  </Alert>
+                )}
+                {hasLegacyUnmatched && (
+                  <Alert color="yellow" radius="sm" className="-mx-3 -mb-3">
+                    <Text size="sm">
+                      Some resources detected in this image could not be matched to models on
+                      Civitai. You can add them manually using the + Resource button.
+                    </Text>
+                  </Alert>
+                )}
               </CustomCard>
             )}
-            {/* #endregion */}
 
-            {/*
-          // #region [missing resources]
-          */}
-            {!resources?.length && (
+            {!resources?.length && !unmatchedResources.length && !hasLegacyUnmatched && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
                 <Center>

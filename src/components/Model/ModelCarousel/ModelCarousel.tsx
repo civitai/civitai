@@ -16,7 +16,7 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
-import { generationPanel } from '~/store/generation.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -104,7 +104,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                   e.preventDefault();
                                   e.stopPropagation();
 
-                                  generationPanel.open({
+                                  generationGraphPanel.open({
                                     type: image.type,
                                     id: image.id,
                                   });

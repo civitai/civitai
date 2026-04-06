@@ -19,7 +19,7 @@ import {
   sourceImageSchema,
   negativePromptSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { type BaseModelGroup } from '~/shared/constants/base-model.constants';
+import { type BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   findClosestAspectRatio,
   getResolutionsFromAspectRatios,
@@ -144,10 +144,12 @@ type Wan22Schema = z.infer<typeof wan22Schema>;
 const wan22Schema = z.object({
   ...baseSchema.shape,
   version: z.literal('v2.2'),
+  multiStep: z.boolean().optional(),
   negativePrompt: negativePromptSchema,
   resolution: z.enum(wan22Resolutions).catch(wan22Resolutions[0]),
   aspectRatio: z.enum(wan22AspectRatios).optional().catch('1:1'),
   shift: z.number().default(8).catch(8),
+  steps: z.number().optional(),
   interpolatorModel: z.enum(wan22InterpolatorModels).optional(),
   useTurbo: z.boolean().optional(),
   frameRate: z.literal(24).optional().catch(24),
@@ -225,7 +227,7 @@ export const wanGenerationConfig = VideoGenerationConfig2({
     if (data.process === 'txt2vid') delete data.images;
     else if (data.process === 'img2vid') delete data.aspectRatio;
     if (data.version !== 'v2.1') {
-      delete data.duration;
+      // delete data.duration;
       delete data.priority;
     }
     switch (data.version) {
@@ -353,7 +355,13 @@ type Wan22Transformed = ReturnType<typeof handleTransformWan22Schema>;
 function handleTransformWan22Schema(data: Wan22Schema) {
   const baseModel = data.process === 'txt2vid' ? 'WanVideo-22-T2V-A14B' : 'WanVideo-22-I2V-A14B';
   const checkpoint = baseModelResourceMap[baseModel];
-  return { ...data, baseModel, resources: uniqBy([checkpoint, ...(data.resources ?? [])], 'id') };
+  // Legacy form always uses single-step FAL path
+  return {
+    ...data,
+    multiStep: false,
+    baseModel,
+    resources: uniqBy([checkpoint, ...(data.resources ?? [])], 'id'),
+  };
 }
 
 type Wan225bTransformed = ReturnType<typeof handleTransformWan225bSchema>;

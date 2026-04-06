@@ -14,6 +14,7 @@ type NOWPaymentsAccessToken = {
 class NOWPaymentsCaller extends HttpCaller {
   private static instance: NOWPaymentsCaller;
   private static acessToken: NOWPaymentsAccessToken;
+  private static pendingAuth: Promise<string> | null = null;
 
   protected constructor(baseUrl?: string) {
     baseUrl ??= env.NOW_PAYMENTS_API_URL;
@@ -98,17 +99,13 @@ class NOWPaymentsCaller extends HttpCaller {
   async getPriceEstimate(
     input: NOWPayments.EstimatePriceInput
   ): Promise<NOWPayments.EstimatePriceResponse | null> {
-    console.log('Estimate Price Input', input);
     const response = await this.getRaw(`/estimate`, { queryParams: input });
-
-    console.log(response);
     if (response.status === 404) return null;
     if (!response.ok) {
       console.error('Failed to get price estimate', response.statusText);
       return null;
     }
     const data = await response.json();
-
     return NOWPayments.estimatePriceResponseSchema.parse(data);
   }
 
@@ -165,6 +162,77 @@ class NOWPaymentsCaller extends HttpCaller {
     return NOWPayments.createPaymentResponseSchema.parse(data);
   }
 
+  async getListPayments(params: {
+    limit?: number;
+    page?: number;
+    sortBy?: string;
+    orderBy?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    invoiceId?: number;
+  }): Promise<NOWPayments.PaymentsListResponse | null> {
+    const token = await this.authenticate();
+    const response = await this.getRaw(`/payment/`, {
+      queryParams: params,
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get payments list', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.paymentsListResponseSchema.parse(data);
+  }
+
+  /** Fetch all payments associated with an invoice (wallet). Handles pagination. */
+  async getPaymentsByInvoiceId(
+    invoiceId: number
+  ): Promise<NOWPayments.CreatePaymentResponse[]> {
+    const PAGE_SIZE = 100;
+    let page = 0;
+    const all: NOWPayments.CreatePaymentResponse[] = [];
+
+    while (true) {
+      const result = await this.getListPayments({
+        limit: PAGE_SIZE,
+        page,
+        invoiceId,
+        sortBy: 'created_at',
+        orderBy: 'desc',
+      });
+
+      if (!result || result.data.length === 0) break;
+      all.push(...result.data);
+      if (result.data.length < PAGE_SIZE) break;
+      page++;
+    }
+
+    return all;
+  }
+
+  async getMerchantCoins(): Promise<NOWPayments.MerchantCoinsResponse | null> {
+    const response = await this.getRaw(`/merchant/coins`);
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get merchant coins', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.merchantCoinsResponseSchema.parse(data);
+  }
+
+  async getFullCurrencies(): Promise<NOWPayments.FullCurrenciesResponse | null> {
+    const response = await this.getRaw(`/full-currencies`);
+    if (response.status === 404) return null;
+    if (!response.ok) {
+      console.error('Failed to get full currencies', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.fullCurrenciesResponseSchema.parse(data);
+  }
+
   async getBalance(): Promise<NOWPayments.BalanceResponse | null> {
     const response = await this.getRaw(`/balance`);
     if (response.status === 404) return null;
@@ -185,6 +253,64 @@ class NOWPaymentsCaller extends HttpCaller {
     }
     const data = await response.json();
     return NOWPayments.payoutCurrenciesResponseSchema.parse(data);
+  }
+
+  async authenticate(): Promise<string> {
+    // Check cached token first
+    if (
+      NOWPaymentsCaller.acessToken &&
+      Date.now() - NOWPaymentsCaller.acessToken.createdAt <
+        NOWPaymentsCaller.acessToken.expiresIn * 1000
+    ) {
+      return NOWPaymentsCaller.acessToken.accessToken;
+    }
+
+    // Prevent concurrent auth calls — reuse in-flight request
+    if (NOWPaymentsCaller.pendingAuth) {
+      return NOWPaymentsCaller.pendingAuth;
+    }
+
+    NOWPaymentsCaller.pendingAuth = this._doAuthenticate();
+    try {
+      return await NOWPaymentsCaller.pendingAuth;
+    } finally {
+      NOWPaymentsCaller.pendingAuth = null;
+    }
+  }
+
+  private async _doAuthenticate(): Promise<string> {
+    const response = await this.postRaw('/auth', {
+      body: JSON.stringify({
+        email: env.NOW_PAYMENTS_EMAIL,
+        password: env.NOW_PAYMENTS_PASSWORD,
+      }),
+    });
+    if (!response.ok) throw new Error('Failed to authenticate with NowPayments');
+    const data = await response.json();
+    const parsed = NOWPayments.authResponseSchema.parse(data);
+
+    NOWPaymentsCaller.acessToken = {
+      accessToken: parsed.token,
+      expiresIn: parsed.expires_in ?? 300, // 5min default
+      createdAt: Date.now(),
+    };
+    return parsed.token;
+  }
+
+  async createPayout(
+    input: NOWPayments.CreatePayoutInput,
+    jwtToken: string
+  ): Promise<NOWPayments.CreatePayoutResponse | null> {
+    const response = await this.postRaw('/payout', {
+      body: JSON.stringify(input),
+      headers: { Authorization: `Bearer ${jwtToken}` },
+    });
+    if (!response.ok) {
+      console.error('Failed to create payout', response.statusText);
+      return null;
+    }
+    const data = await response.json();
+    return NOWPayments.createPayoutResponseSchema.parse(data);
   }
 }
 

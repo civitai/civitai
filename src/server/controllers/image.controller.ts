@@ -7,6 +7,7 @@ import {
   NsfwLevel,
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
+import { mapToViolationType } from '~/server/common/tos-reasons';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { imageTagsCache } from '~/server/redis/caches';
@@ -51,12 +52,15 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
+import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type {
   GetEntitiesCoverImage,
   GetImageInput,
   GetInfiniteImagesOutput,
   ImageModerationSchema,
   ImageReviewQueueInput,
+  SetTosViolationSchema,
   SetVideoThumbnailInput,
   UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
@@ -68,12 +72,15 @@ import {
   getImageContestCollectionDetails,
   getImageModerationReviewQueue,
   getImageResources,
+  getReportViolationDetailsForImages,
   getResourceIdsForImages,
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { imagesFeedWithoutIndexCounter } from '~/server/prom/client';
+import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
 
 export const moderateImageHandler = async ({
   input,
@@ -89,19 +96,28 @@ export const moderateImageHandler = async ({
       moderatorId: ctx.user.id,
     });
     if (input.reviewAction === 'block') {
+      const imageIds = images.map((img) => img.id);
+      const [imageTags, imageResources, reportDetails] = await Promise.all([
+        getTagNamesForImages(imageIds),
+        getResourceIdsForImages(imageIds),
+        getReportViolationDetailsForImages(imageIds),
+      ]);
+
       await Limiter().process(images, (images) =>
         ctx.track.images(
-          images.map(({ id, userId, nsfwLevel, needsReview }) => {
-            return {
-              type: 'DeleteTOS',
-              imageId: id,
-              nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
-              tags: [],
-              resources: [],
-              tosReason: needsReview ?? 'other',
-              ownerId: userId,
-            };
-          })
+          images.map(({ id, userId, nsfwLevel, needsReview }) => ({
+            type: 'DeleteTOS',
+            imageId: id,
+            nsfw: getNsfwLevelDeprecatedReverseMapping(nsfwLevel),
+            tags: imageTags[id] ?? [],
+            resources: imageResources[id] ?? [],
+            tosReason: needsReview ?? 'other',
+            violationType:
+              input.violationType ?? mapToViolationType(needsReview, reportDetails[id]),
+            violationDetails: input.violationDetails ?? reportDetails[id]?.comment ?? '',
+            ownerId: userId,
+            userId: ctx.user.id,
+          }))
         )
       );
     }
@@ -149,12 +165,12 @@ export const setTosViolationHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: SetTosViolationSchema;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
     const { user, ip, fingerprint } = ctx;
-    const { id } = input;
+    const { id, violationType, violationDetails } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
     // Get details of the image
@@ -221,6 +237,10 @@ export const setTosViolationHandler = async ({
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
 
+    // Look up report details for violation type resolution
+    const reportDetails = await getReportViolationDetailsForImages([id]);
+    const resolvedViolationType = violationType ?? mapToViolationType(null, reportDetails[id]);
+
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);
     await ctx.track.images([
@@ -231,7 +251,10 @@ export const setTosViolationHandler = async ({
         tags: imageTags[id] ?? [],
         resources: imageResources[id] ?? [],
         tosReason: 'manual',
+        violationType: resolvedViolationType,
+        violationDetails: violationDetails ?? reportDetails?.[id]?.comment ?? '',
         ownerId: image.userId,
+        userId: ctx.user.id,
       },
     ]);
     return image;
@@ -250,10 +273,33 @@ export const getInfiniteImagesHandler = async ({
   ctx: Context;
 }) => {
   const { user, features } = ctx;
-  // Use getAllImagesIndex (old Meilisearch) when useIndex is true
-  // Use getAllImages (DB) otherwise
-  // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
-  const useIndex = features.imageIndexFeed && input.useIndex;
+
+  // Check BitDex mode first — if active (shadow or primary), always route through
+  // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
+  // Skip BitDex for queries that need features it doesn't support:
+  // - collectionId: requires relational joins through CollectionItem table
+  // - prioritizedUserIds: showcase carousel needs DB-level user prioritization (TODO in getAllImagesIndex)
+  // - reactions: per-user reaction data isn't in the search index, needs DB subquery on ImageReaction
+  // - postId/postIds: specific post queries are ~2ms in Postgres (covered index) and create
+  //   unique cache keys in BitDex that hurt cache hit rate
+  const skipBitdex =
+    !!input.collectionId ||
+    !!input.prioritizedUserIds?.length ||
+    !!input.reactions?.length ||
+    !!input.postId ||
+    !!input.postIds?.length;
+  const bitdexMode = skipBitdex
+    ? null
+    : await getFliptVariant(
+        FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+        user?.id?.toString() || 'anonymous',
+        buildFliptContext(user)
+      );
+  const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
+
+  // Use getAllImagesIndex when useIndex is true OR BitDex is active.
+  // Use getAllImages (DB) otherwise.
+  const useIndex = useBitdex || (features.imageIndexFeed && input.useIndex);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();
@@ -267,7 +313,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useLogicalReplica: features.logicalReplica,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
     } else {
       return await getAllImages({
@@ -276,7 +322,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useLogicalReplica: features.logicalReplica,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
     }
   } catch (error) {
@@ -310,11 +356,22 @@ export const getImagesAsPostsInfiniteHandler = async ({
 }) => {
   try {
     const { user, features } = ctx;
-    // Use getAllImagesIndex (old Meilisearch) when feature flag is enabled
-    // Use getAllImages (DB) otherwise
-    // Note: The new ImagesFeed service is only used by REST API (/api/v1/images)
-    const fetchFn = features.imageIndex ? getAllImagesIndex : getAllImages;
-    type ResultType = typeof features.imageIndex extends true
+
+    // Check BitDex mode — if active, always route through getAllImagesIndex.
+    // Skip BitDex for unsupported query types (collections, prioritized users).
+    const skipBitdex = !!input.collectionId || !!input.prioritizedUserIds?.length;
+    const bitdexMode = skipBitdex
+      ? null
+      : await getFliptVariant(
+          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+          user?.id?.toString() || 'anonymous',
+          buildFliptContext(user)
+        );
+    const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
+    const useIndex = useBitdex || features.imageIndexFeed;
+
+    const fetchFn = useIndex ? getAllImagesIndex : getAllImages;
+    type ResultType = typeof features.imageIndexFeed extends true
       ? ImageResultSearchIndex
       : ImageResultDB;
 
@@ -333,16 +390,28 @@ export const getImagesAsPostsInfiniteHandler = async ({
     const versionPinnedPosts = input.modelVersionId ? pinnedPosts[input.modelVersionId] ?? [] : [];
 
     if (versionPinnedPosts.length && !cursor) {
-      const { items: pinnedPostsImages } = await fetchFn({
+      // Pinned posts: always use DB path (getAllImages) instead of BitDex.
+      // postId queries are ~2ms in Postgres (covered index) and create unique
+      // cache keys in BitDex that hurt cache hit rate. Model gallery queries
+      // (modelVersionId filter) stay on BitDex where they're needed.
+      const { items: pinnedPostsImages } = await getAllImages({
         ...input,
-        limit: limit * 4,
+        // Don't filter by model version/model for pinned posts — we already have
+        // exact postIds. The ImageResourceNew join that modelVersionId triggers
+        // excludes videos and other media that lack resource-detection entries,
+        // causing pinned posts with videos to silently disappear from the gallery.
+        modelVersionId: undefined,
+        modelId: undefined,
+        reviewId: undefined,
+        // Max pinned posts (20) × max images per post (20) = 400
+        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
         useCombinedNsfwLevel: !features.canViewNsfw,
         followed: false,
         postIds: versionPinnedPosts,
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useLogicalReplica: features.logicalReplica,
+        dbTarget: 'datapacket',
       });
 
       for (const image of pinnedPostsImages) {
@@ -350,6 +419,31 @@ export const getImagesAsPostsInfiniteHandler = async ({
         if (!pinned[image.postId]) pinned[image.postId] = [];
         pinned[image.postId].push(image);
       }
+
+      // Build per-post image count map to see which posts got partial vs zero results
+      const imagesPerPost: Record<number, number> = {};
+      for (const id of versionPinnedPosts) imagesPerPost[id] = 0;
+      for (const img of pinnedPostsImages) {
+        if (img.postId) imagesPerPost[img.postId] = (imagesPerPost[img.postId] ?? 0) + 1;
+      }
+
+      const returnedPostIds = [...new Set(pinnedPostsImages.map((i) => i.postId))];
+      const missingPostIds = versionPinnedPosts.filter((id) => !returnedPostIds.includes(id));
+
+      // Always log pinned post fetch results so we can compare good vs bad pods
+      logToAxiom({
+        type: missingPostIds.length ? 'warning' : 'info',
+        name: missingPostIds.length ? 'pinned-posts-missing' : 'pinned-posts-ok',
+        input,
+        requestedPostIds: versionPinnedPosts,
+        returnedPostIds,
+        missingPostIds,
+        imagesPerPost,
+        totalImagesReturned: pinnedPostsImages.length,
+        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
+        userId: user?.id,
+        isModerator: user?.isModerator,
+      });
     }
 
     while (true) {
@@ -364,7 +458,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useLogicalReplica: features.logicalReplica,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
 
       // Merge images by postId
@@ -385,6 +479,26 @@ export const getImagesAsPostsInfiniteHandler = async ({
     }
 
     const mergedPosts = Object.values({ ...pinned, ...posts });
+
+    // Verify pinned posts survived the merge
+    if (versionPinnedPosts.length && !cursor) {
+      const pinnedPostIdsInResult = Object.keys(pinned).map(Number);
+      const mergedPostIds = mergedPosts.map(([img]) => img.postId).filter(isDefined);
+      const droppedInMerge = pinnedPostIdsInResult.filter((id) => !mergedPostIds.includes(id));
+      if (droppedInMerge.length) {
+        logToAxiom({
+          type: 'error',
+          name: 'pinned-posts-dropped-in-merge',
+          message: `Pinned posts present after fetch but missing after merge`,
+          modelId: input.modelId,
+          modelVersionId: input.modelVersionId,
+          pinnedPostIdsInResult,
+          droppedInMerge,
+          pinnedKeys: Object.keys(pinned),
+          postsKeys: Object.keys(posts),
+        });
+      }
+    }
 
     // Get reviews from the users who created the posts
     const userIds = [...new Set(mergedPosts.map(([post]) => post.user.id).filter(isDefined))];

@@ -1,20 +1,15 @@
-import type {
-  ComfyStepTemplate,
-  ImageGenStepTemplate,
-  TextToImageStepTemplate,
-} from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
-import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
+import {
+  buildGenerationContext,
+  generateFromGraph,
+  getWorkflowStatusUpdate,
+  queryGeneratedImageWorkflows2,
+  whatIfFromGraph,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
-import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { generatorFeedbackReward } from '~/server/rewards';
-import {
-  generateImageSchema,
-  generateImageWhatIfSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
 import {
   imageTrainingRouterInputSchema,
   imageTrainingRouterWhatIfSchema,
@@ -25,22 +20,9 @@ import {
   workflowQuerySchema,
   workflowUpdateSchema,
 } from '~/server/schema/orchestrator/workflows.schema';
-import { reportProhibitedRequestSchema } from '~/server/schema/user.schema';
-import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
-import {
-  queryGeneratedImageWorkflows,
-  updateWorkflow,
-} from '~/server/services/orchestrator/common';
+import { updateWorkflow } from '~/server/services/orchestrator/common';
 import { getExperimentalFlags } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
-import {
-  createTextToImage,
-  createTextToImageStep,
-} from '~/server/services/orchestrator/textToImage/textToImage';
-import {
-  createImageGen,
-  createImageGenStep,
-} from '~/server/services/orchestrator/imageGen/imageGen';
 import {
   createTrainingWhatIfWorkflow,
   createTrainingWorkflow,
@@ -49,10 +31,14 @@ import {
   cancelWorkflow,
   deleteManyWorkflows,
   deleteWorkflow,
+  getWorkflow,
   patchWorkflows,
   patchWorkflowTags,
+  queryWorkflows,
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
+import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,
@@ -63,6 +49,21 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
+import {
+  createImageGen,
+  createImageGenStep,
+} from '~/server/services/orchestrator/imageGen/imageGen';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
+import {
+  commonAspectRatios,
+  nanoBananaProSizes,
+  seedreamSizes,
+  qwenSizes,
+  grokSizes,
+} from '~/server/common/constants';
+import type { SessionUser } from 'next-auth';
 import {
   getFlagged,
   getReasons,
@@ -74,8 +75,8 @@ import {
   getFlaggedReasonsSchema,
   getFlaggedConsumerStrikesSchema,
 } from '~/server/schema/orchestrator/flagged-consumers.schema';
-import { getBaseModelGroup } from '~/shared/constants/base-model.constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import semver from 'semver';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 
@@ -109,16 +110,134 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
   return next({ ctx: { ...ctx, user, ...flags } });
 });
 
-const orchestratorProcedure = protectedProcedure.use(orchestratorMiddleware);
+const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
+  const result = await next();
+  const version = ctx.req?.headers['x-client-version'] as string;
+  if (!version || version === 'unknown') return result;
+
+  const [genClient, genClientTemp] = await Promise.all([
+    sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT),
+    sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT_TEMP),
+  ]);
+
+  // New implementation: generation-panel-specific modal with notes
+  if (genClient.version && semver.lt(version, genClient.version)) {
+    ctx.res?.setHeader('x-generation-update-required', genClient.version);
+    if (genClient.notes) ctx.res?.setHeader('x-generation-update-notes', genClient.notes);
+  }
+
+  // Legacy fallback: global modal (deprecated after rollout)
+  if (genClientTemp.version && semver.lt(version, genClientTemp.version)) {
+    ctx.res?.setHeader('x-update-required', 'true');
+  }
+
+  return result;
+});
+
+const orchestratorProcedure = protectedProcedure
+  .use(orchestratorMiddleware)
+  .use(enforceGenerationVersion);
 const orchestratorGuardedProcedure = guardedProcedure
   .use(orchestratorMiddleware)
-  .use(experimentalMiddleware);
+  .use(experimentalMiddleware)
+  .use(enforceGenerationVersion);
 const experimentalProcedure = protectedProcedure.use(experimentalMiddleware);
+
+// Model config for generic iterative generation (mirrors comics config)
+const ITERATE_MODEL_CONFIG: Record<
+  string,
+  {
+    engine: string;
+    baseModel: string;
+    versionId: number;
+    img2imgVersionId?: number;
+    maxReferenceImages: number;
+    sizes: { label: string; width: number; height: number }[];
+  }
+> = {
+  NanoBanana: {
+    engine: 'gemini',
+    baseModel: 'NanoBanana',
+    versionId: 2436219,
+    maxReferenceImages: 7,
+    sizes: nanoBananaProSizes,
+  },
+  Flux2: {
+    engine: 'flux2',
+    baseModel: 'Flux.2 D',
+    versionId: 2439067,
+    maxReferenceImages: 7,
+    sizes: commonAspectRatios,
+  },
+  Seedream: {
+    engine: 'seedream',
+    baseModel: 'Seedream',
+    versionId: 2470991,
+    maxReferenceImages: 7,
+    sizes: seedreamSizes,
+  },
+  OpenAI: {
+    engine: 'openai',
+    baseModel: 'OpenAI',
+    versionId: 2512167,
+    maxReferenceImages: 7,
+    sizes: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
+  },
+  Qwen: {
+    engine: 'qwen',
+    baseModel: 'Qwen',
+    versionId: 2552908,
+    img2imgVersionId: 2558804,
+    maxReferenceImages: 3,
+    sizes: qwenSizes,
+  },
+  Grok: {
+    engine: 'grok',
+    baseModel: 'Grok',
+    versionId: 2738377,
+    maxReferenceImages: 7,
+    sizes: grokSizes,
+  },
+};
 
 export const orchestratorRouter = router({
   getVideoMetadata: orchestratorProcedure
     .input(z.object({ videoUrl: z.string() }))
     .query(({ ctx, input }) => getVideoMetadata(input)),
+
+  // #region [prompt enhancement]
+  enhancePrompt: orchestratorGuardedProcedure
+    .input(promptEnhancementSchema)
+    .mutation(({ ctx, input }) =>
+      enhancePrompt({
+        input,
+        token: ctx.token,
+        userId: ctx.user.id,
+        isGreen: ctx.domain === 'green',
+        isModerator: ctx.user.isModerator,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      })
+    ),
+  /** Generic workflow query by tags — used for prompt enhancement history, future text workflows, etc. */
+  queryWorkflowsByTags: orchestratorProcedure
+    .input(workflowQuerySchema)
+    .query(async ({ ctx, input }) => {
+      return queryWorkflows({
+        ...input,
+        token: ctx.token,
+        hideMatureContent: ctx.hideMatureContent,
+      });
+    }),
+  getWorkflow: orchestratorProcedure
+    .input(workflowIdSchema)
+    .query(({ ctx, input }) =>
+      getWorkflow({ token: ctx.token, path: { workflowId: input.workflowId } })
+    ),
+  // #endregion
 
   // #region [requests]
   deleteWorkflow: orchestratorProcedure
@@ -189,7 +308,7 @@ export const orchestratorRouter = router({
 
   // #region [generated images]
   queryGeneratedImages: orchestratorProcedure.input(workflowQuerySchema).query(({ ctx, input }) =>
-    queryGeneratedImageWorkflows({
+    queryGeneratedImageWorkflows2({
       ...input,
       token: ctx.token,
       user: ctx.user,
@@ -197,169 +316,93 @@ export const orchestratorRouter = router({
       hideMatureContent: ctx.hideMatureContent,
     })
   ),
-  generateImage: orchestratorGuardedProcedure
-    .input(generateImageSchema)
+  // #region [Generation Graph V2 endpoints]
+  /**
+   * Generate from graph - unified endpoint for all generation types
+   */
+  generateFromGraph: orchestratorGuardedProcedure
+    .input(z.any())
     .mutation(async ({ ctx, input }) => {
-      // Audit prompt (skip for whatIf requests)
-      if (!input.whatIf && input.params.prompt) {
-        const { auditPromptServer } = await import('~/server/services/orchestrator/promptAuditing');
-        await auditPromptServer({
-          prompt: input.params.prompt,
-          negativePrompt: input.params.negativePrompt,
-          userId: ctx.user.id,
-          isGreen: ctx.features.isGreen,
-          isModerator: ctx.user.isModerator,
-          track: ctx.track,
+      const {
+        input: formInput,
+        civitaiTip,
+        creatorTip,
+        tags: inputTags,
+        sourceMetadata,
+        sourceMetadataMap,
+        remixOfId,
+      } = input;
+      const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
+      const userTier = ctx.user.tier ?? 'free';
+      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features);
+
+      // Check generation status early
+      if (!status.available && !ctx.user.isModerator) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: status.message ?? 'Generation is currently disabled',
         });
       }
 
-      delete input.params.experimental;
-      const group = getBaseModelGroup(input.params.baseModel);
-      if (
-        EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(group) &&
-        input.params.enhancedCompatibility
-      ) {
-        input.params.engine = 'comfyui';
-      } else {
-        if (input.params.engine === 'comfyui') {
-          delete input.params.engine;
-        }
-        delete input.params.enhancedCompatibility;
-      }
-      const experimental = ctx.experimental;
-
-      const args = {
-        ...input,
-        user: ctx.user,
-        token: ctx.token,
-        experimental,
-        batchAll: ctx.batchAll,
-        isGreen: ctx.features.isGreen,
-        allowMatureContent: ctx.allowMatureContent,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      };
-
-      if (ctx.domain === 'green') {
-        args.tags = [...(args.tags ?? []), 'green'];
-      }
-      // if ('sourceImage' in args.params && args.params.sourceImage) {
-      //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
-      //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
-      //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
-      // }
-      // TODO - handle createImageGen
-      const engine = input.params.engine;
-      if (engine && !['flux-pro-raw', 'comfyui'].includes(engine)) {
-        return await createImageGen(args);
-      } else if (input.params.workflow === 'txt2img') {
-        return await createTextToImage({ ...args });
-      } else {
-        return await createComfy({ ...args });
-      }
-    }),
-  getImageWhatIf: orchestratorGuardedProcedure
-    .input(generateImageWhatIfSchema)
-    // can't use edge cache due to values dependent on individual users
-    // .use(edgeCacheIt({ ttl: CacheTTL.hour }))
-    .query(async ({ ctx, input }) => {
-      try {
-        const args = {
-          ...input,
-          resources: input.resources.map((x) => ({ ...x, strength: 1 })),
-          user: ctx.user,
-          token: ctx.token,
-          batchAll: ctx.batchAll,
-          allowMatureContent: ctx.allowMatureContent,
-          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-        };
-
-        let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
-        if (args.params.engine && args.params.engine !== 'flux-pro-raw') {
-          step = await createImageGenStep({ ...args, whatIf: true });
-        } else if (args.params.workflow === 'txt2img') {
-          step = await createTextToImageStep({ ...args, whatIf: true });
-        } else {
-          step = await createComfyStep({ ...args, whatIf: true });
-        }
-
-        const workflow = await submitWorkflow({
-          token: args.token,
-          body: {
-            steps: [step],
-            tips: args.tips,
-            experimental: ctx.experimental,
-            // @ts-ignore - BuzzSpendType is properly supported.
-            currencies: args.currencies,
-          },
-          query: {
-            whatif: true,
-          },
-        });
-
-        let ready = true;
-
-        for (const step of workflow.steps ?? []) {
-          for (const job of step.jobs ?? []) {
-            const { queuePosition } = job;
-            if (!queuePosition) continue;
-
-            const { support } = queuePosition;
-            if (support !== 'available' && ready) ready = false;
-          }
-        }
-
-        return {
-          allowMatureContent: workflow.allowMatureContent,
-          transactions: workflow.transactions?.list,
-          cost: workflow.cost,
-          ready,
-        };
-      } catch (e) {
-        logToAxiom({
-          name: 'generate-image-what-if',
-          type: 'error',
-          payload: input,
-          error:
-            e instanceof TRPCError
-              ? {
-                  code: e.code,
-                  name: e.name,
-                  message: e.message,
-                }
-              : e,
-        }).catch();
-        throw e;
-      }
-    }),
-  whatIf: orchestratorGuardedProcedure
-    .input(generationSchema)
-    // .use(edgeCacheIt({ ttl: 60 }))
-    .query(({ ctx, input }) =>
-      whatIf({
-        ...input,
+      return generateFromGraph({
+        input: formInput,
+        externalCtx,
         userId: ctx.user.id,
         token: ctx.token,
         experimental: ctx.experimental,
+        isGreen: ctx.features.isGreen,
         allowMatureContent: ctx.allowMatureContent,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      })
-    ),
-  generate: orchestratorGuardedProcedure.input(z.any()).mutation(({ ctx, input }) => {
-    if (ctx.domain === 'green') {
-      input.tags = [...(input.tags ?? []), 'green'];
+        isModerator: ctx.user.isModerator,
+        track: ctx.track,
+        civitaiTip,
+        creatorTip,
+        tags,
+        sourceMetadata,
+        sourceMetadataMap,
+        remixOfId,
+      });
+    }),
+
+  /**
+   * What-if from graph - cost estimation for generation-graph inputs
+   */
+  whatIfFromGraph: orchestratorGuardedProcedure.input(z.any()).query(async ({ ctx, input }) => {
+    const userTier = ctx.user.tier ?? 'free';
+    const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features);
+
+    if (!status.available && !ctx.user.isModerator) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message: status.message ?? 'Generation is currently disabled',
+      });
     }
 
-    return generate({
-      ...input,
-      userId: ctx.user.id,
-      token: ctx.token,
-      experimental: ctx.experimental,
-      isGreen: ctx.features.isGreen,
-      allowMatureContent: ctx.allowMatureContent,
-      currencies: getAllowedAccountTypes(ctx.features, ['blue']),
-      isModerator: ctx.user.isModerator,
-      track: ctx.track,
-    });
+    try {
+      return await whatIfFromGraph({
+        input,
+        externalCtx,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+        token: ctx.token,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      });
+    } catch (e) {
+      logToAxiom({
+        name: 'what-if-from-graph',
+        type: 'error',
+        payload: input,
+        error:
+          e instanceof TRPCError
+            ? {
+                code: e.code,
+                name: e.name,
+                message: e.message,
+              }
+            : e,
+      }).catch();
+      throw e;
+    }
   }),
   // #endregion
 
@@ -379,6 +422,7 @@ export const orchestratorRouter = router({
         ...input,
         token: ctx.token,
         user: ctx.user,
+        features: ctx.features,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       };
       return await createTrainingWorkflow(args);
@@ -395,11 +439,20 @@ export const orchestratorRouter = router({
     }),
   // #endregion
 
-  reportProhibitedRequest: experimentalProcedure
-    .input(reportProhibitedRequestSchema)
-    .mutation(async ({ ctx, input }) => {
-      if (ctx.testing) return false;
-      return await reportProhibitedRequestHandler({ ctx, input });
+  // #region [moderator]
+  /** Query another user's generated images (moderator only) */
+  queryUserGeneratedImages: moderatorProcedure
+    .input(workflowQuerySchema.extend({ userId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const { userId, ...query } = input;
+      // Get token for the target user, not the moderator
+      const targetToken = await getOrchestratorToken(userId, ctx);
+      return queryGeneratedImageWorkflows2({
+        ...query,
+        token: targetToken,
+        user: ctx.user,
+        hideMatureContent: false, // Moderators should see all content
+      });
     }),
 
   getFlaggedConsumers: moderatorProcedure
@@ -416,4 +469,249 @@ export const orchestratorRouter = router({
     .mutation(({ input, ctx }) =>
       reviewConsumerStrikes({ consumerId: `civitai-${input.userId}`, moderatorId: ctx.user.id })
     ),
+  statusUpdate: orchestratorGuardedProcedure
+    .input(workflowIdSchema)
+    .query(({ ctx, input }) =>
+      getWorkflowStatusUpdate({ token: ctx.token, workflowId: input.workflowId })
+    ),
+
+  // ── Generic iterative image editor endpoints ──
+
+  iterateGenerate: protectedProcedure
+    .input(
+      z.object({
+        prompt: z.string().min(1).max(2000),
+        enhance: z.boolean().default(true),
+        aspectRatio: z.string().default('3:4'),
+        baseModel: z.string().nullish(),
+        quantity: z.number().int().min(1).max(4).default(1),
+        sourceImageUrl: z.string().optional(),
+        sourceImageWidth: z.number().int().positive().optional(),
+        sourceImageHeight: z.number().int().positive().optional(),
+        referenceImages: z
+          .array(
+            z.object({
+              url: z.string(),
+              width: z.number().int().positive(),
+              height: z.number().int().positive(),
+            })
+          )
+          .optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const modelConfig =
+        ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ?? ITERATE_MODEL_CONFIG.NanoBanana;
+      const effectiveVersionId =
+        input.sourceImageUrl && modelConfig.img2imgVersionId
+          ? modelConfig.img2imgVersionId
+          : modelConfig.versionId;
+
+      const sizes = modelConfig.sizes;
+      const match =
+        sizes.find((s) => s.label === input.aspectRatio) ??
+        sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
+        sizes[0];
+      const { width: panelWidth, height: panelHeight } = match;
+
+      const token = await getOrchestratorToken(ctx.user!.id, ctx);
+
+      // Build prompt — optionally enhance
+      const originalPrompt = input.prompt.trim();
+      let fullPrompt = originalPrompt;
+      if (input.enhance && fullPrompt) {
+        fullPrompt = await enhanceComicPrompt({
+          token,
+          userPrompt: fullPrompt,
+          characterName: '',
+          characterNames: [],
+          currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        });
+      }
+
+      // Build images array
+      const allImages: { url: string; width: number; height: number }[] = [];
+      if (input.sourceImageUrl && input.sourceImageWidth && input.sourceImageHeight) {
+        const sourceEdgeUrl = getEdgeUrl(input.sourceImageUrl, { original: true });
+        allImages.push({
+          url: sourceEdgeUrl,
+          width: input.sourceImageWidth,
+          height: input.sourceImageHeight,
+        });
+      }
+      if (input.referenceImages) {
+        for (const ref of input.referenceImages) {
+          const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+          allImages.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+        }
+      }
+
+      const cappedImages =
+        allImages.length <= modelConfig.maxReferenceImages
+          ? allImages
+          : allImages.slice(0, modelConfig.maxReferenceImages);
+
+      const tags = ctx.domain === 'green' ? ['iterate', 'green'] : ['iterate'];
+
+      const result = await createImageGen({
+        params: {
+          prompt: fullPrompt || '',
+          negativePrompt: '',
+          engine: modelConfig.engine,
+          baseModel: modelConfig.baseModel as any,
+          width: panelWidth,
+          height: panelHeight,
+          aspectRatio: input.aspectRatio,
+          workflow: 'txt2img',
+          sampler: 'Euler',
+          steps: 25,
+          quantity: input.quantity,
+          draft: false,
+          disablePoi: false,
+          priority: 'low',
+          sourceImage: null,
+          images: cappedImages,
+        },
+        resources: [{ id: effectiveVersionId, strength: 1 }],
+        tags,
+        tips: { creators: 0, civitai: 0 },
+        user: ctx.user! as SessionUser,
+        token,
+        isGreen: ctx.features.isGreen,
+        allowMatureContent: ctx.domain === 'green' ? false : undefined,
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+      });
+
+      return {
+        workflowId: result.id,
+        width: panelWidth,
+        height: panelHeight,
+        cost: result.cost?.total ?? 0,
+        enhancedPrompt: input.enhance && fullPrompt !== originalPrompt ? fullPrompt : null,
+      };
+    }),
+
+  getIterateCostEstimate: protectedProcedure
+    .input(
+      z.object({
+        baseModel: z.string().nullish(),
+        aspectRatio: z.string().default('3:4'),
+        quantity: z.number().int().min(1).max(4).default(1),
+        sourceImage: z
+          .object({
+            url: z.string(),
+            width: z.number().int().positive(),
+            height: z.number().int().positive(),
+          })
+          .nullish(),
+        referenceImages: z
+          .array(
+            z.object({
+              url: z.string(),
+              width: z.number().int().positive(),
+              height: z.number().int().positive(),
+            })
+          )
+          .optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      try {
+        const token = await getOrchestratorToken(ctx.user!.id, ctx);
+        const modelConfig =
+          ITERATE_MODEL_CONFIG[input.baseModel ?? 'NanoBanana'] ?? ITERATE_MODEL_CONFIG.NanoBanana;
+        const hasSourceImage = !!input.sourceImage;
+        const effectiveVersionId =
+          hasSourceImage && modelConfig.img2imgVersionId
+            ? modelConfig.img2imgVersionId
+            : modelConfig.versionId;
+        const sizes = modelConfig.sizes;
+        const match =
+          sizes.find((s) => s.label === input.aspectRatio) ??
+          sizes.find((s) => s.label === '3:4' || s.label === 'Portrait') ??
+          sizes[0];
+        const { width, height } = match;
+
+        // Build real images array for accurate pricing
+        const images: { url: string; width: number; height: number }[] = [];
+        if (input.sourceImage) {
+          const sourceEdgeUrl = getEdgeUrl(input.sourceImage.url, { original: true });
+          images.push({
+            url: sourceEdgeUrl,
+            width: input.sourceImage.width,
+            height: input.sourceImage.height,
+          });
+        }
+        if (input.referenceImages) {
+          for (const ref of input.referenceImages) {
+            const refEdgeUrl = getEdgeUrl(ref.url, { original: true });
+            images.push({ url: refEdgeUrl, width: ref.width, height: ref.height });
+          }
+        }
+        const cappedImages =
+          images.length <= modelConfig.maxReferenceImages
+            ? images
+            : images.slice(0, modelConfig.maxReferenceImages);
+
+        const step = await createImageGenStep({
+          params: {
+            prompt: '',
+            negativePrompt: '',
+            engine: modelConfig.engine,
+            baseModel: modelConfig.baseModel as any,
+            width,
+            height,
+            aspectRatio: input.aspectRatio,
+            workflow: 'txt2img',
+            sampler: 'Euler',
+            steps: 25,
+            quantity: input.quantity,
+            draft: false,
+            disablePoi: false,
+            priority: 'low',
+            sourceImage: null,
+            images: cappedImages,
+          },
+          resources: [{ id: effectiveVersionId, strength: 1 }],
+          tags: ctx.domain === 'green' ? ['iterate', 'green'] : ['iterate'],
+          tips: { creators: 0, civitai: 0 },
+          whatIf: true,
+          user: ctx.user! as SessionUser,
+        });
+
+        const workflow = await submitWorkflow({
+          token,
+          body: {
+            steps: [step],
+            currencies: getAllowedAccountTypes(ctx.features, ['blue']) as any,
+          },
+          query: { whatif: true },
+        });
+
+        return { cost: workflow.cost?.total ?? 0, ready: true };
+      } catch (error) {
+        console.error('Orchestrator getIterateCostEstimate failed:', error);
+        return { cost: 0, ready: false };
+      }
+    }),
+
+  pollIterationStatus: protectedProcedure
+    .input(
+      z.object({
+        workflowId: z.string().min(1),
+        width: z.number().int().positive().optional(),
+        height: z.number().int().positive().optional(),
+        prompt: z.string().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      return pollIterationWorkflow({
+        workflowId: input.workflowId,
+        width: input.width,
+        height: input.height,
+        prompt: input.prompt,
+        userId: ctx.user!.id,
+        ctx,
+      });
+    }),
 });

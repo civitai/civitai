@@ -153,7 +153,7 @@ export default function UserTransactions() {
               const isDebit = amount < 0;
               const isImage = details?.entityType === 'Image';
               const { url, label }: { url?: string; label?: string } = details
-                ? parseBuzzTransactionDetails(details as BuzzTransactionDetails)
+                ? parseBuzzTransactionDetails(details as BuzzTransactionDetails, type)
                 : {};
               if (label) {
                 description = description?.replace('Content', `A ${label.toLowerCase()}`);

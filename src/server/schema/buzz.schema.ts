@@ -72,6 +72,7 @@ export const getBuzzTransactionResponse = z.object({
   amount: z.coerce.number(),
   description: z.coerce.string().nullish(),
   details: buzzTransactionDetails.nullish(),
+  externalTransactionId: z.string().nullish(),
 });
 
 export type GetUserBuzzTransactionsResponse = z.infer<typeof getUserBuzzTransactionsResponse>;
@@ -132,13 +133,33 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .check((ctx) => {
     if (
       ctx.value.entityType &&
-      ['Image', 'Model', 'Article'].includes(ctx.value.entityType) &&
-      ctx.value.amount > buzzConstants.maxEntityTip
+      ['Image', 'Model', 'Article', 'ComicProject', 'ComicChapter'].includes(
+        ctx.value.entityType
+      ) &&
+      ctx.value.amount > buzzConstants.maxTipAmount
     ) {
       ctx.issues.push({
         code: 'custom',
         message: `Your generosity abounds. Unfortunately you're attempting to tip more buzz than allowed in a single transaction`,
         input: ctx.value,
+      });
+    }
+
+    if (
+      (ctx.value.entityId && !ctx.value.entityType) ||
+      (!ctx.value.entityId && ctx.value.entityType)
+    ) {
+      ctx.issues.push({
+        code: 'custom',
+        message: 'Please provide both the entityId and entityType',
+        input: ctx.value,
+        path: ['entityId'],
+      });
+      ctx.issues.push({
+        code: 'custom',
+        message: 'Please provide both the entityId and entityType',
+        input: ctx.value,
+        path: ['entityType'],
       });
     }
   });

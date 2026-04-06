@@ -11,7 +11,8 @@ export default PublicEndpoint(
       const queryResult = await getGenerationData({ query: queryInput, user: session?.user });
       return res.status(200).json(queryResult);
     } catch (e: any) {
-      res.status(400).send({ message: e.message });
+      if (!res.headersSent) return res.status(400).json({ message: e.message });
+      return;
     }
   },
   ['GET']

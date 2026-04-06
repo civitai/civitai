@@ -2,7 +2,8 @@ import {
   wanBaseModelGroupIdMap,
   wanGeneralBaseModelMap,
 } from '~/server/orchestrator/wan/wan.schema';
-import { getBaseModelEngine, type BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelEngine, getEcosystem } from '~/shared/constants/basemodel.constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { getWanVersion } from '../orchestrator/wan/wan.schema';
 
@@ -64,6 +65,7 @@ type NormalizeMetaProps = {
   process?: string;
   engine?: string;
   baseModel?: string;
+  ecosystem?: string;
 };
 
 export function getMetaResources({
@@ -93,11 +95,14 @@ export function normalizeMeta<T extends NormalizeMetaProps>(initialMeta: T) {
   const negativePrompt = 'negativePrompt' in meta ? (meta.negativePrompt as string) : undefined;
   const process = meta.process ?? (type && typeof type === 'string') ? type : undefined;
   const engine = meta.engine ?? (meta.baseModel ? getBaseModelEngine(meta.baseModel) : undefined);
+  const ecosystem =
+    meta.ecosystem ?? (meta.baseModel ? getEcosystem(meta.baseModel)?.key : undefined);
   const data = {
     ...meta,
     ...cleanPrompt({ prompt, negativePrompt }),
     process,
     engine,
+    ecosystem,
   };
 
   if ('engine' in data && typeof data.engine === 'string') {
@@ -137,5 +142,6 @@ function processWanVideoGenMeta(data: WanVideoGenMeta) {
     delete data.sourceImage;
   }
   delete data.workflow;
-  return { ...data, baseModel };
+  const ecosystem = getEcosystem(baseModel)?.key;
+  return { ...data, baseModel, ecosystem };
 }

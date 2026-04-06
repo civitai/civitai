@@ -64,6 +64,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
+import { deleteArticleContentImages } from '~/server/services/article-content-cleanup.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { extractImagesFromArticle } from '~/server/utils/article-image-helpers';
@@ -216,10 +217,10 @@ export const getArticles = async ({
     }
 
     if (username) {
-      const targetUser = await dbRead.user.findUnique({
-        where: { username: username ?? '' },
-        select: { id: true },
-      });
+      const userFindArgs = { where: { username: username ?? '' }, select: { id: true } };
+      const targetUser =
+        (await dbRead.user.findUnique(userFindArgs)) ??
+        (await dbWrite.user.findUnique(userFindArgs));
 
       if (!targetUser) throw new Error('User not found');
 
@@ -341,7 +342,7 @@ export const getArticles = async ({
     }
 
     if (cursor) {
-      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+      const cursorOperator = cursorDirection === 'DESC' ? '<=' : '>=';
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
     }
 
@@ -671,7 +672,7 @@ export const getArticleById = async ({
       userId === article.userId ||
       (coverImage?.ingestion === 'Scanned' && !coverImage?.needsReview);
 
-    let contentJson: Record<string, any> | undefined;
+    let contentJson: MixedObject | undefined;
     if (article.content) {
       contentJson = article.content.startsWith('{')
         ? JSON.parse(article.content)
@@ -745,6 +746,38 @@ export const upsertArticle = async ({
       }
     }
 
+    // For updates, fetch article early so we can check cover image ownership and NSFW level
+    let article: {
+      id: number;
+      cover: string | null;
+      coverId: number | null;
+      userId: number;
+      publishedAt: Date | null;
+      status: string;
+      nsfwLevel: number;
+      metadata: Prisma.JsonValue;
+      content: string | null;
+    } | null = null;
+    if (id) {
+      article = await dbWrite.article.findUnique({
+        where: { id },
+        select: {
+          id: true,
+          cover: true,
+          coverId: true,
+          userId: true,
+          publishedAt: true,
+          status: true,
+          nsfwLevel: true,
+          metadata: true,
+          content: true,
+        },
+      });
+      if (!article) throw throwNotFoundError();
+      const isOwner = article.userId === userId || isModerator;
+      if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+    }
+
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
     let coverId = coverImage?.id;
@@ -753,9 +786,13 @@ export const upsertArticle = async ({
         const result = await createImage({ ...coverImage, userId });
         coverId = result.id;
       } else {
-        const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
-        if (!isImgOwner) {
-          throw throwAuthorizationError('Invalid cover image');
+        // Skip ownership check when the cover image hasn't changed (e.g. mod-uploaded covers)
+        const isExistingCover = article != null && coverId === article.coverId;
+        if (!isExistingCover) {
+          const isImgOwner = await isImageOwner({ userId, isModerator, imageId: coverId });
+          if (!isImgOwner) {
+            throw throwAuthorizationError('Invalid cover image');
+          }
         }
       }
     }
@@ -843,24 +880,13 @@ export const upsertArticle = async ({
       return result;
     }
 
-    const article = await dbWrite.article.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        cover: true,
-        coverId: true,
-        userId: true,
-        publishedAt: true,
-        status: true,
-        nsfwLevel: true,
-        metadata: true,
-        content: true, // Add content for change detection
-      },
-    });
+    // article is guaranteed non-null here since the `if (id)` block above fetches it
     if (!article) throw throwNotFoundError();
 
-    const isOwner = article.userId === userId || isModerator;
-    if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+    // Auto-clamp userNsfwLevel to system floor instead of blocking edits
+    if (data.userNsfwLevel != null && !isModerator) {
+      data.userNsfwLevel = Math.max(data.userNsfwLevel, article.nsfwLevel);
+    }
 
     // Prevent owners from re-publishing articles unpublished for ToS violations
     if (
@@ -1062,7 +1088,10 @@ export const deleteArticleById = async ({
     if (!isOwner) throw throwAuthorizationError(`You cannot perform this action`);
 
     const deleted = await dbWrite.$transaction(async (tx) => {
-      const article = await tx.article.delete({ where: { id }, select: { coverId: true } });
+      const article = await tx.article.delete({
+        where: { id },
+        select: { coverId: true, content: true },
+      });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
       await tx.imageConnection.deleteMany({
@@ -1073,6 +1102,7 @@ export const deleteArticleById = async ({
     });
 
     if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
+    if (deleted.content) await deleteArticleContentImages(deleted.content);
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     return deleted;

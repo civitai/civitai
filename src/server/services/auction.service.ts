@@ -9,8 +9,10 @@ import type { DetailsCanceledBid } from '~/server/notifications/auction.notifica
 import type {
   CreateBidInput,
   DeleteBidInput,
+  GetAuctionBasesInput,
   GetAuctionBySlugInput,
   TogglePauseRecurringBidInput,
+  UpdateAuctionBaseInput,
 } from '~/server/schema/auction.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -971,6 +973,97 @@ export const togglePauseRecurringBid = async ({
     },
   });
 };
+
+export type GetAuctionBasesReturn = AsyncReturnType<typeof getAuctionBases>;
+export async function getAuctionBases({ page, limit }: GetAuctionBasesInput) {
+  const now = new Date();
+  const skip = (page - 1) * limit;
+
+  const [items, totalCount] = await Promise.all([
+    dbWrite.auctionBase.findMany({
+      skip,
+      take: limit,
+      orderBy: { id: 'asc' },
+      select: {
+        id: true,
+        type: true,
+        ecosystem: true,
+        name: true,
+        slug: true,
+        quantity: true,
+        minPrice: true,
+        active: true,
+        runForDays: true,
+        validForDays: true,
+        description: true,
+        _count: {
+          select: {
+            auctions: {
+              where: { startAt: { lte: now }, endAt: { gt: now } },
+            },
+          },
+        },
+        auctions: {
+          where: { startAt: { lte: now }, endAt: { gt: now } },
+          select: {
+            id: true,
+            quantity: true,
+            minPrice: true,
+            startAt: true,
+            endAt: true,
+            _count: { select: { bids: { where: { deleted: false } } } },
+          },
+          take: 1,
+        },
+      },
+    }),
+    dbWrite.auctionBase.count(),
+  ]);
+
+  const mapped = items.map(({ _count, auctions, ...base }) => {
+    const currentAuction = auctions[0] ?? null;
+    return {
+      ...base,
+      currentAuction: currentAuction
+        ? {
+            id: currentAuction.id,
+            quantity: currentAuction.quantity,
+            minPrice: currentAuction.minPrice,
+            startAt: currentAuction.startAt,
+            endAt: currentAuction.endAt,
+            bidCount: currentAuction._count.bids,
+          }
+        : null,
+    };
+  });
+
+  return {
+    items: mapped,
+    totalCount,
+    totalPages: Math.ceil(totalCount / limit),
+    page,
+  };
+}
+
+export async function updateAuctionBase({ id, ...data }: UpdateAuctionBaseInput) {
+  return dbWrite.auctionBase.update({
+    where: { id },
+    data,
+    select: {
+      id: true,
+      type: true,
+      ecosystem: true,
+      name: true,
+      slug: true,
+      quantity: true,
+      minPrice: true,
+      active: true,
+      runForDays: true,
+      validForDays: true,
+      description: true,
+    },
+  });
+}
 
 export async function getLastAuctionReset() {
   const auctionReset = await dbWrite.$queryRaw<{ since_date: Date }[]>`

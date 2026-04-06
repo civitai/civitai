@@ -1,0 +1,15 @@
+{
+  "name": "browser-automation-skill",
+  "version": "1.0.0",
+  "description": "Browser automation skill with REPL exploration and reusable flows",
+  "type": "module",
+  "main": "runner.mjs",
+  "scripts": {
+    "start": "node runner.mjs",
+    "setup": "npx playwright install chromium",
+    "test": "node runner.mjs --list-flows"
+  },
+  "dependencies": {
+    "playwright": "^1.40.0"
+  }
+}

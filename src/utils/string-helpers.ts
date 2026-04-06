@@ -45,7 +45,7 @@ const nameOverrides: Record<string, string> = {
   LoCon: 'LyCORIS',
   LORA: 'LoRA',
   DoRA: 'DoRA',
-  scheduler: 'Sampler',
+  scheduler: 'Scheduler',
   TextualInversion: 'Embedding',
   MotionModule: 'Motion',
   BenefactorsOnly: 'Supporters Only',
@@ -64,6 +64,23 @@ const nameOverrides: Record<string, string> = {
   'Wan Video': 'WAN Video',
   commentV2: 'Comment',
   CommentV2: 'Comment',
+  // Crypto network display names (NowPayments API returns varying codes)
+  base: 'Base',
+  eth: 'Ethereum',
+  ethereum: 'Ethereum',
+  trx: 'Tron',
+  tron: 'Tron',
+  sol: 'Solana',
+  solana: 'Solana',
+  bsc: 'BNB Chain',
+  matic: 'Polygon',
+  polygon: 'Polygon',
+  avaxc: 'Avalanche',
+  avalanche: 'Avalanche',
+  arb: 'Arbitrum',
+  arbitrum: 'Arbitrum',
+  op: 'Optimism',
+  optimism: 'Optimism',
 };
 
 export function getDisplayName(
@@ -194,24 +211,6 @@ export function hashifyObject(obj: any) {
 export function trimNonAlphanumeric(str: string | null | undefined) {
   return str?.replace(/^[^\w]+|[^\w]+$/g, '');
 }
-
-type CivitaiAir = {
-  source: 'civitai';
-  version: number;
-  model: number;
-};
-
-type OrchestratorAir = {
-  source: 'orchestrator';
-  jobId: string;
-  fileName: string;
-};
-
-type AIR = {
-  ecosystem: string;
-  type: string;
-  format?: string | undefined;
-} & (CivitaiAir | OrchestratorAir);
 
 export function parseAIR(identifier: string) {
   const { id, version, ...value } = Air.parse(identifier);

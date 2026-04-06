@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import { type BaseModel, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
@@ -180,7 +180,10 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const { files, ...restVersion } = version;
 
       const canGenerate = modelVersions.some(
-        (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
+        (x) =>
+          x.generationCoverage?.covered &&
+          !unavailableGenResources.includes(x.id) &&
+          isBaseModelGenerationSupported(x.baseModel, model.type)
       );
       const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
@@ -218,7 +221,9 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate:
-              generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
+              generationCoverage?.covered &&
+              unavailableGenResources.indexOf(x.id) === -1 &&
+              isBaseModelGenerationSupported(x.baseModel, model.type),
             settings: settings as RecommendedSettingsSchema,
             baseModel: x.baseModel as BaseModel,
           })

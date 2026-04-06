@@ -1,11 +1,8 @@
 CREATE OR REPLACE FUNCTION update_muted_at()
 RETURNS TRIGGER AS $$
 BEGIN
-    -- Check if muted is set to true and update mutedAt to now()
-    IF NEW.muted THEN
-        NEW."mutedAt" := now();
-    -- Check if muted is set to false and clear mutedAt
-    ELSIF NOT NEW.muted THEN
+    -- Clear mutedAt when muted is set to false
+    IF NOT NEW.muted THEN
         NEW."mutedAt" := NULL;
     END IF;
     RETURN NEW;

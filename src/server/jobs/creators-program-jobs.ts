@@ -41,7 +41,7 @@ export const creatorsProgramDistribute = createJob(
     if (!clickhouse) return;
 
     const availability = getCreatorProgramAvailability();
-    if (!availability) return;
+    if (!availability.isAvailable) return;
 
     // Determine `month` we're settling
     let month = await dbKV.get('compensation-pool-month', FIRST_CREATOR_PROGRAM_MONTH);
@@ -80,24 +80,24 @@ export const creatorsProgramDistribute = createJob(
         allAffectedUsers.add(participant.userId);
         availablePoolValue -= participantShare;
       }
-    }
 
-    // Send pending cash transactions from bank with retry
-    const monthStr = dayjs(month).format('YYYY-MM');
-    await withRetries(async () => {
-      createBuzzTransactionMany(
-        allAllocations.map(([userId, amount]) => ({
-          type: TransactionType.Compensation,
-          toAccountType: 'cashPending',
-          toAccountId: userId,
-          fromAccountId: 0, // central bank
-          amount,
-          description: `Compensation Pool for ${monthStr}`,
-          details: { month },
-          externalTransactionId: `comp-pool-${monthStr}-${userId}`,
-        }))
-      );
-    });
+      // Send pending cash transactions from bank with retry
+      const monthStr = dayjs(month).format('YYYY-MM');
+      await withRetries(async () => {
+        createBuzzTransactionMany(
+          allAllocations.map(([userId, amount]) => ({
+            type: TransactionType.Compensation,
+            toAccountType: 'cashPending',
+            toAccountId: userId,
+            fromAccountId: 0, // central bank
+            amount,
+            description: `Compensation Pool for ${monthStr}`,
+            details: { month },
+            externalTransactionId: `comp-pool-${monthStr}-${userId}-${buzzType}`,
+          }))
+        );
+      });
+    }
 
     // Bust user caches
     const affectedUsers = Array.from(allAffectedUsers);
@@ -120,7 +120,7 @@ export const creatorsProgramInviteTipalti = createJob(
   '50 23 L * *',
   async () => {
     const availability = getCreatorProgramAvailability();
-    if (!availability) return;
+    if (!availability.isAvailable) return;
     const participants = await getPoolParticipantsV2(
       dayjs().subtract(1, 'months').toDate(),
       true,
@@ -190,7 +190,7 @@ export const creatorsProgramSettleCash = createJob(
     if (!clickhouse) return;
 
     const availability = getCreatorProgramAvailability();
-    if (!availability) return;
+    if (!availability.isAvailable) return;
 
     const month = dayjs().subtract(1, 'months').toDate();
     const participants = await getPoolParticipantsV2(month, true, 'yellow');

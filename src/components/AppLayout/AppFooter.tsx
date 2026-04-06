@@ -72,7 +72,6 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     key: 'careers',
     href: '/content/careers',
     children: 'Careers',
-    indicator: true,
   },
   {
     key: '2257',
@@ -142,7 +141,7 @@ export function AppFooter() {
               let button = (
                 <Button
                   key={key ?? i}
-                  component={Link}
+                  component={(props.target === '_blank' ? 'a' : Link) as typeof Link}
                   {...props}
                   className={clsx('px-2.5 @max-sm:px-1', {
                     'pr-3.5': indicator,

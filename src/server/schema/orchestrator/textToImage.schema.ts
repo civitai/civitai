@@ -5,12 +5,27 @@ import type { Sampler } from '~/server/common/constants';
 import { generation } from '~/server/common/constants';
 import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { baseModelGroups } from '~/shared/constants/base-model.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
+import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
+import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
 import { defaultCatch } from '~/utils/zod-helpers';
+
+const schedulers = ['simple', 'discrete', 'karras', 'exponential', 'ays'] as const;
+
+// All valid samplers: UI samplers + sdcpp samplers for ZImageBase/Flux2Klein
+const allValidSamplers = [
+  ...generationSamplers,
+  ...zImageSampleMethods,
+  ...flux2KleinSampleMethods,
+] as const;
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
+const transformationSchema = z.looseObject({
+  workflow: z.string(),
+  params: z.record(z.string(), z.unknown()).optional(),
+  resources: z.array(z.record(z.string(), z.unknown())).optional(),
+});
 
 export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
@@ -18,9 +33,15 @@ export const textToImageParamsSchema = z.object({
   prompt: z.string().default(''),
   negativePrompt: z.string().optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
-  sampler: z.string().refine((val) => generationSamplers.includes(val as Sampler), {
+  sampler: z.string().refine((val) => allValidSamplers.includes(val as any), {
     error: 'Invalid sampler',
   }),
+  scheduler: z
+    .string()
+    .transform((val) =>
+      ['simple', 'discrete', 'karras', 'exponential', 'ays'].includes(val) ? val : 'simple'
+    )
+    .optional(),
   seed: z.coerce.number().min(1).max(generation.maxValues.seed).nullish().catch(null),
   clipSkip: z.coerce.number().optional(),
   steps: z.coerce.number().min(1).max(100).optional(),
@@ -34,7 +55,7 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
   fluxUltraAspectRatio: z.string().optional(),
-  baseModel: z.enum(baseModelGroups),
+  baseModel: z.string(),
   width: z.number(),
   height: z.number(),
   // temp props?
@@ -56,6 +77,7 @@ export const textToImageParamsSchema = z.object({
   process: z.string().optional(),
   enhancedCompatibility: z.boolean().optional(),
   outputFormat: z.enum(['png', 'jpeg']).optional(),
+  transformations: transformationSchema.array().optional(),
 });
 
 // #endregion
@@ -89,6 +111,7 @@ export const generatedImageStepMetadataSchema = z.object({
   params: textToImageParamsSchema.optional(),
   resources: workflowResourceSchema.array().optional(),
   remixOfId: z.number().optional(),
+  transformations: transformationSchema.array().optional(),
   images: z.record(z.string(), textToImageStepImageMetadataSchema).optional(),
 });
 // #endregion

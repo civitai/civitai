@@ -236,6 +236,13 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        comicProject: {
+          select: {
+            comicProject: {
+              select: { id: true, name: true, user: { select: simpleUserSelect } },
+            },
+          },
+        },
       },
     });
     return {
@@ -253,6 +260,7 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
           bounty: item.bounty?.bounty,
           bountyEntry: item.bountyEntry?.bountyEntry,
           chat: item.chat?.chat,
+          comicProject: item.comicProject?.comicProject,
         };
       }),
       ...result,

@@ -88,7 +88,7 @@ export function parseRefCodeToWithdrawalId(refCode: string) {
 
 export const getCreatorProgramAvailability = (isModerator = false) => {
   // 2 - March.
-  const availableDate = dayjs().utc().set('month', 2).startOf('month');
+  const availableDate = dayjs('2024-03-01').utc().startOf('month');
 
   return {
     isAvailable: isModerator || dayjs().isAfter(availableDate),

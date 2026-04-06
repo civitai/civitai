@@ -1,24 +1,88 @@
-name: Docker Release Deploy
+name: Release Deploy
 
 on:
   push:
     branches:
-      # - main
       - release
   workflow_dispatch: {}
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+concurrency:
+  group: deploy-release
+  cancel-in-progress: false
 
+jobs:
+  track-deploy:
+    name: Track Tekton Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: convictional/trigger-workflow-and-wait@v1.6.1
+      - name: Wait for Tekton deployment
+        uses: actions/github-script@v7
         with:
-          owner: civitai
-          repo: civitai-deployment
-          workflow_file_name: deploy.yml
-          github_token: ${{ secrets.GHA_WORKFLOW_TRIGGER }}
-          ref: main
-          client_payload: |
-            { "environment": "${{ github.ref_name == 'release' &&  'prod' || 'dev' }}", "branch": "${{ github.ref_name }}" }
-          wait_workflow: false
+          script: |
+            const sha = context.sha;
+            const owner = 'civitai';
+            const repo = 'civitai';
+            const environment = 'prod';
+            const pollInterval = 30000; // 30s
+            const maxAttempts = 80;     // 40min
+
+            core.info(`Waiting for Tekton deploy of ${sha.substring(0, 7)} to ${environment}...`);
+            core.info(`Dashboard: https://tekton.civitai.com`);
+
+            let deploymentId = null;
+            let attempts = 0;
+
+            while (attempts < maxAttempts) {
+              attempts++;
+
+              // Find deployment for this SHA
+              if (!deploymentId) {
+                const { data: deploys } = await github.rest.repos.listDeployments({
+                  owner, repo, sha, environment
+                });
+                if (deploys.length > 0) {
+                  deploymentId = deploys[0].id;
+                  core.info(`Found deployment: ${deploymentId}`);
+                }
+              }
+
+              // Check deployment status
+              if (deploymentId) {
+                const { data: statuses } = await github.rest.repos.listDeploymentStatuses({
+                  owner, repo, deployment_id: deploymentId
+                });
+
+                if (statuses.length > 0) {
+                  const latest = statuses[0];
+
+                  switch (latest.state) {
+                    case 'success':
+                      core.info(`✅ Deploy succeeded: ${latest.description}`);
+                      core.info(`Completed at ${latest.updated_at}`);
+                      return;
+
+                    case 'failure':
+                    case 'error':
+                      core.setFailed(`❌ Deploy failed: ${latest.description}`);
+                      core.info(`Check logs: https://tekton.civitai.com`);
+                      return;
+
+                    case 'inactive':
+                      core.setFailed(`Deploy marked inactive (superseded)`);
+                      return;
+
+                    default:
+                      if (attempts % 4 === 0) {
+                        core.info(`⏳ ${latest.state}: ${latest.description} (${Math.round(attempts * 30 / 60)}min elapsed)`);
+                      }
+                  }
+                }
+              } else if (attempts % 4 === 0) {
+                core.info(`Waiting for Tekton pipeline to start... (${Math.round(attempts * 30 / 60)}min elapsed)`);
+              }
+
+              await new Promise(r => setTimeout(r, pollInterval));
+            }
+
+            core.setFailed(`Timed out after 40min waiting for deployment. Check https://tekton.civitai.com`);

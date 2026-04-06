@@ -25,7 +25,7 @@ export const useActiveSubscription = ({
     isLoading,
     isFetching,
   } = trpc.subscriptions.getUserSubscription.useQuery(
-    { buzzType: buzzType || mainBuzzType },
+    { buzzType: buzzType || mainBuzzType, includeBadState: checkWhenInBadState },
     {
       enabled: !!currentUser && !!(isMember || checkWhenInBadState),
     }

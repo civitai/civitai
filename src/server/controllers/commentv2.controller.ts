@@ -76,6 +76,8 @@ export const upsertCommentV2Handler = async ({
         ? 'BountyEntry'
         : input.entityType === 'clubPost'
         ? 'ClubPost'
+        : input.entityType === 'challenge'
+        ? 'Challenge'
         : null;
 
     if (type === 'Post' || type === 'Article') {
@@ -119,7 +121,7 @@ export const upsertCommentV2Handler = async ({
 
     const result = await upsertComment({ ...input, userId: ctx.user.id });
     if (!input.id) {
-      if (type && type !== 'ClubPost' && type !== 'Article') {
+      if (type && type !== 'ClubPost' && type !== 'Article' && type !== 'Challenge') {
         await ctx.track.comment({
           type,
           nsfw: result.nsfw,
@@ -224,19 +226,30 @@ export const toggleHideCommentHandler = async ({
   const { id, entityType } = input;
 
   try {
+    const ownerField = entityType === 'challenge' ? 'createdById' : 'userId';
+    // Comic chapter threads use comicProject relation instead of a direct entity relation
+    const threadSelect =
+      entityType === 'comicChapter'
+        ? { comicChapter: { select: { project: { select: { userId: true } } } } }
+        : { [entityType]: { select: { [ownerField]: true } } };
     const comment = await dbRead.commentV2.findFirst({
       where: { id },
       select: {
         hidden: true,
         userId: true,
-        thread: { select: { [entityType]: { select: { userId: true } } } },
+        thread: { select: threadSelect },
       },
     });
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
+    const threadData = comment.thread as any;
+    const entityOwner =
+      entityType === 'comicChapter'
+        ? threadData.comicChapter?.project?.userId
+        : threadData[entityType]?.[ownerField];
     if (
       !isModerator &&
       // Nasty hack to get around the fact that the thread is not typed
-      (comment.thread[entityType] as any)?.userId !== userId
+      entityOwner !== userId
     )
       throw throwAuthorizationError();
 

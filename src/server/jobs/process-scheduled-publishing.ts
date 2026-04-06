@@ -1,11 +1,17 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { NotificationCategory } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
 import {
   bustMvCache,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import { createNotification } from '~/server/services/notification.service';
+import {
+  updateComicChapterNsfwLevels,
+  updateComicProjectNsfwLevels,
+} from '~/server/services/nsfwLevels.service';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
 
@@ -50,7 +56,7 @@ export const processScheduledPublishing = createJob(
           SELECT 1
           FROM "ModelFile" mf
           WHERE mf."modelVersionId" = mv.id
-        )
+        );
     `;
     const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT
@@ -65,26 +71,105 @@ export const processScheduledPublishing = createJob(
       AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
     `;
 
+    // Get scheduled comic chapters
+    const scheduledComicChapters = await dbWrite.$queryRaw<
+      { projectId: number; position: number; userId: number; projectName: string; chapterName: string; username: string | null }[]
+    >`
+      SELECT
+        cc."projectId",
+        cc."position",
+        cp."userId",
+        cp."name" AS "projectName",
+        cc."name" AS "chapterName",
+        u."username"
+      FROM "ComicChapter" cc
+      JOIN "ComicProject" cp ON cp.id = cc."projectId"
+      JOIN "User" u ON u.id = cp."userId"
+      WHERE cc.status = 'Scheduled'
+        AND cc."publishedAt" <= ${now}
+    `;
+
+    // Publish scheduled comic chapters
+    if (scheduledComicChapters.length) {
+      await dbWrite.$executeRaw`
+        UPDATE "ComicChapter"
+        SET status = 'Published'
+        WHERE status = 'Scheduled'
+          AND "publishedAt" <= ${now}
+      `;
+
+      // Update project publishedAt for first-time publishing projects
+      const projectIds = [...new Set(scheduledComicChapters.map((ch) => ch.projectId))];
+      for (const projectId of projectIds) {
+        await dbWrite.comicProject.updateMany({
+          where: { id: projectId, publishedAt: null },
+          data: { publishedAt: now },
+        });
+
+        // Update NSFW levels
+        updateComicChapterNsfwLevels([projectId]).catch((e) =>
+          console.error(`Failed to update chapter NSFW for project ${projectId}:`, e)
+        );
+        updateComicProjectNsfwLevels([projectId]).catch((e) =>
+          console.error(`Failed to update project NSFW for project ${projectId}:`, e)
+        );
+      }
+
+      // Batch-fetch all followers for affected projects in a single query
+      const allFollowers = await dbWrite.$queryRaw<{ projectId: number; userId: number }[]>`
+        SELECT "projectId", "userId" FROM "ComicEngagement"
+        WHERE "projectId" IN (${Prisma.join(projectIds)}) AND "type" = 'Notify'
+      `;
+      const followersByProject = new Map<number, number[]>();
+      for (const f of allFollowers) {
+        const list = followersByProject.get(f.projectId) ?? [];
+        list.push(f.userId);
+        followersByProject.set(f.projectId, list);
+      }
+
+      // Send follower notifications
+      for (const ch of scheduledComicChapters) {
+        const followerIds = followersByProject.get(ch.projectId) ?? [];
+        if (followerIds.length > 0) {
+          await createNotification({
+            type: 'new-comic-chapter',
+            key: `new-comic-chapter:${ch.projectId}:${ch.position}`,
+            category: NotificationCategory.Update,
+            userIds: followerIds,
+            details: {
+              comicProjectId: ch.projectId,
+              comicProjectName: ch.projectName,
+              chapterName: ch.chapterName,
+              authorUsername: ch.username ?? 'Unknown',
+            },
+          });
+        }
+      }
+    }
+
     await dbWrite.$transaction(
       async (tx) => {
-        await tx.$executeRaw`
-      -- Update last version of scheduled models
-      UPDATE "Model" SET "lastVersionAt" = ${now}
-      WHERE id IN (
-        SELECT DISTINCT
-          mv."modelId"
-        FROM "ModelVersion" mv
-        JOIN "Post" p ON p."modelVersionId" = mv.id
-        JOIN "Model" m ON m.id = mv."modelId"
-        WHERE mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-          AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-      );`;
+        const modelsToUpdate = [
+          ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
+        ];
+
+        if (modelsToUpdate.length) {
+          await tx.$executeRaw`
+            -- Update last version of models with versions transitioned to published
+            UPDATE "Model"
+            SET "lastVersionAt" = ${now}
+            WHERE id IN (${Prisma.join(modelsToUpdate)})
+              AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
+          `;
+        }
 
         if (scheduledModels.length) {
           const scheduledModelIds = scheduledModels.map(({ id }) => id);
+
           await tx.$executeRaw`
           -- Make scheduled models published
-          UPDATE "Model" SET status = 'Published'
+          UPDATE "Model" 
+          SET status = 'Published'
           WHERE id IN (${Prisma.join(scheduledModelIds)})
             AND status = 'Scheduled'
             AND "publishedAt" <= ${now}
@@ -94,17 +179,25 @@ export const processScheduledPublishing = createJob(
 
         if (scheduledPosts.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
-          const returnedIds = await tx.$queryRaw<{ id: number }[]>`
+
+          await tx.$queryRaw<{ id: number }[]>`
           -- Update scheduled versions posts
-          UPDATE "Post" p SET "publishedAt" = mv."publishedAt"
+          -- Respect prevPublishedAt metadata to preserve original date on republish
+          UPDATE "Post" p
+          SET
+            "publishedAt" = CASE
+              WHEN p."metadata"->>'prevPublishedAt' IS NOT NULL
+              THEN (p."metadata"->>'prevPublishedAt')::timestamptz
+              ELSE mv."publishedAt"
+            END,
+            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
           FROM "ModelVersion" mv
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE p.id IN (${Prisma.join(scheduledPostIds)})
             AND (p."publishedAt" IS NULL)
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-          RETURNING p.id;
+            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
         `;
 
           // commenting this out, because it should be covered by the db_trigger `update_image_sort_at`
@@ -124,11 +217,13 @@ export const processScheduledPublishing = createJob(
 
           await tx.$executeRaw`
             -- Update scheduled versions published
-            UPDATE "ModelVersion" mv SET status = 'Published', availability = 'Public'
+            UPDATE "ModelVersion" mv 
+            SET status = 'Published', availability = 'Public'
             FROM "Model" m
             WHERE mv.id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
               AND mv."modelId" = m.id
-              AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+              AND mv.status = 'Scheduled'
+              AND mv."publishedAt" <= ${now}
               AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
           `;
 
@@ -141,25 +236,23 @@ export const processScheduledPublishing = createJob(
               tx,
             });
 
-            // Attempt to update the model early access deadline:
+            // Update Model early access deadline in one operation
             await tx.$executeRaw`
+              -- Update model early access deadline
               UPDATE "Model" mo
               SET "earlyAccessDeadline" = GREATEST(mea."earlyAccessDeadline", mo."earlyAccessDeadline")
               FROM (
-                SELECT m.id, mv."earlyAccessEndsAt" AS "earlyAccessDeadline"
+                SELECT mv."modelId", mv."earlyAccessEndsAt" AS "earlyAccessDeadline"
                 FROM "ModelVersion" mv
-                JOIN "Model" m on m.id = mv."modelId"
                 WHERE mv.id IN (${Prisma.join(earlyAccess)})
-                  AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
               ) as mea
-              WHERE mo."id" = mea."id"
+              WHERE mo."id" = mea."modelId"
+                AND (mo.meta IS NULL OR (mo.meta->>'cannotPublish')::boolean IS NOT TRUE);
             `;
           }
         }
       },
-      {
-        timeout: 10000,
-      }
+      { timeout: 30000 }
     );
 
     // Process event engagements

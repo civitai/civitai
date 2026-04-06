@@ -31,6 +31,7 @@ import {
   IconLock,
   IconMessageCircle2,
   IconPhotoPlus,
+  IconRepeat,
   IconShare3,
 } from '@tabler/icons-react';
 import type { TRPCClientErrorBase } from '@trpc/client';
@@ -51,6 +52,7 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { AnimatedCount, useLiveMetrics, MetricSubscriptionProvider } from '~/components/Metrics';
 import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
 import { openResourceReviewEditModal } from '~/components/Dialog/triggers/resource-review-edit';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -122,7 +124,15 @@ import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
 
-export function ModelVersionDetails({
+export function ModelVersionDetails(props: Props) {
+  return (
+    <MetricSubscriptionProvider entityType="ModelVersion" entityId={props.version.id}>
+      <ModelVersionDetailsContent {...props} />
+    </MetricSubscriptionProvider>
+  );
+}
+
+function ModelVersionDetailsContent({
   model,
   version,
   image,
@@ -154,6 +164,15 @@ export function ModelVersionDetails({
     modelVersionId: version.id,
   });
   const mobile = useIsMobile();
+
+  // Live metrics for model version stats
+  const liveMetrics = useLiveMetrics('ModelVersion', version.id, {
+    downloadCount: version.rank?.downloadCountAllTime ?? 0,
+    generationCount: version.rank?.generationCountAllTime ?? 0,
+    thumbsUpCount: version.rank?.thumbsUpCountAllTime ?? 0,
+    thumbsDownCount: version.rank?.thumbsDownCountAllTime ?? 0,
+    earnedAmount: version.rank?.earnedAmountAllTime ?? 0,
+  });
 
   // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
   const downloadsDisabled =
@@ -212,6 +231,32 @@ export function ModelVersionDetails({
       component: ModelAvailabilityUpdate,
       props: { modelId: model.id },
     });
+  };
+
+  // Handler for republishing a private model while keeping it private
+  const handleRepublishPrivateModel = async () => {
+    try {
+      if (model.status !== ModelStatus.Published) {
+        // Republish model, version and all of its posts (keeping it private)
+        const versionIds =
+          (model.status === ModelStatus.UnpublishedViolation ||
+            model.status === ModelStatus.Unpublished) &&
+          user?.isModerator
+            ? model.modelVersions.map(({ id }) => id)
+            : [version.id];
+        await publishModelMutation.mutateAsync({
+          id: model.id,
+          versionIds,
+        });
+      } else {
+        // Just republish the version and its posts
+        await publishVersionMutation.mutateAsync({ id: version.id });
+      }
+      await queryUtils.model.getById.invalidate({ id: model.id });
+    } catch (e) {
+      const error = e as Error;
+      showErrorNotification({ error, title: 'Failed to republish model' });
+    }
   };
 
   const onPurchase = (reason?: 'generation' | 'download') => {
@@ -360,9 +405,9 @@ export function ModelVersionDetails({
       value: (
         <Group gap={4}>
           {!downloadsDisabled && (
-            <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
+            <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Unique Downloads">
               <Text fz={11} fw="bold" inline>
-                {(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}
+                <AnimatedCount value={liveMetrics.downloadCount} abbreviate={false} />
               </Text>
             </IconBadge>
           )}
@@ -386,26 +431,21 @@ export function ModelVersionDetails({
             >
               <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
                 <Text fz={11} fw="bold" inline>
-                  {abbreviateNumber(version.rank?.generationCountAllTime ?? 0)}
+                  <AnimatedCount value={liveMetrics.generationCount} />
                 </Text>
               </IconBadge>
             </GenerateButton>
           ) : (
             <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
               <Text fz={11} fw="bold" inline>
-                {(version.rank?.generationCountAllTime ?? 0).toLocaleString()}
+                <AnimatedCount value={liveMetrics.generationCount} abbreviate={false} />
               </Text>
             </IconBadge>
           )}
-          {version.rank?.earnedAmountAllTime && (
+          {!!liveMetrics.earnedAmount && (
             <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
-              <Text
-                fz={11}
-                fw="bold"
-                title={(version.rank?.earnedAmountAllTime).toLocaleString()}
-                inline
-              >
-                {abbreviateNumber(version.rank?.earnedAmountAllTime)}
+              <Text fz={11} fw="bold" title={liveMetrics.earnedAmount.toLocaleString()} inline>
+                <AnimatedCount value={liveMetrics.earnedAmount} />
               </Text>
             </IconBadge>
           )}
@@ -430,8 +470,8 @@ export function ModelVersionDetails({
         <ModelVersionReview
           modelId={model.id}
           versionId={version.id}
-          thumbsUpCount={version.rank?.thumbsUpCountAllTime ?? 0}
-          thumbsDownCount={version.rank?.thumbsDownCountAllTime ?? 0}
+          thumbsUpCount={liveMetrics.thumbsUpCount}
+          thumbsDownCount={liveMetrics.thumbsDownCount}
         />
       ),
     },
@@ -639,9 +679,28 @@ export function ModelVersionDetails({
     hasFiles &&
     hasPosts &&
     !isPrivateModel;
+
+  // Show republish button for private models that are unpublished
+  const isModelUnpublished =
+    model.status === ModelStatus.Unpublished || model.status === ModelStatus.UnpublishedViolation;
+  const isVersionUnpublished =
+    version.status === ModelStatus.Unpublished ||
+    version.status === ModelStatus.UnpublishedViolation;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
+  // Show republish button for private models that are unpublished
+  const showRepublishPrivateButton =
+    isPrivateModel &&
+    (isModelUnpublished || isVersionUnpublished) &&
+    hasFiles &&
+    hasPosts &&
+    // Only moderators can republish UnpublishedViolation, owners can republish Unpublished
+    (model.status === ModelStatus.UnpublishedViolation ||
+    version.status === ModelStatus.UnpublishedViolation
+      ? user?.isModerator
+      : isOwnerOrMod);
+  // Show request review for owners (non-mods) when model/version is unpublished due to violation
   const showRequestReview =
     isOwner &&
     !user?.isModerator &&
@@ -748,6 +807,17 @@ export function ModelVersionDetails({
             </Stack>
           ) : (
             <Stack gap={4}>
+              {showRepublishPrivateButton && (
+                <Button
+                  color="green"
+                  onClick={handleRepublishPrivateModel}
+                  loading={publishing}
+                  fullWidth
+                  leftSection={<IconRepeat size={16} />}
+                >
+                  Republish (keep private)
+                </Button>
+              )}
               <Group gap="xs" className={classes.ctaContainer}>
                 <Group gap="xs" className="flex-1" wrap="nowrap">
                   {couldGenerate && (
@@ -973,10 +1043,15 @@ export function ModelVersionDetails({
               icon={<IconLock />}
               title="Private Model"
             >
-              <Text>
-                Want to start earning Buzz?{' '}
-                <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
-              </Text>
+              {model.status !== ModelStatus.UnpublishedViolation &&
+              version.status !== ModelStatus.UnpublishedViolation ? (
+                <Text>
+                  Want to start earning Buzz?{' '}
+                  <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
+                </Text>
+              ) : (
+                <Text>This model is private and has been unpublished due to a violation.</Text>
+              )}
             </AlertWithIcon>
           )}
           {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (
@@ -1465,7 +1540,7 @@ export function ModelVersionDetails({
           )}
           {model.description ? (
             <ContentClamp maxHeight={460}>
-              <RenderHtml html={model.description} withMentions />
+              <RenderHtml html={model.description} />
             </ContentClamp>
           ) : null}
         </Stack>

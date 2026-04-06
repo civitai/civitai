@@ -36,6 +36,7 @@ type UploadResult = {
   key: string;
   name?: string;
   size?: number;
+  backend?: string;
 };
 
 type RequestOptions = {
@@ -144,7 +145,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       console.error(data.error);
       throw data.error;
     } else {
-      const { bucket, key, uploadId, urls } = data;
+      const { bucket, key, uploadId, urls, backend } = data;
 
       let currentXhr: XMLHttpRequest;
       const abort = () => {
@@ -193,6 +194,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             key,
             type,
             uploadId,
+            backend,
           }),
         });
 
@@ -208,6 +210,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
                 type,
                 uploadId,
                 parts,
+                backend,
               }),
             });
 
@@ -270,7 +273,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         if (uploadStatus !== 'success') {
           updateFile({ status: uploadStatus, file: undefined });
           await abortUpload();
-          return { url: null, bucket, key };
+          return { url: null, bucket, key, backend };
         }
       }
 
@@ -280,13 +283,13 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       if (!resp.ok) {
         updateFile({ status: 'error', file: undefined });
         await abortUpload();
-        return { url: null, bucket, key };
+        return { url: null, bucket, key, backend };
       }
 
       updateFile({ status: 'success' });
 
       const url = urls[0].url.split('?')[0];
-      return { url, bucket, key, name: file.name, size: file.size };
+      return { url, bucket, key, name: file.name, size: file.size, backend };
     }
   };
 

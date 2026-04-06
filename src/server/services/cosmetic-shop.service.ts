@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -38,12 +39,18 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
-  return dbRead.cosmeticShopItem.findUniqueOrThrow({
+  const shopItemFindArgs = {
     where: {
       id,
     },
     select: cosmeticShopItemSelect,
-  });
+  } as const;
+  return dbRead.cosmeticShopItem
+    .findUniqueOrThrow(shopItemFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
+      return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
+    });
 };
 
 export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticShopItemInput) => {
@@ -210,7 +217,7 @@ export const getShopSections = async (input: GetAllCosmeticShopSections) => {
 };
 
 export const getSectionById = async ({ id }: GetByIdInput) => {
-  const section = await dbRead.cosmeticShopSection.findUniqueOrThrow({
+  const sectionFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -230,7 +237,13 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
         },
       },
     },
-  });
+  } as const;
+  const section = await dbRead.cosmeticShopSection
+    .findUniqueOrThrow(sectionFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'cosmeticShopSection', caller: 'getSectionById' });
+      return dbWrite.cosmeticShopSection.findUniqueOrThrow(sectionFindArgs);
+    });
 
   return {
     ...section,
@@ -323,7 +336,7 @@ export const upsertCosmeticShopSection = async ({
 };
 
 export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
-  const item = await dbRead.cosmeticShopItem.findUniqueOrThrow({
+  const deleteItemFindArgs = {
     where: { id },
     select: {
       id: true,
@@ -333,7 +346,13 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
         },
       },
     },
-  });
+  } as const;
+  const item = await dbRead.cosmeticShopItem
+    .findUniqueOrThrow(deleteItemFindArgs)
+    .catch(() => {
+      dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'deleteCosmeticShopItem' });
+      return dbWrite.cosmeticShopItem.findUniqueOrThrow(deleteItemFindArgs);
+    });
 
   if (item._count.purchases > 0) {
     throw new Error('Cannot delete item with purchases. Please mark it as archived instead.');
@@ -642,7 +661,7 @@ export const getUserPreviewImagesForCosmetics = async ({
     periodMode: 'stats',
     types: [MediaType.image],
     withMeta: false,
-    useLogicalReplica: features.logicalReplica,
+    dbTarget: features.datapacketRead ? 'datapacket' : 'read',
   });
 
   const images = userImages.items.slice(0, limit);
@@ -674,7 +693,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       sort: ImageSort.Newest,
       types: [MediaType.image],
       withMeta: false,
-      useLogicalReplica: features.logicalReplica,
+      dbTarget: features.datapacketRead ? 'datapacket' : 'read',
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);

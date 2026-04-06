@@ -1,6 +1,5 @@
 import type { MantineSize } from '@mantine/core';
 import {
-  ActionIcon,
   Anchor,
   Box,
   Button,
@@ -43,6 +42,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
+import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -241,16 +241,39 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
+        {currentUser?.isModerator && (
+          <CopyButton value={String(user.id)}>
+            {({ copied, copy, color }) => (
+              <Text
+                c={copied ? color : 'dimmed'}
+                size="sm"
+                className="cursor-pointer"
+                onClick={copy}
+              >
+                {copied ? 'Copied!' : `User ID: ${user.id}`}
+              </Text>
+            )}
+          </CopyButton>
+        )}
         {user?.bannedAt && (
           <Group>
             <Popover withArrow>
               <Popover.Target>
                 <UnstyledButton>
-                  <Badge color="red">
-                    <Group gap={0}>
-                      <Text>{user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}</Text>
+                  <Badge
+                    color="red"
+                    style={{
+                      height: 'auto',
+                      whiteSpace: 'normal',
+                      padding: '4px 8px',
+                    }}
+                  >
+                    <Group gap={4} wrap="nowrap" align="flex-start">
+                      <Text style={{ whiteSpace: 'normal', lineHeight: 1.3, textAlign: 'left' }}>
+                        {user?.banReason ? `Banned: ${user?.banReason}` : 'Banned'}
+                      </Text>
                       {user?.bannedReasonDetails && (
-                        <IconInfoCircle size={16} style={{ marginLeft: 4 }} />
+                        <IconInfoCircle size={16} style={{ flexShrink: 0 }} />
                       )}
                     </Group>
                   </Badge>
@@ -321,7 +344,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
 
       {(!isCurrentUser || shouldDisplayStats) && <Divider my={sizeOpts.spacing} />}
 
-      {badges.length > 0 && (
+      {badges.length > 0 && profile.privacySettings?.showBadges !== false && (
         <Stack gap={sizeOpts.spacing}>
           <Text size={sizeOpts.text} c="dimmed" fw={590}>
             Badges

@@ -1,7 +1,8 @@
 // src/utils/trpc.ts
 import { QueryClient } from '@tanstack/react-query';
-import type { TRPCLink } from '@trpc/client';
-import { httpLink, loggerLink } from '@trpc/client';
+import type { CreateTRPCProxyClient, TRPCLink } from '@trpc/client';
+import { createTRPCProxyClient, httpLink, loggerLink } from '@trpc/client';
+import type { CreateTRPCNext } from '@trpc/next';
 import { createTRPCNext } from '@trpc/next';
 import type { NextPageContext } from 'next';
 import superjson from 'superjson';
@@ -62,7 +63,23 @@ function getHeaders(ctx?: NextPageContext) {
   };
 }
 
-export const trpc = createTRPCNext<AppRouter>({
+export const trpcVanilla: CreateTRPCProxyClient<AppRouter> = createTRPCProxyClient<AppRouter>({
+  transformer: superjson,
+  links: [
+    authedCacheBypassLink,
+    loggerLink({
+      enabled: (opts) =>
+        (isDev && env.NEXT_PUBLIC_LOG_TRPC) ||
+        (opts.direction === 'down' && opts.result instanceof Error),
+    }),
+    httpLink({
+      url,
+      headers: getHeaders(),
+    }),
+  ],
+});
+
+export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPCNext<AppRouter>({
   config(opts) {
     const { ctx } = opts;
     const isClient = typeof window !== 'undefined';

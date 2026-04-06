@@ -10,4 +10,8 @@ export declare const lifetimeBuzzBadge: string;
 export declare const lifetimeBuzzContainer: string;
 export declare const moveBackground: string;
 export declare const pulse: string;
+export declare const dashboardGrid: string;
+export declare const dashboardGridConstrained: string;
+export declare const dashboardGridConstrainedInner: string;
 export declare const tileCard: string;
+export declare const transactionsScrollWrapper: string;

@@ -4,6 +4,7 @@ import { env } from '~/env/server';
 import type { BaseModelType } from '~/server/common/constants';
 import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
@@ -15,7 +16,7 @@ import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getModelClient } from '~/server/services/orchestrator/models';
 import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
 import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
@@ -472,6 +473,7 @@ const createUserContentCountCache = <T extends Record<string, any>>(
     key: `${REDIS_KEYS.CACHES.OVERVIEW_USERS}:${counterName}`,
     idKey: 'id',
     ttl: CacheTTL.day,
+    cacheNotFound: false,
     lookupFn: async (ids) => {
       const goodIds = ids.filter(isDefined);
       if (!goodIds.length) return {};
@@ -596,6 +598,25 @@ export const userCollectionCountCache = createUserContentCountCache<UserCollecti
   `
 );
 
+type UserComicCount = { id: number; comicCount: number };
+export const userComicCountCache = createUserContentCountCache<UserComicCount>(
+  'comicCount',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      p."userId" as id,
+      COUNT(DISTINCT p.id)::INT as "comicCount"
+    FROM "ComicProject" p
+    WHERE p."userId" IN (${Prisma.join(userIds)})
+      AND p."status" = 'Active'
+      AND EXISTS (
+        SELECT 1 FROM "ComicChapter" c
+        WHERE c."projectId" = p.id
+          AND c."status" = 'Published'
+      )
+    GROUP BY p."userId"
+  `
+);
+
 type UserHasReceivedReviews = { id: number; hasReceivedReviews: boolean };
 export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasReceivedReviews>(
   'hasReceivedReviews',
@@ -621,6 +642,7 @@ type UserContentOverview = {
   bountyEntryCount: number;
   hasReceivedReviews: boolean;
   collectionCount: number;
+  comicCount: number;
 };
 
 // Helper function to fetch all user content overview data using individual caches
@@ -640,6 +662,7 @@ export const getUserContentOverview = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
+    comicCounts,
   ] = await Promise.all([
     userModelCountCache.fetch(ids),
     userPostCountCache.fetch(ids),
@@ -649,6 +672,7 @@ export const getUserContentOverview = async (
     userBountyEntryCountCache.fetch(ids),
     userCollectionCountCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids),
+    userComicCountCache.fetch(ids),
   ]);
 
   // Merge results
@@ -665,6 +689,7 @@ export const getUserContentOverview = async (
         bountyCount: bountyCounts[id]?.bountyCount ?? 0,
         bountyEntryCount: bountyEntryCounts[id]?.bountyEntryCount ?? 0,
         collectionCount: collectionCounts[id]?.collectionCount ?? 0,
+        comicCount: comicCounts[id]?.comicCount ?? 0,
         hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
       },
     ])
@@ -686,6 +711,7 @@ export const userContentOverviewCache = {
       userBountyEntryCountCache.bust(ids),
       userCollectionCountCache.bust(ids),
       userHasReceivedReviewsCache.bust(ids),
+      userComicCountCache.bust(ids),
     ]);
   },
 };
@@ -708,7 +734,7 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
 });
 
 type ImageWithMetadata = {
@@ -729,7 +755,7 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: CacheTTL.hour,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
@@ -979,7 +1005,7 @@ type ImageResourcesCacheItem = {
 export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
-  ttl: CacheTTL.sm,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
   lookupFn: async (ids) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
@@ -1027,7 +1053,7 @@ export function getBaseModelFromResources(
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
   idKey: 'versionId',
-  ttl: CacheTTL.md,
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.md,
   lookupFn: async (ids) => {
     const mvInfo = await dbRead.modelVersion.findMany({
       where: { id: { in: ids } },
@@ -1088,5 +1114,59 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
         },
       ])
     );
+  },
+});
+
+type UserDownloadItem = {
+  modelVersionId: number;
+  fileId: number;
+  lastDownloaded: number; // timestamp in ms
+};
+
+type UserDownloadsCacheItem = {
+  userId: number;
+  downloads: UserDownloadItem[];
+};
+
+export const userDownloadsCache = createCachedObject<UserDownloadsCacheItem>({
+  key: REDIS_KEYS.CACHES.USER_DOWNLOADS,
+  idKey: 'userId',
+  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
+  cacheNotFound: false,
+  lookupFn: async (userIds) => {
+    if (!clickhouse) return {};
+    if (userIds.length === 0) return {};
+
+    const results = await clickhouse.$query<{
+      userId: number;
+      modelVersionId: number;
+      fileId: number;
+      lastDownloaded: string;
+    }>`
+      SELECT
+        userId,
+        modelVersionId,
+        fileId,
+        max(lastDownloaded) as lastDownloaded
+      FROM userModelDownloads
+      WHERE userId IN (${userIds.join(',')})
+      GROUP BY userId, modelVersionId, fileId
+      ORDER BY lastDownloaded DESC
+      LIMIT 2000 BY userId
+    `;
+
+    // Group by userId
+    const grouped = results.reduce((acc, { userId, modelVersionId, fileId, lastDownloaded }) => {
+      acc[userId] ??= { userId, downloads: [] };
+      acc[userId].downloads.push({
+        modelVersionId,
+        fileId,
+        // ClickHouse returns dates as strings without timezone - append 'Z' to parse as UTC
+        lastDownloaded: new Date(lastDownloaded.replace(' ', 'T') + 'Z').getTime(),
+      });
+      return acc;
+    }, {} as Record<number, UserDownloadsCacheItem>);
+
+    return grouped;
   },
 });

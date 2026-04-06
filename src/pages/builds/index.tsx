@@ -26,7 +26,6 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
 import { trpc } from '~/utils/trpc';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import classes from './index.module.css';
 
@@ -57,7 +56,7 @@ export default function BuildPage() {
       <Meta
         title="Civitai Build Guides | Hardware We Love"
         description="Find the best hardware for your budget and needs to build your own AI Generation machine. We love these components and we think you will too."
-        links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/builds`, rel: 'canonical' }]}
+        canonical="/builds"
       />
       <Container size={800}>
         <Stack gap="xl">

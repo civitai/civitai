@@ -51,7 +51,6 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   const router = useRouter();
   const features = useFeatureFlags();
   const searchRef = useRef<HTMLInputElement>(null);
-  const isMuted = currentUser?.muted ?? false;
 
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
@@ -96,7 +95,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         </Grid.Col>
         <Grid.Col span="auto" className="flex items-center justify-end gap-3 @max-md:hidden">
           <div className="flex items-center gap-3">
-            {!isMuted && <CreateMenu />}
+            <CreateMenu />
             {currentUser && (
               <>
                 <UploadTracker />
@@ -125,7 +124,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
         </Grid.Col>
         <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
           <div className="flex items-center gap-1">
-            {!isMuted && <CreateMenu />}
+            <CreateMenu />
             <LegacyActionIcon variant="subtle" color="gray" onClick={() => setShowSearch(true)}>
               <IconSearch />
             </LegacyActionIcon>

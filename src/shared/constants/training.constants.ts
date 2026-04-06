@@ -44,4 +44,9 @@ export const trainingStatusFields: {
     description:
       'Something went wrong with the training request. Recreate the training job if you see this error (or contact us for help).',
   },
+  [TrainingStatus.Expired]: {
+    color: 'orange',
+    description:
+      'The training data review was not completed in time and this request has expired. Please submit your training again.',
+  },
 };

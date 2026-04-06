@@ -4,6 +4,8 @@ import * as metrics from '~/server/metrics';
 
 const metricSets = {
   models: [metrics.modelMetrics],
+  'model-collections': [metrics.modelCollectionMetrics],
+  basemodels: [metrics.baseModelMetrics],
   users: [metrics.userMetrics],
   images: [metrics.imageMetrics],
   bounties: [metrics.bountyEntryMetrics, metrics.bountyMetrics],
@@ -19,10 +21,16 @@ const metricSets = {
   // ],
 };
 
+// Custom schedules for specific metric sets (default is every 1 minute)
+const metricSchedules: Record<string, string> = {
+  'model-collections': '*/5 * * * *', // every 5 minutes
+  basemodels: '*/5 * * * *', // every 5 minutes
+};
+
 export const metricJobs = Object.entries(metricSets).map(([name, metrics]) =>
   createJob(
     `update-metrics-${name}`,
-    '*/1 * * * *',
+    metricSchedules[name] ?? '*/1 * * * *',
     async (e) => {
       const stats = {
         metrics: {} as Record<string, number>,

@@ -146,5 +146,6 @@
   "highlight.decorations": {
     "rangeBehavior": 1
   },
-  "highlight.regexFlags": "gm"
+  "highlight.regexFlags": "gm",
+  "terminal.integrated.macOptionIsMeta": true
 }

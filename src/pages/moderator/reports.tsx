@@ -44,7 +44,8 @@ import { Form, InputTextArea, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';
 import type { GetReportsProps } from '~/server/controllers/report.controller';
 import type { SetReportStatusInput } from '~/server/schema/report.schema';
-import { ReportEntity, reportStatusColorScheme } from '~/server/schema/report.schema';
+import { reportStatusColorScheme } from '~/server/schema/report.schema';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -453,6 +454,7 @@ const getReportLink = (report: ReportDetail) => {
   else if (report.bountyEntry)
     return `/bounties/${report.bountyEntry.bountyId}/entries/${report.bountyEntry.id}`;
   else if (report.commentV2?.commentV2) return `/comments/v2/${report.commentV2.commentV2.id}`;
+  else if (report.comicProject) return `/comics/${report.comicProject.id}`;
   else if (report.chat)
     return !!env.NEXT_PUBLIC_CHAT_LOOKUP_URL
       ? `${env.NEXT_PUBLIC_CHAT_LOOKUP_URL}${report.chat.id}`

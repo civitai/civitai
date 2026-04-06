@@ -1,4 +1,5 @@
 import type { SessionUser } from 'next-auth';
+import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import {
@@ -15,16 +16,18 @@ const imageTrainingBaseSchema = z.object({
 });
 
 // AI Toolkit specific parameters - uses discriminated union for proper modelVariant validation
+const aiToolkitMaxEpochs = 50;
+const prodigyOptimizers = ['prodigy', 'prodigy8bit'];
+const maxLrForNonProdigy = 0.1;
 const aiToolkitBaseParams = z.object({
   engine: z.literal(OrchEngineTypes.AiToolkit),
-  epochs: z.number(),
+  epochs: z.number().max(aiToolkitMaxEpochs),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
   trainTextEncoder: z.boolean(),
   lrScheduler: z.enum(['constant', 'constant_with_warmup', 'cosine', 'linear', 'step']),
   optimizerType: z.enum([
-    'adam',
     'adamw',
     'adamw8bit',
     'adam8bit',
@@ -34,6 +37,7 @@ const aiToolkitBaseParams = z.object({
     'adagrad',
     'prodigy',
     'prodigy8bit',
+    'automagic',
   ]),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
@@ -42,6 +46,7 @@ const aiToolkitBaseParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  numRepeats: z.number().optional(),
 });
 
 // Use discriminated union to enforce modelVariant requirements per ecosystem
@@ -67,7 +72,19 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     ecosystem: z.literal('zimageturbo'),
     modelVariant: z.undefined().optional(),
   }),
-  // SD3, Flux1, and Wan require modelVariant
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('zimagebase'),
+    modelVariant: z.undefined().optional(),
+  }),
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('ltx2'),
+    modelVariant: z.undefined().optional(),
+  }),
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('ltx23'),
+    modelVariant: z.undefined().optional(),
+  }),
+  // SD3, Flux1, Flux2Klein, and Wan require modelVariant
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('sd3'),
     modelVariant: z.enum(['large', 'medium']),
@@ -80,7 +97,20 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     ecosystem: z.literal('wan'),
     modelVariant: z.enum(['2.1', '2.2']),
   }),
-]);
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('flux2klein'),
+    modelVariant: z.enum(['4b', '9b']),
+  }),
+]).refine(
+  (data) => {
+    if (prodigyOptimizers.includes(data.optimizerType)) return true;
+    return data.lr < maxLrForNonProdigy;
+  },
+  {
+    message: `Learning rate must be less than ${maxLrForNonProdigy} for non-Prodigy optimizers`,
+    path: ['lr'],
+  }
+);
 
 export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParams>;
 
@@ -96,7 +126,13 @@ const whatIfTrainingDetailsParams = trainingDetailsParams.pick({
 const whatIfKohyaParams = z.object({
   model: z.string(),
   priority: z.enum(OrchPriorityTypes),
-  engine: z.enum([OrchEngineTypes.Kohya, OrchEngineTypes.Rapid, OrchEngineTypes.Flux2Dev, OrchEngineTypes.Flux2DevEdit, OrchEngineTypes.Musubi]),
+  engine: z.enum([
+    OrchEngineTypes.Kohya,
+    OrchEngineTypes.Rapid,
+    OrchEngineTypes.Flux2Dev,
+    OrchEngineTypes.Flux2DevEdit,
+    OrchEngineTypes.Musubi,
+  ]),
   trainingDataImagesCount: z.number(),
   resolution: z.number(),
   maxTrainEpochs: z.number(),
@@ -111,7 +147,7 @@ const whatIfAiToolkitParams = z.object({
   trainingDataImagesCount: z.number(),
   ecosystem: z.string(),
   modelVariant: z.string().optional(),
-  epochs: z.number(),
+  epochs: z.number().max(aiToolkitMaxEpochs),
   resolution: z.number().nullable(),
   lr: z.number(),
   textEncoderLr: z.number().nullable(),
@@ -128,6 +164,7 @@ const whatIfAiToolkitParams = z.object({
     'adagrad',
     'prodigy',
     'prodigy8bit',
+    'automagic',
   ]),
   networkDim: z.number().nullable(),
   networkAlpha: z.number().nullable(),
@@ -136,18 +173,29 @@ const whatIfAiToolkitParams = z.object({
   flipAugmentation: z.boolean(),
   shuffleTokens: z.boolean(),
   keepTokens: z.number(),
+  numRepeats: z.number().optional(),
   maxTrainEpochs: z.number().nullable().optional(),
 });
 
-export const imageTrainingRouterWhatIfSchema = z.discriminatedUnion('engine', [
-  whatIfKohyaParams,
-  whatIfAiToolkitParams,
-]);
+export const imageTrainingRouterWhatIfSchema = z
+  .discriminatedUnion('engine', [whatIfKohyaParams, whatIfAiToolkitParams])
+  .refine(
+    (data) => {
+      if (!('optimizerType' in data)) return true; // Kohya params don't have optimizerType
+      if (prodigyOptimizers.includes(data.optimizerType)) return true;
+      return data.lr < maxLrForNonProdigy;
+    },
+    {
+      message: `Learning rate must be less than ${maxLrForNonProdigy} for non-Prodigy optimizers`,
+      path: ['lr'],
+    }
+  );
 export type ImageTrainingRouterWhatIfSchema = z.infer<typeof imageTrainingRouterWhatIfSchema>;
 
 const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
   trainingData: z.url(),
   loraName: z.string(),
+  triggerWord: z.string(),
   samplePrompts: z.array(z.string()),
   negativePrompt: z.string().optional(),
   params: z.discriminatedUnion('engine', [
@@ -168,6 +216,7 @@ const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
 });
 export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSchema> & {
   user: SessionUser;
+  features: FeatureAccess;
 };
 
 // Can't extend a union, so we need to merge with an intersection

@@ -83,7 +83,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import classes from './BountyUpsertForm.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { stringToDate } from '~/utils/zod-helpers';
-import { activeBaseModels } from '~/shared/constants/base-model.constants';
+import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const bountyModeDescription: Record<BountyMode, string> = {

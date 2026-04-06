@@ -39,10 +39,10 @@ function KontextAdContent({ index, className }: { index: number; className?: str
         element: ref.current,
       },
       {
-        onStart: () => console.log('start'),
-        onError: (e) => console.log('error', e),
+        // onStart: () => console.log('start'),
+        // onError: (e) => console.log('error', e),
         onComplete: (content, metadata) => {
-          console.log('complete', { content, metadata });
+          // console.log('complete', { content, metadata });
           if (isDev && !content.length && ref.current) {
             ref.current.innerHTML = `<div class="kontext-ad-container"><em class="kontext-em">whispers</em> You know, that cat's got some serious skills. Maybe you should check out <a class="kontext-a" href="https://server.megabrain.co/impression/0197c1c3-253c-7dd3-a8f6-f6e60aa8842d/redirect" target="_blank">MasterClass: Small Habits that Make a Big Impact on Your Life</a>. James Clear's got some tricks to help you stick to your goals, just like that cat sticking to its fish! </div>`;
           }

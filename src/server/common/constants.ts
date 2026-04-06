@@ -1,7 +1,7 @@
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   BountyType,
   Currency,
@@ -14,7 +14,7 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
 export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -132,7 +132,7 @@ export const constants = {
     [ReviewReactions.Cry]: '😢',
   },
   richTextEditor: {
-    maxFileSize: 1024 * 1024 * 5, // 5MB
+    maxFileSize: 1024 * 1024 * 50, // 50MB
     accept: [...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE],
     // Taken from https://v5.mantine.dev/others/tiptap/#text-color
     presetColors: [
@@ -280,15 +280,15 @@ export const constants = {
       cover: ':modelVersionId/:userId/cover.jpg',
     },
   },
-  supporterBadge: '514e9489-a734-4ea9-b223-ff9833abb3fd',
+  supporterBadge: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
   memberships: {
     tierOrder: ['free', 'founder', 'bronze', 'silver', 'gold'],
     badges: {
-      free: '514e9489-a734-4ea9-b223-ff9833abb3fd',
-      founder: '514e9489-a734-4ea9-b223-ff9833abb3fd',
-      bronze: '514e9489-a734-4ea9-b223-ff9833abb3fd',
-      silver: '9dec8ea0-1cde-4c6c-ac5f-0f97c5b448e4',
-      gold: 'b98074e1-883f-46d9-a290-812bb19ec706',
+      free: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
+      founder: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
+      bronze: '69b4d872-fdc1-4b72-8a4b-258c0065e1aa',
+      silver: '6961e252-3f94-4eee-ae79-01af2403fa49',
+      gold: '8e9f9aa3-74ce-443c-bf4a-e298b9019f42',
     },
     founderDiscount: {
       maxDiscountDate: new Date('2024-05-01T00:00:00Z'),
@@ -352,7 +352,7 @@ export const constants = {
 
 export const maxOrchestratorImageFileSize = 24 * 1024 ** 2; // 24MB
 export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
-export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
+export const maxVideoFileSize = 64 * 1024 ** 2; // 64MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
 
@@ -502,6 +502,22 @@ const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://purplesmart.ai/license',
     name: 'Pony',
   },
+  ltxv2: {
+    url: 'https://github.com/Lightricks/LTX-2/blob/main/LICENSE',
+    name: 'LTXV2',
+  },
+  anima: {
+    url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
+    name: 'Anima',
+  },
+  kling: {
+    url: 'https://klingai.com/terms-of-service',
+    name: 'Kling',
+  },
+  vidu: {
+    url: 'https://www.vidu.com/terms',
+    name: 'Vidu Q1',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -545,11 +561,17 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'Flux.1 Krea': baseLicenses['flux1D'],
   'Flux.1 Kontext': baseLicenses['flux1D'],
   'Flux.2 D': baseLicenses['flux1D'],
+  'Flux.2 Klein 9B': baseLicenses['flux1D'],
+  'Flux.2 Klein 9B-base': baseLicenses['flux1D'],
+  'Flux.2 Klein 4B': baseLicenses['apache 2.0'],
+  'Flux.2 Klein 4B-base': baseLicenses['apache 2.0'],
   ODOR: undefined,
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
+  LTXV2: baseLicenses['ltxv2'],
+  'LTXV 2.3': baseLicenses['ltxv2'],
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   HiDream: baseLicenses['mit'],
@@ -571,6 +593,11 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Seedream: baseLicenses['seedream'],
   'Sora 2': baseLicenses['openai'],
   ZImageTurbo: baseLicenses['apache 2.0'],
+  ZImageBase: baseLicenses['apache 2.0'],
+  Anima: baseLicenses['anima'],
+  Kling: baseLicenses['kling'],
+  'Vidu Q1': baseLicenses['vidu'],
+  Seedance: baseLicenses['seedream'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -635,7 +662,7 @@ export const samplerOffsets = {
   undefined: 4,
 } as const;
 
-const commonAspectRatios = [
+export const commonAspectRatios = [
   { label: 'Square', width: 1024, height: 1024 },
   { label: 'Landscape', width: 1216, height: 832 },
   { label: 'Portrait', width: 832, height: 1216 },
@@ -649,12 +676,28 @@ export const seedreamSizes = [
   { label: '9:16', width: 1440, height: 2560 },
 ];
 
+const seedreamSizes4K = [
+  { label: '16:9', width: 4096, height: 2304 },
+  { label: '4:3', width: 4096, height: 3072 },
+  { label: '1:1', width: 4096, height: 4096 },
+  { label: '3:4', width: 3072, height: 4096 },
+  { label: '9:16', width: 2304, height: 4096 },
+];
+
 export const qwenSizes = [
   { label: '16:9', width: 1664, height: 928 },
   { label: '4:3', width: 1472, height: 1104 },
   { label: '1:1', width: 1328, height: 1328 },
   { label: '3:4', width: 1104, height: 1472 },
   { label: '9:16', width: 928, height: 1664 },
+];
+
+export const grokSizes = [
+  { label: '16:9', width: 1824, height: 1024 },
+  { label: '4:3', width: 1184, height: 888 },
+  { label: '1:1', width: 1024, height: 1024 },
+  { label: '3:4', width: 888, height: 1184 },
+  { label: '9:16', width: 1024, height: 1824 },
 ];
 
 export const ponyV7Sizes = [
@@ -665,13 +708,19 @@ export const ponyV7Sizes = [
   { label: '2:3', width: 1024, height: 1536 },
 ];
 
-const nanoBananaProSizes = [
+export const nanoBananaProSizes = [
   { label: '16:9', width: 2560, height: 1440 },
   { label: '4:3', width: 2304, height: 1728 },
   { label: '1:1', width: 2048, height: 2048 },
   { label: '3:4', width: 1728, height: 2304 },
   { label: '9:16', width: 1440, height: 2560 },
 ];
+
+export const generationResourceConfig: Record<number, MixedObject> = {
+  2470991: {
+    aspectRatios: seedreamSizes4K,
+  },
+};
 
 export type GenerationConfigKey = keyof typeof generationConfig;
 export const generationConfig = {
@@ -875,11 +924,87 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  Flux2Klein_9B: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612554,
+      name: '9b',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 9B',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_9B_base: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612548,
+      name: '9b-base',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 9B-base',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_4B: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612557,
+      name: '4b',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 4B',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  Flux2Klein_4B_base: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2612552,
+      name: '4b-base',
+      trainedWords: [],
+      baseModel: 'Flux.2 Klein 4B-base',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2165902,
+        name: 'FLUX.2 Klein',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
   Qwen: {
     aspectRatios: qwenSizes,
     checkpoint: {
-      id: 2113658,
-      name: 'Qwen-Image Full BF16',
+      id: 2552908,
+      name: 'fp8_e4m3fn',
       trainedWords: [],
       baseModel: 'Qwen',
       strength: 1,
@@ -888,8 +1013,8 @@ export const generationConfig = {
       canGenerate: true,
       hasAccess: true,
       model: {
-        id: 1864281,
-        name: 'Qwen-Image',
+        id: 2268063,
+        name: 'Qwen-Image-2512',
         type: 'Checkpoint',
       },
     } as GenerationResource,
@@ -897,8 +1022,8 @@ export const generationConfig = {
   Seedream: {
     aspectRatios: seedreamSizes,
     checkpoint: {
-      id: 2208278,
-      name: 'v4.0',
+      id: 2470991,
+      name: 'v4.5',
       trainedWords: [],
       baseModel: 'Seedream',
       strength: 1,
@@ -1087,6 +1212,25 @@ export const generationConfig = {
       },
     } as GenerationResource,
   },
+  ZImageBase: {
+    aspectRatios: commonAspectRatios,
+    checkpoint: {
+      id: 2635223,
+      name: 'Base',
+      trainedWords: [],
+      baseModel: 'ZImageBase',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      model: {
+        id: 2342797,
+        name: 'Z Image Base',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
 
   Other: {
     aspectRatios: commonAspectRatios,
@@ -1118,6 +1262,7 @@ export const generation = {
     cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
+    scheduler: 'simple',
     seed: null,
     clipSkip: 2,
     quantity: 2,
@@ -1154,12 +1299,15 @@ export const minUploadSize = 300;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
-export function getGenerationConfig(baseModel = 'SD1') {
+export function getGenerationConfig(baseModel = 'SD1', modelVersionId?: number) {
   if (!(baseModel in generationConfig)) {
     return getGenerationConfig(); // fallback to default config
     // throw new Error(`unsupported baseModel: ${baseModel} in generationConfig`);
   }
-  return generationConfig[baseModel as keyof typeof generationConfig];
+
+  const modelConfig = modelVersionId ? generationResourceConfig[modelVersionId] : undefined;
+  const baseModelConfig = generationConfig[baseModel as keyof typeof generationConfig];
+  return { ...baseModelConfig, ...modelConfig };
 }
 
 export const MODELS_SEARCH_INDEX = 'models_v9';
@@ -1169,6 +1317,7 @@ export const USERS_SEARCH_INDEX = 'users_v3';
 export const COLLECTIONS_SEARCH_INDEX = 'collections_v3';
 export const BOUNTIES_SEARCH_INDEX = 'bounties_v3';
 export const TOOLS_SEARCH_INDEX = 'tools_v2';
+export const COMICS_SEARCH_INDEX = 'comics_v1';
 
 // Metrics:
 export const METRICS_IMAGES_SEARCH_INDEX = 'metrics_images_v1';
@@ -1192,11 +1341,11 @@ export const modelVersionSponsorshipSettingsTypeOptions: Record<
 
 export const BUZZ_FEATURE_LIST = [
   'Pay for on-site model training',
-  'Pay for on-site image generation',
+  'Pay for on-site image and video generation',
   'Purchase early access to models',
   'Support your favorite creators via tips',
   'Create bounties for models, images and more!',
-  'Purchase profile cosmetics from our Cosmetic Store!',
+  'Purchase profile cosmetics from our Cosmetic Shop!',
 ];
 
 export const STRIPE_PROCESSING_AWAIT_TIME = 20000; // 20s
@@ -1294,6 +1443,11 @@ export const banReasonDetails: Record<
     code: BanReasonCode.BuzzCheating,
     publicBanReasonLabel: 'Abusing Buzz System',
     privateBanReasonLabel: 'Abusing Buzz System',
+  },
+  [BanReasonCode.RRDViolation]: {
+    code: BanReasonCode.RRDViolation,
+    publicBanReasonLabel: 'Violated Responsible Resource Development',
+    privateBanReasonLabel: 'Violated Responsible Resource Development (e.g., deepfakes)',
   },
   [BanReasonCode.Other]: {
     code: BanReasonCode.Other,

@@ -408,15 +408,15 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
         const metrics = await clickhouse?.$query<Metrics>(`
             SELECT entityId as "id",
-                   sumIf(metricValue, metricType = 'Collection') as "collectedCount",
-                   sumIf(metricValue, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
-                   sumIf(metricValue, metricType = 'Comment') as "commentCount",
-                   sumIf(metricValue, metricType = 'ReactionLike') as "likeCount",
-                   sumIf(metricValue, metricType = 'ReactionCry') as "cryCount",
-                   sumIf(metricValue, metricType = 'Buzz') as "tippedAmountCount",
-                   sumIf(metricValue, metricType = 'ReactionHeart') as "heartCount",
-                   sumIf(metricValue, metricType = 'ReactionLaugh') as "laughCount"
-            FROM entityMetricEvents
+                   sumIf(total, metricType = 'Collection') as "collectedCount",
+                   sumIf(total, metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) as "reactionCount",
+                   sumIf(total, metricType = 'Comment') as "commentCount",
+                   sumIf(total, metricType = 'ReactionLike') as "likeCount",
+                   sumIf(total, metricType = 'ReactionCry') as "cryCount",
+                   sumIf(total, metricType = 'Buzz') as "tippedAmountCount",
+                   sumIf(total, metricType = 'ReactionHeart') as "heartCount",
+                   sumIf(total, metricType = 'ReactionLaugh') as "laughCount"
+            FROM entityMetricDailyAgg
             WHERE entityType = 'Image'
               AND entityId IN (${batch.join(',')})
             GROUP BY id

@@ -17,7 +17,7 @@ export async function createImageGenStep(
   },
   config?: ReturnType<typeof ImageGenConfig>
 ) {
-  const { priority } = args.params;
+  const { priority, outputFormat } = args.params;
   const timeSpan = new TimeSpan(0, 10, 0);
 
   if (!config) {
@@ -37,7 +37,7 @@ export async function createImageGenStep(
   return {
     $type: 'imageGen',
     priority,
-    input,
+    input: { ...input, outputFormat },
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata,
   } as ImageGenStepTemplate;
@@ -70,7 +70,7 @@ export async function createImageGen(
       tips,
       experimental,
       callbacks: getOrchestratorCallbacks(user.id),
-      nsfwLevel: undefined,
+      nsfwLevel: step.metadata?.isPrivateGeneration ? 'pg13' : undefined,
       allowMatureContent: step.metadata?.isPrivateGeneration ? false : allowMatureContent,
       // @ts-ignore - BuzzSpendType is properly supported.
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,

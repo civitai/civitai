@@ -7,6 +7,7 @@ import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 
 export type RedisKeyStringsCache = Values<typeof REDIS_KEYS>;
 export type RedisKeyStringsSys = Values<typeof REDIS_SYS_KEYS>;
@@ -180,6 +181,70 @@ declare global {
 
 const log = createLogger('redis', 'green');
 
+// Track topology refresh intervals for cleanup
+const clusterRefreshIntervals = new Map<string, ReturnType<typeof setInterval>>();
+
+/**
+ * Trigger topology rediscovery on a cluster client.
+ * Uses internal _slots.rediscover() method - this is undocumented but stable.
+ * See: https://github.com/redis/node-redis/issues/2806
+ */
+function triggerTopologyRediscovery(clusterClient: any, reason: string) {
+  try {
+    if (!clusterClient._slots?.rediscover) {
+      return;
+    }
+
+    log(`Triggering topology rediscovery: ${reason}`);
+
+    // rediscover() requires a client instance with .options property
+    // Try to get a master client from the cluster to pass to rediscover
+    const masters = clusterClient._slots.masters;
+    if (masters && masters.length > 0) {
+      // Use the first available master client
+      const masterClient = masters[0]?.client;
+      if (masterClient) {
+        clusterClient._slots.rediscover(masterClient).catch((err: Error) => {
+          log(`Topology rediscovery failed: ${err.message}`);
+        });
+        return;
+      }
+    }
+
+    // Fallback: try calling without argument (may fail but worth trying)
+    clusterClient._slots.rediscover().catch((err: Error) => {
+      log(`Topology rediscovery failed (no master client): ${err.message}`);
+    });
+  } catch (err) {
+    // Silently ignore if rediscover is not available
+    log(`Topology rediscovery error: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
+ * Parse cluster node URLs from environment variable.
+ * Falls back to single URL if REDIS_CLUSTER_NODES is not set.
+ */
+function parseClusterNodes(fallbackUrl: string): { url: string }[] {
+  if (env.REDIS_CLUSTER_NODES) {
+    const nodes = env.REDIS_CLUSTER_NODES.split(',')
+      .map((nodeUrl) => nodeUrl.trim())
+      .filter(Boolean)
+      .map((nodeUrl) => {
+        const url = new URL(nodeUrl);
+        return { url: `${url.protocol}//${url.host}` };
+      });
+
+    if (nodes.length > 0) {
+      log(`Using ${nodes.length} cluster root nodes from REDIS_CLUSTER_NODES`);
+      return nodes;
+    }
+  }
+
+  log('Using single cluster root node from REDIS_URL');
+  return [{ url: fallbackUrl }];
+}
+
 function getBaseClient(type: 'cache' | 'system') {
   log(`Creating Redis client (${type})`);
 
@@ -209,14 +274,16 @@ function getBaseClient(type: 'cache' | 'system') {
 
   const baseClient = isCluster
     ? createCluster({
-        rootNodes: [
-          {
-            url: connectionUrl,
-            socket: socketConfig,
-            pingInterval,
-          },
-        ],
-        defaults: authConfig,
+        // Use multiple root nodes for redundant topology discovery
+        rootNodes: parseClusterNodes(connectionUrl),
+        defaults: {
+          ...authConfig,
+          socket: socketConfig,
+          pingInterval,
+        },
+        // Increase max redirections for stability during failover
+        // Default is 16, we increase to handle longer failover scenarios
+        maxCommandRedirections: 32,
       })
     : createClient({
         url: connectionUrl,
@@ -225,16 +292,161 @@ function getBaseClient(type: 'cache' | 'system') {
         pingInterval,
       });
 
-  baseClient.on('error', (err: Error) => log(`Redis Error`, err));
-  baseClient.on('connect', () => log('Redis connected'));
-  baseClient.on('reconnecting', () => log('Redis reconnecting'));
-  baseClient.on('ready', () => log('Redis ready!'));
+  // Common event handlers (note: cluster clients don't emit connect/ready events in node-redis v4.x)
+  baseClient.on('error', (err: Error) => log(`Redis Error (${type})`, err));
+  baseClient.on('connect', () => log(`Redis connected (${type})`));
+  baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
+  baseClient.on('ready', () => log(`Redis ready! (${type})`));
 
+  // Cluster-specific event handlers for failover detection
+  // Enhanced failover handling is gated behind FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER
+  // The flag uses the "is-next" segment (hostname == next.civitai.com) to enable by default on next
+  if (isCluster) {
+    // Extract hostname for Flipt context (used for segment matching)
+    const getFliptHostname = (): string => {
+      try {
+        // NEXTAUTH_URL contains the full URL like https://next.civitai.com
+        const nextAuthUrl = env.NEXTAUTH_URL;
+        if (nextAuthUrl) {
+          return new URL(nextAuthUrl).hostname;
+        }
+      } catch {
+        // Ignore URL parsing errors
+      }
+      return 'unknown';
+    };
+    const fliptHostname = getFliptHostname();
+    const fliptContext: Record<string, string> = { hostname: fliptHostname };
+    if (env.FLIPT_DEPLOYMENT_ID) fliptContext.deploymentId = env.FLIPT_DEPLOYMENT_ID;
+    log(
+      `Flipt context for enhanced failover flag: hostname=${fliptHostname}, deploymentId=${
+        env.FLIPT_DEPLOYMENT_ID ?? 'unset'
+      }`
+    );
+
+    // Helper to check feature flag before triggering rediscovery
+    const maybeRediscover = async (reason: string) => {
+      const isEnhancedFailoverEnabled = await isFlipt(
+        FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+        'redis-cluster', // entityId
+        fliptContext // context for segment matching
+      );
+      if (isEnhancedFailoverEnabled) {
+        triggerTopologyRediscovery(baseClient, reason);
+      }
+    };
+
+    // Triggered when a specific node encounters an error
+    baseClient.on('node-error', (err: Error, node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node error [${nodeAddr}]: ${err.message}`);
+      // Trigger topology rediscovery when a node fails (if feature enabled)
+      maybeRediscover(`node-error on ${nodeAddr}`);
+    });
+
+    // Triggered when a node disconnects
+    // This is critical for detecting failovers where the old master goes down
+    baseClient.on('node-disconnect', (node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node disconnected: ${nodeAddr}`);
+      // Trigger topology rediscovery to find the new master (if feature enabled)
+      maybeRediscover(`node-disconnect on ${nodeAddr}`);
+    });
+
+    // Triggered when a node reconnects
+    baseClient.on('node-connect', (node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node connected: ${nodeAddr}`);
+    });
+
+    // Triggered when a node is ready
+    baseClient.on('node-ready', (node: any) => {
+      const nodeAddr = node?.address || node?.url || 'unknown';
+      log(`Redis node ready: ${nodeAddr}`);
+    });
+
+    // Set up periodic topology refresh after client is ready and feature flag is checked
+    // This ensures we don't rely solely on MOVED/ASK errors for discovery
+    // See: https://github.com/redis/node-redis/issues/2806
+    // Helper function to set up enhanced failover after connection
+    const setupEnhancedFailover = async () => {
+      try {
+        log('Checking enhanced failover feature flag...');
+        const isEnhancedFailoverEnabled = await isFlipt(
+          FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
+          'redis-cluster', // entityId
+          fliptContext // context for segment matching
+        );
+
+        if (!isEnhancedFailoverEnabled) {
+          log('Enhanced cluster failover handling is DISABLED (feature flag off)');
+          return;
+        }
+
+        log('Enhanced cluster failover handling is ENABLED');
+
+        const refreshInterval = env.REDIS_CLUSTER_REFRESH_INTERVAL;
+        if (refreshInterval > 0) {
+          const intervalId = setInterval(() => {
+            triggerTopologyRediscovery(baseClient, 'periodic refresh');
+          }, refreshInterval);
+
+          // Store interval for cleanup
+          clusterRefreshIntervals.set(type, intervalId);
+
+          // Wrap close to clean up interval
+          const originalClose = baseClient.close?.bind(baseClient);
+          if (originalClose) {
+            (baseClient as any).close = async () => {
+              const interval = clusterRefreshIntervals.get(type);
+              if (interval) {
+                clearInterval(interval);
+                clusterRefreshIntervals.delete(type);
+                log(`Cleared topology refresh interval for ${type}`);
+              }
+              return originalClose();
+            };
+          }
+
+          log(`Topology refresh scheduled every ${refreshInterval}ms`);
+        }
+      } catch (err) {
+        log(`Enhanced failover setup failed: ${err instanceof Error ? err.message : err}`);
+      }
+    };
+
+    // Note: node-redis v4.x cluster clients don't emit 'ready' event (known bug)
+    // So we set up enhanced failover in the connect() promise callback instead
+    // See: https://github.com/redis/node-redis/issues/1855
+
+    // Don't await here - let connection happen in background
+    // The client will queue commands until connected
+    log(`Calling connect() for ${type} (cluster) client...`);
+    baseClient
+      .connect()
+      .then(async () => {
+        log(`${type} cluster client connected`);
+        await setupEnhancedFailover();
+      })
+      .catch((err) => {
+        log(`Redis connection failed (${type})`, err);
+      });
+
+    return baseClient;
+  }
+
+  // Non-cluster client - use the normal flow
   // Don't await here - let connection happen in background
   // The client will queue commands until connected
-  baseClient.connect().catch((err) => {
-    log(`Redis connection failed`, err);
-  });
+  log(`Calling connect() for ${type} (single) client...`);
+  baseClient
+    .connect()
+    .then(() => {
+      log(`${type} single client connected`);
+    })
+    .catch((err) => {
+      log(`Redis connection failed (${type})`, err);
+    });
 
   return baseClient;
 }
@@ -416,15 +628,21 @@ if (!env.IS_BUILD) {
 export const REDIS_SYS_KEYS = {
   DOWNLOAD: {
     LIMITS: 'download:limits',
+    COUNT: 'download:count',
   },
   GENERATION: {
     LIMITS: 'generation:limits',
+    COUNT: 'generation:count',
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
     TOKENS: 'generation:tokens',
     EXPERIMENTAL: 'generation:experimental',
     CUSTOM_CHALLENGE: 'generation:custom-challenge',
+    BLOCKED_PROMPTS: 'generation:blocked-prompts',
+    REMIX_AUDIT_CHECKED: 'generation:remix-audit-checked',
+    CLIENT: 'generation:client',
+    CLIENT_TEMP: 'generation:client-temp',
   },
   TRAINING: {
     STATUS: 'training:status',
@@ -439,6 +657,7 @@ export const REDIS_SYS_KEYS = {
     FEATURE_STATUS: 'system:feature-status',
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
+    SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -446,6 +665,7 @@ export const REDIS_SYS_KEYS = {
   QUEUES: {
     BUCKETS: 'queues:buckets',
     SEEN_IMAGES: 'queues:seen-images',
+    USER_CONTENT_REMOVAL: 'queues:user-content-removal',
   },
   RESEARCH: {
     RATINGS_TRACKS: 'research:ratings-tracks-2',
@@ -454,6 +674,12 @@ export const REDIS_SYS_KEYS = {
   LIMITS: {
     EMAIL_VERIFICATIONS: 'limits:email-verifications',
     HISTORY_DOWNLOADS: 'limits:history-downloads',
+    CHAT_MESSAGES: 'limits:chat-messages',
+  },
+  COUNTERS: {
+    EMAIL_VERIFICATIONS: 'counters:email-verifications',
+    HISTORY_DOWNLOADS: 'counters:history-downloads',
+    CHAT_MESSAGES: 'counters:chat-messages',
   },
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',
@@ -480,6 +706,8 @@ export const REDIS_SYS_KEYS = {
     EXP: 'new-order:exp',
     FERVOR: 'new-order:fervor',
     BUZZ: 'new-order:blessed-buzz',
+    PENDING_BUZZ: 'new-order:pending-buzz',
+    RECENTLY_GRANTED_BUZZ: 'new-order:recently-granted-buzz',
     SMITE: 'new-order:smite-progress',
     QUEUES: 'new-order:queues',
     ACTIVE_SLOT: 'new-order:active-slot',
@@ -494,6 +722,7 @@ export const REDIS_SYS_KEYS = {
       POOL: 'new-order:sanity-checks',
       FAILURES: 'new-order:sanity-failures',
     },
+    CONFIG: 'new-order:config',
     PROCESSING: {
       LAST_PROCESSED_AT: 'new-order:processing:last-processed-at',
       BATCH_CUTOFF: 'new-order:processing:batch-cutoff',
@@ -571,6 +800,7 @@ export const REDIS_KEYS = {
     RESOURCE_DATA: 'packed:generation:resource-data-3',
     TOKENS: 'generation:tokens',
     COUNT: 'generation:count',
+    BLOCKED_PROMPTS: 'generation:blocked-prompts',
   },
   SYSTEM: {
     MODERATED_TAGS: 'packed:system:moderated_tags',
@@ -580,6 +810,7 @@ export const REDIS_KEYS = {
     TAGS_BLOCKED: 'system:tags-blocked',
     HOME_EXCLUDED_TAGS: 'system:home-excluded-tags',
     BLOCKLIST: 'system:blocklist',
+    PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
     CATEGORIES: 'system:categories',
   },
@@ -603,7 +834,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
-    FEATURED_MODELS: 'packed:featured-models',
+    FEATURED_MODELS: 'packed:featured-models-2',
     HOME_BLOCKS_PERMANENT: 'packed:caches:home-blocks-permanent',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
@@ -617,6 +848,7 @@ export const REDIS_KEYS = {
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
+    USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models',
       IMAGES: 'packed:caches:mod-rules:images',
@@ -627,9 +859,14 @@ export const REDIS_KEYS = {
       RATE_LIMIT: {
         MINUTE: 'new-order:rate-limit:minute',
         HOUR: 'new-order:rate-limit:hour',
+        DAY: 'new-order:rate-limit:day',
       },
     },
     TOP_EARNERS: 'packed:caches:top-earners',
+    SUPPORTED_CRYPTO_CURRENCIES: 'packed:caches:supported-crypto-currencies',
+    CRYPTO_CONVERSION_RATE: 'packed:caches:crypto-conversion-rate',
+    CRYPTO_MIN_AMOUNT: 'packed:caches:crypto-min-amount',
+    TAG_PAGE_SEO: 'packed:caches:tag-page-seo',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
@@ -700,6 +937,9 @@ export const REDIS_KEYS = {
   },
   ENTITY_METRICS: {
     BASE: 'entitymetric',
+  },
+  QUEUES: {
+    SEEN_IMAGES: 'queues:recent-images',
   },
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',

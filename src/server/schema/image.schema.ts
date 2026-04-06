@@ -18,8 +18,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { zc } from '~/utils/schema-helpers';
-import { ImageSort, NsfwLevel } from './../common/enums';
-import { baseModelGroups, baseModels } from '~/shared/constants/base-model.constants';
+import { ImageSort, NsfwLevel, ViolationType } from './../common/enums';
 import { usernameSchema } from '~/shared/zod/username.schema';
 
 const stringToNumber = z.coerce.number().optional();
@@ -92,6 +91,7 @@ export const imageMetadataResourceSchema = z.object({
   name: z.string().optional(),
   weight: z.number().optional(),
   hash: z.string().optional(),
+  unmatched: z.boolean().optional(),
 });
 
 export const additionalResourceSchema = z.object({
@@ -110,7 +110,7 @@ export const civitaiResourceSchema = z.object({
 });
 
 export const imageGenerationSchema = z.object({
-  baseModel: z.enum(baseModelGroups).optional(),
+  baseModel: z.string().optional(),
   prompt: undefinedString,
   negativePrompt: undefinedString,
   cfgScale: stringToNumber,
@@ -248,11 +248,15 @@ export type ImageUpdateSchema = z.infer<typeof imageUpdateSchema>;
 export const imageModerationSchema = z.object({
   ids: z.number().array(),
   reviewAction: z.enum(['unblock', 'block']),
+  violationType: z.enum(ViolationType).optional(),
+  violationDetails: z.string().optional(),
+  removeMinorFlag: z.boolean().optional(),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 export type ImageModerationUnblockSchema = {
   ids: number[];
   moderatorId?: number;
+  removeMinorFlag?: boolean;
 };
 export type ImageModerationBlockSchema = {
   ids?: number[];
@@ -315,7 +319,7 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 export const getInfiniteImagesSchema = baseQuerySchema
   .extend({
     // - from imagesQueryParamSchema
-    baseModels: z.enum(baseModels).array().optional(),
+    baseModels: z.string().array().optional(),
     collectionId: z.number().optional(),
     collectionTagId: z.number().optional(),
     hideAutoResources: z.boolean().optional(),
@@ -361,9 +365,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     generation: z.enum(ImageGenerationProcess).array().optional(),
     ids: z.array(z.number()).optional(),
     imageId: z.number().optional(),
-    include: z.array(imageInclude).default(['cosmetics']),
+    include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
     includeBaseModel: z.boolean().optional(),
     pending: z.boolean().optional(),
+    publishedOnly: z.boolean().optional(),
     postIds: z.number().array().optional(),
     reviewId: z.number().optional(),
     skip: z.number().optional(),
@@ -457,6 +462,18 @@ export const downleveledReviewInput = z.object({
   originalLevel: z.nativeEnum(NsfwLevel).optional(),
 });
 
+export type IngestionErrorReviewInput = z.infer<typeof ingestionErrorReviewInput>;
+export const ingestionErrorReviewInput = z.object({
+  limit: z.number(),
+  cursor: z.number().optional(),
+});
+
+export type ResolveIngestionErrorInput = z.infer<typeof resolveIngestionErrorInput>;
+export const resolveIngestionErrorInput = z.object({
+  id: z.number(),
+  nsfwLevel: z.enum(NsfwLevel),
+});
+
 export type ReportCsamImagesInput = z.infer<typeof reportCsamImagesSchema>;
 export const reportCsamImagesSchema = z.object({
   imageIds: z.array(z.number()).min(1),
@@ -505,6 +522,13 @@ export const updateImageAcceptableMinorSchema = z.object({
   id: z.number(),
   collectionId: z.number(),
   acceptableMinor: z.boolean(),
+});
+
+export type SetTosViolationSchema = z.infer<typeof setTosViolationSchema>;
+export const setTosViolationSchema = z.object({
+  id: z.number(),
+  violationType: z.enum(ViolationType).optional(),
+  violationDetails: z.string().optional(),
 });
 
 export type ToggleImageFlagInput = z.infer<typeof toggleImageFlagSchema>;

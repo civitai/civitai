@@ -3,6 +3,7 @@ import { EventName } from '@paddle/paddle-node-sdk';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
+import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
 import { getPaddle } from '~/server/paddle/client';
@@ -65,7 +66,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const sig = req.headers['paddle-signature'];
     const webhookSecret = env.PADDLE_WEBHOOK_SECRET;
     const buf = await buffer(req);
+    const rawPayload = buf.toString();
     let event: EventEntity | null;
+
+    // Track to ClickHouse (fire and forget, never throws)
+    trackWebhookEvent('paddle', rawPayload).catch(() => {});
+
     try {
       if (!sig || !webhookSecret) {
         // only way this is false is if we forgot to include our secret or paddle decides to suddenly not include their signature
@@ -74,7 +80,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      event = paddle.webhooks.unmarshal(buf.toString(), webhookSecret, sig as string);
+      event = paddle.webhooks.unmarshal(rawPayload, webhookSecret, sig as string);
       if (!event) {
         throw new Error('Invalid Request');
       }

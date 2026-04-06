@@ -1,34 +1,16 @@
 import { TRPCError } from '@trpc/server';
 import type { Context } from '~/server/createContext';
-import type { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
+import type { HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserDownloads, hideDownload } from '~/server/services/download.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { throwDbError } from '~/server/utils/errorHandling';
 
-export const getUserDownloadsInfiniteHandler = async ({
-  input,
-  ctx,
-}: {
-  input: Partial<GetUserDownloadsSchema>;
-  ctx: DeepNonNullable<Context>;
-}) => {
+export const getUserDownloadsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   const { id: userId } = ctx.user;
-  const limit = input.limit ?? DEFAULT_PAGE_SIZE;
 
   try {
-    const { items } = await getUserDownloads({
-      ...input,
-      limit: limit + 1,
-      userId,
-    });
-
-    let nextCursor: Date | undefined;
-    if (items.length > limit) {
-      const nextItem = items.pop();
-      nextCursor = nextItem?.downloadAt;
-    }
-
-    return { items, nextCursor };
+    // Service returns all downloads (up to 2000, limited by ClickHouse query)
+    const { items } = await getUserDownloads({ userId });
+    return { items };
   } catch (error) {
     throw throwDbError(error);
   }

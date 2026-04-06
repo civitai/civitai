@@ -1,10 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
+import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { CoinbaseCaller } from '~/server/http/coinbase/coinbase.caller';
 import type { Coinbase } from '~/server/http/coinbase/coinbase.schema';
 import { logToAxiom } from '~/server/logging/client';
-import { processBuzzOrder } from '~/server/services/coinbase.service';
+import { processBuzzOrder, processCodeOrder } from '~/server/services/coinbase.service';
 
 export const config = {
   api: {
@@ -40,6 +41,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     req.headers['x-cc-webhook-signature'.toLowerCase()];
   const webhookSecret = env.COINBASE_WEBHOOK_SECRET;
   const buf = await buffer(req);
+  const rawPayload = buf.toString('utf8');
+
+  // Track to ClickHouse (fire and forget, never throws)
+  trackWebhookEvent('coinbase', rawPayload).catch(() => {});
 
   try {
     if (!sig || !webhookSecret) {
@@ -59,13 +64,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // Parse the JSON body
-    const { event } = JSON.parse(buf.toString('utf8')) as Coinbase.WebhookEventSchema;
+    const { event } = JSON.parse(rawPayload) as Coinbase.WebhookEventSchema;
 
     switch (event.type) {
-      case 'charge:confirmed':
-        // handle confirmed charge -> Grant buzz
-        await processBuzzOrder(event.data);
+      case 'charge:confirmed': {
+        // Route based on order type
+        const orderId = event.data.metadata?.internalOrderId;
+        if (orderId && orderId.startsWith('code-')) {
+          await processCodeOrder(event.data);
+        } else {
+          await processBuzzOrder(event.data);
+        }
         break;
+      }
       default: {
         if (event.type !== 'charge:created')
           await log({

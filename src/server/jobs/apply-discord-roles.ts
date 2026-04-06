@@ -148,85 +148,63 @@ export const applyDiscordLeaderboardRoles = async () => {
 const applyDiscordPaidRoles = createJob('apply-discord-paid-roles', '*/10 * * * *', async () => {
   const discordRoles = await discord.getAllRoles();
 
-  // Apply the Supporter Role
-  // ----------------------------------------
   const supporterRole = discordRoles.find((r) => r.name === 'Supporter');
-  if (supporterRole) {
-    const existingSupporters = await getAccountsInRole(supporterRole);
-
-    // Add the supporter role to any new supporters
-    const supporters =
-      (
-        await dbWrite.customerSubscription.findMany({
-          where: {
-            status: { in: ['active', 'trialing'] },
-            user: {
-              accounts: {
-                some: { provider: 'discord' },
-              },
-            },
-          },
-          select: {
-            user: {
-              select: {
-                accounts: {
-                  select: { providerAccountId: true },
-                  where: { provider: 'discord' },
-                },
-              },
-            },
-          },
-        })
-      )?.map((s) => s.user.accounts[0].providerAccountId) ?? [];
-    const newSupporters = supporters.filter((u) => !existingSupporters.includes(u));
-    await addRoleToAccounts(supporterRole, newSupporters);
-
-    // Remove the supporter role from any expired supporters
-    const expiredSupporters = existingSupporters.filter((u) => !supporters.includes(u));
-    await removeRoleFromAccounts(supporterRole, expiredSupporters);
-  }
-
-  // Apply the Donator Role
-  // ----------------------------------------
   const donatorRole = discordRoles.find((r) => r.name === 'Donator');
-  if (donatorRole) {
-    // Get the accounts with the donator role
-    const existingDonators = await getAccountsInRole(donatorRole);
 
-    // Get the current donators
-    const donatorCutoff = dayjs().subtract(1, 'month').toDate();
-    const donators = new Set(
-      (
-        await dbWrite.purchase.findMany({
-          where: {
-            createdAt: { gt: donatorCutoff },
-            priceId: env.STRIPE_DONATE_ID,
-            customer: {
-              accounts: {
-                some: { provider: 'discord' },
-              },
-            },
-          },
-          select: {
-            customer: {
-              select: {
-                accounts: {
-                  select: { providerAccountId: true },
-                  where: { provider: 'discord' },
-                },
-              },
-            },
-          },
-        })
-      )?.map((s) => s.customer.accounts[0].providerAccountId) ?? []
-    );
+  // Process Supporter and Donator roles in parallel
+  await Promise.all([
+    // Apply the Supporter Role
+    (async () => {
+      if (!supporterRole) return;
 
-    const newDonators = [...donators].filter((u) => !existingDonators.includes(u));
-    await addRoleToAccounts(donatorRole, newDonators);
+      const existingSupporters = await getAccountsInRole(supporterRole);
 
-    const removedDonators = existingDonators.filter((u) => !donators.has(u));
-    await removeRoleFromAccounts(donatorRole, removedDonators);
-  }
+      // Get current supporters using optimized direct join query
+      const supporters = new Set(
+        (
+          await dbWrite.$queryRaw<{ providerAccountId: string }[]>`
+            SELECT DISTINCT a."providerAccountId"
+            FROM "CustomerSubscription" cs
+            JOIN "Account" a ON a."userId" = cs."userId" AND a.provider = 'discord'
+            WHERE cs.status IN ('active', 'trialing')
+          `
+        )?.map((s) => s.providerAccountId) ?? []
+      );
+
+      const newSupporters = [...supporters].filter((u) => !existingSupporters.includes(u));
+      await addRoleToAccounts(supporterRole, newSupporters);
+
+      const expiredSupporters = existingSupporters.filter((u) => !supporters.has(u));
+      await removeRoleFromAccounts(supporterRole, expiredSupporters);
+    })(),
+
+    // Apply the Donator Role
+    (async () => {
+      if (!donatorRole) return;
+
+      const existingDonators = await getAccountsInRole(donatorRole);
+
+      // Get current donators using optimized direct join query
+      const donatorCutoff = dayjs().subtract(1, 'month').toDate();
+      const donators = new Set(
+        (
+          await dbWrite.$queryRaw<{ providerAccountId: string }[]>`
+            SELECT DISTINCT a."providerAccountId"
+            FROM "Purchase" p
+            JOIN "Account" a ON a."userId" = p."userId" AND a.provider = 'discord'
+            WHERE p."createdAt" > ${donatorCutoff}
+            AND p."priceId" = ${env.STRIPE_DONATE_ID}
+          `
+        )?.map((s) => s.providerAccountId) ?? []
+      );
+
+      const newDonators = [...donators].filter((u) => !existingDonators.includes(u));
+      await addRoleToAccounts(donatorRole, newDonators);
+
+      const removedDonators = existingDonators.filter((u) => !donators.has(u));
+      await removeRoleFromAccounts(donatorRole, removedDonators);
+    })(),
+  ]);
 });
 
 export const applyDiscordRoles = [applyDiscordActivityRoles, applyDiscordPaidRoles];

@@ -14,10 +14,11 @@ import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
 import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
 import type { UserMeta } from '~/server/schema/user.schema';
-import { banReasonDetails } from '~/server/common/constants';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { getUserContentOverview as getUserContentOverviewFromCache } from '~/server/redis/caches';
 import { userUpdateCounter } from '~/server/prom/client';
+import { usersSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 export const getUserContentOverview = async ({
   username,
@@ -286,6 +287,7 @@ export const updateUserProfile = async ({
                       create: {
                         ...coverImage,
                         meta: (coverImage?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                        metadata: { coverImage: true, userId },
                         userId,
                         resources: undefined,
                       },
@@ -307,6 +309,8 @@ export const updateUserProfile = async ({
       timeout: 15000,
     }
   );
+
+  await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
 
   return getUserWithProfile({ id: userId });
 };

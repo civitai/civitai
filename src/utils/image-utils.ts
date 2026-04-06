@@ -55,9 +55,30 @@ export async function createImageElement(src: string | Blob | File) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
-    img.addEventListener('load', () => resolve(img));
+    img.addEventListener('load', async () => {
+      // Try to decode the image to ensure pixel data is ready before canvas operations.
+      // This prevents vertical stripe artifacts when drawImage() is called too early.
+      // However, decode() can fail under memory pressure when processing many images,
+      // so we retry once and ultimately continue even if it fails - the image loaded
+      // successfully which means it's valid, just potentially not pre-decoded.
+      try {
+        await img.decode();
+      } catch {
+        // First attempt failed, wait a bit for memory pressure to ease and retry
+        await new Promise((r) => setTimeout(r, 100));
+        try {
+          await img.decode();
+        } catch {
+          // decode() failed twice but the image loaded successfully - continue anyway.
+          // The risk is potential visual artifacts during canvas resize, but this is
+          // better than rejecting valid images as "corrupt".
+          console.warn('[createImageElement] decode() failed after retry, continuing anyway');
+        }
+      }
+      resolve(img);
+    });
     img.addEventListener('error', (error) => {
-      console.error('failed to get image properties');
+      console.error('[createImageElement] Image failed to load:', error);
       reject(error);
     });
     img.src = objectUrl;

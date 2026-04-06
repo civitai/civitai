@@ -235,6 +235,7 @@ const ReviewCollection = () => {
                   data={collectionItems}
                   empty={<NoContent mt="lg" message="There are no images that need review" />}
                   render={CollectionItemGridItem}
+                  withAds={false}
                 />
                 {hasNextPage && (
                   <InViewLoader

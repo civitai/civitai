@@ -205,7 +205,7 @@ function ImagesHitList() {
         </ImagesProvider>
       </div> */}
       <div>
-        <ImagesProvider images={items as any}>
+        <ImagesProvider images={items as any} hideReactions>
           <MasonryColumnsVirtual
             data={items as any}
             imageDimensions={(data) => {
@@ -215,7 +215,7 @@ function ImagesHitList() {
             }}
             adjustHeight={({ height }) => {
               const imageHeight = Math.max(Math.min(height, 600), 150);
-              return imageHeight + 38;
+              return imageHeight;
             }}
             maxItemHeight={600}
             render={ImagesCardMemoized}
