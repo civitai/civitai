@@ -12,9 +12,9 @@ import {
   getGenerationData,
   getGenerationResources,
   getGenerationStatus,
+  getGenerationConfig,
   getResourceData,
   getUnavailableResources,
-  getUnstableResources,
   resolveImageMeta,
   // textToImage,
   // textToImageTestRun,
@@ -59,9 +59,9 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getGenerationStatus()),
-  getUnstableResources: publicProcedure
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
-    .query(() => getUnstableResources()),
+  getGenerationConfig: publicProcedure
+    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .query(() => getGenerationConfig()),
   getUnavailableResources: publicProcedure.query(() => getUnavailableResources()),
   toggleUnavailableResource: moderatorProcedure
     .input(getByIdSchema)

@@ -51,6 +51,7 @@ import { ltxv23Graph } from './ltxv23-graph';
 import { mochiGraph } from './mochi-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
+import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
 
 // =============================================================================
@@ -213,6 +214,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Chroma'] as const, graph: chromaGraph },
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
+    { values: ['Anima'] as const, graph: animaGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {
