@@ -365,7 +365,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     generation: z.enum(ImageGenerationProcess).array().optional(),
     ids: z.array(z.number()).optional(),
     imageId: z.number().optional(),
-    include: z.array(imageInclude).default(['cosmetics']),
+    include: z.array(imageInclude).default((): ImageInclude[] => ['cosmetics']),
     includeBaseModel: z.boolean().optional(),
     pending: z.boolean().optional(),
     publishedOnly: z.boolean().optional(),
