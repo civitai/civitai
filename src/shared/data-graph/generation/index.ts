@@ -37,6 +37,12 @@ export {
   wan25Durations,
   wanInterpolatorModels,
 } from './wan-graph';
+export {
+  wanImageGraph,
+  ecosystemToImageVersionDef,
+  wan27ImageAspectRatios,
+  wan27VersionId,
+} from './wan-image-graph';
 export { hunyuanGraph, hunyuanAspectRatios, hunyuanDurations } from './hunyuan-graph';
 export { mochiGraph } from './mochi-graph';
 export { soraGraph, soraAspectRatios, soraResolutions } from './sora-graph';

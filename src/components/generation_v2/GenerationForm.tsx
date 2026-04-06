@@ -462,7 +462,7 @@ export function GenerationForm() {
                 }}
               />
 
-              {/* Wan version picker */}
+              {/* Wan video version picker */}
               <Controller
                 graph={graph}
                 name="wanVersion"
@@ -1659,8 +1659,8 @@ function VersionGroupSelector({
     [getResourceData, onChange]
   );
 
-  // Only render if current model is a known version in the tree
-  if (!modelId || !allIds.has(modelId)) return null;
+  // Only render if current model is a known version and there are multiple options
+  if (!modelId || !allIds.has(modelId) || allIds.size <= 1) return null;
 
   const path = findModelPath(versions, modelId);
 

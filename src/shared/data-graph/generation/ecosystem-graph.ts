@@ -45,6 +45,7 @@ import { viduGraph } from './vidu-graph';
 import { openaiGraph } from './openai-graph';
 import { klingGraph, klingVersionIds } from './kling-graph';
 import { wanGraph } from './wan-graph';
+import { wanImageGraph } from './wan-image-graph';
 import { hunyuanGraph } from './hunyuan-graph';
 import { ltxv2Graph } from './ltxv2-graph';
 import { ltxv23Graph } from './ltxv23-graph';
@@ -227,9 +228,12 @@ export const ecosystemGraph = new DataGraph<
         'WanVideo-22-T2V-A14B',
         'WanVideo-25-T2V',
         'WanVideo-25-I2V',
+        'WanVideo27',
       ] as const,
       graph: wanGraph,
     },
+    // Image ecosystems - Wan Image family
+    { values: ['WanImage27'] as const, graph: wanImageGraph },
     // Video ecosystems - individual families
     { values: ['Vidu'] as const, graph: viduGraph },
     { values: ['Kling'] as const, graph: klingGraph },

@@ -317,7 +317,7 @@ async function createEcosystemStep(
     // Video Ecosystems - videoGen step type
     // =========================================================================
 
-    // Wan family (v2.2 returns [videoGen, videoInterpolation]; others return [videoGen])
+    // Wan family (v2.2 returns [videoGen, videoInterpolation]; v2.7 returns [imageGen]; others return [videoGen])
     case 'WanVideo14B_T2V':
     case 'WanVideo14B_I2V_480p':
     case 'WanVideo14B_I2V_720p':
@@ -326,6 +326,8 @@ async function createEcosystemStep(
     case 'WanVideo-22-T2V-A14B':
     case 'WanVideo-25-T2V':
     case 'WanVideo-25-I2V':
+    case 'WanImage27':
+    case 'WanVideo27':
       return createWanSteps(normalizedData, handlerCtx);
 
     // Vidu

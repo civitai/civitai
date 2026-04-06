@@ -30,6 +30,7 @@ import {
   sliderNode,
   enumNode,
   imagesNode,
+  videoNode,
   createResourcesGraph,
   createCheckpointGraph,
   type ResourceData,
@@ -75,6 +76,14 @@ const wanVersionDefs = [
     ecosystems: {
       t2v: 'WanVideo-25-T2V',
       i2v: 'WanVideo-25-I2V',
+    },
+  },
+  {
+    version: 'v2.7',
+    label: '2.7',
+    ecosystems: {
+      t2v: 'WanVideo27',
+      i2v: 'WanVideo27',
     },
   },
 ] as const;
@@ -421,8 +430,113 @@ const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     },
     ['images', 'resolution']
   )
-  .node('duration', enumNode({ options: wan25Durations, defaultValue: 5 }))
-  .merge(createResourcesGraph({ limit: 2 }));
+  .node('duration', enumNode({ options: wan25Durations, defaultValue: 5 }));
+
+// =============================================================================
+// Wan 2.7 Video Subgraph
+// =============================================================================
+
+/** Wan 2.7 video aspect ratios by resolution */
+const wan27AspectRatiosByResolution: Record<string, typeof wanAspectRatios> = {
+  '720p': [
+    { label: '16:9', value: '16:9', width: 1280, height: 720 },
+    { label: '4:3', value: '4:3', width: 960, height: 720 },
+    { label: '1:1', value: '1:1', width: 720, height: 720 },
+    { label: '3:4', value: '3:4', width: 720, height: 960 },
+    { label: '9:16', value: '9:16', width: 720, height: 1280 },
+  ],
+  '1080p': [
+    { label: '16:9', value: '16:9', width: 1920, height: 1080 },
+    { label: '4:3', value: '4:3', width: 1440, height: 1080 },
+    { label: '1:1', value: '1:1', width: 1080, height: 1080 },
+    { label: '3:4', value: '3:4', width: 1080, height: 1440 },
+    { label: '9:16', value: '9:16', width: 1080, height: 1920 },
+  ],
+};
+
+/** Wan 2.7 video resolution options */
+const wan27Resolutions = [
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
+];
+
+/**
+ * Wan 2.7 video subgraph
+ *
+ * Supports 4 workflows via fal provider:
+ * - txt2vid: text-to-video (prompt, aspectRatio, duration 2-15, audioUrl)
+ * - img2vid: image-to-video (startImage, endImage, videoUrl, duration 2-15, audioUrl)
+ * - img2vid:ref2vid: reference-to-video (referenceImages, aspectRatio, duration 2-10, multiShots)
+ * - vid2vid:edit: edit-video (videoUrl required, referenceImage, audioSetting, duration 0+2-10)
+ *
+ * Per the fal API spec: cfgScale, steps, frameRate, loras are NOT supported for v2.7.
+ */
+const wan27Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
+  // Video input for vid2vid:edit
+  .node(
+    'video',
+    (ctx) => ({
+      ...videoNode(),
+      when: ctx.workflow === 'vid2vid:edit',
+    }),
+    ['workflow']
+  )
+  // Negative prompt (supported on txt2vid, img2vid, ref2vid — not on edit-video)
+  .node(
+    'negativePrompt',
+    (ctx) => ({
+      ...negativePromptNode(),
+      when: ctx.workflow !== 'vid2vid:edit',
+    }),
+    ['workflow']
+  )
+  .node('resolution', {
+    input: z.enum(['720p', '1080p']).optional(),
+    output: z.enum(['720p', '1080p']),
+    defaultValue: '720p' as const,
+    meta: { options: wan27Resolutions },
+  })
+  .node(
+    'aspectRatio',
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '720p';
+      const options =
+        wan27AspectRatiosByResolution[resolution] ?? wan27AspectRatiosByResolution['720p'];
+      // Hide when images/video present (aspect ratio derived from source)
+      const hasImages = Array.isArray(ctx.images) && ctx.images.length > 0;
+      const hasVideo = !!(ctx as { video?: { url: string } }).video?.url;
+      return {
+        ...aspectRatioNode({ options, defaultValue: '16:9' }),
+        when: !hasImages && !hasVideo,
+      };
+    },
+    ['images', 'video', 'resolution']
+  )
+  // Duration slider - range depends on workflow (2-15 for txt2vid/img2vid, 2-10 for ref2vid/edit-video)
+  .node(
+    'duration',
+    (ctx) => {
+      const isRef2vid = ctx.workflow === 'img2vid:ref2vid';
+      const isEditVideo = ctx.workflow === 'vid2vid:edit';
+      const max = isRef2vid || isEditVideo ? 10 : 15;
+      return {
+        ...sliderNode({ min: 2, max, step: 1, defaultValue: 5 }),
+        transform: (value: number) => Math.min(Math.max(value, 2), max),
+      };
+    },
+    ['workflow']
+  )
+  // Enable prompt expansion (txt2vid and img2vid only — not on ref2vid or edit-video per spec)
+  .node(
+    'enablePromptEnhancer',
+    (ctx) => ({
+      input: z.boolean().optional(),
+      output: z.boolean(),
+      defaultValue: false,
+      when: ctx.workflow === 'txt2vid' || ctx.workflow === 'img2vid',
+    }),
+    ['workflow']
+  );
 
 // =============================================================================
 // Wan Graph
@@ -448,15 +562,39 @@ type WanCtx = {
  * picker determines which one to use, so the subgraph must handle the I2V direction.
  */
 export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
-  // Images node - shown for img2vid, hidden for txt2vid.
-  // When images are added, Effect A switches to the I2V ecosystem variant.
+  // Images node - shown for img2vid/ref2vid, hidden for txt2vid and vid2vid:edit.
+  // v2.7 img2vid uses slots for first/last frame; ref2vid allows multiple reference images.
   .node(
     'images',
-    (ctx) => ({
-      ...imagesNode({ warnOnMissingAiMetadata: true }),
-      when: !ctx.workflow.startsWith('txt'),
-    }),
-    ['workflow']
+    (ctx) => {
+      const isV27 = ecosystemToVersionDef.get(ctx.ecosystem)?.version === 'v2.7';
+      const isRef2vid = ctx.workflow === 'img2vid:ref2vid';
+      const isImg2vid = ctx.workflow === 'img2vid' || ctx.workflow === 'img2vid:first-last';
+      const isEditVideo = ctx.workflow.startsWith('vid2vid');
+
+      if (isV27 && isImg2vid) {
+        return {
+          ...imagesNode({
+            slots: [{ label: 'First Frame', required: true }, { label: 'Last Frame (optional)' }],
+            warnOnMissingAiMetadata: true,
+          }),
+          when: true,
+        };
+      }
+
+      if (isV27 && isRef2vid) {
+        return {
+          ...imagesNode({ warnOnMissingAiMetadata: true, max: 10 }),
+          when: true,
+        };
+      }
+
+      return {
+        ...imagesNode({ warnOnMissingAiMetadata: true }),
+        when: !ctx.workflow.startsWith('txt') && !isEditVideo,
+      };
+    },
+    ['workflow', 'ecosystem']
   )
 
   // Merge checkpoint graph (model locked from ecosystem defaults)
@@ -523,6 +661,7 @@ export const wanGraph = new DataGraph<WanCtx, GenerationCtx>()
     'v2.2': wan22Graph,
     'v2.2-5b': wan225bGraph,
     'v2.5': wan25Graph,
+    'v2.7': wan27Graph,
   });
 
 // Export constants for use in components
