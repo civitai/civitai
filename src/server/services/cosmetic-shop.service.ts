@@ -661,7 +661,7 @@ export const getUserPreviewImagesForCosmetics = async ({
     periodMode: 'stats',
     types: [MediaType.image],
     withMeta: false,
-    useDatapacketRead: features.datapacketRead,
+    dbTarget: features.datapacketRead ? 'datapacket' : 'read',
   });
 
   const images = userImages.items.slice(0, limit);
@@ -693,7 +693,7 @@ export const getUserPreviewImagesForCosmetics = async ({
       sort: ImageSort.Newest,
       types: [MediaType.image],
       withMeta: false,
-      useDatapacketRead: features.datapacketRead,
+      dbTarget: features.datapacketRead ? 'datapacket' : 'read',
     });
 
     return [...images, ...collectionImages.items].slice(0, limit);
