@@ -819,6 +819,35 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               )}
             </Stack>
           )}
+          {/* Download-related alert */}
+          {hideDownload && (
+            <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
+              {isDownloadable && !isLoadingAccess ? (
+                <Text>
+                  You&apos;ve set this model to Generation-Only. Other users will not be able to
+                  download this model. Click{' '}
+                  <Text
+                    component={Link}
+                    td="underline"
+                    href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
+                    className={!features.canWrite ? 'pointer-events-none' : undefined}
+                  >
+                    here
+                  </Text>{' '}
+                  to change this behavior.
+                </Text>
+              ) : (
+                <Text>
+                  The creator has set this model to Generation-Only.{' '}
+                  <Text td="underline" component={Link} href="/articles/11494">
+                    Learn more
+                  </Text>
+                </Text>
+              )}
+            </AlertWithIcon>
+          )}
+
+          {/* Status alerts */}
           {version.status === ModelStatus.UnpublishedViolation && !version.meta?.needsReview && (
             <AlertWithIcon color="red" iconColor="red" icon={<IconExclamationMark />}>
               <Text>
@@ -863,7 +892,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               community once it has been approved.
             </AlertWithIcon>
           )}
-          <ModelVersionDonationGoals modelVersionId={version.id} />
           <EarlyAccessAlert
             modelId={model.id}
             versionId={version.id}
@@ -878,107 +906,6 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             usageControl={version.usageControl}
           />
 
-          {hideDownload && (
-            <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
-              {isDownloadable && !isLoadingAccess ? (
-                <Text>
-                  You&apos;ve set this model to Generation-Only. Other users will not be able to
-                  download this model. Click{' '}
-                  <Text
-                    component={Link}
-                    td="underline"
-                    href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
-                    className={!features.canWrite ? 'pointer-events-none' : undefined}
-                  >
-                    here
-                  </Text>{' '}
-                  to change this behavior.
-                </Text>
-              ) : (
-                <Text>
-                  The creator has set this model to Generation-Only.{' '}
-                  <Text td="underline" component={Link} href="/articles/11494">
-                    Learn more
-                  </Text>
-                </Text>
-              )}
-            </AlertWithIcon>
-          )}
-
-          {!model.locked && alreadyDownloaded && (
-            <UserResourceReviewComposite
-              modelId={model.id}
-              modelVersionId={version.id}
-              modelName={model.name}
-            >
-              {({ modelId, modelVersionId, userReview, loading }) => (
-                <Card p={8} withBorder>
-                  <Stack gap={8}>
-                    <Group gap={8} justify="space-between" wrap="nowrap">
-                      <Group gap={8} wrap="nowrap">
-                        {loading ? (
-                          <Loader size="xs" />
-                        ) : userReview ? (
-                          <>
-                            {userReview.recommended ? (
-                              <ThumbsUpIcon size={18} />
-                            ) : (
-                              <ThumbsDownIcon size={18} />
-                            )}
-                          </>
-                        ) : (
-                          <IconHeart size={18} />
-                        )}
-                        {userReview ? (
-                          <Text size="sm">
-                            You reviewed this on {formatDateMin(userReview.createdAt, false)}
-                          </Text>
-                        ) : (
-                          <Text size="sm">What did you think of this resource?</Text>
-                        )}
-                      </Group>
-                      {!userReview || !userReview.details ? (
-                        <ResourceReviewThumbActions
-                          modelId={modelId}
-                          modelVersionId={modelVersionId}
-                          userReview={userReview}
-                          size="xs"
-                        />
-                      ) : (
-                        <Group wrap="nowrap" gap={4}>
-                          <Button
-                            size="xs"
-                            color="gray"
-                            onClick={() => openResourceReviewEditModal(userReview)}
-                          >
-                            See Review
-                          </Button>
-                          <Button
-                            size="xs"
-                            color="gray"
-                            component={Link}
-                            px={7}
-                            href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
-                          >
-                            <IconPhotoPlus size={16} />
-                          </Button>
-                        </Group>
-                      )}
-                    </Group>
-                  </Stack>
-                  {userReview && !userReview.details && (
-                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
-                      <EditUserResourceReviewLight
-                        modelId={modelId}
-                        modelVersionId={modelVersionId}
-                        userReview={userReview}
-                      />
-                    </Card.Section>
-                  )}
-                </Card>
-              )}
-            </UserResourceReviewComposite>
-          )}
           <Accordion
             variant="separated"
             multiple
@@ -1590,6 +1517,84 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               </Accordion.Item>
             )}
           </Accordion>
+
+          {/* Resource Review - shown after model details for users who downloaded */}
+          {!model.locked && alreadyDownloaded && (
+            <UserResourceReviewComposite
+              modelId={model.id}
+              modelVersionId={version.id}
+              modelName={model.name}
+            >
+              {({ modelId, modelVersionId, userReview, loading }) => (
+                <Card p={8} withBorder>
+                  <Stack gap={8}>
+                    <Group gap={8} justify="space-between" wrap="nowrap">
+                      <Group gap={8} wrap="nowrap">
+                        {loading ? (
+                          <Loader size="xs" />
+                        ) : userReview ? (
+                          <>
+                            {userReview.recommended ? (
+                              <ThumbsUpIcon size={18} />
+                            ) : (
+                              <ThumbsDownIcon size={18} />
+                            )}
+                          </>
+                        ) : (
+                          <IconHeart size={18} />
+                        )}
+                        {userReview ? (
+                          <Text size="sm">
+                            You reviewed this on {formatDateMin(userReview.createdAt, false)}
+                          </Text>
+                        ) : (
+                          <Text size="sm">What did you think of this resource?</Text>
+                        )}
+                      </Group>
+                      {!userReview || !userReview.details ? (
+                        <ResourceReviewThumbActions
+                          modelId={modelId}
+                          modelVersionId={modelVersionId}
+                          userReview={userReview}
+                          size="xs"
+                        />
+                      ) : (
+                        <Group wrap="nowrap" gap={4}>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            onClick={() => openResourceReviewEditModal(userReview)}
+                          >
+                            See Review
+                          </Button>
+                          <Button
+                            size="xs"
+                            color="gray"
+                            component={Link}
+                            px={7}
+                            href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
+                          >
+                            <IconPhotoPlus size={16} />
+                          </Button>
+                        </Group>
+                      )}
+                    </Group>
+                  </Stack>
+                  {userReview && !userReview.details && (
+                    <Card.Section py="sm" mt="sm" inheritPadding withBorder>
+                      <EditUserResourceReviewLight
+                        modelId={modelId}
+                        modelVersionId={modelVersionId}
+                        userReview={userReview}
+                      />
+                    </Card.Section>
+                  )}
+                </Card>
+              )}
+            </UserResourceReviewComposite>
+          )}
+
+          <ModelVersionDonationGoals modelVersionId={version.id} />
 
           <SmartCreatorCard
             user={model.user}
