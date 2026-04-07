@@ -92,10 +92,11 @@ const querySchema = z.object({
 
 export default function UserMembership() {
   const [activeBuzzType] = useAvailableBuzz();
-  const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
-    checkWhenInBadState: true,
-    buzzType: activeBuzzType,
-  });
+  const { subscription, subscriptionLoading, subscriptionPaymentProvider, isFreeTier } =
+    useActiveSubscription({
+      checkWhenInBadState: true,
+      buzzType: activeBuzzType,
+    });
 
   // Check for subscriptions in other buzz types
   const otherBuzzType = activeBuzzType === 'green' ? 'yellow' : 'green';
@@ -193,29 +194,51 @@ export default function UserMembership() {
               />
             )}
 
-            <Card padding="lg" radius="md" className={styles.noSubscriptionCard}>
-              <Stack gap="md">
-                <Group gap="md" wrap="nowrap">
-                  <ThemeIcon size="lg" color="red" variant="light" radius="md">
-                    <IconInfoTriangleFilled size={24} />
-                  </ThemeIcon>
-                  <div style={{ flex: 1 }}>
-                    <Text size="lg" fw={700} c="red">
-                      No active subscription
-                    </Text>
-                    <Text size="sm" c="dimmed">
-                      We couldn&rsquo;t find an active{' '}
-                      {activeBuzzType === 'green' ? 'Green' : 'Yellow'} membership
-                    </Text>
-                  </div>
-                </Group>
+            {!isFreeTier && !otherSubscription ? (
+              <Card padding="lg" radius="md" className={styles.noSubscriptionCard}>
+                <Stack gap="md">
+                  <Group gap="md" wrap="nowrap">
+                    <ThemeIcon size="lg" color="yellow" variant="light" radius="md">
+                      <IconInfoTriangleFilled size={24} />
+                    </ThemeIcon>
+                    <div style={{ flex: 1 }}>
+                      <Text size="lg" fw={700}>
+                        No {activeBuzzType === 'green' ? 'Green' : 'Yellow'} subscription found
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        You have an active membership, but we couldn&rsquo;t find a subscription for{' '}
+                        {activeBuzzType === 'green' ? 'Green' : 'Yellow'} Buzz. Try refreshing your
+                        session in your settings.
+                      </Text>
+                    </div>
+                  </Group>
+                </Stack>
+              </Card>
+            ) : (
+              <Card padding="lg" radius="md" className={styles.noSubscriptionCard}>
+                <Stack gap="md">
+                  <Group gap="md" wrap="nowrap">
+                    <ThemeIcon size="lg" color="red" variant="light" radius="md">
+                      <IconInfoTriangleFilled size={24} />
+                    </ThemeIcon>
+                    <div style={{ flex: 1 }}>
+                      <Text size="lg" fw={700} c="red">
+                        No active subscription
+                      </Text>
+                      <Text size="sm" c="dimmed">
+                        We couldn&rsquo;t find an active{' '}
+                        {activeBuzzType === 'green' ? 'Green' : 'Yellow'} membership
+                      </Text>
+                    </div>
+                  </Group>
 
-                <Text size="sm">
-                  If you believe this is a mistake, you may try refreshing your session in your
-                  settings.
-                </Text>
-              </Stack>
-            </Card>
+                  <Text size="sm">
+                    If you believe this is a mistake, you may try refreshing your session in your
+                    settings.
+                  </Text>
+                </Stack>
+              </Card>
+            )}
           </Stack>
         </Container>
       </>
