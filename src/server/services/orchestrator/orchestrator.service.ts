@@ -162,6 +162,7 @@ export async function createTextModerationRequest({
   entityType,
   entityId,
   content,
+  labels,
   callbackUrl,
   wait,
   priority = 'normal',
@@ -169,6 +170,7 @@ export async function createTextModerationRequest({
   entityType: string;
   entityId: number;
   content: string;
+  labels?: string[];
   callbackUrl?: string;
   wait?: number;
   priority?: Priority;
@@ -190,6 +192,7 @@ export async function createTextModerationRequest({
           input: {
             text: content,
             mode: 'text',
+            labels,
           },
         } as XGuardModerationStepTemplate,
       ],
