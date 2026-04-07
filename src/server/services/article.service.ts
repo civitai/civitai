@@ -70,6 +70,8 @@ import {
 } from '~/server/services/article-content-cleanup.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { hashContent } from '~/server/services/entity-moderation.service';
 
 type ArticleRaw = {
   id: number;
@@ -751,6 +753,7 @@ export const upsertArticle = async ({
     // For updates, fetch article early so we can check cover image ownership and NSFW level
     let article: {
       id: number;
+      title: string;
       cover: string | null;
       coverId: number | null;
       userId: number;
@@ -765,6 +768,7 @@ export const upsertArticle = async ({
         where: { id },
         select: {
           id: true,
+          title: true,
           cover: true,
           coverId: true,
           userId: true,
@@ -877,6 +881,25 @@ export const upsertArticle = async ({
             articleId: result.id,
           }).catch();
         }
+      }
+
+      // Submit for text moderation (non-blocking, fire-and-forget)
+      if (result.content) {
+        const textForModeration = [data.title, removeTags(result.content)]
+          .filter(Boolean)
+          .join(' ');
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: result.id,
+          content: textForModeration,
+        }).catch((e) => {
+          logToAxiom({
+            type: 'error',
+            name: 'article-text-moderation',
+            message: (e as Error).message,
+            articleId: result.id,
+          }).catch();
+        });
       }
 
       return result;
@@ -1052,6 +1075,36 @@ export const upsertArticle = async ({
             articleId: result.id,
           }).catch();
         }
+      }
+    }
+
+    // Submit for text moderation if content or title changed (non-blocking)
+    {
+      const currentTitle = data.title ?? article.title ?? '';
+      const currentContent = data.content ?? article.content ?? '';
+      const textForModeration = [currentTitle, removeTags(currentContent)]
+        .filter(Boolean)
+        .join(' ');
+      const newHash = hashContent(textForModeration);
+
+      const existingModeration = await dbRead.entityModeration.findUnique({
+        where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+        select: { contentHash: true },
+      });
+
+      if (!existingModeration || existingModeration.contentHash !== newHash) {
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: textForModeration,
+        }).catch((e) => {
+          logToAxiom({
+            type: 'error',
+            name: 'article-text-moderation',
+            message: (e as Error).message,
+            articleId: id,
+          }).catch();
+        });
       }
     }
 

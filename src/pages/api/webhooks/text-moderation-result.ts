@@ -3,11 +3,16 @@ import { getWorkflow } from '@civitai/client';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
+  mapTriggeredLabelsToNsfwLevel,
   recordEntityModerationFailure,
   recordEntityModerationSuccess,
 } from '~/server/services/entity-moderation.service';
+import { dbWrite } from '~/server/db/client';
+import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import { createNotification } from '~/server/services/notification.service';
+import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type TextModerationResult = {
   entityType: string;
@@ -19,9 +24,50 @@ type TextModerationResult = {
 
 // Entity-specific handlers keyed by entityType
 const entityHandlers: Record<string, (result: TextModerationResult) => Promise<void>> = {
-  // Article: async ({ entityId, blocked, triggeredLabels, output }) => {
-  //   TODO: update article with moderation results
-  // },
+  Article: async ({ entityId, blocked, triggeredLabels }) => {
+    const textNsfwLevel = mapTriggeredLabelsToNsfwLevel(triggeredLabels, blocked);
+
+    // Elevate userNsfwLevel if text moderation suggests higher (never lower)
+    if (textNsfwLevel > 0) {
+      await dbWrite.$executeRaw`
+        UPDATE "Article"
+        SET "userNsfwLevel" = GREATEST("userNsfwLevel", ${textNsfwLevel}),
+            "nsfw" = CASE WHEN ${textNsfwLevel} >= ${NsfwLevel.R} THEN true ELSE "nsfw" END,
+            "lockedProperties" = CASE
+              WHEN NOT ('userNsfwLevel' = ANY("lockedProperties"))
+              THEN array_append("lockedProperties", 'userNsfwLevel')
+              ELSE "lockedProperties"
+            END
+        WHERE id = ${entityId}
+      `;
+      await updateArticleNsfwLevels([entityId]);
+    }
+
+    // If blocked, auto-unpublish and notify
+    if (blocked) {
+      const article = await dbWrite.article.findUnique({
+        where: { id: entityId },
+        select: { status: true, userId: true },
+      });
+      if (article && article.status !== ArticleStatus.UnpublishedViolation) {
+        await dbWrite.article.update({
+          where: { id: entityId },
+          data: { status: ArticleStatus.UnpublishedViolation },
+        });
+        await createNotification({
+          userId: article.userId,
+          category: NotificationCategory.System,
+          type: 'system-message',
+          key: `article-text-blocked-${entityId}`,
+          details: {
+            message:
+              'Your article was unpublished because its content violates our Terms of Service.',
+            url: `/articles/${entityId}`,
+          },
+        });
+      }
+    }
+  },
 };
 
 export default WebhookEndpoint(async (req, res) => {

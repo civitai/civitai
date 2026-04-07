@@ -2,7 +2,44 @@ import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import type { XGuardModerationOutput } from '@civitai/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { NsfwLevel } from '~/server/common/enums';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
+
+/**
+ * Maps xGuard triggered labels to numeric NsfwLevel values.
+ * Labels are matched case-insensitively against known categories.
+ * The mapping can be tuned by updating the `labelNsfwMap` record.
+ */
+const labelNsfwMap: Record<string, NsfwLevel> = {
+  sexual: NsfwLevel.X,
+  'sexual/minors': NsfwLevel.Blocked,
+  hate: NsfwLevel.R,
+  'hate/threatening': NsfwLevel.Blocked,
+  harassment: NsfwLevel.R,
+  'harassment/threatening': NsfwLevel.Blocked,
+  'self-harm': NsfwLevel.R,
+  'self-harm/intent': NsfwLevel.Blocked,
+  'self-harm/instructions': NsfwLevel.Blocked,
+  violence: NsfwLevel.R,
+  'violence/graphic': NsfwLevel.X,
+};
+
+export function mapTriggeredLabelsToNsfwLevel(triggeredLabels: string[], blocked: boolean): number {
+  if (blocked) return NsfwLevel.Blocked;
+  if (!triggeredLabels.length) return 0;
+
+  let maxLevel = 0;
+  for (const label of triggeredLabels) {
+    const normalized = label.toLowerCase().trim();
+    const level = labelNsfwMap[normalized];
+    if (level !== undefined && level > maxLevel) maxLevel = level;
+  }
+
+  // Conservative default: any unrecognized triggered label gets at least R
+  if (maxLevel === 0 && triggeredLabels.length > 0) maxLevel = NsfwLevel.R;
+
+  return maxLevel;
+}
 
 export function hashContent(content: string) {
   return createHash('sha256').update(content).digest('hex');
