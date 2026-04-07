@@ -94,6 +94,7 @@ export const serverSchema = z.object({
   LOGGING: commaDelimitedStringArray(),
   IMAGE_SCANNING_ENDPOINT: isProd ? z.string() : z.string().optional(),
   IMAGE_SCANNING_CALLBACK: z.string().optional(),
+  TEXT_MODERATION_CALLBACK: z.string().optional(),
   IMAGE_SCANNING_MODEL: z.string().optional(),
   IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
   IMAGE_SCANNER_NEW: zc.booleanString.default(false),

@@ -463,7 +463,7 @@ export const collectionItemsInfiniteHandler = async ({
   const result = await getCollectionItemsByCollectionId({
     input,
     user: ctx.user,
-    useDatapacketRead: features.datapacketRead,
+    dbTarget: features.datapacketRead ? 'datapacket' : 'read',
   });
 
   return {

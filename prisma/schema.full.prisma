@@ -1563,6 +1563,33 @@ model ImageConnection {
   @@index([entityType, entityId])
 }
 
+enum EntityModerationStatus {
+  Pending
+  Succeeded
+  Failed
+  Expired
+  Canceled
+}
+
+model EntityModeration {
+  id              Int                    @id @default(autoincrement())
+  entityType      String
+  entityId        Int
+  workflowId      String?
+  status          EntityModerationStatus @default(Pending)
+  retryCount      Int                    @default(0)
+  blocked         Boolean?
+  triggeredLabels String[]               @default([])
+  result          Json?
+  contentHash     String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@unique([entityType, entityId])
+  @@index([status])
+  @@index([workflowId])
+}
+
 enum ImageEngagementType {
   Favorite
   Hide

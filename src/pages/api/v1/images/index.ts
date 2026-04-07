@@ -136,7 +136,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           disableMinor: true,
           disablePoi: true,
           includeBaseModel: true,
-          useDatapacketRead: features.datapacketRead,
+          dbTarget: features.datapacketRead ? 'datapacket' : 'read',
         })
       : useBitdex
       ? await getAllImagesIndex({
@@ -154,7 +154,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           disableMinor: true,
           disablePoi: true,
           headers: { src: '/api/v1/images' },
-          useDatapacketRead: features.datapacketRead,
+          dbTarget: features.datapacketRead ? 'datapacket' : 'read',
         })
       : await getImagesFromFeedSearch({
           ...data,

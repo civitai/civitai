@@ -313,7 +313,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useDatapacketRead: features.datapacketRead,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
     } else {
       return await getAllImages({
@@ -322,7 +322,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useDatapacketRead: features.datapacketRead,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
     }
   } catch (error) {
@@ -411,9 +411,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        // Bypass datapacket for pinned posts — bounded query (max ~20 posts),
-        // and datapacket replicas have been observed to silently drop rows.
-        useDatapacketRead: false,
+        dbTarget: 'datapacket',
       });
 
       for (const image of pinnedPostsImages) {
@@ -460,7 +458,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useDatapacketRead: features.datapacketRead,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
 
       // Merge images by postId
