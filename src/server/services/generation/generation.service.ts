@@ -538,6 +538,67 @@ export async function getShouldChargeForResources(
 const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
+/**
+ * Single source of truth for deciding whether a resource can be used for
+ * generation. Mirrors the checks in `transformGenerationData` so callers
+ * outside of `getResourceData` (e.g. `getModelHandler`) can stay in sync.
+ */
+export function getResourceCanGenerate({
+  resource,
+  user,
+  unavailableResources,
+  disabledEcosystems,
+  modOnlyEcosystems,
+}: {
+  resource: {
+    id: number;
+    status: string;
+    availability: string;
+    usageControl?: string;
+    baseModel: string;
+    covered: boolean | null;
+    modelUserId: number;
+  };
+  user: { id?: number; isModerator?: boolean };
+  unavailableResources: number[];
+  disabledEcosystems: Set<string>;
+  modOnlyEcosystems: Set<string>;
+}): boolean {
+  const isUnavailable = unavailableResources.includes(resource.id);
+  const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
+  const covered =
+    (resource.covered || explicitCoveredModelVersionIds.includes(resource.id)) && !isUnavailable;
+
+  const validGenerationStatuses = ['Draft', 'Training', 'Published'];
+  const hasValidStatus = validGenerationStatuses.includes(resource.status);
+  const isPrivate =
+    resource.availability === 'Private' || ['Draft', 'Training'].includes(resource.status);
+
+  let canGenerate = !!(
+    covered &&
+    hasValidStatus &&
+    (!isPrivate || isOwnedByUser || user.isModerator)
+  );
+
+  if (resource.usageControl === 'InternalGeneration' && !user.isModerator) {
+    canGenerate = false;
+  }
+
+  if (canGenerate && (disabledEcosystems.size > 0 || modOnlyEcosystems.size > 0)) {
+    const baseModel = baseModelByName.get(resource.baseModel);
+    const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
+    if (ecosystemKey) {
+      if (disabledEcosystems.has(ecosystemKey)) {
+        canGenerate = false;
+      } else if (modOnlyEcosystems.has(ecosystemKey) && !user.isModerator) {
+        canGenerate = false;
+      }
+    }
+  }
+
+  return canGenerate;
+}
+
 export async function getResourceData(
   versionIds: { id: number; epoch?: number }[] | number[],
   user: { id?: number; isModerator?: boolean } = {},
@@ -559,51 +620,26 @@ export async function getResourceData(
     { settings, ...item }: GenerationResourceDataModel,
     epochNumber?: number
   ) {
-    const isUnavailable = unavailableResources.includes(item.id);
-
     const isOwnedByUser = !!user.id && user.id === item.model.userId;
     const hasAccess = !!(item.hasAccess || isOwnedByUser || user.isModerator);
-    const covered =
-      (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable;
-
-    // Valid statuses for generation: Draft (training epochs), Training, Published
-    // Other statuses (Deleted, Unpublished, etc.) cannot be used for generation
-    const validGenerationStatuses = ['Draft', 'Training', 'Published'];
-    const hasValidStatus = validGenerationStatuses.includes(item.status);
-
-    // Resource is private if:
-    // 1. Availability is explicitly Private, OR
-    // 2. Status is Draft or Training (unpublished/training epochs)
     const isPrivate =
       item.availability === 'Private' || ['Draft', 'Training'].includes(item.status);
 
-    // canGenerate is the definitive "can this user use this resource" flag
-    // Requires: covered by orchestrator AND valid status AND (not private OR user owns it OR moderator)
-    let canGenerate = !!(
-      covered &&
-      hasValidStatus &&
-      (!isPrivate || isOwnedByUser || user.isModerator)
-    );
-
-    // InternalGeneration models are restricted to moderators (consistent with mini endpoint)
-    if (item.usageControl === 'InternalGeneration' && !user.isModerator) {
-      canGenerate = false;
-    }
-
-    // Operator-controlled ecosystem gating from Redis (disabled / mod-only)
-    if (canGenerate && (disabledEcosystems.size > 0 || modOnlyEcosystems.size > 0)) {
-      const baseModel = baseModelByName.get(item.baseModel);
-      const ecosystemKey = baseModel
-        ? ecosystemById.get(baseModel.ecosystemId)?.key
-        : undefined;
-      if (ecosystemKey) {
-        if (disabledEcosystems.has(ecosystemKey)) {
-          canGenerate = false;
-        } else if (modOnlyEcosystems.has(ecosystemKey) && !user.isModerator) {
-          canGenerate = false;
-        }
-      }
-    }
+    const canGenerate = getResourceCanGenerate({
+      resource: {
+        id: item.id,
+        status: item.status,
+        availability: item.availability,
+        usageControl: item.usageControl,
+        baseModel: item.baseModel,
+        covered: item.covered,
+        modelUserId: item.model.userId,
+      },
+      user,
+      unavailableResources,
+      disabledEcosystems,
+      modOnlyEcosystems,
+    });
 
     if (!canGenerate) {
       // Delete these items so that the client doesn't have to notify users about these props. They are irrelevant if the resource cannot be used for generation.
