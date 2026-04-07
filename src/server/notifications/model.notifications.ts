@@ -194,6 +194,10 @@ export const modelNotifications = createNotificationProcessor({
         JOIN "UserEngagement" ue ON ue."targetUserId" = m."userId" AND m."publishedAt" >= ue."createdAt" AND ue.type = 'Follow'
         WHERE
           m."userId" != -1
+          -- 59s lookback buffer: handles race condition between send-notifications and
+          -- process-scheduled-publishing jobs (both */1 * * * *). Without it, a model can be
+          -- missed if its publishedAt falls just before the cursor after the previous run advanced.
+          -- Duplicates are safe due to ON CONFLICT upsert in PendingNotification.
           AND m."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND '${effectiveNow}'::timestamptz
           AND m.status IN ('Published', 'Scheduled')
       )
