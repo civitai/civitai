@@ -74,7 +74,7 @@ export const getServerSideProps = createServerSideProps({
 
     // Allow users with subscriptionId OR users in memberInBadState to access the page
     // Users in bad state need to be able to manage/cancel their subscription
-    if (!session.user.subscriptionId && !session.user.memberInBadState)
+    if (!session.user.subscriptionId && !session.user.memberInBadState && !session.user.tier)
       return {
         redirect: {
           destination: '/pricing',

@@ -37,7 +37,7 @@ export const useActiveSubscription = ({
     subscription,
     subscriptionLoading: !isMember || !currentUser ? false : isLoading || isFetching,
     subscriptionPaymentProvider: subscription?.product?.provider,
-    isFreeTier: !subscription || meta?.tier === 'free',
+    isFreeTier: (meta?.tier ?? currentUser?.tier ?? 'free') === 'free',
     tier: meta?.tier ?? currentUser?.tier ?? 'free',
     meta,
   };
