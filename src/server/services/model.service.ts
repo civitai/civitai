@@ -1120,15 +1120,31 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: { id: true, url: true },
   });
 
+  if (modelFiles.length === 0) return { sent: 0, failed: 0 };
+
+  const sent: number[] = [];
+  const failed: number[] = [];
+
   const tasks = modelFiles.map((file) => async () => {
-    await requestScannerTasks({
+    const result = await requestScannerTasks({
       file,
       tasks: ['Hash', 'Scan', 'ParseMetadata'],
       lowPriority: true,
     });
+    if (result === 'sent') sent.push(file.id);
+    else failed.push(file.id);
   });
 
   await limitConcurrency(tasks, 10);
+
+  if (sent.length > 0) {
+    await dbWrite.modelFile.updateMany({
+      where: { id: { in: sent } },
+      data: { scanRequestedAt: new Date() },
+    });
+  }
+
+  return { sent: sent.length, failed: failed.length };
 };
 
 export type GetModelsWithImagesAndModelVersions = AsyncReturnType<

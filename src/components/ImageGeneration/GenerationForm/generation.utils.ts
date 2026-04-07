@@ -40,8 +40,24 @@ export const useGenerationStatus = () => {
   }, [data, currentUser, isLoading]);
 };
 
-export const useUnstableResources = () => {
-  const { data: unstableResources = [] } = trpc.generation.getUnstableResources.useQuery(
+const DEFAULT_GENERATION_CONFIG = {
+  unstableResources: [] as number[],
+  modOnlyEcosystems: [] as string[],
+  disabledEcosystems: [] as string[],
+};
+
+/**
+ * Returns the dynamic, Redis-backed generator config:
+ * - `unstableResources`: model version IDs flagged unstable by the
+ *   `resource-gen-availability` cron
+ * - `modOnlyEcosystems`: ecosystem keys hidden from non-mods
+ * - `disabledEcosystems`: ecosystem keys disabled for everyone
+ *
+ * Single tRPC query — every generator component that needs any of these
+ * fields should call this hook so React Query dedupes the request.
+ */
+export const useGenerationConfig = () => {
+  const { data = DEFAULT_GENERATION_CONFIG } = trpc.generation.getGenerationConfig.useQuery(
     undefined,
     {
       cacheTime: Infinity,
@@ -50,9 +66,7 @@ export const useUnstableResources = () => {
     }
   );
 
-  return {
-    unstableResources,
-  };
+  return data;
 };
 
 export const useUnsupportedResources = () => {

@@ -39,6 +39,7 @@ import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useGatedEcosystems } from './hooks/useGatedEcosystems';
 
 import {
   Controller,
@@ -122,6 +123,7 @@ export function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
   const workflowHistory = useWorkflowHistoryStore();
   const currentUser = useCurrentUser();
+  const gatedEcosystems = useGatedEcosystems();
   const isMember = !!currentUser && currentUser.tier !== 'free';
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
   const snapshot = graph.getSnapshot() as {
@@ -352,6 +354,7 @@ export function GenerationForm() {
                   handleBaseModelChange(newValue, label);
                 }}
                 compatibleEcosystems={meta?.compatibleEcosystems}
+                excludeEcosystems={gatedEcosystems.length ? gatedEcosystems : undefined}
                 isCompatible={compatibility.isEcosystemKeyCompatible}
                 getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
                 outputType={compatibility.currentOutputType}
