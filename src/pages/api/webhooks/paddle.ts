@@ -172,8 +172,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               serviceTier: subscription?.tier ?? serviceTier ?? null,
             });
 
-            getUserCapCache('yellow')?.bust(user.id);
-            getUserCapCache('green')?.bust(user.id);
+            getUserCapCache()?.bust(user.id);
           }
         }
 

@@ -230,16 +230,7 @@ export default function UserBuzzDashboard() {
           )}
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
-          {selectedAccountType === 'green' && (
-            <Alert color="yellow" title="Green Creator Program Temporarily Disabled">
-              <Text>
-                The Green Creator Program is temporarily disabled and will return in at a later
-                date. In the meantime, you can still earn and use Green Buzz for other activities on
-                the platform.
-              </Text>
-            </Alert>
-          )}
-          {selectedAccountType === 'yellow' && <CreatorProgramV2 buzzType="yellow" />}
+          {(selectedAccountType === 'yellow' || selectedAccountType === 'green') && <CreatorProgramV2 />}
           {selectedAccountType === 'red' && <GetPaid />}
         </Stack>
       </Container>
