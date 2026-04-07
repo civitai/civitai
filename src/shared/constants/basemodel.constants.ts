@@ -3275,7 +3275,7 @@ export const ecosystemGroups: EcosystemGroup[] = [
     id: 'LTXV',
     displayName: 'LTX Video',
     ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23],
-    defaultEcosystemId: ECO.LTXV2,
+    defaultEcosystemId: ECO.LTXV23,
     sortOrder: 205,
   },
   {

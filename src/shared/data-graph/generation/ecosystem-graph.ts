@@ -46,8 +46,7 @@ import { openaiGraph } from './openai-graph';
 import { klingGraph, klingVersionIds } from './kling-graph';
 import { wanGraph } from './wan-graph';
 import { hunyuanGraph } from './hunyuan-graph';
-import { ltxv2Graph } from './ltxv2-graph';
-import { ltxv23Graph } from './ltxv23-graph';
+import { ltxGraph } from './ltx-graph';
 import { mochiGraph } from './mochi-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
@@ -234,8 +233,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Vidu'] as const, graph: viduGraph },
     { values: ['Kling'] as const, graph: klingGraph },
     { values: ['HyV1'] as const, graph: hunyuanGraph },
-    { values: ['LTXV2'] as const, graph: ltxv2Graph },
-    { values: ['LTXV23'] as const, graph: ltxv23Graph },
+    { values: ['LTXV2', 'LTXV23'] as const, graph: ltxGraph },
     { values: ['Mochi'] as const, graph: mochiGraph },
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },

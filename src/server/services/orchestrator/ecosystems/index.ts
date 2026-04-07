@@ -45,8 +45,7 @@ import { createWanSteps } from './wan.handler';
 import { createViduInput } from './vidu.handler';
 import { createKlingInput } from './kling.handler';
 import { createHunyuanInput } from './hunyuan.handler';
-import { createLTXV2Input } from './ltxv2.handler';
-import { createLTXV23Input } from './ltxv23.handler';
+import { createLTXInput } from './ltx.handler';
 import { createMochiInput } from './mochi.handler';
 import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
@@ -139,11 +138,8 @@ export type KlingCtx = EcosystemGraphOutput & { ecosystem: 'Kling' };
 /** Hunyuan (HyV1) context */
 export type HunyuanCtx = EcosystemGraphOutput & { ecosystem: 'HyV1' };
 
-/** LTXV2 context */
-export type LTXV2Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV2' };
-
-/** LTXV23 context */
-export type LTXV23Ctx = EcosystemGraphOutput & { ecosystem: 'LTXV23' };
+/** LTX (LTXV2 + LTXV23) context */
+export type LTXCtx = EcosystemGraphOutput & { ecosystem: 'LTXV2' | 'LTXV23' };
 
 /** Mochi context */
 export type MochiCtx = EcosystemGraphOutput & { ecosystem: 'Mochi' };
@@ -182,8 +178,7 @@ export { createWanSteps } from './wan.handler';
 export { createViduInput } from './vidu.handler';
 export { createKlingInput } from './kling.handler';
 export { createHunyuanInput } from './hunyuan.handler';
-export { createLTXV2Input } from './ltxv2.handler';
-export { createLTXV23Input } from './ltxv23.handler';
+export { createLTXInput } from './ltx.handler';
 export { createMochiInput } from './mochi.handler';
 export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
@@ -340,13 +335,10 @@ async function createEcosystemStep(
     case 'HyV1':
       return createHunyuanInput(normalizedData, handlerCtx);
 
-    // LTXV2
+    // LTX (v2 + v2.3)
     case 'LTXV2':
-      return createLTXV2Input(normalizedData, handlerCtx);
-
-    // LTXV23
     case 'LTXV23':
-      return createLTXV23Input(normalizedData, handlerCtx);
+      return createLTXInput(normalizedData, handlerCtx);
 
     // Mochi
     case 'Mochi':
