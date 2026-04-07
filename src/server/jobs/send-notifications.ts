@@ -139,7 +139,11 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
               {
                 type: 'error',
                 name: 'Notification query timed out with capped window - advancing cursor',
-                details: { key },
+                details: {
+                  key,
+                  effectiveNow: effectiveNowDate.toISOString(),
+                  message: error.message,
+                },
               },
               'notifications'
             ).catch();
