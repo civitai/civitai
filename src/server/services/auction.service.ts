@@ -529,7 +529,7 @@ export const createBid = async ({
         },
         message: err.message,
         stack: err.stack,
-        cause: err.cause,
+        causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
       }).catch();
       await withRetries(() =>
         refundMultiAccountTransaction({
@@ -733,7 +733,7 @@ export const deleteBidsForModel = async ({
             type: 'error',
             message: `Failed to refund user for removed bid`,
             stack: error.stack,
-            cause: error.cause,
+            causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
             data: { transactionId, message: error.message },
           }).catch();
         }
@@ -863,7 +863,7 @@ export const deleteBidsForModelVersion = async ({
             type: 'error',
             message: `Failed to refund user for removed bid`,
             stack: error.stack,
-            cause: error.cause,
+            causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
             data: { transactionId, message: error.message },
           }).catch();
         }

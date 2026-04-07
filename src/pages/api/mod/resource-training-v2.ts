@@ -51,7 +51,7 @@ export default ModEndpoint(async (req, res) => {
       message: 'Failed to update record',
       data: {
         error: err?.message,
-        cause: err?.cause,
+        causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
         stack: err?.stack,
         modelVersionId,
         workflowId,

@@ -138,7 +138,7 @@ export const updateEntityMetric = async ({
     logError('Failed to increment metric', {
       data: logData,
       error: error.message,
-      cause: error.cause,
+      causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       stack: error.stack,
     });
   }
@@ -151,7 +151,7 @@ export const updateEntityMetric = async ({
     logError('Failed to queue metric into CH', {
       data: logData,
       error: error.message,
-      cause: error.cause,
+      causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       stack: error.stack,
     });
   }

@@ -108,7 +108,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
               details: { key },
               message: error.message,
               stack: error.stack,
-              cause: error.cause,
+              causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
             },
             'notifications'
           ).catch();
@@ -129,7 +129,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
         name: 'Failed to send notifications',
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       },
       'notifications'
     ).catch();

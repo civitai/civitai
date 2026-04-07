@@ -678,7 +678,7 @@ export const updateBuzzWithdrawalRequest = async ({
           message: 'Failed to update withdrawal request',
           data: {
             requestId: req.id,
-            error: e,
+            error: e instanceof Error ? e.message : String(e),
           },
         });
 

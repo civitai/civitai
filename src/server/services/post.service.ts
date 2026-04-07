@@ -128,7 +128,7 @@ const getPostStatsObject = async (data: { id: number }[]) => {
         name: 'Failed to getPostStats',
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       },
       'civitai-prod'
     );

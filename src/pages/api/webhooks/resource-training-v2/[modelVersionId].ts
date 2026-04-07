@@ -133,7 +133,7 @@ export default WebhookEndpoint(async (req, res) => {
         const err = e as Error | undefined;
         logWebhook({
           message: 'Failed to update record',
-          data: { error: err?.message, cause: err?.cause, stack: err?.stack, status, workflowId },
+          data: { error: err?.message, causeMessage: err?.cause instanceof Error ? err.cause.message : undefined, stack: err?.stack, status, workflowId },
         });
         return res.status(500).json({ ok: false, error: err?.message, workflowId });
       }

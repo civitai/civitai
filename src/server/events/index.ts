@@ -375,7 +375,7 @@ export const eventEngine = {
         name: 'event-donation-error',
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       });
     }
 

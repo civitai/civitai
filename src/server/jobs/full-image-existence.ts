@@ -76,7 +76,7 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
       name: 'Failed to check full image existence',
       message: error.message,
       stack: error.stack,
-      cause: error.cause,
+      causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
     }).catch();
   }
 });

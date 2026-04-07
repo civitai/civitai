@@ -149,7 +149,7 @@ export default MixedAuthEndpoint(async function handler(
       type: 'error',
       name: 'api-model-version-details',
       message: error.message,
-      cause: error.cause,
+      causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       stack: error.stack,
     });
 

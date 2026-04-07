@@ -80,7 +80,7 @@ import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -213,7 +213,7 @@ export default WebhookEndpoint(async (req, res) => {
     res.status(200).json({ ok: true, pod, result: result ?? null });
   } catch (error) {
     log(`${name} failed: ${((Date.now() - jobStart) / 1000).toFixed(2)}s`, error);
-    axiom.error(`failed`, { duration: Date.now() - jobStart, error });
+    axiom.error(`failed`, { duration: Date.now() - jobStart, error: safeError(error) });
     res.status(500).json({ ok: false, pod, error, stack: (error as Error)?.stack });
   } finally {
     await unlock(name, noCheck);

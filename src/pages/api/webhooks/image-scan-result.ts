@@ -131,7 +131,7 @@ export default WebhookEndpoint(async (req, res) => {
           type: 'error',
           message: e.message,
           stack: e?.stack,
-          cause: e?.cause,
+          causeMessage: e?.cause instanceof Error ? e.cause.message : undefined,
         });
       }
       return res.status(400).send({ error: e.message });
@@ -314,7 +314,7 @@ async function logScanResultError({
     imageId: id,
     message,
     stack: error?.stack,
-    cause: error?.cause,
+    causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
   });
 }
 
@@ -457,7 +457,7 @@ async function checkModerationRules(image: GetImageReturn, tags: TagDetails[]) {
         data: {
           imageId: image.id,
           error: error.message,
-          cause: error.cause,
+          causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
           stack: error.stack,
         },
       })

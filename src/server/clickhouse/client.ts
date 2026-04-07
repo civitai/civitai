@@ -272,7 +272,7 @@ export class Tracker {
             name: 'Failed session',
             message: error.message,
             stack: error.stack,
-            cause: error.cause,
+            causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
           },
           'clickhouse'
         );
@@ -316,7 +316,7 @@ export class Tracker {
           details: { table, data: JSON.stringify(data) },
           message: error.message,
           stack: error.stack,
-          cause: error.cause,
+          causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
         },
         'clickhouse'
       ).catch();
@@ -347,7 +347,7 @@ export class Tracker {
           details: { table, data: JSON.stringify(data) },
           message: error.message,
           stack: error.stack,
-          cause: error.cause,
+          causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
         },
         'clickhouse'
       ).catch();

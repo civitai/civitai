@@ -72,7 +72,7 @@ export const createNotification = async (data: CreateNotificationPendingRow) => 
         details: { key: data.key },
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       },
       'notifications'
     ).catch();

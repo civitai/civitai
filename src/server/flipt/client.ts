@@ -106,7 +106,7 @@ class FliptSingleton {
           {
             type: 'init-flipt-error',
             error: err.message,
-            cause: err.cause,
+            causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
             stack: err.stack,
           },
           'temp-search'

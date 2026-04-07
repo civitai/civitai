@@ -108,7 +108,7 @@ const getArticleStatsObject = async (data: { id: number }[]) => {
         name: 'Failed to getArticleStats',
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       },
       'article-stats'
     ).catch();

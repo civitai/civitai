@@ -85,7 +85,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
               email: user.email,
               bountyId: id,
               error: error.message,
-              cause: error.cause,
+              causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
               stack: error.stack,
             },
           })
@@ -136,7 +136,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
               email: user.email,
               bountyId: id,
               error: error.message,
-              cause: error.cause,
+              causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
               stack: error.stack,
             },
           })
@@ -310,7 +310,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
                 email: user.email,
                 bountyId: id,
                 error: error.message,
-                cause: error.cause,
+                causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
                 stack: error.stack,
               },
             })
@@ -458,7 +458,7 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
               email: user.email,
               bountyId: id,
               error: error.message,
-              cause: error.cause,
+              causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
               stack: error.stack,
             },
           })
