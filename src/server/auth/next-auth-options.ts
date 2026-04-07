@@ -1,6 +1,5 @@
 import { PrismaAdapter } from '@next-auth/prisma-adapter';
 import type { Prisma, PrismaClient, User } from '@prisma/client';
-import dayjs from '~/shared/utils/dayjs';
 import type { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
 import DiscordProvider from 'next-auth/providers/discord';
@@ -13,15 +12,12 @@ import { v4 as uuid } from 'uuid';
 import { isDev, isTest } from '~/env/other';
 import { env } from '~/env/server';
 import { civitaiTokenCookieName, cookiePrefix, useSecureCookies } from '~/libs/auth';
-import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
 import { getSessionUser } from './session-user';
-import { createLimiter } from '~/server/utils/rate-limiting';
 import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
 import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
@@ -32,6 +28,8 @@ import { generateToken } from '~/utils/string-helpers';
 import { civTokenDecrypt } from './civ-token';
 import { isDefined } from '~/utils/type-guards';
 import { userUpdateCounter } from '~/server/prom/client';
+import type { NextApiRequest } from 'next';
+import { verifyCaptchaToken } from '~/server/recaptcha/client';
 
 const setUserName = async (id: number, setTo: string) => {
   try {
@@ -76,13 +74,6 @@ function CustomPrismaAdapter(prismaClient: PrismaClient) {
   return adapter;
 }
 
-const emailLimiter = createLimiter({
-  counterKey: REDIS_SYS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
-  limitKey: REDIS_SYS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
-  fetchCount: async () => 0,
-  refetchInterval: CacheTTL.day,
-});
-
 async function sendVerificationRequest({
   identifier: to,
   url,
@@ -90,7 +81,6 @@ async function sendVerificationRequest({
 }: SendVerificationRequestParams) {
   try {
     await verificationEmail.send({ to, url, theme });
-    await emailLimiter.increment(to).catch(() => null);
   } catch (error) {
     logToAxiom({
       name: 'verification-email',
@@ -102,24 +92,30 @@ async function sendVerificationRequest({
   }
 }
 
-async function isAllowedToSignIn({ email }: { email: string }) {
-  try {
-    const emailDomain = email.split('@')[1];
-    const blockedDomains = await getBlockedEmailDomains();
-    if (blockedDomains.includes(emailDomain)) {
-      throw new Error(`Email domain ${emailDomain} is not allowed`);
-    }
-
-    if (await emailLimiter.hasExceededLimit(email)) {
-      const limitHitTime = await emailLimiter.getLimitHitTime(email);
-      let message = 'Too many verification emails sent to this address';
-      if (limitHitTime)
-        message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
-      throw new Error(message);
-    }
-  } catch (error) {
-    throw error;
+async function isAllowedToSignIn({
+  email,
+  captchaToken,
+}: {
+  email: string;
+  captchaToken?: string;
+}) {
+  const emailDomain = email.split('@')[1];
+  const blockedDomains = await getBlockedEmailDomains();
+  if (blockedDomains.includes(emailDomain)) {
+    throw new Error(`Email domain ${emailDomain} is not allowed`);
   }
+
+  // Require a Cloudflare Turnstile token on every email sign-in attempt. The
+  // managed widget silently passes known-good users (including VPN traffic) and
+  // challenges suspicious clients, so bots hitting this endpoint directly can't
+  // fabricate a valid token.
+  if (!captchaToken) {
+    throw new Error('Captcha token is required to sign in with email');
+  }
+  await verifyCaptchaToken({
+    token: captchaToken,
+    secret: env.CF_MANAGED_TURNSTILE_SECRET,
+  });
 
   return true;
 }
@@ -137,6 +133,14 @@ type AuthedRequest = {
 const jwtSessionWarnCodes = new Set(['JWT_SESSION_ERROR']);
 
 export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
+  // NextAuth's EmailProvider POSTs form-encoded data to /api/auth/signin/email.
+  // Next.js parses that into req.body, so the Turnstile token the client passes
+  // via signIn('email', { cfToken }) shows up here.
+  const nextReq = req as unknown as NextApiRequest | undefined;
+  const captchaToken =
+    typeof nextReq?.body === 'object' && nextReq?.body
+      ? ((nextReq.body as Record<string, unknown>).cfToken as string | undefined)
+      : undefined;
   const options: NextAuthOptions = {
     adapter: CustomPrismaAdapter(dbWrite),
     session: {
@@ -200,7 +204,10 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
         }
 
         if (email?.verificationRequest && account && account.provider === 'email') {
-          const canSignIn = await isAllowedToSignIn({ email: account.providerAccountId });
+          const canSignIn = await isAllowedToSignIn({
+            email: account.providerAccountId,
+            captchaToken,
+          });
           return canSignIn;
         }
 

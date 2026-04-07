@@ -55,7 +55,12 @@ export const EmailLogin = ({
     onStatusChange('loading');
     try {
       console.log('Signing in with email:', email);
-      const result = await signIn('email', { email, redirect: false, callbackUrl: returnUrl });
+      const result = await signIn('email', {
+        email,
+        cfToken: captchaState.token,
+        redirect: false,
+        callbackUrl: returnUrl,
+      });
       console.log('Sign in result:', result);
       if (result?.error === 'AccessDenied') {
         router.replace({ query: { error: 'NoExtraEmails' } }, undefined, { shallow: true });
