@@ -90,30 +90,39 @@ export async function requestScannerTasks({
     ]);
 
   let fileUrl = s3Url;
-  try {
+  const resolveFileUrl = async () => {
     if (isStorageResolverEnabled()) {
-      ({ url: fileUrl } = await getDownloadUrlByFileId(fileId));
-    } else {
-      ({ url: fileUrl } = await getDownloadUrl(s3Url));
+      return (await getDownloadUrlByFileId(fileId)).url;
     }
+    return (await getDownloadUrl(s3Url)).url;
+  };
+
+  try {
+    fileUrl = await resolveFileUrl();
   } catch (error) {
     // Storage-resolver may not have this file yet (sync lag for recently uploaded files).
     // Fall back to delivery worker using the S3 URL directly.
     try {
       ({ url: fileUrl } = await getDownloadUrl(s3Url));
-    } catch (fallbackError) {
-      logToAxiom(
-        {
-          type: 'error',
-          name: 'request-scanner-tasks',
-          message: `Failed to get download url for file ${fileId} (${fileUrl})`,
-          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
-          stack: fallbackError instanceof Error ? fallbackError.stack : undefined,
-        },
-        'webhooks'
-      ).catch();
-      console.error(`Failed to get download url for file ${fileId} (${fileUrl})`);
-      return 'not-found';
+    } catch {
+      // Both failed — wait 60s and retry once (covers registration sync lag)
+      await new Promise((r) => setTimeout(r, 60_000));
+      try {
+        fileUrl = await resolveFileUrl();
+      } catch (retryError) {
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'request-scanner-tasks',
+            message: `Failed to get download url for file ${fileId} (${s3Url})`,
+            error: retryError instanceof Error ? retryError.message : String(retryError),
+            stack: retryError instanceof Error ? retryError.stack : undefined,
+          },
+          'webhooks'
+        ).catch();
+        console.error(`Failed to get download url for file ${fileId} (${s3Url})`);
+        return 'not-found';
+      }
     }
   }
 
