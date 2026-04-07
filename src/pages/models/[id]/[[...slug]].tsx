@@ -121,7 +121,11 @@ import { ModelModifier } from '~/shared/utils/prisma/enums';
 import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -450,15 +454,21 @@ export default function ModelDetailsV2({
 
   const rescanModelMutation = trpc.model.rescan.useMutation({
     onSuccess(data) {
-      if (data.failed > 0) {
-        showSuccessNotification({
+      const { sent = 0, failed = 0 } = (data ?? {}) as { sent?: number; failed?: number };
+      if (sent === 0 && failed > 0) {
+        showErrorNotification({
+          error: new Error(`All ${failed} file(s) failed to send for scanning. Please try again later.`),
+          title: 'Rescan failed',
+        });
+      } else if (failed > 0) {
+        showWarningNotification({
           title: 'Rescan partially failed',
-          message: `Sent ${data.sent} file(s) for scanning, ${data.failed} failed. Check logs for details.`,
+          message: `Sent ${sent} file(s) for scanning, ${failed} could not be processed.`,
         });
       } else {
         showSuccessNotification({
           title: 'Rescan requested',
-          message: `${data.sent} file(s) sent for scanning.`,
+          message: `${sent} file(s) sent for scanning.`,
         });
       }
     },
