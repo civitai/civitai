@@ -12,6 +12,7 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { isModelHashBlocked, unpublishModelById } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {
@@ -21,9 +22,26 @@ export default WebhookEndpoint(async (req, res) => {
   const tasks = query.tasks ?? ['Import', 'Scan', 'Hash', 'ParseMetadata'];
   const { metadata, ...scanResult }: ScanResult = req.body;
 
+  logToAxiom(
+    {
+      type: 'info',
+      name: 'scan-result',
+      message: `Received scan result for file ${fileId}`,
+      fileId,
+      tasks,
+    },
+    'webhooks'
+  ).catch();
+
   const where: Prisma.ModelFileFindUniqueArgs['where'] = { id: fileId };
   const file = await dbWrite.modelFile.findUnique({ where });
-  if (!file) return res.status(404).json({ error: 'File not found' });
+  if (!file) {
+    logToAxiom(
+      { type: 'warning', name: 'scan-result', message: `File not found: ${fileId}`, fileId },
+      'webhooks'
+    ).catch();
+    return res.status(404).json({ error: 'File not found' });
+  }
 
   const data: Prisma.ModelFileUpdateInput = {};
 
@@ -61,7 +79,21 @@ export default WebhookEndpoint(async (req, res) => {
 
   // Update if we made changes...
   let updatedFile: ModelFile | undefined;
-  if (Object.keys(data).length > 0) updatedFile = await dbWrite.modelFile.update({ where, data });
+  if (Object.keys(data).length > 0) {
+    updatedFile = await dbWrite.modelFile.update({ where, data });
+    logToAxiom(
+      {
+        type: 'info',
+        name: 'scan-result',
+        message: `Updated file ${fileId}`,
+        fileId,
+        virusScanResult: data.virusScanResult,
+        pickleScanResult: data.pickleScanResult,
+        exists: data.exists,
+      },
+      'webhooks'
+    ).catch();
+  }
 
   // Update hashes
   if (tasks.includes('Hash') && scanResult.hashes) {
@@ -165,6 +197,16 @@ export default WebhookEndpoint(async (req, res) => {
       });
     }
   }
+
+  logToAxiom(
+    {
+      type: 'info',
+      name: 'scan-result',
+      message: `Completed scan result processing for file ${fileId}`,
+      fileId,
+    },
+    'webhooks'
+  ).catch();
 
   res.status(200).json({ ok: true });
 });

@@ -1586,8 +1586,13 @@ model EntityModeration {
   updatedAt       DateTime               @updatedAt
 
   @@unique([entityType, entityId])
-  @@index([status])
   @@index([workflowId])
+  // NOTE: a partial index `(status, updatedAt) WHERE status IN
+  // ('Pending', 'Failed', 'Expired', 'Canceled') AND retryCount < 9` exists
+  // to support the retry-failed-text-moderation job. It is created via a
+  // manual migration and is not modeled here because Prisma does not
+  // support partial indexes. See:
+  // prisma/migrations/20260407111422_add_entity_moderation_retry_index/
 }
 
 enum ImageEngagementType {

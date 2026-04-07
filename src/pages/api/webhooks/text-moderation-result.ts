@@ -51,12 +51,24 @@ export default WebhookEndpoint(async (req, res) => {
 
         const { blocked, triggeredLabels } = moderationStep.output;
 
-        await recordEntityModerationSuccess({
+        const recorded = await recordEntityModerationSuccess({
           entityType,
           entityId,
           workflowId: event.workflowId,
           output: moderationStep.output,
         });
+
+        if (!recorded) {
+          await logToAxiom({
+            name: 'text-moderation-result',
+            type: 'warning',
+            message: 'Stale workflow callback ignored (workflowId mismatch)',
+            workflowId: event.workflowId,
+            entityType,
+            entityId,
+          });
+          break;
+        }
 
         const handler = entityHandlers[entityType];
         if (handler) {
@@ -78,12 +90,23 @@ export default WebhookEndpoint(async (req, res) => {
           expired: EntityModerationStatus.Expired,
           canceled: EntityModerationStatus.Canceled,
         } as const;
-        await recordEntityModerationFailure({
+        const recorded = await recordEntityModerationFailure({
           entityType,
           entityId,
           workflowId: event.workflowId,
           status: statusMap[event.status],
         });
+        if (!recorded) {
+          await logToAxiom({
+            name: 'text-moderation-result',
+            type: 'warning',
+            message: 'Stale workflow callback ignored (workflowId mismatch)',
+            workflowId: event.workflowId,
+            entityType,
+            entityId,
+          });
+          break;
+        }
         await logToAxiom({
           name: 'text-moderation-result',
           type: event.status === 'failed' ? 'error' : 'warning',
