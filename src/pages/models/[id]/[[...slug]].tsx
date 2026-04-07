@@ -448,7 +448,24 @@ export default function ModelDetailsV2({
     );
   };
 
-  const rescanModelMutation = trpc.model.rescan.useMutation();
+  const rescanModelMutation = trpc.model.rescan.useMutation({
+    onSuccess(data) {
+      if (data.failed > 0) {
+        showSuccessNotification({
+          title: 'Rescan partially failed',
+          message: `Sent ${data.sent} file(s) for scanning, ${data.failed} failed. Check logs for details.`,
+        });
+      } else {
+        showSuccessNotification({
+          title: 'Rescan requested',
+          message: `${data.sent} file(s) sent for scanning.`,
+        });
+      }
+    },
+    onError(error) {
+      showErrorNotification({ error, title: 'Failed to rescan files' });
+    },
+  });
   const handleRescanModel = async () => {
     rescanModelMutation.mutate({ id });
   };
