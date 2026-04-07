@@ -239,7 +239,7 @@ export default function UserBuzzDashboard() {
               </Text>
             </Alert>
           )}
-          {selectedAccountType === 'yellow' && <CreatorProgramV2 />}
+          {selectedAccountType === 'yellow' && <CreatorProgramV2 buzzType="yellow" />}
           {selectedAccountType === 'red' && <GetPaid />}
         </Stack>
       </Container>

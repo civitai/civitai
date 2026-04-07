@@ -46,8 +46,8 @@ import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImag
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   ResourceSelectHandler,
+  useGenerationConfig,
   useGenerationStatus,
-  useUnstableResources,
 } from './generation.utils';
 import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { GenerationCostPopover } from './GenerationCostPopover';
@@ -229,7 +229,7 @@ export function GenerationFormContent() {
   const form = useGenerationForm();
   const invalidateWhatIf = useInvalidateWhatIf();
 
-  const { unstableResources: allUnstableResources } = useUnstableResources();
+  const { unstableResources: allUnstableResources } = useGenerationConfig();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',

@@ -292,7 +292,7 @@ export const BuzzPurchaseImproved = ({
 
   // Calculate total buzz including bonuses
   const buzzCalculation = useBuzzPurchaseCalculation(buzzAmount);
-  const { subscription } = useActiveSubscription();
+  const { subscription, tier } = useActiveSubscription();
   const { multipliers } = useUserMultipliers();
 
   // Calculate percentages safely
@@ -303,8 +303,9 @@ export const BuzzPurchaseImproved = ({
   const bulkBonusPercent = bulkMultiplier > 1 ? Math.round((bulkMultiplier - 1) * 100) : 0;
   // Get membership tier
   const subscriptionMeta = subscription?.product.metadata as SubscriptionProductMetadata;
-  const membershipTier = subscriptionMeta?.tier
-    ? subscriptionMeta.tier.charAt(0).toUpperCase() + subscriptionMeta.tier.slice(1)
+  const resolvedTier = subscriptionMeta?.tier ?? tier;
+  const membershipTier = resolvedTier && resolvedTier !== 'free'
+    ? resolvedTier.charAt(0).toUpperCase() + resolvedTier.slice(1)
     : null;
 
   const onValidate = () => {

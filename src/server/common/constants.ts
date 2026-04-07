@@ -1524,6 +1524,24 @@ export const DEFAULT_LIVE_FEATURE_FLAGS: LiveFeatureFlags = {
   trainingAnnouncement: null,
 };
 
+/**
+ * Dynamic, Redis-backed gating for generator ecosystems.
+ * Lives under REDIS_SYS_KEYS.SYSTEM.FEATURES, hash field
+ * `generation:ecosystem-config`. Operators set this to hide ecosystems
+ * from non-mods (`modOnlyEcosystems`) or kill them entirely (`disabledEcosystems`).
+ */
+export type GenerationEcosystemConfig = {
+  /** Ecosystem keys hidden from non-moderator users (still visible to mods) */
+  modOnlyEcosystems: string[];
+  /** Ecosystem keys disabled for everyone including mods (kill-switch) */
+  disabledEcosystems: string[];
+};
+
+export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig = {
+  modOnlyEcosystems: [],
+  disabledEcosystems: [],
+};
+
 export const EARLY_ACCESS_CONFIG: {
   article: number;
   buzzChargedPerDay: number;
