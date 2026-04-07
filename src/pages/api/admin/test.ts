@@ -14,6 +14,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       entityId: 0,
       content: text,
       wait: 30,
+      labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
     });
 
     res.status(200).json(result);

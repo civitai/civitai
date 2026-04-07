@@ -39,6 +39,12 @@ export async function upsertEntityModerationPending({
   });
 }
 
+/**
+ * Records a successful moderation result. Only updates the row if the stored
+ * `workflowId` still matches the callback's workflowId — this prevents a late
+ * callback from a stale workflow from clobbering a newer in-flight workflow.
+ * Returns `true` if the row was updated, `false` if the callback was stale.
+ */
 export async function recordEntityModerationSuccess({
   entityType,
   entityId,
@@ -51,18 +57,23 @@ export async function recordEntityModerationSuccess({
   output: XGuardModerationOutput;
 }) {
   const { blocked, triggeredLabels } = output;
-  return dbWrite.entityModeration.update({
-    where: { entityType_entityId: { entityType, entityId } },
+  const result = await dbWrite.entityModeration.updateMany({
+    where: { entityType, entityId, workflowId },
     data: {
-      workflowId,
       status: EntityModerationStatus.Succeeded,
       blocked,
       triggeredLabels,
       result: output as unknown as object,
     },
   });
+  return result.count > 0;
 }
 
+/**
+ * Records a non-success terminal state (Failed/Expired/Canceled). Only updates
+ * if the stored `workflowId` matches — see `recordEntityModerationSuccess`.
+ * Returns `true` if the row was updated, `false` if the callback was stale.
+ */
 export async function recordEntityModerationFailure({
   entityType,
   entityId,
@@ -74,14 +85,48 @@ export async function recordEntityModerationFailure({
   workflowId: string;
   status: Exclude<EntityModerationStatus, 'Pending' | 'Succeeded'>;
 }) {
-  return dbWrite.entityModeration.update({
-    where: { entityType_entityId: { entityType, entityId } },
+  const result = await dbWrite.entityModeration.updateMany({
+    where: { entityType, entityId, workflowId },
     data: {
-      workflowId,
       status,
       retryCount: { increment: 1 },
     },
   });
+  return result.count > 0;
+}
+
+/**
+ * Bulk-resolves the current text content for a set of entities of a given type.
+ * Returns a Map keyed by entityId. Entities that no longer exist will be absent
+ * from the map. Throws if the entityType is unknown.
+ */
+type BulkContentResolver = (ids: number[]) => Promise<Map<number, string>>;
+
+const bulkContentResolvers: Record<string, BulkContentResolver> = {
+  Article: async (ids) => {
+    const rows = await dbRead.article.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, content: true },
+    });
+    return new Map(rows.map((r) => [r.id, r.content]));
+  },
+};
+
+export function getSupportedModerationEntityTypes() {
+  return Object.keys(bulkContentResolvers);
+}
+
+export async function resolveEntityContentBulk({
+  entityType,
+  entityIds,
+}: {
+  entityType: string;
+  entityIds: number[];
+}): Promise<Map<number, string>> {
+  const resolver = bulkContentResolvers[entityType];
+  if (!resolver) throw new Error(`No content resolver for entityType: ${entityType}`);
+  if (!entityIds.length) return new Map();
+  return resolver(entityIds);
 }
 
 /**
