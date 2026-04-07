@@ -40,12 +40,14 @@ const animaAspectRatios = [
 // Sampler & Schedule Options
 // =============================================================================
 
+// Note: dpm++2s_a is omitted because it is incompatible with all available schedules.
+// karras and exponential are omitted because they are incompatible with most samplers
+// (euler, heun, dpm++2m, dpm++2mv2). See anima-graph sampler/scheduler compatibility.
 const animaSamplers: SdCppSampleMethod[] = [
   'euler',
   'euler_a',
   'heun',
   'dpm2',
-  'dpm++2s_a',
   'dpm++2m',
   'dpm++2mv2',
 ];
@@ -55,7 +57,7 @@ const animaSamplerPresets = [
   { label: 'Quality', value: 'dpm++2m' },
 ];
 
-const animaSchedules: SdCppSchedule[] = ['simple', 'karras', 'exponential', 'sgm_uniform'];
+const animaSchedules: SdCppSchedule[] = ['simple', 'sgm_uniform'];
 
 // =============================================================================
 // Anima Graph
