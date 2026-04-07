@@ -58,36 +58,40 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     if (userId) {
       // Get user's current balance across all types
       const userBanked = await getBanked(userId);
+      const totalToExtract = userBanked.total;
 
-      for (const [buzzType, amount] of Object.entries(userBanked.perType)) {
-        if (amount <= 0) continue;
-
-        // Reset the banked amount by performing an extraction:
-        if (amount > currentValue) {
+      if (totalToExtract > 0) {
+        // Top up the bank if total extraction exceeds current pool balance
+        if (totalToExtract > currentValue) {
           await createBuzzTransaction({
-            amount: amount - currentValue,
+            amount: totalToExtract - currentValue,
             fromAccountId: 0,
             fromAccountType: 'yellow',
             toAccountId: monthAccount,
             toAccountType: 'creatorProgramBank',
             type: TransactionType.Bank,
+            description: `ADMIN-FORCED-EXTRACTION: RESET BANK (top-up)`,
+          });
+
+          change += totalToExtract - currentValue;
+        }
+
+        // Extract each type back to its original account
+        for (const [buzzType, amount] of Object.entries(userBanked.perType)) {
+          if (amount <= 0) continue;
+
+          await createBuzzTransaction({
+            amount,
+            fromAccountId: monthAccount,
+            fromAccountType: 'creatorProgramBank',
+            toAccountId: userId,
+            toAccountType: buzzType as 'yellow' | 'green',
+            type: TransactionType.Extract,
             description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
           });
 
-          change += amount - currentValue;
+          change -= amount;
         }
-
-        await createBuzzTransaction({
-          amount,
-          fromAccountId: monthAccount,
-          fromAccountType: 'creatorProgramBank',
-          toAccountId: userId,
-          toAccountType: buzzType as 'yellow' | 'green',
-          type: TransactionType.Extract,
-          description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-        });
-
-        change -= amount;
       }
     }
 

@@ -126,7 +126,7 @@ const createUserCapCache = () => {
         AND toStartOfMonth(date) < toStartOfMonth(now())
         GROUP BY month, toAccountId
         ORDER BY earned DESC
-        LIMIT 1;
+        LIMIT 1 BY id;
       `;
 
       return Object.fromEntries(
@@ -188,7 +188,7 @@ export async function getBanked(userId: number) {
       );
 
       return Object.fromEntries(results.map((r) => [r.buzzType, r.total])) as Record<
-        BuzzSpendType,
+        (typeof buzzBankTypes)[number],
         number
       >;
     },

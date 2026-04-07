@@ -57,6 +57,13 @@ export const creatorsProgramDistribute = createJob(
     const allAffectedUsers = new Set<number>();
     let availablePoolValue = Math.floor(pool.value * 100);
 
+    if (pool.size.current <= 0 || availablePoolValue <= 0) {
+      // Nothing to distribute
+      month = dayjs(month).add(1, 'month').toDate();
+      await dbKV.set('compensation-pool-month', month);
+      return;
+    }
+
     for (const participant of participants) {
       // If we're out of pool value, we're done... (sorry folks)
       if (availablePoolValue <= 0) break;
@@ -78,7 +85,7 @@ export const creatorsProgramDistribute = createJob(
     // Send pending cash transactions from bank with retry
     const monthStr = dayjs(month).format('YYYY-MM');
     await withRetries(async () => {
-      createBuzzTransactionMany(
+      await createBuzzTransactionMany(
         allAllocations.map(([userId, amount]) => ({
           type: TransactionType.Compensation,
           toAccountType: 'cashPending',
