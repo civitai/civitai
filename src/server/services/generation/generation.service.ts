@@ -50,6 +50,9 @@ import { parseAIR, stringifyAIR } from '~/shared/utils/air';
 import { isDefined } from '~/utils/type-guards';
 import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { baseModelByName, ecosystemById } from '~/shared/constants/basemodel.constants';
+import type { GenerationEcosystemConfig } from '~/server/common/constants';
+import { DEFAULT_GENERATION_ECOSYSTEM_CONFIG } from '~/server/common/constants';
 import {
   getBaseModelEngine,
   getBaseModelMediaType,
@@ -434,6 +437,39 @@ export async function getUnstableResources() {
   return cachedData ?? [];
 }
 
+export async function getGenerationEcosystemConfig(): Promise<GenerationEcosystemConfig> {
+  const cached = await sysRedis
+    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+    .then((data) => (data ? fromJson<GenerationEcosystemConfig>(data) : null))
+    .catch(() => null); // fallback to default if redis fails
+
+  return cached ?? DEFAULT_GENERATION_ECOSYSTEM_CONFIG;
+}
+
+export type GenerationConfig = {
+  unstableResources: number[];
+  modOnlyEcosystems: string[];
+  disabledEcosystems: string[];
+};
+
+/**
+ * Composed config returned to clients in a single round-trip.
+ * Bundles unstable resources (set programmatically by the
+ * `resource-gen-availability` cron) with operator-controlled ecosystem
+ * gating, so the generator only needs one query to get all of it.
+ */
+export async function getGenerationConfig(): Promise<GenerationConfig> {
+  const [unstableResources, ecosystemConfig] = await Promise.all([
+    getUnstableResources(),
+    getGenerationEcosystemConfig(),
+  ]);
+  return {
+    unstableResources,
+    modOnlyEcosystems: ecosystemConfig.modOnlyEcosystems,
+    disabledEcosystems: ecosystemConfig.disabledEcosystems,
+  };
+}
+
 export async function getUnavailableResources() {
   const cachedData = await sysRedis
     .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
@@ -515,6 +551,9 @@ export async function getResourceData(
 
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
+  const ecosystemConfig = await getGenerationEcosystemConfig();
+  const disabledEcosystems = new Set(ecosystemConfig.disabledEcosystems);
+  const modOnlyEcosystems = new Set(ecosystemConfig.modOnlyEcosystems);
 
   function transformGenerationData(
     { settings, ...item }: GenerationResourceDataModel,
@@ -549,6 +588,21 @@ export async function getResourceData(
     // InternalGeneration models are restricted to moderators (consistent with mini endpoint)
     if (item.usageControl === 'InternalGeneration' && !user.isModerator) {
       canGenerate = false;
+    }
+
+    // Operator-controlled ecosystem gating from Redis (disabled / mod-only)
+    if (canGenerate && (disabledEcosystems.size > 0 || modOnlyEcosystems.size > 0)) {
+      const baseModel = baseModelByName.get(item.baseModel);
+      const ecosystemKey = baseModel
+        ? ecosystemById.get(baseModel.ecosystemId)?.key
+        : undefined;
+      if (ecosystemKey) {
+        if (disabledEcosystems.has(ecosystemKey)) {
+          canGenerate = false;
+        } else if (modOnlyEcosystems.has(ecosystemKey) && !user.isModerator) {
+          canGenerate = false;
+        }
+      }
     }
 
     if (!canGenerate) {

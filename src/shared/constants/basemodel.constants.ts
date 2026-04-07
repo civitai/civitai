@@ -828,6 +828,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Seedance - checkpoint only
   // { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // Anima - checkpoint only
+  { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointOnly },
+
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -935,6 +938,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Flux2Klein_4B_base,
     defaults: {
       model: { id: 2612552 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Anima,
+    defaults: {
+      model: { id: 2836417 },
       modelLocked: true,
     },
   },
