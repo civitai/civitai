@@ -403,10 +403,11 @@ async function processImageRating({
         }).catch(() => null);
       }
 
+      const waitSeconds = rateLimitResult.resetTime
+        ? Math.max(1, Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000))
+        : 60;
       throw throwBadRequestError(
-        `Rate limit exceeded. Please wait ${Math.ceil(
-          (rateLimitResult.resetTime - Date.now()) / 1000
-        )} seconds before voting again.`
+        `Rate limit exceeded. Please wait ${waitSeconds} seconds before voting again.`
       );
     }
   }

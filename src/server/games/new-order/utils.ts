@@ -824,17 +824,19 @@ export async function checkVotingRateLimit(userId: number): Promise<{
     const allowed = minuteAllowed && hourAllowed && dayAllowed && !isAbuse;
 
     if (allowed) {
-      // Add current request
+      // Add current request — use individual commands instead of multi() to avoid
+      // CROSSSLOT errors in Redis Cluster (keys hash to different slots)
       const requestId = `${now}-${Math.random()}`;
-      await redis
-        .multi()
-        .zAdd(minuteKey, { score: now, value: requestId })
-        .zAdd(hourKey, { score: now, value: requestId })
-        .zAdd(dayKey, { score: now, value: requestId })
-        .expire(minuteKey, 60)
-        .expire(hourKey, 3600)
-        .expire(dayKey, 86400)
-        .exec();
+      await Promise.all([
+        redis.zAdd(minuteKey, { score: now, value: requestId }),
+        redis.zAdd(hourKey, { score: now, value: requestId }),
+        redis.zAdd(dayKey, { score: now, value: requestId }),
+      ]);
+      await Promise.all([
+        redis.expire(minuteKey, 60),
+        redis.expire(hourKey, 3600),
+        redis.expire(dayKey, 86400),
+      ]);
     }
 
     return {
