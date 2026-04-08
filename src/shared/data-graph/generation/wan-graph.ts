@@ -280,24 +280,12 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
 /**
  * Wan 2.2 subgraph - advanced controls with negative prompt, shift, interpolation.
  *
- * Supports two modes controlled by the `multiStep` toggle:
- * - Multi-step (default when flag enabled): 12fps comfy generation + VFIMamba interpolation.
- *   Exposes duration, steps, and expanded aspect ratios. Hides interpolatorModel and draft.
- * - Legacy: Single-step FAL generation. Exposes interpolatorModel and draft.
- *
- * The toggle is hidden (and defaults to false) when the wan22MultiStep flipt flag is off.
+ * Two modes, driven entirely by the `wan22MultiStep` flipt flag:
+ * - Flag ON: 12fps comfy generation + VFIMamba interpolation. Exposes duration and
+ *   expanded aspect ratios. Hides interpolatorModel and draft.
+ * - Flag OFF: Single-step FAL generation. Exposes interpolatorModel and draft.
  */
 const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
-  .node(
-    'multiStep',
-    (_ctx, ext) => ({
-      input: z.boolean().optional(),
-      output: z.boolean(),
-      defaultValue: ext.flags?.wan22MultiStep ?? false,
-      when: ext.flags?.wan22MultiStep ?? false,
-    }),
-    []
-  )
   .node('negativePrompt', negativePromptNode())
   .node('resolution', {
     input: z.enum(['480p', '720p']).optional(),
@@ -307,9 +295,9 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   })
   .node(
     'aspectRatio',
-    (ctx) => {
+    (ctx, ext) => {
       const resolution = (ctx as { resolution?: string }).resolution ?? '480p';
-      const multiStep = (ctx as { multiStep?: boolean }).multiStep ?? false;
+      const multiStep = ext.flags?.wan22MultiStep ?? false;
       const options = multiStep
         ? wan22MultiStepAspectRatiosByResolution[resolution] ??
           wan22MultiStepAspectRatiosByResolution['480p']
@@ -319,7 +307,7 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
         when: !(Array.isArray(ctx.images) && ctx.images.length > 0),
       };
     },
-    ['images', 'resolution', 'multiStep']
+    ['images', 'resolution']
   )
   .node('shift', {
     input: z.coerce.number().min(1).max(20).optional(),
@@ -327,36 +315,36 @@ const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     defaultValue: 8,
     meta: { min: 1, max: 20, step: 1 },
   })
-  // Multi-step only: duration and steps
+  // Multi-step only: duration
   .node(
     'duration',
-    (ctx) => ({
+    (_ctx, ext) => ({
       ...enumNode({ options: wanDurations, defaultValue: 5 }),
-      when: (ctx as { multiStep?: boolean }).multiStep === true,
+      when: ext.flags?.wan22MultiStep === true,
     }),
-    ['multiStep']
+    []
   )
   // Legacy only: interpolatorModel and draft
   .node(
     'interpolatorModel',
-    (ctx) => ({
+    (_ctx, ext) => ({
       input: z.enum(['none', 'film', 'rife']).optional(),
       output: z.enum(['none', 'film', 'rife']),
       defaultValue: 'none' as const,
       meta: { options: wanInterpolatorModels },
-      when: (ctx as { multiStep?: boolean }).multiStep !== true,
+      when: ext.flags?.wan22MultiStep !== true,
     }),
-    ['multiStep']
+    []
   )
   .node(
     'draft',
-    (ctx) => ({
+    (_ctx, ext) => ({
       input: z.boolean().optional(),
       output: z.boolean(),
       defaultValue: false,
-      when: (ctx as { multiStep?: boolean }).multiStep !== true,
+      when: ext.flags?.wan22MultiStep !== true,
     }),
-    ['multiStep']
+    []
   )
   .merge(createResourcesGraph({ limit: 2 }));
 

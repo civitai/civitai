@@ -172,11 +172,11 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
     }
 
     case 'v2.2': {
-      // Use multi-step if the user toggled it on AND the flipt kill-switch allows it
-      const useMultiStep =
-        'multiStep' in data &&
-        data.multiStep === true &&
-        (await isFlipt(FLIPT_FEATURE_FLAGS.WAN22_MULTI_STEP));
+      // Multi-step vs legacy is driven entirely by the flipt flag
+      const useMultiStep = await isFlipt(FLIPT_FEATURE_FLAGS.WAN22_MULTI_STEP, 'global', {
+        userId: String(ctx.user.id),
+        isModerator: String(ctx.user.isModerator),
+      });
 
       if (useMultiStep) {
         // Multi-step comfy workflow: 12fps videoGen + VFIMamba fr
