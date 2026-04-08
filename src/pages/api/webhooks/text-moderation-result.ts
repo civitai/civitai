@@ -3,7 +3,6 @@ import { getWorkflow } from '@civitai/client';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
-  mapTriggeredLabelsToNsfwLevel,
   recordEntityModerationFailure,
   recordEntityModerationSuccess,
 } from '~/server/services/entity-moderation.service';
@@ -25,7 +24,14 @@ type TextModerationResult = {
 // Entity-specific handlers keyed by entityType
 const entityHandlers: Record<string, (result: TextModerationResult) => Promise<void>> = {
   Article: async ({ entityId, blocked, triggeredLabels }) => {
-    const textNsfwLevel = mapTriggeredLabelsToNsfwLevel(triggeredLabels, blocked);
+    // Map the highest triggered rating label to its NsfwLevel value (ignoring NSFW meta label)
+    let textNsfwLevel = 0;
+    for (const label of triggeredLabels) {
+      const upper = label.toUpperCase() as keyof typeof NsfwLevel;
+      const level = NsfwLevel[upper];
+      if (level !== undefined && level > textNsfwLevel) textNsfwLevel = level;
+    }
+    if (blocked && textNsfwLevel < NsfwLevel.Blocked) textNsfwLevel = NsfwLevel.Blocked;
 
     // Elevate userNsfwLevel if text moderation suggests higher (never lower)
     if (textNsfwLevel > 0) {
@@ -116,16 +122,17 @@ export default WebhookEndpoint(async (req, res) => {
           break;
         }
 
-        const handler = entityHandlers[entityType];
-        if (handler) {
-          await handler({
-            entityType,
-            entityId,
-            blocked,
-            triggeredLabels,
-            output: moderationStep.output,
-          });
-        }
+        // TODO: Re-enable once we've validated EntityModeration data
+        // const handler = entityHandlers[entityType];
+        // if (handler) {
+        //   await handler({
+        //     entityType,
+        //     entityId,
+        //     blocked,
+        //     triggeredLabels,
+        //     output: moderationStep.output,
+        //   });
+        // }
         break;
       }
       case 'failed':

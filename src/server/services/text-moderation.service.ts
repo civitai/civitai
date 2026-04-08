@@ -10,11 +10,13 @@ export async function submitTextModeration({
   entityType,
   entityId,
   content,
+  labels,
   priority,
 }: {
   entityType: string;
   entityId: number;
   content: string;
+  labels?: string[];
   priority?: Priority;
 }) {
   const callbackUrl =
@@ -25,6 +27,7 @@ export async function submitTextModeration({
     entityType,
     entityId,
     content,
+    labels,
     callbackUrl,
     priority,
   });

@@ -313,12 +313,15 @@ export default WebhookEndpoint(async (req, res) => {
                   return;
                 }
 
-                await submitTextModeration({
-                  entityType: 'Article',
-                  entityId: article.id,
-                  content: text,
-                  priority: 'low',
-                });
+                if (!dryRun) {
+                  await submitTextModeration({
+                    entityType: 'Article',
+                    entityId: article.id,
+                    content: text,
+                    labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
+                    priority: 'low',
+                  });
+                }
                 batchStats.textModerationSubmitted++;
               })
             );
