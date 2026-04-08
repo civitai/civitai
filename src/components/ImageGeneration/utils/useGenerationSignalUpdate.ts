@@ -61,9 +61,18 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
                   step.status = stepMatch.status;
                   step.completedAt = stepMatch.completedAt;
                   step.errors = stepMatch.errors;
+                  // Merge in updated images by id, then append any new images the server
+                  // produced that the client hadn't seen yet. Needed for multi-step workflows
+                  // (e.g. Wan 2.2 interpolation) where the later step starts with zero images
+                  // and only materializes outputs on completion — the previous per-index
+                  // loop only updated existing entries and dropped new ones until reload.
                   for (const [index, image] of step.images.entries()) {
                     const imageMatch = stepMatch.images.find((x) => x.id === image.id);
                     if (imageMatch) step.images[index] = imageMatch;
+                  }
+                  const existingIds = new Set(step.images.map((x) => x.id));
+                  for (const image of stepMatch.images) {
+                    if (!existingIds.has(image.id)) step.images.push(image);
                   }
                 }
               }

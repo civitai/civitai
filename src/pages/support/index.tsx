@@ -7,7 +7,7 @@ export default function SupportPage() {
     <>
       <Meta
         title="Civitai Support | Get help with Civitai"
-        description="Need help? Visit the Civitai support page to get help with using Civitai, report a bug, suggest a feature, and more."
+        description="Need help? Visit the Civitai support page to get help with using Civitai, report a bug, and more."
         canonical="/support"
       />
       <Container size="md" py="xl">

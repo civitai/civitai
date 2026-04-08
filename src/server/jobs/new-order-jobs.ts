@@ -522,7 +522,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         uniq(r.rating) as uniqueRatings,
         d.dominantRating,
         countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
-        count() / greatest(dateDiff('minute', min(r.createdAt), max(r.createdAt)), 1) as avgPerMinute
+        count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
       FROM knights_new_order_image_rating r
       JOIN user_dominant d ON r.userId = d.userId
       WHERE r.createdAt >= now() - INTERVAL 48 HOUR

@@ -116,6 +116,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       inaccurate: true,
       baseModel: true,
       baseModelType: true,
+      availability: true,
       earlyAccessEndsAt: true,
       earlyAccessConfig: true,
       status: true,

@@ -159,10 +159,6 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         if (value.includes(user.id)) permissions.push(key);
       }
 
-      // let feedbackToken: string | undefined;
-      // if (!!user.username && !!user.email)
-      //   feedbackToken = createFeaturebaseToken(user as { username: string; email: string });
-
       const userSettings = userSettingsSchema.safeParse(settings ?? {});
 
       const sessionUser: SessionUser = {
@@ -181,7 +177,6 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
           userSettings.success && userSettings.data.redBrowsingLevel != null
             ? userSettings.data.redBrowsingLevel
             : undefined,
-        // feedbackToken,
       };
 
       await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
