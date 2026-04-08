@@ -751,7 +751,6 @@ type VotingRateLimitConfig = {
   abuseThreshold: number;
 };
 
-const ALLOWED_RESPONSE = { allowed: true, remaining: 0, resetTime: 0, isAbuse: false } as const;
 const DENIED_RESPONSE = { allowed: false, remaining: 0, resetTime: 0, isAbuse: false } as const;
 const MINUTE_WINDOW = 60 * 1000;
 const HOUR_WINDOW = 60 * MINUTE_WINDOW;
