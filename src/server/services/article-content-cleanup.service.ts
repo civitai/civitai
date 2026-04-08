@@ -1,8 +1,5 @@
-import { env } from '~/env/server';
-import { imageS3Client } from '~/utils/s3-client';
 import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
-import { logToAxiom } from '~/server/logging/client';
 import { extractCloudflareUuid, type ExtractedMedia } from '~/utils/article-helpers';
 
 type TiptapNode = {
@@ -56,34 +53,4 @@ export function getContentMedia(content: string): ExtractedMedia[] {
   };
   walk(doc.content);
   return media;
-}
-
-/** Extracts just the image URLs (UUIDs) from article content. */
-export function getContentImageUrls(content: string): string[] {
-  return getContentMedia(content)
-    .filter((m) => m.type === 'image')
-    .map((m) => m.url);
-}
-
-/** Deletes all inline images from an article's content from S3/CF */
-export async function deleteArticleContentImages(content: string) {
-  const urls = getContentImageUrls(content);
-  if (!urls.length) return;
-
-  try {
-    await imageS3Client.deleteManyObjects({
-      bucket: env.S3_IMAGE_UPLOAD_BUCKET,
-      keys: urls,
-    });
-  } catch (e) {
-    logToAxiom(
-      {
-        type: 'error',
-        message: 'Failed to delete article content images',
-        error: (e as Error).message,
-        urls,
-      },
-      'civitai-blue'
-    ).catch();
-  }
 }

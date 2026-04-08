@@ -1180,17 +1180,25 @@ export const deleteArticleById = async ({
     if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
 
     // Delete content images (DB + S3 + cache), excluding cover (already handled above)
+    // Only delete images that have no remaining connections to ANY entity
     const contentImageIds = contentImageConnections
       .map((conn) => conn.imageId)
       .filter((imageId) => imageId !== deleted.coverId);
 
-    for (const imageId of contentImageIds) {
-      await deleteImageById({ id: imageId }).catch((error) => {
-        handleLogError(error, 'article-content-image-cleanup', {
-          articleId: id,
-          imageId,
-        });
+    if (contentImageIds.length > 0) {
+      const trulyOrphanedImages = await dbWrite.image.findMany({
+        where: { id: { in: contentImageIds }, connections: { none: {} } },
+        select: { id: true },
       });
+
+      for (const { id: imageId } of trulyOrphanedImages) {
+        await deleteImageById({ id: imageId }).catch((error) => {
+          handleLogError(error, 'article-content-image-cleanup', {
+            articleId: id,
+            imageId,
+          });
+        });
+      }
     }
 
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);

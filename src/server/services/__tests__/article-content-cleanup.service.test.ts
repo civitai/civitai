@@ -1,12 +1,6 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-vi.mock('~/utils/s3-client', () => ({ imageS3Client: {} }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
-import {
-  getContentMedia,
-  getContentImageUrls,
-} from '~/server/services/article-content-cleanup.service';
+import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 
 const UUID_1 = 'f1f87d35-81ca-4c55-a705-5d518f59d2ce';
 const UUID_2 = 'a2b3c4d5-6789-0abc-def1-234567890abc';
@@ -142,21 +136,5 @@ describe('getContentMedia', () => {
         { url: UUID_1, type: 'image', alt: 'nested.jpg' },
       ]);
     });
-  });
-});
-
-describe('getContentImageUrls', () => {
-  it('returns only image URLs, excluding videos', () => {
-    const content = tiptapDoc(
-      mediaNode(UUID_1, 'image'),
-      mediaNode(UUID_2, 'video'),
-      mediaNode(UUID_3, 'image')
-    );
-    expect(getContentImageUrls(content)).toEqual([UUID_1, UUID_3]);
-  });
-
-  it('returns empty array for no images', () => {
-    const content = tiptapDoc(mediaNode(UUID_1, 'video'));
-    expect(getContentImageUrls(content)).toEqual([]);
   });
 });
