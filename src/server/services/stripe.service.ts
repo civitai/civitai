@@ -174,10 +174,11 @@ export const createSubscribeSession = async ({
       const subscriptionId = subscriptionItem.subscription as string;
 
       // Stripe does not allow setting proration_behavior on a paused subscription.
-      // Resume it first if paused, then apply the plan change.
+      // Use the dedicated resume endpoint to reactivate it before applying the plan change.
       if (activeSubscription.status === 'paused') {
-        await stripe.subscriptions.update(subscriptionId, {
-          pause_collection: '',
+        await stripe.subscriptions.resume(subscriptionId, {
+          billing_cycle_anchor: 'unchanged',
+          proration_behavior: 'none',
         });
       }
 
