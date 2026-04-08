@@ -763,9 +763,9 @@ export const getPaymentIntent = async ({
     customerId = await createCustomer(user);
   }
 
-  if (unitAmount < buzzConstants.minChargeAmount) {
+  if (unitAmount < buzzConstants.minStripeChargeAmount) {
     throw throwBadRequestError(
-      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount / 100)}`
+      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minStripeChargeAmount / 100)}`
     );
   }
 

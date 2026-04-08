@@ -169,7 +169,8 @@ export class BuzzTypes {
 }
 
 export const buzzConstants = {
-  minChargeAmount: 500, // $5.00
+  minChargeAmount: 100, // $1.00
+  minStripeChargeAmount: 500, // $5.00 — Stripe enforces a higher minimum due to processing fees
   maxChargeAmount: 99999999, // $999,999.99
   cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
   referralBonusAmount: 500,
