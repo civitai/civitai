@@ -64,10 +64,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
-import {
-  deleteArticleContentImages,
-  getContentMedia,
-} from '~/server/services/article-content-cleanup.service';
+import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -1159,10 +1156,16 @@ export const deleteArticleById = async ({
     const isOwner = article.userId === userId || isModerator;
     if (!isOwner) throw throwAuthorizationError(`You cannot perform this action`);
 
+    // Collect content image IDs BEFORE the transaction deletes connections
+    const contentImageConnections = await dbWrite.imageConnection.findMany({
+      where: { entityId: id, entityType: ImageConnectionType.Article },
+      select: { imageId: true },
+    });
+
     const deleted = await dbWrite.$transaction(async (tx) => {
       const article = await tx.article.delete({
         where: { id },
-        select: { coverId: true, content: true },
+        select: { coverId: true },
       });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
@@ -1173,8 +1176,23 @@ export const deleteArticleById = async ({
       return article;
     });
 
+    // Delete cover image (DB + S3 + cache)
     if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
-    if (deleted.content) await deleteArticleContentImages(deleted.content);
+
+    // Delete content images (DB + S3 + cache), excluding cover (already handled above)
+    const contentImageIds = contentImageConnections
+      .map((conn) => conn.imageId)
+      .filter((imageId) => imageId !== deleted.coverId);
+
+    for (const imageId of contentImageIds) {
+      await deleteImageById({ id: imageId }).catch((error) => {
+        handleLogError(error, 'article-content-image-cleanup', {
+          articleId: id,
+          imageId,
+        });
+      });
+    }
+
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     return deleted;
