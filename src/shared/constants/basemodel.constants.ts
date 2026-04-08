@@ -158,6 +158,8 @@ export const ECO = {
   WanVideo22_T2V_A14B: 38,
   WanVideo25_T2V: 39,
   WanVideo25_I2V: 40,
+  WanImage27: 64,
+  WanVideo27: 65,
   CogVideoX: 41,
   LTXV: 42,
   LTXV2: 58,
@@ -442,6 +444,22 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Wan Video 2.5 I2V',
     familyId: 5,
     sortOrder: 59,
+  },
+  {
+    id: ECO.WanImage27,
+    key: 'WanImage27',
+    name: 'wanimage27',
+    displayName: 'Wan Image 2.7',
+    familyId: 5,
+    sortOrder: 60,
+  },
+  {
+    id: ECO.WanVideo27,
+    key: 'WanVideo27',
+    name: 'wanvideo27',
+    displayName: 'Wan Video 2.7',
+    familyId: 5,
+    sortOrder: 61,
   },
 
   // PixArt Family (familyId: 6)
@@ -790,6 +808,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   },
   { ecosystemId: ECO.WanVideo25_T2V, supportType: 'generation', modelTypes: checkpointOnly },
   { ecosystemId: ECO.WanVideo25_I2V, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.WanImage27, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.WanVideo27, supportType: 'generation', modelTypes: checkpointOnly },
 
   // HiDream - checkpoint and LORA
   { ecosystemId: ECO.HiDream, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1057,6 +1077,22 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.WanVideo25_I2V,
     defaults: {
       model: { id: 2254963 },
+      modelLocked: true,
+      engine: 'wan',
+    },
+  },
+  {
+    ecosystemId: ECO.WanImage27,
+    defaults: {
+      model: { id: 2828170 },
+      modelLocked: true,
+      engine: 'wan',
+    },
+  },
+  {
+    ecosystemId: ECO.WanVideo27,
+    defaults: {
+      model: { id: 2828005 },
       modelLocked: true,
       engine: 'wan',
     },
@@ -1634,6 +1670,8 @@ export const BM = {
   Anima: 77,
   Grok: 78,
   Qwen2: 79,
+  WanImage27: 80,
+  WanVideo27: 81,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -2595,6 +2633,22 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.WanVideo25_I2V,
     licenseId: 13,
   },
+  {
+    id: BM.WanImage27,
+    name: 'Wan 2.7 Image',
+    description: 'Image generation model from Alibaba',
+    type: 'image',
+    ecosystemId: ECO.WanImage27,
+    licenseId: 13,
+  },
+  {
+    id: BM.WanVideo27,
+    name: 'Wan 2.7 Video',
+    description: 'Video generation model from Alibaba',
+    type: 'video',
+    ecosystemId: ECO.WanVideo27,
+    licenseId: 13,
+  },
 
   // ZImageTurbo
   {
@@ -3265,9 +3319,17 @@ export const ecosystemGroups: EcosystemGroup[] = [
       ECO.WanVideo22_T2V_A14B,
       ECO.WanVideo25_T2V,
       ECO.WanVideo25_I2V,
+      ECO.WanVideo27,
     ],
     defaultEcosystemId: ECO.WanVideo25_T2V,
     sortOrder: 50,
+  },
+  {
+    id: 'WanImage',
+    displayName: 'Wan Image',
+    ecosystemIds: [ECO.WanImage27],
+    defaultEcosystemId: ECO.WanImage27,
+    sortOrder: 51,
   },
   {
     id: 'Flux2Klein',
@@ -3295,6 +3357,7 @@ export const ecosystemGroups: EcosystemGroup[] = [
     defaultEcosystemId: ECO.Seedance,
     sortOrder: 215,
   },
+
   {
     id: 'ZImage',
     displayName: 'ZImage',
