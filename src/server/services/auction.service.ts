@@ -170,6 +170,9 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
           id: true,
           name: true,
           type: true,
+          nsfw: true,
+          poi: true,
+          minor: true,
           meta: true,
           user: {
             select: userWithCosmeticsSelect,
@@ -359,7 +362,8 @@ export const createBid = async ({
   entityId,
   amount,
   recurringUntil,
-}: CreateBidInput & { userId: number }) => {
+  accountTypes,
+}: CreateBidInput & { userId: number; accountTypes: BuzzSpendType[] }) => {
   if (!amount || amount < 0) {
     throw throwBadRequestError('Must bid a positive amount.');
   }
@@ -392,7 +396,6 @@ export const createBid = async ({
   }
 
   // - Check if entityId is valid for this auction type
-  const accountTypes: BuzzSpendType[] = ['yellow'];
   if (auctionData.auctionBase.type === AuctionType.Model) {
     // TODO switch back to dbRead
     const mv = await dbWrite.modelVersion.findFirst({
@@ -406,6 +409,7 @@ export const createBid = async ({
             type: true,
             meta: true,
             poi: true,
+            minor: true,
             status: true,
             nsfwLevel: true,
             nsfw: true,
@@ -437,6 +441,12 @@ export const createBid = async ({
     ) {
       if (!(matchAllowed.baseModels ?? []).includes(mv.baseModel))
         throw throwBadRequestError('Invalid model ecosystem for this auction.');
+    }
+
+    if (accountTypes.includes('green')) {
+      if (mv.model.nsfw || mv.model.poi || mv.model.minor) {
+        throw throwBadRequestError('Cannot bid on this content from this domain.');
+      }
     }
   }
 
@@ -556,6 +566,7 @@ export const createBid = async ({
         startAt: now,
         endAt: recurringUntil === 'forever' ? null : recurringUntil,
         auctionBaseId: auctionData.auctionBase.id,
+        accountType: accountTypes[0] ?? 'yellow',
       },
       update: {
         amount: { increment: amount },

@@ -3680,6 +3680,7 @@ model BidRecurring {
   startAt       DateTime
   endAt         DateTime?
   isPaused      Boolean     @default(false)
+  accountType   String      @default("yellow")
 
   @@unique([auctionBaseId, userId, entityId])
 }

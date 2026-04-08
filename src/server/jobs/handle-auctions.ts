@@ -46,6 +46,7 @@ import {
   getBaseModelGroup,
   getCanAuctionForGeneration,
 } from '~/shared/constants/basemodel.constants';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;
@@ -556,6 +557,7 @@ const createRecurringBids = async (now: Dayjs) => {
       userId: true,
       entityId: true,
       amount: true,
+      accountType: true,
       auctionBase: {
         select: {
           id: true,
@@ -615,12 +617,31 @@ const createRecurringBids = async (now: Dayjs) => {
           continue;
         }
 
+        // If green accountType, re-validate safety before charging
+        if (
+          recurringBid.accountType === 'green' &&
+          recurringBid.auctionBase.type === AuctionType.Model
+        ) {
+          const mv = await dbWrite.modelVersion.findFirst({
+            where: { id: recurringBid.entityId },
+            select: { model: { select: { nsfw: true, poi: true, minor: true } } },
+          });
+          if (mv && (mv.model.nsfw || mv.model.poi || mv.model.minor)) {
+            log(`Skipping recurring bid ${recurringBid.id}: model not allowed on green`);
+            continue;
+          }
+        }
+
         // Charge the user the relevant bid amount
+        const validAccountTypes: BuzzSpendType[] = ['yellow', 'green', 'blue', 'red'];
+        const bidAccountType = validAccountTypes.includes(recurringBid.accountType as BuzzSpendType)
+          ? (recurringBid.accountType as BuzzSpendType)
+          : 'yellow';
         const prefix = getAuctionTransactionPrefix(recurringBid.id, recurringBid.userId);
         const data = await withRetries(() =>
           createMultiAccountBuzzTransaction({
             type: TransactionType.Bid,
-            fromAccountTypes: ['yellow'],
+            fromAccountTypes: [bidAccountType],
             fromAccountId: recurringBid.userId,
             toAccountId: 0,
             amount: recurringBid.amount,

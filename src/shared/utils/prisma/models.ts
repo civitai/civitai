@@ -2792,6 +2792,7 @@ export interface BidRecurring {
   startAt: Date;
   endAt: Date | null;
   isPaused: boolean;
+  accountType: string;
 }
 
 export interface FeaturedModelVersion {
