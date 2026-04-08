@@ -171,12 +171,20 @@ export const createSubscribeSession = async ({
         },
       ];
 
-      await stripe.subscriptions.update(subscriptionItem.subscription as string, {
+      const subscriptionId = subscriptionItem.subscription as string;
+
+      // Stripe does not allow setting proration_behavior on a paused subscription.
+      // Resume it first if paused, then apply the plan change.
+      if (activeSubscription.status === 'paused') {
+        await stripe.subscriptions.update(subscriptionId, {
+          pause_collection: '',
+        });
+      }
+
+      await stripe.subscriptions.update(subscriptionId, {
         items,
         billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
-        // Stripe does not allow proration_behavior: 'none' when billing_cycle_anchor is 'now',
-        // so we use 'create_prorations' for upgrades (billing cycle reset) and 'none' for downgrades.
-        proration_behavior: isUpgrade ? 'create_prorations' : 'none',
+        proration_behavior: 'none',
         // Makes it so that if a sub. is not paid, it won't start right away. Should cover us for failed payments during upgrades
         payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
         // @ts-ignore This is valid as per stripe's documentation
