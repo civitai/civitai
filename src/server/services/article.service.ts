@@ -1397,130 +1397,151 @@ export async function linkArticleContentImages({
   articleId,
   content,
   userId,
+  coverId,
+  cleanupOnly,
 }: {
   articleId: number;
   content: string;
   userId: number;
-}): Promise<void> {
+  coverId?: number | null;
+  cleanupOnly?: boolean;
+}): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
-  if (contentImages.length === 0) return;
 
-  await dbWrite.$transaction(async (tx) => {
+  const orphanedImageIds = await dbWrite.$transaction(async (tx) => {
     const imageUrls = contentImages.map((img) => img.url);
 
-    // Batch query: Get all existing images in one query
-    const existingImages = await tx.image.findMany({
-      where: { url: { in: imageUrls } },
-      select: { id: true, url: true, ingestion: true },
-    });
+    // Track content image IDs for orphan detection
+    let contentImageIds: number[] = [];
 
-    const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
-
-    // Batch create: Missing images (upsert with unique constraint handles races)
-    const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
-    const newlyCreatedImages: { id: number; url: string }[] = [];
-
-    if (missingMedia.length > 0) {
-      const newImages = await tx.image.createManyAndReturn({
-        data: missingMedia.map((media) => ({
-          url: media.url,
-          userId,
-          type: media.type,
-          name: media.alt,
-          ingestion: ImageIngestionStatus.Pending,
-          scanRequestedAt: new Date(),
-        })),
-        select: { id: true, url: true },
-        skipDuplicates: true, // Handle race conditions
+    if (!cleanupOnly) {
+      // Batch query: Get all existing images in one query
+      const existingImages = await tx.image.findMany({
+        where: { url: { in: imageUrls } },
+        select: { id: true, url: true, ingestion: true },
       });
 
-      newImages.forEach((img) => {
-        existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
-        newlyCreatedImages.push(img);
-      });
-    }
+      const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
 
-    // Batch upsert: ImageConnections
-    for (const url of imageUrls) {
-      const image = existingUrlMap.get(url);
-      if (!image) continue;
+      // Batch create: Missing images (upsert with unique constraint handles races)
+      const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
+      const newlyCreatedImages: { id: number; url: string }[] = [];
 
-      await tx.imageConnection.upsert({
-        where: {
-          imageId_entityType_entityId: {
+      if (missingMedia.length > 0) {
+        const newImages = await tx.image.createManyAndReturn({
+          data: missingMedia.map((media) => ({
+            url: media.url,
+            userId,
+            type: media.type,
+            name: media.alt,
+            ingestion: ImageIngestionStatus.Pending,
+            scanRequestedAt: new Date(),
+          })),
+          select: { id: true, url: true },
+          skipDuplicates: true,
+        });
+
+        newImages.forEach((img) => {
+          existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
+          newlyCreatedImages.push(img);
+        });
+      }
+
+      // Batch upsert: ImageConnections
+      for (const url of imageUrls) {
+        const image = existingUrlMap.get(url);
+        if (!image) continue;
+
+        await tx.imageConnection.upsert({
+          where: {
+            imageId_entityType_entityId: {
+              imageId: image.id,
+              entityType: ImageConnectionType.Article,
+              entityId: articleId,
+            },
+          },
+          create: {
             imageId: image.id,
             entityType: ImageConnectionType.Article,
             entityId: articleId,
           },
-        },
-        create: { imageId: image.id, entityType: ImageConnectionType.Article, entityId: articleId },
-        update: {},
+          update: {},
+        });
+      }
+
+      contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
+
+      // Queue images for ingestion
+      const pendingExistingImages = existingImages.filter(
+        (img) => img.ingestion === ImageIngestionStatus.Pending
+      );
+      const imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
+      if (imagesToIngest.length > 0) {
+        // TODO.articleImageScan: remove the lowPriority flag
+        for (const img of imagesToIngest) {
+          await ingestImage({ image: img, lowPriority: true, userId, tx }).catch((error) => {
+            handleLogError(error, 'article-image-ingestion', {
+              articleId,
+              imageIds: newlyCreatedImages.map((i) => i.id),
+            });
+          });
+        }
+      }
+    } else {
+      // In cleanupOnly mode, we still need to know which images are in the current content
+      // so we can detect orphans. Query by URL to get their IDs.
+      const existingImages = await tx.image.findMany({
+        where: { url: { in: imageUrls } },
+        select: { id: true },
       });
+      contentImageIds = existingImages.map((img) => img.id);
     }
 
-    // Remove orphaned connections (images deleted from content)
-    const contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
+    // --- Orphan detection (always runs) ---
+
+    // Build exclusion list: content images + cover image
+    const excludeImageIds = [...contentImageIds];
+    if (coverId) excludeImageIds.push(coverId);
 
     // Get orphaned connections for this article
     const orphanedConnections = await tx.imageConnection.findMany({
       where: {
         entityType: ImageConnectionType.Article,
         entityId: articleId,
-        imageId: { notIn: contentImageIds },
+        imageId: { notIn: excludeImageIds },
       },
       select: { imageId: true },
     });
 
-    const orphanedImageIds = orphanedConnections.map((conn) => conn.imageId);
+    const orphanedIds = orphanedConnections.map((conn) => conn.imageId);
 
-    // Delete the orphaned connections (safe - only affects this article)
-    await tx.imageConnection.deleteMany({
-      where: {
-        entityType: ImageConnectionType.Article,
-        entityId: articleId,
-        imageId: { notIn: contentImageIds },
-      },
-    });
-
-    // SAFETY: Only delete images that have NO remaining connections to ANY entity
-    // This prevents data loss when images are shared across multiple articles/entities
-    if (orphanedImageIds.length > 0) {
-      const trulyOrphanedImages = await tx.image.findMany({
+    // Delete the orphaned connections
+    if (orphanedIds.length > 0) {
+      await tx.imageConnection.deleteMany({
         where: {
-          id: { in: orphanedImageIds },
-          connections: { none: {} }, // Critical check: no connections to ANY entity
+          entityType: ImageConnectionType.Article,
+          entityId: articleId,
+          imageId: { in: orphanedIds },
+        },
+      });
+    }
+
+    // Find truly orphaned images (no connections to ANY entity)
+    if (orphanedIds.length > 0) {
+      const trulyOrphaned = await tx.image.findMany({
+        where: {
+          id: { in: orphanedIds },
+          connections: { none: {} },
         },
         select: { id: true },
       });
-
-      if (trulyOrphanedImages.length > 0) {
-        await tx.image.deleteMany({
-          where: {
-            id: { in: trulyOrphanedImages.map((img) => img.id) },
-          },
-        });
-      }
+      return trulyOrphaned.map((img) => img.id);
     }
 
-    const pendingExistingImages = existingImages.filter(
-      (img) => img.ingestion === ImageIngestionStatus.Pending
-    );
-    const imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
-
-    // Queue newly created images for immediate ingestion
-    if (imagesToIngest.length > 0) {
-      // TODO.articleImageScan: remove the lowPriority flag
-      for (const img of imagesToIngest) {
-        await ingestImage({ image: img, lowPriority: true, userId, tx }).catch((error) => {
-          // Log error but don't fail the article operation
-          handleLogError(error, 'article-image-ingestion', {
-            articleId,
-            imageIds: newlyCreatedImages.map((i) => i.id),
-          });
-        });
-      }
-    }
+    return [];
   });
+
+  return { orphanedImageIds };
 }
 
 /**
