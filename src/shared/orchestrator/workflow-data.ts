@@ -273,7 +273,12 @@ export class BlobData implements NormalizedWorkflowStepOutput {
     const baseSeed = step.params?.seed as number | undefined;
     if (baseSeed != null) this.seed = baseSeed + index;
 
-    const isPrivateGeneration = (step.metadata as any)?.isPrivateGeneration ?? false;
+    // isPrivateGeneration lives on workflow.metadata (not per-step); fall back to
+    // step.metadata for backward compatibility with older workflows that wrote it there.
+    const isPrivateGeneration =
+      (step.workflow?.metadata as any)?.isPrivateGeneration ??
+      (step.metadata as any)?.isPrivateGeneration ??
+      false;
 
     if (data.blockedReason === 'none') this.blockedReason = null;
     if (!this.blockedReason) {
