@@ -46,6 +46,8 @@ export interface BaseModelInputProps {
   label?: string;
   /** Compatible ecosystems for the selected workflow (ecosystem keys) */
   compatibleEcosystems?: string[];
+  /** Ecosystem keys to exclude from the list entirely (e.g. gated by feature flag) */
+  excludeEcosystems?: string[];
   /** Whether the input is disabled */
   disabled?: boolean;
   /** Check if an ecosystem is compatible with the current workflow */
@@ -579,11 +581,16 @@ export function BaseModelInput({
   value,
   onChange,
   compatibleEcosystems,
+  excludeEcosystems,
   disabled,
   isCompatible,
   getTargetWorkflow,
   outputType,
 }: BaseModelInputProps) {
+  const excludeSet = useMemo(
+    () => (excludeEcosystems?.length ? new Set(excludeEcosystems) : null),
+    [excludeEcosystems]
+  );
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [popoverOpened, { close: closePopover, open: openPopover }] = useDisclosure(false);
   const [searchValue, setSearchValue] = useState('');
@@ -615,22 +622,42 @@ export function BaseModelInput({
     [setRecentEcosystems]
   );
 
+  // Filter out excluded ecosystems (e.g. gated by feature flag).
+  // For groups, drop the entire group if its default ecosystem is excluded.
+  const applyExcludeFilter = useCallback(
+    (list: EcosystemDisplayItem[]): EcosystemDisplayItem[] => {
+      if (!excludeSet) return list;
+      return list.filter((item) => {
+        if (item.type === 'ecosystem') return !excludeSet.has(item.key);
+        const defaultEco = item.defaultEcosystemId
+          ? ecosystemById.get(item.defaultEcosystemId)
+          : undefined;
+        return defaultEco ? !excludeSet.has(defaultEco.key) : true;
+      });
+    },
+    [excludeSet]
+  );
+
   // Get display items: groups and standalone ecosystems
   const items = useMemo((): EcosystemDisplayItem[] => {
-    return getEcosystemDisplayItems({
-      compatibleEcosystems,
-      isCompatible,
-      outputType,
-    });
-  }, [compatibleEcosystems, isCompatible, outputType]);
+    return applyExcludeFilter(
+      getEcosystemDisplayItems({
+        compatibleEcosystems,
+        isCompatible,
+        outputType,
+      })
+    );
+  }, [compatibleEcosystems, isCompatible, outputType, applyExcludeFilter]);
 
   // Get ALL items (no outputType filter) for search across all ecosystems.
   // Filters out ecosystems/groups that don't have any dedicated workflows.
   const allItems = useMemo((): EcosystemDisplayItem[] => {
-    const all = getEcosystemDisplayItems({
-      compatibleEcosystems,
-      isCompatible,
-    });
+    const all = applyExcludeFilter(
+      getEcosystemDisplayItems({
+        compatibleEcosystems,
+        isCompatible,
+      })
+    );
 
     return all.filter((item) => {
       if (item.type === 'group' && item.ecosystemIds) {
@@ -645,7 +672,7 @@ export function BaseModelInput({
       if (!eco) return false;
       return getWorkflowsForEcosystem(eco.id).some((w) => w.ecosystemIds.includes(eco.id));
     });
-  }, [compatibleEcosystems, isCompatible]);
+  }, [compatibleEcosystems, isCompatible, applyExcludeFilter]);
 
   // Check if there are any incompatible items (to show the toggle)
   const hasIncompatibleItems = useMemo(() => {

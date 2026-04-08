@@ -27,6 +27,7 @@ import {
   IconCheck,
   IconPlus,
   IconRestore,
+  IconSparkles,
   IconX,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -38,14 +39,15 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { triggerPromptEnhanceDialog } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { InputRequestPriorityCompact } from '~/components/Generation/Input/RequestPriority';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   ResourceSelectHandler,
+  useGenerationConfig,
   useGenerationStatus,
-  useUnstableResources,
 } from './generation.utils';
 import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { GenerationCostPopover } from './GenerationCostPopover';
@@ -142,6 +144,7 @@ import {
   getIsQwenImageEditModel,
   qwenGroupedOptions,
 } from '~/shared/orchestrator/ImageGen/qwen.config';
+import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
@@ -162,7 +165,7 @@ import {
   getGenerationBaseModelsByMediaType,
   getBaseModelGroup,
   getBaseModelConfig,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import {
   geminiModelVersionMap,
   getIsNanoBanana,
@@ -226,7 +229,7 @@ export function GenerationFormContent() {
   const form = useGenerationForm();
   const invalidateWhatIf = useInvalidateWhatIf();
 
-  const { unstableResources: allUnstableResources } = useUnstableResources();
+  const { unstableResources: allUnstableResources } = useGenerationConfig();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -1446,12 +1449,43 @@ export function GenerationFormContent() {
                     </Watch>
                     <Input.Wrapper
                       label={
-                        <div className="mb-1 flex items-center gap-1">
-                          <Input.Label required={!isImg2Img}>Prompt</Input.Label>
-                          <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                            Type out what you&apos;d like to generate in the prompt, add aspects
-                            you&apos;d like to avoid in the negative prompt
-                          </InfoPopover>
+                        <div className="mb-1 flex items-center justify-between">
+                          <div className="flex items-center gap-1">
+                            <Input.Label required={!isImg2Img}>Prompt</Input.Label>
+                            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                              Type out what you&apos;d like to generate in the prompt, add aspects
+                              you&apos;d like to avoid in the negative prompt
+                            </InfoPopover>
+                          </div>
+                          {form.getValues('prompt') && (
+                            <Button
+                              variant="subtle"
+                              size="compact-xs"
+                              leftSection={<IconSparkles size={14} />}
+                              onClick={() => {
+                                const currentBaseModel = form.getValues('baseModel');
+                                let ecosystem = '';
+                                try {
+                                  ecosystem = getRootEcosystem(currentBaseModel).key;
+                                } catch {}
+                                const currentResources = form.getValues('resources') ?? [];
+                                triggerPromptEnhanceDialog({
+                                  prompt: form.getValues('prompt') ?? '',
+                                  negativePrompt: form.getValues('negativePrompt') ?? undefined,
+                                  ecosystem,
+                                  resources: currentResources,
+                                  onApply: (enhancedPrompt, enhancedNegativePrompt) => {
+                                    form.setValue('prompt', enhancedPrompt);
+                                    if (enhancedNegativePrompt) {
+                                      form.setValue('negativePrompt', enhancedNegativePrompt);
+                                    }
+                                  },
+                                });
+                              }}
+                            >
+                              Enhance
+                            </Button>
+                          )}
                         </div>
                       }
                       error={errors.prompt?.message}

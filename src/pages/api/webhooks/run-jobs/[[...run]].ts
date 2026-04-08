@@ -74,6 +74,7 @@ import { sendCollectionNotifications } from '~/server/jobs/send-collection-notif
 import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
+import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
@@ -160,6 +161,7 @@ export const jobs: Job[] = [
   deliverAnnualSubscriptionBuzz,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
+  retryFailedTextModeration,
   expireStrikesJob,
   processTimedUnmutesJob,
   custodySweepJob,

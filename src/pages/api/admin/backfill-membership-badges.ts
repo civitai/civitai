@@ -1,8 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Prisma } from '@prisma/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { dbRead } from '~/server/db/client';
-import { deliverMonthlyCosmetics } from '~/server/services/subscriptions.service';
+import { dbRead, dbWrite } from '~/server/db/client';
 
 type EligibleUser = {
   userId: number;
@@ -12,7 +11,7 @@ type EligibleUser = {
   currentPeriodEnd: Date;
 };
 
-type MissingCosmetic = {
+type MembershipCosmetic = {
   id: number;
   name: string;
   productId: string;
@@ -21,37 +20,48 @@ type MissingCosmetic = {
 };
 
 /**
- * Backfill membership badges for active subscribers who are missing them.
+ * Backfill membership badges for subscribers who are missing them.
  *
- * This endpoint solves the issue where users with early renewal dates (e.g., 12/1-12/10)
- * miss monthly badges that are put into circulation after their renewal day has passed.
+ * Supports both current and past cosmetics. When a cosmeticId is provided,
+ * eligibility is checked against the cosmetic's availability window rather
+ * than only the current month.
  *
  * Usage:
- * - GET /api/admin/backfill-membership-badges?token=xxx
- *   Lists all active cosmetics and users missing them (dry run)
+ * - GET ?token=xxx
+ *   Lists all currently active cosmetics and users missing them (dry run)
  *
- * - GET /api/admin/backfill-membership-badges?token=xxx&cosmeticId=123
- *   Shows users missing a specific cosmetic (dry run)
+ * - GET ?token=xxx&cosmeticId=123 or ?cosmeticId=123,456,789
+ *   Shows users missing specific cosmetic(s), even if from a past month.
+ *   Eligibility is based on whether the user had an active subscription during
+ *   the cosmetic's availability window.
  *
- * - GET /api/admin/backfill-membership-badges?token=xxx&userId=8180390
- *   Check which cosmetics a specific user is missing
+ * - GET ?token=xxx&userId=8180390
+ *   Check which current cosmetics a specific user is missing
  *
- * - GET /api/admin/backfill-membership-badges?token=xxx&execute=true
+ * - GET ?token=xxx&cosmeticId=123,456&execute=true
+ *   Backfills specific cosmetic(s) to all eligible subscribers missing them
+ *
+ * - GET ?token=xxx&execute=true
  *   Backfills ALL currently active cosmetics to all active subscribers missing them
- *   Uses deliverMonthlyCosmetics() which handles tier-level matching properly
  *
- * - GET /api/admin/backfill-membership-badges?token=xxx&execute=true&userId=8180390
+ * - GET ?token=xxx&execute=true&userId=8180390
  *   Backfills cosmetics for a specific user only
  */
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const { cosmeticId, execute, userId } = req.query;
 
   const shouldExecute = execute === 'true';
-  const specificCosmeticId = cosmeticId ? parseInt(String(cosmeticId), 10) : null;
+  const cosmeticIds = cosmeticId
+    ? String(cosmeticId)
+        .split(',')
+        .map((id) => parseInt(id.trim(), 10))
+        .filter((id) => !isNaN(id))
+    : [];
   const specificUserId = userId ? parseInt(String(userId), 10) : null;
 
-  // Find all membership-related cosmetics that are currently active
-  const activeCosmetics = await dbRead.$queryRaw<MissingCosmetic[]>`
+  // When a specific cosmeticId is provided, look it up regardless of date range.
+  // Otherwise, only find cosmetics that are currently active.
+  const cosmetics = await dbRead.$queryRaw<MembershipCosmetic[]>`
     SELECT DISTINCT
       c.id,
       c.name,
@@ -63,24 +73,32 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     WHERE pr.provider = 'Civitai'
       AND pr.metadata->>'monthlyBuzz' IS NOT NULL
       AND (c."availableStart" IS NULL OR c."availableStart" <= NOW())
-      AND (c."availableEnd" IS NULL OR c."availableEnd" >= NOW())
-      ${specificCosmeticId ? Prisma.sql`AND c.id = ${specificCosmeticId}` : Prisma.empty}
+      ${
+        cosmeticIds.length > 0
+          ? Prisma.sql`AND c.id IN (${Prisma.join(cosmeticIds)})`
+          : Prisma.sql`AND (c."availableEnd" IS NULL OR c."availableEnd" >= NOW())`
+      }
     ORDER BY c.id DESC
   `;
 
-  if (activeCosmetics.length === 0) {
+  if (cosmetics.length === 0) {
     return res.status(404).json({
       success: false,
-      message: specificCosmeticId
-        ? `Cosmetic with ID ${specificCosmeticId} not found or not active`
-        : 'No active membership cosmetics found',
+      message:
+        cosmeticIds.length > 0
+          ? `No membership cosmetics found for IDs: ${cosmeticIds.join(', ')}`
+          : 'No active membership cosmetics found',
     });
   }
 
   const missingByCosmetic: Record<number, EligibleUser[]> = {};
 
-  // For each cosmetic, find users who should have it but don't
-  for (const cosmetic of activeCosmetics) {
+  for (const cosmetic of cosmetics) {
+    // Determine if this is a past cosmetic (availableEnd is in the past)
+    const isPast = cosmetic.availableEnd && cosmetic.availableEnd < new Date();
+
+    // For past cosmetics, check if the user had an active subscription that overlapped
+    // the cosmetic's availability window. For current cosmetics, check current subscription.
     const usersWithoutCosmetic = await dbRead.$queryRaw<EligibleUser[]>`
       SELECT
         cs."userId",
@@ -91,9 +109,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       FROM "CustomerSubscription" cs
       JOIN "Product" pr ON pr.id = cs."productId"
       LEFT JOIN "Product" cosmeticProduct ON cosmeticProduct.id = ${cosmetic.productId}
-      WHERE cs.status = 'active'
-        AND cs."currentPeriodEnd" > NOW()
-        AND cs."currentPeriodEnd"::date > NOW()::date
+      WHERE cs.status IN ('active', 'expired_claimable')
         AND pr.provider = 'Civitai'
         AND pr.metadata->>'monthlyBuzz' IS NOT NULL
         -- User's product level must be >= cosmetic's product level
@@ -102,19 +118,28 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           OR jsonb_typeof(cosmeticProduct.metadata->'level') = 'undefined'
           OR (pr.metadata->>'level')::int >= (cosmeticProduct.metadata->>'level')::int
         )
-        -- User's renewal day must have already passed this month
-        -- (same logic as deliverMonthlyCosmetics day matching)
-        AND (
-          -- Exact day match: renewal day <= today's day of month
-          EXTRACT(day FROM cs."currentPeriodStart") <= EXTRACT(day FROM NOW())
-          OR
-          -- Month-end edge case: if their renewal day is > last day of current month,
-          -- and today is the last day of the month, they should have received it
-          (
-            EXTRACT(day FROM cs."currentPeriodStart") > EXTRACT(day FROM (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-            AND EXTRACT(day FROM NOW()) = EXTRACT(day FROM (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
-          )
-        )
+        ${
+          isPast
+            ? Prisma.sql`
+              -- For past cosmetics: subscription must have been active during the availability window
+              AND cs."currentPeriodStart" <= ${cosmetic.availableEnd}
+              AND cs."currentPeriodEnd" >= ${cosmetic.availableStart}
+            `
+            : Prisma.sql`
+              -- For current cosmetics: subscription must be currently active
+              AND cs."currentPeriodEnd" > NOW()
+              AND cs."currentPeriodEnd"::date > NOW()::date
+              -- User's renewal day must have already passed this month
+              AND (
+                EXTRACT(day FROM cs."currentPeriodStart") <= EXTRACT(day FROM NOW())
+                OR
+                (
+                  EXTRACT(day FROM cs."currentPeriodStart") > EXTRACT(day FROM (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
+                  AND EXTRACT(day FROM NOW()) = EXTRACT(day FROM (DATE_TRUNC('month', NOW()) + INTERVAL '1 month' - INTERVAL '1 day'))
+                )
+              )
+            `
+        }
         -- User doesn't already have this cosmetic
         AND NOT EXISTS (
           SELECT 1 FROM "UserCosmetic" uc
@@ -128,25 +153,39 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     missingByCosmetic[cosmetic.id] = usersWithoutCosmetic;
   }
 
-  // Get all unique user IDs who are missing at least one cosmetic
   const allMissingUserIds = [
     ...new Set(Object.values(missingByCosmetic).flatMap((users) => users.map((u) => u.userId))),
   ];
 
-  // Execute backfill using deliverMonthlyCosmetics if requested
+  // Execute backfill by directly inserting UserCosmetic rows.
+  // We don't use deliverMonthlyCosmetics here because it checks availability against NOW(),
+  // which won't work for past cosmetics.
   if (shouldExecute && allMissingUserIds.length > 0) {
-    console.log(`Backfilling cosmetics for ${allMissingUserIds.length} users`);
-    await deliverMonthlyCosmetics({ userIds: allMissingUserIds });
-    console.log(`Backfill complete`);
+    let totalGranted = 0;
+    for (const cosmetic of cosmetics) {
+      const users = missingByCosmetic[cosmetic.id] ?? [];
+      if (users.length === 0) continue;
+
+      const userIds = users.map((u) => u.userId);
+      const result = await dbWrite.$executeRaw`
+        INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "claimKey")
+        SELECT "userId", ${cosmetic.id}, NOW(), 'claimed'
+        FROM UNNEST(${userIds}::int[]) AS t("userId")
+        ON CONFLICT ("userId", "cosmeticId", "claimKey") DO NOTHING
+      `;
+      totalGranted += result;
+      console.log(`Granted cosmetic ${cosmetic.id} (${cosmetic.name}) to ${result} users`);
+    }
+    console.log(`Backfill complete: ${totalGranted} total grants`);
   }
 
-  // Build summary
-  const summary = activeCosmetics.map((cosmetic) => ({
+  const summary = cosmetics.map((cosmetic) => ({
     cosmeticId: cosmetic.id,
     cosmeticName: cosmetic.name,
     productId: cosmetic.productId,
     availableStart: cosmetic.availableStart,
     availableEnd: cosmetic.availableEnd,
+    isPastCosmetic: cosmetic.availableEnd ? cosmetic.availableEnd < new Date() : false,
     usersMissingCount: missingByCosmetic[cosmetic.id]?.length ?? 0,
     usersMissing: specificUserId
       ? missingByCosmetic[cosmetic.id]

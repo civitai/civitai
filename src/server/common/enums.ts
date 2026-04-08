@@ -129,6 +129,7 @@ export enum SignalMessages {
   ChatTypingStatus = 'chat:typing-status',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
+  WorkflowUpdate = 'orchestrator:workflow-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   ModelVersionPopularityUpdate = 'model-version:popularity:update',

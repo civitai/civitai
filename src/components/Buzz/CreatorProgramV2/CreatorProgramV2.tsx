@@ -105,10 +105,11 @@ const cardProps: HTMLProps<HTMLDivElement> = {
 const DATE_FORMAT = 'MMM D, YYYY @ hA z';
 
 // TODO creators program Can probably separate this file into multiple smaller ones. It's getting a bit long.
-export const CreatorProgramV2 = () => {
+export const CreatorProgramV2 = ({ buzzType: buzzTypeProp }: { buzzType?: BuzzSpendType } = {}) => {
   const currentUser = useCurrentUser();
   // Get the domain-specific buzz type (yellow or green)
-  const [activeBuzzType] = useAvailableBuzz();
+  const [domainBuzzType] = useAvailableBuzz();
+  const activeBuzzType = buzzTypeProp ?? domainBuzzType;
   const { phase, isLoading } = useCreatorProgramPhase(activeBuzzType);
   const availability = getCreatorProgramAvailability(currentUser?.isModerator);
   useCreatorPoolListener(activeBuzzType);
@@ -336,7 +337,6 @@ export const CompensationPoolCard = ({ buzzType }: { buzzType: BuzzSpendType }) 
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool(buzzType);
   const isLoading = isLoadingCompensationPool;
   const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM YYYY', true);
-  const [activeBuzzType] = useAvailableBuzz();
 
   if (isLoading) {
     return (
@@ -365,7 +365,7 @@ export const CompensationPoolCard = ({ buzzType }: { buzzType: BuzzSpendType }) 
             <CurrencyIcon
               className="my-auto"
               currency={Currency.BUZZ}
-              type={activeBuzzType}
+              type={buzzType}
               size={20}
             />
             <span className="text-2xl font-bold">
@@ -1070,7 +1070,6 @@ const ExtractBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
   const [_, end] = compensationPool?.phases.extraction ?? [new Date(), new Date()];
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
   const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
-  const [activeBuzzType] = useAvailableBuzz();
 
   const handleExtractBuzz = async () => {
     try {
@@ -1144,7 +1143,7 @@ const ExtractBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
             >
               <div className="flex w-full items-center  justify-between gap-2">
                 <div className="flex gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} size={18} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={18} />
                   <p className="text-sm">{numberWithCommas(banked?.total ?? 0)}</p>
                 </div>
 
@@ -1157,7 +1156,7 @@ const ExtractBuzzCard = ({ buzzType }: { buzzType: BuzzSpendType }) => {
               <span className="font-bold">Extraction Fee:</span>{' '}
               <CurrencyIcon
                 currency={Currency.BUZZ}
-                type={activeBuzzType}
+                type={buzzType}
                 size={14}
                 className="inline"
               />

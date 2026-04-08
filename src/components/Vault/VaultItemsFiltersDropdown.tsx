@@ -24,7 +24,7 @@ import { constants } from '~/server/common/constants';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import styles from './VaultItemsFiltersDropdown.module.scss';
-import { baseModels } from '~/shared/constants/base-model.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 
 type Filters = Omit<GetPaginatedVaultItemsSchema, 'limit'>;
 

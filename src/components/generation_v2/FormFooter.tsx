@@ -1,9 +1,12 @@
 /**
  * FormFooter
  *
- * Footer component for the generation form with quantity input,
- * submit button, reset button, and queue snackbar.
- * Includes alerts for terms agreement, generation status, and errors.
+ * Submit footer for the generation form: quantity input, submit button,
+ * reset button, priority alerts (errors, whatIf, missing fields), and
+ * queue snackbar. Only used by workflows that actually submit.
+ *
+ * Layout chrome (sticky wrapper, status, terms, daily boost, dismissible
+ * status message) is handled by GenerationLayout.
  */
 
 import {
@@ -16,7 +19,6 @@ import {
   NumberInput,
   Text,
 } from '@mantine/core';
-import { useLocalStorage } from '@mantine/hooks';
 import {
   IconAlertTriangle,
   IconArrowRight,
@@ -25,24 +27,15 @@ import {
   IconDots,
   IconX,
 } from '@tabler/icons-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import {
-  DailyBoostRewardClaim,
-  useDailyBoostReward,
-} from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import {
   MembershipUpsell,
   useMembershipUpsell,
 } from '~/components/ImageGeneration/MembershipUpsell';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -52,7 +45,6 @@ import { Controller, useGraph, MultiController } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { useTipStore } from '~/store/tip.store';
-import { hashify } from '~/utils/string-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   useGenerateFromGraph,
@@ -129,7 +121,6 @@ function PriorityAlertSpace({
   missingFieldMessage,
 }: PriorityAlertSpaceProps) {
   const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
-  const dailyBoost = useDailyBoostReward();
   const membershipUpsell = useMembershipUpsell();
 
   // Determine which priority alert to show
@@ -172,7 +163,6 @@ function PriorityAlertSpace({
 
   return (
     <>
-      {dailyBoost.canShow ? <DailyBoostRewardClaim /> : null}
       <QueueSnackbar />
       {priorityAlert}
     </>
@@ -302,14 +292,9 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
 // FormFooter Component
 // =============================================================================
 
-export function FormFooter({
-  onSubmitSuccess,
-  noSubmit,
-}: { onSubmitSuccess?: () => void; noSubmit?: boolean } = {}) {
+export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void } = {}) {
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
-  const status = useGenerationStatus();
-  const { running, helpers } = useTourContext();
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
@@ -327,15 +312,6 @@ export function FormFooter({
   const [isMinLoading, setIsMinLoading] = useState(false);
   const minLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
-  const [reviewed, setReviewed] = useLocalStorage({
-    key: 'review-generation-terms',
-    defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
-  });
-
-  const messageHash = useMemo(
-    () => (status.message ? hashify(status.message).toString() : null),
-    [status.message]
-  );
 
   // Get whatIf data for buzz transaction checking
   const { data: whatIfData } = useWhatIfContext();
@@ -490,7 +466,7 @@ export function FormFooter({
   // Render prohibited prompt warning
   if (promptWarning) {
     return (
-      <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+      <>
         <Alert color="red" title="Prohibited Prompt">
           <Text className="whitespace-pre-wrap">{promptWarning}</Text>
           <Button
@@ -518,124 +494,60 @@ export function FormFooter({
             so we can refine our system.
           </Text>
         )}
-      </div>
-    );
-  }
-
-  // Render generation unavailable alert
-  if (!status.available) {
-    return (
-      <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
-        <AlertWithIcon
-          color="yellow"
-          title="Generation Status Alert"
-          icon={<IconAlertTriangle size={20} />}
-          iconColor="yellow"
-        >
-          {status.message}
-        </AlertWithIcon>
-      </div>
+      </>
     );
   }
 
   return (
-    <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
-      {/* Terms Agreement Alert */}
-      {!reviewed && (
-        <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
-          <Text size="xs">
-            By using the image generator you confirm that you have read and agree to our{' '}
-            <Text component={Link} href="/content/tos" td="underline">
-              Terms of Service
-            </Text>{' '}
-            presented during onboarding. Failure to abide by{' '}
-            <Text component={Link} href="/safety#content-policies" td="underline">
-              our content policies
-            </Text>{' '}
-            will result in the loss of your access to the image generator. Illegal or exploitative
-            content will be removed and reported.
-          </Text>
-          <Button
-            color="yellow"
-            variant="light"
-            onClick={() => {
-              setReviewed(true);
-              if (running) helpers?.next();
-            }}
-            style={{ marginTop: 10 }}
-            leftSection={<IconCheck />}
-            fullWidth
-          >
-            I Confirm, Start Generating
-          </Button>
-        </Alert>
-      )}
-
+    <>
       <PriorityAlertSpace
         submitError={submitError}
         onClearSubmitError={() => setSubmitError(undefined)}
         missingFieldMessage={missingFieldMessage}
       />
 
-      {/* Main form footer - only show when terms are reviewed */}
-      {reviewed && !noSubmit && (
-        <div className="flex min-h-[52px] gap-2">
-          <Controller
-            graph={graph}
-            name="quantity"
-            render={({ value, meta, onChange }) => (
-              <Card withBorder className="flex max-w-[88px] flex-col p-0">
-                <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
-                  Quantity
-                </Text>
-                <NumberInput
-                  value={value ?? 1}
-                  onChange={(val) => onChange(Number(val) || 1)}
-                  min={meta.min}
-                  max={meta.max}
-                  step={meta.step}
-                  size="md"
-                  variant="unstyled"
-                  style={{ marginTop: -16 }}
-                  styles={{
-                    input: {
-                      textAlign: 'center',
-                      fontWeight: 500,
-                      paddingRight: 27,
-                      lineHeight: 1,
-                      paddingTop: 22,
-                      paddingBottom: 6,
-                      height: 'auto',
-                    },
-                  }}
-                />
-              </Card>
-            )}
-          />
-          <SubmitButton
-            isLoading={generateMutation.isLoading || isMinLoading}
-            onSubmit={handleSubmit}
-          />
-          <Button onClick={handleReset} variant="default" className="h-auto px-3">
-            Reset
-          </Button>
-        </div>
-      )}
-
-      {/* Metadata extraction remix/workflow buttons */}
-      {(graph.getSnapshot() as { workflow?: string }).workflow === 'img2meta' && (
-        <MetadataExtractionFooter />
-      )}
-
-      {/* Dismissible Status Message */}
-      {status.available && status.message && messageHash && (
-        <DismissibleAlert color="yellow" title="Generation Status Alert" id={messageHash}>
-          <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
-            {status.message}
-          </CustomMarkdown>
-        </DismissibleAlert>
-      )}
-    </div>
+      <div className="flex min-h-[52px] gap-2">
+        <Controller
+          graph={graph}
+          name="quantity"
+          render={({ value, meta, onChange }) => (
+            <Card withBorder className="flex max-w-[88px] flex-col p-0">
+              <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
+                Quantity
+              </Text>
+              <NumberInput
+                value={value ?? 1}
+                onChange={(val) => onChange(Number(val) || 1)}
+                min={meta.min}
+                max={meta.max}
+                step={meta.step}
+                size="md"
+                variant="unstyled"
+                style={{ marginTop: -16 }}
+                styles={{
+                  input: {
+                    textAlign: 'center',
+                    fontWeight: 500,
+                    paddingRight: 27,
+                    lineHeight: 1,
+                    paddingTop: 22,
+                    paddingBottom: 6,
+                    height: 'auto',
+                  },
+                }}
+              />
+            </Card>
+          )}
+        />
+        <SubmitButton
+          isLoading={generateMutation.isLoading || isMinLoading}
+          onSubmit={handleSubmit}
+        />
+        <Button onClick={handleReset} variant="default" className="h-auto px-3">
+          Reset
+        </Button>
+      </div>
+    </>
   );
 }
 
@@ -645,7 +557,7 @@ export function FormFooter({
 
 const PRIMARY_WORKFLOW_KEYS = ['txt2img', 'img2img', 'img2img:edit'];
 
-function MetadataExtractionFooter() {
+export function MetadataExtractionFooter() {
   const {
     metadata,
     resolvedResources,

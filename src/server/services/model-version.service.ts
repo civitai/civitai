@@ -79,8 +79,8 @@ import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
-import { getBaseModelsByGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 
 export const getModelVersionRunStrategies = async ({

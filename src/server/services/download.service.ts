@@ -5,7 +5,7 @@ import type { HideDownloadInput } from '~/server/schema/download.schema';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 type FileMetadata = {

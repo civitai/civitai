@@ -7,6 +7,9 @@
 
 import z from 'zod';
 import { videoValueSchema, videoMetadataSchema } from './media-schemas';
+
+export const MAX_PROMPT_LENGTH = 6000;
+export const MAX_NEGATIVE_PROMPT_LENGTH = 6000;
 import {
   baseModelByName,
   ecosystemById,
@@ -119,7 +122,7 @@ export function aspectRatioNode({
  * No meta - all props (label, placeholder, etc.) are static.
  */
 export function promptNode({ required }: { required?: boolean } = {}) {
-  let output = z.string().trim().max(6000, 'Prompt is too long');
+  let output = z.string().trim().max(MAX_PROMPT_LENGTH, 'Prompt is too long');
   if (required) output = output.nonempty('Prompt is required');
   return {
     input: z.string().optional(),
@@ -135,7 +138,9 @@ export function promptNode({ required }: { required?: boolean } = {}) {
  * Creates a negative prompt node.
  * No meta - all props are static.
  */
-export function negativePromptNode({ maxLength = 6000 }: { maxLength?: number } = {}) {
+export function negativePromptNode({
+  maxLength = MAX_NEGATIVE_PROMPT_LENGTH,
+}: { maxLength?: number } = {}) {
   return {
     input: z.string().optional(),
     output: z.string().trim().max(maxLength, 'Negative prompt is too long'),

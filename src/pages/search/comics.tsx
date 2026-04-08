@@ -66,7 +66,7 @@ const RenderFilters = () => {
 };
 
 export function ComicHitList() {
-  const { items: rawItems, showMore, isLastPage } = useInfiniteHitsTransformed<'comics'>();
+  const { hits: rawItems, showMore, isLastPage } = useInfiniteHitsTransformed<'comics'>();
   const { status } = useInstantSearch();
   const { items } = useApplyHiddenPreferences({ type: 'comics', data: rawItems });
 

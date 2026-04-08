@@ -55,6 +55,7 @@ const EDIT_IMG_IDS = [
   ECO.Flux2Klein_4B_base,
   ECO.Flux1Kontext,
   ECO.Grok,
+  ECO.WanImage27,
 ];
 
 /** Image ecosystems that support image:create */
@@ -75,6 +76,7 @@ const TXT2IMG_IDS = [
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
   // Other image ecosystems
+  ECO.Anima,
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
@@ -87,6 +89,7 @@ const TXT2IMG_IDS = [
   ECO.ZImageTurbo,
   ECO.ZImageBase,
   ECO.Grok,
+  ECO.WanImage27,
 ];
 
 /** Video ecosystems that support video:create */
@@ -98,6 +101,7 @@ const TXT2VID_IDS = [
   ECO.WanVideo22_TI2V_5B,
   ECO.WanVideo22_T2V_A14B,
   ECO.WanVideo25_T2V,
+  ECO.WanVideo27,
   ECO.Veo3,
   ECO.Sora2,
   ECO.Vidu,
@@ -251,7 +255,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'First/Last Frame',
     description: 'Generate video from start and end images',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23],
+    ecosystemIds: [ECO.Vidu, ECO.Kling, ECO.LTXV2, ECO.LTXV23, ECO.WanVideo27],
     excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
     variantOf: 'img2vid',
   },
@@ -260,7 +264,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23],
+    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23, ECO.WanVideo27],
     excludeModelVersionIds: [viduVersionIds.q3],
   },
 
@@ -288,7 +292,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Edit Video',
     description: 'Edit a video with AI',
     category: 'video',
-    ecosystemIds: [ECO.Grok],
+    ecosystemIds: [ECO.Grok, ECO.WanVideo27],
   },
 
   // 'vid2vid:extend': {
@@ -297,6 +301,20 @@ export const workflowConfigs: WorkflowConfigs = {
   //   category: 'video',
   //   ecosystemIds: [ECO.LTXV23],
   // },
+
+  // ===========================================================================
+  // Text Output Workflows (hidden from picker, triggered programmatically)
+  // ===========================================================================
+
+  'prompt:enhance': {
+    label: 'Enhance Prompt',
+    description: 'Improve your prompt with AI suggestions',
+    category: 'image',
+    ecosystemIds: [],
+    noSubmit: true,
+    hidden: true,
+    enhancement: true,
+  },
 };
 
 // =============================================================================
@@ -428,6 +446,7 @@ export function getWorkflowsForEcosystem(
   modelVersionId?: number
 ): WorkflowOption[] {
   return workflowOptions.filter((w) => {
+    if (workflowConfigByKey.get(w.graphKey)?.hidden) return false;
     if (w.ecosystemIds.length === 0) return true; // Standalone (available to all)
     if (!w.ecosystemIds.includes(ecosystemId)) return false;
     if (modelVersionId && w.excludeModelVersionIds?.includes(modelVersionId)) return false;
@@ -453,7 +472,7 @@ export function getWorkflowsWithCompatibility(ecosystemId: number): {
     category,
     label,
     workflows: workflowOptions
-      .filter((w) => w.category === category)
+      .filter((w) => w.category === category && !workflowConfigByKey.get(w.graphKey)?.hidden)
       .map((w) => ({
         ...w,
         compatible: w.ecosystemIds.length === 0 || w.ecosystemIds.includes(ecosystemId),
@@ -473,7 +492,7 @@ export function getAllWorkflowsGrouped(): {
     category,
     label,
     workflows: workflowOptions
-      .filter((w) => w.category === category)
+      .filter((w) => w.category === category && !workflowConfigByKey.get(w.graphKey)?.hidden)
       .map((w) => ({ ...w, compatible: true })),
   }));
 }
@@ -569,33 +588,42 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
     (ecoId, modelId) =>
       (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
-      ecoId === ECO.Grok,
+      ecoId === ECO.Grok ||
+      ecoId === ECO.WanVideo27,
   ],
   [
     'img2vid',
     (ecoId, modelId) =>
       (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
-      ecoId === ECO.Grok,
+      ecoId === ECO.Grok ||
+      ecoId === ECO.WanVideo27,
   ],
 
   // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
-  ['img2vid:ref2vid', (ecoId) => ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.Vidu],
+  [
+    'img2vid:ref2vid',
+    (ecoId) =>
+      ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.Vidu || ecoId === ECO.WanVideo27,
+  ],
 
   // NanoBanana V2 - only available in new form
   [
     'txt2img',
     (ecoId, modelId) =>
       (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Anima ||
       ecoId === ECO.Grok ||
-      ecoId === ECO.Qwen2,
+      ecoId === ECO.Qwen2 ||
+      ecoId === ECO.WanImage27,
   ],
   [
     'img2img:edit',
     (ecoId, modelId) =>
       (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
       ecoId === ECO.Grok ||
-      ecoId === ECO.Qwen2,
+      ecoId === ECO.Qwen2 ||
+      ecoId === ECO.WanImage27,
   ],
 
   // Grok/LTXV23 vid2vid:edit - no legacy equivalent

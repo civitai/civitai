@@ -1,6 +1,6 @@
 import { Grid, Card, Text, Anchor, Stack, Group } from '@mantine/core';
 import type { IconProps } from '@tabler/icons-react';
-import { IconMail, IconQuestionMark, IconWand } from '@tabler/icons-react';
+import { IconMail, IconQuestionMark } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
 
@@ -31,12 +31,6 @@ const SUPPORT_OPTIONS = [
     description: 'Questions, bugs or errors? Reach out!',
     icon: (props: IconProps) => <IconMail {...props} />,
     link: { label: 'Ticket portal', href: '/bugs' },
-  },
-  {
-    title: 'Feature Requests',
-    description: 'Civitai missing an essential feature? We’d love to hear!',
-    icon: (props: IconProps) => <IconWand {...props} />,
-    link: { label: 'Suggest a feature', href: '/feedback' },
   },
 ];
 

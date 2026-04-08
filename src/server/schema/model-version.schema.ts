@@ -4,7 +4,7 @@ import {
   MAX_DONATION_GOAL,
   MIN_DONATION_GOAL,
 } from '~/components/Model/ModelVersions/model-version.utils';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
@@ -28,7 +28,6 @@ import {
   optimizerTypes,
   trainingBaseModelType,
 } from '~/utils/training';
-import { baseModels } from '~/shared/constants/base-model.constants';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
@@ -71,6 +70,7 @@ export const trainingDetailsBaseModelsQwen = ['qwen_image'] as const;
 export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as const;
 export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
 export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
+export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -87,6 +87,7 @@ const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
   ...trainingDetailsBaseModelsWan,
   ...trainingDetailsBaseModelsLtx2,
+  ...trainingDetailsBaseModelsLtx23,
 ] as const;
 
 const trainingDetailsBaseModels = [
@@ -196,7 +197,7 @@ export const trainingDetailsObj = z.object({
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.enum(baseModels),
+  baseModel: z.string(),
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],

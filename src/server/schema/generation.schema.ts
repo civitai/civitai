@@ -5,8 +5,6 @@ import { GenerationRequestStatus } from '~/server/common/enums';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 import type { UserTier } from '~/server/schema/user.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
-import { baseModels } from '~/shared/constants/base-model.constants';
 import { generationSamplers } from '~/shared/constants/generation.constants';
 import { flux2KleinSampleMethods } from '~/shared/orchestrator/ImageGen/flux2-klein.config';
 import { zImageSampleMethods } from '~/shared/orchestrator/ImageGen/zImage.config';
@@ -34,10 +32,7 @@ export const getGenerationResourcesSchema = z.object({
   types: z.enum(ModelType).array().optional(),
   notTypes: z.enum(ModelType).array().optional(),
   ids: z.number().array().optional(),
-  baseModel: z
-    .string()
-    .refine((val) => baseModels.includes(val as BaseModel), 'Invalid base model')
-    .optional(),
+  baseModel: z.string().optional(),
   supported: z.boolean().optional(),
 });
 

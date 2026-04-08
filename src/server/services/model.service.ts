@@ -15,8 +15,7 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { DEPRECATED_BASE_MODELS } from '~/shared/constants/base-model.constants';
-import { isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import { type BaseModel, DEPRECATED_BASE_MODELS, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -137,7 +136,6 @@ import type {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
 import { Flags } from '~/shared/utils/flags';
 import { isDev } from '~/env/other';
 import { userUpdateCounter } from '~/server/prom/client';
@@ -1121,15 +1119,31 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
     select: { id: true, url: true },
   });
 
+  if (modelFiles.length === 0) return { sent: 0, failed: 0 };
+
+  const sent: number[] = [];
+  const failed: number[] = [];
+
   const tasks = modelFiles.map((file) => async () => {
-    await requestScannerTasks({
+    const result = await requestScannerTasks({
       file,
       tasks: ['Hash', 'Scan', 'ParseMetadata'],
       lowPriority: true,
     });
+    if (result === 'sent') sent.push(file.id);
+    else failed.push(file.id);
   });
 
   await limitConcurrency(tasks, 10);
+
+  if (sent.length > 0) {
+    await dbWrite.modelFile.updateMany({
+      where: { id: { in: sent } },
+      data: { scanRequestedAt: new Date() },
+    });
+  }
+
+  return { sent: sent.length, failed: failed.length };
 };
 
 export type GetModelsWithImagesAndModelVersions = AsyncReturnType<

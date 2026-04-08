@@ -14,7 +14,7 @@ import {
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 
 export const lipsum = `
 Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.
@@ -1589,6 +1589,24 @@ export type LiveFeatureFlags = {
 export const DEFAULT_LIVE_FEATURE_FLAGS: LiveFeatureFlags = {
   buzzGiftCards: false,
   trainingAnnouncement: null,
+};
+
+/**
+ * Dynamic, Redis-backed gating for generator ecosystems.
+ * Lives under REDIS_SYS_KEYS.SYSTEM.FEATURES, hash field
+ * `generation:ecosystem-config`. Operators set this to hide ecosystems
+ * from non-mods (`modOnlyEcosystems`) or kill them entirely (`disabledEcosystems`).
+ */
+export type GenerationEcosystemConfig = {
+  /** Ecosystem keys hidden from non-moderator users (still visible to mods) */
+  modOnlyEcosystems: string[];
+  /** Ecosystem keys disabled for everyone including mods (kill-switch) */
+  disabledEcosystems: string[];
+};
+
+export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig = {
+  modOnlyEcosystems: [],
+  disabledEcosystems: [],
 };
 
 export const EARLY_ACCESS_CONFIG: {

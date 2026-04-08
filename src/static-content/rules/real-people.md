@@ -58,6 +58,6 @@ Content that depicts, or is based on the likeness of real people - living or dec
 
 ### Q: Can I provide feedback or suggest changes to the community guidelines?
 
-**A:** Of course! We value your input. After all, this community is like a potluck – everyone brings something to the table. If you have suggestions for improving the guidelines or have spotted something we might have missed, please let us know by <a href="https://feedback.civitai.com/" target="_blank">submitting feedback</a>.
+**A:** Of course! We value your input. After all, this community is like a potluck – everyone brings something to the table. If you have suggestions for improving the guidelines or have spotted something we might have missed, please let us know.
 
 Civitai is a creative community - but with creativity comes responsibility. The zero real-person policy exists to protect individual rights, ensure compliance with global standards, and keep this platform thriving.

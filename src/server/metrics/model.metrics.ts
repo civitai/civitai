@@ -497,6 +497,14 @@ async function getCommentTasks(ctx: ModelMetricContext) {
   const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];
   ctx.addAffected(affected);
 
+  // Seed commentCount to 0 for all affected models so that models with zero
+  // remaining comments get explicitly set to 0 instead of falling through to
+  // the COALESCE fallback which preserves the stale value.
+  for (const id of affected) {
+    ctx.updates[id] ??= { [ctx.idKey]: id };
+    ctx.updates[id].commentCount ??= 0;
+  }
+
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getCommentTasks', i + 1, 'of', tasks.length);

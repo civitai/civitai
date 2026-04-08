@@ -44,7 +44,7 @@ import {
   EARLY_ACCESS_CONFIG,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { getActiveBaseModels } from '~/shared/constants/basemodel.constants';
 import type { ClubResourceSchema } from '~/server/schema/club.schema';
 import type { GenerationResourceSchema } from '~/server/schema/generation.schema';

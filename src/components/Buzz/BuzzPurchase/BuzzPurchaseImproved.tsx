@@ -275,6 +275,10 @@ export const BuzzPurchaseImproved = ({
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
   const [customAmount, setCustomAmount] = useState<number | undefined>();
   const [activeControl, setActiveControl] = useState<string | null>(null);
+  // Green uses Stripe which has a higher minimum charge due to processing fees
+  const effectiveMinCharge = features.isGreen
+    ? buzzConstants.minStripeChargeAmount
+    : buzzConstants.minChargeAmount;
   // On green site: default to green
   // On yellow site: default to yellow (skip the selector entirely)
   const [selectedBuzzType, setSelectedBuzzType] = useState<BuzzSpendType | undefined>(
@@ -292,7 +296,7 @@ export const BuzzPurchaseImproved = ({
 
   // Calculate total buzz including bonuses
   const buzzCalculation = useBuzzPurchaseCalculation(buzzAmount);
-  const { subscription } = useActiveSubscription();
+  const { subscription, tier } = useActiveSubscription();
   const { multipliers } = useUserMultipliers();
 
   // Calculate percentages safely
@@ -303,8 +307,9 @@ export const BuzzPurchaseImproved = ({
   const bulkBonusPercent = bulkMultiplier > 1 ? Math.round((bulkMultiplier - 1) * 100) : 0;
   // Get membership tier
   const subscriptionMeta = subscription?.product.metadata as SubscriptionProductMetadata;
-  const membershipTier = subscriptionMeta?.tier
-    ? subscriptionMeta.tier.charAt(0).toUpperCase() + subscriptionMeta.tier.slice(1)
+  const resolvedTier = subscriptionMeta?.tier ?? tier;
+  const membershipTier = resolvedTier && resolvedTier !== 'free'
+    ? resolvedTier.charAt(0).toUpperCase() + resolvedTier.slice(1)
     : null;
 
   const onValidate = () => {
@@ -313,8 +318,8 @@ export const BuzzPurchaseImproved = ({
       return false;
     }
 
-    if (unitAmount < buzzConstants.minChargeAmount) {
-      setError(`Minimum amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount)} USD`);
+    if (unitAmount < effectiveMinCharge) {
+      setError(`Minimum amount is $${formatPriceForDisplay(effectiveMinCharge)} USD`);
       return false;
     }
 
@@ -341,7 +346,7 @@ export const BuzzPurchaseImproved = ({
     if (minBuzzAmount) {
       setSelectedPrice(null);
       setActiveControl('customAmount');
-      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), buzzConstants.minChargeAmount));
+      setCustomAmount(Math.max(Math.ceil(minBuzzAmount / 10), effectiveMinCharge));
     }
   }, [packages, minBuzzAmount, selectedPrice]);
 
@@ -364,8 +369,8 @@ export const BuzzPurchaseImproved = ({
   }, [selectedBuzzType, features.isGreen, minBuzzAmount]);
 
   const minBuzzAmountPrice = minBuzzAmount
-    ? Math.max(minBuzzAmount / 10, buzzConstants.minChargeAmount)
-    : buzzConstants.minChargeAmount;
+    ? Math.max(minBuzzAmount / 10, effectiveMinCharge)
+    : effectiveMinCharge;
 
   // If no buzz type is selected, show selection screen
   if (!selectedBuzzType) {
@@ -582,8 +587,8 @@ export const BuzzPurchaseImproved = ({
                                 </SimpleGrid>
 
                                 <Text size="xs" c="dimmed" ta="center">
-                                  Min: {numberWithCommas(buzzConstants.minChargeAmount * 10)} Buzz
-                                  or ${formatPriceForDisplay(buzzConstants.minChargeAmount)}
+                                  Min: {numberWithCommas(effectiveMinCharge * 10)} Buzz
+                                  or ${formatPriceForDisplay(effectiveMinCharge)}
                                 </Text>
                               </Stack>
                             </Accordion.Panel>

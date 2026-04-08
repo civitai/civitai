@@ -119,7 +119,11 @@ import { ModelModifier } from '~/shared/utils/prisma/enums';
 import { Availability, CollectionType, ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import {
+  showErrorNotification,
+  showSuccessNotification,
+  showWarningNotification,
+} from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -129,7 +133,7 @@ import classes from './[[...slug]].module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelDiscussion } from '~/components/Model/Discussion/ModelDiscussion';
 import { ModelGallery } from '~/components/Model/Gallery/ModelGallery';
-import { getBaseModelSeoName } from '~/shared/constants/base-model.constants';
+import { getBaseModelSeoName } from '~/shared/constants/basemodel.constants';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 
 export const getServerSideProps = createServerSideProps({
@@ -444,7 +448,30 @@ export default function ModelDetailsV2({
     );
   };
 
-  const rescanModelMutation = trpc.model.rescan.useMutation();
+  const rescanModelMutation = trpc.model.rescan.useMutation({
+    onSuccess(data) {
+      const { sent = 0, failed = 0 } = (data ?? {}) as { sent?: number; failed?: number };
+      if (sent === 0 && failed > 0) {
+        showErrorNotification({
+          error: new Error(`All ${failed} file(s) failed to send for scanning. Please try again later.`),
+          title: 'Rescan failed',
+        });
+      } else if (failed > 0) {
+        showWarningNotification({
+          title: 'Rescan partially failed',
+          message: `Sent ${sent} file(s) for scanning, ${failed} could not be processed.`,
+        });
+      } else {
+        showSuccessNotification({
+          title: 'Rescan requested',
+          message: `${sent} file(s) sent for scanning.`,
+        });
+      }
+    },
+    onError(error) {
+      showErrorNotification({ error, title: 'Failed to rescan files' });
+    },
+  });
   const handleRescanModel = async () => {
     rescanModelMutation.mutate({ id });
   };

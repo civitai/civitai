@@ -1,12 +1,11 @@
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import type { BaseModel, BaseModelGroup } from '~/shared/constants/base-model.constants';
+import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
   activeBaseModels,
-  getBaseModelConfig,
   getCanAuctionForGeneration,
   getGenerationBaseModelResourceOptions,
-} from '~/shared/constants/base-model.constants';
+} from '~/shared/constants/basemodel.constants';
 import { miscModelTypes } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import nsfwWords from '~/utils/metadata/lists/words-nsfw-soft.json';

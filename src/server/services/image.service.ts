@@ -1018,7 +1018,7 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
   headers?: Record<string, string>; // TODO needed?
-  useDatapacketRead: boolean;
+  dbTarget?: 'read' | 'write' | 'datapacket';
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -1068,9 +1068,10 @@ export const getAllImages = async (
     minorOnly,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
-  const { useDatapacketRead } = input;
+  const { dbTarget = 'read' } = input;
 
-  const imageDbRead = useDatapacketRead ? datapacketDbRead : pgDbRead;
+  const imageDb =
+    dbTarget === 'write' ? pgDbWrite : dbTarget === 'datapacket' ? datapacketDbRead : pgDbRead;
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
@@ -1577,7 +1578,7 @@ export const getAllImages = async (
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
               ${Prisma.join(engines)}
             ]::text[])
@@ -1619,7 +1620,7 @@ export const getAllImages = async (
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
-  const { rows: rawImages } = await imageDbRead.query<GetAllImagesRaw>(query);
+  const { rows: rawImages } = await imageDb.query<GetAllImagesRaw>(query);
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
@@ -1910,6 +1911,7 @@ export const getAllImagesIndex = async (
     imageMetadata,
     thumbnails,
     imageMetrics,
+    tagIdsVar,
   ] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
@@ -1924,6 +1926,10 @@ export const getAllImagesIndex = async (
     await getMetadataForImages(videoIds), // Only need this for videos
     await getThumbnailsForImages(videoIds), // Only need this for videos
     getImageMetricsObject(searchResults),
+    // Fetch tagIds from cache so client-side hidden-tag filtering works.
+    // Search results from BitDex don't include tagIds (too expensive to store),
+    // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
+    include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -1938,6 +1944,10 @@ export const getAllImagesIndex = async (
 
     return {
       ...sr,
+      // Override tagIds from authoritative cache when available.
+      // This ensures client-side hidden-tag filtering works even when
+      // the search engine (BitDex) doesn't return tagIds.
+      tagIds: tagIdsVar?.[sr.id]?.tags ?? sr.tagIds,
       modelVersionId: sr.postedToId,
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
@@ -4037,7 +4047,7 @@ export const getImage = async ({
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
               ${Prisma.join(engines)}
             ]::text[])
@@ -4309,7 +4319,7 @@ export const getImagesForModelVersion = async ({
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
               ${Prisma.join(engines)}
             ]::text[])
@@ -4566,7 +4576,7 @@ export const getImagesForPosts = async ({
       ) AS "hasPositivePrompt",
       (
         CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
+          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
             OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
                 ${Prisma.join(engines)}
               ]::text[])
@@ -6544,7 +6554,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
   let process: string | undefined | null = undefined;
   let hasControlNet = false;
   if (meta) {
-    if ('civitaiResources' in meta && !('Version' in meta)) onSite = true;
+    if ('civitaiResources' in meta && !('Version' in meta) && !('Model' in meta)) onSite = true;
     else if ('engine' in meta && meta.engine === 'openai') onSite = true;
     else if ('engine' in meta) {
       process = meta.process ?? meta.type;

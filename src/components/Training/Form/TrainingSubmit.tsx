@@ -45,7 +45,7 @@ import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelec
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
   ModelVersionUpsertInput,

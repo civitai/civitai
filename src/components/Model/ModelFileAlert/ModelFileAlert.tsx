@@ -2,7 +2,7 @@ import { Anchor, Text } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import type { BaseModel } from '~/shared/constants/base-model.constants';
+import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 
 export const ModelFileAlert = ({

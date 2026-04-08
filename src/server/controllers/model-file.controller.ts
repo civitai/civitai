@@ -53,18 +53,21 @@ export const createFileHandler = async ({
       },
     });
 
-    // Register with storage-resolver for B2 uploads so downloads work
+    // Register with storage-resolver for B2 uploads so downloads work.
+    // Awaited so the location is registered before scan-files can trigger.
     if (backend === 'b2' && s3Path) {
-      registerFileLocation({
-        fileId: file.id,
-        modelVersionId: file.modelVersion.id,
-        modelId: file.modelVersion.modelId,
-        backend: 'backblaze',
-        path: s3Path,
-        sizeKb: input.sizeKB,
-      }).catch((err) => {
+      try {
+        await registerFileLocation({
+          fileId: file.id,
+          modelVersionId: file.modelVersion.id,
+          modelId: file.modelVersion.modelId,
+          backend: 'backblaze',
+          path: s3Path,
+          sizeKb: input.sizeKB,
+        });
+      } catch (err) {
         console.error('Failed to register file location with storage-resolver:', err);
-      });
+      }
     }
 
     ctx.track

@@ -367,6 +367,16 @@ export const BlockImageReason = {
 
 export type BlockImageReason = (typeof BlockImageReason)[keyof typeof BlockImageReason];
 
+export const EntityModerationStatus = {
+  Pending: 'Pending',
+  Succeeded: 'Succeeded',
+  Failed: 'Failed',
+  Expired: 'Expired',
+  Canceled: 'Canceled',
+} as const;
+
+export type EntityModerationStatus = (typeof EntityModerationStatus)[keyof typeof EntityModerationStatus];
+
 export const ImageEngagementType = {
   Favorite: 'Favorite',
   Hide: 'Hide',

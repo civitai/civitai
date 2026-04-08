@@ -32,12 +32,14 @@ import {
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
+import { IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useGatedEcosystems } from './hooks/useGatedEcosystems';
 
 import {
   Controller,
@@ -68,7 +70,8 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useCompatibilityInfo } from './hooks/useCompatibilityInfo';
 import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
-import { FormFooter } from './FormFooter';
+import { FormFooter, MetadataExtractionFooter } from './FormFooter';
+import { GenerationLayout, GenerationFooter } from './GenerationLayout';
 import {
   ResourceAlerts,
   ExperimentalModelAlert,
@@ -98,6 +101,9 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
+import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
+import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { MetadataExtractionPanel } from './inputs/MetadataExtractionPanel';
 import {
   contentGenerationTour,
@@ -117,6 +123,7 @@ export function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
   const workflowHistory = useWorkflowHistoryStore();
   const currentUser = useCurrentUser();
+  const gatedEcosystems = useGatedEcosystems();
   const isMember = !!currentUser && currentUser.tier !== 'free';
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
   const snapshot = graph.getSnapshot() as {
@@ -317,9 +324,9 @@ export function GenerationForm() {
   );
 
   return (
-    <div className="flex size-full flex-1 flex-col">
-      <div className="flex w-full flex-1 flex-col gap-3 p-2">
-        {/* Workflow and ecosystem selectors - inline */}
+    <GenerationLayout>
+      {/* Workflow and ecosystem selectors — always visible */}
+      <>
         <Group gap="xs" wrap="nowrap" className="w-full justify-between">
           <Controller
             graph={graph}
@@ -347,6 +354,7 @@ export function GenerationForm() {
                   handleBaseModelChange(newValue, label);
                 }}
                 compatibleEcosystems={meta?.compatibleEcosystems}
+                excludeEcosystems={gatedEcosystems.length ? gatedEcosystems : undefined}
                 isCompatible={compatibility.isEcosystemKeyCompatible}
                 getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
                 outputType={compatibility.currentOutputType}
@@ -354,17 +362,34 @@ export function GenerationForm() {
             )}
           />
         </Group>
+      </>
 
-        {/* img2meta: self-contained panel, no graph controllers */}
-        {snapshot.workflow === 'img2meta' && (
+      {/* img2meta: self-contained panel, no graph controllers */}
+      {snapshot.workflow === 'img2meta' && (
+        <>
           <>
-            <SelectedWorkflowDisplay workflowId="img2meta" />
+            <SelectedWorkflowDisplay workflowId="img2meta" onBack={handleNavigationBack} />
             <MetadataExtractionPanel />
           </>
-        )}
+          <GenerationFooter>
+            <MetadataExtractionFooter />
+          </GenerationFooter>
+        </>
+      )}
 
-        {/* Selected workflow display OR mode selector */}
-        {snapshot.workflow !== 'img2meta' && (
+      {/* prompt:enhance: self-contained panel, reads captured data from store */}
+      {snapshot.workflow === 'prompt:enhance' && (
+        <>
+          <>
+            <SelectedWorkflowDisplay workflowId="prompt:enhance" onBack={handleNavigationBack} />
+            <PromptEnhancePanelWrapper graph={graph} onBack={handleNavigationBack} />
+          </>
+        </>
+      )}
+
+      {/* Standard generation workflows */}
+      {snapshot.workflow !== 'img2meta' && snapshot.workflow !== 'prompt:enhance' && (
+        <>
           <>
             <Controller
               graph={graph}
@@ -440,7 +465,7 @@ export function GenerationForm() {
                 }}
               />
 
-              {/* Wan version picker */}
+              {/* Wan video version picker */}
               <Controller
                 graph={graph}
                 name="wanVersion"
@@ -659,13 +684,49 @@ export function GenerationForm() {
               name="prompt"
               render={({ value, onChange, meta, error }) => (
                 <Input.Wrapper
+                  styles={{ label: { width: '100%' } }}
                   label={
-                    <ControllerLabel
-                      label="Prompt"
-                      info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
-                    />
+                    <Group justify="space-between" wrap="nowrap" className="w-full">
+                      <ControllerLabel
+                        label="Prompt"
+                        info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
+                        required={meta.required}
+                      />
+                      {value && (
+                        <Button
+                          variant="subtle"
+                          size="compact-xs"
+                          leftSection={<IconSparkles size={14} />}
+                          onClick={() => {
+                            const snap = graph.getSnapshot() as {
+                              ecosystem?: string;
+                              negativePrompt?: string;
+                              resources?: {
+                                id: number;
+                                model: { type: string };
+                                trainedWords?: string[];
+                                strength?: number;
+                              }[];
+                            };
+                            triggerPromptEnhance(
+                              {
+                                prompt: value as string,
+                                negativePrompt: snap.negativePrompt,
+                                ecosystem: snap.ecosystem ?? '',
+                                resources: snap.resources,
+                              },
+                              (wf) =>
+                                graph.set({
+                                  workflow: wf,
+                                } as Parameters<typeof graph.set>[0])
+                            );
+                          }}
+                        >
+                          Enhance
+                        </Button>
+                      )}
+                    </Group>
                   }
-                  required={meta.required}
                   error={error?.message}
                 >
                   <Paper
@@ -1310,20 +1371,6 @@ export function GenerationForm() {
                 )}
               />
 
-              {/* Wan 2.2: Multi-step toggle (comfy 12fps + VFIMamba interpolation) */}
-              <Controller
-                graph={graph}
-                name="multiStep"
-                render={({ value, onChange }) => (
-                  <Checkbox
-                    checked={value}
-                    onChange={(e) => onChange(e.target.checked)}
-                    label="Multi-step with interpolation"
-                    description="Generate at 12fps then interpolate to 24fps for smoother results"
-                  />
-                )}
-              />
-
               {/* Wan: Draft mode toggle (v2.2-5b) / Vidu Q3: Draft mode */}
               <Controller
                 graph={graph}
@@ -1383,17 +1430,58 @@ export function GenerationForm() {
             /> */}
             </AccordionLayout>
           </>
-        )}
-      </div>
-      <FormFooter
-        noSubmit={workflowConfigByKey.get(snapshot.workflow ?? '')?.noSubmit}
-        onSubmitSuccess={
-          snapshot.workflow && isEnhancementWorkflow(snapshot.workflow)
-            ? handleNavigationBack
-            : undefined
+          <GenerationFooter>
+            <FormFooter
+              onSubmitSuccess={
+                snapshot.workflow && isEnhancementWorkflow(snapshot.workflow)
+                  ? handleNavigationBack
+                  : undefined
+              }
+            />
+          </GenerationFooter>
+        </>
+      )}
+    </GenerationLayout>
+  );
+}
+
+// =============================================================================
+// Prompt Enhancement Panel (reads captured data from store)
+// =============================================================================
+
+function PromptEnhancePanelWrapper({
+  graph,
+  onBack,
+}: {
+  graph: ReturnType<typeof useGraph<GenerationGraphTypes>>;
+  onBack: () => void;
+}) {
+  const data = usePromptEnhanceStore((state) => state.data);
+
+  // If store data is gone (e.g., page reload), navigate back to the previous workflow
+  useEffect(() => {
+    if (!data) onBack();
+  }, [data, onBack]);
+
+  if (!data) return null;
+
+  return (
+    <PromptEnhancePanel
+      prompt={data.prompt}
+      negativePrompt={data.negativePrompt}
+      ecosystem={data.ecosystem}
+      triggerWords={data.triggerWords}
+      onBack={onBack}
+      onApply={(enhancedPrompt, enhancedNegativePrompt) => {
+        graph.set({ prompt: enhancedPrompt } as Parameters<typeof graph.set>[0]);
+        if (enhancedNegativePrompt) {
+          graph.set({
+            negativePrompt: enhancedNegativePrompt,
+          } as Parameters<typeof graph.set>[0]);
         }
-      />
-    </div>
+        onBack();
+      }}
+    />
   );
 }
 
@@ -1447,14 +1535,23 @@ function ImagesInput({
 // Helper Components
 // =============================================================================
 
-function ControllerLabel({ label, info }: { label: React.ReactNode; info?: string }) {
-  if (!info) return <Input.Label>{label}</Input.Label>;
+function ControllerLabel({
+  label,
+  info,
+  required,
+}: {
+  label: React.ReactNode;
+  info?: string;
+  required?: boolean;
+}) {
+  if (!info) return <Input.Label required={required}>{label}</Input.Label>;
   return (
     <div className="flex items-center gap-1">
       <Input.Label>{label}</Input.Label>
       <InfoPopover size="xs" iconProps={{ size: 14 }}>
         {info}
       </InfoPopover>
+      {required && <span className="text-red-5">*</span>}
     </div>
   );
 }
@@ -1551,8 +1648,8 @@ function VersionGroupSelector({
     [getResourceData, onChange]
   );
 
-  // Only render if current model is a known version in the tree
-  if (!modelId || !allIds.has(modelId)) return null;
+  // Only render if current model is a known version and there are multiple options
+  if (!modelId || !allIds.has(modelId) || allIds.size <= 1) return null;
 
   const path = findModelPath(versions, modelId);
 

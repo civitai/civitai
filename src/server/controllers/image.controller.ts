@@ -313,7 +313,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useDatapacketRead: features.datapacketRead,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
     } else {
       return await getAllImages({
@@ -322,7 +322,7 @@ export const getInfiniteImagesHandler = async ({
         useCombinedNsfwLevel: !features.canViewNsfw,
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
-        useDatapacketRead: features.datapacketRead,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
     }
   } catch (error) {
@@ -411,9 +411,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        // Bypass datapacket for pinned posts — bounded query (max ~20 posts),
-        // and datapacket replicas have been observed to silently drop rows.
-        useDatapacketRead: false,
+        dbTarget: 'datapacket',
       });
 
       for (const image of pinnedPostsImages) {
@@ -428,24 +426,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
       for (const img of pinnedPostsImages) {
         if (img.postId) imagesPerPost[img.postId] = (imagesPerPost[img.postId] ?? 0) + 1;
       }
-
-      const returnedPostIds = [...new Set(pinnedPostsImages.map((i) => i.postId))];
-      const missingPostIds = versionPinnedPosts.filter((id) => !returnedPostIds.includes(id));
-
-      // Always log pinned post fetch results so we can compare good vs bad pods
-      logToAxiom({
-        type: missingPostIds.length ? 'warning' : 'info',
-        name: missingPostIds.length ? 'pinned-posts-missing' : 'pinned-posts-ok',
-        input,
-        requestedPostIds: versionPinnedPosts,
-        returnedPostIds,
-        missingPostIds,
-        imagesPerPost,
-        totalImagesReturned: pinnedPostsImages.length,
-        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
-        userId: user?.id,
-        isModerator: user?.isModerator,
-      });
     }
 
     while (true) {
@@ -460,7 +440,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         user,
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
-        useDatapacketRead: features.datapacketRead,
+        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
       });
 
       // Merge images by postId

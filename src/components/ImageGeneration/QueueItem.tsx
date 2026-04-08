@@ -29,8 +29,8 @@ import { useEffect, useState } from 'react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
+  useGenerationConfig,
   useGenerationStatus,
-  useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import {
@@ -89,7 +89,7 @@ export function QueueItem({
   const [ref, inView] = useInViewDynamic({ id });
 
   const generationStatus = useGenerationStatus();
-  const { unstableResources } = useUnstableResources();
+  const { unstableResources } = useGenerationConfig();
 
   const { copied, copy } = useClipboard();
 
@@ -170,7 +170,7 @@ export function QueueItem({
     });
   };
 
-  const { prompt, ...details } = params;
+  const { prompt, ...details } = params as { prompt: string };
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -374,7 +374,7 @@ export function QueueItem({
 }
 
 function ResourceRow({ resource }: { resource: GenerationResource }) {
-  const { unstableResources } = useUnstableResources();
+  const { unstableResources } = useGenerationConfig();
   const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
 
