@@ -32,6 +32,7 @@ import {
   trainingDetailsBaseModelsFlux2Klein,
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsLtx2,
+  trainingDetailsBaseModelsLtx23,
   trainingDetailsBaseModelsQwen,
   trainingDetailsBaseModelsWan,
   trainingDetailsBaseModelsXL,
@@ -367,6 +368,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsLtx2 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelLtx23 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsLtx23 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
 
   return (
     <>
@@ -532,6 +538,18 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
+                  {features.ltx23Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="lime"
+                      name="LTX 2.3"
+                      value={baseModelLtx23}
+                      baseType="ltx23"
+                      makeDefaultParams={makeDefaultParams}
+                      isVideo
+                      isNew
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'image' && (
@@ -577,7 +595,8 @@ export const ModelSelect = ({
                   </AlertWithIcon>
                 ) : selectedRun.baseType === 'hunyuan' ||
                   selectedRun.baseType === 'wan' ||
-                  selectedRun.baseType === 'ltx2' ? (
+                  selectedRun.baseType === 'ltx2' ||
+                  selectedRun.baseType === 'ltx23' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: this is an experimental build. Pricing, default settings, and results are
                     subject to change.

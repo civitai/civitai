@@ -1,4 +1,4 @@
-import type { Priority, WorkflowStepTemplate } from '@civitai/client';
+import type { Priority, WorkflowStepTemplate, XGuardModerationStepTemplate } from '@civitai/client';
 import { submitWorkflow } from '@civitai/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { logToAxiom } from '~/server/logging/client';
@@ -149,6 +149,77 @@ export async function createImageIngestionRequest({
       name: 'image-ingestion',
       imageId,
       url,
+      responseStatus: response.status,
+      serverTiming,
+      error,
+    });
+  }
+
+  return data;
+}
+
+export async function createTextModerationRequest({
+  entityType,
+  entityId,
+  content,
+  labels,
+  callbackUrl,
+  wait,
+  priority = 'normal',
+}: {
+  entityType: string;
+  entityId: number;
+  content: string;
+  labels?: string[];
+  callbackUrl?: string;
+  wait?: number;
+  priority?: Priority;
+}) {
+  const metadata = { entityType, entityId };
+
+  const { data, error, response } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    query: wait ? { wait } : undefined,
+    body: {
+      metadata,
+      currencies: [],
+      steps: [
+        {
+          $type: 'xGuardModeration',
+          name: 'textModeration',
+          metadata,
+          priority,
+          input: {
+            text: content,
+            mode: 'text',
+            labels,
+          },
+        } as XGuardModerationStepTemplate,
+      ],
+      callbacks: callbackUrl
+        ? [
+            {
+              url: `${callbackUrl}`,
+              type: [
+                'workflow:succeeded',
+                'workflow:failed',
+                'workflow:expired',
+                'workflow:canceled',
+              ],
+            },
+          ]
+        : undefined,
+    },
+  });
+
+  const serverTiming = response.headers.get('Server-Timing');
+
+  if (!data) {
+    logToAxiom({
+      type: 'error',
+      name: 'text-moderation',
+      entityType,
+      entityId,
       responseStatus: response.status,
       serverTiming,
       error,

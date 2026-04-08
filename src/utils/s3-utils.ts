@@ -82,9 +82,7 @@ export async function getImageUploadBackend(userId?: number): Promise<{
   // This is intentional for Phase 1 — migrate user-facing uploads first, then flip server-side.
   const useB2 =
     env.S3_IMAGE_B2_ACCESS_KEY &&
-    (userId
-      ? await isFlipt(FLIPT_FEATURE_FLAGS.B2_IMAGE_UPLOAD, String(userId))
-      : false);
+    (userId ? await isFlipt(FLIPT_FEATURE_FLAGS.B2_IMAGE_UPLOAD, String(userId)) : false);
 
   if (useB2) {
     return {

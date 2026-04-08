@@ -60,7 +60,8 @@ export const BuzzPurchaseMultiplierFeature = ({
   buzzAmount: number;
   buzzType?: BuzzSpendType;
 }) => {
-  const { subscription } = useActiveSubscription();
+  const { subscription, tier } = useActiveSubscription();
+  const isMember = !!tier && tier !== 'free';
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const purchasesMultiplier = multipliers.purchasesMultiplier ?? 1;
   const { mainBuzzAdded, blueBuzzAdded, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
@@ -68,7 +69,7 @@ export const BuzzPurchaseMultiplierFeature = ({
     purchasesMultiplier,
   });
 
-  if (multipliersLoading || ((!subscription || mainBuzzAdded === 0) && blueBuzzAdded === 0)) {
+  if (multipliersLoading || ((!isMember || mainBuzzAdded === 0) && blueBuzzAdded === 0)) {
     return null;
   }
 
@@ -88,8 +89,8 @@ export const BuzzPurchaseMultiplierFeature = ({
       subtitle={(className: string) => (
         <Stack gap="sm">
           <Text className={className}>
-            {subscription
-              ? `As a ${capitalize(metadata.tier)} member you get ${Math.round(
+            {isMember
+              ? `As a ${capitalize(subscription ? metadata.tier : tier)} member you get ${Math.round(
                   (purchasesMultiplier - 1) * 100
                 )}% bonus Buzz on each purchase (${numberWithCommas(mainBuzzAdded)} ${
                   capitalize(buzzType) ?? 'Yellow'

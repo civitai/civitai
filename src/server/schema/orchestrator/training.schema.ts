@@ -80,6 +80,10 @@ const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
     ecosystem: z.literal('ltx2'),
     modelVariant: z.undefined().optional(),
   }),
+  aiToolkitBaseParams.extend({
+    ecosystem: z.literal('ltx23'),
+    modelVariant: z.undefined().optional(),
+  }),
   // SD3, Flux1, Flux2Klein, and Wan require modelVariant
   aiToolkitBaseParams.extend({
     ecosystem: z.literal('sd3'),

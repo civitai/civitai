@@ -76,6 +76,7 @@ const TXT2IMG_IDS = [
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
   // Other image ecosystems
+  ECO.Anima,
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
@@ -611,6 +612,7 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
     'txt2img',
     (ecoId, modelId) =>
       (ecoId === ECO.NanoBanana && modelId === nanoBananaVersionIds.v2) ||
+      ecoId === ECO.Anima ||
       ecoId === ECO.Grok ||
       ecoId === ECO.Qwen2 ||
       ecoId === ECO.WanImage27,

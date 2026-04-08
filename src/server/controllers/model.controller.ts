@@ -2,7 +2,10 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
-import { type BaseModel, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
@@ -135,6 +138,8 @@ import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
+  getGenerationEcosystemConfig,
+  getResourceCanGenerate,
   getResourceData,
   getUnavailableResources,
 } from '../services/generation/generation.service';
@@ -196,6 +201,9 @@ export const getModelHandler = async ({
 
     const modelCategories = await getCategoryTags('model');
     const unavailableGenResources = await getUnavailableResources();
+    const ecosystemConfig = await getGenerationEcosystemConfig();
+    const disabledEcosystems = new Set(ecosystemConfig.disabledEcosystems);
+    const modOnlyEcosystems = new Set(ecosystemConfig.modOnlyEcosystems);
 
     const metrics = model.metrics[0];
     const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
@@ -207,8 +215,9 @@ export const getModelHandler = async ({
     });
 
     const recommendedResourceIds =
-      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.resource.id)) ??
-      [];
+      model.modelVersions.flatMap((version) =>
+        version?.recommendedResources.map((x) => x.resource.id)
+      ) ?? [];
     const generationResources = await getResourceData(recommendedResourceIds, ctx?.user);
 
     return {
@@ -260,9 +269,23 @@ export const getModelHandler = async ({
               EntityAccessPermission.EarlyAccessDownload);
 
         const canGenerate =
-          !!version.generationCoverage?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1 &&
-          isBaseModelGenerationSupported(version.baseModel, model.type);
+          getResourceCanGenerate({
+            resource: {
+              id: version.id,
+              status: version.status,
+              availability: version.availability,
+              usageControl: version.usageControl,
+              baseModel: version.baseModel,
+              covered: version.generationCoverage?.covered ?? false,
+              modelUserId: model.user.id,
+            },
+            user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
+            unavailableResources: unavailableGenResources,
+            disabledEcosystems,
+            modOnlyEcosystems,
+          }) &&
+          isBaseModelGenerationSupported(version.baseModel, model.type) &&
+          (entityAccessForVersion?.hasAccess ?? false);
 
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);

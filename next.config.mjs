@@ -106,6 +106,7 @@ export default defineNextConfig(
     transpilePackages: [],
     experimental: {
       // scrollRestoration: true,
+      cpus: 8,
       serverSourceMaps: true,
       instrumentationHook: true, // Enable instrumentation.ts for OTEL
       largePageDataBytes: 512 * 100000,

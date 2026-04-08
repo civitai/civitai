@@ -10,7 +10,7 @@
 
 import { Alert, List, Text } from '@mantine/core';
 
-import { useUnstableResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ecosystemByKey, isEcosystemExperimental } from '~/shared/constants/basemodel.constants';
 import { useWhatIfContext } from './WhatIfProvider';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -76,7 +76,7 @@ function getSelectedResources(model: unknown, resources: unknown, vae: unknown):
  * Should be used inside a MultiController for 'model', 'resources', and 'vae'.
  */
 export function ResourceAlerts({ model, resources, vae }: ResourceAlertsProps) {
-  const { unstableResources: allUnstableResources } = useUnstableResources();
+  const { unstableResources: allUnstableResources } = useGenerationConfig();
 
   // Extract resource-related values (may be undefined depending on active discriminator branch)
   const selectedResources = getSelectedResources(model, resources, vae);

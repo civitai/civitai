@@ -1018,7 +1018,7 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
   headers?: Record<string, string>; // TODO needed?
-  useDatapacketRead: boolean;
+  dbTarget?: 'read' | 'write' | 'datapacket';
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -1068,9 +1068,10 @@ export const getAllImages = async (
     minorOnly,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
-  const { useDatapacketRead } = input;
+  const { dbTarget = 'read' } = input;
 
-  const imageDbRead = useDatapacketRead ? datapacketDbRead : pgDbRead;
+  const imageDb =
+    dbTarget === 'write' ? pgDbWrite : dbTarget === 'datapacket' ? datapacketDbRead : pgDbRead;
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
@@ -1619,7 +1620,7 @@ export const getAllImages = async (
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
-  const { rows: rawImages } = await imageDbRead.query<GetAllImagesRaw>(query);
+  const { rows: rawImages } = await imageDb.query<GetAllImagesRaw>(query);
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);

@@ -848,6 +848,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Seedance - checkpoint only
   // { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // Anima - checkpoint only
+  { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointOnly },
+
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -955,6 +958,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Flux2Klein_4B_base,
     defaults: {
       model: { id: 2612552 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Anima,
+    defaults: {
+      model: { id: 2836417 },
       modelLocked: true,
     },
   },
@@ -3337,7 +3347,7 @@ export const ecosystemGroups: EcosystemGroup[] = [
     id: 'LTXV',
     displayName: 'LTX Video',
     ecosystemIds: [ECO.LTXV, ECO.LTXV2, ECO.LTXV23],
-    defaultEcosystemId: ECO.LTXV2,
+    defaultEcosystemId: ECO.LTXV23,
     sortOrder: 205,
   },
   {
@@ -3810,14 +3820,27 @@ export function getBaseModelConfig(baseModel: string): BaseModelRecord {
 
 /**
  * Get ecosystem key for a base model
- * @param baseModel - Base model name
+ * @param baseModel - Base model name OR ecosystem key (e.g., "Nano Banana" or "NanoBanana")
  * @returns Ecosystem key (e.g., "SDXL", "Flux1")
  */
 export function getBaseModelGroup(baseModel: string): string {
+  // Try to find by base model name first (e.g., "Nano Banana", "Flux.1 D")
   const record = baseModelByName.get(baseModel);
-  if (!record) return 'Other';
-  const ecosystem = ecosystemById.get(record.ecosystemId);
-  return ecosystem?.key ?? 'Other';
+  if (record) {
+    const ecosystem = ecosystemById.get(record.ecosystemId);
+    return ecosystem?.key ?? 'Other';
+  }
+  // Fall back to matching by ecosystem key directly (e.g., "NanoBanana", "OpenAI").
+  // Matches the legacy base-model.constants.ts behavior where getBaseModelConfig
+  // checked both `x.name === baseModel || x.group === baseModel`. Some constants
+  // (e.g. generationConfig.NanoBanana.checkpoint.baseModel = 'NanoBanana') store
+  // the ecosystem key in the resource's baseModel field instead of the display
+  // name, and downstream code like the form-watch subscription in
+  // GenerationFormProvider relies on this lookup returning a real ecosystem key
+  // instead of collapsing to 'Other'.
+  const ecosystem = ecosystemByKey.get(baseModel);
+  if (ecosystem) return ecosystem.key;
+  return 'Other';
 }
 
 /**
@@ -3853,9 +3876,11 @@ export function getBaseModelSeoName(baseModel?: string): string {
  * @returns Root ecosystem name (lowercase)
  */
 export function getBaseModelEcosystem(baseModel: string): string {
-  const record = baseModelByName.get(baseModel);
-  if (!record) return 'other';
-
+  // Match legacy base-model.constants.ts behavior: accept both the base model
+  // display name (e.g. "Nano Banana") AND the ecosystem key (e.g. "NanoBanana")
+  // via the getBaseModelConfig fallback chain.
+  const record = getBaseModelConfig(baseModel);
+  if (!record || record.name === 'Other') return 'other';
   // Get root ecosystem (walks up parent chain)
   const rootEcosystem = getRootEcosystem(record.ecosystemId);
   return rootEcosystem.name;
@@ -3863,23 +3888,25 @@ export function getBaseModelEcosystem(baseModel: string): string {
 
 /**
  * Get media type for a base model
- * @param baseModel - Base model name
+ * @param baseModel - Base model name or ecosystem key
  * @returns Media type ('image' or 'video')
  */
 export function getBaseModelMediaType(baseModel: string): MediaType | undefined {
-  const record = baseModelByName.get(baseModel);
-  if (!record) return undefined;
+  // Accept both display name and ecosystem key via the fallback chain.
+  const record = getBaseModelConfig(baseModel);
+  if (!record || record.name === 'Other') return undefined;
   return Array.isArray(record.type) ? record.type[0] : record.type;
 }
 
 /**
  * Get engine identifier for a base model
- * @param baseModel - Base model name
+ * @param baseModel - Base model name or ecosystem key
  * @returns Engine string (e.g., "wan", "hunyuan", "veo3") or undefined for models without an engine
  */
 export function getBaseModelEngine(baseModel: string): string | undefined {
-  const record = baseModelByName.get(baseModel);
-  if (!record) return undefined;
+  // Accept both display name and ecosystem key via the fallback chain.
+  const record = getBaseModelConfig(baseModel);
+  if (!record || record.name === 'Other') return undefined;
   return getEcosystemSetting(record.ecosystemId, 'engine');
 }
 
@@ -3968,9 +3995,15 @@ export const getBaseModelGenerationConfig = lazy(() =>
       for (const modelType of genSupport.modelTypes) {
         const supported: BaseModelSupportMapped[] = [];
 
-        // Add full support for models in this ecosystem
+        // Add full support for models in this ecosystem.
+        // Hidden models (e.g. NanoBanana, OpenAI, Imagen4 — synthetic API-backed
+        // checkpoints) MUST still appear here, otherwise the form's
+        // ResourceSelect treats their checkpoint as an unsupported type and
+        // nulls the model field on mount. `hidden` only affects whether a base
+        // model shows up in user-facing pickers, not whether it supports
+        // generation.
         for (const model of ecosystemModels) {
-          if (!model.hidden && !model.disabled) {
+          if (!model.disabled) {
             supported.push({ baseModel: model.name, support: 'full' });
           }
         }
