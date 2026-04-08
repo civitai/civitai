@@ -44,6 +44,7 @@ const animaAspectRatios = [
 // karras and exponential are omitted because they are incompatible with most samplers
 // (euler, heun, dpm++2m, dpm++2mv2). See anima-graph sampler/scheduler compatibility.
 const animaSamplers: SdCppSampleMethod[] = [
+  'er_sde',
   'euler',
   'euler_a',
   'heun',
@@ -81,7 +82,7 @@ export const animaGraph = new DataGraph<{ ecosystem: string; workflow: string },
   .node('steps', sliderNode({ min: 10, max: 50, defaultValue: 25 }))
   .node(
     'sampler',
-    samplerNode({ options: animaSamplers, defaultValue: 'euler', presets: animaSamplerPresets })
+    samplerNode({ options: animaSamplers, defaultValue: 'euler_a', presets: animaSamplerPresets })
   )
   .node('scheduler', schedulerNode({ options: animaSchedules, defaultValue: 'simple' }))
   .node('negativePrompt', negativePromptNode());
