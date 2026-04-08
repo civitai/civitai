@@ -33,6 +33,10 @@ import classes from './index.module.css';
 export function Home() {
   const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({});
+  // homeExcludedTags previously held the woman/women tag IDs to hard-filter
+  // them out of the homepage model feed. That's now handled server-side via
+  // the `diversify` flag below — kept this query only because the home image
+  // feed still uses it for image tag exclusions.
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
 
@@ -199,8 +203,12 @@ export function Home() {
                         showAds
                         disableStoreFilters
                         filters={{
-                          // excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
-                          excludedTagIds: homeExcludedTags.map((tag) => tag.id),
+                          // Diversify replaces the legacy woman tag blocklist:
+                          // instead of hard-filtering one subject, the server
+                          // applies per-bucket caps so the feed never gets
+                          // dominated by any single category. See
+                          // model.service.ts `diversify` for buckets and caps.
+                          diversify: true,
                           // Required to override localStorage filters
                           period: isProd ? MetricTimeframe.Week : MetricTimeframe.AllTime,
                           sort: ModelSort.HighestRated,

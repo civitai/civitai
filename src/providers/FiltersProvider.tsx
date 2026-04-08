@@ -60,6 +60,7 @@ const modelFilterSchema = z.object({
   minorOnly: z.boolean().optional(),
   disablePoi: z.boolean().optional(),
   disableMinor: z.boolean().optional(),
+  diversify: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;

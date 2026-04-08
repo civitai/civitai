@@ -357,7 +357,12 @@ export const getModelsInfiniteHandler = async ({
     let isPrivate = false;
     let nextCursor: string | bigint | undefined;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
-    while (results.length < (input.limit ?? 100) && loopCount < 3) {
+    // When diversifying, only one underlying call is allowed. The diversity
+    // cap pass enforces a per-bucket maximum *per call*, so a retry loop
+    // would multiply the caps (e.g. cap=6 women × 2 loops = 12). The
+    // wrapper over-fetches enough to fill a single page on its own.
+    const maxLoops = input.diversify ? 1 : 3;
+    while (results.length < (input.limit ?? 100) && loopCount < maxLoops) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
         user: ctx.user,

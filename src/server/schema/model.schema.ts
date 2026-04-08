@@ -123,6 +123,11 @@ export const getAllModelsSchema = z.object({
   // Mod only:
   poiOnly: z.boolean().optional(),
   minorOnly: z.boolean().optional(),
+  // When true, applies subject-bucket caps to the result page so no single
+  // bucket (woman, man, anime, style, etc) can dominate. Used by the homepage
+  // model feed to keep variety high. Implementation lives in model.service.ts
+  // (search for `diversify`).
+  diversify: z.boolean().optional(),
 });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

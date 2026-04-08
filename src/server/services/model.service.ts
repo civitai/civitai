@@ -278,7 +278,21 @@ export const getModelsRaw = async ({
     isFeatured,
     poiOnly,
     minorOnly,
+    diversify,
   } = input;
+
+  // Over-fetch factor when diversifying. Buckets that hit their cap drop
+  // results, so we ask Postgres for more rows than the page size and let the
+  // diversity pass downstream pick a balanced subset.
+  //
+  // Real-world: the homepage's "highest rated this week" feed is ~80%+
+  // women cover images. To fill a 30-item page with the woman cap at 20%
+  // (=6 women) we need 24 non-women items. With ~17% non-women in the top
+  // ranks, that's 24/0.17 ≈ 142 candidates minimum. 12x gives a margin
+  // and lets the smaller buckets (anime, character, concept) actually
+  // surface enough variety to fill the page without falling back to pass 3.
+  const diversifyOverFetch = 12;
+  const diversifyMultiplier = diversify ? diversifyOverFetch : 1;
 
   // TODO yes, this will not work with pagination. dont have time to adjust the cursor for both dbs.
   let searchModelIds: number[] = [];
@@ -745,7 +759,7 @@ export const getModelsRaw = async ({
       ${Prisma.join(AND, ' AND ')}
     ORDER BY
       ${Prisma.raw(orderBy)}
-    LIMIT ${(take ?? 100) + 1}
+    LIMIT ${(take ?? 100) * diversifyMultiplier + 1}
   `;
 
   // const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
@@ -773,16 +787,21 @@ export const getModelsRaw = async ({
       ])
   );
 
+  // When diversifying we over-fetch and trim later, so cursor handling is
+  // deferred until after the diversity pass. Otherwise use the legacy "fetch
+  // take+1, last row is the cursor" pattern.
   let nextCursor: string | bigint | undefined;
-  if (take && models.length > take) {
+  if (!diversify && take && models.length > take) {
     nextCursor = models[models.length - 1]?.cursorId || undefined; // Use final item as cursor to grab next page
     models.pop(); //Remove excess model
   }
 
   return {
-    items: withSpan('model:getAll:transform', () =>
-      models
+    items: withSpan('model:getAll:transform', () => {
+      const transformed = models
         .map(({ rank, cursorId, ...model }) => {
+          // capture cursor for the diversify pass; stripped before return
+          const __cursorId = cursorId;
           const data = modelData[model.id.toString()];
           if (!data) return null;
 
@@ -855,10 +874,25 @@ export const getModelsRaw = async ({
               cosmetics: userCosmetics[model.userId] ?? [],
             },
             cosmetic: cosmetics[model.id] ?? null,
+            __cursorId,
           };
         })
-        .filter(isDefined)
-    ),
+        .filter(isDefined);
+
+      // When diversifying we keep __cursorId on each item so the wrapper
+      // (getModelsWithImagesAndModelVersions) can run the cap pass against
+      // *cover image* tags rather than model tags — model tags don't reflect
+      // what the cover actually depicts (e.g. a "style" model with a woman
+      // cover). The wrapper strips __cursorId and fixes up nextCursor.
+      if (diversify) {
+        // Capture last over-fetched item's cursor so the wrapper has a
+        // fallback if it ends up keeping every item.
+        const last = transformed[transformed.length - 1];
+        if (last?.__cursorId != null) nextCursor = last.__cursorId as any;
+        return transformed;
+      }
+      return transformed.map(({ __cursorId, ...rest }) => rest);
+    }),
     nextCursor,
     isPrivate,
   };
@@ -1151,6 +1185,85 @@ export type GetModelsWithImagesAndModelVersions = AsyncReturnType<
   typeof getModelsWithImagesAndModelVersions
 >['items'][0];
 
+// --- Diversity buckets for the homepage model feed ----------------------
+// Buckets are checked in priority order (most specific first). The cap is a
+// fraction of the requested page size; the sum is intentionally >1 so a page
+// can fill up but no single bucket can dominate.
+//
+// Classification runs against COVER IMAGE tags, not model tags. A "style" or
+// "realistic" model with a woman cover should count as woman — what the user
+// sees on the homepage is the cover, not the model's taxonomy.
+//
+// Tag IDs are resolved lazily on first call against the live Tag table and
+// cached in-process so we don't hardcode IDs that could drift.
+const DIVERSIFY_BUCKET_DEFS: { name: string; cap: number; tagNames: string[] }[] = [
+  { name: 'furry', cap: 0.1, tagNames: ['furry', 'anthro', 'bara'] },
+  {
+    name: 'anime',
+    cap: 0.2,
+    tagNames: ['anime', 'hentai', 'manga', 'manhwa', 'webtoon', 'anime character'],
+  },
+  { name: 'woman', cap: 0.2, tagNames: ['woman', 'women', 'girl', 'girls', 'female', 'milf'] },
+  { name: 'man', cap: 0.15, tagNames: ['man', 'men', 'male', 'boys', 'gay'] },
+  { name: 'celebrity', cap: 0.1, tagNames: ['celebrity', 'actress', 'pornstar', 'vtuber'] },
+  {
+    name: 'character',
+    cap: 0.2,
+    tagNames: ['character', 'characters', 'game character', 'oc', 'pokemon', 'person'],
+  },
+  {
+    name: 'style',
+    cap: 0.25,
+    tagNames: [
+      'style',
+      'styles',
+      'art style',
+      'artstyle',
+      'artist',
+      'illustration',
+      'art',
+      'photorealistic',
+      'realistic',
+      '2d',
+      '3d',
+      'cartoon',
+    ],
+  },
+  {
+    name: 'concept',
+    cap: 0.25,
+    tagNames: ['concept', 'poses', 'clothing', 'background', 'tool', 'fantasy'],
+  },
+];
+
+let diversifyBucketsPromise: Promise<
+  { name: string; cap: number; tagIds: Set<number> }[]
+> | null = null;
+function getDiversifyBuckets() {
+  if (!diversifyBucketsPromise) {
+    diversifyBucketsPromise = (async () => {
+      const allNames = [...new Set(DIVERSIFY_BUCKET_DEFS.flatMap((d) => d.tagNames))];
+      const tags = await dbRead.tag.findMany({
+        where: { name: { in: allNames } },
+        select: { id: true, name: true },
+      });
+      const nameToId = new Map(tags.map((t) => [t.name, t.id]));
+      return DIVERSIFY_BUCKET_DEFS.map(({ name, cap, tagNames }) => ({
+        name,
+        cap,
+        tagIds: new Set(
+          tagNames.map((n) => nameToId.get(n)).filter((x): x is number => x != null)
+        ),
+      }));
+    })().catch((err) => {
+      // Reset so a transient failure doesn't permanently disable diversify.
+      diversifyBucketsPromise = null;
+      throw err;
+    });
+  }
+  return diversifyBucketsPromise;
+}
+
 export const getModelsWithImagesAndModelVersions = async ({
   input,
   user,
@@ -1216,10 +1329,7 @@ export const getModelsWithImagesAndModelVersions = async ({
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
   const unavailableGenResources = await getUnavailableResources();
-  const result = {
-    nextCursor,
-    isPrivate,
-    items: items
+  let mappedItems = items
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
         if (!version) {
@@ -1263,10 +1373,111 @@ export const getModelsWithImagesAndModelVersions = async ({
           canGenerate,
         };
       })
-      .filter(isDefined),
-  };
+      .filter(isDefined);
 
-  return result;
+  // Diversity cap pass — runs only when the homepage (or any caller) opts in
+  // via `diversify`. Classifies each model by its COVER IMAGE tags (not its
+  // model tags) so a "style" model with a woman cover counts as woman.
+  // Walks in rank order, drops items whose bucket is already at cap, and
+  // stops once the page is full.
+  let finalNextCursor = nextCursor;
+  if (input.diversify && mappedItems.length > 0) {
+    const capStart = Date.now();
+    const buckets = await getDiversifyBuckets();
+    const pageSize = input.limit;
+    const capCounts = new Map<string, number>();
+    const classify = (imageTagIds: number[] | undefined) => {
+      if (!imageTagIds || imageTagIds.length === 0) return null;
+      const set = new Set(imageTagIds);
+      for (const b of buckets) {
+        for (const id of b.tagIds) {
+          if (set.has(id)) return b;
+        }
+      }
+      return null; // 'other' — uncapped
+    };
+
+    const kept: typeof mappedItems = [];
+    const keptIds = new Set<number>();
+    let lastSeenCursor: any = null;
+    // Pass 1: strict caps. Walk in rank order, drop items whose bucket is
+    // already at its cap.
+    for (const item of mappedItems) {
+      lastSeenCursor = (item as any).__cursorId;
+      if (kept.length >= pageSize) break;
+      const coverTagIds = item.images[0]?.tags as number[] | undefined;
+      const bucket = classify(coverTagIds);
+      if (bucket) {
+        const limit = Math.max(1, Math.ceil(bucket.cap * pageSize));
+        const current = capCounts.get(bucket.name) ?? 0;
+        if (current >= limit) continue;
+        capCounts.set(bucket.name, current + 1);
+      }
+      kept.push(item);
+      keptIds.add(item.id);
+    }
+    // Pass 2: fill from non-saturated buckets. If strict caps left us
+    // short, walk again allowing buckets up to 2× their original cap — but
+    // skip any bucket that already hit its strict cap in pass 1, because
+    // those are the over-represented ones we're trying to dilute. This
+    // prevents the fill from just refilling the dominant bucket (women)
+    // and leaving the page looking the same as the baseline.
+    if (kept.length < pageSize) {
+      const saturatedInPass1 = new Set<string>();
+      for (const b of buckets) {
+        const limit = Math.max(1, Math.ceil(b.cap * pageSize));
+        if ((capCounts.get(b.name) ?? 0) >= limit) saturatedInPass1.add(b.name);
+      }
+      for (const item of mappedItems) {
+        if (kept.length >= pageSize) break;
+        if (keptIds.has(item.id)) continue;
+        const coverTagIds = item.images[0]?.tags as number[] | undefined;
+        const bucket = classify(coverTagIds);
+        if (bucket && saturatedInPass1.has(bucket.name)) continue;
+        if (bucket) {
+          const relaxedLimit = Math.max(1, Math.ceil(bucket.cap * pageSize * 2));
+          const current = capCounts.get(bucket.name) ?? 0;
+          if (current >= relaxedLimit) continue;
+          capCounts.set(bucket.name, current + 1);
+        }
+        kept.push(item);
+        keptIds.add(item.id);
+      }
+    }
+    // NOTE: intentionally no "fill from anything" pass 3. If pass 1+2 left
+    // us short, it's because the over-fetch is so dominated by one bucket
+    // that there genuinely aren't enough non-saturated items. Backfilling
+    // from the dominant bucket would just undo the whole point of the cap
+    // — better to return a slightly shorter page with real variety than a
+    // full page that's mostly women again. The page can still be padded
+    // out by the next infinite-scroll fetch.
+
+    if (kept.length >= pageSize) {
+      finalNextCursor = ((kept[kept.length - 1] as any).__cursorId as any) || finalNextCursor;
+    } else if (lastSeenCursor != null && mappedItems.length > pageSize) {
+      finalNextCursor = lastSeenCursor;
+    }
+
+    console.log(
+      `[diversify] page=${pageSize} fetched=${mappedItems.length} kept=${
+        kept.length
+      } caps=${JSON.stringify(Object.fromEntries(capCounts))} durMs=${Date.now() - capStart}`
+    );
+    mappedItems = kept;
+  }
+
+  // Strip the temporary __cursorId we threaded through getModelsRaw for the
+  // diversify pass. It's never part of the public response shape.
+  const cleanItems = mappedItems.map((item) => {
+    const { __cursorId, ...rest } = item as any;
+    return rest as typeof item;
+  });
+
+  return {
+    nextCursor: finalNextCursor,
+    isPrivate,
+    items: cleanItems,
+  };
 };
 
 export const getModelVersionsMicro = async ({
