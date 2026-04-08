@@ -1,6 +1,7 @@
 import { adUnitFactory } from '~/components/Ads/AdUnitFactory';
 import { useEffect } from 'react';
 import { useAdUnitStore } from '~/components/Ads/adUnit.store';
+import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useContainerLargerThan } from '~/components/ContainerProvider/useContainerLargerThan';
 import { CloseButton } from '@mantine/core';
 
@@ -50,11 +51,17 @@ function AdUnitWithCloseButton() {
 }
 
 export function AdUnitOutstreamWithCloseButton() {
+  const { useDirectAds } = useAdsContext();
   const enabled = useAdUnitStore((state) => state.adUnits.outstream);
+  // Snigel video ad — .com only. Skip on .red since direct-ad fallback isn't supported for video.
+  if (useDirectAds) return null;
   return enabled ? <AdUnitWithCloseButton /> : null;
 }
 
 export function RenderAdUnitOutstream({ minContainerWidth }: { minContainerWidth: number }) {
+  const { useDirectAds } = useAdsContext();
   const enabled = useContainerLargerThan(minContainerWidth);
+  // Snigel video ad — .com only.
+  if (useDirectAds) return null;
   return enabled ? <EnableAdUnitOutstream /> : null;
 }

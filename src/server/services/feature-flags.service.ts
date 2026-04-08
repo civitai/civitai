@@ -138,7 +138,6 @@ const featureFlags = createFeatureFlags({
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
-  kontextAds: ['mod', 'granted'],
   datapacketRead: ['public'],
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],

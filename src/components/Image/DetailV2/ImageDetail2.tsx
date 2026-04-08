@@ -382,7 +382,7 @@ export function ImageDetail2() {
                           </div>
                           <CarouselIndicators {...carouselNavigation} />
                           {/* {viewportHeight >= 1050 && (
-                      <AdUnitImageDetailBanner browsingLevel={image.nsfwLevel} />
+                      <AdUnitImageDetailBanner />
                     )} */}
                         </div>
                       </>
