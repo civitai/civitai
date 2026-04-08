@@ -862,6 +862,7 @@ export const upsertArticle = async ({
             articleId: result.id,
             content: result.content,
             userId,
+            coverId: result.coverId,
           });
 
           // Mark article as scanned after successfully linking images
@@ -1053,17 +1054,31 @@ export const upsertArticle = async ({
 
       if (hasContentChanged) {
         try {
-          await linkArticleContentImages({
+          const { orphanedImageIds } = await linkArticleContentImages({
             articleId: id,
             content: data.content,
             userId,
+            coverId: coverId ?? article.coverId,
+            cleanupOnly: !scanContent,
           });
 
-          // Mark article as scanned after successfully linking images
-          await dbWrite.article.update({
-            where: { id },
-            data: { contentScannedAt: new Date() },
-          });
+          // Delete truly orphaned images (DB + S3 + cache) post-transaction
+          for (const imageId of orphanedImageIds) {
+            await deleteImageById({ id: imageId }).catch((error) => {
+              handleLogError(error, 'article-orphaned-image-cleanup', {
+                articleId: id,
+                imageId,
+              });
+            });
+          }
+
+          if (scanContent) {
+            // Mark article as scanned after successfully linking images
+            await dbWrite.article.update({
+              where: { id },
+              data: { contentScannedAt: new Date() },
+            });
+          }
         } catch (e) {
           // Non-blocking: continue even if image linking fails, but log the error
           const error = e as Error;
@@ -1073,7 +1088,7 @@ export const upsertArticle = async ({
             message: error.message,
             cause: error.cause,
             stack: error.stack,
-            articleId: result.id,
+            articleId: id,
           }).catch();
         }
       }
