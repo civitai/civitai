@@ -7,12 +7,15 @@ import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import type { ExtractedMedia } from '~/utils/article-helpers';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { EntityModerationStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { ImageConnectionType } from '~/server/common/enums';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { removeTags } from '~/utils/string-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
+
+const allModes = ['images', 'text-moderation', 'retry-failed-moderation'] as const;
+type Mode = (typeof allModes)[number];
 
 const querySchema = z.object({
   dryRun: booleanString().default(true),
@@ -22,7 +25,10 @@ const querySchema = z.object({
   end: z.coerce.number().optional(),
   after: z.coerce.date().optional(),
   before: z.coerce.date().optional(),
-  mode: z.enum(['images', 'text-moderation', 'both']).default('images'),
+  mode: z
+    .string()
+    .transform((v) => v.split(',') as Mode[])
+    .pipe(z.array(z.enum(allModes)).min(1)),
 });
 
 export default WebhookEndpoint(async (req, res) => {
@@ -33,12 +39,14 @@ export default WebhookEndpoint(async (req, res) => {
 
   const params = result.data;
   const { dryRun, concurrency, batchSize, mode } = params;
-  const runImages = mode === 'images' || mode === 'both';
-  const runTextModeration = mode === 'text-moderation' || mode === 'both';
+  const modes = new Set(mode);
+  const runImages = modes.has('images');
+  const runTextModeration = modes.has('text-moderation');
+  const runRetryFailed = modes.has('retry-failed-moderation');
   const startTime = Date.now();
 
   log(
-    `Starting article migration process (mode: ${mode})${
+    `Starting article migration process (modes: ${mode.join(',')})${
       dryRun ? ' (DRY RUN)' : ''
     } with batchSize ${batchSize}, concurrency ${concurrency}`
   );
@@ -75,14 +83,37 @@ export default WebhookEndpoint(async (req, res) => {
         }
 
         // Get min/max article IDs that need processing
-        if (runTextModeration && !runImages) {
-          // Text moderation only: find articles without EntityModeration records
+        if (runRetryFailed && !runTextModeration && !runImages) {
+          // Retry-failed only: find articles with Failed/Expired EntityModeration
           const [{ max }] = await dbWrite.$queryRaw<{ max: number }[]>(
-            Prisma.sql`SELECT MAX(a.id) "max" FROM "Article" a
-            LEFT JOIN "EntityModeration" em ON em."entityId" = a.id AND em."entityType" = 'Article'
-            WHERE a.status = ${ArticleStatus.Published}::"ArticleStatus"
-            AND a.content != ''
-            AND em.id IS NULL`
+            Prisma.sql`
+              SELECT MAX(a.id) "max" FROM "Article" a
+              JOIN "EntityModeration" em ON em."entityId" = a.id AND em."entityType" = 'Article'
+              WHERE a.status = ${ArticleStatus.Published}::"ArticleStatus"
+              AND a.content != ''
+              AND em.status IN (${EntityModerationStatus.Failed}::"EntityModerationStatus", ${EntityModerationStatus.Expired}::"EntityModerationStatus")
+            `
+          );
+          return { start: params.start, end: params.end ?? max ?? 0 };
+        }
+
+        if ((runTextModeration || runRetryFailed) && !runImages) {
+          // Text moderation (with optional retry-failed-moderation): union of missing + failed
+          const conditions: Prisma.Sql[] = [];
+          if (runTextModeration) conditions.push(Prisma.sql`em.id IS NULL`);
+          if (runRetryFailed)
+            conditions.push(
+              Prisma.sql`em.status IN (${EntityModerationStatus.Failed}::"EntityModerationStatus", ${EntityModerationStatus.Expired}::"EntityModerationStatus")`
+            );
+
+          const [{ max }] = await dbWrite.$queryRaw<{ max: number }[]>(
+            Prisma.sql`
+              SELECT MAX(a.id) "max" FROM "Article" a
+              LEFT JOIN "EntityModeration" em ON em."entityId" = a.id AND em."entityType" = 'Article'
+              WHERE a.status = ${ArticleStatus.Published}::"ArticleStatus"
+              AND a.content != ''
+              AND (${Prisma.join(conditions, ' OR ')})
+            `
           );
           return { start: params.start, end: params.end ?? max ?? 0 };
         }
@@ -99,23 +130,31 @@ export default WebhookEndpoint(async (req, res) => {
         const batchStart = Date.now();
 
         // Fetch articles by ID range
-        const articleBatch = await dbWrite.article.findMany({
-          where: {
-            id: { gte: start, lte: end },
-            status: ArticleStatus.Published,
-            content: { not: '' },
-            // For images mode, only process articles not yet scanned
-            // For text-moderation mode, the range fetcher already filters by missing EntityModeration
-            ...(runImages ? { contentScannedAt: null } : {}),
-          },
-          select: {
-            id: true,
-            title: true,
-            content: true,
-            userId: true,
-          },
-          orderBy: { id: 'asc' },
-        });
+        const articleBatch = await dbWrite.$queryRaw<
+          { id: number; title: string; content: string; userId: number }[]
+        >(
+          Prisma.sql`
+            SELECT DISTINCT a.id, a.title, a.content, a."userId"
+            FROM "Article" a
+            ${
+              runRetryFailed
+                ? Prisma.sql`LEFT JOIN "EntityModeration" em ON em."entityId" = a.id AND em."entityType" = 'Article'`
+                : Prisma.empty
+            }
+            WHERE a.id >= ${start} AND a.id <= ${end}
+            AND a.status = ${ArticleStatus.Published}::"ArticleStatus"
+            AND a.content != ''
+            ${runImages ? Prisma.sql`AND a."contentScannedAt" IS NULL` : Prisma.empty}
+            ${
+              runRetryFailed && !runTextModeration && !runImages
+                ? Prisma.sql`AND em.status IN (${EntityModerationStatus.Failed}::"EntityModerationStatus", ${EntityModerationStatus.Expired}::"EntityModerationStatus")`
+                : runRetryFailed && runTextModeration
+                ? Prisma.sql`AND (em.id IS NULL OR em.status IN (${EntityModerationStatus.Failed}::"EntityModerationStatus", ${EntityModerationStatus.Expired}::"EntityModerationStatus"))`
+                : Prisma.empty
+            }
+            ORDER BY a.id ASC
+          `
+        );
 
         if (articleBatch.length === 0) {
           console.log(`No articles found in range ${start}-${end}`);
@@ -142,7 +181,7 @@ export default WebhookEndpoint(async (req, res) => {
               batchStats.imagesCreated += contentMedia.length;
               batchStats.connectionsCreated += contentMedia.length;
             }
-            if (runTextModeration) {
+            if (runTextModeration || runRetryFailed) {
               const text = [article.title, removeTags(article.content)].filter(Boolean).join(' ');
               log(`[DRY RUN] Article ${article.id}: text moderation (${text.length} chars)`);
               batchStats.textModerationSubmitted++;
@@ -303,7 +342,7 @@ export default WebhookEndpoint(async (req, res) => {
           }
 
           // --- Text moderation processing ---
-          if (runTextModeration) {
+          if (runTextModeration || runRetryFailed) {
             const textModResults = await Promise.allSettled(
               articleBatch.map(async (article) => {
                 const text = [article.title, removeTags(article.content)].filter(Boolean).join(' ');
@@ -362,7 +401,7 @@ export default WebhookEndpoint(async (req, res) => {
     res.status(200).json({
       ok: true,
       dryRun,
-      mode,
+      modes: mode,
       duration: `${duration}s`,
       result: {
         articlesProcessed: aggregatedStats.articlesProcessed,
