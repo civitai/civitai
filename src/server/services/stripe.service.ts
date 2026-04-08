@@ -171,7 +171,18 @@ export const createSubscribeSession = async ({
         },
       ];
 
-      await stripe.subscriptions.update(subscriptionItem.subscription as string, {
+      const subscriptionId = subscriptionItem.subscription as string;
+
+      // Stripe does not allow setting proration_behavior on a paused subscription.
+      // Use the dedicated resume endpoint to reactivate it before applying the plan change.
+      if (activeSubscription.status === 'paused') {
+        await stripe.subscriptions.resume(subscriptionId, {
+          billing_cycle_anchor: 'unchanged',
+          proration_behavior: 'none',
+        });
+      }
+
+      await stripe.subscriptions.update(subscriptionId, {
         items,
         billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
         proration_behavior: 'none',
@@ -763,9 +774,9 @@ export const getPaymentIntent = async ({
     customerId = await createCustomer(user);
   }
 
-  if (unitAmount < buzzConstants.minChargeAmount) {
+  if (unitAmount < buzzConstants.minStripeChargeAmount) {
     throw throwBadRequestError(
-      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minChargeAmount / 100)}`
+      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minStripeChargeAmount / 100)}`
     );
   }
 
