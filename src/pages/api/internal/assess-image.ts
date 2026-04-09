@@ -7,7 +7,7 @@ import { addCorsHeaders, TokenSecuredEndpoint } from '~/server/utils/endpoint-he
 const schema = z.object({
   url: z.string(),
 });
-const resultCache = new LRUCache<string, any>({ max: 1000, ttl: 30 * 60 * 1000 });
+const resultCache = new LRUCache<string, any>({ max: 100_000, ttl: 24 * 60 * 60 * 1000 });
 
 export default TokenSecuredEndpoint(
   env.HIVE_VISUAL_TOKEN?.slice(0, 5) ?? 'dummy',
