@@ -1040,17 +1040,17 @@ export const getPrevMonthStats = async () => {
         dollarAmountPerThousand: formatToLeastDecimals(getCurrentValue(1000, compensationPool)),
         dollarHighestEarned: hasCashedOut
           ? formatToLeastDecimals(getCurrentValue(cashedOutCreators[0].amount, compensationPool))
-          : '0',
+          : 0,
         dollarAverageEarned: hasCashedOut
           ? formatToLeastDecimals(
               getCurrentValue(totalBankedBuzz / cashedOutCreators.length, compensationPool)
             )
-          : '0',
+          : 0,
         dollarMedianEarned: hasCashedOut
           ? formatToLeastDecimals(
               getCurrentValue(cashedOutCreators[median].amount, compensationPool)
             )
-          : '0',
+          : 0,
       };
 
       return data;
