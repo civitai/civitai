@@ -27,18 +27,25 @@ export const parseBuzzTransactionDetails = (
     details.toAccountType ?? 'Yellow'
   )} Buzz from ${details.user ? `@${details.user}` : 'a user'}`;
 
-  // Handle training transactions with workflowId (only for Training type, not Generation)
-  const workflowId = (details as Record<string, unknown>).workflowId;
-  if (
-    transactionType === TransactionType.Training &&
-    typeof workflowId === 'string' &&
-    workflowId
-  ) {
-    return {
-      url: `/training/${workflowId}`,
-      notification: '',
-      label: 'Training',
-    };
+  // For training transactions, prefer stable entity-based URL over workflowId redirect
+  if (transactionType === TransactionType.Training) {
+    if (details.entityId) {
+      return {
+        url: `/model-versions/${details.entityId}`,
+        notification: '',
+        label: 'Training',
+      };
+    }
+    const workflowId = (details as Record<string, unknown>).workflowId;
+    if (typeof workflowId === 'string' && workflowId) {
+      return {
+        url: `/training/${workflowId}`,
+        notification: '',
+        label: 'Training',
+      };
+    }
+
+    return { url: undefined, notification: '', label: 'Training' };
   }
 
   if (!details.entityId || !details.entityType) {
