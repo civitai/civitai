@@ -377,6 +377,7 @@ async function runTextModeration(
               content: text,
               labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
               priority: 'low',
+              wait: 30,
             });
             stats.textModerationSubmitted++;
           } catch (error) {
