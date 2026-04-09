@@ -31,7 +31,7 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const sent: number[] = [];
   const failed: number[] = [];
   for (const file of files) {
-    const result = await requestScannerTasks({ file });
+    const result = await requestScannerTasks({ file, retryOnFailure: true });
     if (result === 'sent') sent.push(file.id);
     else if (result === 'not-found') failed.push(file.id);
     // 'error' = scanner issue, don't mark as non-existent, just skip
@@ -54,12 +54,15 @@ type ScannerRequest = {
   file: FileScanRequest;
   tasks?: ScannerTask[] | ScannerTask;
   lowPriority?: boolean;
+  /** When true, waits 60s and retries if URL resolution fails (for background jobs only). */
+  retryOnFailure?: boolean;
 };
 
 export async function requestScannerTasks({
   file: { id: fileId, url: s3Url },
   tasks = ['Scan', 'Hash', 'ParseMetadata'],
   lowPriority = false,
+  retryOnFailure = false,
 }: ScannerRequest): Promise<'sent' | 'not-found' | 'error'> {
   if (!env.SCANNING_ENDPOINT) {
     console.log('Skipping file scanning');
@@ -104,19 +107,25 @@ export async function requestScannerTasks({
     // Fall back to delivery worker using the S3 URL directly.
     try {
       ({ url: fileUrl } = await getDownloadUrl(s3Url));
-    } catch {
-      // Both failed — wait 60s and retry once (covers registration sync lag)
-      await new Promise((r) => setTimeout(r, 60_000));
-      try {
-        fileUrl = await resolveFileUrl();
-      } catch (retryError) {
+    } catch (fallbackError) {
+      if (retryOnFailure) {
+        // Background job: wait 60s and retry once (covers registration sync lag)
+        await new Promise((r) => setTimeout(r, 60_000));
+        try {
+          fileUrl = await resolveFileUrl();
+        } catch {
+          // Retry also failed
+        }
+      }
+      if (fileUrl === s3Url) {
+        // Still unresolved after all attempts
         logToAxiom(
           {
             type: 'error',
             name: 'request-scanner-tasks',
             message: `Failed to get download url for file ${fileId} (${s3Url})`,
-            error: retryError instanceof Error ? retryError.message : String(retryError),
-            stack: retryError instanceof Error ? retryError.stack : undefined,
+            error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+            stack: fallbackError instanceof Error ? fallbackError.stack : undefined,
           },
           'webhooks'
         ).catch();
