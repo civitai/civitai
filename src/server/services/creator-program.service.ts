@@ -10,14 +10,8 @@ import {
 } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import type {
-  BuzzCreatorProgramType,
-  BuzzSpendType,
-} from '~/shared/constants/buzz.constants';
-import {
-  TransactionType,
-  buzzBankTypes,
-} from '~/shared/constants/buzz.constants';
+import type { BuzzCreatorProgramType, BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 import type {
   CashWithdrawalMetadataSchema,
   CompensationPoolInput,
@@ -835,10 +829,7 @@ export async function withdrawCash(userId: number, amount: number) {
   }
 }
 
-export async function getPoolParticipants(
-  month?: Date,
-  includeNegativeAmounts = false
-) {
+export async function getPoolParticipants(month?: Date, includeNegativeAmounts = false) {
   month ??= new Date();
 
   const bankAccountType = getBankAccountType();
@@ -882,10 +873,7 @@ export async function getPoolParticipants(
   return participants.filter((p) => !bannedParticipants.some((b) => b.userId === p.userId));
 }
 
-export async function getPoolParticipantsV2(
-  month?: Date,
-  includeNegativeAmounts = false
-) {
+export async function getPoolParticipantsV2(month?: Date, includeNegativeAmounts = false) {
   month ??= new Date();
   const monthAccount = getMonthAccount(month);
   const data = await getTopContributors({

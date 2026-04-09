@@ -38,8 +38,7 @@ export const openPhasesModal = () => {
             <h3 className="text-xl font-bold">Banking Phase</h3>
             <ul className="pl-4">
               <li>
-                During this phase, creators can Bank any Yellow or Green Buzz
-                they&rsquo;ve earned.
+                During this phase, creators can Bank any Yellow or Green Buzz they&rsquo;ve earned.
               </li>
               <li>This phase lasts until 3 days before the end of the month (UTC).</li>
               <li>
@@ -310,19 +309,12 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                       'no cap'
                     ) : cap.percentOfPeakEarning ? (
                       <span className="inline-flex">
-                        a{' '}
-                        <CurrencyIcon
-                          currency={Currency.BUZZ}
-                                                    className="inline"
-                        />
+                        a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)} cap
                       </span>
                     ) : (
                       <span className="inline-flex">
-                        <CurrencyIcon
-                          currency={Currency.BUZZ}
-                                                    className="inline"
-                        />
+                        <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)}
                       </span>
                     )}
@@ -357,8 +349,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                 : 'No Cap'}
             </p>
             <p className="font-bold">
-              Your Cap:{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+              Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
               {numberWithCommas(Math.floor(banked.cap.cap))}
             </p>
 
