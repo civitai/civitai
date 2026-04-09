@@ -121,10 +121,7 @@ export const creatorsProgramInviteTipalti = createJob(
   async () => {
     const availability = getCreatorProgramAvailability();
     if (!availability.isAvailable) return;
-    const participants = await getPoolParticipantsV2(
-      dayjs().subtract(1, 'months').toDate(),
-      true
-    );
+    const participants = await getPoolParticipantsV2(dayjs().subtract(1, 'months').toDate(), true);
     if (participants.length === 0) return;
     const balances = await getAccountsBalances({
       accountIds: participants.map((p) => p.userId),
