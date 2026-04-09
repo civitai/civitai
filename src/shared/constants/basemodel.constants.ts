@@ -2635,7 +2635,7 @@ export const baseModelRecords: BaseModelRecord[] = [
   },
   {
     id: BM.WanImage27,
-    name: 'Wan 2.7 Image',
+    name: 'Wan Image 2.7',
     description: 'Image generation model from Alibaba',
     type: 'image',
     ecosystemId: ECO.WanImage27,
@@ -2643,7 +2643,7 @@ export const baseModelRecords: BaseModelRecord[] = [
   },
   {
     id: BM.WanVideo27,
-    name: 'Wan 2.7 Video',
+    name: 'Wan Video 2.7',
     description: 'Video generation model from Alibaba',
     type: 'video',
     ecosystemId: ECO.WanVideo27,
