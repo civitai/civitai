@@ -348,6 +348,27 @@ export const createCancelSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
+export const cancelSubscriptionWithFallback = async ({
+  customerId,
+  userId,
+}: {
+  customerId: string;
+  userId: number;
+}) => {
+  const stripe = await getServerStripe();
+  if (!stripe) throw throwBadRequestError('Stripe is not available');
+
+  try {
+    const result = await createCancelSubscriptionSession({ customerId });
+    return { type: 'redirect' as const, url: result.url };
+  } catch (portalError) {
+    log('Portal cancellation failed, attempting direct cancellation:', portalError);
+    await cancelSubscription({ userId });
+    await invalidateSubscriptionCaches(userId);
+    return { type: 'direct' as const };
+  }
+};
+
 export const createBuzzSession = async ({
   customerId,
   user,
@@ -705,7 +726,7 @@ export const cancelSubscription = async ({
           provider: 'Stripe',
         },
         status: {
-          in: ['active', 'past_due', 'trialing'],
+          in: ['active', 'past_due', 'trialing', 'incomplete', 'unpaid'],
         },
       },
       select: { id: true },
