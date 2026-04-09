@@ -183,9 +183,27 @@ export function SourceImageUploadMultiple({
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
   const isCroppingRef = useRef(false);
   const verifiedDimsRef = useRef(new Set<string>());
+  // Track which ids/urls this component has marked as uploading/verifying in the
+  // global store, so we can force-clear them on unmount. Otherwise a workflow
+  // switch that unmounts mid-flight (e.g., img2vid → txt2vid while a slot upload
+  // is in progress, or after a crop modal dismiss) leaves the Generate button
+  // stuck in its loading state.
+  const trackedUploadingIdsRef = useRef(new Set<string>());
+  const trackedVerifyingUrlsRef = useRef(new Set<string>());
   // Always-current value ref for use in async callbacks to avoid stale closures
   const valueRef = useRef(value);
   valueRef.current = value;
+
+  useEffect(() => {
+    const uploadingIds = trackedUploadingIdsRef.current;
+    const verifyingUrls = trackedVerifyingUrlsRef.current;
+    return () => {
+      for (const id of uploadingIds) setImageUploading(id, false);
+      for (const url of verifyingUrls) setImageVerifying(url, false);
+      uploadingIds.clear();
+      verifyingUrls.clear();
+    };
+  }, []);
 
   const previewImages = useMemo(() => {
     if (!value) return [];
@@ -199,9 +217,53 @@ export function SourceImageUploadMultiple({
     return images;
   }, [value, uploads]);
 
-  const previewItems = useMemo(() => {
-    return [...previewImages.filter((x) => !x.linkToId), ...uploads];
-  }, [previewImages, uploads]);
+  // Build previewItems deterministically: for each value entry, show the
+  // associated upload in place if a matching cropping/complete upload exists.
+  //  - 'cropping' substitution hides the original behind the loading card while
+  //    a re-crop is in progress (Kling → Veo3 workflow switch flow).
+  //  - 'complete' substitution dedupes the upload entry against the value entry
+  //    once the upload finishes and the orchestrator URL has been written into
+  //    value, so we don't render two cards for the same image.
+  //  - 'uploading' uploads are NOT substituted: slots mode eagerly writes
+  //    value[slot]=blobUrl before its uploads finish, and substituting would
+  //    cause the handle-update-value effect to see completed.length=0 and
+  //    clear the eager value back to empty.
+  // Anything not consumed by substitution is appended as an orphan card —
+  // covers new in-progress uploads (non-slot dropzone), errored uploads, and
+  // value entries with no matching upload.
+  const previewItems = useMemo<ImagePreview[]>(() => {
+    const items: ImagePreview[] = [];
+    const consumedUploadIds = new Set<string>();
+
+    // Narrow to a tuple with a definitely-present id so TS is happy downstream.
+    type IdentifiedUpload = ImagePreview & { id: string };
+    const substitutableByUrl = new Map<string, IdentifiedUpload>();
+    for (const item of uploads) {
+      if (
+        item.id &&
+        (item.status === 'complete' || item.status === 'cropping') &&
+        !substitutableByUrl.has(item.url)
+      ) {
+        substitutableByUrl.set(item.url, item as IdentifiedUpload);
+      }
+    }
+
+    for (const val of value ?? []) {
+      const upload = substitutableByUrl.get(val.url);
+      if (upload && !consumedUploadIds.has(upload.id)) {
+        items.push(upload);
+        consumedUploadIds.add(upload.id);
+      } else {
+        items.push({ status: 'complete', ...val });
+      }
+    }
+
+    for (const item of uploads) {
+      if (!item.id || !consumedUploadIds.has(item.id)) items.push(item);
+    }
+
+    return items;
+  }, [value, uploads]);
 
   useEffect(() => {
     if (uploads.length > 0 && uploads.every((x) => x.status === 'complete')) setUploads([]);
@@ -368,7 +430,10 @@ export function SourceImageUploadMultiple({
     for (const url of unresolved) verifiedDimsRef.current.add(url);
 
     // Track verifying state so FormFooter can show loading
-    for (const url of unresolved) setImageVerifying(url, true);
+    for (const url of unresolved) {
+      setImageVerifying(url, true);
+      trackedVerifyingUrlsRef.current.add(url);
+    }
 
     const snapshot = value;
     Promise.all(
@@ -376,7 +441,10 @@ export function SourceImageUploadMultiple({
         getImageDimensions(url)
           .then(({ width, height }) => ({ url, width, height }))
           .catch(() => null)
-          .finally(() => setImageVerifying(url, false))
+          .finally(() => {
+            setImageVerifying(url, false);
+            trackedVerifyingUrlsRef.current.delete(url);
+          })
       )
     ).then((results) => {
       const verified = results.filter(
@@ -505,7 +573,10 @@ export function SourceImageUploadMultiple({
         images,
         onConfirm: async (output) => {
           // Clear early uploading markers — new upload IDs take over below
-          for (const id of earlyUploadIds) setImageUploading(id, false);
+          for (const id of earlyUploadIds) {
+            setImageUploading(id, false);
+            trackedUploadingIdsRef.current.delete(id);
+          }
 
           // Determine what needs uploading:
           // - Cropped images always need upload
@@ -528,39 +599,82 @@ export function SourceImageUploadMultiple({
           }
 
           if (toUpload.length) {
-            // Show uploading indicators, preserving any unrelated uploads
+            // Show cropping indicators, preserving any unrelated uploads.
+            // Status 'cropping' (rather than 'uploading') so previewImages links
+            // these entries to the matching value image by URL — this hides the
+            // original image behind the loading card instead of rendering both.
             setUploads((prev) => [
               ...prev.filter((x) => !pendingUrlSet.has(x.url)),
               ...toUpload.map(({ id, index, originalUrl }) => ({
-                status: 'uploading' as const,
+                status: 'cropping' as const,
                 url: originalUrl,
                 id,
                 slotIndex: isSlotsMode ? index : undefined,
               })),
             ]);
 
-            // Upload each and swap URL in value as each completes
-            await Promise.all(
+            // Upload in parallel, collect results, and apply a single onChange at
+            // the end. Per-upload onChanges would race: concurrent callbacks read
+            // a stale valueRef before React has committed the previous update.
+            // Flushing once after Promise.all reads the fully-settled value once.
+            // We also defer the setUploads cleanup to a single atomic call after
+            // onChange, so the cropping cards stay in place until the new value
+            // lands — otherwise per-upload cleanup would briefly unhide the
+            // original value image behind each linked cropping card as its entry
+            // is removed before the batched value swap.
+            const toUploadIds = new Set(toUpload.map((u) => u.id));
+            const uploadResults = await Promise.all(
               toUpload.map(async ({ src, id, originalUrl }) => {
                 try {
                   const response = await uploadOrchestratorImage(src, id);
                   if (response.url && response.available) {
-                    const result = {
-                      url: response.url,
-                      width: response.width,
-                      height: response.height,
+                    return {
+                      originalUrl,
+                      result: {
+                        url: response.url,
+                        width: response.width,
+                        height: response.height,
+                      },
                     };
-                    // Swap the preview/original URL with the orchestrator URL in value
-                    const latest = valueRef.current;
-                    if (latest) {
-                      onChange?.(latest.map((img) => (img.url === originalUrl ? result : img)));
-                    }
                   }
-                } finally {
-                  setUploads((prev) => prev.filter((x) => x.id !== id));
+                } catch {
+                  // fall through to null below
                 }
+                return null;
               })
             );
+
+            const successful = uploadResults.filter(isDefined);
+            if (successful.length > 0) {
+              // Preload all result URLs in parallel before committing the swap,
+              // so when the cropping cards flip to the new images they render
+              // immediately from the browser cache instead of popping in one by
+              // one as each orchestrator fetch lands.
+              await Promise.all(
+                successful.map(
+                  ({ result }) =>
+                    new Promise<void>((resolve) => {
+                      const img = new Image();
+                      img.onload = () => resolve();
+                      img.onerror = () => resolve();
+                      img.src = result.url;
+                    })
+                )
+              );
+
+              // Swap in slots/re-crop mode (originalUrl already in value), append
+              // otherwise (non-slot new uploads whose previewUrl wasn't in value).
+              const next = [...(valueRef.current ?? [])];
+              for (const { originalUrl, result } of successful) {
+                const idx = next.findIndex((img) => img.url === originalUrl);
+                if (idx >= 0) next[idx] = result;
+                else next.push(result);
+              }
+              onChange?.(next);
+            }
+            // Clear all cropping entries in one go after the value swap has been
+            // emitted. Any entries that errored out are also removed here.
+            setUploads((prev) => prev.filter((x) => !x.id || !toUploadIds.has(x.id)));
 
             isCroppingRef.current = false;
           } else {
@@ -569,7 +683,10 @@ export function SourceImageUploadMultiple({
         },
         onCancel: () => {
           // Clear early uploading markers
-          for (const id of earlyUploadIds) setImageUploading(id, false);
+          for (const id of earlyUploadIds) {
+            setImageUploading(id, false);
+            trackedUploadingIdsRef.current.delete(id);
+          }
 
           // Remove pending upload indicators
           setUploads((prev) => prev.filter((x) => !pendingUrlSet.has(x.url)));
@@ -611,8 +728,11 @@ export function SourceImageUploadMultiple({
   }
 
   // Slots mode: upload one or more images to specific slots.
-  // Resolves dimensions, eagerly sets value, then delegates to the shared
-  // openCropModal or uploads directly. Uses the same pipeline as non-slot mode.
+  // Tracks slot positions internally and only commits to value once the
+  // orchestrator URLs are ready — never writes blob URLs into value.
+  // The crop modal (when applicable) operates on blob URLs in its own state
+  // without touching value. Slot dropzone loading state is rendered from the
+  // `uploads` list (matched by slotIndex), not from value.
   async function handleSlotUpload(entries: { slotIndex: number; src: File | string }[]) {
     // Validate file sizes
     for (const { src } of entries) {
@@ -630,12 +750,18 @@ export function SourceImageUploadMultiple({
       previewUrl: typeof src === 'string' ? src : URL.createObjectURL(src),
       uploadId: getRandomId(),
     }));
+    const itemIds = new Set(items.map((x) => x.uploadId));
 
     // Mark as uploading immediately so useImagesUploadingOrVerifying blocks
-    // the whatIf query before blob URLs reach the graph
-    for (const { uploadId } of items) setImageUploading(uploadId, true);
+    // the whatIf query before any value changes happen.
+    for (const { uploadId } of items) {
+      setImageUploading(uploadId, true);
+      trackedUploadingIdsRef.current.add(uploadId);
+    }
 
-    // Show upload indicators in slots
+    // Show upload indicators in slots. The slot renderer keys off
+    // `uploads.find(u => u.slotIndex === slotIndex)` so this is sufficient
+    // to display loading state without writing anything to value.
     setUploads((prev) => {
       const slotIndices = new Set(items.map((x) => x.slotIndex));
       return [
@@ -649,8 +775,15 @@ export function SourceImageUploadMultiple({
       ];
     });
 
+    const cleanupTracking = () => {
+      for (const { uploadId } of items) {
+        setImageUploading(uploadId, false);
+        trackedUploadingIdsRef.current.delete(uploadId);
+      }
+    };
+
     try {
-      // Resolve dimensions (cache-first)
+      // Resolve dimensions (cache-first) so we can detect whether cropping is needed.
       const dimensioned = await Promise.all(
         items.map(async (item) => {
           const cached = sourceMetadataStore.getMetadata(item.previewUrl);
@@ -665,68 +798,118 @@ export function SourceImageUploadMultiple({
         })
       );
 
-      // Eagerly set value at slot positions so concurrent uploads see each other
-      const latestValue = valueRef.current ? [...valueRef.current] : [];
-      for (const { slotIndex, previewUrl, width, height } of dimensioned) {
-        while (latestValue.length <= slotIndex) {
-          latestValue.push(undefined as unknown as SourceImageProps);
-        }
-        latestValue[slotIndex] = { url: previewUrl, width, height };
-      }
-      const allImages = latestValue.filter(Boolean) as SourceImageProps[];
-      onChange?.(allImages);
+      // If cropping is required, open the crop modal and await the user's
+      // crops as a promise. The crop modal operates entirely on blob URLs in
+      // its own props — value is never touched.
+      type CropResult = { slotIndex: number; src: Blob | File | string; uploadId: string };
+      let toUpload: CropResult[];
 
-      const newUrls = dimensioned.map((d) => d.previewUrl);
-
-      // Check crop — delegate to shared openCropModal
-      if (getShouldCrop(allImages)) {
-        openCropModal(
-          allImages.map((img) => ({ ...img, aspectRatio: img.width / img.height })),
-          newUrls
-        );
-      } else {
-        // No crop needed — upload each and swap URL in value as each completes
-        await Promise.all(
-          dimensioned.map(async ({ src, uploadId, previewUrl }) => {
-            try {
-              const response = await uploadOrchestratorImage(src, uploadId);
-              if (response.blockedReason || !response.available || !response.url) {
-                setUploads((prev) =>
-                  prev.map((item) =>
-                    item.id === uploadId
-                      ? {
-                          status: 'error' as const,
-                          url: previewUrl,
-                          src,
-                          error: response.blockedReason ?? 'Upload failed',
-                          id: uploadId,
-                        }
-                      : item
-                  )
+      if (getShouldCrop(dimensioned)) {
+        isCroppingRef.current = true;
+        const cropResult = await new Promise<CropResult[] | null>((resolve) => {
+          dialogStore.trigger({
+            id: 'image-crop-modal',
+            component: ImageCropModal,
+            props: {
+              images: dimensioned.map((d) => ({
+                url: d.previewUrl,
+                width: d.width,
+                height: d.height,
+                aspectRatio: d.width / d.height,
+              })),
+              aspectRatios,
+              onConfirm: (output: { src: string; cropped?: Blob }[]) => {
+                resolve(
+                  output.map((o, i) => ({
+                    slotIndex: dimensioned[i].slotIndex,
+                    src: o.cropped ?? dimensioned[i].src,
+                    uploadId: dimensioned[i].uploadId,
+                  }))
                 );
-                return;
-              }
-              // Swap preview URL with orchestrator URL in value
-              const result = {
+              },
+              onCancel: () => resolve(null),
+            },
+          });
+        });
+        isCroppingRef.current = false;
+
+        if (!cropResult) {
+          // Cancelled — clear upload indicators and tracking, leave value alone.
+          setUploads((prev) => prev.filter((x) => !x.id || !itemIds.has(x.id)));
+          cleanupTracking();
+          return;
+        }
+        toUpload = cropResult;
+      } else {
+        toUpload = dimensioned.map((d) => ({
+          slotIndex: d.slotIndex,
+          src: d.src,
+          uploadId: d.uploadId,
+        }));
+      }
+
+      // Upload all in parallel and collect successful results with their slot.
+      const uploadResults = await Promise.all(
+        toUpload.map(async ({ slotIndex, src, uploadId }) => {
+          try {
+            const response = await uploadOrchestratorImage(src, uploadId);
+            if (response.blockedReason || !response.available || !response.url) {
+              const previewUrl =
+                items.find((x) => x.uploadId === uploadId)?.previewUrl ?? '';
+              setUploads((prev) =>
+                prev.map((item) =>
+                  item.id === uploadId
+                    ? {
+                        status: 'error' as const,
+                        url: previewUrl,
+                        src,
+                        error: response.blockedReason ?? 'Upload failed',
+                        id: uploadId,
+                        slotIndex,
+                      }
+                    : item
+                )
+              );
+              return null;
+            }
+            return {
+              slotIndex,
+              uploadId,
+              result: {
                 url: response.url,
                 width: response.width,
                 height: response.height,
-              };
-              const latest = valueRef.current;
-              if (latest) {
-                onChange?.(latest.map((img) => (img.url === previewUrl ? result : img)));
-              }
-              setUploads((prev) => prev.filter((x) => x.id !== uploadId));
-            } catch {
-              setUploads((prev) => prev.filter((x) => x.id !== uploadId));
-            }
-          })
-        );
+              },
+            };
+          } catch {
+            return null;
+          }
+        })
+      );
+
+      const successful = uploadResults.filter(isDefined);
+      if (successful.length > 0) {
+        // Build the new value with successful uploads placed at their slot
+        // positions. This is the only place handleSlotUpload calls onChange.
+        const next = valueRef.current ? [...valueRef.current] : [];
+        for (const { slotIndex, result } of successful) {
+          while (next.length <= slotIndex) {
+            next.push(undefined as unknown as SourceImageProps);
+          }
+          next[slotIndex] = result;
+        }
+        onChange?.(next.filter(Boolean) as SourceImageProps[]);
       }
+
+      // Clear uploading entries for successful uploads (errored entries stay
+      // visible so the user can see the error message).
+      const successfulIds = new Set(successful.map((s) => s.uploadId));
+      setUploads((prev) => prev.filter((x) => !x.id || !successfulIds.has(x.id)));
+      cleanupTracking();
     } catch (e) {
       setError((e as Error).message);
-      const ids = new Set(items.map((x) => x.uploadId));
-      setUploads((prev) => prev.filter((x) => !x.id || !ids.has(x.id)));
+      setUploads((prev) => prev.filter((x) => !x.id || !itemIds.has(x.id)));
+      cleanupTracking();
     }
   }
 
