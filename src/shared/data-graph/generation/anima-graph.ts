@@ -11,6 +11,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
   negativePromptNode,
   samplerNode,
   schedulerNode,
@@ -76,6 +77,7 @@ export const animaGraph = new DataGraph<{ ecosystem: string; workflow: string },
       }),
     []
   )
+  .merge(createResourcesGraph())
   .node('seed', seedNode())
   .node('aspectRatio', aspectRatioNode({ options: animaAspectRatios, defaultValue: '1:1' }))
   .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 7, step: 0.5 }))

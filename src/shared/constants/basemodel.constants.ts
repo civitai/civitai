@@ -849,7 +849,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Anima - checkpoint only
-  { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
