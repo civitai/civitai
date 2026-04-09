@@ -1,3 +1,4 @@
+import { LRUCache } from 'lru-cache';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
@@ -6,7 +7,7 @@ import { addCorsHeaders, TokenSecuredEndpoint } from '~/server/utils/endpoint-he
 const schema = z.object({
   url: z.string(),
 });
-const resultCache = new Map<string, any>();
+const resultCache = new LRUCache<string, any>({ max: 1000, ttl: 30 * 60 * 1000 });
 
 export default TokenSecuredEndpoint(
   env.HIVE_VISUAL_TOKEN?.slice(0, 5) ?? 'dummy',

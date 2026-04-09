@@ -14,6 +14,8 @@ export type TtlCacheOptions = {
   refreshOnAccess?: boolean;
   /** Optional name for metrics tracking (default: 'unnamed') */
   name?: string;
+  /** Maximum number of entries (default: 10000). Oldest entries are evicted when exceeded. */
+  max?: number;
 };
 
 /**
@@ -50,11 +52,17 @@ export class TtlCache<T> {
   private ttl: number;
   private refreshOnAccess: boolean;
   private name: string;
+  private max: number;
 
   constructor(options: TtlCacheOptions = {}) {
     this.ttl = options.ttl ?? 60 * 60 * 1000; // Default 1 hour
     this.refreshOnAccess = options.refreshOnAccess ?? true;
     this.name = options.name ?? 'unnamed';
+    this.max = options.max ?? 10_000;
+
+    // Periodic cleanup of expired entries every 5 minutes
+    const interval = setInterval(() => this.cleanup(), 5 * 60 * 1000);
+    interval.unref(); // Don't prevent process exit
   }
 
   /**
@@ -101,6 +109,22 @@ export class TtlCache<T> {
       data,
       expiresAt: Date.now() + this.ttl,
     });
+    this.evictIfNeeded();
+  }
+
+  /**
+   * Evict oldest entries when cache exceeds max size.
+   * Map iteration order is insertion order, so the first entries are the oldest.
+   */
+  private evictIfNeeded(): void {
+    if (this.cache.size <= this.max) return;
+    const toRemove = this.cache.size - this.max;
+    let removed = 0;
+    for (const key of this.cache.keys()) {
+      if (removed >= toRemove) break;
+      this.cache.delete(key);
+      removed++;
+    }
   }
 
   /**
@@ -116,6 +140,7 @@ export class TtlCache<T> {
         expiresAt,
       });
     }
+    this.evictIfNeeded();
   }
 
   /**
