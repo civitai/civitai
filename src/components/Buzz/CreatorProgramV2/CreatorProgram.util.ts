@@ -216,7 +216,7 @@ export const useCreatorProgramMutate = () => {
     withdrawCash: handleWithdrawCash,
     withdrawingCash: withdrawCashMutation.isLoading,
     extractBuzz: handleExtractBuzz,
-    extractingBuzz: extractBuzzMutation,
+    extractingBuzz: extractBuzzMutation.isLoading,
   };
 };
 

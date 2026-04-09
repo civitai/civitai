@@ -1027,26 +1027,30 @@ export const getPrevMonthStats = async () => {
       const extractedCreators = participants.filter((p) => p.extracted > 0);
       const median = Math.floor(cashedOutCreators.length / 2);
 
+      const totalBankedBuzz = cashedOutCreators.reduce((acc, p) => acc + p.amount, 0);
+      const hasCashedOut = cashedOutCreators.length > 0;
+
       const data = {
         dollarValue: compensationPool.value,
         creatorCount: participants.length,
-        totalBankedBuzz: cashedOutCreators.reduce((acc, p) => acc + p.amount, 0),
+        totalBankedBuzz,
         extractedCreatorCount: extractedCreators.length,
         cashedOutCreatorCount: cashedOutCreators.length,
         totalExtractedBuzz: extractedCreators.reduce((acc, p) => acc + p.extracted, 0),
         dollarAmountPerThousand: formatToLeastDecimals(getCurrentValue(1000, compensationPool)),
-        dollarHighestEarned: formatToLeastDecimals(
-          getCurrentValue(cashedOutCreators[0].amount, compensationPool)
-        ),
-        dollarAverageEarned: formatToLeastDecimals(
-          getCurrentValue(
-            cashedOutCreators.reduce((acc, p) => acc + p.amount, 0) / cashedOutCreators.length,
-            compensationPool
-          )
-        ),
-        dollarMedianEarned: formatToLeastDecimals(
-          getCurrentValue(cashedOutCreators[median].amount, compensationPool)
-        ),
+        dollarHighestEarned: hasCashedOut
+          ? formatToLeastDecimals(getCurrentValue(cashedOutCreators[0].amount, compensationPool))
+          : '0',
+        dollarAverageEarned: hasCashedOut
+          ? formatToLeastDecimals(
+              getCurrentValue(totalBankedBuzz / cashedOutCreators.length, compensationPool)
+            )
+          : '0',
+        dollarMedianEarned: hasCashedOut
+          ? formatToLeastDecimals(
+              getCurrentValue(cashedOutCreators[median].amount, compensationPool)
+            )
+          : '0',
       };
 
       return data;

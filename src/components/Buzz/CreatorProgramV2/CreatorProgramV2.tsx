@@ -780,7 +780,7 @@ const WithdrawCashCard = () => {
         message: 'You have successfully created a cash transaction.',
       });
 
-      setToWithdraw(MIN_WITHDRAWAL_AMOUNT);
+      setToWithdraw(MIN_WITHDRAWAL_AMOUNT / 100);
     } catch (error) {
       // no-op. The mutation should handle it.
     }

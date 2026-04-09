@@ -6,115 +6,67 @@ This PR unifies the yellow/green compensation pools into a single pool and adds 
 
 ---
 
-## Concerns
+## Open Concerns
 
-### 1. `clearCacheByPattern` — is it imported?
-
-**File:** [creator-program.service.ts](../src/server/services/creator-program.service.ts)
-
-`bustCompensationPoolCache` calls `clearCacheByPattern(...)` to clean up legacy per-type cache keys, but it's not clear this function is imported or exists. If it's missing, the cache bust will throw at runtime.
-
-**Action:** Verify `clearCacheByPattern` is imported and available from the cache utility module.
-
----
-
-### 2. ClickHouse query: `LIMIT 1` -> `LIMIT 1 BY id`
-
-**File:** [creator-program.service.ts](../src/server/services/creator-program.service.ts) — `createUserCapCache`
-
-The cap query was changed from `LIMIT 1` to `LIMIT 1 BY id`. This is correct for returning one row **per user** (instead of one row total across all users in the batch), but:
-
-- Was the old `LIMIT 1` actually a bug, or was it intentional because the query was already scoped to a single buzz type?
-- With the unified pool now aggregating across yellow+green, `LIMIT 1 BY id` is necessary. But confirm the `ORDER BY earned DESC` still applies per-group (ClickHouse `LIMIT BY` respects the preceding `ORDER BY`).
-
-**Action:** Verify the query returns the peak earning month per user, not just the global max.
-
----
-
-### 3. Distribution job — `externalTransactionId` format change
+### 1. Distribution job — `externalTransactionId` format change
 
 **File:** [creators-program-jobs.ts](../src/server/jobs/creators-program-jobs.ts)
 
 Old format: `comp-pool-${monthStr}-${userId}-${buzzType}`
 New format: `comp-pool-unified-${monthStr}-${userId}`
 
-If this job runs during a transition month where the old format was already used for one buzz type, the new unified ID won't collide with the old per-type IDs. This means a user could theoretically receive both a per-type and a unified payout for the same month.
+If this job runs during a transition month where the old format was already used for one buzz type, the new unified ID won't collide with the old per-type IDs. This means a user could theoretically receive both a per-type and a unified payout for the same month. In practice the risk is very low — the job runs on the last day of the month and advances the month state atomically via `dbKV`, so reprocessing a month would only happen if the old code partially ran and crashed before advancing.
 
-**Action:** Confirm that either (a) the transition happens cleanly on a month boundary, or (b) there's a guard against double-distribution.
-
----
-
-### 4. `MatureContentMigrationAlert` — `dismissAlert` endpoint
-
-**File:** [MatureContentMigrationAlert.tsx](../src/components/Alerts/MatureContentMigrationAlert.tsx)
-
-The component calls `trpc.user.dismissAlert.useMutation()`. This endpoint needs to exist and accept `{ alertId: string }`.
-
-**Action:** Verify the `user.dismissAlert` tRPC route exists and handles the `alertId` parameter.
+**Status:** Accepted risk — no fix needed.
 
 ---
 
-### 5. Whitespace-only lines where `type` prop was removed from `CurrencyIcon`
+### 2. Low priority cleanup
 
-**File:** [CreatorProgramV2.modals.tsx](../src/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals.tsx) — lines ~316, ~322
-
-When `type={activeBuzzType}` was removed, the lines were left with extra whitespace:
-
-```tsx
-<CurrencyIcon
-  currency={Currency.BUZZ}
-                          className="inline"
-/>
-```
-
-This is cosmetic but should be cleaned up for consistency.
-
-**Action:** Remove the extra whitespace on those lines.
+- **`getBankAccountType` unused param** ([creator-program.service.ts](../src/server/services/creator-program.service.ts)): Takes `_buzzType?: BuzzSpendType` but always returns `'creatorProgramBank'`. Could remove param and update call sites.
 
 ---
 
-### 6. `MIN_CAP` import removed from service but still referenced in modals
+## Pre-existing bugs fixed in this PR
 
-**File:** [creator-program.service.ts](../src/server/services/creator-program.service.ts) — `MIN_CAP` was removed from imports.
+### `extractingBuzz` returned mutation object instead of `.isLoading`
 
-`CreatorProgramCapsInfo` in [CreatorProgramV2.modals.tsx](../src/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals.tsx) still references `MIN_CAP`. Verify it imports `MIN_CAP` from the constants file directly and doesn't depend on a re-export from the service.
+**File:** [CreatorProgram.util.ts:219](../src/components/Buzz/CreatorProgramV2/CreatorProgram.util.ts#L219)
 
-**Action:** Confirm `MIN_CAP` is imported from `creator-program.constants` in the modals file.
+Was returning the entire mutation object instead of `.isLoading`, meaning the extract button had no loading indicator and users could double-click. **Fixed.**
 
----
+### `setToWithdraw(MIN_WITHDRAWAL_AMOUNT)` missing `/ 100`
 
-### 7. Extraction fee edge case — zero-amount types
+**File:** [CreatorProgramV2.tsx:783](../src/components/Buzz/CreatorProgramV2/CreatorProgramV2.tsx#L783)
 
-**File:** [creator-program.service.ts](../src/server/services/creator-program.service.ts) — `extractBuzz`
+After withdrawal, the input reset to raw cents instead of dollars. **Fixed.**
 
-The proportional fee splitting uses `Math.floor` per type with last-type-gets-remainder. If a user has a tiny balance in one type (e.g., 1 yellow, 99999 green), the floor division assigns 0 to yellow and the full fee to green. This is mathematically correct but worth confirming it's the desired behavior (no minimum fee per type).
+### `getPrevMonthStats` crashes on empty participants
 
-**Action:** Low priority — just confirm intent.
+**File:** [creator-program.service.ts:1038-1048](../src/server/services/creator-program.service.ts#L1038-L1048)
 
----
-
-### 8. `getBankAccountType` still accepts `_buzzType` parameter
-
-**File:** [creator-program.service.ts](../src/server/services/creator-program.service.ts)
-
-`getBankAccountType` takes `_buzzType?: BuzzSpendType` but always returns `'creatorProgramBank'`. The parameter exists for backwards compat at call sites. Consider removing the parameter entirely and updating all call sites to make the unification intent explicit.
-
-**Action:** Low priority cleanup.
+`cashedOutCreators[0].amount` throws if no one cashed out, and the error gets cached for `CacheTTL.month`. **Fixed** with `hasCashedOut` guard.
 
 ---
 
-### 9. `reset-bank.ts` — admin top-up uses `TransactionType.Bank` from account 0
+## Verified Non-Issues
 
-**File:** [reset-bank.ts](../src/pages/api/mod/reset-bank.ts) — lines 66-74
-
-When a mod resets a user's bank and the extraction exceeds the current pool balance, a top-up transaction is created with `fromAccountId: 0`, `TransactionType.Bank`. This could cause account 0 to appear as a "participant" in `getPoolParticipants` queries that aggregate bank transactions. The underfunding concern Copilot raised (per-type vs total comparison) is **not an issue** — the code correctly compares `totalToExtract` (combined) against `currentValue` before the per-type extraction loop.
-
-**Action:** Consider using a distinct transaction type (e.g., `TransactionType.Adjustment`) or a non-bankable `fromAccountType` for the admin top-up to avoid polluting participant queries. Low risk since this is a mod-only endpoint.
+- **`clearCacheByPattern` import** — Imported at line 33 from `cache-helpers.ts`.
+- **`LIMIT 1` -> `LIMIT 1 BY id`** — Already fixed in this PR. Returns peak earning month per user correctly.
+- **`reset-bank.ts` admin top-up from account 0** — userId=0 is the Civitai system account. Participant queries filter through `User` table which excludes it.
+- **`dismissAlert` endpoint** — Exists at `user.router.ts:225` with schema and handler.
+- **`MIN_CAP` import** — Modals file imports directly from `creator-program.constants`, not from the service.
+- **Whitespace in modals** — Fixed by author.
 
 ---
 
-## Copilot Concern: `getBanked` return type
+## Copilot Concerns — All Non-Issues
 
-> Copilot flagged: `getBanked` returns `perType` built only from `buzzBankTypes` but cast to `Record<BuzzSpendType, number>`, implying keys like `blue`/`red` exist.
-
-**Status: Not an issue.** The cast at line 184-186 is already `Record<(typeof buzzBankTypes)[number], number>`, which narrows to `'yellow' | 'green'`. The type is correct as written.
+| Concern | Status | Reason |
+| ------- | ------ | ------ |
+| `LIMIT 1` returns global peak instead of per-user | Already fixed | PR changed to `LIMIT 1 BY id` at line 123 |
+| Division by zero in distribution job | Guarded | Line 60 early-returns when `pool.size.current <= 0` |
+| `createBuzzTransactionMany` not awaited | Wrong | Line 88 clearly shows `await` |
+| `getBanked` return type too broad | Wrong | Cast is already `Record<(typeof buzzBankTypes)[number], number>` |
+| `reset-bank.ts` underfunding / userId=0 pollution | Wrong | Total comparison is correct; userId=0 is system account |
+| Plan doc out of date | N/A | File doesn't exist in repo |
