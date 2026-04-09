@@ -18,10 +18,6 @@ import { completeClubMembershipCharge } from '~/server/services/clubMembership.s
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
-import { createLogger } from '~/utils/logging';
-
-const log = createLogger('stripe-webhook', 'blue');
-
 // Stripe requires the raw body to construct the event.
 export const config = {
   api: {
@@ -49,8 +45,6 @@ const relevantEvents = new Set([
   'product.deleted',
   'product.updated',
   'invoice.paid',
-  'invoice.payment_failed',
-  'checkout.session.expired',
   'payment_intent.succeeded',
 ]);
 
@@ -85,20 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const invoice = event.data.object as Stripe.Invoice;
             await manageInvoicePaid(invoice);
             break;
-          case 'invoice.payment_failed':
-            const failedInvoice = event.data.object as Stripe.Invoice;
-            log(
-              'Invoice payment failed:',
-              failedInvoice.id,
-              'subscription:',
-              failedInvoice.subscription
-            );
-            break;
-          case 'checkout.session.expired':
-            const expiredSession = event.data.object as Stripe.Checkout.Session;
-            log('Checkout session expired:', expiredSession.id);
-            break;
-          case 'product.created':
+case 'product.created':
           case 'product.updated':
           case 'product.deleted':
             await upsertProductRecord(event.data.object as Stripe.Product);
