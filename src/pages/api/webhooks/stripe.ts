@@ -62,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let event: Stripe.Event;
 
     // Track to ClickHouse (fire and forget, never throws)
-    trackWebhookEvent('stripe', rawPayload).catch(() => {});
+    trackWebhookEvent('stripe', rawPayload).catch(() => null);
 
     try {
       if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
@@ -79,7 +79,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const invoice = event.data.object as Stripe.Invoice;
             await manageInvoicePaid(invoice);
             break;
-case 'product.created':
+          case 'product.created':
           case 'product.updated':
           case 'product.deleted':
             await upsertProductRecord(event.data.object as Stripe.Product);

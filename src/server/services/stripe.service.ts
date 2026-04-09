@@ -835,7 +835,9 @@ export const getPaymentIntent = async ({
 
   if (unitAmount < buzzConstants.minStripeChargeAmount) {
     throw throwBadRequestError(
-      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minStripeChargeAmount / 100)}`
+      `Minimum purchase amount is $${formatPriceForDisplay(
+        buzzConstants.minStripeChargeAmount / 100
+      )}`
     );
   }
 
