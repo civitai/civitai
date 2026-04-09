@@ -626,7 +626,7 @@ const createRecurringBids = async (now: Dayjs) => {
             where: { id: recurringBid.entityId },
             select: { model: { select: { nsfw: true, poi: true, minor: true } } },
           });
-          if (mv && (mv.model.nsfw || mv.model.poi || mv.model.minor)) {
+          if (!mv || mv.model.nsfw || mv.model.poi || mv.model.minor) {
             log(`Skipping recurring bid ${recurringBid.id}: model not allowed on green`);
             continue;
           }
