@@ -16,13 +16,6 @@ import {
   withdrawCash,
 } from '~/server/services/creator-program.service';
 import { protectedProcedure, router } from '~/server/trpc';
-import { z } from 'zod';
-import { preprocessAccountType } from '~/server/schema/buzz.schema';
-import { buzzBankTypes } from '~/shared/constants/buzz.constants';
-
-const buzzTypeSchema = z.object({
-  buzzType: z.preprocess(preprocessAccountType, z.enum(buzzBankTypes)),
-});
 
 export const creatorProgramRouter = router({
   getCreatorRequirements: protectedProcedure.query(({ ctx }) =>
@@ -35,21 +28,21 @@ export const creatorProgramRouter = router({
     .input(compensationPoolInputSchema)
     .query(({ input }) => getCompensationPool(input)),
   getCash: protectedProcedure.query(({ ctx }) => getCash(ctx.user.id)),
-  getBanked: protectedProcedure.input(buzzTypeSchema).query(({ ctx, input }) => {
-    return getBanked(ctx.user.id, input.buzzType);
+  getBanked: protectedProcedure.query(({ ctx }) => {
+    return getBanked(ctx.user.id);
   }),
   getWithdrawalHistory: protectedProcedure.query(({ ctx }) => getWithdrawalHistory(ctx.user.id)),
 
   bankBuzz: protectedProcedure.input(bankBuzzSchema).mutation(({ ctx, input }) => {
     return bankBuzz(ctx.user.id, input.amount, input.accountType);
   }),
-  extractBuzz: protectedProcedure.input(buzzTypeSchema).mutation(({ ctx, input }) => {
-    return extractBuzz(ctx.user.id, input.buzzType);
+  extractBuzz: protectedProcedure.mutation(({ ctx }) => {
+    return extractBuzz(ctx.user.id);
   }),
   withdrawCash: protectedProcedure.input(withdrawCashSchema).mutation(({ ctx, input }) => {
     return withdrawCash(ctx.user.id, input.amount);
   }),
-  getPrevMonthStats: protectedProcedure.input(buzzTypeSchema).query(({ input }) => {
-    return getPrevMonthStats(input.buzzType);
+  getPrevMonthStats: protectedProcedure.query(() => {
+    return getPrevMonthStats();
   }),
 });

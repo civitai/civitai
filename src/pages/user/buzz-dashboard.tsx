@@ -106,10 +106,7 @@ export default function UserBuzzDashboard() {
 
   return (
     <>
-      <Meta
-        title="Civitai | My Buzz Dashboard"
-        deIndex
-      />
+      <Meta title="Civitai | My Buzz Dashboard" deIndex />
       <Container size="lg">
         <Stack gap="md">
           <Stack gap="md">
@@ -162,19 +159,22 @@ export default function UserBuzzDashboard() {
           ) : null}
 
           {/* Prepaid Token Claim Section (yellow buzz only, Civitai prepaid members) */}
-          {selectedAccountType === 'yellow' && isCivitaiPrepaid && subscription && (() => {
-            const prepaidTokens = getPrepaidTokens({
-              metadata: subscription.metadata as SubscriptionMetadata,
-            });
-            const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
-            return (
-              <PrepaidTokenOverview
-                tokens={prepaidTokens}
-                nextUnlockDate={nextUnlockDate}
-                subscription={subscription}
-              />
-            );
-          })()}
+          {selectedAccountType === 'yellow' &&
+            isCivitaiPrepaid &&
+            subscription &&
+            (() => {
+              const prepaidTokens = getPrepaidTokens({
+                metadata: subscription.metadata as SubscriptionMetadata,
+              });
+              const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
+              return (
+                <PrepaidTokenOverview
+                  tokens={prepaidTokens}
+                  nextUnlockDate={nextUnlockDate}
+                  subscription={subscription}
+                />
+              );
+            })()}
 
           {/* Ways to Earn Rewards (hidden when empty) */}
           {(loadingRewards || multipliersLoading || hasRewards) && (
@@ -230,16 +230,9 @@ export default function UserBuzzDashboard() {
           )}
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
-          {selectedAccountType === 'green' && (
-            <Alert color="yellow" title="Green Creator Program Temporarily Disabled">
-              <Text>
-                The Green Creator Program is temporarily disabled and will return in at a later
-                date. In the meantime, you can still earn and use Green Buzz for other activities on
-                the platform.
-              </Text>
-            </Alert>
+          {(selectedAccountType === 'yellow' || selectedAccountType === 'green') && (
+            <CreatorProgramV2 />
           )}
-          {selectedAccountType === 'yellow' && <CreatorProgramV2 buzzType="yellow" />}
           {selectedAccountType === 'red' && <GetPaid />}
         </Stack>
       </Container>
