@@ -362,9 +362,43 @@ export const cancelSubscriptionWithFallback = async ({
     const result = await createCancelSubscriptionSession({ customerId });
     return { type: 'redirect' as const, url: result.url };
   } catch (portalError) {
+    // Only fall back for Stripe/portal errors, not for "no subscription found"
+    const errorMessage = portalError instanceof Error ? portalError.message : String(portalError);
+    if (errorMessage.includes('No active subscription')) {
+      throw portalError;
+    }
+
     log('Portal cancellation failed, attempting direct cancellation:', portalError);
-    await cancelSubscription({ userId });
+
+    // Look up the subscription to ensure it exists before attempting direct cancel.
+    // Only allow direct cancellation for statuses where the user has been paying —
+    // incomplete/unpaid subscriptions should only be cancelled via the Stripe portal
+    // to avoid losing the ability to collect pending payments.
+    const subscription = await dbWrite.customerSubscription.findFirst({
+      where: {
+        userId,
+        product: { provider: 'Stripe' },
+        status: { in: ['active', 'past_due', 'trialing'] },
+      },
+      select: { id: true },
+    });
+
+    if (!subscription) {
+      throw throwBadRequestError(
+        'Unable to cancel subscription. Please contact support for assistance.'
+      );
+    }
+
+    await stripe.subscriptions.del(subscription.id);
+
+    // Optimistically delete the DB record so the UI reflects the cancellation
+    // immediately rather than waiting for the webhook. The webhook handler
+    // (customer.subscription.deleted) is idempotent and handles missing records.
+    await dbWrite.customerSubscription.delete({ where: { id: subscription.id } }).catch(() => {
+      // Record may already be deleted by a concurrent webhook — safe to ignore
+    });
     await invalidateSubscriptionCaches(userId);
+
     return { type: 'direct' as const };
   }
 };
@@ -461,6 +495,10 @@ export const upsertSubscription = async (
 
   if (isCancelingSubscription && subscription.cancel_at === null) {
     // immediate cancel:
+    if (!mainSubscription) {
+      log('Subscription already deleted (e.g., by direct cancellation fallback)');
+      return;
+    }
     log('Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     await invalidateSubscriptionCaches(user.id);
@@ -726,7 +764,7 @@ export const cancelSubscription = async ({
           provider: 'Stripe',
         },
         status: {
-          in: ['active', 'past_due', 'trialing', 'incomplete', 'unpaid'],
+          in: ['active', 'past_due', 'trialing'],
         },
       },
       select: { id: true },
