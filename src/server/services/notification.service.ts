@@ -164,6 +164,28 @@ export const markNotificationsRead = async ({
   all = false,
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
+  // Fire-and-forget: the UI optimistically marks as read, so we don't need to
+  // block the response on the cross-Atlantic write to DO managed Postgres.
+  // Errors are logged but not surfaced to the user.
+  const writePromise = _markNotificationsReadImpl({ id, userId, all, category });
+  writePromise.catch((err) => {
+    logToAxiom({
+      type: 'warning',
+      name: 'notification.markRead',
+      message: `Failed to mark notifications read: ${(err as Error).message}`,
+      userId,
+      all,
+      category,
+    }).catch(() => {});
+  });
+};
+
+async function _markNotificationsReadImpl({
+  id,
+  userId,
+  all,
+  category,
+}: MarkReadNotificationInput & { userId: number; all: boolean }) {
   if (all) {
     if (category) {
       // Join only needed when filtering by category
@@ -220,7 +242,7 @@ export const markNotificationsRead = async ({
         notificationCache.decrementUser(userId, catData[0].category).catch(() => {});
     }
   }
-};
+}
 
 export const createUserNotificationSetting = async ({
   type,
