@@ -682,7 +682,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
     primary: {
       extensions: [...ggufExts, '.onnx'],
-      fileTypes: ['Model', 'Pruned Model'],
+      fileTypes: ['Model', 'Pruned Model', 'UNet', 'Diffusion Model'],
       maxFiles: 8,
     },
     additional: {
@@ -691,8 +691,6 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
         'VAE',
         'Config',
         'Training Data',
-        'UNet',
-        'Diffusion Model',
         'CLIPVision',
         'ControlNet',
         'Text Encoder',
