@@ -369,6 +369,8 @@ function PriorityAlertSpace({
         </Text>
       </Notification>
     );
+  } else if (membershipUpsell.canShow) {
+    priorityAlert = <MembershipUpsell />;
   }
 
   return (
@@ -458,6 +460,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
+  const membershipUpsell = useMembershipUpsell();
 
   // Get validation state from whatIf context
   const { canEstimateCost, validationErrors } = useWhatIfContext();
@@ -668,57 +671,59 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         snackbarRight={<CostBreakdown />}
       />
 
-      <div className="flex h-[52px] items-stretch gap-2">
-        <Controller
-          graph={graph}
-          name="quantity"
-          render={({ value, meta, onChange }) => (
-            <Card withBorder className="flex max-w-[68px] flex-col p-0">
-              <NumberInput
-                value={value ?? 1}
-                onChange={(val) => onChange(Number(val) || 1)}
-                min={meta.min}
-                max={meta.max}
-                step={meta.step}
-                size="md"
-                variant="unstyled"
-                styles={{
-                  root: { flex: 1 },
-                  wrapper: { height: '100%' },
-                  input: {
-                    textAlign: 'center',
-                    fontWeight: 600,
-                    paddingRight: 27,
-                    lineHeight: 1,
-                    paddingTop: 6,
-                    paddingBottom: 16,
-                    height: '100%',
-                  },
-                }}
-              />
-              <Text
-                className="pr-6 text-center text-[10px] font-semibold"
-                c="dimmed"
-                style={{ marginTop: -16 }}
-              >
-                QTY
-              </Text>
-            </Card>
-          )}
-        />
-        <Button.Group className="flex-1">
-          <SubmitButton
-            isLoading={generateMutation.isLoading || isMinLoading}
-            onSubmit={handleSubmit}
+      {!membershipUpsell.needsAcknowledgment && (
+        <div className="flex h-[52px] items-stretch gap-2">
+          <Controller
+            graph={graph}
+            name="quantity"
+            render={({ value, meta, onChange }) => (
+              <Card withBorder className="flex max-w-[68px] flex-col p-0">
+                <NumberInput
+                  value={value ?? 1}
+                  onChange={(val) => onChange(Number(val) || 1)}
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step}
+                  size="md"
+                  variant="unstyled"
+                  styles={{
+                    root: { flex: 1 },
+                    wrapper: { height: '100%' },
+                    input: {
+                      textAlign: 'center',
+                      fontWeight: 600,
+                      paddingRight: 27,
+                      lineHeight: 1,
+                      paddingTop: 6,
+                      paddingBottom: 16,
+                      height: '100%',
+                    },
+                  }}
+                />
+                <Text
+                  className="pr-6 text-center text-[10px] font-semibold"
+                  c="dimmed"
+                  style={{ marginTop: -16 }}
+                >
+                  QTY
+                </Text>
+              </Card>
+            )}
           />
-          {currentUser && <ConnectedBuzzTypeSelector />}
-        </Button.Group>
-        <Tooltip label="Reset">
-          <ActionIcon onClick={handleReset} variant="default" className="h-auto" size="xl">
-            <IconRestore size={16} />
-          </ActionIcon>
-        </Tooltip>
-      </div>
+          <Button.Group className="flex-1">
+            <SubmitButton
+              isLoading={generateMutation.isLoading || isMinLoading}
+              onSubmit={handleSubmit}
+            />
+            {currentUser && <ConnectedBuzzTypeSelector />}
+          </Button.Group>
+          <Tooltip label="Reset">
+            <ActionIcon onClick={handleReset} variant="default" className="h-auto" size="xl">
+              <IconRestore size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </div>
+      )}
     </>
   );
 }
