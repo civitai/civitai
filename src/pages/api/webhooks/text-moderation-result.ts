@@ -111,17 +111,16 @@ export default WebhookEndpoint(async (req, res) => {
           break;
         }
 
-        // TODO: Re-enable once we've validated EntityModeration data
-        // const handler = entityHandlers[entityType];
-        // if (handler) {
-        //   await handler({
-        //     entityType,
-        //     entityId,
-        //     blocked,
-        //     triggeredLabels,
-        //     output: moderationStep.output,
-        //   });
-        // }
+        const handler = entityHandlers[entityType];
+        if (handler) {
+          await handler({
+            entityType,
+            entityId,
+            blocked,
+            triggeredLabels,
+            output: moderationStep.output,
+          });
+        }
         break;
       }
       case 'failed':
