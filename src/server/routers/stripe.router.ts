@@ -8,6 +8,7 @@ import {
   getPaymentIntentHandler,
   getSetupIntentHandler,
   createCancelSubscriptionSessionHandler,
+  cancelSubscriptionWithFallbackHandler,
 } from './../controllers/stripe.controller';
 import { publicProcedure, router, protectedProcedure } from '~/server/trpc';
 import * as Schema from '../schema/stripe.schema';
@@ -24,6 +25,9 @@ export const stripeRouter = router({
   ),
   createCancelSubscriptionSession: protectedProcedure.mutation(
     createCancelSubscriptionSessionHandler
+  ),
+  cancelSubscriptionWithFallback: protectedProcedure.mutation(
+    cancelSubscriptionWithFallbackHandler
   ),
   createDonateSession: protectedProcedure
     .input(Schema.createDonateSessionSchema)

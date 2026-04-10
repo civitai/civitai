@@ -93,7 +93,7 @@ type WanImageVersionCtx = {
  * Controls: negativePrompt, aspectRatio, enablePromptEnhancer
  */
 const wan27Graph = new DataGraph<WanImageVersionCtx, GenerationCtx>()
-  .node('negativePrompt', negativePromptNode())
+  .node('negativePrompt', negativePromptNode({ maxLength: 500 }))
   .node(
     'aspectRatio',
     (ctx) => ({

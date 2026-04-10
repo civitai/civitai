@@ -13,6 +13,7 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
 
 // Types derived from generation graph
@@ -23,7 +24,14 @@ type AnimaCtx = EcosystemGraphOutput & { ecosystem: 'Anima' };
  * Creates imageGen input for Anima ecosystem.
  */
 export const createAnimaInput = defineHandler<AnimaCtx, [ImageGenStepTemplate]>(
-  (data) => {
+  (data, ctx) => {
+    const loras: Record<string, number> = {};
+    if ('resources' in data && Array.isArray(data.resources)) {
+      for (const resource of data.resources as ResourceData[]) {
+        loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
+      }
+    }
+
     return [
       {
         $type: 'imageGen',
@@ -42,6 +50,7 @@ export const createAnimaInput = defineHandler<AnimaCtx, [ImageGenStepTemplate]>(
           seed: data.seed,
           quantity: data.quantity ?? 1,
           outputFormat: data.outputFormat,
+          loras: Object.keys(loras).length > 0 ? loras : undefined,
         }) as AnimaCreateImageGenInput,
       },
     ];
