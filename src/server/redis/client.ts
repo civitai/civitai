@@ -941,6 +941,9 @@ export const REDIS_KEYS = {
   QUEUES: {
     SEEN_IMAGES: 'queues:recent-images',
   },
+  ARTICLE: {
+    SCAN_UPDATE: 'article:scan-update',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`

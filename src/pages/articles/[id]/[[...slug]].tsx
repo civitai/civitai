@@ -25,6 +25,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { ArticleContextMenu } from '~/components/Article/ArticleContextMenu';
 import { ArticleDetailComments } from '~/components/Article/Detail/ArticleDetailComments';
+import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
 import { Sidebar } from '~/components/Article/Detail/Sidebar';
 import { ToggleArticleEngagement } from '~/components/Article/ToggleArticleEngagement';
 import {
@@ -352,6 +353,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   )}
                 </div>
               </AlertWithIcon>
+            )}
+            {article.status === ArticleStatus.Processing && isOwner && (
+              <ArticleScanStatus
+                articleId={article.id}
+                onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
+              />
             )}
           </Stack>
           <ContainerGrid2 gutter="xl">

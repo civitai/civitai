@@ -29,7 +29,7 @@ const featureFlags = createFeatureFlags({
   canWrite: ['public'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
-  articles: ['blue', 'red', 'public'],
+  articles: ['public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
@@ -111,13 +111,11 @@ const featureFlags = createFeatureFlags({
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
-  isBlue: ['public', 'blue'],
-  isRed: ['public', 'red'],
+  isBlue: ['public', 'blue', 'red'],
+  isRed: ['public', 'red', 'blue'],
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
   canBuyBuzz: ['public'],
-  adsEnabled: ['public', 'blue'],
-  useRedTheme: ['public', 'blue', 'red'],
-  useGreenTheme: ['green'],
+  adsEnabled: ['public'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],
@@ -150,6 +148,7 @@ const featureFlags = createFeatureFlags({
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
+  articleImageScanning: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -316,17 +315,8 @@ const hasFeature = (
       ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
     );
 
-    serverMatch = domains.some(([color, domain]) => {
-      if (
-        color === 'blue' &&
-        ['stage.civitai.com', 'stage-0.civitai.com', 'dev.civitai.com'].includes(host) &&
-        // No reason to forcefully enable `isBlue` if we can avoid it. The app doesn't rely on it for the most part.
-        key !== 'isBlue'
-      )
-        return true;
+    serverMatch = domains.some(([, domain]) => {
       if (host === domain) return true;
-      // Match any localhost port against a localhost domain
-      if (host.startsWith('localhost:') && domain?.startsWith('localhost:')) return true;
       return false;
     });
 
