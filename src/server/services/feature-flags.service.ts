@@ -117,6 +117,7 @@ const featureFlags = createFeatureFlags({
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
   useRedTheme: ['red'],
+  useGreenTheme: ['green'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],
@@ -145,7 +146,7 @@ const featureFlags = createFeatureFlags({
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
   auctionsMod: ['granted'],
-  challengePlatform: ['public'],
+  challengePlatform: ['blue', 'red', 'public'],
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],
