@@ -23,36 +23,35 @@ type AnimaCtx = EcosystemGraphOutput & { ecosystem: 'Anima' };
 /**
  * Creates imageGen input for Anima ecosystem.
  */
-export const createAnimaInput = defineHandler<AnimaCtx, [ImageGenStepTemplate]>(
-  (data, ctx) => {
-    const loras: Record<string, number> = {};
-    if ('resources' in data && Array.isArray(data.resources)) {
-      for (const resource of data.resources as ResourceData[]) {
-        loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
-      }
+export const createAnimaInput = defineHandler<AnimaCtx, [ImageGenStepTemplate]>((data, ctx) => {
+  const loras: Record<string, number> = {};
+  if ('resources' in data && Array.isArray(data.resources)) {
+    for (const resource of data.resources as ResourceData[]) {
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
     }
-
-    return [
-      {
-        $type: 'imageGen',
-        input: removeEmpty({
-          engine: 'sdcpp',
-          ecosystem: 'anima',
-          operation: 'createImage',
-          prompt: data.prompt,
-          negativePrompt: data.negativePrompt,
-          width: data.aspectRatio?.width,
-          height: data.aspectRatio?.height,
-          cfgScale: data.cfgScale,
-          steps: data.steps,
-          sampleMethod: data.sampler as SdCppSampleMethod,
-          schedule: data.scheduler as SdCppSchedule,
-          seed: data.seed,
-          quantity: data.quantity ?? 1,
-          outputFormat: data.outputFormat,
-          loras: Object.keys(loras).length > 0 ? loras : undefined,
-        }) as AnimaCreateImageGenInput,
-      },
-    ];
   }
-);
+
+  return [
+    {
+      $type: 'imageGen',
+      input: removeEmpty({
+        engine: 'sdcpp',
+        ecosystem: 'anima',
+        operation: 'createImage',
+        prompt: data.prompt,
+        negativePrompt: data.negativePrompt,
+        width: data.aspectRatio?.width,
+        height: data.aspectRatio?.height,
+        cfgScale: data.cfgScale,
+        steps: data.steps,
+        sampleMethod: data.sampler as SdCppSampleMethod,
+        schedule: data.scheduler as SdCppSchedule,
+        seed: data.seed,
+        quantity: data.quantity ?? 1,
+        outputFormat: data.outputFormat,
+        loras: Object.keys(loras).length > 0 ? loras : undefined,
+        diffuserModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+      }) as AnimaCreateImageGenInput,
+    },
+  ];
+});

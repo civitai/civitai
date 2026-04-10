@@ -965,7 +965,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2836417 },
-      modelLocked: true,
     },
   },
   {
