@@ -348,6 +348,63 @@ export const createCancelSubscriptionSession = async ({ customerId }: { customer
   return { url: session.url };
 };
 
+export const cancelSubscriptionWithFallback = async ({
+  customerId,
+  userId,
+}: {
+  customerId: string;
+  userId: number;
+}) => {
+  const stripe = await getServerStripe();
+  if (!stripe) throw throwBadRequestError('Stripe is not available');
+
+  try {
+    const result = await createCancelSubscriptionSession({ customerId });
+    return { type: 'redirect' as const, url: result.url };
+  } catch (portalError) {
+    // Only fall back for Stripe/portal errors, not for "no subscription found"
+    const errorMessage = portalError instanceof Error ? portalError.message : String(portalError);
+    if (errorMessage.includes('No active subscription')) {
+      throw portalError;
+    }
+
+    log('Portal cancellation failed, attempting direct cancellation:', portalError);
+
+    // Verify the subscription exists in DB before direct cancel. All non-canceled
+    // Stripe subscription statuses are safe to cancel via the API: Stripe sets
+    // auto_advance=false on finalized invoices (no further charges) and any open
+    // invoices simply remain uncollected. There's no revenue to protect here —
+    // `unpaid` means Smart Retries already gave up, and `incomplete` means the
+    // initial payment never succeeded.
+    const subscription = await dbWrite.customerSubscription.findFirst({
+      where: {
+        userId,
+        product: { provider: 'Stripe' },
+        status: { in: ['active', 'past_due', 'trialing', 'incomplete', 'unpaid'] },
+      },
+      select: { id: true },
+    });
+
+    if (!subscription) {
+      throw throwBadRequestError(
+        'Unable to cancel subscription. Please contact support for assistance.'
+      );
+    }
+
+    await stripe.subscriptions.del(subscription.id);
+
+    // Optimistically delete the DB record so the UI reflects the cancellation
+    // immediately rather than waiting for the webhook. The webhook handler
+    // (customer.subscription.deleted) is idempotent and handles missing records.
+    await dbWrite.customerSubscription.delete({ where: { id: subscription.id } }).catch(() => {
+      // Record may already be deleted by a concurrent webhook — safe to ignore
+    });
+    await invalidateSubscriptionCaches(userId);
+
+    return { type: 'direct' as const };
+  }
+};
+
 export const createBuzzSession = async ({
   customerId,
   user,
@@ -440,6 +497,10 @@ export const upsertSubscription = async (
 
   if (isCancelingSubscription && subscription.cancel_at === null) {
     // immediate cancel:
+    if (!mainSubscription) {
+      log('Subscription already deleted (e.g., by direct cancellation fallback)');
+      return;
+    }
     log('Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     await invalidateSubscriptionCaches(user.id);
@@ -776,7 +837,9 @@ export const getPaymentIntent = async ({
 
   if (unitAmount < buzzConstants.minStripeChargeAmount) {
     throw throwBadRequestError(
-      `Minimum purchase amount is $${formatPriceForDisplay(buzzConstants.minStripeChargeAmount / 100)}`
+      `Minimum purchase amount is $${formatPriceForDisplay(
+        buzzConstants.minStripeChargeAmount / 100
+      )}`
     );
   }
 
