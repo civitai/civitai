@@ -106,6 +106,31 @@ function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
 }
 
 // =============================================================================
+// Total Cost (including tips)
+// =============================================================================
+
+/**
+ * Computes the total generation cost including creator and Civitai tips.
+ * Used by the buzz type selector, submit button, and insufficient buzz alert.
+ */
+function useTotalGenerationCost() {
+  const graph = useGraph<GenerationGraphTypes>();
+  const features = useFeatureFlags();
+  const { creatorTip, civitaiTip } = useTipStore();
+  const { data } = useWhatIfContext();
+
+  const snapshot = graph.getSnapshot() as ResourceSnapshot & { workflow?: string };
+  const hasCreatorTip = getHasCreatorTip(snapshot);
+
+  const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
+  const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
+  const base = data?.cost?.base ?? 0;
+  const totalTip = Math.ceil(base * creatorTipRate) + Math.ceil(base * civitaiTipRate);
+
+  return (data?.cost?.total ?? 0) + totalTip;
+}
+
+// =============================================================================
 // Buzz Type Selection
 // =============================================================================
 
@@ -131,18 +156,48 @@ export function useSelectedBuzzType() {
  * The button displays the cost with the selected buzz type icon.
  * The dropdown shows all available buzz types with their balances.
  */
-function BuzzTypeSelector() {
+export function BuzzTypeSelector({
+  cost,
+  loading,
+  error,
+  onRetry,
+}: {
+  cost: number;
+  loading: boolean;
+  error?: boolean;
+  onRetry?: () => void;
+}) {
   const { availableTypes, selectedType, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
   } = useQueryBuzz(availableTypes);
-  const { data, isLoading: isWhatIfLoading } = useWhatIfContext();
+
+  const isWhatIfLoading = loading;
+  const totalCost = cost;
 
   // Keep the last known cost so it doesn't flash to 0 during re-fetch
   const lastCostRef = useRef(0);
-  const totalCost = data?.cost?.total ?? 0;
   if (totalCost > 0) lastCostRef.current = totalCost;
   const displayCost = isWhatIfLoading ? lastCostRef.current : totalCost;
+  const showLoading = !error && (isWhatIfLoading || displayCost <= 0);
+
+  // Error state: show retry button instead of cost
+  if (error && onRetry) {
+    return (
+      <Tooltip label="Failed to estimate cost. Click to retry.">
+        <Button
+          variant="default"
+          size="compact-sm"
+          className="h-full gap-1 px-2"
+          color="red"
+          onClick={onRetry}
+        >
+          <IconAlertTriangle size={14} />
+          <IconRestore size={14} />
+        </Button>
+      </Tooltip>
+    );
+  }
 
   return (
     <Menu position="top" withinPortal>
@@ -152,7 +207,7 @@ function BuzzTypeSelector() {
           size="compact-sm"
           className="h-full gap-1 px-2"
           color="gray"
-          loading={isWhatIfLoading}
+          loading={showLoading}
           loaderProps={{ size: 14 }}
         >
           <CurrencyIcon currency={Currency.BUZZ} type={selectedType} size={16} />
@@ -185,6 +240,20 @@ function BuzzTypeSelector() {
   );
 }
 
+/** BuzzTypeSelector wired to the WhatIfProvider context (for use inside FormFooter). */
+function ConnectedBuzzTypeSelector() {
+  const { isLoading, isError, refetch } = useWhatIfContext();
+  const cost = useTotalGenerationCost();
+  return (
+    <BuzzTypeSelector
+      cost={cost}
+      loading={isLoading}
+      error={isError}
+      onRetry={() => refetch()}
+    />
+  );
+}
+
 // =============================================================================
 // PriorityAlertSpace Component
 // =============================================================================
@@ -214,15 +283,15 @@ function PriorityAlertSpace({
   missingFieldMessage,
   snackbarRight,
 }: PriorityAlertSpaceProps) {
-  const { data, error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
+  const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
   const membershipUpsell = useMembershipUpsell();
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
   } = useQueryBuzz(availableTypes);
+  const totalCost = useTotalGenerationCost();
 
   // Check if user has insufficient buzz of the selected type
-  const totalCost = data?.cost?.total ?? 0;
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
   const insufficientBuzz = totalCost > 0 && selectedBalance < totalCost;
 
@@ -325,14 +394,14 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   const { color } = useBuzzCurrencyConfig(selectedType);
 
   // Get whatIf data from context (provided by WhatIfProvider)
-  const { data, isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const { isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const totalCost = useTotalGenerationCost();
 
   // Check if user has enough of the selected buzz type
   const {
     data: { accounts },
   } = useQueryBuzz([selectedType]);
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
-  const totalCost = data?.cost?.total ?? 0;
   const insufficientBuzz = totalCost > 0 && balance < totalCost;
 
   const handleClick = () => {
@@ -642,7 +711,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
             isLoading={generateMutation.isLoading || isMinLoading}
             onSubmit={handleSubmit}
           />
-          <BuzzTypeSelector />
+          {currentUser && <ConnectedBuzzTypeSelector />}
         </Button.Group>
         <Tooltip label="Reset">
           <ActionIcon onClick={handleReset} variant="default" className="h-auto" size="xl">

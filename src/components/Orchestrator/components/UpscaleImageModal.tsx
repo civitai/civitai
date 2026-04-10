@@ -11,7 +11,8 @@ import * as z from 'zod';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { ModalSubmitButton } from '~/components/Orchestrator/components/GenerateButton';
+import { generationFormStore } from '~/store/generation-form.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { useForm } from '~/libs/form';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -136,6 +137,7 @@ export function UpscaleImageModal({ sourceImage, metadata }: UpscaleImageModalPr
             }
           : undefined;
 
+      const { buzzType } = generationFormStore.getState();
       await generateMutation.mutateAsync({
         input: {
           workflow: 'img2img:upscale',
@@ -149,6 +151,7 @@ export function UpscaleImageModal({ sourceImage, metadata }: UpscaleImageModalPr
           upscaleSelection: selection,
         },
         sourceMetadata: metadata,
+        ...(buzzType ? { buzzType } : {}),
       });
       dialog.onClose();
     }
@@ -173,16 +176,14 @@ export function UpscaleImageModal({ sourceImage, metadata }: UpscaleImageModalPr
               {generateMutation.error.message}
             </Notification>
           )}
-          <GenerateButton
+          <ModalSubmitButton
             type="submit"
-            loading={whatIf.isInitialLoading || generateMutation.isLoading}
+            loading={generateMutation.isLoading}
+            disabled={whatIf.isInitialLoading || whatIf.isError || !form.formState.isValid}
             cost={whatIf.data?.cost?.total ?? 0}
-            disabled={whatIf.isError || !form.formState.isValid}
-            allowMatureContent={whatIf.data?.allowMatureContent}
-            transactions={whatIf.data?.transactions}
           >
             Upscale
-          </GenerateButton>
+          </ModalSubmitButton>
         </GenForm>
       </GenerationProvider>
     </Modal>

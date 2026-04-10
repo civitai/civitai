@@ -2,17 +2,18 @@ import { Alert, Button, Group, Text } from '@mantine/core';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useAppContext } from '~/providers/AppProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /**
  * Hook to check if membership upsell should be shown.
+ * Shows on civitai.red for non-members to encourage membership for Blue Buzz mature generation.
  */
 export function useMembershipUpsell() {
   const currentUser = useCurrentUser();
-  const { domain } = useAppContext();
+  const features = useFeatureFlags();
 
   return {
-    canShow: !!domain.blue && !currentUser?.isPaidMember,
+    canShow: !features.isGreen && !currentUser?.isPaidMember,
   };
 }
 
@@ -30,19 +31,10 @@ export function MembershipUpsell() {
           </Text>
           <InfoPopover size="sm" withinPortal>
             <Text size="sm">
-              Did you know that members can generate mature content using their Blue Buzz? Get a{' '}
-              <Text component="span" c="yellow">
-                yellow
-              </Text>{' '}
-              membership now to use your Blue Buzz to keep generating
+              Members can generate mature content using their Blue Buzz. Get a membership now to use
+              your Blue Buzz to keep generating.
             </Text>
-            <Button
-              component={NextLink}
-              href="/pricing?buzzType=yellow"
-              size="sm"
-              fullWidth
-              mt="sm"
-            >
+            <Button component={NextLink} href="/pricing" size="sm" fullWidth mt="sm">
               Purchase Membership
             </Button>
           </InfoPopover>

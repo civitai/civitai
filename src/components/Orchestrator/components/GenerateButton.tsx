@@ -1,5 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Text } from '@mantine/core';
+import { useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
@@ -38,5 +40,23 @@ export function GenerateButton({
         <Text ta="center">{children}</Text>
       </Button>
     </LoginRedirect>
+  );
+}
+
+/**
+ * Generate button colored by the user's selected buzz type.
+ * For use in modals (UpscaleImageModal, UpscaleVideoModal, etc.).
+ */
+export function ModalSubmitButton({
+  children = 'Generate',
+  ...buttonProps
+}: ButtonProps & Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
+  const { selectedType } = useSelectedBuzzType();
+  const { color } = useBuzzCurrencyConfig(selectedType);
+
+  return (
+    <GenerateButton {...buttonProps} color={color}>
+      {children}
+    </GenerateButton>
   );
 }
