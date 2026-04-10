@@ -96,10 +96,10 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             message: 'Successfully unpublished article',
           });
 
-          queryUtils.article.getById.setData({ id: article.id }, (old) => ({
-            ...(old as ArticleGetById),
-            ...result,
-          }));
+          queryUtils.article.getById.setData({ id: article.id }, (old) => {
+            if (!old) return old;
+            return { ...old, ...result, metadata: result.metadata ?? old.metadata };
+          });
 
           await queryUtils.article.getInfinite.invalidate();
           await queryUtils.article.getMyDraftArticles.invalidate();
@@ -125,10 +125,10 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             message: 'Successfully restored article',
           });
 
-          queryUtils.article.getById.setData({ id: article.id }, (old) => ({
-            ...(old as ArticleGetById),
-            ...result,
-          }));
+          queryUtils.article.getById.setData({ id: article.id }, (old) => {
+            if (!old) return old;
+            return { ...old, ...result, metadata: result.metadata ?? old.metadata };
+          });
 
           await queryUtils.article.getInfinite.invalidate();
         },
