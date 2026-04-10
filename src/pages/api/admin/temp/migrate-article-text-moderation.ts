@@ -26,8 +26,8 @@ type Article = { id: number; title: string; content: string; userId: number };
 
 const querySchema = z.object({
   dryRun: booleanString().default(true),
-  batchSize: z.coerce.number().min(1).max(1000).default(100),
-  concurrency: z.coerce.number().min(1).max(5).default(2),
+  batchSize: z.coerce.number().min(1).max(1000).default(1000),
+  concurrency: z.coerce.number().min(1).max(5).default(5),
   start: z.coerce.number().optional().default(0),
   end: z.coerce.number().optional(),
   after: z.coerce.date().optional(),
@@ -191,7 +191,6 @@ export default WebhookEndpoint(async (req, res) => {
               content: text,
               labels: ['nsfw'],
               priority: 'low',
-              wait: 30,
             });
             stats.textModerationSubmitted++;
           } catch (error) {
