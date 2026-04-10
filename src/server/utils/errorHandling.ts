@@ -170,13 +170,14 @@ export function throwConflictError(message: string | null = null, error?: unknow
   });
 }
 
-export function handleLogError(e: Error, name?: string) {
+export function handleLogError(e: Error, name?: string, details?: MixedObject) {
   const error = new Error(e.message ?? 'Unexpected error occurred', { cause: e });
   if (isProd)
     logToAxiom(
       {
         type: 'error',
         name: name ?? error.name,
+        ...details,
         message: error.message,
         stack: error.stack,
         cause: error.cause,

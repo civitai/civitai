@@ -29,7 +29,7 @@ const featureFlags = createFeatureFlags({
   canWrite: ['public'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
-  articles: ['blue', 'red', 'public'],
+  articles: ['public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
@@ -150,6 +150,7 @@ const featureFlags = createFeatureFlags({
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
+  articleImageScanning: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
