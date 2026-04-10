@@ -176,6 +176,9 @@ export const ECO = {
   Anima: 59,
   Grok: 61,
 
+  // Root ecosystems - Audio models
+  AceStep: 66,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -701,6 +704,15 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Other',
     sortOrder: 999,
   },
+
+  // Audio ecosystems
+  {
+    id: ECO.AceStep,
+    key: 'AceStep',
+    name: 'acestep',
+    displayName: 'ACE Step',
+    sortOrder: 300,
+  },
 ];
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
@@ -870,6 +882,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // LTXV2.3 - checkpoint and LORA
   { ecosystemId: ECO.LTXV23, supportType: 'generation', modelTypes: checkpointAndLora },
+
+  // AceStep - checkpoint only (audio generation)
+  { ecosystemId: ECO.AceStep, supportType: 'generation', modelTypes: checkpointOnly },
 ];
 
 // =============================================================================
@@ -1233,6 +1248,12 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Other,
     defaults: {
       model: { id: 164821 },
+    },
+  },
+  {
+    ecosystemId: ECO.AceStep,
+    defaults: {
+      modelLocked: true,
     },
   },
 ];
@@ -1672,6 +1693,7 @@ export const BM = {
   Qwen2: 79,
   WanImage27: 80,
   WanVideo27: 81,
+  AceStep: 82,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -2713,6 +2735,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     hidden: true,
     licenseId: 23,
   },
+
+  // ACE Step (audio)
+  {
+    id: BM.AceStep,
+    name: 'ACE Step',
+    description: 'ACE Step 1.5 music generation model',
+    type: 'audio',
+    ecosystemId: ECO.AceStep,
+  },
 ];
 
 export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
@@ -3430,8 +3461,8 @@ export interface GetEcosystemDisplayItemsOptions {
   compatibleEcosystems?: string[];
   /** Function to check if an ecosystem is compatible */
   isCompatible?: (ecosystemKey: string) => boolean;
-  /** Filter by output type (image/video) */
-  outputType?: 'image' | 'video';
+  /** Filter by output type (image/video/audio) */
+  outputType?: 'image' | 'video' | 'audio';
 }
 
 /**

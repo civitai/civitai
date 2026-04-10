@@ -14,6 +14,7 @@
  */
 
 import type {
+  AceStepAudioStepTemplate,
   ComfyStepTemplate,
   ImageGenStepTemplate,
   TextToImageStepTemplate,
@@ -41,6 +42,9 @@ import { createZImageInput } from './z-image.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 
+// Audio ecosystem handlers
+import { createAceStepInput } from './ace-step.handler';
+
 // Video ecosystem handlers
 import { createWanSteps } from './wan.handler';
 import { createViduInput } from './vidu.handler';
@@ -62,7 +66,8 @@ export type StepInput =
   | ComfyStepTemplate
   | ImageGenStepTemplate
   | VideoGenStepTemplate
-  | VideoInterpolationStepTemplate;
+  | VideoInterpolationStepTemplate
+  | AceStepAudioStepTemplate;
 
 /** Validated output from the generation graph with ecosystem */
 export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -157,6 +162,9 @@ export type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 /** Grok context */
 export type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 
+/** AceStep context */
+export type AceStepCtx = EcosystemGraphOutput & { ecosystem: 'AceStep' };
+
 // =============================================================================
 // Exports - Individual handlers
 // =============================================================================
@@ -177,6 +185,9 @@ export { createChromaInput } from './chroma.handler';
 export { createZImageInput } from './z-image.handler';
 export { createHiDreamInput } from './hi-dream.handler';
 export { createPonyV7Input } from './pony-v7.handler';
+
+// Audio ecosystems
+export { createAceStepInput } from './ace-step.handler';
 
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
@@ -374,6 +385,13 @@ async function createEcosystemStep(
       }
       return createGrokImageInput(normalizedData, handlerCtx);
     }
+
+    // =========================================================================
+    // Audio Ecosystems - aceStepAudio step type
+    // =========================================================================
+
+    case 'AceStep':
+      return createAceStepInput(normalizedData, handlerCtx);
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

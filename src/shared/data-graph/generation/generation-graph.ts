@@ -102,6 +102,7 @@ const NEW_TO_OLD: Record<string, string> = {
   'video:interpolate': 'vid2vid:interpolate',
   'video:edit': 'vid2vid:edit',
   'video:extend': 'vid2vid:extend',
+  'audio:create': 'txt2aud',
 };
 
 /** Migrate stored workflow key to current format */
@@ -229,6 +230,8 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         'img2vid:ref2vid',
         'vid2vid:edit',
         'vid2vid:extend',
+        // Audio workflows with ecosystem support
+        'txt2aud',
       ] as const,
       graph: ecosystemGraph,
     },
@@ -281,7 +284,10 @@ export function workflowHasNode(workflow: string, nodeKey: string): boolean {
  * Checks whether each workflow's sub-graph contains an 'images' or 'video' node
  * by evaluating the graph's default path for each workflow.
  */
-export function getWorkflowsForMediaType(mediaType: 'image' | 'video'): WorkflowOption[] {
+export function getWorkflowsForMediaType(mediaType: 'image' | 'video' | 'audio'): WorkflowOption[] {
+  if (mediaType === 'audio') {
+    return workflowOptions.filter((w) => workflowHasNode(w.graphKey, 'lyrics'));
+  }
   const nodeKey = mediaType === 'image' ? 'images' : 'video';
   return workflowOptions.filter((w) => workflowHasNode(w.graphKey, nodeKey));
 }

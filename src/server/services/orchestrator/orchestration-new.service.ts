@@ -890,7 +890,12 @@ export async function generateFromGraph({
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
-  const outputTag = data.output === 'image' ? WORKFLOW_TAGS.IMAGE : WORKFLOW_TAGS.VIDEO;
+  const outputTag =
+    data.output === 'image'
+      ? WORKFLOW_TAGS.IMAGE
+      : data.output === 'audio'
+        ? WORKFLOW_TAGS.AUDIO
+        : WORKFLOW_TAGS.VIDEO;
 
   const tags = [
     WORKFLOW_TAGS.GENERATION,
@@ -1017,7 +1022,7 @@ import { parseAIR } from '~/shared/utils/air';
 // Types
 // =============================================================================
 
-/** Normalized output (image or video) from a workflow step */
+/** Normalized output (image, video, or audio) from a workflow step */
 export interface NormalizedWorkflowStepOutput {
   url: string;
   workflowId: string;
@@ -1025,7 +1030,7 @@ export interface NormalizedWorkflowStepOutput {
   seed?: number | null;
   status: WorkflowStatus;
   aspect: number;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'audio';
   id: string;
   available: boolean;
   urlExpiresAt?: string | null;
@@ -1036,6 +1041,7 @@ export interface NormalizedWorkflowStepOutput {
   previewUrlExpiresAt?: string | null;
   width: number;
   height: number;
+  duration?: number | null;
 }
 
 /** Step metadata with mapped params and enriched resources */

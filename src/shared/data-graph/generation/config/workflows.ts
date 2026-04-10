@@ -18,6 +18,7 @@ import {
   ecosystemById,
   getEcosystemSupport,
 } from '~/shared/constants/basemodel.constants';
+import type { OutputType } from './types';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
 import { nanoBananaVersionIds } from '~/shared/data-graph/generation/nano-banana-graph';
 import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
@@ -303,6 +304,19 @@ export const workflowConfigs: WorkflowConfigs = {
   // },
 
   // ===========================================================================
+  // Audio Workflows
+  // ===========================================================================
+
+  txt2aud: {
+    label: 'Create Audio',
+    modeLabel: 'Text to Audio',
+    description: 'Generate music from text description and lyrics',
+    category: 'audio',
+    ecosystemIds: [ECO.AceStep],
+    stepDisplay: 'separate',
+  },
+
+  // ===========================================================================
   // Text Output Workflows (hidden from picker, triggered programmatically)
   // ===========================================================================
 
@@ -458,6 +472,7 @@ export function getWorkflowsForEcosystem(
 export const workflowCategories: { category: WorkflowCategory; label: string }[] = [
   { category: 'image', label: 'Image' },
   { category: 'video', label: 'Video' },
+  { category: 'audio', label: 'Audio' },
 ];
 
 /**
@@ -529,7 +544,7 @@ export function getInputTypeForWorkflow(workflowId: string): 'text' | 'image' | 
 /**
  * Get the output type from a workflow key.
  */
-export function getOutputTypeForWorkflow(workflowId: string): 'image' | 'video' {
+export function getOutputTypeForWorkflow(workflowId: string): OutputType {
   const config = workflowConfigByKey.get(workflowId);
   return config?.category ?? 'image';
 }
@@ -631,6 +646,9 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
 
   // vid2vid:extend - no legacy equivalent
   ['vid2vid:extend', true],
+
+  // Audio workflows - no legacy equivalent
+  ['txt2aud', true],
 ]);
 
 /**

@@ -1,4 +1,6 @@
 import type {
+  AceStepAudioStep,
+  AudioBlob,
   ComfyStep,
   ImageGenStep,
   TextToImageStep,
@@ -82,7 +84,8 @@ type WorkflowStepAggregate =
   | VideoGenStep
   | VideoEnhancementStep
   | VideoUpscalerStep
-  | VideoInterpolationStep;
+  | VideoInterpolationStep
+  | AceStepAudioStep;
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
@@ -752,7 +755,9 @@ export async function updateWorkflow({
 //   return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
 // }
 
-function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBlob> | undefined {
+function normalizeOutput(
+  step: WorkflowStepAggregate
+): Array<ImageBlob | VideoBlob | AudioBlob> | undefined {
   switch (step.$type) {
     case 'comfy':
       return step.output?.blobs?.map((blob) => ({ ...blob, type: 'image' }));
@@ -764,6 +769,12 @@ function normalizeOutput(step: WorkflowStepAggregate): Array<ImageBlob | VideoBl
     case 'videoEnhancement':
     case 'videoInterpolation':
       return step.output?.video ? [{ ...step.output.video, type: 'video' }] : undefined;
+    case 'aceStepAudio': {
+      if (!step.output?.blob) return undefined;
+      // With a cover image, the output is a video (WebM); without, it's audio
+      const blobType = step.output.blob.type === 'video' ? 'video' : 'audio';
+      return [{ ...step.output.blob, type: blobType }];
+    }
   }
 }
 
@@ -774,7 +785,7 @@ export interface NormalizedWorkflowStepOutput {
   seed?: number | null;
   status: WorkflowStatus;
   aspect: number;
-  type: 'image' | 'video';
+  type: 'image' | 'video' | 'audio';
   id: string;
   available: boolean;
   urlExpiresAt?: string | null;
@@ -785,6 +796,7 @@ export interface NormalizedWorkflowStepOutput {
   previewUrlExpiresAt?: string | null;
   width: number;
   height: number;
+  duration?: number | null;
 }
 
 function formatWorkflowStepOutput({
@@ -800,7 +812,7 @@ function formatWorkflowStepOutput({
   const images: NormalizedWorkflowStepOutput[] = items.map((item, index) => {
     const job = step.jobs?.find((x) => x.id === item.jobId);
     // eslint-disable-next-line prefer-const
-    let { width, height, ...restItem } = item;
+    let { width, height, ...restItem } = item as ImageBlob | VideoBlob;
     let aspect: number | undefined;
     if (!width || !height) {
       const params = (step.metadata?.params ?? {}) as {
@@ -890,6 +902,7 @@ function formatWorkflowStepOutput({
       aspect,
       width,
       height,
+      duration: 'duration' in item ? (item as AudioBlob).duration : undefined,
     };
   });
   const errors: string[] = [];

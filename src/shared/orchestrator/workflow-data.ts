@@ -1,4 +1,5 @@
 import type {
+  AudioBlob,
   ImageBlob,
   VideoBlob,
   NsfwLevel,
@@ -233,7 +234,7 @@ export class BlobData implements NormalizedWorkflowStepOutput {
   seed?: number | null;
   status!: WorkflowStatus;
   aspect!: number;
-  type!: 'image' | 'video';
+  type!: 'image' | 'video' | 'audio';
   id!: string;
   available!: boolean;
   urlExpiresAt?: string | null;
@@ -256,7 +257,7 @@ export class BlobData implements NormalizedWorkflowStepOutput {
     domain,
     nsfwEnabled,
   }: {
-    data: ImageBlob | VideoBlob;
+    data: ImageBlob | VideoBlob | AudioBlob;
     /** workflow.allowMatureContent */
     allowMatureContent?: boolean | null;
     step: StepData;

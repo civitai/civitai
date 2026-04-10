@@ -29,6 +29,7 @@ import {
   Radio,
   Switch,
   Text,
+  Textarea,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
@@ -678,8 +679,8 @@ export function GenerationForm() {
               )}
             />
 
-            {/* Prompt with Trigger Words */}
-            <Controller
+            {/* Prompt with Trigger Words (hidden for audio workflows which use musicDescription) */}
+            {snapshot.workflow !== 'txt2aud' && <Controller
               graph={graph}
               name="prompt"
               render={({ value, onChange, meta, error }) => (
@@ -804,7 +805,7 @@ export function GenerationForm() {
                   </Paper>
                 </Input.Wrapper>
               )}
-            />
+            />}
 
             {/* Negative prompt (SD only) */}
             <Controller
@@ -818,6 +819,41 @@ export function GenerationForm() {
                   placeholder="What to avoid..."
                   autosize
                   minRows={1}
+                />
+              )}
+            />
+
+            {/* Music description (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="musicDescription"
+              render={({ value, onChange, error }) => (
+                <Textarea
+                  label="Music Description"
+                  description="Describe the music style, genre, mood, and instruments"
+                  placeholder="Neo-Soul: A warm, organic neo-soul track with smooth Rhodes chords..."
+                  value={value as string}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
+                  autosize
+                  minRows={2}
+                />
+              )}
+            />
+
+            {/* Lyrics (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="lyrics"
+              render={({ value, onChange }) => (
+                <Textarea
+                  label="Lyrics"
+                  description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
+                  placeholder={'[Verse]\nBreaking through the walls tonight\nNothing\'s gonna stop this fight\n\n[Chorus]\nRock and roll forever\nWe\'re in this together'}
+                  value={value as string}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  autosize
+                  minRows={4}
                 />
               )}
             />
@@ -1365,6 +1401,69 @@ export function GenerationForm() {
                   <Checkbox
                     label="Generate audio"
                     description="Generate audio along with the video"
+                    checked={value}
+                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  />
+                )}
+              />
+
+              {/* BPM (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="bpm"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    label="BPM"
+                    value={value as number}
+                    onChange={onChange}
+                    min={(meta as { min: number }).min}
+                    max={(meta as { max: number }).max}
+                  />
+                )}
+              />
+
+              {/* Instrumental weight (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="instrumentalWeight"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    label="Instrumental Weight"
+                    value={value as number}
+                    onChange={onChange}
+                    min={(meta as { min: number }).min}
+                    max={(meta as { max: number }).max}
+                    step={(meta as { step: number }).step}
+                    precision={1}
+                  />
+                )}
+              />
+
+              {/* Vocal weight (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="vocalWeight"
+                render={({ value, meta, onChange }) => (
+                  <SliderInput
+                    label="Vocal Weight"
+                    value={value as number}
+                    onChange={onChange}
+                    min={(meta as { min: number }).min}
+                    max={(meta as { max: number }).max}
+                    step={(meta as { step: number }).step}
+                    precision={1}
+                  />
+                )}
+              />
+
+              {/* Generate cover toggle (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="generateCover"
+                render={({ value, onChange }) => (
+                  <Checkbox
+                    label="Generate cover image"
+                    description="Auto-generate an album cover using AI"
                     checked={value}
                     onChange={(e) => onChange(e.currentTarget.checked)}
                   />

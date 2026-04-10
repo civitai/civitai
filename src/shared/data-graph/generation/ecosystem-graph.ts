@@ -54,6 +54,7 @@ import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
+import { aceStepGraph } from './ace-step-graph';
 
 // =============================================================================
 // Helper Functions
@@ -83,7 +84,7 @@ function getValidEcosystemForWorkflow(workflowId: string, currentValue?: string)
 // =============================================================================
 
 export const ecosystemGraph = new DataGraph<
-  { workflow: string; output: 'image' | 'video'; input: 'text' | 'image' | 'video' },
+  { workflow: string; output: 'image' | 'video' | 'audio'; input: 'text' | 'image' | 'video' },
   GenerationCtx
 >()
   // ecosystem depends on workflow to filter compatible ecosystems
@@ -95,8 +96,9 @@ export const ecosystemGraph = new DataGraph<
       const compatibleEcosystems = compatibleEcosystemIds
         .map((id) => ecosystemById.get(id)?.key)
         .filter((key): key is string => !!key);
-      // Default ecosystem by output type: ZImageTurbo for image, Kling for video
-      const outputDefault = ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
+      // Default ecosystem by output type
+      const outputDefault =
+        ctx.output === 'audio' ? 'AceStep' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
       const defaultValue = compatibleEcosystems.includes(outputDefault)
         ? outputDefault
         : compatibleEcosystems[0] ?? 'SDXL';
@@ -255,6 +257,8 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
+    // Audio ecosystems
+    { values: ['AceStep'] as const, graph: aceStepGraph },
   ])
   // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
   .node(
@@ -272,13 +276,15 @@ export const ecosystemGraph = new DataGraph<
   .node(
     'prompt',
     (ctx) => {
+      const isAudio = ctx.ecosystem === 'AceStep';
       const images = 'images' in ctx ? (ctx.images as unknown[]) : undefined;
       // const multiShot = 'multiShot' in ctx ? (ctx.multiShot as boolean) : false;
       const isKlingV3 = ctx.ecosystem === 'Kling' && ctx.model?.id === klingVersionIds.v3;
       const isGrok = ctx.ecosystem === 'Grok';
-      return { ...promptNode({ required: !images?.length || isKlingV3 || isGrok }) };
+      // Audio workflows use musicDescription — prompt is present but not required
+      return { ...promptNode({ required: isAudio ? false : !images?.length || isKlingV3 || isGrok }) };
     },
-    ['images', 'multiShot']
+    ['images', 'multiShot', 'ecosystem']
   )
   .computed(
     'triggerWords',

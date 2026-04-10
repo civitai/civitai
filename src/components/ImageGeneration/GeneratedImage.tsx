@@ -3,6 +3,7 @@ import {
   IconDotsVertical,
   IconHeart,
   IconInfoCircle,
+  IconMusic,
   IconThumbDown,
   IconThumbUp,
   IconWand,
@@ -189,6 +190,8 @@ export function GeneratedImage({
     if (running && value) helpers?.next();
   }
 
+  const isAudio = image.type === 'audio';
+
   return (
     <TwCard
       ref={ref}
@@ -200,7 +203,7 @@ export function GeneratedImage({
       )}
       style={isLightbox ? { aspectRatio: image.aspect } : undefined}
     >
-      {!isLightbox && !inView && <div style={{ aspectRatio: image.aspect }} />}
+      {!isLightbox && !inView && <div style={{ aspectRatio: isAudio ? 1 : image.aspect }} />}
       {(isLightbox || inView) && (
         <>
           <div
@@ -208,9 +211,20 @@ export function GeneratedImage({
               'relative flex items-center justify-center',
               isLightbox ? 'max-h-[calc(100vh-32px)]' : 'max-h-full'
             )}
-            style={{ aspectRatio: image.aspect }}
+            style={{ aspectRatio: isAudio ? 1 : image.aspect }}
           >
-            {
+            {isAudio ? (
+              <div className="flex size-full flex-col items-center justify-center gap-4 bg-dark-6 p-4">
+                <IconMusic size={48} className="text-dimmed" />
+                {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+                <audio
+                  src={image.url}
+                  controls
+                  className="w-full max-w-[280px]"
+                  preload="metadata"
+                />
+              </div>
+            ) : (
               <EdgeMedia2
                 // Use previewUrl for rendering in queue (smaller/faster), but full url for lightbox
                 src={isLightbox ? image.url : image.previewUrl ?? image.url}
@@ -253,7 +267,7 @@ export function GeneratedImage({
                   autoPlay: true,
                 }}
               />
-            }
+            )}
             <div className="pointer-events-none absolute size-full shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
 
             {!isLightbox && !image.blockedReason && (
@@ -357,7 +371,7 @@ function GeneratedImageActions({
           classes.actionsWrapper,
           (menuOpen || isLightbox) && classes.actionsVisible,
           isOverlay && classes.desktopOnly,
-          image.type === 'video' ? 'bottom-2 left-12' : 'bottom-1 left-1',
+          image.type === 'video' || image.type === 'audio' ? 'bottom-2 left-12' : 'bottom-1 left-1',
           'absolute flex flex-wrap items-center gap-1 p-1'
         )}
       >

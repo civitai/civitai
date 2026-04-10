@@ -79,6 +79,7 @@ export interface UseGeneratedItemWorkflowsReturn {
 const categoryLabels: Record<WorkflowCategory, string> = {
   image: 'Image',
   video: 'Video',
+  audio: 'Audio',
 };
 
 /** Categories relevant for image outputs (workflows that accept image input) */
