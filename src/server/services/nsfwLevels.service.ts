@@ -284,8 +284,15 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
         SELECT
           a.id,
           GREATEST(
-            COALESCE(bit_or(cover."nsfwLevel"), 0),
-            COALESCE(bit_or(content_imgs."nsfwLevel"), 0)
+            -- Cover is a single row per article, so max() is effectively identity.
+            COALESCE(max(cover."nsfwLevel"), 0),
+            -- Content images can be many-per-article. Take the highest rating
+            -- rather than bit_or'ing them: image nsfwLevel values are powers of
+            -- 2 (PG=1, PG13=2, R=4, X=8, XXX=16), so integer max == highest
+            -- rating. bit_or would produce multi-bit masks that leak through
+            -- the downstream (nsfwLevel & browsingLevel) != 0 filter when an
+            -- article mixes PG + NSFW images.
+            COALESCE(max(content_imgs."nsfwLevel"), 0)
           ) AS "nsfwLevel"
         FROM "Article" a
 
@@ -306,10 +313,15 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
         GROUP BY a.id
       )
       UPDATE "Article" a
-      SET "nsfwLevel" = GREATEST(a."userNsfwLevel", level."nsfwLevel")
+      SET "nsfwLevel" = (
+        CASE
+          WHEN a.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
+          ELSE GREATEST(a."userNsfwLevel", level."nsfwLevel")
+        END
+      )
       FROM level
       WHERE level.id = a.id
-        AND level."nsfwLevel" != a."nsfwLevel"
+        AND (level."nsfwLevel" != a."nsfwLevel" OR a.nsfw = TRUE)
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(

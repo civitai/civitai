@@ -2,7 +2,8 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import { ImageConnectionType, NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import type { NsfwLevel } from '~/server/common/enums';
+import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
@@ -19,14 +20,13 @@ import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { createProfanityFilter } from '~/libs/profanity-simple';
-import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
@@ -565,6 +565,7 @@ export const getCivitaiNews = async () => {
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
       AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
+      AND (a."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     ORDER BY a."createdAt" DESC
     LIMIT 10
   `;
@@ -615,7 +616,12 @@ export const getCivitaiEvents = async () => {
     collectionId: collection.id,
     sort: ArticleSort.Newest,
   });
-  const events = await getArticles({ ...input, limit: 100, sessionUser: undefined });
+  const events = await getArticles({
+    ...input,
+    limit: 100,
+    sessionUser: undefined,
+    browsingLevel: publicBrowsingLevelsFlag,
+  });
   return events;
 };
 
@@ -624,7 +630,8 @@ export const getArticleById = async ({
   id,
   userId,
   isModerator,
-}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
+  browsingLevel,
+}: GetByIdInput & { userId?: number; isModerator?: boolean; browsingLevel?: number }) => {
   try {
     const article = await dbRead.article.findFirst({
       where: {
@@ -640,6 +647,15 @@ export const getArticleById = async ({
     if (userId && !isModerator) {
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
+    }
+
+    // NSFW level enforcement — moderators and the article owner always bypass.
+    // On green (or any caller that passes a browsingLevel), articles whose
+    // nsfwLevel doesn't intersect the allowed mask are treated as not found.
+    if (browsingLevel && !isModerator && article.userId !== userId) {
+      if ((article.nsfwLevel & browsingLevel) === 0) {
+        throw throwNotFoundError(`No article with id ${id}`);
+      }
     }
 
     // Fetch connected images with ingestion status
@@ -691,9 +707,7 @@ export const getArticleById = async ({
       coverImage: canViewCoverImage ? coverImage : undefined,
       contentJson,
       contentImages: imageConnections.map((conn) => conn.image),
-      metadata: article.metadata
-        ? filterSensitiveProfanityData(article.metadata as ArticleMetadata, isModerator)
-        : null,
+      metadata: (article.metadata as ArticleMetadata) ?? null,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -722,29 +736,6 @@ export const upsertArticle = async ({
     if (!isModerator) {
       // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
-
-      // Check article title and content for profanity using threshold-based evaluation
-      const profanityFilter = createProfanityFilter();
-      const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
-      const evaluation = profanityFilter.evaluateContent(textToCheck);
-
-      // If profanity exceeds thresholds, mark article as NSFW with recommended level
-      if (evaluation.shouldMarkNSFW && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
-        data.metadata = {
-          ...data.metadata,
-          profanityMatches: evaluation.matchedWords,
-          profanityEvaluation: {
-            reason: evaluation.reason,
-            metrics: evaluation.metrics,
-          },
-        } as ArticleMetadata;
-        data.nsfw = true;
-        data.userNsfwLevel = evaluation.suggestedLevel;
-        data.lockedProperties =
-          data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
-            ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
-            : ['nsfw', 'userNsfwLevel'];
-      }
     }
 
     // For updates, fetch article early so we can check cover image ownership and NSFW level

@@ -29,7 +29,7 @@ const featureFlags = createFeatureFlags({
   canWrite: ['public'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
-  articles: ['blue', 'red', 'public'],
+  articles: ['public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
