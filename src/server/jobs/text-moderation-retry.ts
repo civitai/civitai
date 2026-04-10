@@ -98,7 +98,7 @@ export const retryFailedTextModeration = createJob(
             entityType,
             entityId: item.entityId,
             content,
-            labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
+            labels: ['nsfw'],
             priority: 'low',
           });
           if (workflow?.id) retried++;

@@ -890,7 +890,7 @@ export const upsertArticle = async ({
           entityType: 'Article',
           entityId: result.id,
           content: textForModeration,
-          labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
+          labels: ['nsfw'],
         }).catch((e) => {
           logToAxiom({
             type: 'error',
@@ -1110,7 +1110,7 @@ export const upsertArticle = async ({
           entityType: 'Article',
           entityId: id,
           content: textForModeration,
-          labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
+          labels: ['nsfw'],
         }).catch((e) => {
           logToAxiom({
             type: 'error',

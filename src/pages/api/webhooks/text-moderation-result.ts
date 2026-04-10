@@ -7,7 +7,7 @@ import {
   recordEntityModerationSuccess,
 } from '~/server/services/entity-moderation.service';
 import { dbWrite } from '~/server/db/client';
-import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
+import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -24,28 +24,17 @@ type TextModerationResult = {
 // Entity-specific handlers keyed by entityType
 const entityHandlers: Record<string, (result: TextModerationResult) => Promise<void>> = {
   Article: async ({ entityId, blocked, triggeredLabels }) => {
-    // Map the highest triggered rating label to its NsfwLevel value (ignoring NSFW meta label)
-    let textNsfwLevel = 0;
-    for (const label of triggeredLabels) {
-      const upper = label.toUpperCase() as keyof typeof NsfwLevel;
-      const level = NsfwLevel[upper];
-      if (level !== undefined && level > textNsfwLevel) textNsfwLevel = level;
-    }
-    if (blocked && textNsfwLevel < NsfwLevel.Blocked) textNsfwLevel = NsfwLevel.Blocked;
+    // Text moderation now only returns whether the article content is NSFW or not.
+    // Blocked content is treated as NSFW regardless of triggered labels.
+    const isNsfw = blocked || triggeredLabels.some((label) => label.toLowerCase() === 'nsfw');
 
-    // Elevate userNsfwLevel if text moderation suggests higher (never lower)
-    if (textNsfwLevel > 0) {
-      await dbWrite.$executeRaw`
-        UPDATE "Article"
-        SET "userNsfwLevel" = GREATEST("userNsfwLevel", ${textNsfwLevel}),
-            "nsfw" = CASE WHEN ${textNsfwLevel} >= ${NsfwLevel.R} THEN true ELSE "nsfw" END,
-            "lockedProperties" = CASE
-              WHEN NOT ('userNsfwLevel' = ANY("lockedProperties"))
-              THEN array_append("lockedProperties", 'userNsfwLevel')
-              ELSE "lockedProperties"
-            END
-        WHERE id = ${entityId}
-      `;
+    // Elevate the nsfw flag only — never downgrade, since image content or the user
+    // may have already flagged the article as NSFW for reasons unrelated to text.
+    if (isNsfw) {
+      await dbWrite.article.update({
+        where: { id: entityId },
+        data: { nsfw: true },
+      });
       await updateArticleNsfwLevels([entityId]);
     }
 
