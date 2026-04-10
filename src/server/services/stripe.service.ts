@@ -370,15 +370,17 @@ export const cancelSubscriptionWithFallback = async ({
 
     log('Portal cancellation failed, attempting direct cancellation:', portalError);
 
-    // Look up the subscription to ensure it exists before attempting direct cancel.
-    // Only allow direct cancellation for statuses where the user has been paying —
-    // incomplete/unpaid subscriptions should only be cancelled via the Stripe portal
-    // to avoid losing the ability to collect pending payments.
+    // Verify the subscription exists in DB before direct cancel. All non-canceled
+    // Stripe subscription statuses are safe to cancel via the API: Stripe sets
+    // auto_advance=false on finalized invoices (no further charges) and any open
+    // invoices simply remain uncollected. There's no revenue to protect here —
+    // `unpaid` means Smart Retries already gave up, and `incomplete` means the
+    // initial payment never succeeded.
     const subscription = await dbWrite.customerSubscription.findFirst({
       where: {
         userId,
         product: { provider: 'Stripe' },
-        status: { in: ['active', 'past_due', 'trialing'] },
+        status: { in: ['active', 'past_due', 'trialing', 'incomplete', 'unpaid'] },
       },
       select: { id: true },
     });
