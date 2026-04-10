@@ -8,7 +8,7 @@ export const depositHistoryInputSchema = z.object({
 
 export type GetDepositAddressInput = z.infer<typeof getDepositAddressInputSchema>;
 export const getDepositAddressInputSchema = z.object({
-  chain: z.enum(['evm', 'sol', 'trx', 'btc', 'doge', 'ltc']).default('evm'),
+  chain: z.string().min(1).max(20).default('evm'),
 });
 
 export type GetMinAmountInput = z.infer<typeof getMinAmountInputSchema>;
