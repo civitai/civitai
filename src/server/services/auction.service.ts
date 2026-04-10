@@ -257,6 +257,7 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
         createdAt: true,
         fromRecurring: true,
         isRefunded: true,
+        accountType: true,
         auction: {
           select: auctionSelect,
         },
@@ -340,6 +341,7 @@ export const getMyRecurringBids = async ({ userId }: { userId: number }) => {
         createdAt: true,
         endAt: true,
         isPaused: true,
+        accountType: true,
         auctionBase: {
           select: auctionBaseSelect,
         },
@@ -378,6 +380,7 @@ export const createBid = async ({
         where: {
           userId,
           entityId,
+          accountType: accountTypes[0] ?? 'yellow',
         },
         select: {
           ...auctionSelect.bids.select,
@@ -524,6 +527,7 @@ export const createBid = async ({
           entityId,
           amount,
           transactionIds: transactionIds,
+          accountType: accountTypes[0] ?? 'yellow',
         },
       });
     } catch (e) {
@@ -553,10 +557,11 @@ export const createBid = async ({
   if (!!recurringUntil) {
     await dbWrite.bidRecurring.upsert({
       where: {
-        auctionBaseId_userId_entityId: {
+        auctionBaseId_userId_entityId_accountType: {
           auctionBaseId: auctionData.auctionBase.id,
           entityId,
           userId,
+          accountType: accountTypes[0] ?? 'yellow',
         },
       },
       create: {

@@ -3664,8 +3664,9 @@ model Bid {
   transactionIds String[] @default([])
   isRefunded     Boolean  @default(false)
   fromRecurring  Boolean  @default(false)
+  accountType    String   @default("yellow")
 
-  @@unique([auctionId, userId, entityId])
+  @@unique([auctionId, userId, entityId, accountType])
 }
 
 model BidRecurring {
@@ -3682,7 +3683,7 @@ model BidRecurring {
   isPaused      Boolean     @default(false)
   accountType   String      @default("yellow")
 
-  @@unique([auctionBaseId, userId, entityId])
+  @@unique([auctionBaseId, userId, entityId, accountType])
 }
 
 model FeaturedModelVersion {

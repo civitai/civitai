@@ -127,7 +127,7 @@ const featureFlags = createFeatureFlags({
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
   privateModels: ['public'],
-  auctions: ['blue', 'red', 'green', 'public'],
+  auctions: ['blue', 'red', 'public'],
   newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],

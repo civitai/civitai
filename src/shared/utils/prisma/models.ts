@@ -2778,6 +2778,7 @@ export interface Bid {
   transactionIds: string[];
   isRefunded: boolean;
   fromRecurring: boolean;
+  accountType: string;
 }
 
 export interface BidRecurring {
