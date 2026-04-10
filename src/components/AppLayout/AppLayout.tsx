@@ -124,8 +124,7 @@ export function MainContent({
       <main className="flex-1">
         {subNav && <SubNav>{subNav}</SubNav>}
         {announcements && <Announcements />}
-        {/* TODO: Re-enable when environment swap is ready */}
-        {/* {announcements && <MatureContentMigrationAlert />} */}
+        {announcements && <MatureContentMigrationAlert />}
         {children}
       </main>
       {footer}
