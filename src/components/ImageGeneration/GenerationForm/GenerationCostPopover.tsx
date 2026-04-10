@@ -14,8 +14,8 @@ import classes from './GenerationCostPopover.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import { useMainBuzzAccountType } from '~/components/Buzz/useBuzz';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useGenerationFormStore } from '~/store/generation-form.store';
 
 const getEmojiByValue = (value: number) => {
   if (value === 0) return '😢';
@@ -38,29 +38,32 @@ export function GenerationCostPopover({
   const totalCost = workflowCost.total ?? 0;
   const disabled = totalCost > 0 ? popoverProps.disabled : true;
 
-  // When no transactions are available, we use the cost to determine the badge color.
+  // Use the user-selected buzz type for the cost badge color
   const availableBuzzTypes = useAvailableBuzz(['blue']);
-  const guessedMainBuzzAccountType = useMainBuzzAccountType(availableBuzzTypes, totalCost);
+  const storedBuzzType = useGenerationFormStore((s) => s.buzzType);
+  const selectedType =
+    storedBuzzType && availableBuzzTypes.includes(storedBuzzType)
+      ? storedBuzzType
+      : availableBuzzTypes.find((t) => t !== 'blue') ?? availableBuzzTypes[0];
   const mainBuzzAccountType =
     transactions && transactions.length > 0
       ? transactions.reduce((highest, current) =>
           current.amount > highest.amount ? current : highest
         ).accountType
-      : guessedMainBuzzAccountType;
+      : selectedType;
 
   return (
     <Popover shadow="md" {...popoverProps} withinPortal>
       <Popover.Target>
         {variant === 'info-circle' ? (
-          <LegacyActionIcon
-            variant="subtle"
-            size="xs"
-            color="yellow.7"
-            radius="xl"
-            disabled={disabled}
-          >
-            <IconInfoCircle stroke={2.5} />
-          </LegacyActionIcon>
+          <div className="flex cursor-pointer items-center gap-1">
+            <Text span c="yellow.7" size="sm">
+              Breakdown
+            </Text>
+            <Text span c="yellow.7" size="sm">
+              <IconInfoCircle size="16" stroke={2.5} />
+            </Text>
+          </div>
         ) : (
           <CurrencyBadge
             unitAmount={totalCost}

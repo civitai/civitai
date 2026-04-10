@@ -370,7 +370,7 @@ export function quantityNode(config?: QuantityNodeConfig) {
   return (_ctx: Record<string, unknown>, ext: GenerationCtx) => {
     const min = config?.min ?? 1;
     const step = config?.step ?? 1;
-    const max = ext.limits.maxQuantity;
+    const max = 16 ?? ext.limits.maxQuantity;
 
     return {
       input: z.coerce
