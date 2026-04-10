@@ -2042,13 +2042,7 @@ export function GenerationFormContent() {
                       {reviewed && (
                         <>
                           {!submitError ? (
-                            <QueueSnackbar
-                              right={
-                                features.creatorComp ? (
-                                  <GenerationCostPopover width={300} workflowCost={data.cost} />
-                                ) : undefined
-                              }
-                            />
+                            <QueueSnackbar right={<LegacyCostBreakdown />} />
                           ) : (
                             <Notification
                               icon={<IconX size={18} />}
@@ -2140,6 +2134,13 @@ function ReadySection() {
 }
 
 // #endregion
+
+function LegacyCostBreakdown() {
+  const featureFlags = useFeatureFlags();
+  const { data } = useTextToImageWhatIfContext();
+  if (!featureFlags.creatorComp) return null;
+  return <GenerationCostPopover width={300} workflowCost={data.cost} />;
+}
 
 function WhatIfAlert() {
   const { error } = useTextToImageWhatIfContext();

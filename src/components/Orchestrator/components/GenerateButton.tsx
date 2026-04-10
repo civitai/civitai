@@ -21,7 +21,7 @@ export function GenerateButton({
   error?: string;
   transactions?: unknown[];
   loading?: boolean;
-  onClick?: () => void;
+  onClick?: (() => void) | React.MouseEventHandler<HTMLButtonElement>;
   allowMatureContent?: boolean | null;
 } & ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
@@ -49,8 +49,9 @@ export function GenerateButton({
  */
 export function ModalSubmitButton({
   children = 'Generate',
+  cost: _cost,
   ...buttonProps
-}: ButtonProps & Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
+}: { cost?: number } & ButtonProps & Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
   const { selectedType } = useSelectedBuzzType();
   const { color } = useBuzzCurrencyConfig(selectedType);
 
