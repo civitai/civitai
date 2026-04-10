@@ -38,6 +38,24 @@ export function getChainForNetwork(network: string): ChainConfig | undefined {
   return NETWORK_TO_CHAIN.get(network.toLowerCase());
 }
 
+/**
+ * Get chain config with fallback for unknown networks.
+ * Returns the explicit config if one exists, otherwise synthesizes one
+ * using the network name as chain, displayName, and targetCurrency.
+ * This allows newly-enabled NowPayments currencies to show up without code changes.
+ */
+export function getChainForNetworkWithFallback(network: string): ChainConfig {
+  const net = network.toLowerCase();
+  return (
+    NETWORK_TO_CHAIN.get(net) ?? {
+      chain: net,
+      displayName: NETWORK_DISPLAY_NAMES[net] ?? net.toUpperCase(),
+      networks: [net],
+      targetCurrency: net,
+    }
+  );
+}
+
 /** Get the chain config by chain identifier (e.g., 'evm', 'btc'). */
 export function getChainConfig(chain: string): ChainConfig | undefined {
   return CHAIN_CONFIGS.find((c) => c.chain === chain);
@@ -57,6 +75,7 @@ const NETWORK_DISPLAY_NAMES: Record<string, string> = {
   btc: 'Bitcoin',
   doge: 'Dogecoin',
   ltc: 'Litecoin',
+  xmr: 'Monero',
 };
 
 /** Get a human-friendly display name for a chain (e.g., 'evm' -> 'Ethereum'). */

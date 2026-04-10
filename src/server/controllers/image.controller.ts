@@ -426,24 +426,6 @@ export const getImagesAsPostsInfiniteHandler = async ({
       for (const img of pinnedPostsImages) {
         if (img.postId) imagesPerPost[img.postId] = (imagesPerPost[img.postId] ?? 0) + 1;
       }
-
-      const returnedPostIds = [...new Set(pinnedPostsImages.map((i) => i.postId))];
-      const missingPostIds = versionPinnedPosts.filter((id) => !returnedPostIds.includes(id));
-
-      // Always log pinned post fetch results so we can compare good vs bad pods
-      logToAxiom({
-        type: missingPostIds.length ? 'warning' : 'info',
-        name: missingPostIds.length ? 'pinned-posts-missing' : 'pinned-posts-ok',
-        input,
-        requestedPostIds: versionPinnedPosts,
-        returnedPostIds,
-        missingPostIds,
-        imagesPerPost,
-        totalImagesReturned: pinnedPostsImages.length,
-        limit: constants.modelGallery.maxPinnedPosts * POST_IMAGE_LIMIT,
-        userId: user?.id,
-        isModerator: user?.isModerator,
-      });
     }
 
     while (true) {

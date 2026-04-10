@@ -239,16 +239,6 @@ export default defineNextConfig(
           permanent: true,
         },
         {
-          source: '/canny/feedback',
-          destination: 'https://feedback.civitai.com/?b=feature-request',
-          permanent: true,
-        },
-        {
-          source: '/feedback',
-          destination: 'https://feedback.civitai.com/?b=feature-request',
-          permanent: true,
-        },
-        {
           source: '/canny/bugs',
           destination:
             'https://civitai-team.myfreshworks.com/login/auth/civitai?client_id=451979510707337272&redirect_uri=https%3A%2F%2Fcivitai.freshdesk.com%2Ffreshid%2Fcustomer_authorize_callback%3Fhd%3Dsupport.civitai.com',

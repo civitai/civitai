@@ -15,6 +15,7 @@ import {
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import * as z from 'zod';
 
 export const nowPaymentsRouter = router({
@@ -48,4 +49,8 @@ export const nowPaymentsRouter = router({
         m.reconcileUserDeposits(input.userId)
       )
     ),
+  flushCurrencyCache: moderatorProcedure.mutation(async () => {
+    await redis.del(REDIS_KEYS.CACHES.SUPPORTED_CRYPTO_CURRENCIES);
+    return { flushed: true };
+  }),
 });

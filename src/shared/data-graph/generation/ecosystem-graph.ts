@@ -23,6 +23,7 @@ import {
   getWorkflowsForEcosystem,
   isWorkflowAvailable,
   getDefaultEcosystemForWorkflow,
+  workflowConfigByKey,
   workflowGroups,
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
@@ -45,12 +46,13 @@ import { viduGraph } from './vidu-graph';
 import { openaiGraph } from './openai-graph';
 import { klingGraph, klingVersionIds } from './kling-graph';
 import { wanGraph } from './wan-graph';
+import { wanImageGraph } from './wan-image-graph';
 import { hunyuanGraph } from './hunyuan-graph';
-import { ltxv2Graph } from './ltxv2-graph';
-import { ltxv23Graph } from './ltxv23-graph';
+import { ltxGraph } from './ltx-graph';
 import { mochiGraph } from './mochi-graph';
 import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
+import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
 
 // =============================================================================
@@ -154,12 +156,22 @@ export const ecosystemGraph = new DataGraph<
         return;
       }
 
-      // Workflow not supported - find a compatible non-enhancement workflow
-      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id).filter(
-        (w) => !w.enhancement
-      );
-      if (compatibleWorkflows.length > 0) {
-        set('workflow', compatibleWorkflows[0].graphKey);
+      // Workflow not supported - find a compatible workflow.
+      // Prefer workflows in the same category (image/video) as the current workflow,
+      // and exclude enhancement and noSubmit (utility) workflows.
+      const currentCategory = workflowConfigByKey.get(ctx.workflow)?.category;
+      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id).filter((w) => {
+        if (w.enhancement) return false;
+        const config = workflowConfigByKey.get(w.graphKey);
+        if (config?.noSubmit) return false;
+        return true;
+      });
+      const sameCategory = currentCategory
+        ? compatibleWorkflows.filter((w) => w.category === currentCategory)
+        : [];
+      const fallback = sameCategory[0] ?? compatibleWorkflows[0];
+      if (fallback) {
+        set('workflow', fallback.graphKey);
       } else {
         set('workflow', 'txt2img');
       }
@@ -213,6 +225,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Chroma'] as const, graph: chromaGraph },
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
+    { values: ['Anima'] as const, graph: animaGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {
@@ -227,15 +240,17 @@ export const ecosystemGraph = new DataGraph<
         'WanVideo-22-T2V-A14B',
         'WanVideo-25-T2V',
         'WanVideo-25-I2V',
+        'WanVideo27',
       ] as const,
       graph: wanGraph,
     },
+    // Image ecosystems - Wan Image family
+    { values: ['WanImage27'] as const, graph: wanImageGraph },
     // Video ecosystems - individual families
     { values: ['Vidu'] as const, graph: viduGraph },
     { values: ['Kling'] as const, graph: klingGraph },
     { values: ['HyV1'] as const, graph: hunyuanGraph },
-    { values: ['LTXV2'] as const, graph: ltxv2Graph },
-    { values: ['LTXV23'] as const, graph: ltxv23Graph },
+    { values: ['LTXV2', 'LTXV23'] as const, graph: ltxGraph },
     { values: ['Mochi'] as const, graph: mochiGraph },
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },

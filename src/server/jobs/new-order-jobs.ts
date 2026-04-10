@@ -494,7 +494,7 @@ const newOrderChangeRateTarget = createJob(
 );
 
 // Periodic abuse detection: identify users with suspicious rating patterns
-// Runs every 6 hours, logs to Axiom for monitoring
+// Runs daily at 23:00 UTC, logs to Axiom and Discord for monitoring
 const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * *', async () => {
   if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
@@ -512,7 +512,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
           userId,
           topK(1)(rating)[1] as dominantRating
         FROM knights_new_order_image_rating
-        WHERE createdAt >= now() - INTERVAL 48 HOUR
+        WHERE createdAt >= now() - INTERVAL 24 HOUR
           AND rank != 'Acolyte'
         GROUP BY userId
       )
@@ -522,13 +522,13 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         uniq(r.rating) as uniqueRatings,
         d.dominantRating,
         countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
-        count() / greatest(dateDiff('minute', min(r.createdAt), max(r.createdAt)), 1) as avgPerMinute
+        count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
       FROM knights_new_order_image_rating r
       JOIN user_dominant d ON r.userId = d.userId
-      WHERE r.createdAt >= now() - INTERVAL 48 HOUR
+      WHERE r.createdAt >= now() - INTERVAL 24 HOUR
         AND r.rank != 'Acolyte'
       GROUP BY r.userId, d.dominantRating
-      HAVING totalRatings >= 200
+      HAVING totalRatings >= 100
         AND (uniqueRatings = 1 OR dominantPct >= 90 OR avgPerMinute > 15)
       ORDER BY totalRatings DESC
       LIMIT 50
@@ -550,7 +550,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
           avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
         })),
       },
-      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 48 hours`,
+      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 24 hours`,
     }).catch(() => null);
 
     // Alert moderators via Discord webhook
@@ -572,7 +572,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         body: JSON.stringify({
           embeds: [
             {
-              title: `⚠️ KoN Abuse Detection — ${suspects.length} suspect(s)`,
+              title: `⚠️ KoN Abuse Detection (24h) — ${suspects.length} suspect(s)`,
               description:
                 suspectLines +
                 (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),

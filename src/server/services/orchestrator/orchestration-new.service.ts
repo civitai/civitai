@@ -165,6 +165,10 @@ export type GenerationHandlerCtx = {
    * Use `airs.getOrThrow(id)` to get the AIR and throw if not found.
    */
   airs: StrictAirMap;
+  /**
+   * The user initiating the generation request.
+   */
+  user: { id: number; isModerator: boolean };
 };
 
 // =============================================================================
@@ -761,7 +765,10 @@ export async function createWorkflowStepsFromGraph({
 
   // Build AIR map from enriched resources for handlers
   const airs = new StrictAirMap(enrichedResources.map((r) => [r.id, r.air]));
-  const handlerCtx: GenerationHandlerCtx = { airs };
+  const handlerCtx: GenerationHandlerCtx = {
+    airs,
+    user: { id: user?.id ?? 0, isModerator: !!user?.isModerator },
+  };
 
   // Resolve seed before creating step input and metadata so both use the same value.
   const resolvedData =
@@ -1668,21 +1675,6 @@ export async function getWorkflowStatusUpdate({
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
-        // Get params from either new format (input) or legacy format (params)
-        let params: Record<string, unknown>;
-        if (
-          metadata.input &&
-          typeof metadata.input === 'object' &&
-          'workflow' in (metadata.input as object)
-        ) {
-          // New format: metadata.input already contains graph-compatible data
-          params = metadata.input as Record<string, unknown>;
-        } else {
-          // Legacy format: map params using legacy-metadata-mapper
-          const legacyParams = (metadata.params ?? {}) as Record<string, unknown>;
-          params = mapDataToGraphInput(legacyParams, [], { stepType: step.$type });
-        }
-
         // For dimension resolution, prefer step params (legacy format stores upscale dims there),
         // fall back to workflow-level params (new format stores them on workflow.metadata).
         const stepParams = (metadata.params ?? {}) as Record<string, unknown>;
@@ -1699,7 +1691,6 @@ export async function getWorkflowStatusUpdate({
           name: step.name,
           status: step.status,
           completedAt: step.completedAt,
-          params,
           images,
           errors: errors.length > 0 ? errors : undefined,
         };

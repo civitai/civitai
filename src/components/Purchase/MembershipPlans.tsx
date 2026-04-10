@@ -28,7 +28,6 @@ import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PlanCard } from '~/components/Subscriptions/PlanCard';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useLiveFeatureFlags } from '~/hooks/useLiveFeatureFlags';
 import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { isHolidaysTime } from '~/utils/date-helpers';

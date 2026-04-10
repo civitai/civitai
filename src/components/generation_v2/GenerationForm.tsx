@@ -39,6 +39,7 @@ import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react'
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useGatedEcosystems } from './hooks/useGatedEcosystems';
 
 import {
   Controller,
@@ -122,6 +123,7 @@ export function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
   const workflowHistory = useWorkflowHistoryStore();
   const currentUser = useCurrentUser();
+  const gatedEcosystems = useGatedEcosystems();
   const isMember = !!currentUser && currentUser.tier !== 'free';
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
   const snapshot = graph.getSnapshot() as {
@@ -352,6 +354,7 @@ export function GenerationForm() {
                   handleBaseModelChange(newValue, label);
                 }}
                 compatibleEcosystems={meta?.compatibleEcosystems}
+                excludeEcosystems={gatedEcosystems.length ? gatedEcosystems : undefined}
                 isCompatible={compatibility.isEcosystemKeyCompatible}
                 getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
                 outputType={compatibility.currentOutputType}
@@ -462,7 +465,7 @@ export function GenerationForm() {
                 }}
               />
 
-              {/* Wan version picker */}
+              {/* Wan video version picker */}
               <Controller
                 graph={graph}
                 name="wanVersion"
@@ -1368,20 +1371,6 @@ export function GenerationForm() {
                 )}
               />
 
-              {/* Wan 2.2: Multi-step toggle (comfy 12fps + VFIMamba interpolation) */}
-              <Controller
-                graph={graph}
-                name="multiStep"
-                render={({ value, onChange }) => (
-                  <Checkbox
-                    checked={value}
-                    onChange={(e) => onChange(e.target.checked)}
-                    label="Multi-step with interpolation"
-                    description="Generate at 12fps then interpolate to 24fps for smoother results"
-                  />
-                )}
-              />
-
               {/* Wan: Draft mode toggle (v2.2-5b) / Vidu Q3: Draft mode */}
               <Controller
                 graph={graph}
@@ -1659,8 +1648,8 @@ function VersionGroupSelector({
     [getResourceData, onChange]
   );
 
-  // Only render if current model is a known version in the tree
-  if (!modelId || !allIds.has(modelId)) return null;
+  // Only render if current model is a known version and there are multiple options
+  if (!modelId || !allIds.has(modelId) || allIds.size <= 1) return null;
 
   const path = findModelPath(versions, modelId);
 

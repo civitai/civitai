@@ -99,7 +99,7 @@ import {
   verifiedProcedure,
 } from '~/server/trpc';
 import { CacheTTL } from '~/server/common/constants';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { refreshSession } from '~/server/auth/session-invalidation';
 
 export const userRouter = router({
@@ -140,6 +140,13 @@ export const userRouter = router({
   update: guardedProcedure.input(userUpdateSchema).mutation(updateUserHandler),
   requestEmailChange: protectedProcedure
     .input(requestEmailChangeSchema)
+    .use(
+      rateLimit({
+        limit: 2,
+        period: 24 * 60 * 60,
+        errorMessage: 'You can only request 2 email changes per day. Please try again tomorrow.',
+      })
+    )
     .mutation(async ({ input, ctx }) => {
       return requestEmailChange(ctx.user.id, input.newEmail);
     }),

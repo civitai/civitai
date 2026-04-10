@@ -15,13 +15,7 @@
 
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import {
-  aspectRatioNode,
-  createCheckpointGraph,
-  imagesNode,
-  seedNode,
-  sliderNode,
-} from './common';
+import { aspectRatioNode, createCheckpointGraph, imagesNode, seedNode, sliderNode } from './common';
 
 // =============================================================================
 // Flux Kontext Mode Constants
@@ -97,10 +91,7 @@ export const fluxKontextGraph = new DataGraph<
     []
   )
   .node('aspectRatio', aspectRatioNode({ options: fluxKontextAspectRatios, defaultValue: '1:1' }))
-  .node(
-    'cfgScale',
-    sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5 })
-  )
+  .node('cfgScale', sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5 }))
   .node('seed', seedNode());
 
 // Export mode options for use in components

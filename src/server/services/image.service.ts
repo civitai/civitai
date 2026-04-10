@@ -1911,6 +1911,7 @@ export const getAllImagesIndex = async (
     imageMetadata,
     thumbnails,
     imageMetrics,
+    tagIdsVar,
   ] = await Promise.all([
     await getBasicDataForUsers(userIds),
     include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
@@ -1925,6 +1926,10 @@ export const getAllImagesIndex = async (
     await getMetadataForImages(videoIds), // Only need this for videos
     await getThumbnailsForImages(videoIds), // Only need this for videos
     getImageMetricsObject(searchResults),
+    // Fetch tagIds from cache so client-side hidden-tag filtering works.
+    // Search results from BitDex don't include tagIds (too expensive to store),
+    // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
+    include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
   ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -1939,6 +1944,10 @@ export const getAllImagesIndex = async (
 
     return {
       ...sr,
+      // Override tagIds from authoritative cache when available.
+      // This ensures client-side hidden-tag filtering works even when
+      // the search engine (BitDex) doesn't return tagIds.
+      tagIds: tagIdsVar?.[sr.id]?.tags ?? sr.tagIds,
       modelVersionId: sr.postedToId,
       type: sr.type as MediaType,
       createdAt: sr.sortAt,

@@ -117,8 +117,6 @@ import type {
 } from './../schema/user.schema';
 import { removeUserContentFromSearchIndex } from '~/server/meilisearch/util';
 import { cancelSubscription } from '~/server/services/stripe.service';
-// import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
-
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },

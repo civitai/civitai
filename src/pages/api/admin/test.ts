@@ -1,4 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type { XGuardModerationStep } from '@civitai/client';
+import { slimTextModerationOutput } from '~/server/services/entity-moderation.service';
 import { createTextModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -14,9 +16,20 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       entityId: 0,
       content: text,
       wait: 30,
+      labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
     });
 
-    res.status(200).json(result);
+    const slimmed = result
+      ? {
+          ...result,
+          steps: ((result.steps ?? []) as unknown as XGuardModerationStep[]).map((step) => ({
+            ...step,
+            output: step.output ? slimTextModerationOutput(step.output) : step.output,
+          })),
+        }
+      : result;
+
+    res.status(200).json(slimmed);
   } catch (e) {
     console.log(e);
     res.status(400).json({ error: (e as Error).message });

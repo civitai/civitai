@@ -116,7 +116,7 @@ const featureFlags = createFeatureFlags({
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
-  useRedTheme: ['public', 'blue', 'red'],
+  useRedTheme: ['red'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],
@@ -144,7 +144,7 @@ const featureFlags = createFeatureFlags({
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
   auctionsMod: ['granted'],
-  challengePlatform: ['blue', 'red', 'public'],
+  challengePlatform: ['public'],
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],

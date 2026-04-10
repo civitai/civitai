@@ -4,6 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logToAxiom } from '~/server/logging/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
@@ -750,14 +751,14 @@ type VotingRateLimitConfig = {
   abuseThreshold: number;
 };
 
-const ALLOWED_RESPONSE = { allowed: true, remaining: 0, resetTime: 0, isAbuse: false } as const;
+const DENIED_RESPONSE = { allowed: false, remaining: 0, resetTime: 0, isAbuse: false } as const;
 const MINUTE_WINDOW = 60 * 1000;
 const HOUR_WINDOW = 60 * MINUTE_WINDOW;
 const DAY_WINDOW = 24 * HOUR_WINDOW;
 
 /**
  * Get rate limit config from Redis. Returns null if unavailable — callers
- * should skip rate limiting entirely when config is not set.
+ * should deny the vote when config is not available.
  */
 async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
   try {
@@ -774,10 +775,26 @@ export async function checkVotingRateLimit(userId: number): Promise<{
   resetTime: number;
   isAbuse: boolean;
 }> {
-  if (!redis) return ALLOWED_RESPONSE;
+  if (!redis) {
+    logToAxiom({
+      type: 'error',
+      name: 'new-order-rate-limit-unavailable',
+      details: { userId, reason: 'redis-client-unavailable' },
+      message: `Rate limiter denied vote for user ${userId}: Redis client unavailable`,
+    }).catch(() => null);
+    return DENIED_RESPONSE;
+  }
 
   const limits = await getVotingRateLimitConfig();
-  if (!limits) return ALLOWED_RESPONSE;
+  if (!limits) {
+    logToAxiom({
+      type: 'error',
+      name: 'new-order-rate-limit-unavailable',
+      details: { userId, reason: 'config-not-set' },
+      message: `Rate limiter denied vote for user ${userId}: rate limit config not set in Redis`,
+    }).catch(() => null);
+    return DENIED_RESPONSE;
+  }
 
   const now = Date.now();
   const minuteKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.MINUTE}:${userId}` as const;
@@ -807,17 +824,19 @@ export async function checkVotingRateLimit(userId: number): Promise<{
     const allowed = minuteAllowed && hourAllowed && dayAllowed && !isAbuse;
 
     if (allowed) {
-      // Add current request
+      // Add current request — use individual commands instead of multi() to avoid
+      // CROSSSLOT errors in Redis Cluster (keys hash to different slots)
       const requestId = `${now}-${Math.random()}`;
-      await redis
-        .multi()
-        .zAdd(minuteKey, { score: now, value: requestId })
-        .zAdd(hourKey, { score: now, value: requestId })
-        .zAdd(dayKey, { score: now, value: requestId })
-        .expire(minuteKey, 60)
-        .expire(hourKey, 3600)
-        .expire(dayKey, 86400)
-        .exec();
+      await Promise.all([
+        redis.zAdd(minuteKey, { score: now, value: requestId }),
+        redis.zAdd(hourKey, { score: now, value: requestId }),
+        redis.zAdd(dayKey, { score: now, value: requestId }),
+      ]);
+      await Promise.all([
+        redis.expire(minuteKey, 60),
+        redis.expire(hourKey, 3600),
+        redis.expire(dayKey, 86400),
+      ]);
     }
 
     return {
@@ -828,6 +847,12 @@ export async function checkVotingRateLimit(userId: number): Promise<{
     };
   } catch (error) {
     handleLogError(error as Error, `Rate limiting failed for user ${userId}`);
-    return ALLOWED_RESPONSE;
+    logToAxiom({
+      type: 'error',
+      name: 'new-order-rate-limit-unavailable',
+      details: { userId, reason: 'redis-operation-failed', error: (error as Error).message },
+      message: `Rate limiter denied vote for user ${userId}: Redis operation failed`,
+    }).catch(() => null);
+    return DENIED_RESPONSE;
   }
 }

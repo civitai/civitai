@@ -31,7 +31,7 @@ import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import type { Price } from '~/shared/utils/prisma/models';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
@@ -217,10 +217,25 @@ export const StripeCancelMembershipButton = ({
   hasUsedVaultStorage: boolean;
 }) => {
   const { mutate, isLoading: connectingToStripe } =
-    trpc.stripe.createCancelSubscriptionSession.useMutation({
-      async onSuccess({ url }) {
-        onClose();
-        Router.push(url);
+    trpc.stripe.cancelSubscriptionWithFallback.useMutation({
+      async onSuccess(data) {
+        if (data.type === 'redirect') {
+          onClose();
+          Router.push(data.url);
+        } else {
+          onClose();
+          showSuccessNotification({
+            title: 'Subscription cancelled',
+            message: 'Your subscription has been cancelled successfully.',
+          });
+          window.location.reload();
+        }
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Failed to cancel subscription',
+          error: new Error(error.message),
+        });
       },
     });
 
