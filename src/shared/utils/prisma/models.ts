@@ -2778,6 +2778,7 @@ export interface Bid {
   transactionIds: string[];
   isRefunded: boolean;
   fromRecurring: boolean;
+  accountType: string;
 }
 
 export interface BidRecurring {
@@ -2792,6 +2793,7 @@ export interface BidRecurring {
   startAt: Date;
   endAt: Date | null;
   isPaused: boolean;
+  accountType: string;
 }
 
 export interface FeaturedModelVersion {

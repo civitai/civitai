@@ -77,7 +77,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     key: '2257',
     href: '/content/2257',
     children: '18 U.S.C. §2257',
-    features: (features) => !features.isGreen,
+    features: (features) => features.useRedTheme,
   },
 ];
 
@@ -117,9 +117,8 @@ export function AppFooter() {
         className={clsx(
           ' relative flex h-[var(--footer-height)] w-full items-center gap-2  overflow-x-auto bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
           {
-            ['border-t border-gray-3 dark:border-dark-4']: domain === 'blue',
-            [`border-red-8 border-t-[3px]`]: domain === 'red',
-            [`border-green-8 border-t-[3px]`]: domain === 'green',
+            ['border-t border-gray-3 dark:border-dark-4']: !features.useRedTheme,
+            [`border-red-8 border-t-[3px]`]: features.useRedTheme,
           }
         )}
         style={{ scrollbarWidth: 'thin' }}
