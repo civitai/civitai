@@ -211,7 +211,7 @@ export function BuzzTypeSelector({
           <Text size="sm" fw={600}>
             {abbreviateNumber(displayCost)}
           </Text>
-          <IconChevronDown size={12} />
+          <IconChevronDown size={12} className="ml-0.5" />
         </Button>
       </Menu.Target>
       <Menu.Dropdown>
