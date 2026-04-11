@@ -22,6 +22,10 @@ import {
 } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import {
+  MembershipUpsell,
+  useMembershipUpsell,
+} from '~/components/ImageGeneration/MembershipUpsell';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -62,6 +66,7 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
   const status = useGenerationStatus();
   const { running, helpers } = useTourContext();
   const dailyBoost = useDailyBoostReward();
+  const membershipUpsell = useMembershipUpsell();
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
     defaultValue: window?.localStorage?.getItem('review-generation-terms') === 'true',
@@ -72,7 +77,8 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
     [status.message]
   );
 
-  const showFooterContent = status.available && reviewed;
+  const showFooterContent =
+    status.available && reviewed && !membershipUpsell.needsAcknowledgment;
 
   return (
     <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
@@ -86,7 +92,12 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
           {status.message}
         </AlertWithIcon>
       ) : !reviewed ? (
-        <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
+        <Alert
+          color="yellow"
+          title="Image Generation Terms"
+          data-tour="gen:terms"
+          className="-m-2 rounded-none rounded-t-xl"
+        >
           <Text size="xs">
             By using the image generator you confirm that you have read and agree to our{' '}
             <Text component={Link} href="/content/tos" td="underline">
@@ -113,6 +124,8 @@ function GenerationLayoutFooter({ children }: { children: ReactNode }) {
             I Confirm, Start Generating
           </Button>
         </Alert>
+      ) : membershipUpsell.needsAcknowledgment ? (
+        <MembershipUpsell />
       ) : (
         <>{dailyBoost.canShow && <DailyBoostRewardClaim />}</>
       )}
