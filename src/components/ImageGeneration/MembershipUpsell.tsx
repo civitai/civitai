@@ -53,48 +53,44 @@ export function MembershipUpsell() {
   // First time: full warning — blocks the footer submit buttons
   if (!acknowledged) {
     return (
-      <Alert p="md" pb="sm" color="yellow" variant="outline">
-        <div className="flex flex-col gap-3">
-          <div>
-            <Text size="sm" fw={700} className="flex items-center gap-1.5">
-              <IconAlertTriangle size={16} color="var(--mantine-color-yellow-6)" />
-              Blue Buzz can&apos;t generate mature content
-            </Text>
-            <Text size="sm" mt={4}>
-              Your generation will be blocked if it produces mature results. Blue Buzz is limited to
-              safe-for-work content.
-            </Text>
-          </div>
-          <div className="rounded-md border border-solid border-gray-4 p-2.5 dark:border-dark-4">
-            <Text size="sm" fw={600}>
-              Unlock mature content with a membership
-            </Text>
-            <Text size="xs" c="dimmed">
-              Members can generate mature content on Civitai.red with Blue Buzz — your membership
-              carries over automatically.
-            </Text>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              component="a"
-              href={pricingUrl}
-              target="_blank"
-              rel="noreferrer nofollow"
-              variant="filled"
-              size="sm"
-              className="flex-1"
-            >
-              Become a member
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              className="flex-1"
-              onClick={() => setAcknowledged(true)}
-            >
-              Continue anyway
-            </Button>
-          </div>
+      <Alert color="yellow" className="-m-2 rounded-none rounded-t-xl">
+        <Text size="sm" fw={700} c="var(--mantine-color-yellow-light-color)" className="flex items-center gap-1.5">
+          <IconAlertTriangle size={16} />
+          Blue Buzz can&apos;t generate mature content
+        </Text>
+        <Text size="xs" mt={4}>
+          Your generation will be blocked if it produces mature results. Blue Buzz is limited to
+          safe-for-work content only.
+        </Text>
+        <div className="mt-3 rounded-md border border-solid border-yellow-8/40 bg-white/40 p-2.5 dark:bg-dark-6/60">
+          <Text size="xs" fw={600}>
+            Unlock mature content with a membership
+          </Text>
+          <Text size="xs" style={{ opacity: 0.7 }}>
+            Members can generate mature content on Civitai.red. Your membership from Civitai.com
+            carries over automatically.
+          </Text>
+        </div>
+        <div className="mt-3 flex items-center gap-3">
+          <Button
+            component="a"
+            href={pricingUrl}
+            target="_blank"
+            rel="noreferrer nofollow"
+            variant="filled"
+            className="flex-1"
+          >
+            Become a member
+          </Button>
+          <Text
+            size="xs"
+            fw={700}
+            className="cursor-pointer hover:underline"
+            style={{ opacity: 0.6 }}
+            onClick={() => setAcknowledged(true)}
+          >
+            Continue anyway
+          </Text>
         </div>
       </Alert>
     );

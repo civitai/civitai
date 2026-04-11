@@ -39,10 +39,7 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import {
-  MembershipUpsell,
-  useMembershipUpsell,
-} from '~/components/ImageGeneration/MembershipUpsell';
+import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -284,7 +281,6 @@ function PriorityAlertSpace({
   snackbarRight,
 }: PriorityAlertSpaceProps) {
   const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
-  const membershipUpsell = useMembershipUpsell();
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
@@ -369,8 +365,6 @@ function PriorityAlertSpace({
         </Text>
       </Notification>
     );
-  } else if (membershipUpsell.canShow) {
-    priorityAlert = <MembershipUpsell />;
   }
 
   return (

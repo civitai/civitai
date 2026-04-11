@@ -1,5 +1,6 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Text } from '@mantine/core';
+
 import { useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
@@ -36,6 +37,13 @@ export function GenerateButton({
         loading={loading}
         disabled={!canGenerate || disabled}
         onClick={onClick}
+        className={buttonProps.className}
+        style={{
+          ...buttonProps.style,
+          borderWidth: '1px 0 1px 1px',
+          borderStyle: 'solid',
+          borderColor: 'var(--mantine-color-default-border)',
+        }}
       >
         <Text ta="center">{children}</Text>
       </Button>
