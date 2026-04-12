@@ -185,14 +185,18 @@ export default WebhookEndpoint(async (req, res) => {
               return;
             }
 
-            await submitTextModeration({
+            const workflow = await submitTextModeration({
               entityType: 'Article',
               entityId: article.id,
               content: text,
               labels: ['nsfw'],
               priority: 'low',
             });
-            stats.textModerationSubmitted++;
+            if (workflow?.id) {
+              stats.textModerationSubmitted++;
+            } else {
+              stats.errors.push(`Text moderation article ${article.id}: no workflow returned`);
+            }
           } catch (error) {
             stats.errors.push(
               `Text moderation article ${article.id}: ${
