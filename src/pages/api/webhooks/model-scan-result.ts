@@ -98,7 +98,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
               data: {
                 modelId: model.id,
                 error: error.message,
-                cause: error.cause,
+                causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
                 stack: error.stack,
               },
             })
@@ -132,7 +132,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
               data: {
                 modelId: model.id,
                 error: error.message,
-                cause: error.cause,
+                causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
                 stack: error.stack,
               },
             })

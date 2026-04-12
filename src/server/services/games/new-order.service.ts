@@ -653,7 +653,7 @@ async function processImageRating({
           },
           message: error.message,
           stack: error.stack,
-          cause: error.cause,
+          causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
         },
         'clickhouse'
       ).catch();
@@ -1002,7 +1002,7 @@ export async function processFinalRatings() {
         },
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       },
       'clickhouse'
     ).catch();

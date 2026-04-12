@@ -141,7 +141,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
         type: 'error',
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       }).catch();
       throw error;
     }
@@ -310,7 +310,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
         type: 'error',
         message: `Failed to create featured models`,
         error: err.message,
-        cause: err.cause,
+        causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
         stack: err.stack,
       }).catch();
       return false;
@@ -396,7 +396,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
           message: `Failed to update checkpoint coverage`,
           data: { checkpoints },
           error: err.message,
-          cause: err.cause,
+          causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
           stack: err.stack,
         }).catch();
 
@@ -502,7 +502,7 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
                 message: `Failed to refund bid`,
                 data: { tid },
                 error: err.message,
-                cause: err.cause,
+                causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
                 stack: err.stack,
               }).catch();
               return { transactionId: null };
@@ -516,7 +516,7 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
             message: `Failed to run refund`,
             data: { tid },
             error: err.message,
-            cause: err.cause,
+            causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
             stack: err.stack,
           }).catch();
 
@@ -696,7 +696,7 @@ const createRecurringBids = async (now: Dayjs) => {
           message: `Failed to handle recurring bid`,
           data: { recurringBid },
           error: err.message,
-          cause: err.cause,
+          causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
           stack: err.stack,
         }).catch();
       }

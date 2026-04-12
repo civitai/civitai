@@ -3008,7 +3008,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       {
         type: 'search-error',
         error: err.message,
-        cause: err.cause,
+        causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
         input: removeEmpty(input),
         request,
       },
@@ -3912,7 +3912,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       {
         type: 'search-error',
         error: err.message,
-        cause: err.cause,
+        causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
         input: removeEmpty(input),
         request,
       },
@@ -3935,7 +3935,7 @@ const getImageMetricsObject = async (data: { id: number }[]) => {
         name: 'Failed to getImageMetrics',
         message: error.message,
         stack: error.stack,
-        cause: error.cause,
+        causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
       },
       'clickhouse'
     ).catch();
@@ -7143,7 +7143,7 @@ export async function addSeenImageIds(imageIds: number[], maxSize = 10000) {
         {
           type: 'search-redis-error',
           error: err.message,
-          cause: err.cause,
+          causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
           stack: err.stack,
         },
         'temp-search'

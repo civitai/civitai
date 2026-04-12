@@ -537,7 +537,7 @@ export const upsertModelVersion = async ({
 
     // Run it in the background to avoid blocking the request.
     ingestModelById({ id: version.modelId }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+      logToAxiom({ type: 'error', name: 'model-ingestion', error: error instanceof Error ? error.message : String(error), modelId: version.modelId })
     );
 
     return version;
@@ -909,7 +909,7 @@ export const publishModelVersionById = async ({
 
   // Run it in the background to avoid blocking the request.
   ingestModelById({ id: version.modelId }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: version.modelId })
+    logToAxiom({ type: 'error', name: 'model-ingestion', error: error instanceof Error ? error.message : String(error), modelId: version.modelId })
   );
 
   return version;

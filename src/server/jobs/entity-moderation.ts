@@ -474,7 +474,7 @@ const runClavata = async ({
           data: {
             error: error.message,
             name: error.name,
-            cause: error.cause,
+            causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
             stack: error.stack,
             code: error.code,
           },

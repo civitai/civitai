@@ -10,6 +10,31 @@ const axiom = shouldConnect
     })
   : null;
 
+/**
+ * Extract only safe primitive fields from an error for logging.
+ *
+ * Logging raw error objects (especially from axios or AWS SDK) blows up the
+ * Axiom schema because each unique key in `.config`, `.headers`, `.cause`,
+ * `.$metadata`, `.config.data._readableState`, etc. becomes a separate field.
+ * Always pass errors through this helper before logging them.
+ */
+export function safeError(e: unknown): MixedObject | undefined {
+  if (e == null) return undefined;
+  if (e instanceof Error) {
+    const anyErr = e as any;
+    const cause = anyErr.cause;
+    return {
+      name: e.name,
+      message: e.message,
+      stack: e.stack,
+      code: anyErr.code,
+      causeMessage:
+        cause instanceof Error ? cause.message : cause != null ? String(cause) : undefined,
+    };
+  }
+  return { message: String(e) };
+}
+
 export async function logToAxiom(data: MixedObject, datastream?: string) {
   const sendData = { pod: env.PODNAME, ...data };
   if (isProd) {

@@ -48,7 +48,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     logToAxiom({
       type: 'mod-remove-images-error',
       error: err.message,
-      cause: err.cause,
+      causeMessage: err?.cause instanceof Error ? err.cause.message : undefined,
       stack: err.stack,
     });
     res.status(500);

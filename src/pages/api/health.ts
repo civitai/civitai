@@ -20,7 +20,7 @@ function logError({ error, name, details }: { error: Error; name: string; detail
       details,
       message: error.message,
       stack: error.stack,
-      cause: error.cause,
+      causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
     }).catch();
   } else {
     console.log(`Failed to get a connection to ${name}`);

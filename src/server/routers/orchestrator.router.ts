@@ -7,7 +7,7 @@ import {
   queryGeneratedImageWorkflows2,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
 import {
@@ -391,15 +391,11 @@ export const orchestratorRouter = router({
       logToAxiom({
         name: 'what-if-from-graph',
         type: 'error',
-        payload: input,
+        payload: JSON.stringify(input),
         error:
           e instanceof TRPCError
-            ? {
-                code: e.code,
-                name: e.name,
-                message: e.message,
-              }
-            : e,
+            ? { code: e.code, name: e.name, message: e.message }
+            : safeError(e),
       }).catch();
       throw e;
     }

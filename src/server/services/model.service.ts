@@ -1739,7 +1739,7 @@ export const upsertModel = async (
       const parsedModel = ingestModelSchema.parse(result);
       // Run it in the background to prevent blocking the request
       ingestModel({ ...parsedModel }).catch((error) =>
-        logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+        logToAxiom({ type: 'error', name: 'model-ingestion', error: error instanceof Error ? error.message : String(error), modelId: parsedModel.id })
       );
     }
 
@@ -1967,7 +1967,7 @@ export const publishModelById = async ({
   if (!republishing) {
     const parsedModel = ingestModelSchema.parse(model);
     ingestModel({ ...parsedModel }).catch((error) =>
-      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+      logToAxiom({ type: 'error', name: 'model-ingestion', error: error instanceof Error ? error.message : String(error), modelId: parsedModel.id })
     );
   }
 
@@ -3191,7 +3191,7 @@ export async function getFeaturedModels() {
       type: 'error',
       message: error.message,
       stack: error.stack,
-      cause: error.cause,
+      causeMessage: error?.cause instanceof Error ? error.cause.message : undefined,
     }).catch();
     return [];
   }

@@ -242,7 +242,7 @@ export const creatorsProgramSettleCash = createJob(
         await logToAxiom({
           name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
-          error: e,
+          error: e instanceof Error ? e.message : String(e),
           positiveBalances,
         });
 

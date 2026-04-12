@@ -772,7 +772,7 @@ export async function withdrawCash(userId: number, amount: number) {
       data: {},
     });
   } catch (e) {
-    await logToAxiom({ name: 'withdraw-cash', type: 'error', error: e, ...data, userId });
+    await logToAxiom({ name: 'withdraw-cash', type: 'error', error: e instanceof Error ? e.message : String(e), ...data, userId });
 
     // In case of error, we need to revert the transaction
     if (data.updated) {

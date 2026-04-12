@@ -629,7 +629,7 @@ export const purchaseCosmeticShopItem = async ({
           shopItemId,
           userId,
           transactionId,
-          error: e,
+          error: e instanceof Error ? e.message : String(e),
         },
       });
     }

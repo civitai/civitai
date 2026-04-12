@@ -938,7 +938,7 @@ export const updateSubscriptionPlan = async ({
           message: 'Failed to update subscription',
           userId,
           priceId,
-          error: e,
+          error: e instanceof Error ? e.message : String(e),
           stack: (e as Error)?.stack,
         });
 
