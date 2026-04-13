@@ -70,7 +70,6 @@ export function AppLayout({
   return (
     <div className="flex h-full flex-1 flex-col">
       {header}
-      <RewardsBonusBanner />
       {loading ? (
         <PageLoader />
       ) : notFound ? (
@@ -124,7 +123,13 @@ export function MainContent({
   return scrollable ? (
     <ScrollArea {...props}>
       <main className="flex-1">
-        {subNav && <SubNav>{subNav}</SubNav>}
+        {subNav && (
+          <SubNav>
+            <RewardsBonusBanner />
+            {subNav}
+          </SubNav>
+        )}
+        {!subNav && <RewardsBonusBanner />}
         {announcements && <Announcements />}
         {announcements && <MatureContentMigrationAlert />}
         {children}
@@ -134,7 +139,13 @@ export function MainContent({
   ) : (
     <div className="no-scroll group flex flex-1 flex-col overflow-hidden">
       <main className="flex flex-1 flex-col overflow-hidden">
-        {subNav && <SubNav>{subNav}</SubNav>}
+        {subNav && (
+          <SubNav>
+            <RewardsBonusBanner />
+            {subNav}
+          </SubNav>
+        )}
+        {!subNav && <RewardsBonusBanner />}
         {children}
       </main>
       {footer}

@@ -1,6 +1,7 @@
 import {
   Alert,
   Anchor,
+  Badge,
   Center,
   Container,
   Grid,
@@ -13,6 +14,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { IconSparkles } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
@@ -96,6 +98,10 @@ export default function UserBuzzDashboard() {
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
   const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
+  const globalRewardsBonus =
+    (multipliers as { globalRewardsBonus?: number }).globalRewardsBonus ?? 1;
+  const baseRewardsMultiplier =
+    globalRewardsBonus > 1 ? rewardsMultiplier / globalRewardsBonus : rewardsMultiplier;
   const { subscription, subscriptionPaymentProvider } = useActiveSubscription({
     buzzType: selectedAccountType,
   });
@@ -180,23 +186,50 @@ export default function UserBuzzDashboard() {
           {(loadingRewards || multipliersLoading || hasRewards) && (
             <Paper className={classes.tileCard} p="lg" radius="md">
               <Stack>
-                <Group justify="space-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-xl font-bold" id="rewards">
                     Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
                   </h3>
-                  {isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
-                    <Tooltip multiline label="Your membership makes rewards worth more!">
-                      <Stack gap={0}>
-                        <Text
-                          size="md"
-                          style={{ fontSize: 20 }}
-                          fw={700}
-                          className={selectedBuzzConfig.classNames?.gradientText}
-                        >
-                          Rewards Multiplier: {rewardsMultiplier}x
-                        </Text>
-                      </Stack>
-                    </Tooltip>
+                  {globalRewardsBonus > 1 ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {baseRewardsMultiplier > 1 && (
+                        <>
+                          <Badge size="lg" radius="xl" variant="light" color="gray">
+                            Membership {baseRewardsMultiplier}x
+                          </Badge>
+                          <Text size="xs" c="dimmed">
+                            ×
+                          </Text>
+                        </>
+                      )}
+                      <Badge
+                        size="lg"
+                        radius="xl"
+                        variant="light"
+                        color="yellow"
+                        leftSection={<IconSparkles size={14} />}
+                      >
+                        Event {globalRewardsBonus}x
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        =
+                      </Text>
+                      <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
+                        Total {rewardsMultiplier}x
+                      </Badge>
+                    </div>
+                  ) : isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge size="lg" radius="xl" variant="light" color="gray">
+                        Membership {rewardsMultiplier}x
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        =
+                      </Text>
+                      <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
+                        Total {rewardsMultiplier}x
+                      </Badge>
+                    </div>
                   ) : (
                     isMember &&
                     features.membershipsV2 && (
@@ -213,7 +246,7 @@ export default function UserBuzzDashboard() {
                       </Text>
                     )
                   )}
-                </Group>
+                </div>
                 {loadingRewards || multipliersLoading ? (
                   <Center py="xl">
                     <Loader />
