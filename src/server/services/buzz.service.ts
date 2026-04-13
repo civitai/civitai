@@ -182,11 +182,33 @@ export function getMultipliersForUserCache(userIds: number[]) {
   return userMultipliersCache.fetch(userIds);
 }
 
+/**
+ * Returns the global rewards bonus multiplier from the Flipt variant flag.
+ * Use this for time-limited bonus events (e.g. double rewards weekend).
+ * The variant key should be a numeric string like "2" for 2x, "1.5" for 1.5x.
+ * Returns 1 when no bonus is active or Flipt is unavailable.
+ */
+export async function getGlobalRewardsBonusMultiplier(): Promise<number> {
+  const { getFliptVariant, FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
+  const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.REWARDS_BONUS_MULTIPLIER);
+  if (!variant) return 1;
+  const parsed = parseFloat(variant);
+  return isNaN(parsed) || parsed <= 0 ? 1 : parsed;
+}
+
 export async function getMultipliersForUser(userId: number, refresh = false) {
   if (refresh) await deleteMultipliersForUserCache(userId);
 
   const multipliers = await getMultipliersForUserCache([userId]);
-  return multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
+  const base = multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
+
+  // Apply global rewards bonus (from Flipt variant flag) on top of subscription multiplier
+  const globalBonus = await getGlobalRewardsBonusMultiplier();
+  if (globalBonus !== 1) {
+    return { ...base, rewardsMultiplier: base.rewardsMultiplier * globalBonus };
+  }
+
+  return base;
 }
 
 export function deleteMultipliersForUserCache(userId: number) {
