@@ -9,10 +9,19 @@
  *   node .claude/skills/flipt/flipt.mjs create <flag-key> -d "description"
  *   node .claude/skills/flipt/flipt.mjs enable <flag-key>
  *   node .claude/skills/flipt/flipt.mjs disable <flag-key>
+ *   node .claude/skills/flipt/flipt.mjs create <flag-key> --variant --variants "1.5,2" -d "description"
+ *   node .claude/skills/flipt/flipt.mjs add-variant <flag-key> <variant-key>
+ *   node .claude/skills/flipt/flipt.mjs remove-variant <flag-key> <variant-key>
+ *   node .claude/skills/flipt/flipt.mjs set-rollout <flag-key> <variant-key> [--rollout 100]
  *
  * Options:
  *   --description, -d   Description for new flag
  *   --enabled           Create flag as enabled (default: disabled)
+ *   --variant           Create as variant flag (default: boolean)
+ *   --variants <keys>   Comma-separated variant keys (first is default)
+ *   --default <key>     Set default variant key
+ *   --rollout <pct>     Rollout percentage for set-rollout (default: 100)
+ *   --segment <key>     Segment key for rules (default: all-users)
  *   --json              Output results as JSON
  *   --quiet, -q         Minimal output
  *   --force, -f         Skip confirmation prompts
@@ -68,8 +77,14 @@ if (!FLIPT_URL || !FLIPT_API_TOKEN) {
 const args = process.argv.slice(2);
 let command = '';
 let flagKey = '';
+let extraArg = '';
 let description = '';
 let enabled = false;
+let isVariant = false;
+let variantKeys = [];
+let defaultVariant = '';
+let rolloutPct = 100;
+let segmentKey = 'all-users';
 let jsonOutput = false;
 let quiet = false;
 let force = false;
@@ -80,6 +95,17 @@ for (let i = 0; i < args.length; i++) {
     description = args[++i] || '';
   } else if (arg === '--enabled') {
     enabled = true;
+  } else if (arg === '--variant') {
+    isVariant = true;
+  } else if (arg === '--variants') {
+    isVariant = true;
+    variantKeys = (args[++i] || '').split(',').map(v => v.trim()).filter(Boolean);
+  } else if (arg === '--default') {
+    defaultVariant = args[++i] || '';
+  } else if (arg === '--rollout') {
+    rolloutPct = parseInt(args[++i] || '100', 10);
+  } else if (arg === '--segment') {
+    segmentKey = args[++i] || 'all-users';
   } else if (arg === '--json') {
     jsonOutput = true;
   } else if (arg === '--quiet' || arg === '-q') {
@@ -91,6 +117,8 @@ for (let i = 0; i < args.length; i++) {
       command = arg;
     } else if (!flagKey) {
       flagKey = arg;
+    } else if (!extraArg) {
+      extraArg = arg;
     }
   }
 }
@@ -166,6 +194,28 @@ async function getFlag(key) {
     console.log(`Description: ${data.description}`);
   }
 
+  if (data.variants?.length > 0) {
+    console.log('\nVariants:');
+    for (const v of data.variants) {
+      const def = v.default ? ' (default)' : '';
+      const attach = v.attachment ? ` → ${JSON.stringify(v.attachment)}` : '';
+      console.log(`  - ${v.key}${def}${attach}`);
+    }
+  }
+
+  if (data.rules?.length > 0) {
+    console.log('\nRules:');
+    for (const rule of data.rules) {
+      if (rule.segment) {
+        const segs = rule.segment.keys?.join(', ') || 'unknown';
+        console.log(`  - Segment: ${segs}`);
+        for (const dist of rule.distributions || []) {
+          console.log(`    → variant "${dist.variant}" at ${dist.rollout}%`);
+        }
+      }
+    }
+  }
+
   if (data.rollouts?.length > 0) {
     console.log('\nRollout Rules:');
     for (const rollout of data.rollouts) {
@@ -180,22 +230,23 @@ async function getFlag(key) {
 }
 
 async function createFlag(key, desc, isEnabled) {
-  // Note: This may fail if the token is read-only
+  const flagType = isVariant ? 'VARIANT_FLAG_TYPE' : 'BOOLEAN_FLAG_TYPE';
   try {
     const data = await apiRequest('POST', '/api/v1/flags', {
-      key,
-      name: key,
-      type: 'BOOLEAN_FLAG_TYPE',
-      description: desc || '',
-      enabled: isEnabled,
+      key, name: key, type: flagType, description: desc || '', enabled: isEnabled,
     });
 
-    if (jsonOutput) {
-      console.log(JSON.stringify(data, null, 2));
-      return;
+    if (isVariant && variantKeys.length > 0) {
+      const defKey = defaultVariant || variantKeys[0];
+      for (const vk of variantKeys) {
+        await apiRequest('POST', `/api/v1/flags/${key}/variants`, { key: vk, default: vk === defKey });
+      }
+      if (!quiet) console.log(`  Created ${variantKeys.length} variants (default: ${defKey})`);
     }
 
-    console.log(`✓ Created flag: ${key}`);
+    if (jsonOutput) { console.log(JSON.stringify(data, null, 2)); return; }
+
+    console.log(`✓ Created ${isVariant ? 'variant' : 'boolean'} flag: ${key}`);
     console.log(`  Status: ${isEnabled ? 'enabled' : 'disabled'}`);
     console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
   } catch (err) {
@@ -205,18 +256,73 @@ async function createFlag(key, desc, isEnabled) {
       console.error('1. Clone: gh repo clone civitai/flipt-state /tmp/flipt-state');
       console.error('2. Edit: civitai-app/default/features.yaml');
       console.error('3. Add your flag to the flags section:');
-      console.error(`
+      if (isVariant && variantKeys.length > 0) {
+        const defKey = defaultVariant || variantKeys[0];
+        const variantYaml = variantKeys.map(vk => {
+          const def = vk === defKey ? '\n          default: true' : '';
+          return `        - key: "${vk}"${def}`;
+        }).join('\n');
+        console.error(`
     - key: ${key}
       name: ${key}
-      type: BOOLEAN_FLAG_TYPE
+      type: VARIANT_FLAG_TYPE
+      description: ${desc || 'Your description here'}
+      enabled: ${isEnabled}
+      variants:
+${variantYaml}
+`);
+      } else {
+        console.error(`
+    - key: ${key}
+      name: ${key}
+      type: ${flagType}
       description: ${desc || 'Your description here'}
       enabled: ${isEnabled}
 `);
+      }
       console.error('4. Commit and push the changes');
       process.exit(1);
     }
     throw err;
   }
+}
+
+async function addVariant(flagKey, variantKey) {
+  const data = await apiRequest('POST', `/api/v1/flags/${flagKey}/variants`, { key: variantKey, default: false });
+  if (jsonOutput) { console.log(JSON.stringify(data, null, 2)); return; }
+  console.log(`✓ Added variant "${variantKey}" to flag: ${flagKey}`);
+  console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
+}
+
+async function removeVariant(flagKey, variantKey) {
+  const allFlags = await apiRequest('GET', '/api/v1/flags');
+  const flag = allFlags.flags?.find(f => f.key === flagKey);
+  if (!flag) throw new Error(`Flag not found: ${flagKey}`);
+  const variant = flag.variants?.find(v => v.key === variantKey);
+  if (!variant) throw new Error(`Variant "${variantKey}" not found on flag: ${flagKey}`);
+  await apiRequest('DELETE', `/api/v1/flags/${flagKey}/variants/${variant.id}`);
+  if (!jsonOutput) {
+    console.log(`✓ Removed variant "${variantKey}" from flag: ${flagKey}`);
+    console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
+  }
+}
+
+async function setRollout(flagKey, variantKey) {
+  const allFlags = await apiRequest('GET', '/api/v1/flags');
+  const flag = allFlags.flags?.find(f => f.key === flagKey);
+  if (!flag) throw new Error(`Flag not found: ${flagKey}`);
+  if (flag.type !== 'VARIANT_FLAG_TYPE') throw new Error(`Flag "${flagKey}" is not a variant flag`);
+  const variant = flag.variants?.find(v => v.key === variantKey);
+  if (!variant) throw new Error(`Variant "${variantKey}" not found on flag: ${flagKey}`);
+  const rule = await apiRequest('POST', `/api/v1/flags/${flagKey}/rules`, {
+    segmentKeys: [segmentKey], segmentOperator: 'OR_SEGMENT_OPERATOR',
+  });
+  await apiRequest('POST', `/api/v1/flags/${flagKey}/rules/${rule.id}/distributions`, {
+    variantId: variant.id, rollout: rolloutPct,
+  });
+  if (jsonOutput) { console.log(JSON.stringify({ rule, variant: variantKey, rollout: rolloutPct }, null, 2)); return; }
+  console.log(`✓ Set rollout for "${variantKey}" on flag "${flagKey}": ${rolloutPct}% (segment: ${segmentKey})`);
+  console.log('\n⚠️  Note: API changes are temporary. For permanent changes, edit civitai/flipt-state repo.');
 }
 
 async function updateFlag(key, isEnabled) {
@@ -289,16 +395,24 @@ Usage:
   node .claude/skills/flipt/flipt.mjs <command> [options]
 
 Commands:
-  list              List all flags
-  get <key>         Get details for a specific flag
-  create <key>      Create a new boolean flag
-  enable <key>      Enable a flag
-  disable <key>     Disable a flag
-  delete <key>      Delete a flag (requires --force)
+  list                            List all flags
+  get <key>                       Get details for a specific flag
+  create <key>                    Create a new flag (boolean by default)
+  enable <key>                    Enable a flag
+  disable <key>                   Disable a flag
+  delete <key>                    Delete a flag (requires --force)
+  add-variant <flag> <variant>    Add a variant to an existing flag
+  remove-variant <flag> <variant> Remove a variant from a flag
+  set-rollout <flag> <variant>    Set rollout rule for a variant
 
 Options:
   --description, -d <text>   Description for new flag
   --enabled                  Create flag as enabled (default: disabled)
+  --variant                  Create as variant flag (default: boolean)
+  --variants <keys>          Comma-separated variant keys (first is default)
+  --default <key>            Set default variant key
+  --rollout <pct>            Rollout percentage (default: 100)
+  --segment <key>            Segment key for rules (default: all-users)
   --json                     Output results as JSON
   --quiet, -q                Minimal output
   --force, -f                Skip confirmation prompts
@@ -307,8 +421,10 @@ Examples:
   node .claude/skills/flipt/flipt.mjs list
   node .claude/skills/flipt/flipt.mjs get my-feature
   node .claude/skills/flipt/flipt.mjs create my-feature -d "Enable new feature"
+  node .claude/skills/flipt/flipt.mjs create my-feature --variant --variants "1.5,2" -d "Multiplier"
   node .claude/skills/flipt/flipt.mjs enable my-feature
-  node .claude/skills/flipt/flipt.mjs disable my-feature
+  node .claude/skills/flipt/flipt.mjs set-rollout my-feature 2 --rollout 100
+  node .claude/skills/flipt/flipt.mjs add-variant my-feature 3
 
 Note: Write operations require an admin token. If you have a read-only token,
 use the GitOps workflow by editing the civitai/flipt-state repository.`);
@@ -359,6 +475,30 @@ async function main() {
           process.exit(1);
         }
         await deleteFlag(flagKey);
+        break;
+      case 'add-variant':
+        if (!flagKey || !extraArg) {
+          console.error('Error: Flag key and variant key required');
+          console.error('Usage: flipt.mjs add-variant <flag-key> <variant-key>');
+          process.exit(1);
+        }
+        await addVariant(flagKey, extraArg);
+        break;
+      case 'remove-variant':
+        if (!flagKey || !extraArg) {
+          console.error('Error: Flag key and variant key required');
+          console.error('Usage: flipt.mjs remove-variant <flag-key> <variant-key>');
+          process.exit(1);
+        }
+        await removeVariant(flagKey, extraArg);
+        break;
+      case 'set-rollout':
+        if (!flagKey || !extraArg) {
+          console.error('Error: Flag key and variant key required');
+          console.error('Usage: flipt.mjs set-rollout <flag-key> <variant-key> [--rollout 100] [--segment all-users]');
+          process.exit(1);
+        }
+        await setRollout(flagKey, extraArg);
         break;
       case 'help':
       case '--help':
