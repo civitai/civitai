@@ -44,26 +44,13 @@ export function LoginContent(args: {
   const reason = args.reason ?? query.reason;
   const message = reason ? loginRedirectReasons[reason] : args.message;
 
-  // Build cross-domain login URL — detect current domain and offer login via the other
+  // Show "Login with [green domain]" on any domain that isn't green (.com)
+  const greenDomain = colorDomains.green;
   const currentHost = typeof window !== 'undefined' ? window.location.host : '';
-  const domainEntries = Object.entries(colorDomains) as [string, string | undefined][];
-  const currentColor = domainEntries.find(([, domain]) => domain === currentHost)?.[0];
-  // If on blue/red, sync with green (.com); if on green, sync with blue (.red)
-  const syncTarget = (() => {
-    if (!currentColor) return null;
-    if (currentColor === 'blue' || currentColor === 'red') {
-      const domain = colorDomains.green;
-      return domain ? { domain, color: 'green' } : null;
-    }
-    if (currentColor === 'green') {
-      const domain = colorDomains.blue;
-      return domain ? { domain, color: 'blue' } : null;
-    }
-    return null;
-  })();
-  const showCivitaiLogin = !!syncTarget;
-  const civitaiLoginHref = syncTarget
-    ? `https://${syncTarget.domain}/login?returnUrl=${encodeURIComponent(`https://${currentHost}${returnUrl}?sync-account=${syncTarget.color}`)}`
+  const isOnGreen = currentHost === greenDomain;
+  const showCivitaiLogin = !isOnGreen && !!greenDomain;
+  const civitaiLoginHref = showCivitaiLogin
+    ? `https://${greenDomain}/login?returnUrl=${encodeURIComponent(`https://${currentHost}${returnUrl}?sync-account=green`)}`
     : undefined;
 
   useEffect(() => {
@@ -94,9 +81,7 @@ export function LoginContent(args: {
       <div className="flex items-center justify-center">
         <Logo
           className="max-h-10"
-          accentColor={
-            currentColor === 'red' ? '#e03131' : currentColor === 'green' ? '#2f9e44' : '#1971c2'
-          }
+          accentColor={isOnGreen ? '#2f9e44' : '#1971c2'}
         />
       </div>
       <Title order={1} className="text-center text-xl font-bold">
@@ -135,7 +120,7 @@ export function LoginContent(args: {
       )}
       {status !== 'submitted' ? (
         <div className="flex flex-col gap-3">
-          {showCivitaiLogin && syncTarget && (
+          {showCivitaiLogin && (
             <Button
               component="a"
               href={civitaiLoginHref}
@@ -143,7 +128,7 @@ export function LoginContent(args: {
               leftSection={<IconCivitai size={20} />}
               className="bg-[#228BE6] hover:bg-[#1C7ED6]"
             >
-              {syncTarget.domain}
+              {greenDomain}
             </Button>
           )}
           {providers.map((provider) => (

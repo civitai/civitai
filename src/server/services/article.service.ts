@@ -1903,9 +1903,7 @@ export async function rescanArticle({
   });
 
   // Remove from search index immediately — article should not be searchable while rescanning.
-  await articlesSearchIndex.queueUpdate([
-    { id, action: SearchIndexUpdateQueueAction.Update },
-  ]);
+  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
   // --- Re-link content images (picks up new images, queues Pending ones) ---
   if (article.content) {
