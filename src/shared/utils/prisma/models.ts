@@ -108,6 +108,8 @@ export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakere
 
 export type ArticleStatus = "Draft" | "Published" | "Unpublished" | "UnpublishedViolation" | "Processing";
 
+export type ArticleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error" | "Rescan";
+
 export type ArticleEngagementType = "Favorite" | "Hide";
 
 export type GenerationSchedulers = "EulerA" | "Euler" | "LMS" | "Heun" | "DPM2" | "DPM2A" | "DPM2SA" | "DPM2M" | "DPMSDE" | "DPMFast" | "DPMAdaptive" | "LMSKarras" | "DPM2Karras" | "DPM2AKarras" | "DPM2SAKarras" | "DPM2MKarras" | "DPMSDEKarras" | "DDIM";
@@ -1964,6 +1966,8 @@ export interface Article {
   coverImage?: Image | null;
   publishedAt: Date | null;
   contentScannedAt: Date | null;
+  ingestion: ArticleIngestionStatus;
+  scanRequestedAt: Date | null;
   userId: number;
   user?: User;
   availability: Availability;

@@ -521,6 +521,16 @@ export const ArticleStatus = {
 
 export type ArticleStatus = (typeof ArticleStatus)[keyof typeof ArticleStatus];
 
+export const ArticleIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+  Rescan: 'Rescan',
+} as const;
+
+export type ArticleIngestionStatus = (typeof ArticleIngestionStatus)[keyof typeof ArticleIngestionStatus];
+
 export const ArticleEngagementType = {
   Favorite: 'Favorite',
   Hide: 'Hide',
