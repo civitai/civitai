@@ -3,6 +3,7 @@ import { IconBolt, IconSparkles, IconArrowRight } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { formatMultiplier } from '~/utils/buzz';
 
 type Props = Record<string, never>;
 
@@ -10,21 +11,23 @@ export default function RewardsBonusInfoModal(_props: Props) {
   const dialog = useDialogContext();
   const { multipliers } = useUserMultipliers();
 
-  const globalBonus = (multipliers as { globalRewardsBonus?: number }).globalRewardsBonus ?? 1;
-  const totalMultiplier = multipliers.rewardsMultiplier ?? 1;
-  const baseMultiplier = globalBonus > 1 ? totalMultiplier / globalBonus : totalMultiplier;
+  const globalBonus = multipliers.globalRewardsBonus;
+  const totalMultiplier = multipliers.rewardsMultiplier;
+  const baseMultiplier = multipliers.baseRewardsMultiplier;
   const hasSubscriptionBonus = baseMultiplier > 1;
 
   const bonusLabel =
-    globalBonus >= 2 ? `${globalBonus}x` : `${((globalBonus - 1) * 100).toFixed(0)}%`;
+    globalBonus >= 2
+      ? formatMultiplier(globalBonus)
+      : `${((globalBonus - 1) * 100).toFixed(0)}%`;
 
   return (
     <Modal {...dialog} size="sm" radius="lg" withCloseButton>
       <Stack align="center" gap="md" pb="sm">
         {/* Hero section */}
-        <div className="relative flex items-center justify-center overflow-hidden rounded-xl px-6 py-5">
-          <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-amber-700 via-amber-500 to-amber-700 bg-[length:200%_100%]" />
-          <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent bg-[length:200%_100%]" />
+        <div className="relative flex items-center justify-center overflow-hidden rounded-xl px-6 py-5 motion-reduce:animate-none">
+          <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-amber-700 via-amber-500 to-amber-700 bg-[length:200%_100%] motion-reduce:animate-none" />
+          <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent bg-[length:200%_100%] motion-reduce:animate-none" />
           <div className="relative flex flex-col items-center gap-2">
             <div className="flex items-center gap-2 text-white">
               <IconSparkles size={24} />
@@ -61,14 +64,14 @@ export default function RewardsBonusInfoModal(_props: Props) {
             <div className="flex items-center justify-between rounded-md bg-gray-1 px-3 py-2 dark:bg-dark-5">
               <Text size="sm">Your membership bonus</Text>
               <Text size="sm" fw={700}>
-                {baseMultiplier}x
+                {formatMultiplier(baseMultiplier)}
               </Text>
             </div>
           )}
           <div className="flex items-center justify-between rounded-md bg-gray-1 px-3 py-2 dark:bg-dark-5">
             <Text size="sm">Bonus event multiplier</Text>
             <Text size="sm" fw={700} c="yellow.5">
-              {globalBonus}x
+              {formatMultiplier(globalBonus)}
             </Text>
           </div>
           <div className="flex items-center justify-between rounded-md bg-blue-1 px-3 py-2 dark:bg-blue-9/20">
@@ -76,7 +79,7 @@ export default function RewardsBonusInfoModal(_props: Props) {
               Your total multiplier
             </Text>
             <Text size="sm" fw={800} c="blue">
-              {totalMultiplier}x
+              {formatMultiplier(totalMultiplier)}
             </Text>
           </div>
         </Stack>

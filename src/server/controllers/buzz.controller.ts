@@ -22,7 +22,6 @@ import {
   createBuzzTransaction,
   createBuzzTransactionMany,
   getDailyCompensationRewardByUser,
-  getGlobalRewardsBonusMultiplier,
   getMultipliersForUser,
   getTransactionsReport,
   getUserBuzzAccount,
@@ -369,11 +368,7 @@ export async function depositClubFundsHandler({
 
 export const getUserMultipliersHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    const [multipliers, globalRewardsBonus] = await Promise.all([
-      getMultipliersForUser(ctx.user.id),
-      getGlobalRewardsBonusMultiplier(),
-    ]);
-    return { ...multipliers, globalRewardsBonus };
+    return getMultipliersForUser(ctx.user.id);
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
