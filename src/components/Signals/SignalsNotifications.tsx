@@ -7,6 +7,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import type { BuzzUpdateSignalSchema } from '~/server/schema/signals.schema';
 import { showBuzzNotification } from '~/utils/notifications';
+import { formatMultiplier } from '~/utils/buzz';
 
 const baseNotificationConfig: Record<BuzzSpendType, { color: string }> = {
   blue: { color: 'blue.4' },
@@ -25,14 +26,14 @@ export function BonusBadge({ multiplier }: { multiplier: number }) {
       leftSection={<IconSparkles size={10} />}
       style={{ verticalAlign: 'middle' }}
     >
-      {multiplier}x bonus
+      {formatMultiplier(multiplier)} bonus
     </Badge>
   );
 }
 
 export const SignalNotifications = () => {
   const { multipliers } = useUserMultipliers();
-  const globalBonus = (multipliers as { globalRewardsBonus?: number }).globalRewardsBonus ?? 1;
+  const globalBonus = multipliers.globalRewardsBonus;
 
   const onBalanceUpdate = useCallback(
     (updated: BuzzUpdateSignalSchema) => {

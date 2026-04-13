@@ -40,7 +40,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { getAccountTypeLabel } from '~/utils/buzz';
+import { formatMultiplier, getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -97,11 +97,9 @@ export default function UserBuzzDashboard() {
   );
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
-  const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
-  const globalRewardsBonus =
-    (multipliers as { globalRewardsBonus?: number }).globalRewardsBonus ?? 1;
-  const baseRewardsMultiplier =
-    globalRewardsBonus > 1 ? rewardsMultiplier / globalRewardsBonus : rewardsMultiplier;
+  const rewardsMultiplier = multipliers.rewardsMultiplier;
+  const globalRewardsBonus = multipliers.globalRewardsBonus;
+  const baseRewardsMultiplier = multipliers.baseRewardsMultiplier;
   const { subscription, subscriptionPaymentProvider } = useActiveSubscription({
     buzzType: selectedAccountType,
   });
@@ -195,7 +193,7 @@ export default function UserBuzzDashboard() {
                       {baseRewardsMultiplier > 1 && (
                         <>
                           <Badge size="lg" radius="xl" variant="light" color="gray">
-                            Membership {baseRewardsMultiplier}x
+                            Membership {formatMultiplier(baseRewardsMultiplier)}
                           </Badge>
                           <Text size="xs" c="dimmed">
                             ×
@@ -209,25 +207,25 @@ export default function UserBuzzDashboard() {
                         color="yellow"
                         leftSection={<IconSparkles size={14} />}
                       >
-                        Event {globalRewardsBonus}x
+                        Event {formatMultiplier(globalRewardsBonus)}
                       </Badge>
                       <Text size="xs" c="dimmed">
                         =
                       </Text>
                       <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
-                        Total {rewardsMultiplier}x
+                        Total {formatMultiplier(rewardsMultiplier)}
                       </Badge>
                     </div>
                   ) : isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
                     <div className="flex flex-wrap items-center gap-1.5">
                       <Badge size="lg" radius="xl" variant="light" color="gray">
-                        Membership {rewardsMultiplier}x
+                        Membership {formatMultiplier(rewardsMultiplier)}
                       </Badge>
                       <Text size="xs" c="dimmed">
                         =
                       </Text>
                       <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
-                        Total {rewardsMultiplier}x
+                        Total {formatMultiplier(rewardsMultiplier)}
                       </Badge>
                     </div>
                   ) : (
