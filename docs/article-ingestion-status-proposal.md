@@ -1,7 +1,7 @@
 # Article Ingestion Status — Design Proposal
 
 **Status**: Draft, pending implementation decision
-**Context**: Surfaced during review of [`article-scanning-rollout.md`](./article-scanning-rollout.md) on 2026-04-10
+**Context**: Surfaced during review of [`article-scanning-rollout.md`](./article-scanning-rollout.md) on 2026-04-10, updated 2026-04-12
 **Related**: civitai/civitai#1879 (`feature/scan-article-images`), [`article-content-scanning.md`](./article-content-scanning.md)
 
 ---
@@ -10,10 +10,11 @@
 
 Add an `ArticleIngestionStatus` enum + `Article.ingestion` column that mirrors how `Image.ingestion` already gates image serving. Non-owner, non-moderator article reads filter on `ingestion = 'Scanned'`. This:
 
-1. Closes the legacy-backfill Green exposure window (the real gap I missed in the initial gotchas review).
+1. ~~Closes the legacy-backfill Green exposure window~~ — **mitigated by deployment strategy** (see §"Gap 1" below). Backfills run against prod DB from staging before the production deploy, so legacy articles are already scanned when Green access turns on.
 2. Supersedes the accepted async text-scan window decision from 2026-04-10 — not by reversing it, but by offering a gating mechanism the earlier discussion didn't consider.
 3. Unifies image and text scan gating under a single predicate.
 4. Separates scan state (system) from publication state (user intent), which removes most of the awkwardness around `ArticleStatus.Processing`.
+5. Adds proper scan-lifecycle date tracking (`scanRequestedAt`, `scannedAt`) to Article, mirroring Image. Fixes the `contentScannedAt` misnomer and closes the gap where text-only articles have no scan timestamp at all.
 
 **Decision pending**: ship this as a followup (recommended) vs. absorb into the current PR (bigger scope, cleaner landing).
 
@@ -21,7 +22,14 @@ Add an `ArticleIngestionStatus` enum + `Article.ingestion` column that mirrors h
 
 ## The problem this solves
 
-### Gap 1 — Legacy backfill exposes unscanned content to Civitai Green
+### Gap 1 — Legacy backfill exposes unscanned content to Civitai Green (MITIGATED)
+
+> **2026-04-12 update**: This gap is closed by the deployment strategy. Both backfills will run against the prod DB from a staging environment *before* the production deploy ships `articles: ['public']`. By the time Green access turns on, every legacy article already has correct `ImageConnection` rows, recomputed `nsfwLevel` masks, and `EntityModeration` results. There is no window where unscanned legacy content is visible to Green.
+>
+> The original analysis below is preserved for context on why the gap existed in the first rollout sequence, but it is no longer a blocker.
+
+<details>
+<summary>Original analysis (preserved for context)</summary>
 
 The current rollout sequence (§4 of `article-scanning-rollout.md`) is:
 
@@ -34,6 +42,8 @@ Between steps 1 and 2, a legacy article's `nsfwLevel` is computed from **just** 
 So a legacy article with a PG cover, NSFW content images embedded in the body, and NSFW text currently has `nsfwLevel = PG`. After step 1 deploys, Civitai Green filters by `(nsfwLevel & publicBrowsingLevelsFlag) != 0` and happily serves that article. The backfills eventually fix it, but the entire legacy corpus is visible to Green at its **pre-scan** level for the duration of the backfill window.
 
 The commit message for `28b38c7dd` acknowledges that legacy masks are wrong and will be updated by the backfill. `article-scanning-rollout.md` §2.3 calls this out directly: "running `updateArticleNsfwLevels` over legacy articles (which happens implicitly when backfills complete) will change existing masks for any article that mixed PG + NSFW content images under the old code." Any article whose mask *changes* during the backfill was being served at the wrong level *before* the backfill ran. That's the leak window.
+
+</details>
 
 ### Gap 2 — The live text-scan window is still there
 
@@ -58,13 +68,29 @@ enum ArticleIngestionStatus {
 
 model Article {
   // ... existing fields
-  ingestion ArticleIngestionStatus @default(Pending)
+  contentScannedAt DateTime?              // repurposed: set when BOTH scans complete (was: set at image-link time)
+  ingestion        ArticleIngestionStatus @default(Pending)
+  scanRequestedAt  DateTime?              // when scan was first requested (image link + text submit)
 
   @@index([status, ingestion, nsfwLevel])  // supports the Green query shape
 }
 ```
 
-**Migration**: adds the column with `@default(Pending)`. Every existing article is `Pending` on schema apply — **every legacy article is immediately invisible to Civitai Green the moment the migration runs.** That's the safety property we want.
+These fields mirror `Image.scanRequestedAt` and `Image.scannedAt`. They give us:
+
+- **Filterability**: query for articles that were never scanned (`contentScannedAt IS NULL`), or that have been waiting too long (`scanRequestedAt < NOW() - INTERVAL '1 hour'` AND `ingestion = 'Pending'`).
+- **Observability**: measure scan latency (`contentScannedAt - scanRequestedAt`), find stuck articles, build dashboards.
+- **Parity with Image**: same semantics, same query patterns.
+
+#### `contentScannedAt` repurposed (not deprecated)
+
+The existing `contentScannedAt` field was previously set when `linkArticleContentImages` ran (i.e., when image *links* were created), not when scanning *completed*. Text-only articles never got it set at all.
+
+**New semantics**: `contentScannedAt` is now set **only** inside `recomputeArticleIngestion` when `ingestion` transitions to `Scanned` — meaning both image scans and text moderation have completed successfully. The name is now accurate: "when was this article's content actually scanned."
+
+`scanRequestedAt` replaces the old `contentScannedAt` write timing — it's set when `linkArticleContentImages` + `submitTextModeration` fire, tracking "when did we kick off scanning."
+
+**Migration**: adds two new fields (`ingestion`, `scanRequestedAt`). `ingestion` defaults to `Pending`. `contentScannedAt` keeps its column but its write sites are redirected. Every existing article is `Pending` on schema apply — **every legacy article is immediately invisible to Civitai Green the moment the migration runs** (if the serving gates are deployed with the migration). `scanRequestedAt` defaults to `NULL` for legacy articles and gets populated as backfills run.
 
 ### Serving-path gate
 
@@ -134,22 +160,34 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
     ? 'Scanned'
     : 'Pending';
 
+  const now = new Date();
   await dbWrite.article.update({
     where: { id: articleId },
-    data: { ingestion: next },
+    data: {
+      ingestion: next,
+      // Set scannedAt only on the transition to Scanned, and only if not already set
+      // (mirrors Image.scannedAt logic — preserves original scan date on rescans)
+      ...(next === 'Scanned' ? { scannedAt: now } : {}),
+    },
   });
 }
 ```
 
 **Important edge case**: a brand-new article with no content images and text moderation pending is `imageDone=true` (no images to wait on) but `textDone=false`, so it correctly stays `Pending`. Don't let the `noImages` shortcut mark it Scanned.
 
-**Call sites for the helper**:
+**Call sites for `recomputeArticleIngestion`** (sets `ingestion` + `scannedAt`):
 
 - `src/pages/api/webhooks/image-scan-result.ts` — after each image scan result is processed (it already queries which articles the image belongs to for the debounce logic)
 - `src/pages/api/webhooks/text-moderation-result.ts` — inside the `Article` entity handler, after `recordEntityModerationSuccess`/`Failure`
 - `src/server/services/article.service.ts` upsert path — after `linkArticleContentImages` + `submitTextModeration` (handles the "new article with no images, text pending" base case — writes `ingestion: Pending` explicitly)
 - `src/pages/api/admin/temp/migrate-article-images.ts` — at the end of each processed article
 - `src/pages/api/admin/temp/migrate-article-text-moderation.ts` — **not** strictly needed because the text backfill just submits to xGuard; the webhook handler is what updates state when xGuard responds
+
+**Call sites for `scanRequestedAt`** (set once when scanning is first kicked off):
+
+- `src/server/services/article.service.ts` upsert path — set `scanRequestedAt = new Date()` alongside the `linkArticleContentImages` + `submitTextModeration` calls. This is the "we started scanning" timestamp. Covers both image-bearing and text-only articles because text moderation always fires.
+- `src/pages/api/admin/temp/migrate-article-images.ts` — set `scanRequestedAt` for each legacy article as it's processed by the backfill (if not already set).
+- `src/pages/api/admin/temp/migrate-article-text-moderation.ts` — set `scanRequestedAt` for text-only legacy articles that have no content images and were missed by the image backfill.
 
 ### Option B — Two booleans (rejected)
 
@@ -183,15 +221,17 @@ Recommend **Path 1** for this followup. The vestigial enum value can be removed 
 
 ## Legacy backfill story
 
-The migration with `@default(Pending)` is the key mechanism:
+> **2026-04-12 update**: Since Gap 1 is mitigated by running backfills from staging against prod DB before deploy, the ingestion column is no longer the *primary* safety gate for legacy content. However, the `ingestion` column + date fields still provide long-term value: filterability, observability, and a self-gating mechanism for any future backfill or re-scan scenario.
 
-1. **Schema apply** — every existing article becomes `ingestion = Pending`. Civitai Green instantly loses visibility of the entire legacy corpus. No staged flag flip required; the migration itself is the safety gate.
-2. **Image backfill runs** — for each article: extract media, create `ImageConnection` rows, kick off image scans. At the end of each article, call `recomputeArticleIngestion(id)`. Articles with no content media transition toward `Scanned` if text side is also done; articles with content media stay `Pending` until the async image scans complete.
-3. **Image scan webhooks** — as each content image completes scanning, the webhook calls `recomputeArticleIngestion(articleId)`. Articles whose last image just finished (and whose text is already Succeeded) flip to `Scanned` and become visible to Green.
-4. **Text backfill runs in parallel** — submits each article to xGuard. The webhook handler (already live on this branch) calls `recomputeArticleIngestion` after processing the xGuard response. Articles whose text just finished (and whose images are already done) flip to `Scanned`.
-5. **Articles light up for Green one at a time**, as each finishes *both* sides. No cliff-edge "all of prod becomes visible at once" moment.
+The migration adds `ingestion` (default `Pending`), `scanRequestedAt` (default `NULL`), and `scannedAt` (default `NULL`) to every existing article.
 
-Compare to the operational mitigation I originally recommended (staged flag flip): that mitigation requires two deploys and a manual wait-for-backfill step, and gives you a single cliff where Green becomes visible. The ingestion refactor gives you gradual, self-gated exposure with one deploy.
+**Backfill flow** (run from staging against prod DB before production deploy):
+
+1. **Image backfill runs** — for each article: extract media, create `ImageConnection` rows, kick off image scans, set `scanRequestedAt = NOW()`. At the end of each article, call `recomputeArticleIngestion(id)`. Articles with no content media transition toward `Scanned` if text side is also done; articles with content media stay `Pending` until the async image scans complete.
+2. **Image scan webhooks** — as each content image completes scanning, the webhook calls `recomputeArticleIngestion(articleId)`. When the last scan finishes (and text is already Succeeded), `ingestion` flips to `Scanned` and `scannedAt` is set.
+3. **Text backfill runs in parallel** — submits each article to xGuard, sets `scanRequestedAt` if not already set (covers text-only articles). The webhook handler calls `recomputeArticleIngestion` after processing the xGuard response.
+4. **Articles light up for Green one at a time**, as each finishes *both* sides. No cliff-edge "all of prod becomes visible at once" moment.
+5. **Production deploy** ships with `articles: ['public']`. Legacy corpus is already scanned and has correct `ingestion`, `scannedAt`, and `nsfwLevel` values.
 
 ---
 
@@ -211,15 +251,16 @@ Authors don't see a Processing dialog. They don't experience any UX regression f
 
 | Area | Files | Rough lines |
 |---|---|---|
-| Schema migration | `prisma/schema.full.prisma`, generated migration SQL | ~20 |
-| Helper function | `src/server/services/article.service.ts` | ~50 |
-| Webhook wiring | `image-scan-result.ts`, `text-moderation-result.ts` | ~15 |
+| Schema migration | `prisma/schema.full.prisma`, generated migration SQL | ~25 |
+| Helper function | `src/server/services/article.service.ts` | ~55 |
+| Webhook wiring | `image-scan-result.ts`, `text-moderation-result.ts` | ~20 |
 | Serving gates | ~6 read sites + Meilisearch index filter | ~50 |
 | Remove Processing from auto-publish | `article.service.ts` `updateArticleImageScanStatus` | ~15 |
-| Upsert path wiring | `article.service.ts` create + update branches | ~15 |
+| Upsert path wiring + `scanRequestedAt` | `article.service.ts` create + update branches | ~20 |
 | Re-scan path | `article.service.ts` upsert status-flip logic | ~10 |
-| Backfill wiring | `migrate-article-images.ts` | ~10 |
-| Tests | new tests for `recomputeArticleIngestion` transitions | ~150 |
+| Backfill wiring + `scanRequestedAt` | `migrate-article-images.ts` | ~20 |
+| Repurpose `contentScannedAt` writes | `article.service.ts` (old writes → `scanRequestedAt`, new writes via helper) | ~5 |
+| Tests | new tests for `recomputeArticleIngestion` transitions + date fields | ~170 |
 
 A few hundred lines across ~15 files + one DB migration. Doable in a session or two of focused work. The existing parity test from the current PR (`src/utils/__tests__/article-extraction-parity.test.ts`) is unaffected.
 
@@ -239,64 +280,66 @@ A few hundred lines across ~15 files + one DB migration. Doable in a session or 
 
 6. **Index choice** — `@@index([status, ingestion, nsfwLevel])` is one option. The actual best index depends on query patterns. Check `getArticles` query plans before committing to a specific shape; a partial index on `(ingestion, nsfwLevel) WHERE status = 'Published'` might be better if most Green queries also filter to Published.
 
+7. **`contentScannedAt` on rescan** — when an author edits a Published article and triggers a rescan, `recomputeArticleIngestion` will overwrite `contentScannedAt` when the new scan completes. The old timestamp is lost. If we need history, consider keeping the old value and only overwriting on Scanned transition (current implementation). This means `contentScannedAt` always reflects "last time all scans were green."
+
 ---
 
 ## Two paths forward
 
-### Path A — Ship this PR as-is with staged flag flip, ingestion refactor as immediate followup (recommended)
+> **2026-04-12 decision**: Path B was chosen — the ingestion refactor is absorbed into the scanning PR on `feature/scan-article-images`. One clean landing with `ingestion` + `scanRequestedAt` + repurposed `contentScannedAt` available from the start.
 
-1. On `feature/scan-article-images`: change `articles` flag from `['public']` to `['blue','red','public']` (pre-branch state, no Green exposure).
-2. Merge and deploy. Code goes live; new-article image scan + text moderation + webhook enforcement all activate. Green still doesn't see articles.
-3. Run image backfill to completion.
-4. Run text-moderation backfill to completion.
-5. Flip `articles` to `['public']` in a small followup deploy. Green gains access to the now-scanned legacy corpus.
-6. **Immediately start the ingestion refactor** as a separate PR using this doc. Merge before the next meaningful feature work on articles so the scan gate is in place for future changes.
+### Implementation (Path B — absorbed into this PR)
 
-**Pros**: minimal scope for current PR, rollout can proceed this week, ingestion refactor gets the attention it deserves in its own review.
-**Cons**: two deploys instead of one, manual "wait for backfill" step, brief Green-disabled window for Civitai Green users who would otherwise see articles.
-
-### Path B — Absorb the ingestion refactor into this PR
-
-1. On `feature/scan-article-images`: add the schema, helper, webhook wiring, serving gates, all the things.
-2. Merge and deploy. Migration applies → every legacy article becomes `Pending` → Green sees nothing immediately.
-3. Backfills run. Articles light up one at a time as they finish both scan sides.
-4. No staged flag flip required.
-
-**Pros**: one clean landing, self-gated rollout, closes both the legacy gap and the live async window in one shot.
-**Cons**: significantly larger PR surface area (several hundred lines + DB migration + serving-path changes across many files), higher risk of missing a read site, need to re-review everything, delays the merge.
-
-### Decision criteria
-
-The single most important data point for choosing: **how many legacy articles are in prod?**
-
-- **If the corpus is small** (~tens of thousands): Path A is obviously fine. The backfill drains fast, the brief Green-disabled window is negligible, and the ingestion refactor can be cleaned up later without pressure.
-- **If the corpus is large** (hundreds of thousands or millions): Path B pays for itself because the self-gating eliminates the "wait for backfill" dance and gives operators a much nicer rollout experience. The one-clean-landing argument also gets stronger because you don't want to ship a rushed ingestion refactor on top of a rollout that's still settling.
-
-Run this before deciding:
-
-```sql
-SELECT
-  COUNT(*) AS total_articles,
-  COUNT(*) FILTER (WHERE status = 'Published') AS published,
-  COUNT(*) FILTER (WHERE status = 'Published' AND content != '') AS published_with_content,
-  COUNT(*) FILTER (WHERE status = 'Published' AND "contentScannedAt" IS NULL) AS unscanned_published
-FROM "Article";
-```
+1. Schema migration adds `ArticleIngestionStatus` enum, `ingestion` (default `Pending`), `scanRequestedAt` columns, and composite index.
+2. `recomputeArticleIngestion` helper derives ingestion state from `ImageConnection` + `Image.ingestion` and `EntityModeration` ground truth.
+3. Helper is called from: image scan webhook (`updateArticleImageScanStatus`), text moderation webhook (success + failure), and backfill (`migrate-article-images.ts`).
+4. Upsert paths set `scanRequestedAt` + `ingestion: Pending` instead of the old premature `contentScannedAt` write.
+5. Serving gates (`ingestion = 'Scanned'`) added to: `getArticles`, `getArticleById`, `getCivitaiNews`, Meilisearch index, OG endpoint. Owners and mods bypass.
+6. Run backfills from staging against prod DB. Articles light up to `Scanned` as both scan sides complete.
+7. Deploy. New articles are gated by `ingestion = 'Scanned'` from day one.
 
 ---
 
 ## Next-session checklist
 
-When picking this up fresh:
+Implementation status (2026-04-12):
 
-- [ ] Run the corpus-size query above to confirm Path A vs Path B.
-- [ ] Confirm the historical Green state — did `articles: ['public']` on `main` already mean Green sees articles, or is this branch opening Green access for the first time? Check git blame on `src/server/services/feature-flags.service.ts` for the `articles` entry. If Green already sees articles on `main`, the whole "legacy exposure" framing is softer because the corpus is already exposed; the concern narrows to "new leaks *enabled* by the branch", which is different.
-- [ ] Re-read the 2026-04-10 decision in `~/.claude/projects/-Users-hackstreetboy-Projects-civitai/memory/project_article_text_scan_window.md`. Confirm that this proposal genuinely doesn't re-open it — specifically verify that the author-facing UX stays "instant publish" (Open Question 1 above).
-- [ ] Decide between Path A and Path B based on corpus size + team appetite for scope.
-- [ ] If Path A: make the flag change on the branch, add a note to §4 of `article-scanning-rollout.md` documenting the staged flag flip procedure, and create a followup ticket/branch for the ingestion refactor.
-- [ ] If Path B: start with the schema migration commit, then the helper + webhook wiring commit, then the serving-gates commit (with a careful grep sweep for every article read site), then the Processing-removal commit. Each commit independently reviewable and rollback-able.
-- [ ] Either path: the §5.6 parity test (`src/utils/__tests__/article-extraction-parity.test.ts`) and §5.2 stale `Succeeded` re-enforcement fix are still on the table from the original gotchas review. Those can land independently of this proposal.
-- [ ] Either path: re-examine the `contentScannedAt` naming. The rename-for-clarity discussion is still outstanding from the earlier session.
+- [x] **Path B chosen and implemented** — ingestion refactor absorbed into the scanning PR.
+- [x] Schema: `ArticleIngestionStatus` enum, `ingestion` + `scanRequestedAt` fields, composite index, migration SQL.
+- [x] `recomputeArticleIngestion` helper — derives state from `ImageConnection` + `EntityModeration` ground truth.
+- [x] Webhook wiring — image scan (`updateArticleImageScanStatus`) + text moderation (success + failure paths).
+- [x] Upsert paths — `scanRequestedAt` + `ingestion: Pending` replaces old `contentScannedAt` writes.
+- [x] Serving gates — `getArticles`, `getArticleById`, `getCivitaiNews`, Meilisearch index, OG endpoint.
+- [x] Backfill wiring — `migrate-article-images.ts` uses `scanRequestedAt` + calls `recomputeArticleIngestion`.
+
+Still open:
+
+- [ ] Confirm the historical Green state — did `articles: ['public']` on `main` already mean Green sees articles? Check git blame on `src/server/services/feature-flags.service.ts`.
+- [ ] The §5.6 parity test (`src/utils/__tests__/article-extraction-parity.test.ts`) and §5.2 stale `Succeeded` re-enforcement fix are still on the table from the original gotchas review.
+- [ ] `ArticleScanStatus` UI component — may need updating to read `ingestion` instead of (or in addition to) `status === Processing`.
+- [ ] Processing auto-publish notification — currently fires on Processing → Published; consider whether it should also fire on ingestion → Scanned transition, or be dropped.
+- [ ] Run `pnpm run typecheck` to verify all type references resolve.
+
+---
+
+## User-triggered rescan
+
+With `Article.ingestion` in place, we can give authors a "request rescan" action for their own articles. This is useful when:
+
+- An article is stuck in `Pending` or `Error` due to a transient scan pipeline issue.
+- The author edited their article but scanning didn't re-trigger (e.g., content hash dedupe blocked re-moderation after an xGuard recalibration).
+- A moderator restored an article from `UnpublishedViolation` and the author wants to confirm it scans clean.
+
+**Proposed UX**: a button in the article edit form (visible when `ingestion` is not `Scanned`) that:
+
+1. Resets `ingestion = Rescan`, clears `scannedAt` (keeps `scanRequestedAt` for history), and sets a new `scanRequestedAt`.
+2. Re-runs `linkArticleContentImages` to pick up any image changes.
+3. Re-submits text moderation to xGuard (requires clearing the `contentHash` on `EntityModeration` for this article so the dedupe check doesn't skip it).
+4. The normal webhook flow calls `recomputeArticleIngestion` as results come back.
+
+**Rate limiting**: cap at N rescans per article per 24h to prevent abuse. Store count in `ArticleMetadata` or a simple Redis key.
+
+**Scope**: this is a followup feature, not part of the initial ingestion refactor. But the ingestion column and date fields make it trivial to implement later — without them, there's no clean way to track "rescan requested" vs "never scanned" vs "scan complete".
 
 ---
 

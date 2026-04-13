@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeTags } from '~/utils/string-helpers';
@@ -181,7 +182,12 @@ async function fetchModelData(id: number): Promise<EntityData | null> {
 async function fetchArticleData(id: number): Promise<EntityData | null> {
   const [article, metric] = await Promise.all([
     dbRead.article.findFirst({
-      where: { id, publishedAt: { not: null }, tosViolation: false },
+      where: {
+        id,
+        publishedAt: { not: null },
+        tosViolation: false,
+        ingestion: ArticleIngestionStatus.Scanned,
+      },
       select: {
         title: true,
         content: true,

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
+import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
@@ -173,6 +173,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
       where: {
         publishedAt: { not: null },
         status: ArticleStatus.Published,
+        ingestion: ArticleIngestionStatus.Scanned,
         tosViolation: false,
         availability: { not: Availability.Unsearchable },
         id: batch.type === 'update' ? { in: batch.ids } : { gte: batch.startId, lte: batch.endId },

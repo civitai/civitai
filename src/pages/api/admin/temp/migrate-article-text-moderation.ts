@@ -1,12 +1,21 @@
 import { ArticleStatus, Prisma } from '@prisma/client';
+import type { XGuardModerationStep } from '@civitai/client';
 import * as z from 'zod';
 import { pgDbRead } from '~/server/db/pgDb';
+import { dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import {
+  recordEntityModerationSuccess,
+  recordEntityModerationFailure,
+} from '~/server/services/entity-moderation.service';
+import { NotificationCategory } from '~/server/common/enums';
+import { createNotification } from '~/server/services/notification.service';
+import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { removeTags } from '~/utils/string-helpers';
 
 type CancelFn = () => Promise<void>;
@@ -19,6 +28,10 @@ type MigrationStats = {
   articlesProcessed: number;
   textModerationSubmitted: number;
   textModerationSkipped: number;
+  succeeded: number;
+  failed: number;
+  flaggedNsfw: number;
+  blocked: number;
   errors: string[];
 };
 
@@ -90,6 +103,10 @@ export default WebhookEndpoint(async (req, res) => {
     articlesProcessed: 0,
     textModerationSubmitted: 0,
     textModerationSkipped: 0,
+    succeeded: 0,
+    failed: 0,
+    flaggedNsfw: 0,
+    blocked: 0,
     errors: [],
   };
 
@@ -191,17 +208,81 @@ export default WebhookEndpoint(async (req, res) => {
               content: text,
               labels: ['nsfw'],
               priority: 'low',
+              wait: 30,
             });
-            if (workflow?.id) {
-              stats.textModerationSubmitted++;
-            } else {
-              stats.errors.push(`Text moderation article ${article.id}: no workflow returned`);
+            if (!workflow?.id) {
+              stats.errors.push(`Article ${article.id}: no workflow returned`);
+              return;
+            }
+            stats.textModerationSubmitted++;
+
+            // Process the result inline instead of relying on the webhook callback
+            const steps = (workflow.steps ?? []) as unknown as XGuardModerationStep[];
+            const moderationStep = steps.find((x) => x.$type === 'xGuardModeration');
+
+            if (!moderationStep?.output) {
+              // Workflow returned but didn't complete within the wait window
+              stats.failed++;
+              await recordEntityModerationFailure({
+                entityType: 'Article',
+                entityId: article.id,
+                workflowId: workflow.id,
+                status: EntityModerationStatus.Failed,
+              });
+              stats.errors.push(
+                `Article ${article.id}: no moderation output (workflow ${workflow.id})`
+              );
+              return;
+            }
+
+            const { blocked, triggeredLabels } = moderationStep.output;
+
+            await recordEntityModerationSuccess({
+              entityType: 'Article',
+              entityId: article.id,
+              workflowId: workflow.id,
+              output: moderationStep.output,
+            });
+            stats.succeeded++;
+
+            // Apply Article-specific moderation logic (mirrors webhook handler)
+            const isNsfw = blocked || triggeredLabels.some((l) => l.toLowerCase() === 'nsfw');
+            if (isNsfw) {
+              await dbWrite.article.update({
+                where: { id: article.id },
+                data: { nsfw: true },
+              });
+              await updateArticleNsfwLevels([article.id]);
+              stats.flaggedNsfw++;
+            }
+
+            if (blocked) {
+              const existing = await dbWrite.article.findUnique({
+                where: { id: article.id },
+                select: { status: true, userId: true },
+              });
+              if (existing && existing.status !== ArticleStatus.UnpublishedViolation) {
+                await dbWrite.article.update({
+                  where: { id: article.id },
+                  data: { status: ArticleStatus.UnpublishedViolation },
+                });
+                await createNotification({
+                  userId: existing.userId,
+                  category: NotificationCategory.System,
+                  type: 'system-message',
+                  key: `article-text-blocked-${article.id}`,
+                  details: {
+                    message:
+                      'Your article was unpublished because its content violates our Terms of Service.',
+                    url: `/articles/${article.id}`,
+                  },
+                });
+              }
+              stats.blocked++;
             }
           } catch (error) {
             stats.errors.push(
-              `Text moderation article ${article.id}: ${
-                error instanceof Error ? error.message : 'Unknown error'
-              }`
+              `Article ${article.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
             );
           }
         });
@@ -223,7 +304,7 @@ export default WebhookEndpoint(async (req, res) => {
       log(
         `[batch ${batchNumber}] Complete in ${batchDuration}ms | ` +
           `batch: ${articles.length} articles | ` +
-          `totals: ${stats.articlesProcessed} processed, ${stats.textModerationSubmitted} submitted, ${stats.textModerationSkipped} skipped, ${stats.errors.length} errors | ` +
+          `totals: ${stats.articlesProcessed} processed, ${stats.textModerationSubmitted} submitted, ${stats.succeeded} succeeded, ${stats.failed} failed, ${stats.flaggedNsfw} nsfw, ${stats.blocked} blocked, ${stats.textModerationSkipped} skipped, ${stats.errors.length} errors | ` +
           `progress: ${progressPct}% (id ${cursor}/${maxId}) | ` +
           `rate: ${rate.toFixed(1)} articles/s | ` +
           `elapsed: ${elapsedSec.toFixed(1)}s`
@@ -242,6 +323,10 @@ export default WebhookEndpoint(async (req, res) => {
         articlesProcessed: stats.articlesProcessed,
         textModerationSubmitted: stats.textModerationSubmitted,
         textModerationSkipped: stats.textModerationSkipped,
+        succeeded: stats.succeeded,
+        failed: stats.failed,
+        flaggedNsfw: stats.flaggedNsfw,
+        blocked: stats.blocked,
         errorCount: stats.errors.length,
         errorsSample: stats.errors.slice(0, 10),
       },

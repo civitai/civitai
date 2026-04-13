@@ -7,8 +7,9 @@ import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import type { ExtractedMedia } from '~/utils/article-helpers';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ArticleIngestionStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { ImageConnectionType } from '~/server/common/enums';
+import { recomputeArticleIngestion } from '~/server/services/article.service';
 
 const log = createLogger('migrate-article-images', 'blue');
 
@@ -234,12 +235,22 @@ async function runImageScan(
               if (processedArticleIds.length > 0) {
                 await tx.article.updateMany({
                   where: { id: { in: processedArticleIds } },
-                  data: { contentScannedAt: new Date() },
+                  data: { scanRequestedAt: new Date() },
                 });
               }
             },
             { timeout: 60000, maxWait: 10000 }
           );
+
+          // Recompute ingestion status for each processed article
+          for (const articleId of articleMediaMap.keys()) {
+            try {
+              await recomputeArticleIngestion(articleId);
+            } catch (error) {
+              const msg = error instanceof Error ? error.message : 'Unknown error';
+              log(`⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
+            }
+          }
 
           log(
             `  Transaction complete: ${stats.imagesCreated} images, ${stats.connectionsCreated} connections`
@@ -251,23 +262,33 @@ async function runImageScan(
         }
       }
 
-      // Mark articles without images as scanned (exclude extraction failures so they can be retried)
+      // Mark articles without images and recompute their ingestion status
       const articlesWithoutImages = articleBatch.filter(
         (article) => !articleMediaMap.has(article.id) && !failedArticleIds.has(article.id)
       );
       if (articlesWithoutImages.length > 0) {
-        await dbWrite.article
-          .updateMany({
-            where: { id: { in: articlesWithoutImages.map((a) => a.id) } },
-            data: { contentScannedAt: new Date() },
-          })
-          .catch((error) => {
-            log(
-              `⚠️  Failed to mark ${articlesWithoutImages.length} articles: ${
-                error instanceof Error ? error.message : 'Unknown error'
-              }`
-            );
+        const ids = articlesWithoutImages.map((a) => a.id);
+        try {
+          await dbWrite.article.updateMany({
+            where: { id: { in: ids } },
+            data: { scanRequestedAt: new Date() },
           });
+        } catch (error) {
+          log(
+            `⚠️  Failed to mark ${articlesWithoutImages.length} articles: ${
+              error instanceof Error ? error.message : 'Unknown error'
+            }`
+          );
+        }
+
+        for (const articleId of ids) {
+          try {
+            await recomputeArticleIngestion(articleId);
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            log(`⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
+          }
+        }
       }
 
       log(`[images] Batch complete (${Date.now() - batchStart}ms)`);

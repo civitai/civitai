@@ -9,6 +9,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
 import type {
   ArticleMetadata,
   GetInfiniteArticlesSchema,
@@ -52,8 +54,10 @@ import { getPagination, getPagingData } from '~/server/utils/pagination-helpers'
 import type { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import {
   ArticleEngagementType,
+  ArticleIngestionStatus,
   ArticleStatus,
   Availability,
+  EntityModerationStatus,
   ImageIngestionStatus,
   MetricTimeframe,
   TagTarget,
@@ -255,6 +259,13 @@ export const getArticles = async ({
     if (!isOwnerRequest) {
       if (!isMod) {
         AND.push(Prisma.sql`a."status" = ${ArticleStatus.Published}::"ArticleStatus"`);
+        if (userId) {
+          AND.push(
+            Prisma.sql`(a."ingestion" = 'Scanned'::"ArticleIngestionStatus" OR a."userId" = ${userId})`
+          );
+        } else {
+          AND.push(Prisma.sql`a."ingestion" = 'Scanned'::"ArticleIngestionStatus"`);
+        }
       }
       if (!!excludedUserIds?.length) {
         AND.push(Prisma.sql`a."userId" NOT IN (${Prisma.join(excludedUserIds, ',')})`);
@@ -565,6 +576,7 @@ export const getCivitaiNews = async () => {
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
       AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
+      AND a."ingestion" = 'Scanned'::"ArticleIngestionStatus"
       AND (a."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     ORDER BY a."createdAt" DESC
     LIMIT 10
@@ -637,7 +649,14 @@ export const getArticleById = async ({
       where: {
         id,
         OR: !isModerator
-          ? [{ publishedAt: { not: null }, status: ArticleStatus.Published }, { userId }]
+          ? [
+              {
+                publishedAt: { not: null },
+                status: ArticleStatus.Published,
+                ingestion: ArticleIngestionStatus.Scanned,
+              },
+              { userId },
+            ]
           : undefined,
       },
       select: articleDetailSelect,
@@ -853,10 +872,10 @@ export const upsertArticle = async ({
             coverId: result.coverId,
           });
 
-          // Mark article as scanned after successfully linking images
+          // Mark scan as requested after successfully linking images
           await dbWrite.article.update({
             where: { id: result.id },
-            data: { contentScannedAt: new Date() },
+            data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Pending },
           });
         } catch (e) {
           // Non-blocking: continue even if image linking fails, but log the error
@@ -1061,10 +1080,11 @@ export const upsertArticle = async ({
           }
 
           if (scanContent) {
-            // Mark article as scanned after successfully linking images
+            // Content changed and images need re-scanning — use Rescan to distinguish
+            // user-edit-triggered rescans from initial pending scans.
             await dbWrite.article.update({
               where: { id },
-              data: { contentScannedAt: new Date() },
+              data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Rescan },
             });
           }
         } catch (e) {
@@ -1733,5 +1753,227 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
       },
       { timeout: 30000, maxWait: 10000 }
     );
+
+    // Recompute article ingestion status after image scan processing
+    await recomputeArticleIngestion(articleId);
   }
+}
+
+/**
+ * Recompute Article.ingestion from ground truth (Image.ingestion + EntityModeration).
+ *
+ * This is the single source of truth for article ingestion state. Call it after:
+ * - Image scan webhooks (via updateArticleImageScanStatus)
+ * - Text moderation webhooks (success or failure)
+ * - Article upsert (to lock in Pending state)
+ * - Backfill completion per article
+ *
+ * Sets contentScannedAt when ingestion transitions to Scanned.
+ */
+export async function recomputeArticleIngestion(articleId: number): Promise<void> {
+  await dbWrite.$transaction(
+    async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+
+      // --- Image side ---
+      const connections = await tx.imageConnection.findMany({
+        where: { entityId: articleId, entityType: ImageConnectionType.Article },
+        include: { image: { select: { ingestion: true } } },
+      });
+
+      const totalImages = connections.length;
+      const scannedImages = connections.filter(
+        (c) => c.image.ingestion === ImageIngestionStatus.Scanned
+      ).length;
+      const blockedImages = connections.filter(
+        (c) => c.image.ingestion === ImageIngestionStatus.Blocked
+      ).length;
+      const errorImages = connections.filter(
+        (c) =>
+          c.image.ingestion === ImageIngestionStatus.Error ||
+          c.image.ingestion === ImageIngestionStatus.NotFound
+      ).length;
+
+      const imageBlocked = blockedImages > 0;
+      const imageError = errorImages > 0;
+      const imageDone =
+        totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
+
+      // --- Text moderation side ---
+      const textModeration = await tx.entityModeration.findUnique({
+        where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
+        select: { status: true, blocked: true },
+      });
+
+      const textBlocked =
+        textModeration?.status === EntityModerationStatus.Succeeded &&
+        textModeration.blocked === true;
+      const textErrorStatuses: string[] = [
+        EntityModerationStatus.Failed,
+        EntityModerationStatus.Expired,
+        EntityModerationStatus.Canceled,
+      ];
+      const textError = !!textModeration && textErrorStatuses.includes(textModeration.status);
+      const textDone = textModeration?.status === EntityModerationStatus.Succeeded;
+
+      // --- Derive ingestion state ---
+      let next: ArticleIngestionStatus;
+      if (imageBlocked || textBlocked) {
+        next = ArticleIngestionStatus.Blocked;
+      } else if (imageError || textError) {
+        next = ArticleIngestionStatus.Error;
+      } else if (imageDone && textDone) {
+        next = ArticleIngestionStatus.Scanned;
+      } else {
+        next = ArticleIngestionStatus.Pending;
+      }
+
+      // Only set contentScannedAt on the *transition* to Scanned (not if already Scanned)
+      // to preserve the original scan-completion timestamp for observability.
+      const current = await tx.article.findUniqueOrThrow({
+        where: { id: articleId },
+        select: { ingestion: true },
+      });
+
+      await tx.article.update({
+        where: { id: articleId },
+        data: {
+          ingestion: next,
+          ...(next === ArticleIngestionStatus.Scanned &&
+          current.ingestion !== ArticleIngestionStatus.Scanned
+            ? { contentScannedAt: new Date() }
+            : {}),
+        },
+      });
+    },
+    { timeout: 30000, maxWait: 10000 }
+  );
+
+  // Sync search index — the index filters on ingestion = 'Scanned', so any
+  // ingestion state change must be reflected (add when Scanned, remove otherwise).
+  await articlesSearchIndex.queueUpdate([
+    { id: articleId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+}
+
+const RESCAN_LIMIT = 3;
+const RESCAN_WINDOW_SECONDS = CacheTTL.day; // 24 hours
+
+/**
+ * Rescan an article: re-queue all content images and re-submit text moderation.
+ *
+ * Resets ingestion to Rescan, clears contentScannedAt, and lets the normal
+ * webhook flow (image scan + text moderation) drive the article back to a
+ * terminal ingestion state via recomputeArticleIngestion.
+ */
+export async function rescanArticle({
+  id,
+  isModerator,
+}: GetByIdInput & { isModerator?: boolean }): Promise<void> {
+  // --- Rate limit (owners only, mods bypass) ---
+  const cacheKey = `${REDIS_KEYS.ARTICLE.RESCAN}:${id}` as const;
+  if (!isModerator) {
+    const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
+    const cutoff = Date.now() - RESCAN_WINDOW_SECONDS * 1000;
+    const recentAttempts = attempts.filter((t) => t > cutoff);
+
+    if (recentAttempts.length >= RESCAN_LIMIT) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: `This article can only be rescanned ${RESCAN_LIMIT} times per day. Please try again later.`,
+      });
+    }
+  }
+
+  // --- Fetch article ---
+  const article = await dbRead.article.findUnique({
+    where: { id },
+    select: { id: true, userId: true, content: true, title: true, coverId: true },
+  });
+  if (!article) throw throwNotFoundError(`No article with id ${id}`);
+
+  // --- Reset ingestion state ---
+  await dbWrite.article.update({
+    where: { id },
+    data: {
+      ingestion: ArticleIngestionStatus.Rescan,
+      scanRequestedAt: new Date(),
+      contentScannedAt: null,
+    },
+  });
+
+  // Remove from search index immediately — article should not be searchable while rescanning.
+  await articlesSearchIndex.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+
+  // --- Re-link content images (picks up new images, queues Pending ones) ---
+  if (article.content) {
+    await linkArticleContentImages({
+      articleId: id,
+      content: article.content,
+      userId: article.userId,
+      coverId: article.coverId,
+    });
+  }
+
+  // --- Re-queue already-processed images for rescan ---
+  const connections = await dbRead.imageConnection.findMany({
+    where: { entityId: id, entityType: ImageConnectionType.Article },
+    include: { image: { select: { id: true, url: true, ingestion: true } } },
+  });
+
+  for (const conn of connections) {
+    if (conn.image.ingestion === ImageIngestionStatus.Pending) continue;
+    await ingestImage({ image: conn.image, lowPriority: true, userId: article.userId }).catch(
+      (err) => {
+        handleLogError(err, 'article-rescan-image', { articleId: id, imageId: conn.image.id });
+      }
+    );
+  }
+
+  // --- Clear content hash and re-submit text moderation ---
+  await dbWrite.entityModeration.updateMany({
+    where: { entityType: 'Article', entityId: id },
+    data: { contentHash: null },
+  });
+
+  if (article.content) {
+    const textForModeration = [article.title, removeTags(article.content)]
+      .filter(Boolean)
+      .join(' ');
+
+    await submitTextModeration({
+      entityType: 'Article',
+      entityId: id,
+      content: textForModeration,
+      labels: ['nsfw'],
+    }).catch((e) => {
+      logToAxiom({
+        type: 'error',
+        name: 'article-rescan-text-moderation',
+        message: (e as Error).message,
+        articleId: id,
+      }).catch();
+    });
+  }
+
+  // --- Record rate limit attempt ---
+  const attempts = (await redis.packed.get<number[]>(cacheKey)) ?? [];
+  attempts.push(Date.now());
+  const cutoff = Date.now() - RESCAN_WINDOW_SECONDS * 1000;
+  await redis.packed.set(
+    cacheKey,
+    attempts.filter((t) => t > cutoff)
+  );
+  await redis.expire(cacheKey, RESCAN_WINDOW_SECONDS);
+
+  // --- Log for observability ---
+  logToAxiom({
+    type: 'info',
+    name: 'article-rescan',
+    articleId: id,
+    imageCount: connections.length,
+    isModerator,
+  }).catch();
 }
