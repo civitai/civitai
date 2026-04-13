@@ -85,6 +85,8 @@ export function stringifyAIR({
   try {
     ecosystem = getRootEcosystem(baseModel).key;
   } catch {}
+  // Upscaler models use 'Other' in AIR for backwards compatibility
+  if (ecosystem === 'Upscaler') ecosystem = 'Other';
 
   const urnType = typeUrnMap[type] ?? 'unknown';
 
