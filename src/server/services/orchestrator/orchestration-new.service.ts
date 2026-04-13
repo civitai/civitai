@@ -254,6 +254,9 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
       }))
     );
   }
+  if ('upscaler' in data && data.upscaler?.id) {
+    refs.push({ id: data.upscaler.id });
+  }
   if ('vae' in data && data.vae?.id) {
     refs.push({
       id: data.vae.id,
@@ -479,10 +482,14 @@ function createVideoUpscaleInput(
  */
 async function createImageUpscaleSteps(
   data: Extract<GenerationGraphOutput, { workflow: 'img2img:upscale' }>,
+  handlerCtx: GenerationHandlerCtx,
   sourceCtx?: SourceCtx
 ): Promise<StepInput[]> {
   const images = data.images ?? [];
   const targetDimensions = data.targetDimensions ?? [];
+
+  // Resolve upscaler AIR from the resource data
+  const upscalerAir = handlerCtx.airs.getOrThrow(data.upscaler.id);
 
   // Build steps for non-null entries (images that can be upscaled)
   const steps: Promise<StepInput>[] = [];
@@ -503,6 +510,7 @@ async function createImageUpscaleSteps(
           upscaleWidth: dims.width,
           upscaleHeight: dims.height,
           outputFormat: data.outputFormat,
+          upscaler: upscalerAir,
         },
       }).then((step) => {
         if (!sourceCtx) return step;
@@ -580,7 +588,7 @@ async function createStepInputs(
       break;
 
     case 'img2img:upscale':
-      rawResult = await createImageUpscaleSteps(data, metadataCtx.sourceCtx);
+      rawResult = await createImageUpscaleSteps(data, handlerCtx, metadataCtx.sourceCtx);
       break;
 
     case 'img2img:remove-background':

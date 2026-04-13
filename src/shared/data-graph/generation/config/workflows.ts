@@ -208,7 +208,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Increase image resolution',
     category: 'image',
     enhancement: true,
-    ecosystemIds: [],
+    ecosystemIds: [ECO.Upscaler],
   },
 
   'img2img:remove-background': {

@@ -409,6 +409,9 @@ function splitResourcesForLegacy(
     model: split.model
       ? toResourceData(split.model, findLegacy(split.model.id)?.strength)
       : undefined,
+    upscaler: split.upscaler
+      ? toResourceData(split.upscaler, findLegacy(split.upscaler.id)?.strength)
+      : undefined,
     resources: split.resources.map((r) => toResourceData(r, findLegacy(r.id)?.strength)),
     vae: split.vae ? toResourceData(split.vae, findLegacy(split.vae.id)?.strength) : undefined,
   };
@@ -608,7 +611,7 @@ export function mapLegacyMetadata(
   // Resource splitting with legacy strength merging
   const split = splitResourcesForLegacy(enrichedResources, legacyResources);
   let { model } = split;
-  const { resources, vae } = split;
+  const { upscaler, resources, vae } = split;
 
   // If no checkpoint found from resources, try to infer model from fluxMode AIR
   if (!model && params?.fluxMode) {
@@ -620,6 +623,7 @@ export function mapLegacyMetadata(
   return {
     ...graphInput,
     model,
+    upscaler,
     resources,
     vae,
   } as Partial<GenerationGraphCtx>;
