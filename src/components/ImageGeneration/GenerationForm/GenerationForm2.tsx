@@ -393,6 +393,9 @@ export function GenerationFormContent() {
       if (split.model) {
         graphInput.model = toGraphResource(split.model);
       }
+      if (split.upscaler) {
+        graphInput.upscaler = toGraphResource(split.upscaler);
+      }
       if (split.resources.length) {
         graphInput.resources = split.resources.map(toGraphResource);
       }

@@ -582,6 +582,9 @@ export function getWorkflowLabelForEcosystem(
 type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolean);
 
 const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
+  // Upscale workflow — legacy form has no upscaler node
+  ['img2img:upscale', true],
+
   // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
   [
     'txt2vid',
