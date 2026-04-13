@@ -1,4 +1,4 @@
-import { Alert, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { Alert, Button, Code, Paper, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
 import dayjs from '~/shared/utils/dayjs';
 import type { BuiltInProviderType } from 'next-auth/providers/index';
@@ -7,11 +7,14 @@ import { useEffect, useRef, useState } from 'react';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
+import { IconCivitai } from '~/components/SVG/IconCivitai';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { providers, SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { colorDomains } from '~/shared/constants/domain.constants';
 import { handleSignIn } from '~/utils/auth-helpers';
 import { setCookie } from '~/utils/cookies-helpers';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
@@ -37,9 +40,25 @@ export function LoginContent(args: {
     { enabled: !!code }
   );
 
+  const features = useFeatureFlags();
   const returnUrl = args.returnUrl ?? query.returnUrl ?? '/';
   const reason = args.reason ?? query.reason;
   const message = reason ? loginRedirectReasons[reason] : args.message;
+
+  // Build cross-domain login URL for non-blue domains
+  const blueDomain = colorDomains.blue;
+  const redDomain = colorDomains.red;
+  const greenDomain = colorDomains.green;
+  // Detect actual domain by comparing against configured domains
+  const currentHost = typeof window !== 'undefined' ? window.location.host : '';
+  const isOnBlue = currentHost === blueDomain;
+  const isOnRed = currentHost === redDomain;
+  const isOnGreen = currentHost === greenDomain;
+  const currentDomain = isOnRed ? redDomain : isOnGreen ? greenDomain : null;
+  const showCivitaiLogin = !isOnBlue && blueDomain && currentDomain;
+  const civitaiLoginHref = showCivitaiLogin
+    ? `https://${blueDomain}/login?returnUrl=${encodeURIComponent(`https://${currentDomain}${returnUrl}?sync-account=blue`)}`
+    : undefined;
 
   useEffect(() => {
     if (reason) {
@@ -67,7 +86,10 @@ export function LoginContent(args: {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-center">
-        <Logo className="max-h-10" />
+        <Logo
+          className="max-h-10"
+          accentColor={isOnRed ? '#e03131' : isOnGreen ? '#2f9e44' : '#1971c2'}
+        />
       </div>
       <Title order={1} className="text-center text-xl font-bold">
         Sign Up or Log In
@@ -105,6 +127,17 @@ export function LoginContent(args: {
       )}
       {status !== 'submitted' ? (
         <div className="flex flex-col gap-3">
+          {showCivitaiLogin && (
+            <Button
+              component="a"
+              href={civitaiLoginHref}
+              size="md"
+              leftSection={<IconCivitai size={20} />}
+              className="bg-[#228BE6] hover:bg-[#1C7ED6]"
+            >
+              Civitai.com
+            </Button>
+          )}
           {providers.map((provider) => (
             <SocialButton
               key={provider.name}
@@ -148,7 +181,7 @@ export function LoginContent(args: {
   );
 }
 
-function Logo({ className }: { className?: string }) {
+function Logo({ className, accentColor = '#1971c2' }: { className?: string; accentColor?: string }) {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 107 22.7" className={className}>
       <g>
@@ -162,11 +195,11 @@ function Logo({ className }: { className?: string }) {
       v19.5h7.6l8.3-8.3V1.8h-5.2v8.3l-5.4,6V1.8C36.1,1.8,30.8,1.8,30.8,1.8z M49.1,1.8v19.5h5.2V1.8C54.3,1.8,49.1,1.8,49.1,1.8z"
         />
         <path
-          className="fill-[#1971c2]"
+          fill={accentColor}
           d="M100.3,1.8v19.5h5.2V1.8H100.3z M95.6,1.8H80.8l-2.3,2.3v17.2h5.2v-7.1h8.9v7.1h5.2V4.1C97.8,4.1,95.6,1.8,95.6,1.8z
       M92.7,8.9h-8.9V7h8.9V8.9z"
         />
-        <path className="fill-[#1971c2]" d="M46.7,16.2v5.1h-5.1" />
+        <path fill={accentColor} d="M46.7,16.2v5.1h-5.1" />
       </g>
     </svg>
   );

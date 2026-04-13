@@ -23,6 +23,7 @@ import {
   getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
+  rescanArticle,
 } from '~/server/services/article.service';
 import {
   unpublishArticleHandler,
@@ -101,6 +102,11 @@ export const articleRouter = router({
     .use(isFlagProtected('articles'))
     .use(isModerator)
     .mutation(restoreArticleHandler),
+  rescan: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('articleImageScanning'))
+    .use(isOwnerOrModerator)
+    .mutation(({ input, ctx }) => rescanArticle({ ...input, isModerator: ctx.user.isModerator })),
   getScanStatus: publicProcedure
     .input(getByIdSchema)
     .use(isFlagProtected('articleImageScanning'))
