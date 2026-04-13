@@ -269,7 +269,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             >
               Edit
             </Menu.Item>
-            {atDetailsPage && (
+            {atDetailsPage && features.articleImageScanning && (
               <Menu.Item
                 leftSection={
                   isRescanning ? <Loader size={14} /> : <IconRadar2 size={14} stroke={1.5} />

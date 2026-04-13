@@ -1080,10 +1080,11 @@ export const upsertArticle = async ({
           }
 
           if (scanContent) {
-            // Mark scan as requested after successfully linking images
+            // Content changed and images need re-scanning — use Rescan to distinguish
+            // user-edit-triggered rescans from initial pending scans.
             await dbWrite.article.update({
               where: { id },
-              data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Pending },
+              data: { scanRequestedAt: new Date(), ingestion: ArticleIngestionStatus.Rescan },
             });
           }
         } catch (e) {
@@ -1827,11 +1828,21 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
         next = ArticleIngestionStatus.Pending;
       }
 
+      // Only set contentScannedAt on the *transition* to Scanned (not if already Scanned)
+      // to preserve the original scan-completion timestamp for observability.
+      const current = await tx.article.findUniqueOrThrow({
+        where: { id: articleId },
+        select: { ingestion: true },
+      });
+
       await tx.article.update({
         where: { id: articleId },
         data: {
           ingestion: next,
-          ...(next === ArticleIngestionStatus.Scanned ? { contentScannedAt: new Date() } : {}),
+          ...(next === ArticleIngestionStatus.Scanned &&
+          current.ingestion !== ArticleIngestionStatus.Scanned
+            ? { contentScannedAt: new Date() }
+            : {}),
         },
       });
     },
@@ -1851,7 +1862,7 @@ const RESCAN_WINDOW_SECONDS = CacheTTL.day; // 24 hours
 /**
  * Rescan an article: re-queue all content images and re-submit text moderation.
  *
- * Resets ingestion to Pending, clears contentScannedAt, and lets the normal
+ * Resets ingestion to Rescan, clears contentScannedAt, and lets the normal
  * webhook flow (image scan + text moderation) drive the article back to a
  * terminal ingestion state via recomputeArticleIngestion.
  */
@@ -1885,11 +1896,16 @@ export async function rescanArticle({
   await dbWrite.article.update({
     where: { id },
     data: {
-      ingestion: ArticleIngestionStatus.Pending,
+      ingestion: ArticleIngestionStatus.Rescan,
       scanRequestedAt: new Date(),
       contentScannedAt: null,
     },
   });
+
+  // Remove from search index immediately — article should not be searchable while rescanning.
+  await articlesSearchIndex.queueUpdate([
+    { id, action: SearchIndexUpdateQueueAction.Update },
+  ]);
 
   // --- Re-link content images (picks up new images, queues Pending ones) ---
   if (article.content) {
