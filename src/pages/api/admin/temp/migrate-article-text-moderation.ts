@@ -13,6 +13,7 @@ import {
   recordEntityModerationSuccess,
   recordEntityModerationFailure,
 } from '~/server/services/entity-moderation.service';
+import { recomputeArticleIngestion } from '~/server/services/article.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -39,8 +40,9 @@ type Article = { id: number; title: string; content: string; userId: number };
 
 const querySchema = z.object({
   dryRun: booleanString().default(true),
+  fixup: booleanString().default(false),
   batchSize: z.coerce.number().min(1).max(1000).default(1000),
-  concurrency: z.coerce.number().min(1).max(5).default(5),
+  concurrency: z.coerce.number().min(1).max(20).default(20),
   start: z.coerce.number().optional().default(0),
   end: z.coerce.number().optional(),
   after: z.coerce.date().optional(),
@@ -123,6 +125,138 @@ export default WebhookEndpoint(async (req, res) => {
   });
 
   try {
+    // --- Fixup mode: backfill scanRequestedAt + recompute ingestion for already-processed articles ---
+    if (params.fixup) {
+      log(
+        `Starting fixup mode${params.dryRun ? ' (DRY RUN)' : ''} — ` +
+          `backfilling scanRequestedAt and recomputing ingestion for articles with existing EntityModeration records`
+      );
+
+      let fixupCursor = params.start;
+      let fixupBatch = 0;
+
+      while (!stopped) {
+        fixupBatch++;
+        const batchStart = Date.now();
+
+        const articlesQuery = await pgDbRead.cancellableQuery<{
+          id: number;
+          scanRequestedAt: Date | null;
+        }>(Prisma.sql`
+          SELECT a.id, a."scanRequestedAt"
+          FROM "Article" a
+          JOIN "EntityModeration" em ON em."entityId" = a.id AND em."entityType" = 'Article'
+          WHERE em.status = ${EntityModerationStatus.Succeeded}::"EntityModerationStatus"
+          AND a.id >= ${fixupCursor}
+          ${params.end ? Prisma.sql`AND a.id <= ${params.end}` : Prisma.empty}
+          AND (a."scanRequestedAt" IS NULL OR a.ingestion NOT IN ('Scanned', 'Blocked'))
+          ORDER BY a.id ASC
+          LIMIT ${params.batchSize}
+        `);
+        cancelFns.push(articlesQuery.cancel);
+
+        let articles: { id: number; scanRequestedAt: Date | null }[];
+        try {
+          articles = await articlesQuery.result();
+        } catch (error) {
+          if (stopped) break;
+          throw error;
+        }
+
+        if (articles.length === 0) {
+          log(`[fixup batch ${fixupBatch}] No more articles to fix — done`);
+          break;
+        }
+
+        const firstId = articles[0].id;
+        const lastId = articles[articles.length - 1].id;
+        log(
+          `[fixup batch ${fixupBatch}] Processing ${articles.length} articles (IDs ${firstId}-${lastId})...`
+        );
+
+        if (params.dryRun) {
+          for (const article of articles) {
+            log(
+              `[DRY RUN] Article ${article.id}: would set scanRequestedAt${
+                article.scanRequestedAt ? ' (already set)' : ''
+              } + recompute ingestion`
+            );
+          }
+          stats.articlesProcessed += articles.length;
+        } else {
+          // Bulk-set scanRequestedAt for articles that don't have it
+          const needsScanRequestedAt = articles.filter((a) => !a.scanRequestedAt).map((a) => a.id);
+          if (needsScanRequestedAt.length > 0) {
+            await dbWrite.$executeRaw`
+              UPDATE "Article"
+              SET "scanRequestedAt" = NOW()
+              WHERE id IN (${Prisma.join(needsScanRequestedAt)})
+              AND "scanRequestedAt" IS NULL
+            `;
+          }
+
+          // Recompute ingestion for each article
+          const tasks = articles.map((article) => async () => {
+            try {
+              await recomputeArticleIngestion(article.id);
+              stats.succeeded++;
+            } catch (error) {
+              stats.errors.push(
+                `Article ${article.id}: fixup failed — ${
+                  error instanceof Error ? error.message : 'Unknown error'
+                }`
+              );
+              stats.failed++;
+            }
+          });
+
+          const beforeFailed = stats.failed;
+          await limitConcurrency(tasks, params.concurrency);
+          stats.articlesProcessed += articles.length;
+
+          // Abort early if the entire batch failed (e.g. schema mismatch)
+          const batchFailures = stats.failed - beforeFailed;
+          if (batchFailures === articles.length) {
+            log(
+              `[fixup batch ${fixupBatch}] All ${
+                articles.length
+              } articles failed — aborting early. Sample error: ${
+                stats.errors[stats.errors.length - 1]
+              }`
+            );
+            stopped = true;
+          }
+        }
+
+        fixupCursor = lastId + 1;
+
+        const batchDuration = Date.now() - batchStart;
+        log(
+          `[fixup batch ${fixupBatch}] Complete in ${batchDuration}ms | ` +
+            `${articles.length} articles | ` +
+            `totals: ${stats.articlesProcessed} processed, ${stats.succeeded} succeeded, ${stats.failed} failed`
+        );
+      }
+
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      log(`Fixup completed in ${duration}s${stopped ? ' (stopped early)' : ''}`);
+
+      return res.status(200).json({
+        ok: true,
+        mode: 'fixup',
+        dryRun: params.dryRun,
+        stopped,
+        duration: `${duration}s`,
+        result: {
+          articlesProcessed: stats.articlesProcessed,
+          succeeded: stats.succeeded,
+          failed: stats.failed,
+          errorCount: stats.errors.length,
+          errorsSample: stats.errors.slice(0, 10),
+        },
+      });
+    }
+
     // Resolve cursor bounds
     let cursor = params.start;
     let maxId: number;
@@ -243,6 +377,13 @@ export default WebhookEndpoint(async (req, res) => {
               workflowId: workflow.id,
               output: moderationStep.output,
             });
+
+            // Set scanRequestedAt if not already set and recompute ingestion state
+            await dbWrite.article.update({
+              where: { id: article.id },
+              data: { scanRequestedAt: new Date() },
+            });
+            await recomputeArticleIngestion(article.id);
             stats.succeeded++;
 
             // Apply Article-specific moderation logic (mirrors webhook handler)
@@ -281,13 +422,28 @@ export default WebhookEndpoint(async (req, res) => {
               stats.blocked++;
             }
           } catch (error) {
+            stats.failed++;
             stats.errors.push(
               `Article ${article.id}: ${error instanceof Error ? error.message : 'Unknown error'}`
             );
           }
         });
 
+        const beforeFailed = stats.failed;
         await limitConcurrency(tasks, params.concurrency);
+
+        // Abort early if the entire batch failed
+        const batchFailures = stats.failed - beforeFailed;
+        if (batchFailures === articles.length) {
+          log(
+            `[batch ${batchNumber}] All ${
+              articles.length
+            } articles failed — aborting early. Sample error: ${
+              stats.errors[stats.errors.length - 1]
+            }`
+          );
+          stopped = true;
+        }
       }
 
       stats.articlesProcessed += articles.length;
