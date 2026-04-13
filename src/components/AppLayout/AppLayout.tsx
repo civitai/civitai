@@ -18,6 +18,7 @@ import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
+import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
@@ -69,6 +70,7 @@ export function AppLayout({
   return (
     <div className="flex h-full flex-1 flex-col">
       {header}
+      <RewardsBonusBanner />
       {loading ? (
         <PageLoader />
       ) : notFound ? (
