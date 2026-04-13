@@ -12,7 +12,7 @@ import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { providers, SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+
 import { Currency } from '~/shared/utils/prisma/enums';
 import { colorDomains } from '~/shared/constants/domain.constants';
 import { handleSignIn } from '~/utils/auth-helpers';
@@ -40,24 +40,30 @@ export function LoginContent(args: {
     { enabled: !!code }
   );
 
-  const features = useFeatureFlags();
   const returnUrl = args.returnUrl ?? query.returnUrl ?? '/';
   const reason = args.reason ?? query.reason;
   const message = reason ? loginRedirectReasons[reason] : args.message;
 
-  // Build cross-domain login URL for non-blue domains
-  const blueDomain = colorDomains.blue;
-  const redDomain = colorDomains.red;
-  const greenDomain = colorDomains.green;
-  // Detect actual domain by comparing against configured domains
+  // Build cross-domain login URL — detect current domain and offer login via the other
   const currentHost = typeof window !== 'undefined' ? window.location.host : '';
-  const isOnBlue = currentHost === blueDomain;
-  const isOnRed = currentHost === redDomain;
-  const isOnGreen = currentHost === greenDomain;
-  const currentDomain = isOnRed ? redDomain : isOnGreen ? greenDomain : null;
-  const showCivitaiLogin = !isOnBlue && blueDomain && currentDomain;
-  const civitaiLoginHref = showCivitaiLogin
-    ? `https://${blueDomain}/login?returnUrl=${encodeURIComponent(`https://${currentDomain}${returnUrl}?sync-account=blue`)}`
+  const domainEntries = Object.entries(colorDomains) as [string, string | undefined][];
+  const currentColor = domainEntries.find(([, domain]) => domain === currentHost)?.[0];
+  // If on blue/red, sync with green (.com); if on green, sync with blue (.red)
+  const syncTarget = (() => {
+    if (!currentColor) return null;
+    if (currentColor === 'blue' || currentColor === 'red') {
+      const domain = colorDomains.green;
+      return domain ? { domain, color: 'green' } : null;
+    }
+    if (currentColor === 'green') {
+      const domain = colorDomains.blue;
+      return domain ? { domain, color: 'blue' } : null;
+    }
+    return null;
+  })();
+  const showCivitaiLogin = !!syncTarget;
+  const civitaiLoginHref = syncTarget
+    ? `https://${syncTarget.domain}/login?returnUrl=${encodeURIComponent(`https://${currentHost}${returnUrl}?sync-account=${syncTarget.color}`)}`
     : undefined;
 
   useEffect(() => {
@@ -88,7 +94,9 @@ export function LoginContent(args: {
       <div className="flex items-center justify-center">
         <Logo
           className="max-h-10"
-          accentColor={isOnRed ? '#e03131' : isOnGreen ? '#2f9e44' : '#1971c2'}
+          accentColor={
+            currentColor === 'red' ? '#e03131' : currentColor === 'green' ? '#2f9e44' : '#1971c2'
+          }
         />
       </div>
       <Title order={1} className="text-center text-xl font-bold">
@@ -127,7 +135,7 @@ export function LoginContent(args: {
       )}
       {status !== 'submitted' ? (
         <div className="flex flex-col gap-3">
-          {showCivitaiLogin && (
+          {showCivitaiLogin && syncTarget && (
             <Button
               component="a"
               href={civitaiLoginHref}
@@ -135,7 +143,7 @@ export function LoginContent(args: {
               leftSection={<IconCivitai size={20} />}
               className="bg-[#228BE6] hover:bg-[#1C7ED6]"
             >
-              Civitai.com
+              {syncTarget.domain}
             </Button>
           )}
           {providers.map((provider) => (
