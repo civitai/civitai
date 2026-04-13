@@ -291,5 +291,5 @@ export const buzzToUsdc = (buzzAmount: number): number => {
 export function formatMultiplier(value: number): string {
   if (!Number.isFinite(value)) return '1x';
   const rounded = Number(value.toFixed(2));
-  return Number.isInteger(rounded) ? `${rounded}x` : `${rounded}x`;
+  return `${rounded}x`;
 }
