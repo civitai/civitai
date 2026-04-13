@@ -380,8 +380,12 @@ export function GenerationFormProvider({
     const ecosystemKey = graphParams.ecosystem as string | undefined;
     const ecosystemId = ecosystemKey ? ecosystemByKey.get(ecosystemKey)?.id : undefined;
     const checkpointModelId = graphResources.find((r) => r.model.type === 'Checkpoint')?.id;
+    const hasUpscalerResource = graphResources.some((r) => r.model.type === 'Upscaler');
 
-    if (workflowKey && isNewFormOnly(workflowKey, ecosystemId, checkpointModelId)) {
+    if (
+      hasUpscalerResource ||
+      (workflowKey && isNewFormOnly(workflowKey, ecosystemId, checkpointModelId))
+    ) {
       prevCounterRef.current = storeCounter;
       openSwitchToNewFormModal({
         onConfirm: () => {

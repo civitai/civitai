@@ -1,35 +1,50 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import type { XGuardModerationStep } from '@civitai/client';
-import { slimTextModerationOutput } from '~/server/services/entity-moderation.service';
-import { createTextModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { dbWrite } from '~/server/db/client';
+import { modelsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-
-const DEFAULT_TEST_PROMPT =
-  'lazypos, masterpiece, best quality, ultra-detailed, sharp focus, 1girl, solo, mature woman, 32 years old, beautiful, sexy, petite, curvy body, narrow waist, big firm ass, detailed blonde hair, french braid, perfect big eyes, green eyes, pale skin, realistic skin texture, fine pores, skin indentations, crop top lifted exposing breasts, hotpants, parted lips, nipples, relaxed posture chest forward, dynamic side close-up angle, locker room, wooden lockers, tiled floor, BREAK partially illuminated, dramatic lighting, volumetric lighting, cinematic lighting';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
-    const text = (req.query.text as string) ?? DEFAULT_TEST_PROMPT;
+    // Find all Upscaler model versions that have generation coverage and baseModel != 'Upscaler'
+    const upscalerVersions = await dbWrite.$queryRaw<
+      { modelVersionId: number; modelId: number; baseModel: string }[]
+    >`
+      SELECT mv.id AS "modelVersionId", m.id AS "modelId", mv."baseModel"
+      FROM "ModelVersion" mv
+      JOIN "Model" m ON m.id = mv."modelId"
+      JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+      WHERE m.type = 'Upscaler'::"ModelType"
+        AND mv."baseModel" != 'Upscaler'
+    `;
 
-    const result = await createTextModerationRequest({
-      entityType: 'Article',
-      entityId: 0,
-      content: text,
-      wait: 30,
-      labels: ['nsfw', 'pg', 'pg13', 'r', 'x', 'xxx'],
+    if (upscalerVersions.length === 0) {
+      return res.status(200).json({ message: 'No upscaler versions to update', updated: 0 });
+    }
+
+    const versionIds = upscalerVersions.map((v) => v.modelVersionId);
+    const modelIds = [...new Set(upscalerVersions.map((v) => v.modelId))];
+
+    // Update baseModel to 'Upscaler' for all covered upscaler versions
+    const updateResult = await dbWrite.modelVersion.updateMany({
+      where: { id: { in: versionIds } },
+      data: { baseModel: 'Upscaler' },
     });
 
-    const slimmed = result
-      ? {
-          ...result,
-          steps: ((result.steps ?? []) as unknown as XGuardModerationStep[]).map((step) => ({
-            ...step,
-            output: step.output ? slimTextModerationOutput(step.output) : step.output,
-          })),
-        }
-      : result;
+    // Queue affected models for meilisearch re-indexing
+    await modelsSearchIndex.queueUpdate(
+      modelIds.map((id) => ({
+        id,
+        action: SearchIndexUpdateQueueAction.Update,
+      }))
+    );
 
-    res.status(200).json(slimmed);
+    res.status(200).json({
+      message: `Updated ${updateResult.count} upscaler versions across ${modelIds.length} models`,
+      updated: updateResult.count,
+      models: modelIds.length,
+      sampleVersions: upscalerVersions.slice(0, 10),
+    });
   } catch (e) {
     console.log(e);
     res.status(400).json({ error: (e as Error).message });

@@ -35,25 +35,24 @@ export type StepMetadataFormat<T extends ResourceLike> = {
  * @example
  * ```ts
  * const allResources = await fetchGenerationData({ type: 'modelVersion', id });
- * const { model, resources, vae } = splitResourcesByType(allResources.resources);
- * graph.set({ model, resources, vae });
+ * const { model, upscaler, resources, vae } = splitResourcesByType(allResources.resources);
+ * graph.set({ model, upscaler, resources, vae });
  * ```
  */
 export function splitResourcesByType<T extends ResourceLike>(
   resources: T[]
-): { model?: T; resources: T[]; vae?: T } {
+): { model?: T; upscaler?: T; resources: T[]; vae?: T } {
   // Filter out injectable resources (draft LoRAs etc.)
   const userResources = resources.filter((r) => !allInjectableResourceIds.includes(r.id));
 
-  const model = userResources.find(
-    (r) => r.model.type === 'Checkpoint' || r.model.type === 'Upscaler'
-  );
+  const model = userResources.find((r) => r.model.type === 'Checkpoint');
+  const upscaler = userResources.find((r) => r.model.type === 'Upscaler');
   const vae = userResources.find((r) => r.model.type === 'VAE');
   const additional = userResources.filter(
     (r) => r.model.type !== 'Checkpoint' && r.model.type !== 'Upscaler' && r.model.type !== 'VAE'
   );
 
-  return { model, resources: additional, vae };
+  return { model, upscaler, resources: additional, vae };
 }
 
 // =============================================================================
@@ -71,15 +70,18 @@ export function splitResourcesByType<T extends ResourceLike>(
  */
 export function combineResources<T extends ResourceLike>({
   model,
+  upscaler,
   resources = [],
   vae,
 }: {
   model?: T;
+  upscaler?: T;
   resources?: T[];
   vae?: T;
 }): T[] {
   const result: T[] = [];
   if (model) result.push(model);
+  if (upscaler) result.push(upscaler);
   result.push(...resources);
   if (vae) result.push(vae);
   return result;
@@ -107,14 +109,16 @@ export function combineResources<T extends ResourceLike>({
 export function toStepMetadata<T extends ResourceLike>(
   graphOutput: Record<string, unknown> & {
     model?: T;
+    upscaler?: T;
     resources?: T[];
     vae?: T;
   }
 ): StepMetadataFormat<T> {
-  const { model, resources: additionalResources, vae, ...params } = graphOutput;
+  const { model, upscaler, resources: additionalResources, vae, ...params } = graphOutput;
 
   const resources = combineResources({
     model,
+    upscaler,
     resources: additionalResources,
     vae,
   });
@@ -142,11 +146,17 @@ export function toStepMetadata<T extends ResourceLike>(
 export function fromStepMetadata<T extends ResourceLike>({
   resources,
   params,
-}: StepMetadataFormat<T>): Record<string, unknown> & { model?: T; resources: T[]; vae?: T } {
+}: StepMetadataFormat<T>): Record<string, unknown> & {
+  model?: T;
+  upscaler?: T;
+  resources: T[];
+  vae?: T;
+} {
   const split = splitResourcesByType(resources);
   return {
     ...params,
     model: split.model,
+    upscaler: split.upscaler,
     resources: split.resources,
     vae: split.vae,
   };

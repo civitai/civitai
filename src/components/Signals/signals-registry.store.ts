@@ -13,5 +13,11 @@ export const useSignalRegistry = create<SignalRegistryState>(() => ({
 export function registerSignalGroup(name: SignalGroupName) {
   const { groups } = useSignalRegistry.getState();
   if (groups.has(name)) return;
-  useSignalRegistry.setState({ groups: new Set(groups).add(name) });
+  // Defer setState to avoid triggering updates during React render phase
+  queueMicrotask(() => {
+    const { groups: current } = useSignalRegistry.getState();
+    if (!current.has(name)) {
+      useSignalRegistry.setState({ groups: new Set(current).add(name) });
+    }
+  });
 }

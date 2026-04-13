@@ -669,6 +669,28 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Upscaler model (img2img:upscale) */}
+            <Controller
+              graph={graph}
+              name="upscaler"
+              render={({ value, meta, onChange }) => (
+                <ResourceSelectInput
+                  value={value as any}
+                  onChange={onChange as any}
+                  label={
+                    <ControllerLabel
+                      label="Upscaler"
+                      info="Select the upscaler model to use for enhancing image resolution."
+                    />
+                  }
+                  buttonLabel="Select Upscaler"
+                  modalTitle="Select Upscaler"
+                  options={meta.options}
+                  allowRemove
+                />
+              )}
+            />
+
             {/* Upscale selection (img2img:upscale) */}
             <Controller
               graph={graph}
