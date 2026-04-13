@@ -283,6 +283,11 @@ function InnerProvider({
       const storedEco = ecosystemByKey.get(storedEcosystem);
       if (storedEco && isWorkflowAvailable(resolvedWorkflow, storedEco.id)) return;
 
+      // Workflows with exactly one ecosystem (e.g. img2img:upscale → Upscaler) have no
+      // ambiguity — the graph auto-corrects to the only valid ecosystem, no modal needed.
+      const workflowEcosystemIds = getEcosystemsForWorkflow(resolvedWorkflow);
+      if (workflowEcosystemIds.length === 1) return;
+
       // Ecosystem was corrected — show compatibility modal
       openCompatibilityConfirmModal({
         pendingChange: buildWorkflowPendingChange({
@@ -348,6 +353,7 @@ function InnerProvider({
           ...paramsWithoutOutputSettings,
           workflow: resolvedWorkflow,
           model: split.model,
+          upscaler: split.upscaler,
           resources: split.resources,
           vae: split.vae,
         };
@@ -415,8 +421,7 @@ function InnerProvider({
         // ecosystem. Switch only when an incoming resource is truly incompatible.
         const currentEcosystem = snapshot.ecosystem as string | undefined;
         const currentEco = currentEcosystem ? ecosystemByKey.get(currentEcosystem) : undefined;
-        const allCompatible =
-          currentEco && areResourcesCompatible(currentEco.id, data.resources);
+        const allCompatible = currentEco && areResourcesCompatible(currentEco.id, data.resources);
 
         const incomingEcosystem = data.params.ecosystem as string | undefined;
 
@@ -427,6 +432,12 @@ function InnerProvider({
           ? workflowConfigByKey.get(currentWorkflow)
           : undefined;
         let targetWorkflow = data.params.workflow as string | undefined;
+
+        // Upscaler models always switch to the upscale workflow
+        if (split.upscaler) {
+          targetWorkflow = 'img2img:upscale';
+        }
+
         if (
           !targetWorkflow &&
           currentWorkflowConfig &&
@@ -544,8 +555,8 @@ function InnerProvider({
           ...(allCompatible ? paramsWithoutEcosystem : data.params),
           ...(targetWorkflow && { workflow: targetWorkflow }),
           resources: mergedResources,
-          // Only include model/vae when present — otherwise we'd nullify the current value
           ...(split.model && { model: split.model }),
+          ...(split.upscaler && { upscaler: split.upscaler }),
           ...(split.vae && { vae: split.vae }),
         };
         // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union

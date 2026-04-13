@@ -160,12 +160,20 @@ export const ecosystemGraph = new DataGraph<
       // Prefer workflows in the same category (image/video) as the current workflow,
       // and exclude enhancement and noSubmit (utility) workflows.
       const currentCategory = workflowConfigByKey.get(ctx.workflow)?.category;
-      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id).filter((w) => {
+      const allWorkflows = getWorkflowsForEcosystem(ecosystem.id);
+      let compatibleWorkflows = allWorkflows.filter((w) => {
         if (w.enhancement) return false;
         const config = workflowConfigByKey.get(w.graphKey);
         if (config?.noSubmit) return false;
         return true;
       });
+      // If all workflows are enhancement (e.g. Upscaler ecosystem), allow them
+      if (compatibleWorkflows.length === 0) {
+        compatibleWorkflows = allWorkflows.filter((w) => {
+          const config = workflowConfigByKey.get(w.graphKey);
+          return !config?.noSubmit;
+        });
+      }
       const sameCategory = currentCategory
         ? compatibleWorkflows.filter((w) => w.category === currentCategory)
         : [];

@@ -249,6 +249,18 @@ export function GenerationForm() {
           ecosystemIds.includes(compatibility.currentEcosystemId));
 
       if (!isEntryCompatible) {
+        // Workflows with exactly one ecosystem have no ambiguity — apply directly
+        if (ecosystemIds.length === 1) {
+          const ecoKey = ecosystemById.get(ecosystemIds[0]!)?.key;
+          if (ecoKey) {
+            graph.set({
+              workflow: graphKey,
+              ecosystem: ecoKey,
+            } as Parameters<typeof graph.set>[0]);
+            return;
+          }
+        }
+
         // Get recommended ecosystem (considers last-used preferences)
         const recommended = compatibility.getTargetEcosystemForWorkflow(graphKey);
         const defaultKey = recommended?.key;
@@ -665,6 +677,28 @@ export function GenerationForm() {
                   height={meta.sourceHeight}
                   maxResolution={meta.maxOutputResolution}
                   options={meta.options}
+                />
+              )}
+            />
+
+            {/* Upscaler model (img2img:upscale) */}
+            <Controller
+              graph={graph}
+              name="upscaler"
+              render={({ value, meta, onChange }) => (
+                <ResourceSelectInput
+                  value={value as any}
+                  onChange={onChange as any}
+                  label={
+                    <ControllerLabel
+                      label="Upscaler"
+                      info="Select the upscaler model to use for enhancing image resolution."
+                    />
+                  }
+                  buttonLabel="Select Upscaler"
+                  modalTitle="Select Upscaler"
+                  options={meta.options}
+                  allowRemove
                 />
               )}
             />
