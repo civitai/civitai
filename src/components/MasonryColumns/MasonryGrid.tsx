@@ -40,9 +40,11 @@ export function MasonryGrid<TData>({
   const colorScheme = useComputedColorScheme('dark');
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
-  const { adsEnabled } = useAdsContext();
+  const { adsEnabled, useDirectAds } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
-  const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  // Disable in-feed ads on civitai.red (direct ads) for now
+  const adsReallyAreEnabled =
+    adsEnabled && !useDirectAds && getIsSafeBrowsingLevel(browsingLevel) && withAds;
   const createAdFeed = useCreateAdFeed();
   const items = useMemo(
     () =>
