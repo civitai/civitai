@@ -249,18 +249,6 @@ export function GenerationForm() {
           ecosystemIds.includes(compatibility.currentEcosystemId));
 
       if (!isEntryCompatible) {
-        // Workflows with exactly one ecosystem have no ambiguity — apply directly
-        if (ecosystemIds.length === 1) {
-          const ecoKey = ecosystemById.get(ecosystemIds[0]!)?.key;
-          if (ecoKey) {
-            graph.set({
-              workflow: graphKey,
-              ecosystem: ecoKey,
-            } as Parameters<typeof graph.set>[0]);
-            return;
-          }
-        }
-
         // Get recommended ecosystem (considers last-used preferences)
         const recommended = compatibility.getTargetEcosystemForWorkflow(graphKey);
         const defaultKey = recommended?.key;
