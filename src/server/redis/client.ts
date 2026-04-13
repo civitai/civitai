@@ -943,6 +943,7 @@ export const REDIS_KEYS = {
   },
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
+    RESCAN: 'article:rescan',
   },
 } as const;
 

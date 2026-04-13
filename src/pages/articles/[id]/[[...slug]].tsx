@@ -58,7 +58,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { ArticleEngagementType, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
+import {
+  ArticleEngagementType,
+  ArticleIngestionStatus,
+  ArticleStatus,
+  Availability,
+} from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -354,12 +359,14 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </div>
               </AlertWithIcon>
             )}
-            {article.status === ArticleStatus.Processing && isOwner && (
-              <ArticleScanStatus
-                articleId={article.id}
-                onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
-              />
-            )}
+            {isOwner &&
+              article.ingestion &&
+              article.ingestion !== ArticleIngestionStatus.Scanned && (
+                <ArticleScanStatus
+                  articleId={article.id}
+                  onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
+                />
+              )}
           </Stack>
           <ContainerGrid2 gutter="xl">
             <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>

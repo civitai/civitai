@@ -4,13 +4,15 @@
  * Displays real-time scanning progress for article content images with modern UI
  */
 
-import { Alert, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
-import { IconAlertCircle, IconCheck, IconShield } from '@tabler/icons-react';
+import { Alert, Button, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
+import { IconAlertCircle, IconCheck, IconRadar2, IconShield } from '@tabler/icons-react';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
 import { useEffect } from 'react';
 import clsx from 'clsx';
 import { ArticleProblematicImages } from './ArticleProblematicImages';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useRescanArticle } from '~/hooks/useRescanArticle';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 interface ArticleScanStatusProps {
   articleId: number;
@@ -19,6 +21,8 @@ interface ArticleScanStatusProps {
 
 export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusProps) {
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+  const { rescan: handleRescan, isLoading: isRescanning } = useRescanArticle();
   const { status, isLoading, error, isComplete, hasImages, progress } = useArticleScanStatus({
     articleId,
   });
@@ -72,6 +76,18 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
             blockedImages={status.images?.blocked || []}
             errorImages={status.images?.error || []}
           />
+          {currentUser && (
+            <Button
+              leftSection={<IconRadar2 size={16} />}
+              variant="light"
+              color="blue"
+              size="sm"
+              loading={isRescanning}
+              onClick={() => handleRescan(articleId)}
+            >
+              Rescan Article
+            </Button>
+          )}
         </Stack>
       );
     }

@@ -7,6 +7,7 @@ import {
   IconDotsVertical,
   IconFlag,
   IconPencil,
+  IconRadar2,
   IconRecycle,
   IconTrash,
 } from '@tabler/icons-react';
@@ -27,6 +28,7 @@ import { ToggleLockComments } from '../CommentsV2/ToggleLockComments';
 import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
+import { useRescanArticle } from '~/hooks/useRescanArticle';
 import type { ArticleGetById } from '~/types/router';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -52,6 +54,8 @@ export function ArticleContextMenu({ article, ...props }: Props) {
     ((atDetailsPage && article.status === ArticleStatus.Unpublished) ||
       article.status === ArticleStatus.UnpublishedViolation);
   const features = useFeatureFlags();
+
+  const { rescan: handleRescanArticle, isLoading: isRescanning } = useRescanArticle();
 
   const deleteArticleMutation = trpc.article.delete.useMutation();
   const handleDeleteArticle = () => {
@@ -265,6 +269,22 @@ export function ArticleContextMenu({ article, ...props }: Props) {
             >
               Edit
             </Menu.Item>
+            {atDetailsPage && features.articleImageScanning && (
+              <Menu.Item
+                leftSection={
+                  isRescanning ? <Loader size={14} /> : <IconRadar2 size={14} stroke={1.5} />
+                }
+                onClick={(e: React.MouseEvent) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  handleRescanArticle(article.id);
+                }}
+                disabled={isRescanning}
+                closeMenuOnClick={false}
+              >
+                Rescan
+              </Menu.Item>
+            )}
             {isModerator && (
               <ToggleLockComments entityId={article.id} entityType="article">
                 {({ toggle, locked, isLoading }) => {

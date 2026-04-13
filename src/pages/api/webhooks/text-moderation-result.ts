@@ -10,6 +10,7 @@ import { dbWrite } from '~/server/db/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { recomputeArticleIngestion } from '~/server/services/article.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { ArticleStatus, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -62,6 +63,9 @@ const entityHandlers: Record<string, (result: TextModerationResult) => Promise<v
         });
       }
     }
+
+    // Recompute article ingestion status after text moderation result
+    await recomputeArticleIngestion(entityId);
   },
 };
 
@@ -156,6 +160,11 @@ export default WebhookEndpoint(async (req, res) => {
           entityType,
           entityId,
         });
+
+        // Recompute article ingestion status on text moderation failure
+        if (entityType === 'Article') {
+          await recomputeArticleIngestion(entityId);
+        }
         break;
       }
       default: {
