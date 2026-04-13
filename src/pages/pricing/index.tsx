@@ -136,8 +136,7 @@ export default function Pricing() {
       showBuzzTopUp={!features.isGreen}
       buzzType={selectedBuzzType}
     >
-      {/* TODO: Re-enable when environment swap to .com + .red is ready */}
-      {/* {features.isGreen && (
+      {features.isGreen && (
         <Stack gap="md" align="center" mb="sm">
           <Stack gap={4} align="center">
             <Title order={1} className="text-center text-3xl font-bold sm:text-4xl">
@@ -173,7 +172,7 @@ export default function Pricing() {
             </Button>
           </div>
         </Stack>
-      )} */}
+      )}
       <div
         style={{
           // @ts-ignore

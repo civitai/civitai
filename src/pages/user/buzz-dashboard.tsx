@@ -1,6 +1,7 @@
 import {
   Alert,
   Anchor,
+  Badge,
   Center,
   Container,
   Grid,
@@ -13,6 +14,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { IconSparkles } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
@@ -38,7 +40,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { getAccountTypeLabel } from '~/utils/buzz';
+import { formatMultiplier, getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -95,7 +97,9 @@ export default function UserBuzzDashboard() {
   );
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
-  const rewardsMultiplier = multipliers.rewardsMultiplier ?? 1;
+  const rewardsMultiplier = multipliers.rewardsMultiplier;
+  const globalRewardsBonus = multipliers.globalRewardsBonus;
+  const baseRewardsMultiplier = multipliers.baseRewardsMultiplier;
   const { subscription, subscriptionPaymentProvider } = useActiveSubscription({
     buzzType: selectedAccountType,
   });
@@ -106,10 +110,7 @@ export default function UserBuzzDashboard() {
 
   return (
     <>
-      <Meta
-        title="Civitai | My Buzz Dashboard"
-        deIndex
-      />
+      <Meta title="Civitai | My Buzz Dashboard" deIndex />
       <Container size="lg">
         <Stack gap="md">
           <Stack gap="md">
@@ -162,41 +163,71 @@ export default function UserBuzzDashboard() {
           ) : null}
 
           {/* Prepaid Token Claim Section (yellow buzz only, Civitai prepaid members) */}
-          {selectedAccountType === 'yellow' && isCivitaiPrepaid && subscription && (() => {
-            const prepaidTokens = getPrepaidTokens({
-              metadata: subscription.metadata as SubscriptionMetadata,
-            });
-            const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
-            return (
-              <PrepaidTokenOverview
-                tokens={prepaidTokens}
-                nextUnlockDate={nextUnlockDate}
-                subscription={subscription}
-              />
-            );
-          })()}
+          {selectedAccountType === 'yellow' &&
+            isCivitaiPrepaid &&
+            subscription &&
+            (() => {
+              const prepaidTokens = getPrepaidTokens({
+                metadata: subscription.metadata as SubscriptionMetadata,
+              });
+              const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
+              return (
+                <PrepaidTokenOverview
+                  tokens={prepaidTokens}
+                  nextUnlockDate={nextUnlockDate}
+                  subscription={subscription}
+                />
+              );
+            })()}
 
           {/* Ways to Earn Rewards (hidden when empty) */}
           {(loadingRewards || multipliersLoading || hasRewards) && (
             <Paper className={classes.tileCard} p="lg" radius="md">
               <Stack>
-                <Group justify="space-between">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <h3 className="text-xl font-bold" id="rewards">
                     Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
                   </h3>
-                  {isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
-                    <Tooltip multiline label="Your membership makes rewards worth more!">
-                      <Stack gap={0}>
-                        <Text
-                          size="md"
-                          style={{ fontSize: 20 }}
-                          fw={700}
-                          className={selectedBuzzConfig.classNames?.gradientText}
-                        >
-                          Rewards Multiplier: {rewardsMultiplier}x
-                        </Text>
-                      </Stack>
-                    </Tooltip>
+                  {globalRewardsBonus > 1 ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {baseRewardsMultiplier > 1 && (
+                        <>
+                          <Badge size="lg" radius="xl" variant="light" color="gray">
+                            Membership {formatMultiplier(baseRewardsMultiplier)}
+                          </Badge>
+                          <Text size="xs" c="dimmed">
+                            ×
+                          </Text>
+                        </>
+                      )}
+                      <Badge
+                        size="lg"
+                        radius="xl"
+                        variant="light"
+                        color="yellow"
+                        leftSection={<IconSparkles size={14} />}
+                      >
+                        Event {formatMultiplier(globalRewardsBonus)}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        =
+                      </Text>
+                      <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
+                        Total {formatMultiplier(rewardsMultiplier)}
+                      </Badge>
+                    </div>
+                  ) : isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge size="lg" radius="xl" variant="light" color="gray">
+                        Membership {formatMultiplier(rewardsMultiplier)}
+                      </Badge>
+                      <Text size="xs" c="dimmed">
+                        =
+                      </Text>
+                      <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
+                        Total {formatMultiplier(rewardsMultiplier)}
+                      </Badge>
+                    </div>
                   ) : (
                     isMember &&
                     features.membershipsV2 && (
@@ -213,7 +244,7 @@ export default function UserBuzzDashboard() {
                       </Text>
                     )
                   )}
-                </Group>
+                </div>
                 {loadingRewards || multipliersLoading ? (
                   <Center py="xl">
                     <Loader />
@@ -230,16 +261,9 @@ export default function UserBuzzDashboard() {
           )}
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward buzzAccountType={selectedAccountType} />}
-          {selectedAccountType === 'green' && (
-            <Alert color="yellow" title="Green Creator Program Temporarily Disabled">
-              <Text>
-                The Green Creator Program is temporarily disabled and will return in at a later
-                date. In the meantime, you can still earn and use Green Buzz for other activities on
-                the platform.
-              </Text>
-            </Alert>
+          {(selectedAccountType === 'yellow' || selectedAccountType === 'green') && (
+            <CreatorProgramV2 />
           )}
-          {selectedAccountType === 'yellow' && <CreatorProgramV2 buzzType="yellow" />}
           {selectedAccountType === 'red' && <GetPaid />}
         </Stack>
       </Container>

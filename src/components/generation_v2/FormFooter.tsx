@@ -10,6 +10,7 @@
  */
 
 import {
+  ActionIcon,
   Alert,
   Button,
   Card,
@@ -18,23 +19,27 @@ import {
   Notification,
   NumberInput,
   Text,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconArrowRight,
   IconArrowsShuffle,
   IconCheck,
+  IconChevronDown,
   IconDots,
+  IconRestore,
   IconX,
 } from '@tabler/icons-react';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
 
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import {
-  MembershipUpsell,
-  useMembershipUpsell,
-} from '~/components/ImageGeneration/MembershipUpsell';
+import { useMembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -43,8 +48,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Controller, useGraph, MultiController } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { useGenerationFormStore } from '~/store/generation-form.store';
 import { useTipStore } from '~/store/tip.store';
+import { abbreviateNumber } from '~/utils/number-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
   useGenerateFromGraph,
@@ -94,6 +103,155 @@ function getHasCreatorTip(snapshot: ResourceSnapshot): boolean {
 }
 
 // =============================================================================
+// Total Cost (including tips)
+// =============================================================================
+
+/**
+ * Computes the total generation cost including creator and Civitai tips.
+ * Used by the buzz type selector, submit button, and insufficient buzz alert.
+ */
+function useTotalGenerationCost() {
+  const graph = useGraph<GenerationGraphTypes>();
+  const features = useFeatureFlags();
+  const { creatorTip, civitaiTip } = useTipStore();
+  const { data } = useWhatIfContext();
+
+  const snapshot = graph.getSnapshot() as ResourceSnapshot & { workflow?: string };
+  const hasCreatorTip = getHasCreatorTip(snapshot);
+
+  const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
+  const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
+  const base = data?.cost?.base ?? 0;
+  const totalTip = Math.ceil(base * creatorTipRate) + Math.ceil(base * civitaiTipRate);
+
+  return (data?.cost?.total ?? 0) + totalTip;
+}
+
+// =============================================================================
+// Buzz Type Selection
+// =============================================================================
+
+/**
+ * Returns the available buzz types for generation and the currently selected type.
+ * On .com: green + blue. On .red: yellow + blue.
+ * Defaults to the site's primary type (green on .com, yellow on .red).
+ */
+export function useSelectedBuzzType() {
+  const availableTypes = useAvailableBuzz(['blue']);
+  const storedType = useGenerationFormStore((s) => s.buzzType);
+  const setBuzzType = useGenerationFormStore((s) => s.setBuzzType);
+
+  // Default to the site's primary type (first non-blue type, or first available)
+  const primaryType = availableTypes.find((t) => t !== 'blue') ?? availableTypes[0];
+  const selectedType = storedType && availableTypes.includes(storedType) ? storedType : primaryType;
+
+  return { availableTypes, selectedType, setBuzzType };
+}
+
+/**
+ * Buzz type selector that shows the current generation cost.
+ * The button displays the cost with the selected buzz type icon.
+ * The dropdown shows all available buzz types with their balances.
+ */
+export function BuzzTypeSelector({
+  cost,
+  loading,
+  error,
+  onRetry,
+}: {
+  cost: number;
+  loading: boolean;
+  error?: boolean;
+  onRetry?: () => void;
+}) {
+  const { availableTypes, selectedType, setBuzzType } = useSelectedBuzzType();
+  const {
+    data: { accounts },
+  } = useQueryBuzz(availableTypes);
+
+  const isWhatIfLoading = loading;
+  const totalCost = cost;
+
+  // Keep the last known cost so it doesn't flash to 0 during re-fetch
+  const lastCostRef = useRef(0);
+  if (totalCost > 0) lastCostRef.current = totalCost;
+  const displayCost = isWhatIfLoading ? lastCostRef.current : totalCost;
+  const showLoading = !error && (isWhatIfLoading || displayCost <= 0);
+
+  // Error state: show retry button instead of cost
+  if (error && onRetry) {
+    return (
+      <Tooltip label="Failed to estimate cost. Click to retry.">
+        <Button
+          variant="default"
+          size="compact-sm"
+          className="h-full gap-1 px-2"
+          color="red"
+          onClick={onRetry}
+        >
+          <IconAlertTriangle size={14} />
+          <IconRestore size={14} />
+        </Button>
+      </Tooltip>
+    );
+  }
+
+  return (
+    <Menu position="top" withinPortal>
+      <Menu.Target>
+        <Button
+          variant="default"
+          size="compact-sm"
+          className="h-full gap-1 px-2"
+          color="gray"
+          loading={showLoading}
+          loaderProps={{ size: 14 }}
+        >
+          <CurrencyIcon currency={Currency.BUZZ} type={selectedType} size={16} />
+          <Text size="sm" fw={600}>
+            {abbreviateNumber(displayCost)}
+          </Text>
+          <IconChevronDown size={12} className="ml-0.5" />
+        </Button>
+      </Menu.Target>
+      <Menu.Dropdown>
+        <Menu.Label>Pay with</Menu.Label>
+        {availableTypes.map((buzzType) => {
+          const balance = accounts.find((a) => a.type === buzzType)?.balance ?? 0;
+          return (
+            <Menu.Item
+              key={buzzType}
+              leftSection={<CurrencyIcon currency={Currency.BUZZ} type={buzzType} size={16} />}
+              onClick={() => setBuzzType(buzzType)}
+              className={buzzType === selectedType ? 'bg-dark-5' : undefined}
+            >
+              <Text size="sm" fw={buzzType === selectedType ? 600 : 400}>
+                {buzzType.charAt(0).toUpperCase() + buzzType.slice(1)} Buzz —{' '}
+                {abbreviateNumber(balance)}
+              </Text>
+            </Menu.Item>
+          );
+        })}
+      </Menu.Dropdown>
+    </Menu>
+  );
+}
+
+/** BuzzTypeSelector wired to the WhatIfProvider context (for use inside FormFooter). */
+function ConnectedBuzzTypeSelector() {
+  const { isLoading, isError, refetch } = useWhatIfContext();
+  const cost = useTotalGenerationCost();
+  return (
+    <BuzzTypeSelector
+      cost={cost}
+      loading={isLoading}
+      error={isError}
+      onRetry={() => refetch()}
+    />
+  );
+}
+
+// =============================================================================
 // PriorityAlertSpace Component
 // =============================================================================
 
@@ -101,6 +259,7 @@ interface PriorityAlertSpaceProps {
   submitError?: string;
   onClearSubmitError: () => void;
   missingFieldMessage?: string | null;
+  snackbarRight?: ReactNode;
 }
 
 /**
@@ -119,9 +278,27 @@ function PriorityAlertSpace({
   submitError,
   onClearSubmitError,
   missingFieldMessage,
+  snackbarRight,
 }: PriorityAlertSpaceProps) {
   const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
-  const membershipUpsell = useMembershipUpsell();
+  const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
+  const {
+    data: { accounts },
+  } = useQueryBuzz(availableTypes);
+  const totalCost = useTotalGenerationCost();
+
+  // Check if user has insufficient buzz of the selected type
+  const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
+  const insufficientBuzz = totalCost > 0 && selectedBalance < totalCost;
+
+  // Find an alternative buzz type that has enough balance
+  const alternativeType = insufficientBuzz
+    ? availableTypes.find((t) => {
+        if (t === selectedType) return false;
+        const balance = accounts.find((a) => a.type === t)?.balance ?? 0;
+        return balance >= totalCost;
+      })
+    : undefined;
 
   // Determine which priority alert to show
   let priorityAlert: ReactNode;
@@ -159,11 +336,40 @@ function PriorityAlertSpace({
         {submitError}
       </Notification>
     );
+  } else if (insufficientBuzz) {
+    const typeName = selectedType.charAt(0).toUpperCase() + selectedType.slice(1);
+    priorityAlert = (
+      <Notification
+        icon={<IconAlertTriangle size={18} />}
+        color="yellow"
+        className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+        withCloseButton={false}
+      >
+        <Text size="sm">
+          Not enough {typeName} Buzz ({abbreviateNumber(selectedBalance)}/
+          {abbreviateNumber(totalCost)}).{' '}
+          {alternativeType ? (
+            <Text
+              span
+              c="blue.4"
+              className="cursor-pointer"
+              onClick={() => setBuzzType(alternativeType)}
+            >
+              Switch to {alternativeType.charAt(0).toUpperCase() + alternativeType.slice(1)} Buzz
+            </Text>
+          ) : (
+            <Text span c="blue.4" component="a" href="/purchase/buzz" target="_blank">
+              Get more Buzz
+            </Text>
+          )}
+        </Text>
+      </Notification>
+    );
   }
 
   return (
     <>
-      <QueueSnackbar />
+      <QueueSnackbar right={snackbarRight} />
       {priorityAlert}
     </>
   );
@@ -179,112 +385,59 @@ interface SubmitButtonProps {
 }
 
 function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) {
-  const graph = useGraph<GenerationGraphTypes>();
-  const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
-  const { creatorTip, civitaiTip } = useTipStore();
+  const { selectedType } = useSelectedBuzzType();
+  const { color } = useBuzzCurrencyConfig(selectedType);
 
   // Get whatIf data from context (provided by WhatIfProvider)
-  // isLoading includes both prompt-dirty AND fetching states
+  const { isError, isLoading: isWhatIfLoading, canEstimateCost } = useWhatIfContext();
+  const totalCost = useTotalGenerationCost();
+
+  // Check if user has enough of the selected buzz type
   const {
-    data,
-    isError,
-    isLoading: isWhatIfLoading,
-    isPromptDirty,
-    canEstimateCost,
-  } = useWhatIfContext();
-
-  // Pending submit: when the user clicks the loading button while prompt is dirty,
-  // we queue the submit and auto-fire it once the whatIf resolves with fresh pricing.
-  // Uses state (not a ref) so that setting it triggers a re-render and the effect re-evaluates.
-  const [pendingSubmit, setPendingSubmit] = useState(false);
-
-  // Use a ref for onSubmit so the effect doesn't depend on its identity.
-  // handleSubmit is not memoized (it captures many closure vars), so without
-  // a ref the effect would re-fire on every parent render, which can trigger
-  // "Maximum update depth exceeded" during HMR cascades.
-  const onSubmitRef = useRef(onSubmit);
-  onSubmitRef.current = onSubmit;
-
-  useEffect(() => {
-    if (pendingSubmit && !isWhatIfLoading && !isSubmitting) {
-      setPendingSubmit(false);
-      onSubmitRef.current?.();
-    }
-  }, [pendingSubmit, isWhatIfLoading, isSubmitting]);
-
-  // Get values from graph for tip calculation
-  const snapshot = graph.getSnapshot() as ResourceSnapshot & { workflow?: string };
-  const hasCreatorTip = getHasCreatorTip(snapshot);
-
-  // Calculate tip amounts
-  const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
-  const civitaiTipRate = features.creatorComp ? civitaiTip : 0;
-
-  const base = data?.cost?.base ?? 0;
-  const totalTip = Math.ceil(base * creatorTipRate) + Math.ceil(base * civitaiTipRate);
-  const totalCost = (data?.cost?.total ?? 0) + totalTip;
+    data: { accounts },
+  } = useQueryBuzz([selectedType]);
+  const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
+  const insufficientBuzz = totalCost > 0 && balance < totalCost;
 
   const handleClick = () => {
     if (running) helpers?.next();
     onSubmit?.();
   };
 
-  // Allow clicking the loading button when prompt is dirty to queue a pending submit.
-  // Clicking the overlay also blurs the prompt, which triggers the whatIf refresh.
-  const showPendingOverlay = isPromptDirty && !isSubmitting && !isError && canEstimateCost;
-
-  const generateButton = (
+  return (
     <GenerateButton
       type="button"
       data-tour="gen:submit"
       className="h-full flex-1 px-2"
-      loading={isWhatIfLoading || isSubmitting}
-      cost={totalCost}
-      disabled={isError || !canEstimateCost}
+      color={color}
+      loading={isSubmitting}
+      disabled={isWhatIfLoading || isError || !canEstimateCost || insufficientBuzz}
       onClick={handleClick}
-      transactions={data?.transactions}
-      allowMatureContent={data?.allowMatureContent}
     />
   );
+}
 
-  // Overlay to capture clicks on the loading button when prompt is dirty.
-  const pendingOverlay = showPendingOverlay ? (
-    <div
-      className="absolute inset-0 z-10 cursor-pointer"
-      onClick={() => {
-        // Blur the active element (e.g. prompt textarea) to trigger the whatIf refresh
-        if (document.activeElement instanceof HTMLElement) {
-          document.activeElement.blur();
-        }
-        setPendingSubmit(true);
-      }}
-    />
-  ) : null;
+/**
+ * Cost breakdown info icon for the snackbar.
+ * Shows the GenerationCostPopover with tip details when creatorComp is enabled.
+ */
+function CostBreakdown() {
+  const graph = useGraph<GenerationGraphTypes>();
+  const features = useFeatureFlags();
+  const { data } = useWhatIfContext();
 
-  if (!features.creatorComp) {
-    // When there's no overlay needed, return the button directly (no wrapper)
-    if (!pendingOverlay) return generateButton;
+  if (!features.creatorComp) return null;
 
-    // Wrapper mirrors the button's flex-1 + h-full so layout is unchanged
-    return (
-      <div className="relative flex h-full flex-1">
-        {generateButton}
-        {pendingOverlay}
-      </div>
-    );
-  }
+  const snapshot = graph.getSnapshot() as ResourceSnapshot & { workflow?: string };
+  const hasCreatorTip = getHasCreatorTip(snapshot);
 
   return (
-    <div className="relative flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
-      {generateButton}
-      {pendingOverlay}
-      <GenerationCostPopover
-        width={300}
-        workflowCost={data?.cost ?? {}}
-        hideCreatorTip={!hasCreatorTip}
-      />
-    </div>
+    <GenerationCostPopover
+      width={300}
+      workflowCost={data?.cost ?? {}}
+      hideCreatorTip={!hasCreatorTip}
+    />
   );
 }
 
@@ -301,6 +454,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
+  const membershipUpsell = useMembershipUpsell();
 
   // Get validation state from whatIf context
   const { canEstimateCost, validationErrors } = useWhatIfContext();
@@ -408,6 +562,9 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Check if any resources have early access
     const hasEarlyAccess = resourceData.some((x) => x.earlyAccessConfig);
 
+    // Get the user-selected buzz type for this generation
+    const { buzzType: selectedBuzzType } = useGenerationFormStore.getState();
+
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
@@ -418,6 +575,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         remixOfId,
         creatorTip: hasCreatorTip ? creatorTip : 0,
         civitaiTip,
+        ...(selectedBuzzType ? { buzzType: selectedBuzzType } : {}),
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
       });
@@ -504,49 +662,62 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         submitError={submitError}
         onClearSubmitError={() => setSubmitError(undefined)}
         missingFieldMessage={missingFieldMessage}
+        snackbarRight={<CostBreakdown />}
       />
 
-      <div className="flex min-h-[52px] gap-2">
-        <Controller
-          graph={graph}
-          name="quantity"
-          render={({ value, meta, onChange }) => (
-            <Card withBorder className="flex max-w-[88px] flex-col p-0">
-              <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
-                Quantity
-              </Text>
-              <NumberInput
-                value={value ?? 1}
-                onChange={(val) => onChange(Number(val) || 1)}
-                min={meta.min}
-                max={meta.max}
-                step={meta.step}
-                size="md"
-                variant="unstyled"
-                style={{ marginTop: -16 }}
-                styles={{
-                  input: {
-                    textAlign: 'center',
-                    fontWeight: 500,
-                    paddingRight: 27,
-                    lineHeight: 1,
-                    paddingTop: 22,
-                    paddingBottom: 6,
-                    height: 'auto',
-                  },
-                }}
-              />
-            </Card>
-          )}
-        />
-        <SubmitButton
-          isLoading={generateMutation.isLoading || isMinLoading}
-          onSubmit={handleSubmit}
-        />
-        <Button onClick={handleReset} variant="default" className="h-auto px-3">
-          Reset
-        </Button>
-      </div>
+      {!membershipUpsell.needsAcknowledgment && (
+        <div className="flex h-[52px] items-stretch gap-2">
+          <Controller
+            graph={graph}
+            name="quantity"
+            render={({ value, meta, onChange }) => (
+              <Card withBorder className="flex max-w-[68px] flex-col p-0">
+                <NumberInput
+                  value={value ?? 1}
+                  onChange={(val) => onChange(Number(val) || 1)}
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step}
+                  size="md"
+                  variant="unstyled"
+                  styles={{
+                    root: { flex: 1 },
+                    wrapper: { height: '100%' },
+                    input: {
+                      textAlign: 'center',
+                      fontWeight: 600,
+                      paddingRight: 27,
+                      lineHeight: 1,
+                      paddingTop: 6,
+                      paddingBottom: 16,
+                      height: '100%',
+                    },
+                  }}
+                />
+                <Text
+                  className="pr-6 text-center text-[10px] font-semibold"
+                  c="dimmed"
+                  style={{ marginTop: -16 }}
+                >
+                  QTY
+                </Text>
+              </Card>
+            )}
+          />
+          <Button.Group className="flex-1">
+            <SubmitButton
+              isLoading={generateMutation.isLoading || isMinLoading}
+              onSubmit={handleSubmit}
+            />
+            {currentUser && <ConnectedBuzzTypeSelector />}
+          </Button.Group>
+          <Tooltip label="Reset">
+            <ActionIcon onClick={handleReset} variant="default" className="h-auto" size="xl">
+              <IconRestore size={16} />
+            </ActionIcon>
+          </Tooltip>
+        </div>
+      )}
     </>
   );
 }
