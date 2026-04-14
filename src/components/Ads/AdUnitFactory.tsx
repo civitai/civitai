@@ -448,17 +448,22 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
     if (traceRef.current) searchParams.append('trace', traceRef.current);
     fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
       credentials: 'include',
-    }).then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setData(data);
-        traceRef.current = data.trace;
-        fetchingRef.current = !data?.next;
-      } else {
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const data = await res.json();
+          setData(data);
+          traceRef.current = data.trace;
+          fetchingRef.current = !data?.next;
+        } else {
+          fetchingRef.current = false;
+        }
+        impressionRef.current = false;
+      })
+      .catch(() => {
         fetchingRef.current = false;
-      }
-      impressionRef.current = false;
-    });
+        impressionRef.current = false;
+      });
   }, [browsingLevel, props.adUnit, props.id]);
 
   const interval = usePausableInterval(handleServe, 30 * 1000);
@@ -506,11 +511,16 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
           headers: {
             'Content-Type': 'application/json',
           },
-        }).then(() => {
-          window.dispatchEvent(
-            new CustomEvent('civitai-custom-ad-impression', { detail: props.adUnit })
-          );
-        });
+        })
+          .then(() => {
+            window.dispatchEvent(
+              new CustomEvent('civitai-custom-ad-impression', { detail: props.adUnit })
+            );
+          })
+          .catch(() => {
+            // Impression tracking failed — not critical, allow retry on next cycle
+            impressionRef.current = false;
+          });
       }
     }
 

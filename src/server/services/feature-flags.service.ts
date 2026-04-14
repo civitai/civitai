@@ -112,10 +112,9 @@ const featureFlags = createFeatureFlags({
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue', 'red'],
-  isRed: ['public', 'blue'],
+  isRed: ['public', 'blue', 'red'],
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
   canBuyBuzz: ['public'],
-  adsEnabled: ['public'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],

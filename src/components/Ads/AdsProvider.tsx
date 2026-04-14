@@ -79,6 +79,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     useAdProviderStore.setState({ adsBlocked: false });
   }
 
+  // For direct ads (.red), probe the ad server to detect adblockers.
+  // Snigel's onLoad/onError callbacks don't fire since the script isn't loaded.
+  useEffect(() => {
+    if (!useDirectAds || !adsEnabled) return;
+    const url = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
+    fetch(`${url}/api/v1/serve`, { method: 'HEAD', credentials: 'include' })
+      .then(() => useAdProviderStore.setState({ adsBlocked: false }))
+      .catch(() => useAdProviderStore.setState({ adsBlocked: true }));
+  }, [useDirectAds, adsEnabled]);
+
   useEffect(() => {
     function callback() {
       // check for cmp consent
