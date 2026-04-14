@@ -110,6 +110,7 @@ import {
   getIsZImageTurbo,
   getIsZImageBase,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  WORKFLOW_TAGS,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -404,6 +405,7 @@ export function GenerationFormContent() {
         input: graphInput,
         civitaiTip: tips.civitai,
         creatorTip: tips.creators,
+        tags: [WORKFLOW_TAGS.SOURCE.LEGACY],
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         ...(selectedBuzzType ? { buzzType: selectedBuzzType } : {}),
       }).catch((error: any) => {

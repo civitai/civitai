@@ -2,11 +2,14 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
   buildGenerationContext,
+  formatGenerationResponse2,
   generateFromGraph,
   getWorkflowStatusUpdate,
   queryGeneratedImageWorkflows2,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { getWorkflow as clientGetWorkflow } from '@civitai/client';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
@@ -471,6 +474,19 @@ export const orchestratorRouter = router({
         user: ctx.user,
         hideMatureContent: false, // Moderators should see all content
       });
+    }),
+
+  /** Fetch any workflow by ID and normalize it (moderator only) */
+  getWorkflowForModeration: moderatorProcedure
+    .input(workflowIdSchema)
+    .query(async ({ ctx, input }) => {
+      const { data } = await clientGetWorkflow({
+        client: internalOrchestratorClient,
+        path: { workflowId: input.workflowId },
+      });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Workflow not found' });
+      const [normalized] = await formatGenerationResponse2([data], ctx.user);
+      return normalized;
     }),
 
   getFlaggedConsumers: moderatorProcedure
