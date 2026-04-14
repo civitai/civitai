@@ -71,6 +71,7 @@ import {
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
@@ -575,6 +576,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         remixOfId,
         creatorTip: hasCreatorTip ? creatorTip : 0,
         civitaiTip,
+        tags: [WORKFLOW_TAGS.SOURCE.NEW],
         ...(selectedBuzzType ? { buzzType: selectedBuzzType } : {}),
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),

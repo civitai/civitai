@@ -34,6 +34,7 @@ import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationGraphStore, useGenerationGraphStore } from '~/store/generation-graph.store';
 import { isNewFormOnly } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { openSwitchToNewFormModal } from '~/components/generation_v2/SwitchToNewFormModal';
 import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
@@ -175,6 +176,7 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
       conditionalPerformTransaction(cost, () => {
         mutate({
           input: graphData,
+          tags: [WORKFLOW_TAGS.SOURCE.LEGACY],
           ...(buzzType ? { buzzType } : {}),
         });
       });

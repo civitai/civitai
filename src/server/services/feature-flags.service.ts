@@ -112,7 +112,7 @@ const featureFlags = createFeatureFlags({
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue', 'red'],
-  isRed: ['public', 'blue'],
+  isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public'],
