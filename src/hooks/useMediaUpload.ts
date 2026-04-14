@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useFileUploadContext } from '~/components/FileUpload/FileUploadProvider';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useS3Upload } from '~/hooks/useS3Upload';
@@ -11,6 +12,10 @@ import { auditMetaData } from '~/utils/metadata/audit';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
+
+// Max number of images uploading concurrently to S3. Tune here if we hit
+// throttling from the bucket or want to let more through.
+const MAX_CONCURRENT_UPLOADS = 2;
 
 // #region [types]
 type ProcessingFile = PreprocessFileReturnType & {
@@ -49,12 +54,89 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   } = useS3Upload({
     endpoint: '/api/v1/image-upload/multipart',
   });
+  const fileUploadContext = useFileUploadContext();
   const uploadSettings = useMediaUploadSettingsContext();
   const canAdd =
     uploadSettings.maxItems - count > 0 &&
     !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+
+  // Concurrency pool shared across all processFiles() calls on this hook instance.
+  type UploadJob = {
+    processing: ProcessingFile;
+    index: number;
+    context?: TContext;
+    aborted: boolean;
+  };
+  const activeWorkersRef = useRef(0);
+  const jobQueueRef = useRef<UploadJob[]>([]);
+
+  async function runWorker() {
+    try {
+      while (jobQueueRef.current.length > 0) {
+        const job = jobQueueRef.current.shift()!;
+        if (job.aborted) continue;
+        const onComplete = onCompleteRef.current;
+        const { file, ...data } = job.processing;
+        try {
+          const { key, url } = await upload(file, UploadType.Image);
+          if (!url) throw new Error('Failed to upload image');
+          onComplete({ status: 'added', ...data, url: key, index: job.index }, job.context);
+        } catch (e) {
+          console.error(e);
+          onComplete(
+            { status: 'error', ...data, url: data.objectUrl, index: job.index },
+            job.context
+          );
+        }
+      }
+    } finally {
+      activeWorkersRef.current--;
+    }
+  }
+
+  function enqueueJobs(jobs: UploadJob[]) {
+    if (!jobs.length) return;
+
+    // Pre-register pending entries so the UI reflects queued items.
+    if (fileUploadContext) {
+      const [, setFiles] = fileUploadContext;
+      setFiles((prev) => {
+        const existing = new Set(prev.map((x) => x.file));
+        const additions = jobs
+          .filter((job) => !existing.has(job.processing.file))
+          .map((job) => ({
+            file: job.processing.file,
+            progress: 0,
+            uploaded: 0,
+            size: job.processing.file.size,
+            speed: 0,
+            timeRemaining: 0,
+            status: 'pending' as const,
+            abort: () => {
+              job.aborted = true;
+              // Drop the tracked pending entry so canAdd frees up and the UI
+              // doesn't show a phantom "pending" row for a file we'll never upload.
+              setFiles((cur) => cur.filter((x) => x.file !== job.processing.file));
+            },
+            name: job.processing.file.name,
+            url: '',
+          }));
+        return additions.length ? [...prev, ...additions] : prev;
+      });
+    }
+
+    jobQueueRef.current.push(...jobs);
+    while (activeWorkersRef.current < MAX_CONCURRENT_UPLOADS && jobQueueRef.current.length > 0) {
+      activeWorkersRef.current++;
+      runWorker().catch((e) => {
+        // Safety net — runWorker has a finally for bookkeeping, but if something
+        // truly unexpected escapes, we must not swallow it silently.
+        console.error('runWorker unexpectedly threw', e);
+      });
+    }
+  }
   // #endregion
 
   // #region [file processor]
@@ -159,11 +241,12 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       setError(undefined);
 
       // begin uploads
-      const onComplete = onCompleteRef.current;
-      for (const [i, { file, ...data }] of mapped.entries()) {
+      const jobs: UploadJob[] = [];
+      for (const [i, processing] of mapped.entries()) {
         const index = start + i;
-        if (!!data.blockedFor) {
-          onComplete?.(
+        if (!!processing.blockedFor) {
+          const { file, ...data } = processing;
+          onCompleteRef.current?.(
             {
               status: 'blocked',
               ...data,
@@ -173,20 +256,10 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
             context
           );
         } else {
-          upload(file, UploadType.Image)
-            .then(({ key, url }) => {
-              if (!url) {
-                throw new Error('Failed to upload image');
-              }
-
-              onComplete({ status: 'added', ...data, url: key, index }, context);
-            })
-            .catch((error) => {
-              console.error(error);
-              onComplete({ status: 'error', ...data, url: data.objectUrl, index }, context);
-            });
+          jobs.push({ processing, index, context, aborted: false });
         }
       }
+      enqueueJobs(jobs);
     } catch (error: any) {
       setError(error);
     }
