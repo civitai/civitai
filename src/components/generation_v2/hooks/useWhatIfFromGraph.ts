@@ -123,16 +123,17 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   // Build the query payload from validated data.
   // Note: buzz type is NOT included here — cost is the same regardless of which
   // buzz type the user selects. Buzz type only matters at submission time.
+  // Prompt/negativePrompt are stripped — they don't affect cost and shouldn't
+  // be sent to the server until actual submission.
   const queryPayload = useMemo(() => {
     if (!validationResult?.success) return null;
 
-    const outputSnapshot = validationResult.data as Record<string, unknown>;
-    const snapshotForQuery = {
-      ...outputSnapshot,
-      prompt: (outputSnapshot.prompt as string) || 'cost estimation',
-    };
+    const outputSnapshot = omit(validationResult.data as Record<string, unknown>, [
+      'prompt',
+      'negativePrompt',
+    ]);
 
-    return filterSnapshotForSubmit(snapshotForQuery, {
+    return filterSnapshotForSubmit(outputSnapshot, {
       computedKeys: graph.getComputedKeys(),
     });
   }, [validationResult, graph]);
