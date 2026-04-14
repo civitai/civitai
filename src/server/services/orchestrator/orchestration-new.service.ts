@@ -1459,13 +1459,22 @@ function formatStep(
     remixOfId = undefined;
   }
 
-  // Map to graph format (workflow, ecosystem, aspectRatio resolution) if we have params
+  // Map to graph format (workflow, ecosystem, aspectRatio resolution) if we have params.
+  // Skip mapping for enhancement steps with source lineage (metadata.workflow set by
+  // buildResolvedSource) — their step params are source context, not the step's own
+  // generation params. The actual form inputs live on workflow.metadata which gets its
+  // own mapDataToGraphInput pass. Running it here would inject a wrong workflow key
+  // (e.g. 'txt2img' inferred from source params) which causes StepData.params to
+  // return step params instead of falling through to workflow-level params.
+  const hasSourceLineage = 'workflow' in metadata;
   let finalParams: Record<string, unknown> | undefined;
-  if (resolvedParams) {
+  if (resolvedParams && !hasSourceLineage) {
     const mapped = mapDataToGraphInput(resolvedParams, resolvedResources ?? [], {
       stepType: step.$type,
     });
     finalParams = removeEmpty({ ...resolvedParams, ...mapped });
+  } else if (resolvedParams) {
+    finalParams = resolvedParams;
   }
 
   // For dimension resolution, use step params or fall back to workflow params
