@@ -7,6 +7,55 @@ import { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
+const MAX_PART_ATTEMPTS = 3;
+const MAX_BACKOFF_MS = 60_000;
+const MIN_RETRY_AFTER_MS = 1000;
+
+type UploadPartError = {
+  status: number | null;
+  retryAfter?: string | null;
+  networkError?: boolean;
+  aborted?: boolean;
+};
+
+function shouldRetryPartError(err: UploadPartError) {
+  if (err.aborted) return false;
+  if (err.networkError) return true;
+  if (err.status === 429) return true;
+  if (err.status !== null && err.status >= 500) return true;
+  return false;
+}
+
+function getRetryDelay(err: UploadPartError, attempt: number) {
+  if (err.retryAfter) {
+    const seconds = Number(err.retryAfter);
+    if (!isNaN(seconds) && seconds > 0) return Math.min(seconds * 1000, MAX_BACKOFF_MS);
+    const dateMs = Date.parse(err.retryAfter);
+    if (!isNaN(dateMs)) {
+      // Floor to avoid hammering the server when client clock is skewed.
+      const delta = Math.max(dateMs - Date.now(), MIN_RETRY_AFTER_MS);
+      return Math.min(delta, MAX_BACKOFF_MS);
+    }
+  }
+  // Exponential backoff with jitter: ~1s, 2s, 4s + up to 1s jitter
+  const base = Math.min(1000 * 2 ** attempt, MAX_BACKOFF_MS);
+  return base + Math.random() * 1000;
+}
+
+// Abort-aware sleep so cancelling during a long Retry-After window
+// short-circuits the backoff instead of waiting it out.
+function cancellableSleep(ms: number, signal: AbortSignal) {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve();
+    const onDone = () => {
+      signal.removeEventListener('abort', onDone);
+      clearTimeout(t);
+      resolve();
+    };
+    const t = setTimeout(onDone, ms);
+    signal.addEventListener('abort', onDone);
+  });
+}
 
 type FileInputProps = {
   onChange: (file: File[] | undefined, event: ChangeEvent<HTMLInputElement>) => void;
@@ -148,10 +197,17 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       const { bucket, key, uploadId, urls, backend } = data;
 
       let currentXhr: XMLHttpRequest;
+      const abortController = new AbortController();
       const abort = () => {
+        abortController.abort();
         if (currentXhr) currentXhr.abort();
       };
-      setFiles((x) => [...x, { file, ...pendingTrackedFile, abort } as TrackedFile]);
+      setFiles((x) => {
+        if (x.some((y) => y.file === file)) {
+          return x.map((y) => (y.file === file ? ({ ...y, abort } as TrackedFile) : y));
+        }
+        return [...x, { file, ...pendingTrackedFile, abort } as TrackedFile];
+      });
 
       function updateFile(trackedFile: Partial<TrackedFile>) {
         setFiles((x) =>
@@ -227,7 +283,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       // Prepare part upload
       const partsCount = urls.length;
       const uploadPart = (url: string, i: number) =>
-        new Promise<TrackedFile['status']>((resolve, reject) => {
+        new Promise<void>((resolve, reject) => {
           let eTag: string;
           const start = (i - 1) * FILE_CHUNK_SIZE;
           const end = i * FILE_CHUNK_SIZE;
@@ -237,18 +293,28 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           xhr.upload.addEventListener('loadend', ({ loaded }) => {
             totalUploaded += loaded;
           });
-          xhr.addEventListener('loadend', () => {
-            const success = xhr.readyState === 4 && xhr.status === 200;
-            if (success) {
-              parts.push({ ETag: eTag, PartNumber: i });
-              resolve('success');
-            }
-          });
           xhr.addEventListener('load', () => {
             eTag = xhr.getResponseHeader('ETag') ?? '';
           });
-          xhr.addEventListener('error', () => reject('error'));
-          xhr.addEventListener('abort', () => reject('aborted'));
+          xhr.addEventListener('loadend', () => {
+            if (xhr.readyState !== 4) return;
+            if (xhr.status === 200) {
+              parts.push({ ETag: eTag, PartNumber: i });
+              resolve();
+            } else {
+              const err: UploadPartError = {
+                status: xhr.status,
+                retryAfter: xhr.getResponseHeader('Retry-After'),
+              };
+              reject(err);
+            }
+          });
+          xhr.addEventListener('error', () =>
+            reject({ status: null, networkError: true } as UploadPartError)
+          );
+          xhr.addEventListener('abort', () =>
+            reject({ status: null, aborted: true } as UploadPartError)
+          );
           xhr.open('PUT', url);
           xhr.setRequestHeader('Content-Type', 'application/octet-stream');
           xhr.send(part);
@@ -258,20 +324,32 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       // Make part requests
       const parts: { ETag: string; PartNumber: number }[] = [];
       for (const { url, partNumber } of urls as { url: string; partNumber: number }[]) {
-        let uploadStatus: TrackedFile['status'] = 'pending';
+        let partError: UploadPartError | null = null;
 
-        // Retry up to 3 times
-        let retryCount = 0;
-        while (retryCount < 3) {
-          uploadStatus = await uploadPart(url, partNumber);
-          if (uploadStatus !== 'error') break;
-          retryCount++;
-          await new Promise((resolve) => setTimeout(resolve, 5000 * retryCount));
+        for (let attempt = 0; attempt < MAX_PART_ATTEMPTS; attempt++) {
+          if (abortController.signal.aborted) {
+            partError = { status: null, aborted: true };
+            break;
+          }
+          try {
+            await uploadPart(url, partNumber);
+            partError = null;
+            break;
+          } catch (err) {
+            partError = err as UploadPartError;
+            if (attempt === MAX_PART_ATTEMPTS - 1 || !shouldRetryPartError(partError)) break;
+            await cancellableSleep(getRetryDelay(partError, attempt), abortController.signal);
+            if (abortController.signal.aborted) {
+              partError = { status: null, aborted: true };
+              break;
+            }
+          }
         }
 
         // If we failed to upload, abort the whole thing
-        if (uploadStatus !== 'success') {
-          updateFile({ status: uploadStatus, file: undefined });
+        if (partError) {
+          const status: TrackedFile['status'] = partError.aborted ? 'aborted' : 'error';
+          updateFile({ status, file: undefined });
           await abortUpload();
           return { url: null, bucket, key, backend };
         }
