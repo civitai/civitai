@@ -23,6 +23,7 @@ export const serverSchema = z.object({
   DATAPACKET_DATABASE_RO_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
+  NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
   DATABASE_POOL_IDLE_TIMEOUT: z.coerce.number().default(30000),
   DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),

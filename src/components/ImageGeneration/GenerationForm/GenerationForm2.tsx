@@ -107,6 +107,7 @@ import {
   getIsZImageTurbo,
   getIsZImageBase,
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  WORKFLOW_TAGS,
 } from '~/shared/constants/generation.constants';
 import {
   flux1ModelModeOptions,
@@ -389,6 +390,9 @@ export function GenerationFormContent() {
       if (split.model) {
         graphInput.model = toGraphResource(split.model);
       }
+      if (split.upscaler) {
+        graphInput.upscaler = toGraphResource(split.upscaler);
+      }
       if (split.resources.length) {
         graphInput.resources = split.resources.map(toGraphResource);
       }
@@ -400,6 +404,7 @@ export function GenerationFormContent() {
         input: graphInput,
         civitaiTip: tips.civitai,
         creatorTip: tips.creators,
+        tags: [WORKFLOW_TAGS.SOURCE.LEGACY],
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
       }).catch((error: any) => {
         if (

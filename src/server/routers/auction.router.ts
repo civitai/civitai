@@ -25,6 +25,7 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
+import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
 const auctionProcedure = protectedProcedure.use(isFlagProtected('auctions'));
 
@@ -39,9 +40,13 @@ export const auctionRouter = router({
   getMyRecurringBids: auctionProcedure.query(({ ctx }) =>
     getMyRecurringBids({ userId: ctx.user.id })
   ),
-  createBid: auctionProcedure
-    .input(createBidInput)
-    .mutation(({ input, ctx }) => createBid({ ...input, userId: ctx.user.id })),
+  createBid: auctionProcedure.input(createBidInput).mutation(({ input, ctx }) =>
+    createBid({
+      ...input,
+      userId: ctx.user.id,
+      accountTypes: getAllowedAccountTypes(ctx.features),
+    })
+  ),
   deleteBid: auctionProcedure
     .input(deleteBidInput)
     .mutation(({ input, ctx }) => deleteBid({ ...input, userId: ctx.user.id })),

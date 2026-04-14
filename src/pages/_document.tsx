@@ -13,8 +13,8 @@ export default class _Document extends Document {
         </Head>
         <body
           className={clsx(pageProps.colorScheme, {
-            ['green']: pageProps.flags.isGreen,
-            ['red']: pageProps.flags.isRed,
+            ['red']: pageProps.flags.useRedTheme,
+            ['green']: pageProps.flags.useGreenTheme,
           })}
         >
           <Main />

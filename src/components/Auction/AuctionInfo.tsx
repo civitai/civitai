@@ -286,6 +286,7 @@ export const AuctionInfo = () => {
   const { ref: placeBidRef, inView: placeBidInView } = useInView();
   const router = useRouter();
   const { selectedAuction, selectedModel, validAuction, setSelectedModel } = useAuctionContext();
+  const { isGreen } = useFeatureFlags();
   const { baseModels } = useFiltersContext((state) => state.auctions);
 
   const [searchText, setSearchText] = useState<string>('');
@@ -441,7 +442,11 @@ export const AuctionInfo = () => {
     return asOrdinal(spot);
   };
 
-  const validBid = !!bidPrice && bidPrice > 0 && !!selectedModel;
+  const isSelectedModelBlocked =
+    isGreen &&
+    !!selectedModel &&
+    !!(selectedModel.model?.nsfw || selectedModel.model?.poi || selectedModel.model?.minor);
+  const validBid = !!bidPrice && bidPrice > 0 && !!selectedModel && !isSelectedModelBlocked;
   const selectedModelBid = useMemo(
     () => auctionData?.bids?.find((b) => b.entityId === selectedModel?.id)?.totalAmount ?? 0,
     [auctionData?.bids, selectedModel?.id]
@@ -801,6 +806,11 @@ export const AuctionInfo = () => {
               >
                 This checkpoint type ({selectedModel.baseModel}) is unavailable in the generator,
                 but can still be featured.
+              </AlertWithIcon>
+            )}
+            {isSelectedModelBlocked && (
+              <AlertWithIcon icon={<IconAlertTriangle size={16} />} color="red" iconColor="red">
+                This model is not available to bid on this site.
               </AlertWithIcon>
             )}
           </Stack>

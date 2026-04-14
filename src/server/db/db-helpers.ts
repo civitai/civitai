@@ -87,7 +87,7 @@ export function getClient(
       ? env.DATABASE_CONNECTION_TIMEOUT || 5000
       : env.DATABASE_CONNECTION_TIMEOUT,
     min: 0,
-    max: env.DATABASE_POOL_MAX,
+    max: isNotification ? (env.NOTIFICATION_POOL_MAX ?? env.DATABASE_POOL_MAX) : env.DATABASE_POOL_MAX,
     // trying this for leaderboard job
     idleTimeoutMillis: instance === 'primaryReadLong' ? 300_000 : env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:

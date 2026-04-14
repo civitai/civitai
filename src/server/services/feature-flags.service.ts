@@ -116,6 +116,8 @@ const featureFlags = createFeatureFlags({
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
   canBuyBuzz: ['public'],
   adsEnabled: ['public', 'blue'],
+  useRedTheme: ['red'],
+  useGreenTheme: ['green'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],

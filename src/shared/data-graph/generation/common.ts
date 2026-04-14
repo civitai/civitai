@@ -980,6 +980,28 @@ export function createResourcesGraph(options?: { resourceTypes?: ModelType[]; li
 }
 
 /**
+ * Creates an upscaler resource node (ecosystem-independent).
+ * Unlike other resource nodes, upscalers aren't tied to any ecosystem,
+ * so no baseModel filtering is applied.
+ *
+ * Meta is computed from the current value to derive excludeIds.
+ */
+export function upscalerNode() {
+  return {
+    input: resourceInputSchema.optional(),
+    output: resourceSchema,
+    defaultValue: { id: 164821, model: { type: 'Upscaler' } },
+    meta: (_ctx: unknown, _ext: unknown, value: ResourceData | undefined) => ({
+      options: {
+        canGenerate: true,
+        resources: [{ type: 'Upscaler' as ModelType }],
+        excludeIds: value ? [value.id] : [],
+      },
+    }),
+  };
+}
+
+/**
  * Creates a VAE node.
  * Meta contains only: options (dynamic based on ecosystem)
  *

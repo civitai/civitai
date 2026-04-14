@@ -130,7 +130,7 @@ export function SubscriptionCard() {
                 </Text>
               </Group>
             )}
-            {!subscription.cancelAt && !isCivitaiProvider && !subscription.isBadState && (
+            {!subscription.cancelAt && !isCivitaiProvider && (
               <CancelMembershipAction
                 variant="button"
                 buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}

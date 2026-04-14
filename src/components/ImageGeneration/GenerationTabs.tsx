@@ -34,6 +34,7 @@ import { useLegacyGeneratorStore } from '~/store/legacy-generator.store';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useRemixStore } from '~/store/remix.store';
+import { WorkflowLookup } from '~/components/generation_v2/WorkflowLookup';
 
 type GenerationPanelView = 'queue' | 'generate' | 'feed';
 
@@ -123,6 +124,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
       <div className="flex w-full flex-col gap-2 p-3">
         <div className="flex w-full items-center justify-between gap-2">
           <div className="relative flex flex-1 flex-nowrap items-center gap-2">
+            {currentUser?.isModerator && <WorkflowLookup />}
             {features.challengePlatform && <ChallengeIndicator />}
             {features.appTour && (
               <HelpButton

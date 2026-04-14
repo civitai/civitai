@@ -18,7 +18,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   getChainConfig,
-  getChainForNetwork,
+  getChainForNetworkWithFallback,
   isDepositComplete,
   outcomeAmountToBuzz,
 } from '~/server/common/chain-config';
@@ -35,8 +35,13 @@ const log = async (data: MixedObject) => {
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 
 export const getDepositAddress = async (userId: number, chain = 'evm') => {
-  const config = getChainConfig(chain);
-  if (!config) throw new Error(`Unsupported chain: ${chain}`);
+  // Use explicit config if available, otherwise fall back to chain name as targetCurrency
+  const config = getChainConfig(chain) ?? {
+    chain,
+    displayName: chain.toUpperCase(),
+    networks: [chain],
+    targetCurrency: chain,
+  };
 
   // Check if wallet already exists before acquiring lock
   const existing = await dbRead.cryptoWallet.findUnique({
@@ -763,10 +768,10 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
 
   const selectedCodes = new Set(merchantCoins.selectedCurrencies.map((c) => c.toLowerCase()));
 
-  // Filter full currencies to only our selected ones, and only those on supported chains
+  // Filter full currencies to only our selected ones with a known network
   const selectedCurrencies = fullCurrencies.currencies
     .filter((c) => selectedCodes.has(c.code.toLowerCase()))
-    .filter((c) => c.network && getChainForNetwork(c.network));
+    .filter((c) => !!c.network);
 
   // Fetch min amounts with bounded concurrency to avoid overwhelming NowPayments API
   const currenciesWithMin: SupportedCurrencyNetwork[] = await mapWithConcurrency(
@@ -788,7 +793,9 @@ export const getSupportedCurrencies = async (): Promise<SupportedCurrencyGroup[]
         isStable: currency.is_stable ?? false,
         minAmount: minAmount?.min_amount ?? null,
         minAmountUsd: minAmount?.fiat_equivalent ?? null,
-        chain: getChainForNetwork(currency.network ?? '')?.chain ?? null,
+        chain: currency.network
+          ? getChainForNetworkWithFallback(currency.network).chain
+          : null,
       };
     }
   );

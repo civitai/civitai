@@ -32,7 +32,7 @@ export function SensitiveShield({
 
   // this content is not available on this site
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
-    if (isLoading) return <PageLoader />; // Makes it so that we may confirm this to be true
+    if (isLoading) return <PageLoader />;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
@@ -41,7 +41,7 @@ export function SensitiveShield({
     );
   }
   if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
-    if (isLoading) return <PageLoader />; // Makes it so that we may confirm this to be true
+    if (isLoading) return <PageLoader />;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">

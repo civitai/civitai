@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
+import { chunk } from 'lodash-es';
 
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
@@ -12,6 +13,10 @@ import {
   isStorageResolverEnabled,
 } from '~/utils/delivery-worker';
 import { logToAxiom } from '~/server/logging/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+
+const SCAN_BATCH_SIZE = 200;
+const SCAN_CONCURRENCY = 10;
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
@@ -28,26 +33,34 @@ export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
     select: { id: true, url: true },
   });
 
-  const sent: number[] = [];
-  const failed: number[] = [];
-  for (const file of files) {
-    const result = await requestScannerTasks({ file });
-    if (result === 'sent') sent.push(file.id);
-    else if (result === 'not-found') failed.push(file.id);
-    // 'error' = scanner issue, don't mark as non-existent, just skip
+  const batches = chunk(files, SCAN_BATCH_SIZE);
+  for (const batch of batches) {
+    const batchIds = batch.map((f) => f.id);
+
+    // Mark batch as requested upfront so overlapping runs won't re-process
+    await dbWrite.modelFile.updateMany({
+      where: { id: { in: batchIds } },
+      data: { scanRequestedAt: new Date() },
+    });
+
+    const failed: number[] = [];
+    await limitConcurrency(
+      batch.map((file) => async () => {
+        const result = await requestScannerTasks({ file });
+        if (result === 'not-found') failed.push(file.id);
+        // 'error' = scanner issue, don't mark as non-existent, just skip
+      }),
+      SCAN_CONCURRENCY
+    );
+
+    // Mark failed as non-existent
+    if (failed.length > 0) {
+      await dbWrite.modelFile.updateMany({
+        where: { id: { in: failed } },
+        data: { exists: false },
+      });
+    }
   }
-
-  // Mark sent as requested
-  await dbWrite.modelFile.updateMany({
-    where: { id: { in: sent } },
-    data: { scanRequestedAt: new Date() },
-  });
-
-  // Mark failed doesn't exist
-  await dbWrite.modelFile.updateMany({
-    where: { id: { in: failed } },
-    data: { exists: false },
-  });
 });
 
 type ScannerRequest = {

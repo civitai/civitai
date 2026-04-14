@@ -49,6 +49,11 @@ export const WORKFLOW_TAGS = {
     LIKED: 'feedback:liked',
     DISLIKED: 'feedback:disliked',
   },
+  // Source form identifiers
+  SOURCE: {
+    LEGACY: 'source:legacy',
+    NEW: 'source:new',
+  },
   // Process types for filtering
   PROCESS: {
     // Image processes

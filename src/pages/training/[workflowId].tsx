@@ -28,7 +28,14 @@ export const getServerSideProps = createServerSideProps({
       },
     });
 
-    if (!modelVersion) return { notFound: true };
+    if (!modelVersion) {
+      const username = session.user.username;
+      const destination = username ? `/user/${username}/models?section=training` : '/';
+
+      return {
+        redirect: { destination, permanent: false },
+      };
+    }
 
     return {
       redirect: {

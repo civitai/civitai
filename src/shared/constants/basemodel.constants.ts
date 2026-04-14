@@ -179,6 +179,9 @@ export const ECO = {
   // Root ecosystems - Audio models
   AceStep: 66,
 
+  // Utility ecosystems
+  Upscaler: 66,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -698,6 +701,13 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 209,
   },
   {
+    id: ECO.Upscaler,
+    key: 'Upscaler',
+    name: 'upscaler',
+    displayName: 'Upscaler',
+    sortOrder: 998,
+  },
+  {
     id: ECO.Other,
     key: 'Other',
     name: 'other',
@@ -885,6 +895,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // AceStep - checkpoint only (audio generation)
   { ecosystemId: ECO.AceStep, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // Upscaler - upscaler models only
+  { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
 ];
 
 // =============================================================================
@@ -980,7 +993,6 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2836417 },
-      modelLocked: true,
     },
   },
   {
@@ -1694,6 +1706,7 @@ export const BM = {
   WanImage27: 80,
   WanVideo27: 81,
   AceStep: 82,
+  Upscaler: 82,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -2231,6 +2244,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     ecosystemId: ECO.OpenAI,
     hidden: true,
     licenseId: 20,
+  },
+
+  // Upscaler
+  {
+    id: BM.Upscaler,
+    name: 'Upscaler',
+    description: 'Image upscaling models for increasing resolution',
+    type: 'image',
+    ecosystemId: ECO.Upscaler,
   },
 
   // Other

@@ -91,7 +91,12 @@ import { AspectRatioInput } from './inputs/AspectRatioInput';
 import { SliderInput } from './inputs/SliderInput';
 import { SelectInput } from './inputs/SelectInput';
 import { SeedInput } from './inputs/SeedInput';
-import { ImageUploadMultipleInput } from './inputs/ImageUploadMultipleInput';
+import {
+  ImageUploadMultipleInput,
+  type ImageStatusAnnotation,
+} from './inputs/ImageUploadMultipleInput';
+import { fetchBlobAsFile } from '~/utils/file-utils';
+import { ExifParser } from '~/utils/metadata';
 import { VideoInput } from './inputs/VideoInput';
 import { InterpolationFactorInput } from './inputs/InterpolationFactorInput';
 import { PriorityInput } from './inputs/PriorityInput';
@@ -666,6 +671,28 @@ export function GenerationForm() {
                   height={meta.sourceHeight}
                   maxResolution={meta.maxOutputResolution}
                   options={meta.options}
+                />
+              )}
+            />
+
+            {/* Upscaler model (img2img:upscale) */}
+            <Controller
+              graph={graph}
+              name="upscaler"
+              render={({ value, meta, onChange }) => (
+                <ResourceSelectInput
+                  value={value as any}
+                  onChange={onChange as any}
+                  label={
+                    <ControllerLabel
+                      label="Upscaler"
+                      info="Select the upscaler model to use for enhancing image resolution."
+                    />
+                  }
+                  buttonLabel="Select Upscaler"
+                  modalTitle="Select Upscaler"
+                  options={meta.options}
+                  allowRemove
                 />
               )}
             />
@@ -1609,9 +1636,12 @@ function ImagesInput({
   workflow?: string;
 }) {
   const annotationsSnapshot = useGraphSubscription(graph, 'annotations');
-  const annotations = annotationsSnapshot?.value as
+  const graphAnnotations = annotationsSnapshot?.value as
     | ({ label: string; color: string; tooltip?: string } | null)[]
     | undefined;
+  const aiMetaAnnotations = useAiMetadataAnnotations(value);
+  const annotations = useMergedAnnotations(graphAnnotations, aiMetaAnnotations);
+
   return (
     <ImageUploadMultipleInput
       value={value}
@@ -1624,10 +1654,63 @@ function ImagesInput({
       warnOnMissingAiMetadata={meta?.warnOnMissingAiMetadata}
       aspectRatios={meta?.aspectRatios}
       cropToFirstImage={meta?.cropToFirstImage}
-      imageAnnotations={annotations ?? undefined}
+      imageAnnotations={annotations}
       imageLayout="wrap"
     />
   );
+}
+
+/**
+ * For moderators, checks each image for valid AI metadata (EXIF).
+ * Returns a parallel annotation array or undefined for non-moderators.
+ */
+function useAiMetadataAnnotations(
+  images: { url: string }[] | null | undefined
+): (ImageStatusAnnotation | null)[] | undefined {
+  const currentUser = useCurrentUser();
+  const [results, setResults] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!currentUser?.isModerator || !images?.length) return;
+
+    for (const { url } of images) {
+      if (url in results) continue;
+      fetchBlobAsFile(url).then(async (file) => {
+        if (!file) return;
+        const parser = await ExifParser(file);
+        const meta = await parser.getMetadata();
+        const hasAiMeta = Object.keys(meta).length > 0 || parser.isMadeOnSite();
+        setResults((prev) => ({ ...prev, [url]: hasAiMeta }));
+      });
+    }
+  }, [currentUser?.isModerator, images]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!currentUser?.isModerator || !images?.length) return undefined;
+
+  return images.map(({ url }) => {
+    if (!(url in results)) return null;
+    return results[url]
+      ? { label: 'AI Meta', color: 'green', tooltip: 'Valid AI metadata detected' }
+      : { label: 'No AI Meta', color: 'yellow', tooltip: 'No AI metadata found in image' };
+  });
+}
+
+/** Merge two parallel annotation arrays, preferring graph annotations over AI meta. */
+function useMergedAnnotations(
+  graph: (ImageStatusAnnotation | null)[] | undefined,
+  aiMeta: (ImageStatusAnnotation | null)[] | undefined
+): (ImageStatusAnnotation | null)[] | undefined {
+  return useMemo(() => {
+    if (!graph && !aiMeta) return undefined;
+    if (!graph) return aiMeta;
+    if (!aiMeta) return graph;
+    const len = Math.max(graph.length, aiMeta.length);
+    const merged: (ImageStatusAnnotation | null)[] = [];
+    for (let i = 0; i < len; i++) {
+      merged.push(graph[i] ?? aiMeta[i] ?? null);
+    }
+    return merged;
+  }, [graph, aiMeta]);
 }
 
 // =============================================================================

@@ -254,6 +254,9 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
       }))
     );
   }
+  if ('upscaler' in data && data.upscaler?.id) {
+    refs.push({ id: data.upscaler.id });
+  }
   if ('vae' in data && data.vae?.id) {
     refs.push({
       id: data.vae.id,
@@ -479,10 +482,14 @@ function createVideoUpscaleInput(
  */
 async function createImageUpscaleSteps(
   data: Extract<GenerationGraphOutput, { workflow: 'img2img:upscale' }>,
+  handlerCtx: GenerationHandlerCtx,
   sourceCtx?: SourceCtx
 ): Promise<StepInput[]> {
   const images = data.images ?? [];
   const targetDimensions = data.targetDimensions ?? [];
+
+  // Resolve upscaler AIR from the resource data
+  const upscalerAir = handlerCtx.airs.getOrThrow(data.upscaler.id);
 
   // Build steps for non-null entries (images that can be upscaled)
   const steps: Promise<StepInput>[] = [];
@@ -503,6 +510,7 @@ async function createImageUpscaleSteps(
           upscaleWidth: dims.width,
           upscaleHeight: dims.height,
           outputFormat: data.outputFormat,
+          upscaler: upscalerAir,
         },
       }).then((step) => {
         if (!sourceCtx) return step;
@@ -580,7 +588,7 @@ async function createStepInputs(
       break;
 
     case 'img2img:upscale':
-      rawResult = await createImageUpscaleSteps(data, metadataCtx.sourceCtx);
+      rawResult = await createImageUpscaleSteps(data, handlerCtx, metadataCtx.sourceCtx);
       break;
 
     case 'img2img:remove-background':
@@ -1320,6 +1328,19 @@ export function formatStepOutputs(
         height = params.upscaleHeight as number | undefined;
       }
 
+      // Check top-level targetDimensions (upscale workflows store per-image output
+      // dimensions here; use the matching index or first entry as fallback)
+      if (!width || !height) {
+        const targetDims = params.targetDimensions as
+          | Array<{ width?: number; height?: number }>
+          | undefined;
+        const dims = targetDims?.[index] ?? targetDims?.[0];
+        if (dims?.width && dims?.height) {
+          width = dims.width;
+          height = dims.height;
+        }
+      }
+
       // Fall back to source dimensions from params (input image dims for img2img,
       // or aspect ratio target dims for txt2img)
       if (!width || !height) {
@@ -1465,9 +1486,16 @@ function formatStep(
     remixOfId = undefined;
   }
 
-  // Map to graph format (workflow, ecosystem, aspectRatio resolution) if we have params
+  // Map to graph format (workflow, ecosystem, aspectRatio resolution) if we have params.
+  // Skip mapping for enhancement steps with source lineage (metadata.workflow set by
+  // buildResolvedSource) — their step params are source context, not the step's own
+  // generation params. The actual form inputs live on workflow.metadata which gets its
+  // own mapDataToGraphInput pass. Running it here would inject a wrong workflow key
+  // (e.g. 'txt2img' inferred from source params) which causes StepData.params to
+  // return step params instead of falling through to workflow-level params.
+  const hasSourceLineage = 'workflow' in metadata;
   let finalParams: Record<string, unknown> | undefined;
-  if (resolvedParams) {
+  if (resolvedParams && !hasSourceLineage) {
     const mapped = mapDataToGraphInput(resolvedParams, resolvedResources ?? [], {
       stepType: step.$type,
     });
