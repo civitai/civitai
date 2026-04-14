@@ -162,6 +162,7 @@ export async function getFliptVariant(
       context,
     });
 
+    if (!evaluation.match) return null;
     return evaluation.variantKey;
   } catch (e) {
     console.error('Flipt variant evaluation error:', e);
