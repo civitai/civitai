@@ -2,8 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
-import type { NsfwLevel } from '~/server/common/enums';
-import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
+import { NsfwLevel } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
@@ -20,29 +19,24 @@ import type { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { articlesSearchIndex } from '~/server/search-index';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { imageSelect, profileImageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { createProfanityFilter } from '~/libs/profanity-simple';
+import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import {
-  createImage,
-  deleteImageById,
-  ingestImage,
-  ingestImageBulk,
-} from '~/server/services/image.service';
+import { createImage, deleteImageById } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { isImageOwner } from '~/server/services/util.service';
 import {
-  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -54,7 +48,6 @@ import {
   ArticleEngagementType,
   ArticleStatus,
   Availability,
-  ImageIngestionStatus,
   MetricTimeframe,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
@@ -64,11 +57,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from './file.service';
 import { generateJSON } from '@tiptap/html/server';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
-import { getContentMedia } from '~/server/services/article-content-cleanup.service';
-import { createNotification } from '~/server/services/notification.service';
-import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
-import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { hashContent } from '~/server/services/entity-moderation.service';
+import { deleteArticleContentImages } from '~/server/services/article-content-cleanup.service';
 
 type ArticleRaw = {
   id: number;
@@ -565,7 +554,6 @@ export const getCivitaiNews = async () => {
     JOIN "Collection" c ON c.id = ci."collectionId"
     WHERE c.name IN ('Newsroom', 'Updates') AND c."userId" = -1 AND a."createdAt" > now() - '1 year'::interval
       AND a."publishedAt" IS NOT NULL AND a.status = 'Published'::"ArticleStatus"
-      AND (a."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
     ORDER BY a."createdAt" DESC
     LIMIT 10
   `;
@@ -616,12 +604,7 @@ export const getCivitaiEvents = async () => {
     collectionId: collection.id,
     sort: ArticleSort.Newest,
   });
-  const events = await getArticles({
-    ...input,
-    limit: 100,
-    sessionUser: undefined,
-    browsingLevel: publicBrowsingLevelsFlag,
-  });
+  const events = await getArticles({ ...input, limit: 100, sessionUser: undefined });
   return events;
 };
 
@@ -630,8 +613,7 @@ export const getArticleById = async ({
   id,
   userId,
   isModerator,
-  browsingLevel,
-}: GetByIdInput & { userId?: number; isModerator?: boolean; browsingLevel?: number }) => {
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   try {
     const article = await dbRead.article.findFirst({
       where: {
@@ -648,25 +630,6 @@ export const getArticleById = async ({
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
     }
-
-    // NSFW level enforcement — moderators and the article owner always bypass.
-    // On green (or any caller that passes a browsingLevel), articles whose
-    // nsfwLevel doesn't intersect the allowed mask are treated as not found.
-    if (browsingLevel && !isModerator && article.userId !== userId) {
-      if ((article.nsfwLevel & browsingLevel) === 0) {
-        throw throwNotFoundError(`No article with id ${id}`);
-      }
-    }
-
-    // Fetch connected images with ingestion status
-    const imageConnections = await dbRead.imageConnection.findMany({
-      where: { entityId: id, entityType: ImageConnectionType.Article },
-      include: {
-        image: {
-          select: { id: true, url: true, ingestion: true },
-        },
-      },
-    });
 
     const articleCategories = await getCategoryTags('article');
     const attachments: Awaited<ReturnType<typeof getFilesByEntity>> = await getFilesByEntity({
@@ -706,8 +669,9 @@ export const getArticleById = async ({
       })),
       coverImage: canViewCoverImage ? coverImage : undefined,
       contentJson,
-      contentImages: imageConnections.map((conn) => conn.image),
-      metadata: (article.metadata as ArticleMetadata) ?? null,
+      metadata: article.metadata
+        ? filterSensitiveProfanityData(article.metadata as ArticleMetadata, isModerator)
+        : null,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -722,26 +686,46 @@ export const upsertArticle = async ({
   attachments,
   coverImage,
   isModerator,
-  scanContent,
   ...data
 }: UpsertArticleInput & {
   userId: number;
   isModerator?: boolean;
   nsfw?: boolean;
   metadata?: ArticleMetadata;
-  scanContent?: boolean;
 }) => {
   try {
     await throwOnBlockedLinkDomain(data.content);
     if (!isModerator) {
       // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+
+      // Check article title and content for profanity using threshold-based evaluation
+      const profanityFilter = createProfanityFilter();
+      const textToCheck = [data.title, data.content].filter(Boolean).join(' ');
+      const evaluation = profanityFilter.evaluateContent(textToCheck);
+
+      // If profanity exceeds thresholds, mark article as NSFW with recommended level
+      if (evaluation.shouldMarkNSFW && (data.userNsfwLevel <= NsfwLevel.PG13 || !data.nsfw)) {
+        data.metadata = {
+          ...data.metadata,
+          profanityMatches: evaluation.matchedWords,
+          profanityEvaluation: {
+            reason: evaluation.reason,
+            metrics: evaluation.metrics,
+          },
+        } as ArticleMetadata;
+        data.nsfw = true;
+        data.userNsfwLevel = evaluation.suggestedLevel;
+        data.lockedProperties =
+          data.lockedProperties && !data.lockedProperties.includes('userNsfwLevel')
+            ? [...data.lockedProperties, 'nsfw', 'userNsfwLevel']
+            : ['nsfw', 'userNsfwLevel'];
+      }
     }
 
     // For updates, fetch article early so we can check cover image ownership and NSFW level
     let article: {
       id: number;
-      title: string;
       cover: string | null;
       coverId: number | null;
       userId: number;
@@ -749,14 +733,12 @@ export const upsertArticle = async ({
       status: string;
       nsfwLevel: number;
       metadata: Prisma.JsonValue;
-      content: string | null;
     } | null = null;
     if (id) {
       article = await dbWrite.article.findUnique({
         where: { id },
         select: {
           id: true,
-          title: true,
           cover: true,
           coverId: true,
           userId: true,
@@ -764,7 +746,6 @@ export const upsertArticle = async ({
           status: true,
           nsfwLevel: true,
           metadata: true,
-          content: true,
         },
       });
       if (!article) throw throwNotFoundError();
@@ -792,22 +773,10 @@ export const upsertArticle = async ({
     }
 
     if (!id) {
-      // Set publishedAt based on status
-      // - Published: Set to now (appears at top of feed)
-      // - Processing: Don't set yet (will be set when scan completes)
-      // - Draft/Other: Don't set
-      let publishedAt: Date | null | undefined = undefined;
-      if (data.status === ArticleStatus.Published) {
-        publishedAt = new Date();
-      } else if (data.status === ArticleStatus.Processing) {
-        publishedAt = null;
-      }
-
       const result = await dbWrite.$transaction(async (tx) => {
         const article = await tx.article.create({
           data: {
             ...data,
-            publishedAt,
             coverId,
             userId,
             tags: tags
@@ -843,55 +812,6 @@ export const upsertArticle = async ({
         return article;
       });
 
-      // Link content images for new article (creates Image entities and ImageConnections)
-      if (result.content && scanContent) {
-        try {
-          await linkArticleContentImages({
-            articleId: result.id,
-            content: result.content,
-            userId,
-            coverId: result.coverId,
-          });
-
-          // Mark article as scanned after successfully linking images
-          await dbWrite.article.update({
-            where: { id: result.id },
-            data: { contentScannedAt: new Date() },
-          });
-        } catch (e) {
-          // Non-blocking: continue even if image linking fails, but log the error
-          const error = e as Error;
-          logToAxiom({
-            type: 'error',
-            name: 'article-image-linking',
-            message: error.message,
-            cause: error.cause,
-            stack: error.stack,
-            articleId: result.id,
-          }).catch();
-        }
-      }
-
-      // Submit for text moderation (non-blocking, fire-and-forget)
-      if (result.content) {
-        const textForModeration = [data.title, removeTags(result.content)]
-          .filter(Boolean)
-          .join(' ');
-        submitTextModeration({
-          entityType: 'Article',
-          entityId: result.id,
-          content: textForModeration,
-          labels: ['nsfw'],
-        }).catch((e) => {
-          logToAxiom({
-            type: 'error',
-            name: 'article-text-moderation',
-            message: (e as Error).message,
-            articleId: result.id,
-          }).catch();
-        });
-      }
-
       return result;
     }
 
@@ -914,53 +834,11 @@ export const upsertArticle = async ({
       );
     }
 
-    // SECURITY: Validate image scan status before allowing publish
-    // Prevent publishing articles with blocked or failed images
-    // Note: Pending images are allowed - article will remain in Processing status until scan completes
-    if (!isModerator && data.status === ArticleStatus.Published && scanContent) {
-      const scanStatus = await getArticleScanStatus({ id });
-      const hasProblematicImages = scanStatus.blocked > 0 || scanStatus.error > 0;
-
-      if (hasProblematicImages) {
-        const errorParts: string[] = [];
-        if (scanStatus.blocked > 0) {
-          errorParts.push(`${scanStatus.blocked} image(s) blocked (policy violation)`);
-        }
-        if (scanStatus.error > 0) {
-          errorParts.push(`${scanStatus.error} image(s) failed to scan`);
-        }
-
-        throw throwBadRequestError(
-          `Cannot publish article: ${errorParts.join(', ')}. Please remove or replace these images.`
-        );
-      }
-    }
-
     const republishing =
       (article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published) ||
       !!article.publishedAt;
 
     const prevMetadata = article.metadata as ArticleMetadata | null;
-
-    // Set publishedAt based on status
-    // - Published: Set to now for new articles, preserve for republishing
-    // - Processing: Preserve existing publishedAt if article was already published (re-scan scenario)
-    // - Unpublished: Preserve publishedAt so republish keeps original date
-    // - Draft: Clear publishedAt (never been published)
-    let publishedAt: Date | null | undefined = undefined;
-    if (data.status === ArticleStatus.Published) {
-      publishedAt = republishing ? article.publishedAt : new Date();
-    } else if (data.status === ArticleStatus.Processing) {
-      // Preserve original publishedAt if article was already published (re-scanning scenario)
-      // Otherwise set to null for new articles
-      publishedAt = article.publishedAt || null;
-    } else if (data.status === ArticleStatus.Unpublished) {
-      // Preserve publishedAt when unpublishing so republish keeps original date
-      publishedAt = article.publishedAt;
-    } else if (data.status === ArticleStatus.Draft) {
-      // Clear publishedAt for drafts
-      publishedAt = null;
-    }
 
     const result = await dbWrite.$transaction(async (tx) => {
       const updated = await tx.article.update({
@@ -968,7 +846,7 @@ export const upsertArticle = async ({
         data: {
           ...data,
           metadata: { ...prevMetadata, ...data.metadata },
-          publishedAt,
+          publishedAt: republishing ? article.publishedAt : data.publishedAt,
           coverId,
           tags: tags
             ? {
@@ -1035,84 +913,6 @@ export const upsertArticle = async ({
       }
     }
 
-    // Link content images (creates Image entities and ImageConnections)
-    if (data.content) {
-      // OPTIMIZATION: Only process images if content actually changed
-      const hasContentChanged = article.content !== data.content;
-
-      if (hasContentChanged) {
-        try {
-          const { orphanedImageIds } = await linkArticleContentImages({
-            articleId: id,
-            content: data.content,
-            userId,
-            coverId: coverId ?? article.coverId,
-            cleanupOnly: !scanContent,
-          });
-
-          // Delete truly orphaned images (DB + S3 + cache) post-transaction
-          for (const imageId of orphanedImageIds) {
-            await deleteImageById({ id: imageId }).catch((error) => {
-              handleLogError(error, 'article-orphaned-image-cleanup', {
-                articleId: id,
-                imageId,
-              });
-            });
-          }
-
-          if (scanContent) {
-            // Mark article as scanned after successfully linking images
-            await dbWrite.article.update({
-              where: { id },
-              data: { contentScannedAt: new Date() },
-            });
-          }
-        } catch (e) {
-          // Non-blocking: continue even if image linking fails, but log the error
-          const error = e as Error;
-          logToAxiom({
-            type: 'error',
-            name: 'article-image-linking',
-            message: error.message,
-            cause: error.cause,
-            stack: error.stack,
-            articleId: id,
-          }).catch();
-        }
-      }
-    }
-
-    // Submit for text moderation if content or title changed (non-blocking)
-    {
-      const currentTitle = data.title ?? article.title ?? '';
-      const currentContent = data.content ?? article.content ?? '';
-      const textForModeration = [currentTitle, removeTags(currentContent)]
-        .filter(Boolean)
-        .join(' ');
-      const newHash = hashContent(textForModeration);
-
-      const existingModeration = await dbRead.entityModeration.findUnique({
-        where: { entityType_entityId: { entityType: 'Article', entityId: id } },
-        select: { contentHash: true },
-      });
-
-      if (!existingModeration || existingModeration.contentHash !== newHash) {
-        submitTextModeration({
-          entityType: 'Article',
-          entityId: id,
-          content: textForModeration,
-          labels: ['nsfw'],
-        }).catch((e) => {
-          logToAxiom({
-            type: 'error',
-            name: 'article-text-moderation',
-            message: (e as Error).message,
-            articleId: id,
-          }).catch();
-        });
-      }
-    }
-
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     // If it was published, process it.
@@ -1147,51 +947,19 @@ export const deleteArticleById = async ({
     const isOwner = article.userId === userId || isModerator;
     if (!isOwner) throw throwAuthorizationError(`You cannot perform this action`);
 
-    // Collect content image IDs BEFORE the transaction deletes connections
-    const contentImageConnections = await dbWrite.imageConnection.findMany({
-      where: { entityId: id, entityType: ImageConnectionType.Article },
-      select: { imageId: true },
-    });
-
     const deleted = await dbWrite.$transaction(async (tx) => {
       const article = await tx.article.delete({
         where: { id },
-        select: { coverId: true },
+        select: { coverId: true, content: true },
       });
 
       await tx.file.deleteMany({ where: { entityId: id, entityType: 'Article' } });
-      await tx.imageConnection.deleteMany({
-        where: { entityId: id, entityType: ImageConnectionType.Article },
-      });
 
       return article;
     });
 
-    // Delete cover image (DB + S3 + cache)
     if (deleted.coverId) await deleteImageById({ id: deleted.coverId });
-
-    // Delete content images (DB + S3 + cache), excluding cover (already handled above)
-    // Only delete images that have no remaining connections to ANY entity
-    const contentImageIds = contentImageConnections
-      .map((conn) => conn.imageId)
-      .filter((imageId) => imageId !== deleted.coverId);
-
-    if (contentImageIds.length > 0) {
-      const trulyOrphanedImages = await dbWrite.image.findMany({
-        where: { id: { in: contentImageIds }, connections: { none: {} } },
-        select: { id: true },
-      });
-
-      for (const { id: imageId } of trulyOrphanedImages) {
-        await deleteImageById({ id: imageId }).catch((error) => {
-          handleLogError(error, 'article-content-image-cleanup', {
-            articleId: id,
-            imageId,
-          });
-        });
-      }
-    }
-
+    if (deleted.content) await deleteArticleContentImages(deleted.content);
     await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
     return deleted;
@@ -1411,327 +1179,4 @@ export async function getModeratorArticles({
       metadata: article.metadata as ArticleMetadata | null,
     })),
   };
-}
-
-// --- Article Image Scanning Functions ---
-
-/**
- * Link article content images to article entity
- * Creates Image entities and ImageConnections for all embedded images
- *
- * Uses batch queries to prevent N+1 performance issues
- *
- * @param articleId - Article ID to link images to
- * @param content - Article HTML content
- * @param userId - User ID for image ownership
- */
-export async function linkArticleContentImages({
-  articleId,
-  content,
-  userId,
-  coverId,
-  cleanupOnly,
-}: {
-  articleId: number;
-  content: string;
-  userId: number;
-  coverId?: number | null;
-  cleanupOnly?: boolean;
-}): Promise<{ orphanedImageIds: number[] }> {
-  const contentImages = getContentMedia(content);
-
-  const orphanedImageIds = await dbWrite.$transaction(async (tx) => {
-    const imageUrls = contentImages.map((img) => img.url);
-
-    // Track content image IDs for orphan detection
-    let contentImageIds: number[] = [];
-
-    if (!cleanupOnly) {
-      // Batch query: Get all existing images in one query
-      const existingImages = await tx.image.findMany({
-        where: { url: { in: imageUrls } },
-        select: { id: true, url: true, ingestion: true },
-      });
-
-      const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
-
-      // Batch create: Missing images (upsert with unique constraint handles races)
-      const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
-      const newlyCreatedImages: { id: number; url: string }[] = [];
-
-      if (missingMedia.length > 0) {
-        const newImages = await tx.image.createManyAndReturn({
-          data: missingMedia.map((media) => ({
-            url: media.url,
-            userId,
-            type: media.type,
-            name: media.alt,
-            ingestion: ImageIngestionStatus.Pending,
-            scanRequestedAt: new Date(),
-          })),
-          select: { id: true, url: true },
-          skipDuplicates: true,
-        });
-
-        newImages.forEach((img) => {
-          existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
-          newlyCreatedImages.push(img);
-        });
-      }
-
-      // Batch upsert: ImageConnections
-      for (const url of imageUrls) {
-        const image = existingUrlMap.get(url);
-        if (!image) continue;
-
-        await tx.imageConnection.upsert({
-          where: {
-            imageId_entityType_entityId: {
-              imageId: image.id,
-              entityType: ImageConnectionType.Article,
-              entityId: articleId,
-            },
-          },
-          create: {
-            imageId: image.id,
-            entityType: ImageConnectionType.Article,
-            entityId: articleId,
-          },
-          update: {},
-        });
-      }
-
-      contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
-
-      // Queue images for ingestion
-      const pendingExistingImages = existingImages.filter(
-        (img) => img.ingestion === ImageIngestionStatus.Pending
-      );
-      const imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
-      if (imagesToIngest.length > 0) {
-        // TODO.articleImageScan: remove the lowPriority flag
-        for (const img of imagesToIngest) {
-          await ingestImage({ image: img, lowPriority: true, userId, tx }).catch((error) => {
-            handleLogError(error, 'article-image-ingestion', {
-              articleId,
-              imageIds: newlyCreatedImages.map((i) => i.id),
-            });
-          });
-        }
-      }
-    } else {
-      // In cleanupOnly mode, we still need to know which images are in the current content
-      // so we can detect orphans. Query by URL to get their IDs.
-      const existingImages = await tx.image.findMany({
-        where: { url: { in: imageUrls } },
-        select: { id: true },
-      });
-      contentImageIds = existingImages.map((img) => img.id);
-    }
-
-    // --- Orphan detection (always runs) ---
-
-    // Build exclusion list: content images + cover image
-    const excludeImageIds = [...contentImageIds];
-    if (coverId) excludeImageIds.push(coverId);
-
-    // Get orphaned connections for this article
-    const orphanedConnections = await tx.imageConnection.findMany({
-      where: {
-        entityType: ImageConnectionType.Article,
-        entityId: articleId,
-        imageId: { notIn: excludeImageIds },
-      },
-      select: { imageId: true },
-    });
-
-    const orphanedIds = orphanedConnections.map((conn) => conn.imageId);
-
-    // Delete the orphaned connections
-    if (orphanedIds.length > 0) {
-      await tx.imageConnection.deleteMany({
-        where: {
-          entityType: ImageConnectionType.Article,
-          entityId: articleId,
-          imageId: { in: orphanedIds },
-        },
-      });
-    }
-
-    // Find truly orphaned images (no connections to ANY entity)
-    if (orphanedIds.length > 0) {
-      const trulyOrphaned = await tx.image.findMany({
-        where: {
-          id: { in: orphanedIds },
-          connections: { none: {} },
-        },
-        select: { id: true },
-      });
-      return trulyOrphaned.map((img) => img.id);
-    }
-
-    return [];
-  });
-
-  return { orphanedImageIds };
-}
-
-/**
- * Get article image scan status for real-time progress tracking
- *
- * @param articleId - Article ID to get scan status for
- * @returns Object with scan progress counts, completion status, and detailed image lists
- */
-export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
-  total: number;
-  scanned: number;
-  blocked: number;
-  error: number;
-  pending: number;
-  allComplete: boolean;
-  images: {
-    blocked: Array<{
-      id: number;
-      url: string;
-      ingestion: ImageIngestionStatus;
-      blockedFor: string | null;
-    }>;
-    error: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
-    pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
-  };
-}> {
-  const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityId: id,
-      entityType: ImageConnectionType.Article,
-    },
-    include: { image: { select: { id: true, url: true, ingestion: true, blockedFor: true } } },
-  });
-
-  const total = connections.length;
-  const scannedImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Scanned
-  );
-  const blockedImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Blocked
-  );
-  const errorImages = connections.filter(
-    (c) =>
-      c.image.ingestion === ImageIngestionStatus.Error ||
-      c.image.ingestion === ImageIngestionStatus.NotFound
-  );
-  const pendingImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Pending
-  );
-
-  return {
-    total,
-    scanned: scannedImages.length,
-    blocked: blockedImages.length,
-    error: errorImages.length,
-    pending: pendingImages.length,
-    allComplete: pendingImages.length === 0,
-    images: {
-      blocked: blockedImages.map((c) => c.image),
-      error: errorImages.map((c) => c.image),
-      pending: pendingImages.map((c) => c.image),
-    },
-  };
-}
-
-/**
- * Update article scan status after images complete scanning
- *
- * Uses PostgreSQL advisory locks to prevent race conditions from concurrent webhook calls
- * Implements transaction-safe status updates with automatic rollback on errors
- *
- * @param articleIds - Array of article IDs to update
- */
-export async function updateArticleImageScanStatus(articleIds: number[]): Promise<void> {
-  for (const articleId of articleIds) {
-    await dbWrite.$transaction(
-      async (tx) => {
-        // Acquire PostgreSQL advisory lock (prevents concurrent webhooks)
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
-
-        // Get all connected images
-        const connections = await tx.imageConnection.findMany({
-          where: { entityId: articleId, entityType: ImageConnectionType.Article },
-          include: { image: { select: { ingestion: true } } },
-        });
-
-        // Calculate scan status
-        const totalImages = connections.length;
-        const scannedImages = connections.filter(
-          (c) => c.image.ingestion === ImageIngestionStatus.Scanned
-        ).length;
-        const blockedImages = connections.filter(
-          (c) => c.image.ingestion === ImageIngestionStatus.Blocked
-        ).length;
-        const errorImages = connections.filter(
-          (c) =>
-            c.image.ingestion === ImageIngestionStatus.Error ||
-            c.image.ingestion === ImageIngestionStatus.NotFound
-        ).length;
-
-        // Check if all images have been processed (scanned, blocked, or error)
-        const allProcessed = scannedImages + blockedImages + errorImages === totalImages;
-
-        // Only publish if ALL images scanned successfully (no blocked or error images)
-        const allScannedSuccessfully = scannedImages === totalImages;
-        const hasProblematicImages = blockedImages > 0 || errorImages > 0;
-
-        if (allProcessed) {
-          await updateArticleNsfwLevels([articleId]);
-
-          const article = await tx.article.findUnique({
-            where: { id: articleId },
-            select: { status: true, publishedAt: true, userId: true },
-          });
-
-          if (article?.status === ArticleStatus.Processing) {
-            if (allScannedSuccessfully && !hasProblematicImages) {
-              // All images scanned successfully - safe to publish
-              await tx.article.update({
-                where: { id: articleId },
-                data: {
-                  status: ArticleStatus.Published,
-                  publishedAt: article.publishedAt || new Date(),
-                },
-              });
-
-              // Success notification
-              await createNotification({
-                userId: article.userId,
-                category: NotificationCategory.System,
-                type: 'system-message',
-                key: `article-published-${articleId}`,
-                details: {
-                  message: `Your article has been published successfully!`,
-                  url: `/articles/${articleId}`,
-                },
-              });
-            } else if (hasProblematicImages) {
-              // Has blocked or error images - keep in Processing, notify user
-              await createNotification({
-                userId: article.userId,
-                category: NotificationCategory.System,
-                type: 'system-message',
-                key: `article-images-blocked-${articleId}`,
-                details: {
-                  message: `Your article cannot be published: ${
-                    blockedImages > 0
-                      ? `${blockedImages} image(s) blocked (policy violation)`
-                      : `${errorImages} image(s) failed to scan`
-                  }. Please remove or replace these images and resubmit.`,
-                  url: `/articles/${articleId}/edit`,
-                },
-              });
-            }
-          }
-        }
-      },
-      { timeout: 30000, maxWait: 10000 }
-    );
-  }
 }

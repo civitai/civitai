@@ -1,23 +1,12 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import { Anchor, Button, Group, Input, Paper, Stack, Text, Title, Tooltip } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { Anchor, Button, Group, Stack, Text, Title, Tooltip, Paper, Input } from '@mantine/core';
+import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as z from 'zod';
 
-import { ArticleScanStatus } from '~/components/Article/ArticleScanStatus';
 import { BackButton } from '~/components/BackButton/BackButton';
-import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
-import { ContentPolicyLink } from '~/components/ContentPolicyLink/ContentPolicyLink';
-import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
-import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
-import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
-import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
@@ -30,19 +19,26 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import { upsertArticleInput } from '~/server/schema/article.schema';
-import { imageSchema } from '~/server/schema/image.schema';
 import type { ArticleGetById } from '~/server/services/article.service';
-import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
-import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
-import { extractImagesFromArticle } from '~/utils/article-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
+import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { constants } from '~/server/common/constants';
+import { imageSchema } from '~/server/schema/image.schema';
+import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const schema = upsertArticleInput
   .omit({ coverImage: true, userNsfwLevel: true, lockedProperties: true })
@@ -113,7 +109,7 @@ export function ArticleUpsertForm({ article }: Props) {
       title,
     }),
   });
-  const [userNsfwLevel, content] = form.watch(['userNsfwLevel', 'content']);
+  const [userNsfwLevel] = form.watch(['userNsfwLevel']);
   useEffect(() => {
     if (currentUser?.isModerator) {
       if (userNsfwLevel)
@@ -146,103 +142,46 @@ export function ArticleUpsertForm({ article }: Props) {
     coverImage,
     userNsfwLevel,
     lockedProperties,
-    content,
     ...rest
   }: z.infer<typeof schema>) => {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
 
-    const submitArticle = (args?: { status?: ArticleStatus }) => {
-      // Moderators can directly edit lockedProperties; non-moderators use the ref
-      const finalLockedProperties = currentUser?.isModerator
-        ? lockedProperties
-        : lockedPropertiesRef.current;
+    // Moderators can directly edit lockedProperties; non-moderators use the ref
+    const finalLockedProperties = currentUser?.isModerator
+      ? lockedProperties
+      : lockedPropertiesRef.current;
 
-      upsertArticleMutation.mutate(
-        {
-          ...rest,
-          content,
-          userNsfwLevel: canEditUserNsfwLevel
-            ? userNsfwLevel
-              ? Number(userNsfwLevel)
-              : 0
-            : undefined,
-          tags,
-          // publishedAt will be set server-side based on status
-          status: args?.status ? args.status : publishing ? ArticleStatus.Published : undefined,
-          coverImage,
-          lockedProperties: lockedPropertiesRef.current,
+    upsertArticleMutation.mutate(
+      {
+        ...rest,
+        userNsfwLevel: canEditUserNsfwLevel
+          ? userNsfwLevel
+            ? Number(userNsfwLevel)
+            : 0
+          : undefined,
+        tags,
+        publishedAt: publishing ? new Date() : null,
+        status: publishing ? ArticleStatus.Published : undefined,
+        coverImage: coverImage,
+        lockedProperties: finalLockedProperties,
+      },
+      {
+        async onSuccess(result) {
+          await router.push(`/articles/${result.id}`);
+          await queryUtils.article.getById.invalidate({ id: result.id });
+          await queryUtils.article.getInfinite.invalidate();
+          clearStorage();
         },
-        {
-          async onSuccess(result) {
-            clearStorage();
-
-            await Promise.all([
-              queryUtils.article.getById.invalidate({ id: result.id }),
-              queryUtils.article.getScanStatus.invalidate({ id: result.id }),
-              queryUtils.article.getInfinite.invalidate(),
-            ]);
-            await router.push(`/articles/${result.id}`);
-          },
-          onError(error) {
-            showErrorNotification({
-              title: 'Failed to save article',
-              error: new Error(error.message),
-            });
-          },
-        }
-      );
-    };
-
-    // Check if publishing or updating published article with embedded images
-    const contentImages = features.articleImageScanning ? extractImagesFromArticle(content) : [];
-
-    if (contentImages.length > 0 && (publishing || article?.status === ArticleStatus.Published)) {
-      // Check if images are already in the database
-      const existingImageUrls = new Set(article?.contentImages?.map((img) => img.url) || []);
-      const newImages = contentImages.filter((img) => !existingImageUrls.has(img.url));
-
-      if (newImages.length === 0) {
-        // All images already exist in database, no scanning delay expected
-        submitArticle();
-        return;
+        onError(error) {
+          showErrorNotification({
+            title: 'Failed to save article',
+            error: new Error(error.message),
+          });
+        },
       }
-
-      // Has new images that need scanning, show confirmation modal
-      openConfirmModal({
-        title: 'Article Image Processing',
-        children: (
-          <Stack gap="sm">
-            <Text>
-              Your article contains {newImages.length} new embedded image
-              {newImages.length > 1 ? 's' : ''} that need to be scanned for content safety.
-            </Text>
-            {existingImageUrls.size > 0 && (
-              <Text size="sm" c="dimmed">
-                ({existingImageUrls.size} existing image{existingImageUrls.size > 1 ? 's' : ''}{' '}
-                already processed)
-              </Text>
-            )}
-            <Text>
-              This article will be set to <strong>Processing</strong> status while images are being
-              scanned. This could take some time, and your article will automatically publish when
-              complete.
-            </Text>
-            <Text size="sm" c="dimmed">
-              You&apos;ll receive a notification when your article is published.
-            </Text>
-          </Stack>
-        ),
-        labels: { cancel: 'Cancel', confirm: 'Continue' },
-        confirmProps: { color: 'blue' },
-        onConfirm: () => submitArticle({ status: ArticleStatus.Processing }),
-      });
-      return;
-    }
-
-    // No images or just saving draft, proceed normally
-    submitArticle();
+    );
   };
 
   return (
@@ -296,15 +235,8 @@ export function ArticleUpsertForm({ article }: Props) {
             }}
             gap="xl"
           >
-            {article?.id && article.status === ArticleStatus.Processing && (
-              <ArticleScanStatus
-                articleId={article.id}
-                onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
-              />
-            )}
             <ActionButtons
               article={article}
-              currentContent={content as string}
               saveButtonProps={{
                 loading: upsertArticleMutation.isLoading && !publishing,
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
@@ -443,7 +375,6 @@ export function ArticleUpsertForm({ article }: Props) {
             )}
             <ActionButtons
               article={article}
-              currentContent={content as string}
               saveButtonProps={{
                 loading: upsertArticleMutation.isLoading && !publishing,
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
@@ -467,86 +398,28 @@ type Props = { article?: ArticleGetById };
 
 function ActionButtons({
   article,
-  currentContent,
   saveButtonProps,
   publishButtonProps,
   ...stackProps
 }: ActionButtonProps) {
-  // Get scan status for articles in Processing state
-  const { status: scanStatus } = useArticleScanStatus({
-    articleId: article?.id ?? 0,
-    enabled: !!article?.id && article.status === ArticleStatus.Processing,
-  });
-
-  // Extract images from current editor content (memoized to avoid re-parsing on every render)
-  const currentContentUrls = useMemo(() => {
-    if (!currentContent) return new Set<string>();
-    const images = extractImagesFromArticle(currentContent ?? '');
-    return new Set(images.map((img) => img.url));
-  }, [currentContent]);
-
-  // Check if problematic images are STILL in current content (memoized)
-  const hasProblematicImages = useMemo(() => {
-    if (!scanStatus || (scanStatus.blocked === 0 && scanStatus.error === 0)) {
-      return false;
-    }
-
-    const problematicImages = [
-      ...(scanStatus.images?.blocked || []),
-      ...(scanStatus.images?.error || []),
-    ];
-
-    return problematicImages.some((img) => currentContentUrls.has(img.url));
-  }, [scanStatus, currentContentUrls]);
-
-  const publishDisabled = publishButtonProps.disabled || hasProblematicImages;
-
-  // Memoize tooltip label to avoid string concatenation on every render
-  const publishTooltipLabel = useMemo(() => {
-    if (!hasProblematicImages || !scanStatus) return undefined;
-
-    const parts: string[] = [];
-    if (scanStatus.blocked > 0) {
-      parts.push(`${scanStatus.blocked} image(s) blocked (policy violation)`);
-    }
-    if (scanStatus.error > 0) {
-      parts.push(`${scanStatus.error} image(s) failed to scan`);
-    }
-
-    return `Cannot publish: ${parts.join(' and ')}. Please remove or replace these images.`;
-  }, [hasProblematicImages, scanStatus]);
-
   return (
     <Stack {...stackProps} gap={8}>
       {article?.publishedAt ? (
-        <Tooltip
-          label={publishTooltipLabel}
-          disabled={!hasProblematicImages || article.status === ArticleStatus.Published}
-          {...tooltipProps}
+        <Button
+          {...(article.status !== ArticleStatus.Published ? publishButtonProps : saveButtonProps)}
+          type="submit"
+          fullWidth
         >
-          <Button
-            {...(article.status !== ArticleStatus.Published ? publishButtonProps : saveButtonProps)}
-            disabled={
-              article.status !== ArticleStatus.Published
-                ? publishDisabled
-                : saveButtonProps.disabled
-            }
-            type="submit"
-            fullWidth
-          >
-            {article.status !== ArticleStatus.Published ? 'Publish' : 'Save'}
-          </Button>
-        </Tooltip>
+          {article.status !== ArticleStatus.Published ? 'Publish' : 'Save'}
+        </Button>
       ) : (
         <>
           <Button {...saveButtonProps} type="submit" variant="default" fullWidth>
             Save Draft
           </Button>
-          <Tooltip label={publishTooltipLabel} disabled={!hasProblematicImages} {...tooltipProps}>
-            <Button {...publishButtonProps} disabled={publishDisabled} type="submit" fullWidth>
-              Publish
-            </Button>
-          </Tooltip>
+          <Button {...publishButtonProps} type="submit" fullWidth>
+            Publish
+          </Button>
         </>
       )}
       {article?.publishedAt ? (
@@ -578,5 +451,4 @@ type ActionButtonProps = StackProps & {
   saveButtonProps: FormButtonProps;
   publishButtonProps: FormButtonProps;
   article?: ArticleGetById;
-  currentContent?: string;
 };

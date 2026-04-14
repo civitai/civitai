@@ -82,23 +82,6 @@ import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
-import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-
-/**
- * Resolves the currencies to use for a generation request.
- * If the user selected a specific buzz type, validates it's allowed and uses only that type.
- * Otherwise falls back to all allowed types for the domain.
- */
-function resolveGenerationCurrencies(
-  features: Parameters<typeof getAllowedAccountTypes>[0],
-  userBuzzType?: string
-): BuzzSpendType[] {
-  const allowed = getAllowedAccountTypes(features, ['blue']);
-  if (userBuzzType && allowed.includes(userBuzzType as BuzzSpendType)) {
-    return [userBuzzType as BuzzSpendType];
-  }
-  return allowed;
-}
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -351,7 +334,6 @@ export const orchestratorRouter = router({
         sourceMetadata,
         sourceMetadataMap,
         remixOfId,
-        buzzType,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
@@ -373,7 +355,7 @@ export const orchestratorRouter = router({
         experimental: ctx.experimental,
         isGreen: ctx.features.isGreen,
         allowMatureContent: ctx.allowMatureContent,
-        currencies: resolveGenerationCurrencies(ctx.features, buzzType),
+        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
         isModerator: ctx.user.isModerator,
         track: ctx.track,
         civitaiTip,

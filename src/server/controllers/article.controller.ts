@@ -35,14 +35,8 @@ export const upsertArticleHandler = async ({
     );
     // Only users with adminTags featureFlag can add adminOnly tags
     if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
-    const scanContent = ctx.features.articleImageScanning ?? false;
 
-    return upsertArticle({
-      ...input,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
-      scanContent,
-    });
+    return upsertArticle({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

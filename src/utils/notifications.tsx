@@ -104,7 +104,7 @@ export function showBuzzNotification({
   showNotification({
     color: 'yellow.4',
     message: (
-      <Group gap={4} wrap="nowrap" align="flex-start">
+      <Group gap={4} wrap="nowrap">
         {/* @ts-ignore: ignoring ts error cause `transparent` works on variant */}
         <ThemeIcon color={notificationProps.color ?? 'yellow.4'} variant="transparent">
           <IconBolt size={18} fill="currentColor" />

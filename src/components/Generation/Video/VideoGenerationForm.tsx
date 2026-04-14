@@ -13,12 +13,11 @@ import { useIsMutating } from '@tanstack/react-query';
 import { Button, Notification } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
-import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { useFormContext } from 'react-hook-form';
 import { getQueryKey } from '@trpc/react-query';
 import { trpc } from '~/utils/trpc';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { IconX } from '@tabler/icons-react';
 import { useVideoGenerationStore } from '~/components/Generation/Video/VideoGenerationProvider';
 import { ViduFormInput } from './ViduFormInput';
@@ -46,7 +45,6 @@ import { usePromptFocusedStore } from '~/components/Generate/Input/InputPrompt';
 import { SoraFormInput } from '~/components/Generation/Video/SoraFormInput';
 import { MembershipUpsell } from '~/components/ImageGeneration/MembershipUpsell';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { generationFormStore } from '~/store/generation-form.store';
 import {
   mapDataToGraphInput,
   mapGraphToLegacyParams,
@@ -172,12 +170,10 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
 
       const graphData = result.data;
 
-      const { buzzType } = generationFormStore.getState();
       conditionalPerformTransaction(cost, () => {
         mutate({
           input: graphData,
           tags: [WORKFLOW_TAGS.SOURCE.LEGACY],
-          ...(buzzType ? { buzzType } : {}),
         });
       });
     } catch (e: any) {
@@ -407,25 +403,26 @@ function SubmitButton2({
     setState({ cost: data.cost?.base ?? undefined });
   }, [data]);
 
-  const { selectedType } = useSelectedBuzzType();
-  const { color } = useBuzzCurrencyConfig(selectedType);
-
   return (
-    <Button.Group className="flex-1">
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
       <GenerateButton
         type="submit"
         className="flex-1"
-        color={color}
         disabled={!query || isUploadingImage}
         loading={isFetching || loading}
+        cost={totalCost}
+        transactions={data.transactions}
+        allowMatureContent={data.allowMatureContent}
       >
         Generate
       </GenerateButton>
-      <BuzzTypeSelector
-        cost={totalCost}
-        loading={isFetching}
+      <GenerationCostPopover
+        width={300}
+        workflowCost={data.cost ?? defaultWorkflowCost}
+        hideCreatorTip
+        hideCivitaiTip
       />
-    </Button.Group>
+    </div>
   );
 }
 

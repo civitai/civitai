@@ -68,9 +68,6 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/generation_v2/FormFooter';
-import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import { generationFormStore } from '~/store/generation-form.store';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
@@ -403,14 +400,12 @@ export function GenerationFormContent() {
         graphInput.vae = toGraphResource(split.vae);
       }
 
-      const { buzzType: selectedBuzzType } = generationFormStore.getState();
       await mutateAsync({
         input: graphInput,
         civitaiTip: tips.civitai,
         creatorTip: tips.creators,
         tags: [WORKFLOW_TAGS.SOURCE.LEGACY],
         remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
-        ...(selectedBuzzType ? { buzzType: selectedBuzzType } : {}),
       }).catch((error: any) => {
         if (
           allowMatureContent &&
@@ -1972,6 +1967,7 @@ export function GenerationFormContent() {
                 </div>
                 <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                   <DailyBoostRewardClaim />
+                  <MembershipUpsell />
                   {promptWarning ? (
                     <div>
                       <Alert color="red" title="Prohibited Prompt">
@@ -2046,7 +2042,7 @@ export function GenerationFormContent() {
                       {reviewed && (
                         <>
                           {!submitError ? (
-                            <QueueSnackbar right={<LegacyCostBreakdown />} />
+                            <QueueSnackbar />
                           ) : (
                             <Notification
                               icon={<IconX size={18} />}
@@ -2058,36 +2054,18 @@ export function GenerationFormContent() {
                             </Notification>
                           )}
                           <WhatIfAlert />
-                          <div className="flex h-[52px] items-stretch gap-2">
-                            <Card withBorder className="flex max-w-[68px] flex-col p-0">
+                          <div className="flex gap-2">
+                            <Card withBorder className="flex max-w-[88px] flex-col p-0">
+                              <Text className="pr-6 text-center text-xs font-semibold" c="dimmed">
+                                Quantity
+                              </Text>
                               <InputQuantity
                                 name="quantity"
-                                variant="unstyled"
-                                size="md"
+                                className={classes.generateButtonQuantityInput}
                                 min={minQuantity}
                                 max={maxQuantity}
                                 step={minQuantity}
-                                styles={{
-                                  root: { flex: 1 },
-                                  wrapper: { height: '100%' },
-                                  input: {
-                                    textAlign: 'center',
-                                    fontWeight: 600,
-                                    paddingRight: 27,
-                                    lineHeight: 1,
-                                    paddingTop: 6,
-                                    paddingBottom: 16,
-                                    height: '100%',
-                                  },
-                                }}
                               />
-                              <Text
-                                className="pr-6 text-center text-[10px] font-semibold"
-                                c="dimmed"
-                                style={{ marginTop: -16 }}
-                              >
-                                QTY
-                              </Text>
                             </Card>
 
                             <SubmitButton isLoading={isLoading} />
@@ -2139,13 +2117,6 @@ function ReadySection() {
 
 // #endregion
 
-function LegacyCostBreakdown() {
-  const featureFlags = useFeatureFlags();
-  const { data } = useTextToImageWhatIfContext();
-  if (!featureFlags.creatorComp) return null;
-  return <GenerationCostPopover width={300} workflowCost={data.cost} />;
-}
-
 function WhatIfAlert() {
   const { error } = useTextToImageWhatIfContext();
   if (!error) return null;
@@ -2191,29 +2162,29 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const totalTip = Math.ceil(base * tips.creators) + Math.ceil(base * tips.civitai);
   total = (data.cost?.total ?? 0) + totalTip;
 
-  const currentUser = useCurrentUser();
-  const { selectedType } = useSelectedBuzzType();
-  const { color } = useBuzzCurrencyConfig(selectedType);
-
   const generateButton = (
     <GenerateButton
       type="submit"
       data-tour="gen:submit"
       className="h-full flex-1 px-2"
-      color={color}
-      loading={props.isLoading}
-      disabled={isInitialLoading || isError}
+      loading={isInitialLoading || props.isLoading}
+      cost={total}
+      disabled={isError}
       onClick={() => {
         if (running) helpers?.next();
       }}
+      transactions={data.transactions}
+      allowMatureContent={data.allowMatureContent}
     />
   );
 
+  if (!features.creatorComp) return generateButton;
+
   return (
-    <Button.Group className="flex-1">
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
       {generateButton}
-      {currentUser && <BuzzTypeSelector cost={total} loading={isInitialLoading} />}
-    </Button.Group>
+      <GenerationCostPopover width={300} workflowCost={data.cost} hideCreatorTip={!hasCreatorTip} />
+    </div>
   );
 }
 

@@ -11,8 +11,7 @@ import * as z from 'zod';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { ModalSubmitButton } from '~/components/Orchestrator/components/GenerateButton';
-import { generationFormStore } from '~/store/generation-form.store';
+import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { useForm } from '~/libs/form';
 import { useGenerateFromGraph } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -100,7 +99,6 @@ export function BackgroundRemovalModal({ sourceImage, metadata }: BackgroundRemo
     const totalCost = whatIf.data?.cost?.total ?? 0;
 
     async function performTransaction() {
-      const { buzzType } = generationFormStore.getState();
       await generateMutation.mutateAsync({
         input: {
           workflow: 'img2img:remove-background',
@@ -113,7 +111,6 @@ export function BackgroundRemovalModal({ sourceImage, metadata }: BackgroundRemo
           ],
         },
         sourceMetadata: metadata,
-        ...(buzzType ? { buzzType } : {}),
       });
       dialog.onClose();
     }
@@ -138,14 +135,16 @@ export function BackgroundRemovalModal({ sourceImage, metadata }: BackgroundRemo
               {generateMutation.error.message}
             </Notification>
           )}
-          <ModalSubmitButton
+          <GenerateButton
             type="submit"
-            loading={generateMutation.isLoading}
-            disabled={whatIf.isInitialLoading || whatIf.isError}
+            loading={whatIf.isInitialLoading || generateMutation.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
+            disabled={whatIf.isError}
+            allowMatureContent={whatIf.data?.allowMatureContent}
+            transactions={whatIf.data?.transactions}
           >
             Remove Background
-          </ModalSubmitButton>
+          </GenerateButton>
         </GenForm>
       </GenerationProvider>
     </Modal>

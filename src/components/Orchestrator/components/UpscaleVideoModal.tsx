@@ -13,8 +13,7 @@ import { useEffect, useState } from 'react';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { ModalSubmitButton } from '~/components/Orchestrator/components/GenerateButton';
-import { generationFormStore } from '~/store/generation-form.store';
+import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
@@ -97,7 +96,6 @@ export function UpscaleVideoModal({ videoUrl, metadata }: UpscaleVideoModalProps
     const totalCost = whatIf.data?.cost?.total ?? 0;
 
     async function performTransaction() {
-      const { buzzType } = generationFormStore.getState();
       await generateMutation.mutateAsync({
         input: {
           workflow: 'vid2vid:upscale',
@@ -105,7 +103,6 @@ export function UpscaleVideoModal({ videoUrl, metadata }: UpscaleVideoModalProps
           scaleFactor: data.scaleFactor,
         },
         sourceMetadata: metadata,
-        ...(buzzType ? { buzzType } : {}),
       });
       dialog.onClose();
     }
@@ -171,14 +168,16 @@ export function UpscaleVideoModal({ videoUrl, metadata }: UpscaleVideoModalProps
               {generateMutation.error.message}
             </Notification>
           )}
-          <ModalSubmitButton
+          <GenerateButton
             type="submit"
-            loading={generateMutation.isLoading}
-            disabled={whatIf.isInitialLoading || whatIf.isError}
+            loading={whatIf.isInitialLoading || generateMutation.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
+            disabled={whatIf.isError}
+            allowMatureContent={whatIf.data?.allowMatureContent}
+            transactions={whatIf.data?.transactions}
           >
             Upscale
-          </ModalSubmitButton>
+          </GenerateButton>
         </GenForm>
       </GenerationProvider>
     </Modal>

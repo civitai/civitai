@@ -6,12 +6,8 @@ import {
   recordEntityModerationFailure,
   recordEntityModerationSuccess,
 } from '~/server/services/entity-moderation.service';
-import { dbWrite } from '~/server/db/client';
-import { NotificationCategory } from '~/server/common/enums';
-import { createNotification } from '~/server/services/notification.service';
-import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { ArticleStatus, EntityModerationStatus } from '~/shared/utils/prisma/enums';
+import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type TextModerationResult = {
   entityType: string;
@@ -23,46 +19,9 @@ type TextModerationResult = {
 
 // Entity-specific handlers keyed by entityType
 const entityHandlers: Record<string, (result: TextModerationResult) => Promise<void>> = {
-  Article: async ({ entityId, blocked, triggeredLabels }) => {
-    // Text moderation now only returns whether the article content is NSFW or not.
-    // Blocked content is treated as NSFW regardless of triggered labels.
-    const isNsfw = blocked || triggeredLabels.some((label) => label.toLowerCase() === 'nsfw');
-
-    // Elevate the nsfw flag only — never downgrade, since image content or the user
-    // may have already flagged the article as NSFW for reasons unrelated to text.
-    if (isNsfw) {
-      await dbWrite.article.update({
-        where: { id: entityId },
-        data: { nsfw: true },
-      });
-      await updateArticleNsfwLevels([entityId]);
-    }
-
-    // If blocked, auto-unpublish and notify
-    if (blocked) {
-      const article = await dbWrite.article.findUnique({
-        where: { id: entityId },
-        select: { status: true, userId: true },
-      });
-      if (article && article.status !== ArticleStatus.UnpublishedViolation) {
-        await dbWrite.article.update({
-          where: { id: entityId },
-          data: { status: ArticleStatus.UnpublishedViolation },
-        });
-        await createNotification({
-          userId: article.userId,
-          category: NotificationCategory.System,
-          type: 'system-message',
-          key: `article-text-blocked-${entityId}`,
-          details: {
-            message:
-              'Your article was unpublished because its content violates our Terms of Service.',
-            url: `/articles/${entityId}`,
-          },
-        });
-      }
-    }
-  },
+  // Article: async ({ entityId, blocked, triggeredLabels, output }) => {
+  //   TODO: update article with moderation results
+  // },
 };
 
 export default WebhookEndpoint(async (req, res) => {

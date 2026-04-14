@@ -1520,7 +1520,7 @@ function ModelVersionDetailsContent({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.poi && <AdUnitSide_2 />}
+          {!model.nsfw && !model.poi && <AdUnitSide_2 />}
         </Stack>
       </ContainerGrid2.Col>
 

@@ -182,47 +182,11 @@ export function getMultipliersForUserCache(userIds: number[]) {
   return userMultipliersCache.fetch(userIds);
 }
 
-const MAX_GLOBAL_BONUS = 5;
-
-/**
- * Returns the global rewards bonus multiplier from the Flipt variant flag.
- * Use this for time-limited bonus events (e.g. double rewards weekend).
- * The variant key should be a numeric string like "2" for 2x, "1.5" for 1.5x.
- * Returns 1 when no bonus is active, Flipt is unavailable, or the value is invalid.
- * Capped at MAX_GLOBAL_BONUS to prevent config mistakes from breaking the economy.
- */
-export async function getGlobalRewardsBonusMultiplier(): Promise<number> {
-  try {
-    const { getFliptVariant, FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
-    const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.REWARDS_BONUS_MULTIPLIER);
-    if (!variant) return 1;
-
-    const trimmed = variant.trim();
-    if (!/^\d+(\.\d+)?$/.test(trimmed)) return 1;
-
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed < 1) return 1;
-
-    return Math.min(parsed, MAX_GLOBAL_BONUS);
-  } catch {
-    return 1;
-  }
-}
-
 export async function getMultipliersForUser(userId: number, refresh = false) {
   if (refresh) await deleteMultipliersForUserCache(userId);
 
   const multipliers = await getMultipliersForUserCache([userId]);
-  const base = multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
-
-  const globalRewardsBonus = await getGlobalRewardsBonusMultiplier();
-
-  return {
-    ...base,
-    rewardsMultiplier: base.rewardsMultiplier * globalRewardsBonus,
-    baseRewardsMultiplier: base.rewardsMultiplier,
-    globalRewardsBonus,
-  };
+  return multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
 }
 
 export function deleteMultipliersForUserCache(userId: number) {

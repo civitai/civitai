@@ -310,7 +310,6 @@
     "eslint-plugin-import": "^2.26.0",
     "eslint-plugin-prettier": "^4.2.1",
     "eslint-plugin-tailwindcss": "^3.15.1",
-    "happy-dom": "^18.0.1",
     "husky": "^9.1.1",
     "lint-staged": "^15.2.7",
     "pg-format": "^1.0.4",

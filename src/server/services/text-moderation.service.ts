@@ -10,16 +10,12 @@ export async function submitTextModeration({
   entityType,
   entityId,
   content,
-  labels,
   priority,
-  wait,
 }: {
   entityType: string;
   entityId: number;
   content: string;
-  labels?: string[];
   priority?: Priority;
-  wait?: number;
 }) {
   const callbackUrl =
     env.TEXT_MODERATION_CALLBACK ??
@@ -29,10 +25,8 @@ export async function submitTextModeration({
     entityType,
     entityId,
     content,
-    labels,
     callbackUrl,
     priority,
-    wait,
   });
 
   if (workflow?.id) {

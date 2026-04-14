@@ -296,18 +296,9 @@ export class BlobData implements NormalizedWorkflowStepOutput {
     return this.blockedReason === 'canUpgrade';
   }
 
-  /** Whether this image's block can be resolved in-place (upgrade or redirect). */
-  get hasResolvableBlock() {
-    return (
-      this.blockedReason === 'canUpgrade' ||
-      this.blockedReason === 'siteRestricted' ||
-      this.blockedReason === 'membershipRequired'
-    );
-  }
-
   /** Whether this image should be shown in the UI (not hidden, not hard-blocked). */
   get displayable(): boolean {
-    return !this.hidden && (!this.blockedReason || this.hasResolvableBlock);
+    return !this.hidden && (!this.blockedReason || this.canUpgrade);
   }
 
   /** Per-image metadata from step (hidden, feedback, favorite, etc.). */

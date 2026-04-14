@@ -13,5 +13,8 @@ export function getRequestDomainColor(req: { headers: { host?: string } }) {
   for (const [color, domain] of Object.entries(colorDomains)) {
     if (!domain) continue;
     if (host === domain) return color as ColorDomain;
+    // Match any localhost port against a localhost domain
+    if (host.startsWith('localhost:') && domain.startsWith('localhost:'))
+      return color as ColorDomain;
   }
 }

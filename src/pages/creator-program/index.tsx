@@ -57,6 +57,7 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { Countdown } from '~/components/Countdown/Countdown';
 import classes from './index.module.scss';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { buzzBankTypes } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
 
 const sizing = {
@@ -83,6 +84,7 @@ function CreatorsClubV1() {
   const availability = getCreatorProgramAvailability();
   const [mainBuzzColor] = useAvailableBuzz();
   const { classNames, colorRgb } = useBuzzCurrencyConfig(mainBuzzColor);
+  const isGreenTemporarilyDisabled = mainBuzzColor === 'green';
 
   return (
     <>
@@ -139,9 +141,9 @@ function CreatorsClubV1() {
             </Grid.Col>
           </Grid>
           <HowItWorksSection />
-          <FunStatsSection />
+          {!isGreenTemporarilyDisabled && <FunStatsSection />}
           <JoinSection applyFormUrl={applyFormUrl} />
-          <CreatorCapsSection />
+          {!isGreenTemporarilyDisabled && <CreatorCapsSection />}
           <FAQ />
         </Stack>
       </Container>
@@ -245,7 +247,8 @@ const HowItWorksSection = () => {
 };
 
 const FunStatsSection = () => {
-  const { prevMonthStats, isLoading } = usePrevMonthStats();
+  const [activeBuzzType] = useAvailableBuzz();
+  const { prevMonthStats, isLoading } = usePrevMonthStats(activeBuzzType);
 
   if (isLoading) {
     return <Skeleton className={classes.section} width="100%" height="200px" />;
@@ -291,7 +294,7 @@ const FunStatsSection = () => {
               </Table.Td>
               <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} size={16} />
                   <span>
                     {numberWithCommas(
                       prevMonthStats.totalBankedBuzz + prevMonthStats.totalExtractedBuzz
@@ -316,7 +319,7 @@ const FunStatsSection = () => {
               </Table.Td>
               <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalExtractedBuzz)}</span>
                 </div>
               </Table.Td>
@@ -330,7 +333,7 @@ const FunStatsSection = () => {
               </Table.Td>
               <Table.Td className="border-0 border-b border-l border-solid py-2 pl-2">
                 <div className="flex items-center gap-2">
-                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} size={16} />
                   <span>{numberWithCommas(prevMonthStats.totalBankedBuzz)}</span>
                 </div>{' '}
               </Table.Td>
@@ -396,6 +399,7 @@ const FunStatsSection = () => {
   );
 };
 const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
+  const [mainBuzzType] = useAvailableBuzz();
   const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
   const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
@@ -408,6 +412,53 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
     OnboardingSteps.BannedCreatorProgram
   );
   const isJoined = Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram);
+  const isGreenTemporarilyDisabled = mainBuzzType === 'green';
+  const { colorRgb: greenColorRgb, color: greenColor } = useBuzzCurrencyConfig('green');
+
+  if (isGreenTemporarilyDisabled) {
+    return (
+      <Stack className={classes.section}>
+        <Stack gap={0} mb="sm">
+          <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+            Coming Soon to Civitai Green!
+          </Title>
+        </Stack>
+        <Paper
+          withBorder
+          className={clsx(classes.card, classes.highlightCard)}
+          style={{
+            // @ts-ignore
+            '--buzz-color': greenColorRgb,
+          }}
+        >
+          <Stack align="center" gap="xl" py="xl">
+            <Group gap={0}>
+              <IconBolt style={{ fill: greenColor }} color={greenColor} size={48} />
+              <IconBolt style={{ fill: greenColor }} color={greenColor} size={72} />
+              <IconBolt style={{ fill: greenColor }} color={greenColor} size={48} />
+            </Group>
+            <Stack gap="md" align="center" maw={600}>
+              <Title order={2} c="white" ta="center">
+                <span className="text-buzz">Green</span> Creator Program Returns at a later date!
+              </Title>
+              <Text size="lg" c="white" ta="center">
+                We&apos;re excited to start the <span className="text-buzz">Green</span> Creator
+                Program! Turn your <span className="text-buzz">Green</span> Buzz into real earnings
+                by banking your Buzz and claiming your share of the monthly compensation pool.
+              </Text>
+              <Text size="md" c="white" ta="center" fw={500}>
+                In the meantime, you can still earn and use <span className="text-buzz">Green</span>{' '}
+                Buzz for other activities on the platform. Stay tuned for updates!
+              </Text>
+            </Stack>
+            <Button size="xl" variant="white" disabled>
+              Launching at a later date
+            </Button>
+          </Stack>
+        </Paper>
+      </Stack>
+    );
+  }
 
   return (
     <Stack className={classes.section}>
@@ -525,7 +576,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
           </Paper>
         </Grid.Col>
         <Grid.Col span={{ base: 12, sm: 4 }}>
-          <CompensationPoolCard />
+          <CompensationPoolCard buzzType={mainBuzzType} />
         </Grid.Col>
       </Grid>
     </Stack>
@@ -538,8 +589,8 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     a: `Yes! If you're eligible for the program, but don't want to participate, nobody's forcing you! Even if you do join the program, but don't want to contribute Buzz, that's fine – there's no requirement to Bank anything.`,
   },
   {
-    q: 'Can I bank both Yellow and Green Buzz?',
-    a: `Yes! There is a single unified Compensation Pool. You can bank either Yellow or Green Buzz (or both) into the same pool each month. Your earnings are based on your total banked Buzz across both types.`,
+    q: 'Is the Compensation Pool shared between Civitai.green and Civitai.com? ',
+    a: `No, Civitai.green and Civitai.com have distinct compensation pools. If you have any form of Membership (Green or Prepaid) you can Bank Buzz in either pool, or both, each month. Earnings from both pools drop into your Tipalti account for withdrawal.`,
   },
   {
     q: 'Would buying a higher Membership Tier (Silver or Gold) increase my earnings?',

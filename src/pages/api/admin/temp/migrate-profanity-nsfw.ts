@@ -7,10 +7,15 @@ import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { MODELS_SEARCH_INDEX, BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
-import { bountiesSearchIndex, modelsSearchIndex } from '~/server/search-index';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  MODELS_SEARCH_INDEX,
+  ARTICLES_SEARCH_INDEX,
+  BOUNTIES_SEARCH_INDEX,
+} from '~/server/common/constants';
+import { articlesSearchIndex, bountiesSearchIndex, modelsSearchIndex } from '~/server/search-index';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { booleanString } from '~/utils/zod-helpers';
+import type { ArticleMetadata } from '~/server/schema/article.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { BountyDetailsSchema } from '~/server/schema/bounty.schema';
 
@@ -21,7 +26,7 @@ const schema = z.object({
   end: z.coerce.number().optional(),
   after: z.coerce.date().optional(),
   before: z.coerce.date().optional(),
-  entity: z.enum(['models', 'bounties']),
+  entity: z.enum(['models', 'articles', 'bounties']),
   dryRun: booleanString().default(true),
 });
 
@@ -226,6 +231,193 @@ async function migrateProfanityNsfw(req: NextApiRequest, res: NextApiResponse) {
           }
         } else {
           console.log(`No profane models found (${start} - ${end})`);
+        }
+      },
+    },
+    articles: {
+      tableName: 'Article',
+      searchIndex: ARTICLES_SEARCH_INDEX,
+      textFields: ['title', 'content'],
+      rangeFetcher: async () => {
+        if (params.after || params.before) {
+          const results = await dbRead.$queryRaw<{ start: number; end: number }[]>`
+            WITH dates AS (
+              SELECT
+              MIN("createdAt") as start,
+              MAX("createdAt") as end
+              FROM "Article" WHERE "createdAt" > ${params.after ?? new Date(0)}
+              ${params.before ? Prisma.sql`AND "createdAt" < ${params.before}` : Prisma.empty}
+            )
+            SELECT MIN(id) as start, MAX(id) as end
+            FROM "Article" a
+            JOIN dates d ON d.start = a."createdAt" OR d.end = a."createdAt";
+          `;
+          return results[0];
+        }
+        const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+          Prisma.sql`SELECT MAX(id) "max" FROM "Article";`
+        );
+        return { start: params.start, end: max };
+      },
+      processor: async ({
+        start,
+        end,
+        cancelFns,
+      }: {
+        start: number;
+        end: number;
+        cancelFns: (() => void)[];
+      }) => {
+        const records = await dbRead.$queryRaw<
+          {
+            id: number;
+            title: string;
+            content: string | null;
+            nsfw: boolean;
+            userNsfwLevel: number;
+            lockedProperties: string[];
+            metadata: ArticleMetadata;
+          }[]
+        >`
+          SELECT id, title, content, nsfw, "userNsfwLevel", "lockedProperties", metadata
+          FROM "Article"
+          WHERE id BETWEEN ${start} AND ${end}
+          AND status = 'Published'
+        `;
+
+        const updatesToMake: {
+          id: number;
+          nsfw: boolean;
+          userNsfwLevel: number;
+          lockedProperties: string[];
+          metadata: ArticleMetadata;
+        }[] = [];
+        const searchIndexUpdates: { id: number }[] = [];
+
+        for (const record of records) {
+          const textToCheck = [record.title, record.content].filter(Boolean).join(' ');
+          const { shouldMarkNSFW, metrics, reason, suggestedLevel, matchedWords } =
+            profanityFilter.evaluateContent(textToCheck);
+
+          // Case 1: Mark as NSFW if threshold exceeded and not properly marked
+          if (shouldMarkNSFW && record.userNsfwLevel <= NsfwLevel.PG13) {
+            const newLockedProperties = [
+              ...(record.lockedProperties || []),
+              'nsfw',
+              'userNsfwLevel',
+            ];
+
+            const updatedMetadata = {
+              ...(record.metadata || {}),
+              profanityMatches: matchedWords,
+              profanityEvaluation: { reason, metrics },
+            };
+
+            updatesToMake.push({
+              id: record.id,
+              nsfw: true,
+              userNsfwLevel: suggestedLevel,
+              lockedProperties: newLockedProperties,
+              metadata: updatedMetadata,
+            });
+            searchIndexUpdates.push({ id: record.id });
+          }
+          // Case 2: Unmark NSFW if threshold NOT exceeded but was previously marked by profanity system
+          else if (
+            !shouldMarkNSFW &&
+            record.nsfw &&
+            record.metadata?.profanityMatches &&
+            record.metadata.profanityMatches.length > 0
+          ) {
+            const newLockedProperties = record.lockedProperties
+              ? record.lockedProperties.filter(
+                  (prop) => prop !== 'nsfw' && prop !== 'userNsfwLevel'
+                )
+              : [];
+
+            const updatedMetadata = {
+              ...(record.metadata || {}),
+              profanityMatches: record.metadata.profanityMatches, // Keep for audit trail
+              profanityEvaluation: {
+                reason: 'threshold_correction',
+                metrics,
+                previousReason: record.metadata.profanityEvaluation?.reason,
+                correctedAt: new Date().toISOString(),
+              },
+            };
+
+            updatesToMake.push({
+              id: record.id,
+              nsfw: false,
+              userNsfwLevel: suggestedLevel,
+              lockedProperties: newLockedProperties,
+              metadata: updatedMetadata,
+            });
+            searchIndexUpdates.push({ id: record.id });
+          }
+        }
+
+        if (updatesToMake.length > 0) {
+          if (dryRun) {
+            // Add to CSV records
+            for (const update of updatesToMake) {
+              const originalRecord = records.find((r) => r.id === update.id);
+              const analyzedText = [originalRecord?.title, originalRecord?.content]
+                .filter(Boolean)
+                .join(' ');
+              csvRecords.push({
+                id: update.id,
+                analyzedText,
+                profanityMatches: update.metadata.profanityMatches?.join(', ') || '',
+              });
+            }
+            console.log(
+              `[DRY RUN] Would update ${updatesToMake.length} articles (${start} - ${end})`
+            );
+          } else {
+            // Update database using parameterized bulk update
+            // Articles need 5 parameters per record: id, nsfw, userNsfwLevel, lockedProperties, metadata
+            // i * 5 ensures each record gets the next 5 parameter slots: ($1,$2,$3,$4,$5), ($6,$7,$8,$9,$10), etc.
+            const { cancel, result } = await pgDbWrite.cancellableQuery(
+              `
+                UPDATE "Article"
+                SET nsfw = data.nsfw::boolean, "userNsfwLevel" = data."userNsfwLevel"::integer, "lockedProperties" = data."lockedProperties"::text[], metadata = data.metadata::jsonb
+                FROM (VALUES ${updatesToMake
+                  .map(
+                    (_, i) =>
+                      `($${i * 5 + 1}::integer, $${i * 5 + 2}::boolean, $${i * 5 + 3}::integer, $${
+                        i * 5 + 4
+                      }::text, $${i * 5 + 5}::jsonb)`
+                  )
+                  .join(', ')}) AS data(id, nsfw, "userNsfwLevel", "lockedProperties", metadata)
+                WHERE "Article".id = data.id
+              `,
+              // Parameter array matches the placeholder order
+              updatesToMake.flatMap((u) => [
+                u.id,
+                u.nsfw,
+                u.userNsfwLevel,
+                `{${u.lockedProperties.map((p) => `"${p}"`).join(',')}}`,
+                JSON.stringify(u.metadata),
+              ])
+            );
+
+            cancelFns.push(cancel);
+            await result();
+
+            if (searchIndexUpdates.length > 0) {
+              articlesSearchIndex.queueUpdate(
+                searchIndexUpdates.map(({ id }) => ({
+                  id,
+                  action: SearchIndexUpdateQueueAction.Update,
+                }))
+              );
+            }
+
+            console.log(`Updated ${updatesToMake.length} articles (${start} - ${end})`);
+          }
+        } else {
+          console.log(`No profane articles found (${start} - ${end})`);
         }
       },
     },

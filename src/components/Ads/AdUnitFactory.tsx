@@ -5,8 +5,7 @@ import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { AdUnitRenderable, useAdunitRenderableContext } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
@@ -123,7 +122,8 @@ function AdWrapper({
 }) {
   // const router = useRouter();
   // const key = router.asPath.split('?')[0];
-  const { adsBlocked, ready, isMember, consent, useDirectAds } = useAdsContext();
+  const { adsBlocked, ready, isMember, consent } = useAdsContext();
+  const { nsfw } = useAdunitRenderableContext();
 
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
@@ -134,7 +134,7 @@ function AdWrapper({
     <>
       {adsBlocked || !consent ? (
         <SupportUsImage sizes={adSizes ?? undefined} />
-      ) : useDirectAds ? (
+      ) : nsfw ? (
         <CivitaiAdUnit adUnit={adUnit} id={id} />
       ) : inView && ready && adSizes !== undefined ? (
         <AdUnitContent
@@ -247,19 +247,21 @@ export function adUnitFactory(factoryArgs: {
 }) {
   function AdUnit({
     withFeedback,
+    browsingLevel,
     className,
     maxHeight,
     maxWidth,
     preserveLayout,
   }: {
     withFeedback?: boolean;
+    browsingLevel?: number;
     className?: string;
     maxHeight?: number;
     maxWidth?: number;
     preserveLayout?: boolean;
   }) {
     return (
-      <AdUnitRenderable>
+      <AdUnitRenderable browsingLevel={browsingLevel}>
         <AdWrapper
           {...factoryArgs}
           withFeedback={withFeedback}
@@ -415,7 +417,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
   const { nodeRef } = useContainerContext();
   const containerWidth = useContainerWidth();
   const node = useScrollAreaRef();
-  const browsingLevel = useBrowsingLevelDebounced();
+  const { browsingLevel } = useAdunitRenderableContext();
   const fetchingRef = React.useRef(false);
   const impressionRef = React.useRef(false);
   const [data, setData] = useState<{

@@ -18,10 +18,15 @@ import { trpc } from '~/utils/trpc';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
-const { SlotProvider, Slot, RenderSlot, Header, Footer, RenderHeader, RenderFooter } = createSlots([
-  'header',
-  'footer',
-]);
+const {
+  SlotProvider,
+  Slot,
+  RenderSlot,
+  Header,
+  Footer,
+  RenderHeader,
+  RenderFooter,
+} = createSlots(['header', 'footer']);
 
 function ComponentWithSlots({ children }: { children: React.ReactNode }) {
   return (
@@ -291,6 +296,7 @@ function Example() {
 import { Label, Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
 import { IconCheck, IconSelector } from '@tabler/icons-react';
 import { ImagesAsPostsInfinite } from '~/components/Image/AsPosts/ImagesAsPostsInfinite';
+import { KontextAd } from '~/components/Ads/Kontext/KontextAd';
 import { SourceImageUploadMultiple } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 const people = [

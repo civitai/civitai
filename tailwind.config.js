@@ -196,23 +196,12 @@ module.exports = {
             boxShadow: '0 0 0px rgba(0,255,0,0)',
           },
         },
-        'gradient-shift': {
-          '0%': { backgroundPosition: '0% 50%' },
-          '50%': { backgroundPosition: '100% 50%' },
-          '100%': { backgroundPosition: '0% 50%' },
-        },
-        shimmer: {
-          '0%': { backgroundPosition: '-200% 0' },
-          '100%': { backgroundPosition: '200% 0' },
-        },
       },
       animation: {
         wiggle: 'wiggle 1s ease-in-out infinite',
         jello: 'jello 2s 1s ease-in-out',
         glowPulse: 'glowPulse 1.2s ease-in-out 3',
         'border-chase': 'border-chase 3s linear infinite',
-        'gradient-shift': 'gradient-shift 8s ease infinite',
-        shimmer: 'shimmer 6s ease-in-out infinite',
       },
     },
   },

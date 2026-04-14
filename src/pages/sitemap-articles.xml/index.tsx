@@ -2,10 +2,9 @@ import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { GetServerSideProps } from 'next';
 import type { ISitemapField } from 'next-sitemap';
 import { getServerSideSitemapLegacy } from 'next-sitemap';
-import { ArticleSort } from '~/server/common/enums';
+import { ArticleSort, NsfwLevel } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { slugit } from '~/utils/string-helpers';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
@@ -14,7 +13,7 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
     period: MetricTimeframe.AllTime,
     sort: ArticleSort.MostBookmarks,
     periodMode: 'published',
-    browsingLevel: publicBrowsingLevelsFlag,
+    browsingLevel: NsfwLevel.PG,
   }).catch(() => ({ items: [] }));
 
   const fields: ISitemapField[] = data.items.map((article) => ({

@@ -202,9 +202,6 @@ async function fetchArticleData(id: number): Promise<EntityData | null> {
       .catch(() => null),
   ]);
   if (!article) return null;
-  // Cover-image NSFW handling is done downstream via getSafeImage() +
-  // buildEntityImage(null) — when the cover is NSFW the template renders the
-  // LogoPlaceholder instead, while still showing title/content/stats.
 
   const stats: StatItem[] = metric
     ? [

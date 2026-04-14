@@ -1,6 +1,7 @@
 import { Anchor, Button, Center, Loader, Modal, Table } from '@mantine/core';
 import { capitalize } from 'lodash-es';
 import { useBankedBuzz } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -20,9 +21,11 @@ import {
   formatCurrencyForDisplay,
   numberWithCommas,
 } from '~/utils/number-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, toPascalCase } from '~/utils/string-helpers';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { buzzBankTypes } from '~/shared/constants/buzz.constants';
 
-export const openPhasesModal = () => {
+export const openPhasesModal = (buzztype: BuzzSpendType) => {
   dialogStore.trigger({
     component: AlertDialog,
     props: {
@@ -38,7 +41,8 @@ export const openPhasesModal = () => {
             <h3 className="text-xl font-bold">Banking Phase</h3>
             <ul className="pl-4">
               <li>
-                During this phase, creators can Bank any Yellow or Green Buzz they&rsquo;ve earned.
+                During this phase, creators can Bank any {toPascalCase(buzztype ?? 'Yellow')} Buzz
+                they&rsquo;ve earned.
               </li>
               <li>This phase lasts until 3 days before the end of the month (UTC).</li>
               <li>
@@ -257,7 +261,8 @@ export const openCreatorScoreModal = () => {
 };
 
 export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }) => {
-  const { banked, isLoading } = useBankedBuzz();
+  const [activeBuzzType] = useAvailableBuzz();
+  const { banked, isLoading } = useBankedBuzz(activeBuzzType);
 
   if (isLoading) {
     return (
@@ -309,12 +314,21 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
                       'no cap'
                     ) : cap.percentOfPeakEarning ? (
                       <span className="inline-flex">
-                        a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+                        a{' '}
+                        <CurrencyIcon
+                          currency={Currency.BUZZ}
+                          type={activeBuzzType}
+                          className="inline"
+                        />
                         {abbreviateNumber(cap.limit)} cap
                       </span>
                     ) : (
                       <span className="inline-flex">
-                        <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+                        <CurrencyIcon
+                          currency={Currency.BUZZ}
+                          type={activeBuzzType}
+                          className="inline"
+                        />
                         {abbreviateNumber(cap.limit)}
                       </span>
                     )}
@@ -335,7 +349,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
             <p>
               <span className="font-bold">Peak Earning Month:</span>{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+              <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} className="inline" />
               {abbreviateNumber(banked.cap.peakEarning.earned)}{' '}
               <span className="opacity-50">
                 ({formatDate(banked.cap.peakEarning.month, 'MMM YYYY')})
@@ -343,20 +357,21 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
             <p>
               <span className="font-bold">Tier Cap:</span>{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+              <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} className="inline" />
               {banked.cap.definition.limit
                 ? numberWithCommas(banked.cap.definition.limit)
                 : 'No Cap'}
             </p>
             <p className="font-bold">
-              Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+              Your Cap:{' '}
+              <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} className="inline" />{' '}
               {numberWithCommas(Math.floor(banked.cap.cap))}
             </p>
 
             {banked.cap.cap <= MIN_CAP && (
               <p className="text-sm opacity-50">
                 All members have a minimum cap of{' '}
-                <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+                <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} className="inline" />{' '}
                 {abbreviateNumber(MIN_CAP)}
               </p>
             )}
@@ -365,7 +380,7 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
           {nextCap && (
             <p>
               You could increase your cap to{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+              <CurrencyIcon currency={Currency.BUZZ} type={activeBuzzType} className="inline" />{' '}
               {numberWithCommas(Math.floor(potentialEarnings as number))} by upgrading to a{' '}
               {capitalize(nextCap.tier)} Membership.{' '}
               <Anchor className="text-nowrap" href="/pricing" onClick={onUpgrade}>

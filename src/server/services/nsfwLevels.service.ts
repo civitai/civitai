@@ -43,14 +43,7 @@ async function getImageConnectedEntities(imageIds: number[]) {
 
   return {
     postIds: images.map((x) => x.postId).filter(isDefined),
-    articleIds: [
-      ...new Set([
-        ...articles.map((x) => x.id),
-        ...connections
-          .filter((x) => x.entityType === ImageConnectionType.Article)
-          .map((x) => x.entityId),
-      ]),
-    ],
+    articleIds: articles.map((x) => x.id),
     bountyIds: connections
       .filter((x) => x.entityType === ImageConnectionType.Bounty)
       .map((x) => x.entityId),
@@ -281,47 +274,21 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
   if (!articleIds.length) return;
   const articles = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
       WITH level AS (
-        SELECT
-          a.id,
-          GREATEST(
-            -- Cover is a single row per article, so max() is effectively identity.
-            COALESCE(max(cover."nsfwLevel"), 0),
-            -- Content images can be many-per-article. Take the highest rating
-            -- rather than bit_or'ing them: image nsfwLevel values are powers of
-            -- 2 (PG=1, PG13=2, R=4, X=8, XXX=16), so integer max == highest
-            -- rating. bit_or would produce multi-bit masks that leak through
-            -- the downstream (nsfwLevel & browsingLevel) != 0 filter when an
-            -- article mixes PG + NSFW images.
-            COALESCE(max(content_imgs."nsfwLevel"), 0)
-          ) AS "nsfwLevel"
+        SELECT DISTINCT ON (a.id) a.id, bit_or(i."nsfwLevel") "nsfwLevel"
         FROM "Article" a
-
-        -- Cover image (left join - may not exist)
-        LEFT JOIN "Image" cover
-          ON a."coverId" = cover.id
-          AND cover."ingestion" = 'Scanned'
-
-        -- Content images (left join - may not exist)
-        LEFT JOIN "ImageConnection" ic
-          ON ic."entityId" = a.id
-          AND ic."entityType" = 'Article'
-        LEFT JOIN "Image" content_imgs
-          ON ic."imageId" = content_imgs.id
-          AND content_imgs."ingestion" = 'Scanned'
-
+        JOIN "Image" i ON a."coverId" = i.id
         WHERE a.id IN (${Prisma.join(articleIds)})
         GROUP BY a.id
       )
       UPDATE "Article" a
       SET "nsfwLevel" = (
         CASE
-          WHEN a.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-          ELSE GREATEST(a."userNsfwLevel", level."nsfwLevel")
+          WHEN a."userNsfwLevel" > a."nsfwLevel" THEN a."userNsfwLevel"
+          ELSE level."nsfwLevel"
         END
       )
       FROM level
-      WHERE level.id = a.id
-        AND (level."nsfwLevel" != a."nsfwLevel" OR a.nsfw = TRUE)
+      WHERE level.id = a.id AND level."nsfwLevel" != a."nsfwLevel"
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(

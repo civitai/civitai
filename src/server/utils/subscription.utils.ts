@@ -13,7 +13,8 @@ export const invalidateSubscriptionCaches = async (userId: number) => {
     setVaultFromSubscription({
       userId,
     }),
-    getUserCapCache().bust(userId),
+    getUserCapCache('yellow').bust(userId),
+    getUserCapCache('green').bust(userId),
     invalidateCivitaiUser({ userId }),
   ]);
 };

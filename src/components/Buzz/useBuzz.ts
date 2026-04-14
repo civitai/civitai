@@ -65,17 +65,10 @@ export const useBuzzSignalUpdate = () => {
 export const useUserMultipliers = () => {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const {
-    data = {
-      purchasesMultiplier: 1,
-      rewardsMultiplier: 1,
-      baseRewardsMultiplier: 1,
-      globalRewardsBonus: 1,
-    },
-    isLoading,
-  } = trpc.buzz.getUserMultipliers.useQuery(undefined, {
-    enabled: !!currentUser && features.buzz,
-  });
+  const { data = { purchasesMultiplier: 1, rewardsMultiplier: 1 }, isLoading } =
+    trpc.buzz.getUserMultipliers.useQuery(undefined, {
+      enabled: !!currentUser && features.buzz,
+    });
 
   return {
     multipliersLoading: isLoading,

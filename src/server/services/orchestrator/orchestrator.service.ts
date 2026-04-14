@@ -212,7 +212,7 @@ export async function createTextModerationRequest({
     },
   });
 
-  const serverTiming = response?.headers?.get('Server-Timing');
+  const serverTiming = response.headers.get('Server-Timing');
 
   if (!data) {
     logToAxiom({
@@ -220,7 +220,7 @@ export async function createTextModerationRequest({
       name: 'text-moderation',
       entityType,
       entityId,
-      responseStatus: response?.status,
+      responseStatus: response.status,
       serverTiming,
       error,
     });

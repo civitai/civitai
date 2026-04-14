@@ -271,7 +271,6 @@ export enum PurchasableRewardModeratorViewMode {
 export enum ImageConnectionType {
   Bounty = 'Bounty',
   BountyEntry = 'BountyEntry',
-  Article = 'Article',
 }
 
 export enum SearchIndexUpdateQueueAction {
