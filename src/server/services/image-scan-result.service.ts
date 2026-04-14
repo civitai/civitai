@@ -57,7 +57,7 @@ export async function isExemptFromAiVerification(
       EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR
-      EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty'))
+      EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty', 'Article'))
     ) AS exempt
   `;
   return result?.exempt ?? false;
