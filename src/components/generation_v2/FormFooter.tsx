@@ -31,7 +31,8 @@ import {
   IconRestore,
   IconX,
 } from '@tabler/icons-react';
-import { useCallback, useRef, useState, type ReactNode } from 'react';
+import clsx from 'clsx';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useQueryBuzz } from '~/components/Buzz/useBuzz';
@@ -154,6 +155,8 @@ export function useSelectedBuzzType() {
  * The button displays the cost with the selected buzz type icon.
  * The dropdown shows all available buzz types with their balances.
  */
+const BUZZ_SELECTOR_SEEN_KEY = 'buzz-type-selector-seen';
+
 export function BuzzTypeSelector({
   cost,
   loading,
@@ -166,9 +169,27 @@ export function BuzzTypeSelector({
   onRetry?: () => void;
 }) {
   const { availableTypes, selectedType, setBuzzType } = useSelectedBuzzType();
+  const buzzConfig = useBuzzCurrencyConfig(selectedType);
   const {
     data: { accounts },
   } = useQueryBuzz(availableTypes);
+
+  // Track whether the user has ever opened the buzz type selector
+  const [showGlow, setShowGlow] = useState(false);
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(BUZZ_SELECTOR_SEEN_KEY)) setShowGlow(true);
+    } catch {}
+  }, []);
+
+  const handleMenuOpen = (opened: boolean) => {
+    if (opened && showGlow) {
+      setShowGlow(false);
+      try {
+        localStorage.setItem(BUZZ_SELECTOR_SEEN_KEY, '1');
+      } catch {}
+    }
+  };
 
   const isWhatIfLoading = loading;
   const totalCost = cost;
@@ -198,19 +219,22 @@ export function BuzzTypeSelector({
   }
 
   return (
-    <Menu position="top" withinPortal>
+    <Menu position="top" withinPortal onChange={handleMenuOpen}>
       <Menu.Target>
         <Button
           variant="default"
           size="compact-sm"
-          className="h-full gap-1 px-2"
+          className={clsx('h-full gap-1 px-2', showGlow && 'animate-buzz-glow')}
+          style={
+            showGlow ? ({ '--buzz-color': buzzConfig.colorRgb } as React.CSSProperties) : undefined
+          }
           color="gray"
           loading={showLoading}
           loaderProps={{ size: 14 }}
         >
           <CurrencyIcon currency={Currency.BUZZ} type={selectedType} size={16} />
           <Text size="sm" fw={600}>
-            {abbreviateNumber(displayCost)}
+            {numberWithCommas(displayCost)}
           </Text>
           <IconChevronDown size={12} className="ml-0.5" />
         </Button>
@@ -228,7 +252,7 @@ export function BuzzTypeSelector({
             >
               <Text size="sm" fw={buzzType === selectedType ? 600 : 400}>
                 {buzzType.charAt(0).toUpperCase() + buzzType.slice(1)} Buzz —{' '}
-                {abbreviateNumber(balance)}
+                {numberWithCommas(balance)}
               </Text>
             </Menu.Item>
           );
@@ -243,12 +267,7 @@ function ConnectedBuzzTypeSelector() {
   const { isLoading, isError, refetch } = useWhatIfContext();
   const cost = useTotalGenerationCost();
   return (
-    <BuzzTypeSelector
-      cost={cost}
-      loading={isLoading}
-      error={isError}
-      onRetry={() => refetch()}
-    />
+    <BuzzTypeSelector cost={cost} loading={isLoading} error={isError} onRetry={() => refetch()} />
   );
 }
 
