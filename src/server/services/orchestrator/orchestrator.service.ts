@@ -9,12 +9,14 @@ export async function createImageIngestionRequest({
   imageId,
   url,
   callbackUrl,
+  wait,
   priority = 'normal',
   type = 'image',
 }: {
   imageId: number;
   url: string;
   callbackUrl?: string;
+  wait?: number;
   priority?: Priority;
   type?: MediaType;
 }) {
@@ -23,6 +25,7 @@ export async function createImageIngestionRequest({
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
+    query: wait ? { wait } : undefined,
     body: {
       metadata,
       arguments: {

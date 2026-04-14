@@ -3194,7 +3194,10 @@ export async function getImagesFromBitdexPreFilter(
   filters.push(_in(nsfwLevelField, browsingLevels.map(_int)));
 
   // NSFW license restrictions
-  if (nsfwRestrictedBaseModels.length > 0) {
+  // Only add when the browsing level actually includes NSFW levels — otherwise the outer
+  // nsfwLevel filter (line above) already excludes [4,8,16,32] and the inner AND is
+  // guaranteed false, making the compound NOT a no-op but still ~273ms to evaluate in BitDex.
+  if (nsfwRestrictedBaseModels.length > 0 && includesNsfwContent) {
     filters.push(
       _not(
         _and(

@@ -16,7 +16,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { imagesNode } from './common';
+import { imagesNode, upscalerNode } from './common';
 
 // =============================================================================
 // Constants
@@ -171,6 +171,8 @@ const upscaleSelectionSchema = z.discriminatedUnion('type', [
 export const imageUpscaleGraph = new DataGraph<Record<never, never>, GenerationCtx>()
   // Images node - batch upscale allows up to 10 images
   .node('images', () => imagesNode({ min: 1, max: MAX_UPSCALE_IMAGES }), [])
+  // Upscaler model resource (ecosystem-independent)
+  .node('upscaler', () => upscalerNode(), [])
   // Upscale selection - the user's chosen preset
   .node(
     'upscaleSelection',

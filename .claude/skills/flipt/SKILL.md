@@ -21,10 +21,13 @@ node .claude/skills/flipt/flipt.mjs <command> [options]
 |---------|-------------|
 | `list` | List all flags |
 | `get <key>` | Get details for a specific flag |
-| `create <key>` | Create a new boolean flag |
+| `create <key>` | Create a new flag (boolean by default) |
 | `enable <key>` | Enable a flag (set to true) |
 | `disable <key>` | Disable a flag (set to false) |
 | `delete <key>` | Delete a flag (requires confirmation) |
+| `add-variant <flag> <variant>` | Add a variant to an existing flag |
+| `remove-variant <flag> <variant>` | Remove a variant from a flag |
+| `set-rollout <flag> <variant>` | Set rollout rule for a variant |
 
 ### Options
 
@@ -32,6 +35,11 @@ node .claude/skills/flipt/flipt.mjs <command> [options]
 |------|-------------|
 | `--description <text>`, `-d` | Description for new flag |
 | `--enabled` | Create flag as enabled (default: disabled) |
+| `--variant` | Create as variant flag (default: boolean) |
+| `--variants <keys>` | Comma-separated variant keys (first is default) |
+| `--default <key>` | Set default variant key |
+| `--rollout <pct>` | Rollout percentage (default: 100) |
+| `--segment <key>` | Segment key for rules (default: all-users) |
 | `--json` | Output results as JSON |
 | `--quiet`, `-q` | Minimal output |
 | `--force`, `-f` | Skip confirmation prompts |
