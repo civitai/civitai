@@ -180,7 +180,7 @@ export const ECO = {
   AceStep: 66,
 
   // Utility ecosystems
-  Upscaler: 66,
+  Upscaler: 67,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -1706,7 +1706,7 @@ export const BM = {
   WanImage27: 80,
   WanVideo27: 81,
   AceStep: 82,
-  Upscaler: 82,
+  Upscaler: 83,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
