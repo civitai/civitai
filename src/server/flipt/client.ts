@@ -38,6 +38,7 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_MULTI_STEP = 'wan22-multi-step',
   IMAGE_INDEX_FEED = 'image-index-feed',
   BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
+  REWARDS_BONUS_MULTIPLIER = 'rewards-bonus-multiplier',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
@@ -161,6 +162,7 @@ export async function getFliptVariant(
       context,
     });
 
+    if (!evaluation.match) return null;
     return evaluation.variantKey;
   } catch (e) {
     console.error('Flipt variant evaluation error:', e);
