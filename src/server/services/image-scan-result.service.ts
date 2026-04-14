@@ -60,7 +60,7 @@ export async function isExemptFromAiVerification(
       EXISTS(SELECT 1 FROM "UserProfile" WHERE "coverImageId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Article" WHERE "coverId" = ${imageId}) OR
       EXISTS(SELECT 1 FROM "Challenge" WHERE "coverImageId" = ${imageId}) OR
-      EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty'))
+      EXISTS(SELECT 1 FROM "ImageConnection" WHERE "imageId" = ${imageId} AND "entityType" IN ('Bounty', 'Article'))
     ) AS exempt
   `;
   return result?.exempt ?? false;
@@ -84,7 +84,7 @@ type RepeatStep = {
     steps: Array<MediaRatingStep | WdTaggingStep>;
   };
 };
-type ScanResultStep = WdTaggingStep | MediaRatingStep | MediaHashStep | RepeatStep;
+export type ScanResultStep = WdTaggingStep | MediaRatingStep | MediaHashStep | RepeatStep;
 
 type NormalizedTag = {
   name: string;
@@ -107,7 +107,7 @@ const tagCache = new TtlCache<TagWithId>({});
 export async function processImageScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
 
-  const { data, error, request } = await getWorkflow({
+  const { data } = await getWorkflow({
     client: internalOrchestratorClient,
     path: { workflowId: event.workflowId },
   });
@@ -116,8 +116,36 @@ export async function processImageScanResult(req: NextApiRequest) {
   const imageId = data.metadata?.imageId as number | undefined;
   if (!imageId) throw new Error(`missing workflow metadata.imageId - ${event.workflowId}`);
 
-  if (event.status !== 'succeeded') {
-    // Atomically increment retryCount and set workflowId without clobbering other scanJobs fields
+  const featureFlags = getFeatureFlagsLazy({ req });
+  await processImageScanWorkflow({
+    workflowId: event.workflowId,
+    status: event.status,
+    steps: (data.steps ?? []) as unknown as ScanResultStep[],
+    imageId,
+    articleImageScanning: featureFlags.articleImageScanning,
+  });
+}
+
+/**
+ * Core image scan processing extracted so it can be called from both the webhook
+ * handler (via `processImageScanResult`) and migration scripts that use `wait`
+ * to get results inline.
+ */
+export async function processImageScanWorkflow({
+  workflowId,
+  status,
+  steps,
+  imageId,
+  articleImageScanning = false,
+}: {
+  workflowId: string;
+  status: string;
+  steps: ScanResultStep[];
+  imageId: number;
+  /** Enable debounced article ingestion updates (webhook path with feature flag) */
+  articleImageScanning?: boolean;
+}) {
+  if (status !== 'succeeded') {
     await dbWrite.$executeRaw`
       UPDATE "Image"
       SET
@@ -129,232 +157,221 @@ export async function processImageScanResult(req: NextApiRequest) {
             to_jsonb(COALESCE(("scanJobs"->>'retryCount')::int, 0) + 1)
           ),
           '{workflowId}',
-          ${JSON.stringify(event.workflowId)}::jsonb
+          ${JSON.stringify(workflowId)}::jsonb
         )
       WHERE id = ${imageId}
     `;
-  } else {
-    const steps = (data.steps ?? []) as unknown as ScanResultStep[];
+    return;
+  }
 
-    const wdTagging =
-      steps.find((x) => x.$type === 'wdTagging')?.output ?? aggregateWdTaggingRepeater(steps);
-    const mediaRating =
-      steps.find((x) => x.$type === 'mediaRating')?.output ?? aggregateMediaRatingRepeater(steps);
-    const mediaHash = steps.find((x) => x.$type === 'mediaHash')?.output;
+  const wdTagging =
+    steps.find((x) => x.$type === 'wdTagging')?.output ?? aggregateWdTaggingRepeater(steps);
+  const mediaRating =
+    steps.find((x) => x.$type === 'mediaRating')?.output ?? aggregateMediaRatingRepeater(steps);
+  const mediaHash = steps.find((x) => x.$type === 'mediaHash')?.output;
 
-    const missingSteps: string[] = [];
-    if (!wdTagging) missingSteps.push('wdTagging');
-    if (!mediaRating) missingSteps.push('mediaRating');
+  const missingSteps: string[] = [];
+  if (!wdTagging) missingSteps.push('wdTagging');
+  if (!mediaRating) missingSteps.push('mediaRating');
 
-    if (missingSteps.length > 0)
-      throw new Error(
-        `Incomplete workflow: ${event.workflowId}. Missing steps: ${missingSteps.join(', ')}`
-      );
+  if (missingSteps.length > 0)
+    throw new Error(
+      `Incomplete workflow: ${workflowId}. Missing steps: ${missingSteps.join(', ')}`
+    );
 
-    if (mediaRating?.nsfwLevel === 'na')
-      throw new Error(`invalid media rating for workflow: ${event.workflowId}`);
+  if (mediaRating?.nsfwLevel === 'na')
+    throw new Error(`invalid media rating for workflow: ${workflowId}`);
 
-    const { tags: wdTags } = wdTagging!;
-    // TODO - convert nsfwLevel from orchestrator format to tag format (pg13 to pg-13)
-    const { nsfwLevel } = mediaRating!;
-    let { isBlocked, blockedReason } = mediaRating!;
-    const { hashes } = mediaHash ?? {};
+  const { tags: wdTags } = wdTagging!;
+  const { nsfwLevel } = mediaRating!;
+  let { isBlocked, blockedReason } = mediaRating!;
+  const { hashes } = mediaHash ?? {};
 
-    let pHash: bigint | undefined;
-    if (hashes?.perceptual) {
-      const bigInt = BigInt('0x' + hashes.perceptual);
-      pHash = BigInt.asIntN(64, bigInt);
-    }
+  let pHash: bigint | undefined;
+  if (hashes?.perceptual) {
+    const bigInt = BigInt('0x' + hashes.perceptual);
+    pHash = BigInt.asIntN(64, bigInt);
+  }
 
-    if (!isBlocked && pHash) {
-      isBlocked = await getIsImageBlocked(pHash);
-      if (isBlocked) blockedReason = 'Similar to blocked content';
-    }
-    if (isBlocked) {
-      await dbWrite.image.updateMany({
-        where: { id: imageId },
-        data: {
-          pHash,
-          ingestion: ImageIngestionStatus.Blocked,
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: blockedReason,
-        },
-      });
-    }
-
-    const image = await dbWrite.image.findUnique({
+  if (!isBlocked && pHash) {
+    isBlocked = await getIsImageBlocked(pHash);
+    if (isBlocked) blockedReason = 'Similar to blocked content';
+  }
+  if (isBlocked) {
+    await dbWrite.image.updateMany({
       where: { id: imageId },
-      select: {
-        id: true,
-        createdAt: true,
-        scannedAt: true,
-        type: true,
-        userId: true,
-        meta: true,
-        metadata: true,
-        postId: true,
-        nsfwLevelLocked: true,
-        nsfwLevel: true,
-        scanJobs: true,
-        ingestion: true,
+      data: {
+        pHash,
+        ingestion: ImageIngestionStatus.Blocked,
+        nsfwLevel: NsfwLevel.Blocked,
+        blockedFor: blockedReason,
       },
     });
+  }
 
-    if (!image) throw new Error(`image not found: ${imageId}`);
+  const image = await dbWrite.image.findUnique({
+    where: { id: imageId },
+    select: {
+      id: true,
+      createdAt: true,
+      scannedAt: true,
+      type: true,
+      userId: true,
+      meta: true,
+      metadata: true,
+      postId: true,
+      nsfwLevelLocked: true,
+      nsfwLevel: true,
+      scanJobs: true,
+      ingestion: true,
+    },
+  });
 
-    const { prompt, negativePrompt } = (image.meta ?? {}) as {
-      prompt?: string;
-      negativePrompt?: string;
-    };
+  if (!image) throw new Error(`image not found: ${imageId}`);
 
-    // split tags into source groups
-    const tagsWithSource = {
-      [TagSource.WD14]: wdTags,
-      [TagSource.SpineRating]: { [nsfwLevel]: 100 },
-    };
-    const normalizedTags: NormalizedTag[] = Object.entries(tagsWithSource).flatMap(
-      ([source, tagMap]) =>
-        Object.entries(tagMap).map(([name, confidence]) => {
-          if (source === TagSource.WD14) name = name.replace(/_/g, ' ');
-          return {
-            name,
-            confidence: Math.round(confidence * 100),
-            source: source as TagSource,
-          };
-        })
-    );
+  const { prompt, negativePrompt } = (image.meta ?? {}) as {
+    prompt?: string;
+    negativePrompt?: string;
+  };
 
-    // compute tags based on tag rules and prompt and then get tags with ids and create tags that don't exist
-    const tags = await processTags({ tags: normalizedTags, prompt });
+  const tagsWithSource = {
+    [TagSource.WD14]: wdTags,
+    [TagSource.SpineRating]: { [nsfwLevel]: 100 },
+  };
+  const normalizedTags: NormalizedTag[] = Object.entries(tagsWithSource).flatMap(
+    ([source, tagMap]) =>
+      Object.entries(tagMap).map(([name, confidence]) => {
+        if (source === TagSource.WD14) name = name.replace(/_/g, ' ');
+        return {
+          name,
+          confidence: Math.round(confidence * 100),
+          source: source as TagSource,
+        };
+      })
+  );
 
-    // add tag relations to image
-    await insertTagsOnImageNew(
-      tags.map((tag) => ({
-        imageId: image.id,
-        tagId: tag.id,
-        source: tag.source,
-        confidence: tag.confidence,
-        automated: true,
-      }))
-    );
+  const tags = await processTags({ tags: normalizedTags, prompt });
 
-    const audit = await auditScanResults({
+  await insertTagsOnImageNew(
+    tags.map((tag) => ({
       imageId: image.id,
-      userId: image.userId,
-      prompt,
-      negativePrompt,
-    });
+      tagId: tag.id,
+      source: tag.source,
+      confidence: tag.confidence,
+      automated: true,
+    }))
+  );
 
-    const validAiGeneration = isValidAIGeneration({ ...image, tags, meta: image.meta as any });
+  const audit = await auditScanResults({
+    imageId: image.id,
+    userId: image.userId,
+    prompt,
+    negativePrompt,
+  });
 
-    // Build update data - scanJobs will be updated atomically via raw SQL
-    const toUpdate: Prisma.ImageUpdateInput = {
-      updatedAt: new Date(),
-      pHash,
-    };
-    if (audit.blockedFor) {
-      toUpdate.ingestion = ImageIngestionStatus.Blocked;
-      toUpdate.blockedFor = audit.blockedFor;
-      toUpdate.nsfwLevel = NsfwLevel.Blocked;
-    } else if (
-      audit.nsfw &&
-      !validAiGeneration &&
-      !(await isExemptFromAiVerification(image.id, image.metadata as MediaMetadata | null))
-    ) {
-      toUpdate.ingestion = ImageIngestionStatus.Blocked;
-      toUpdate.blockedFor = BlockedReason.AiNotVerified;
-      toUpdate.nsfwLevel = audit.nsfwLevel;
-    } else {
-      toUpdate.ingestion = ImageIngestionStatus.Scanned;
-      toUpdate.needsReview = audit.reviewKey ?? null;
-      toUpdate.minor = audit.minor;
-      toUpdate.poi = audit.poi;
-      toUpdate.blockedFor = null;
-      toUpdate.nsfwLevel = audit.nsfwLevel;
+  const validAiGeneration = isValidAIGeneration({ ...image, tags, meta: image.meta as any });
 
-      toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
-    }
+  const toUpdate: Prisma.ImageUpdateInput = {
+    updatedAt: new Date(),
+    pHash,
+  };
+  if (audit.blockedFor) {
+    toUpdate.ingestion = ImageIngestionStatus.Blocked;
+    toUpdate.blockedFor = audit.blockedFor;
+    toUpdate.nsfwLevel = NsfwLevel.Blocked;
+  } else if (
+    audit.nsfw &&
+    !validAiGeneration &&
+    !(await isExemptFromAiVerification(image.id, image.metadata as MediaMetadata | null))
+  ) {
+    toUpdate.ingestion = ImageIngestionStatus.Blocked;
+    toUpdate.blockedFor = BlockedReason.AiNotVerified;
+    toUpdate.nsfwLevel = audit.nsfwLevel;
+  } else {
+    toUpdate.ingestion = ImageIngestionStatus.Scanned;
+    toUpdate.needsReview = audit.reviewKey ?? null;
+    toUpdate.minor = audit.minor;
+    toUpdate.poi = audit.poi;
+    toUpdate.blockedFor = null;
+    toUpdate.nsfwLevel = audit.nsfwLevel;
 
-    // Use atomic update for scanJobs to avoid clobbering concurrent changes to scans field
-    await dbWrite.$executeRaw`
-      UPDATE "Image"
-      SET
-        "updatedAt" = ${toUpdate.updatedAt},
-        "pHash" = ${pHash ?? null},
-        "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
-        "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
-        "nsfwLevel" = ${toUpdate.nsfwLevel as number},
-        "needsReview" = ${(toUpdate.needsReview as string) ?? null},
-        "minor" = ${(toUpdate.minor as boolean) ?? false},
-        "poi" = ${(toUpdate.poi as boolean) ?? false},
-        "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
-        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
-          event.workflowId
-        )}::jsonb)
-      WHERE id = ${image.id}
-    `;
+    toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
+  }
 
-    // handle blocked image updates
-    if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {
-      await queueImageSearchIndexUpdate({
-        ids: [image.id],
-        action: SearchIndexUpdateQueueAction.Delete,
-      });
-    }
-    // handle scanned image updates
-    else if (toUpdate.ingestion === ImageIngestionStatus.Scanned) {
-      await tagIdsForImagesCache.refresh(image.id);
-      if (
-        typeof image.metadata === 'object' &&
-        (image.metadata as MediaMetadata | undefined)?.profilePicture
-      ) {
-        await deleteUserProfilePictureCache(image.userId);
-      }
+  await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      "updatedAt" = ${toUpdate.updatedAt},
+      "pHash" = ${pHash ?? null},
+      "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
+      "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
+      "nsfwLevel" = ${toUpdate.nsfwLevel as number},
+      "needsReview" = ${(toUpdate.needsReview as string) ?? null},
+      "minor" = ${(toUpdate.minor as boolean) ?? false},
+      "poi" = ${(toUpdate.poi as boolean) ?? false},
+      "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
+      "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
+        workflowId
+      )}::jsonb)
+    WHERE id = ${image.id}
+  `;
 
-      if (image.postId) await updatePostNsfwLevel(image.postId);
-      await updateComicNsfwLevelsForImage(image.id);
-
-      // NEW: Debounced article updates (prevents N+1 issue)
-      // Only process if feature flag is enabled
-      const featureFlags = getFeatureFlagsLazy({ req });
-      if (featureFlags.articleImageScanning) {
-        const articleConnections = await dbWrite.imageConnection.findMany({
-          where: { imageId: image.id, entityType: ImageConnectionType.Article },
-          select: { entityId: true },
-        });
-
-        if (articleConnections.length > 0) {
-          for (const { entityId } of articleConnections) {
-            // Uses debouncing: 50 images → 1 DB update
-            await debounceArticleUpdate(entityId);
-          }
-        }
-      }
-
-      await queueImageSearchIndexUpdate({
-        ids: [image.id],
-        action: SearchIndexUpdateQueueAction.Update,
-      });
-
-      const tagsForReview = [...audit.poiTags, ...audit.minorTags, ...audit.reviewTags];
-      if (tagsForReview.length > 0) {
-        await createImageTagsForReview({
-          imageId: image.id,
-          tagIds: tagsForReview.map((x) => x.id),
-        });
-      }
-
-      if (!audit.reviewKey && image.type === 'image') {
-        await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
-      }
-    }
-
-    await signalClient.send({
-      target: SignalMessages.ImageIngestionStatus,
-      data: { imageId: image.id, ingestion: toUpdate.ingestion, blockedFor: toUpdate.blockedFor },
-      userId: image.userId,
+  // handle blocked image updates
+  if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {
+    await queueImageSearchIndexUpdate({
+      ids: [image.id],
+      action: SearchIndexUpdateQueueAction.Delete,
     });
   }
+  // handle scanned image updates
+  else if (toUpdate.ingestion === ImageIngestionStatus.Scanned) {
+    await tagIdsForImagesCache.refresh(image.id);
+    if (
+      typeof image.metadata === 'object' &&
+      (image.metadata as MediaMetadata | undefined)?.profilePicture
+    ) {
+      await deleteUserProfilePictureCache(image.userId);
+    }
+
+    if (image.postId) await updatePostNsfwLevel(image.postId);
+    await updateComicNsfwLevelsForImage(image.id);
+
+    if (articleImageScanning) {
+      const articleConnections = await dbWrite.imageConnection.findMany({
+        where: { imageId: image.id, entityType: ImageConnectionType.Article },
+        select: { entityId: true },
+      });
+
+      if (articleConnections.length > 0) {
+        for (const { entityId } of articleConnections) {
+          await debounceArticleUpdate(entityId);
+        }
+      }
+    }
+
+    await queueImageSearchIndexUpdate({
+      ids: [image.id],
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+
+    const tagsForReview = [...audit.poiTags, ...audit.minorTags, ...audit.reviewTags];
+    if (tagsForReview.length > 0) {
+      await createImageTagsForReview({
+        imageId: image.id,
+        tagIds: tagsForReview.map((x) => x.id),
+      });
+    }
+
+    if (!audit.reviewKey && image.type === 'image') {
+      await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+    }
+  }
+
+  await signalClient.send({
+    target: SignalMessages.ImageIngestionStatus,
+    data: { imageId: image.id, ingestion: toUpdate.ingestion, blockedFor: toUpdate.blockedFor },
+    userId: image.userId,
+  });
 }
 
 async function getIsImageBlocked(hash: bigint) {

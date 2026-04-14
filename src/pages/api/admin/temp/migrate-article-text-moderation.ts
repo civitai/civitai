@@ -345,6 +345,7 @@ export default WebhookEndpoint(async (req, res) => {
               wait: 30,
             });
             if (!workflow?.id) {
+              stats.failed++;
               stats.errors.push(`Article ${article.id}: no workflow returned`);
               return;
             }
