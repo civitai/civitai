@@ -280,7 +280,12 @@ export class BlobData implements NormalizedWorkflowStepOutput {
       (step.metadata as any)?.isPrivateGeneration ??
       false;
 
+    if (domain.green && this.blockedReason === 'MatureContent') {
+      this.blockedReason = 'siteRestricted';
+    }
+
     if (data.blockedReason === 'none') this.blockedReason = null;
+
     if (!this.blockedReason) {
       if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
         this.blockedReason = 'privateGen';
