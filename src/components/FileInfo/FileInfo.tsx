@@ -16,7 +16,7 @@ export function FileInfo({ file }: Props) {
   ];
   if (file.metadata?.fp) items.push({ label: 'Precision', value: file.metadata.fp });
   if (file.metadata?.format && file.name.endsWith('.zip'))
-    items.push({ label: 'Format', value: file.metadata.format });
+    items.push({ label: 'Format', value: file.metadata?.format });
   if (file.metadata?.size)
     items.push({ label: 'Model Size', value: startCase(file.metadata.size) });
 
