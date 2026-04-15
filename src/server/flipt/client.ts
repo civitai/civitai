@@ -38,6 +38,8 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_MULTI_STEP = 'wan22-multi-step',
   IMAGE_INDEX_FEED = 'image-index-feed',
   BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
+  MEILI_CACHE_OPS = 'meili-cache-ops',
+  MEILI_USER_OWN_PASS = 'meili-user-own-pass',
   REWARDS_BONUS_MULTIPLIER = 'rewards-bonus-multiplier',
 }
 
@@ -167,6 +169,26 @@ export async function getFliptVariant(
   } catch (e) {
     console.error('Flipt variant evaluation error:', e);
     return null;
+  }
+}
+
+export async function getFliptBoolean(
+  flag: string,
+  entityId = 'global',
+  context: Record<string, string> = {}
+): Promise<boolean> {
+  const fliptClient = await FliptSingleton.getInstance();
+  if (!fliptClient) return false;
+
+  try {
+    const evaluation = fliptClient.evaluateBoolean({
+      flagKey: flag,
+      entityId,
+      context,
+    });
+    return evaluation.enabled;
+  } catch (e) {
+    return false;
   }
 }
 
