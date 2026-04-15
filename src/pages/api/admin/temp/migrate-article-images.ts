@@ -7,130 +7,51 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
-import type { ExtractedMedia } from '~/utils/article-helpers';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { ImageConnectionType } from '~/server/common/enums';
 import { recomputeArticleIngestion } from '~/server/services/article.service';
-import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
-import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
-import {
-  processImageScanWorkflow,
-  type ScanResultStep,
-} from '~/server/services/image-scan-result.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('migrate-article-images', 'blue');
 
-// --- Types ---
+// --- Types / Schema ---
+
+type Article = { id: number; content: string; userId: number };
 
 type MigrationStats = {
   articlesProcessed: number;
   imagesCreated: number;
   connectionsCreated: number;
-  imagesScanned: number;
-  imagesFailed: number;
-  errors: string[];
+  errors: number;
 };
 
-type Article = { id: number; title: string; content: string; userId: number };
-
-type RunContext = {
-  on: (event: 'close', listener: () => void) => void;
-};
+/** Minimal contract dataProcessor needs for cancellation — `NextApiResponse`
+ * satisfies it because the underlying `http.ServerResponse` extends
+ * `EventEmitter` and emits `'close'` when the client disconnects. */
+type RunContext = { on: (event: 'close', listener: () => void) => void };
 
 const querySchema = z.object({
   dryRun: booleanString().default(true),
   rollback: booleanString().default(false),
-  batchSize: z.coerce.number().min(1).max(1000).default(100),
-  concurrency: z.coerce.number().min(1).max(5).default(2),
-  scanConcurrency: z.coerce.number().min(1).max(10).default(5),
+  // Each batch extracts media from up to `batchSize` articles and commits in
+  // one transaction (~10 media items/article on average). `concurrency`
+  // parallel batches run at once — don't exceed the DB connection pool. The
+  // run continues until the cursor exhausts the corpus (or the caller aborts).
+  //
+  // Scanning is async: images are created with `ingestion: Pending` and the
+  // `trg_image_scan_queue` DB trigger enqueues them to JobQueue. The
+  // `ingest-images` cron sends article-backfill images through the low-priority
+  // orchestrator lane (see `src/server/jobs/image-ingestion.ts`) so migration
+  // work doesn't starve live user uploads.
+  batchSize: z.coerce.number().min(1).max(1000).default(250),
+  concurrency: z.coerce.number().min(1).max(10).default(4),
+  // `start` is the minimum Article ID to consider. Useful when resuming after
+  // an abort (the per-group log line prints the current cursor).
   start: z.coerce.number().optional().default(0),
   end: z.coerce.number().optional(),
-  after: z.coerce.date().optional(),
-  before: z.coerce.date().optional(),
 });
 
 type MigrationParams = z.infer<typeof querySchema>;
-
-// --- Helpers ---
-
-function createEmptyStats(): MigrationStats {
-  return {
-    articlesProcessed: 0,
-    imagesCreated: 0,
-    connectionsCreated: 0,
-    imagesScanned: 0,
-    imagesFailed: 0,
-    errors: [],
-  };
-}
-
-function mergeStats(statsList: MigrationStats[]): MigrationStats {
-  const merged = createEmptyStats();
-  for (const stats of statsList) {
-    merged.articlesProcessed += stats.articlesProcessed;
-    merged.imagesCreated += stats.imagesCreated;
-    merged.connectionsCreated += stats.connectionsCreated;
-    merged.imagesScanned += stats.imagesScanned;
-    merged.imagesFailed += stats.imagesFailed;
-    merged.errors.push(...stats.errors);
-  }
-  return merged;
-}
-
-type CancelFn = () => Promise<void>;
-
-async function fetchDateRange(params: MigrationParams, cancelFns: CancelFn[]) {
-  const query = await pgDbRead.cancellableQuery<{ start: number; end: number }>(Prisma.sql`
-    WITH dates AS (
-      SELECT
-      MIN("createdAt") as start,
-      MAX("createdAt") as end
-      FROM "Article" WHERE "createdAt" > ${params.after ?? new Date(0)}
-      ${params.before ? Prisma.sql`AND "createdAt" < ${params.before}` : Prisma.empty}
-    )
-    SELECT MIN(id) as start, MAX(id) as end
-    FROM "Article" a
-    JOIN dates d ON d.start = a."createdAt" OR d.end = a."createdAt";
-  `);
-  cancelFns.push(query.cancel);
-  const results = await query.result();
-  return results[0];
-}
-
-/**
- * Submit an image for scanning with wait, then process the result inline.
- * Returns true if the scan completed and was processed, false otherwise.
- */
-async function scanImageInline(image: { id: number; url: string; type: 'image' | 'video' }) {
-  const workflow = await createImageIngestionRequest({
-    imageId: image.id,
-    url: image.url,
-    priority: 'low',
-    type: image.type,
-    wait: 30,
-  });
-
-  if (!workflow?.id) {
-    throw new Error(`Image ${image.id}: no workflow returned`);
-  }
-
-  const steps = (workflow.steps ?? []) as unknown as ScanResultStep[];
-  const hasOutput = steps.some((s) => 'output' in s && s.output);
-
-  if (!hasOutput) {
-    throw new Error(
-      `Image ${image.id}: workflow ${workflow.id} did not complete within wait window`
-    );
-  }
-
-  await processImageScanWorkflow({
-    workflowId: workflow.id,
-    status: 'succeeded',
-    steps,
-    imageId: image.id,
-  });
-}
 
 // --- Rollback Mode ---
 
@@ -163,12 +84,26 @@ async function runRollback(params: MigrationParams): Promise<{
     `Found ${connections.length} connections, ${imageIds.length} images, ${articleIds.length} articles`
   );
 
-  // Step 2: Find which images are ONLY connected to articles (safe to delete)
+  // Step 2: Find which images have OTHER references and must be preserved.
+  // Mirrors the checks in isExemptFromAiVerification — we can't just look at
+  // ImageConnection since images can also be tied to posts, model resources,
+  // or cover-image slots on users/articles/challenges/profiles.
   const sharedImages = await dbWrite.$queryRaw<{ imageId: number }[]>`
-    SELECT DISTINCT "imageId"
-    FROM "ImageConnection"
-    WHERE "imageId" IN (${Prisma.join(imageIds)})
-    AND "entityType" != 'Article'
+    SELECT DISTINCT id AS "imageId"
+    FROM "Image"
+    WHERE id IN (${Prisma.join(imageIds)})
+      AND (
+        "postId" IS NOT NULL
+        OR EXISTS (
+          SELECT 1 FROM "ImageConnection" ic
+          WHERE ic."imageId" = "Image".id AND ic."entityType" != 'Article'
+        )
+        OR EXISTS (SELECT 1 FROM "ImageResourceNew" r WHERE r."imageId" = "Image".id)
+        OR EXISTS (SELECT 1 FROM "User" u WHERE u."profilePictureId" = "Image".id)
+        OR EXISTS (SELECT 1 FROM "UserProfile" up WHERE up."coverImageId" = "Image".id)
+        OR EXISTS (SELECT 1 FROM "Article" a WHERE a."coverId" = "Image".id)
+        OR EXISTS (SELECT 1 FROM "Challenge" ch WHERE ch."coverImageId" = "Image".id)
+      )
   `;
   const sharedImageIds = new Set(sharedImages.map((r) => r.imageId));
   const orphanedImageIds = imageIds.filter((id) => !sharedImageIds.has(id));
@@ -235,35 +170,195 @@ async function runRollback(params: MigrationParams): Promise<{
   };
 }
 
-// --- Image Scan Mode ---
+// --- Migration ---
+//
+// Extract content images from a batch of articles, create `Image` rows
+// (`ingestion: Pending`) + `ImageConnection` rows, and recompute each
+// article's ingestion state. Scanning runs async: the `trg_image_scan_queue`
+// DB trigger enqueues new Pending images into JobQueue, the `ingest-images`
+// cron submits them via the low-priority orchestrator lane, and
+// `/api/webhooks/image-scan-result` flips articles back to `Scanned` once
+// all images terminate.
 
-async function runImageScan(
+async function processBatch(
+  articles: Article[],
+  dryRun: boolean,
+  concurrency: number,
+  stats: MigrationStats
+): Promise<void> {
+  const batchIds = articles.map((a) => a.id);
+
+  // Extract URLs. Deduplicate across the batch so shared URLs create a
+  // single Image row + multiple ImageConnection rows.
+  const allUrls = new Set<string>();
+  const mediaByUrl = new Map<string, { type: 'image' | 'video'; userId: number; name?: string }>();
+  const articleUrlPairs: Array<{ articleId: number; url: string }> = [];
+
+  for (const article of articles) {
+    const media = getContentMedia(article.content);
+    for (const item of media) {
+      allUrls.add(item.url);
+      articleUrlPairs.push({ articleId: article.id, url: item.url });
+      if (!mediaByUrl.has(item.url)) {
+        mediaByUrl.set(item.url, { type: item.type, userId: article.userId, name: item.alt });
+      }
+    }
+  }
+
+  if (dryRun) {
+    log(`[DRY RUN] ${articles.length} articles → ${allUrls.size} unique URLs`);
+    stats.articlesProcessed += articles.length;
+    stats.imagesCreated += allUrls.size;
+    stats.connectionsCreated += articleUrlPairs.length;
+    return;
+  }
+
+  if (allUrls.size > 0) {
+    try {
+      await dbWrite.$transaction(
+        async (tx) => {
+          const existing = await tx.image.findMany({
+            where: { url: { in: [...allUrls] } },
+            select: { id: true, url: true },
+          });
+          const urlToImageId = new Map(existing.map((img) => [img.url, img.id]));
+          const missingUrls = [...allUrls].filter((url) => !urlToImageId.has(url));
+
+          if (missingUrls.length > 0) {
+            // `ingestion: Pending` causes the `trg_image_scan_queue` trigger
+            // to auto-enqueue into JobQueue.
+            const created = await tx.image.createManyAndReturn({
+              data: missingUrls.map((url) => {
+                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+                const info = mediaByUrl.get(url)!;
+                return {
+                  url,
+                  userId: info.userId,
+                  type: info.type,
+                  name: info.name,
+                  ingestion: ImageIngestionStatus.Pending,
+                  scanRequestedAt: new Date(),
+                };
+              }),
+              select: { id: true, url: true },
+              skipDuplicates: true,
+            });
+            for (const img of created) urlToImageId.set(img.url, img.id);
+            stats.imagesCreated += created.length;
+          }
+
+          const connections = articleUrlPairs
+            .map(({ articleId, url }) => {
+              const imageId = urlToImageId.get(url);
+              return imageId
+                ? { imageId, entityType: ImageConnectionType.Article, entityId: articleId }
+                : null;
+            })
+            .filter((c): c is NonNullable<typeof c> => c !== null);
+
+          if (connections.length > 0) {
+            await tx.imageConnection.createMany({ data: connections, skipDuplicates: true });
+            stats.connectionsCreated += connections.length;
+          }
+
+          await tx.article.updateMany({
+            where: { id: { in: batchIds } },
+            data: { scanRequestedAt: new Date() },
+          });
+        },
+        { timeout: 60_000, maxWait: 10_000 }
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      log(
+        `❌ Batch transaction failed (articles ${batchIds[0]}-${
+          batchIds[batchIds.length - 1]
+        }): ${msg}`
+      );
+      stats.errors += articles.length;
+      return;
+    }
+  } else {
+    // Text-only batch: still stamp scanRequestedAt so the article's ingestion
+    // state gets recomputed (it may already be Scanned from text moderation).
+    await dbWrite.article.updateMany({
+      where: { id: { in: batchIds } },
+      data: { scanRequestedAt: new Date() },
+    });
+  }
+
+  // Recompute every article in the batch. Articles with images flip to
+  // Pending (webhook recomputes them back to Scanned once scans complete);
+  // text-only articles stay wherever their text-moderation state puts them.
+  const recomputeTasks = batchIds.map((articleId) => async () => {
+    try {
+      await recomputeArticleIngestion(articleId);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      log(`  ⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
+      stats.errors++;
+    }
+  });
+  await limitConcurrency(recomputeTasks, concurrency);
+
+  stats.articlesProcessed += articles.length;
+}
+
+async function fetchArticleBatch(
+  start: number,
+  end: number,
+  cancelFns: (() => Promise<void>)[]
+): Promise<Article[]> {
+  // Unprocessed = Published + has content + no Article ImageConnection yet.
+  // Uses cancellableQuery so a client disconnect kills the in-flight pg query
+  // (dataProcessor calls all registered cancelFns from its `close` handler).
+  const query = await pgDbRead.cancellableQuery<Article>(Prisma.sql`
+    SELECT a.id, a.content, a."userId"
+    FROM "Article" a
+    LEFT JOIN "ImageConnection" ic ON ic."entityId" = a.id AND ic."entityType" = 'Article'
+    WHERE a.id >= ${start} AND a.id <= ${end}
+      AND a.status = ${ArticleStatus.Published}::"ArticleStatus"
+      AND a.content != ''
+      AND ic."imageId" IS NULL
+    ORDER BY a.id ASC
+  `);
+  cancelFns.push(query.cancel);
+  return query.result();
+}
+
+type MigrationResult = MigrationStats & {
+  /** Highest article ID range end reached. Useful for resuming via `?start=` if the run was aborted. */
+  lastProcessedEnd: number;
+};
+
+async function runMigration(
   params: MigrationParams,
   runContext: RunContext
-): Promise<MigrationStats> {
-  const { dryRun } = params;
-  const batchResults: MigrationStats[] = [];
-  let aborted = false;
-  let batchNumber = 0;
+): Promise<MigrationResult> {
+  const stats: MigrationStats = {
+    articlesProcessed: 0,
+    imagesCreated: 0,
+    connectionsCreated: 0,
+    errors: 0,
+  };
+  let lastProcessedEnd = params.start;
   const startTime = Date.now();
 
-  log(`Running image scan mode${dryRun ? ' (DRY RUN)' : ''}...`);
+  log(`Running migration${params.dryRun ? ' (DRY RUN)' : ''}...`);
 
   await dataProcessor({
     params,
     runContext,
     rangeFetcher: async ({ cancelFns }) => {
-      if (params.after || params.before) return fetchDateRange(params, cancelFns);
-
-      // Find articles that haven't had their content images extracted yet
-      // (no ImageConnection rows for the Article entity type)
-      const query = await pgDbRead.cancellableQuery<{ max: number }>(
-        Prisma.sql`SELECT MAX(a.id) "max" FROM "Article" a
+      // Cap the iteration at the largest unprocessed article ID so we don't
+      // walk dead ID space past the corpus tail.
+      const query = await pgDbRead.cancellableQuery<{ max: number }>(Prisma.sql`
+        SELECT MAX(a.id) "max" FROM "Article" a
         LEFT JOIN "ImageConnection" ic ON ic."entityId" = a.id AND ic."entityType" = 'Article'
         WHERE a.status = ${ArticleStatus.Published}::"ArticleStatus"
-        AND a.content != ''
-        AND ic."imageId" IS NULL`
-      );
+          AND a.content != ''
+          AND ic."imageId" IS NULL
+      `);
       cancelFns.push(query.cancel);
       const [{ max }] = await query.result();
       const range = { start: params.start, end: params.end ?? max ?? 0 };
@@ -272,350 +367,72 @@ async function runImageScan(
       log(`Range: ${range.start}-${range.end} (${rangeSize} ids, ~${batches} batches)`);
       return range;
     },
-    processor: async ({ start, end }) => {
-      if (aborted) return;
+    processor: async ({ start, end, cancelFns }) => {
+      const articles = await fetchArticleBatch(start, end, cancelFns);
+      if (articles.length === 0) return;
 
-      const batchStart = Date.now();
-      const stats = createEmptyStats();
+      await processBatch(articles, params.dryRun, params.concurrency, stats);
 
-      // Don't push cancel to shared cancelFns — resolved query closures retain
-      // references to result data (article content), causing OOM over many batches.
-      // The dataProcessor's stop flag handles disconnection for in-flight work.
-      const articlesQuery = await pgDbRead.cancellableQuery<Article>(
-        Prisma.sql`
-          SELECT a.id, a.title, a.content, a."userId"
-          FROM "Article" a
-          LEFT JOIN "ImageConnection" ic ON ic."entityId" = a.id AND ic."entityType" = 'Article'
-          WHERE a.id >= ${start} AND a.id <= ${end}
-          AND a.status = ${ArticleStatus.Published}::"ArticleStatus"
-          AND a.content != ''
-          AND ic."imageId" IS NULL
-          ORDER BY a.id ASC
-        `
-      );
-      const articleBatch = await articlesQuery.result();
+      if (end > lastProcessedEnd) lastProcessedEnd = end;
 
-      if (articleBatch.length === 0) return;
-
-      log(`[images] Processing ${articleBatch.length} articles (IDs ${start}-${end})...`);
-
-      if (dryRun) {
-        for (const article of articleBatch) {
-          const contentMedia = getContentMedia(article.content);
-          log(`[DRY RUN] Article ${article.id}: ${contentMedia.length} media items`);
-          stats.imagesCreated += contentMedia.length;
-          stats.connectionsCreated += contentMedia.length;
-          stats.articlesProcessed++;
-        }
-        batchResults.push(stats);
-        return;
-      }
-
-      const articleMediaMap = new Map<number, { media: ExtractedMedia[]; userId: number }>();
-      const allUrls = new Set<string>();
-      const failedArticleIds = new Set<number>();
-
-      for (const article of articleBatch) {
-        try {
-          const contentMedia = getContentMedia(article.content);
-          if (contentMedia.length === 0) {
-            stats.articlesProcessed++;
-            continue;
-          }
-          articleMediaMap.set(article.id, { media: contentMedia, userId: article.userId });
-          contentMedia.forEach((media) => allUrls.add(media.url));
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : 'Unknown error';
-          stats.errors.push(`Article ${article.id} extraction: ${msg}`);
-          failedArticleIds.add(article.id);
-        }
-      }
-
-      // Track images created in this batch so we can scan them after the transaction
-      const createdImageIds: { id: number; url: string; type: 'image' | 'video' }[] = [];
-
-      if (articleMediaMap.size > 0) {
-        log(`Extracted ${allUrls.size} unique URLs from ${articleMediaMap.size} articles`);
-
-        try {
-          await dbWrite.$transaction(
-            async (tx) => {
-              const existingImages = await tx.image.findMany({
-                where: { url: { in: Array.from(allUrls) } },
-                select: { id: true, url: true, ingestion: true },
-              });
-
-              const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
-              const missingUrlSet = new Set(
-                Array.from(allUrls).filter((url) => !existingUrlMap.has(url))
-              );
-
-              if (missingUrlSet.size > 0) {
-                const mediaByUrl = new Map<
-                  string,
-                  { type: 'image' | 'video'; userId: number; name?: string }
-                >();
-
-                for (const [, { media, userId }] of articleMediaMap) {
-                  for (const item of media) {
-                    if (missingUrlSet.has(item.url) && !mediaByUrl.has(item.url)) {
-                      mediaByUrl.set(item.url, { type: item.type, userId, name: item.alt });
-                    }
-                  }
-                }
-
-                const createdImages = await tx.image.createManyAndReturn({
-                  data: Array.from(mediaByUrl.entries()).map(([url, { type, userId, name }]) => ({
-                    url,
-                    userId,
-                    type,
-                    name,
-                    ingestion: ImageIngestionStatus.Pending,
-                    scanRequestedAt: new Date(),
-                  })),
-                  select: { id: true, url: true },
-                  skipDuplicates: true,
-                });
-
-                for (const img of createdImages) {
-                  existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
-                  const mediaInfo = mediaByUrl.get(img.url);
-                  createdImageIds.push({
-                    id: img.id,
-                    url: img.url,
-                    type: mediaInfo?.type ?? 'image',
-                  });
-                }
-                stats.imagesCreated += createdImages.length;
-              }
-
-              // Also collect existing images that are still Pending (not yet scanned)
-              for (const [, img] of existingUrlMap) {
-                if (
-                  'ingestion' in img &&
-                  img.ingestion === ImageIngestionStatus.Pending &&
-                  !createdImageIds.some((c) => c.id === img.id)
-                ) {
-                  // Find the type from article media data
-                  for (const [, { media }] of articleMediaMap) {
-                    const match = media.find((m) => m.url === img.url);
-                    if (match) {
-                      createdImageIds.push({ id: img.id, url: img.url, type: match.type });
-                      break;
-                    }
-                  }
-                }
-              }
-
-              const allConnections: Array<{
-                imageId: number;
-                entityType: ImageConnectionType.Article;
-                entityId: number;
-              }> = [];
-
-              for (const [articleId, { media }] of articleMediaMap) {
-                for (const item of media) {
-                  const existing = existingUrlMap.get(item.url);
-                  if (existing) {
-                    allConnections.push({
-                      imageId: existing.id,
-                      entityType: ImageConnectionType.Article,
-                      entityId: articleId,
-                    });
-                  }
-                }
-              }
-
-              if (allConnections.length > 0) {
-                await tx.imageConnection.createMany({
-                  data: allConnections,
-                  skipDuplicates: true,
-                });
-                stats.connectionsCreated += allConnections.length;
-              }
-
-              stats.articlesProcessed += articleMediaMap.size;
-
-              const processedArticleIds = Array.from(articleMediaMap.keys());
-              if (processedArticleIds.length > 0) {
-                await tx.article.updateMany({
-                  where: { id: { in: processedArticleIds } },
-                  data: { scanRequestedAt: new Date() },
-                });
-              }
-            },
-            { timeout: 60000, maxWait: 10000 }
-          );
-
-          log(
-            `  Transaction complete: ${stats.imagesCreated} images, ${stats.connectionsCreated} connections`
-          );
-
-          // Scan images inline with wait
-          if (createdImageIds.length > 0) {
-            log(`  Scanning ${createdImageIds.length} images inline...`);
-            const scanTasks = createdImageIds.map((img) => async () => {
-              try {
-                await scanImageInline(img);
-                stats.imagesScanned++;
-              } catch (error) {
-                const msg = error instanceof Error ? error.message : 'Unknown error';
-                log(`  ⚠️  Image ${img.id} scan: ${msg}`);
-                stats.imagesFailed++;
-                stats.errors.push(`Image ${img.id} scan: ${msg}`);
-              }
-            });
-            await limitConcurrency(scanTasks, params.scanConcurrency);
-
-            // Abort early if all image scans failed (e.g. orchestrator down)
-            if (stats.imagesFailed === createdImageIds.length && createdImageIds.length > 0) {
-              log(
-                `  All ${createdImageIds.length} image scans failed — aborting. Sample: ${
-                  stats.errors[stats.errors.length - 1]
-                }`
-              );
-              aborted = true;
-            }
-
-            log(
-              `  Image scanning complete: ${stats.imagesScanned} scanned, ${stats.imagesFailed} failed`
-            );
-          }
-
-          const processedArticleIds = Array.from(articleMediaMap.keys());
-
-          // Propagate image NSFW levels up to the article (mirrors webhook path
-          // via updateArticleImageScanStatus). Single bulk SQL update.
-          if (processedArticleIds.length > 0) {
-            try {
-              await updateArticleNsfwLevels(processedArticleIds);
-            } catch (error) {
-              const msg = error instanceof Error ? error.message : 'Unknown error';
-              log(`  ⚠️  updateArticleNsfwLevels failed: ${msg}`);
-              stats.errors.push(`updateArticleNsfwLevels: ${msg}`);
-            }
-          }
-
-          // Recompute ingestion status for each processed article
-          const recomputeTasks = processedArticleIds.map((articleId) => async () => {
-            try {
-              await recomputeArticleIngestion(articleId);
-            } catch (error) {
-              const msg = error instanceof Error ? error.message : 'Unknown error';
-              log(`  ⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
-            }
-          });
-          await limitConcurrency(recomputeTasks, params.scanConcurrency);
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : 'Unknown error';
-          log(`❌ Batch transaction failed: ${msg}`);
-          stats.errors.push(`Batch transaction failed: ${msg}`);
-        }
-      }
-
-      // Mark articles without images and recompute their ingestion status
-      const articlesWithoutImages = articleBatch.filter(
-        (article) => !articleMediaMap.has(article.id) && !failedArticleIds.has(article.id)
-      );
-      if (articlesWithoutImages.length > 0) {
-        const ids = articlesWithoutImages.map((a) => a.id);
-        try {
-          await dbWrite.article.updateMany({
-            where: { id: { in: ids } },
-            data: { scanRequestedAt: new Date() },
-          });
-        } catch (error) {
-          log(
-            `  ⚠️  Failed to mark ${articlesWithoutImages.length} articles: ${
-              error instanceof Error ? error.message : 'Unknown error'
-            }`
-          );
-        }
-
-        const recomputeTasks = ids.map((articleId) => async () => {
-          try {
-            await recomputeArticleIngestion(articleId);
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : 'Unknown error';
-            log(`  ⚠️  recomputeArticleIngestion failed for article ${articleId}: ${msg}`);
-          }
-        });
-        await limitConcurrency(recomputeTasks, params.scanConcurrency);
-      }
-
-      batchResults.push(stats);
-      batchNumber++;
-
-      const cumulative = mergeStats(batchResults);
       const elapsedSec = (Date.now() - startTime) / 1000;
-      const rate = cumulative.articlesProcessed / Math.max(elapsedSec, 0.001);
-
+      const rate = stats.articlesProcessed / Math.max(elapsedSec, 0.001);
       log(
-        `[batch ${batchNumber}] Complete in ${Date.now() - batchStart}ms | ` +
-          `batch: ${stats.articlesProcessed} articles, ${stats.imagesCreated} images created, ${stats.imagesScanned} scanned, ${stats.imagesFailed} scan failures | ` +
-          `totals: ${cumulative.articlesProcessed} articles, ${cumulative.imagesCreated} images, ${cumulative.connectionsCreated} connections, ${cumulative.imagesScanned} scanned, ${cumulative.imagesFailed} scan failures, ${cumulative.errors.length} errors | ` +
-          `rate: ${rate.toFixed(1)} articles/s | elapsed: ${elapsedSec.toFixed(1)}s`
+        `[batch ${start}-${end}] ${articles.length} articles | ` +
+          `totals: ${stats.articlesProcessed} processed, ${stats.imagesCreated} images, ` +
+          `${stats.connectionsCreated} connections, ${stats.errors} errors | ` +
+          `${rate.toFixed(1)}/s | elapsed: ${elapsedSec.toFixed(1)}s`
       );
     },
   });
 
-  return mergeStats(batchResults);
+  return { ...stats, lastProcessedEnd };
 }
 
 // --- Main Handler ---
 
 export default WebhookEndpoint(async (req, res) => {
-  const result = querySchema.safeParse(req.query);
-  if (!result.success) {
-    return res.status(400).json({ ok: false, error: z.treeifyError(result.error) });
+  const parsed = querySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ ok: false, error: z.treeifyError(parsed.error) });
   }
-
-  const params = result.data;
+  const params = parsed.data;
   const startTime = Date.now();
-
-  log(
-    `Starting article image scan${params.dryRun ? ' (DRY RUN)' : ''} with batchSize ${
-      params.batchSize
-    }, concurrency ${params.concurrency}, scanConcurrency ${params.scanConcurrency}`
-  );
 
   try {
     if (params.rollback) {
-      const rollbackResult = await runRollback(params);
+      const result = await runRollback(params);
       const duration = ((Date.now() - startTime) / 1000).toFixed(2);
       log(`Rollback completed in ${duration}s`);
-
       return res.status(200).json({
         ok: true,
         mode: 'rollback',
         dryRun: params.dryRun,
         duration: `${duration}s`,
-        result: rollbackResult,
+        result,
       });
     }
 
-    const aggregated = await runImageScan(params, res);
+    log(
+      `Starting migration${params.dryRun ? ' (DRY RUN)' : ''} with ` +
+        `batchSize=${params.batchSize}, concurrency=${params.concurrency}, start=${params.start}`
+    );
+
+    const { lastProcessedEnd, ...stats } = await runMigration(params, res);
+
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
-    log(`Process completed successfully in ${duration}s`);
+    log(`Migration completed in ${duration}s (lastProcessedEnd=${lastProcessedEnd}).`);
 
     res.status(200).json({
       ok: true,
       dryRun: params.dryRun,
       duration: `${duration}s`,
-      result: {
-        articlesProcessed: aggregated.articlesProcessed,
-        imagesCreated: aggregated.imagesCreated,
-        connectionsCreated: aggregated.connectionsCreated,
-        imagesScanned: aggregated.imagesScanned,
-        imagesFailed: aggregated.imagesFailed,
-        errorCount: aggregated.errors.length,
-        errorsSample: aggregated.errors.slice(0, 10),
-      },
+      lastProcessedEnd,
+      result: stats,
     });
   } catch (error) {
     const duration = ((Date.now() - startTime) / 1000).toFixed(2);
     log(`Process failed after ${duration}s:`, error);
-
     res.status(500).json({
       ok: false,
       error: (error as Error).message,
