@@ -28,8 +28,14 @@ export function useAppContext() {
   if (!context) throw new Error('missing AppProvider in tree');
   return context;
 }
-export function useServerDomains() {
-  return useAppContext().serverDomains;
+
+export function useServerDomains(): Record<ColorDomain, string> {
+  const { serverDomains } = useAppContext();
+  return {
+    green: serverDomains.green ?? 'civitai.green',
+    blue: serverDomains.blue ?? 'civitai.com',
+    red: serverDomains.red ?? 'civitai.red',
+  };
 }
 export function AppProvider({
   children,

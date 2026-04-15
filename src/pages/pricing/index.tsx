@@ -54,7 +54,7 @@ export default function Pricing() {
       };
 
       window.open(
-        `//${serverDomains.green as string}/pricing?${QS.stringify(query)}`,
+        `//${serverDomains.green}/pricing?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );

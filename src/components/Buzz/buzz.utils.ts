@@ -30,7 +30,7 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
       };
 
       window.open(
-        `//${serverDomains.green as string}/purchase/buzz?${QS.stringify(query)}`,
+        `//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );

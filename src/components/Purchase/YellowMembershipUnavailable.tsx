@@ -7,7 +7,7 @@ import { QS } from '~/utils/qs';
 
 export function YellowMembershipUnavailable() {
   const serverDomains = useServerDomains();
-  const greenPricingUrl = `//${serverDomains.green as string}/pricing?${QS.stringify({ buzzType: 'green', 'sync-account': 'blue' })}`;
+  const greenPricingUrl = `//${serverDomains.green}/pricing?${QS.stringify({ buzzType: 'green', 'sync-account': 'blue' })}`;
 
   return (
     <Stack gap="lg" style={{ maxWidth: 600, margin: '0 auto' }}>

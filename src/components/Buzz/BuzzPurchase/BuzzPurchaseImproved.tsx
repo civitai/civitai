@@ -359,7 +359,7 @@ export const BuzzPurchaseImproved = ({
       };
 
       window.open(
-        `//${serverDomains.green || 'green.civitai.com'}/purchase/buzz?${QS.stringify(query)}`,
+        `//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );
