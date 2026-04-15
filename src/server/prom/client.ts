@@ -1,6 +1,8 @@
 import type { Counter } from 'prom-client';
 import client from 'prom-client';
-import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { datapacketDbRead } from '~/server/db/datapacketDb';
+import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
+import { pgDbRead, pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 
 const PROM_PREFIX = 'civitai_app_';
 export function registerCounter({ name, help }: { name: string; help: string }) {
@@ -184,6 +186,47 @@ if (!global.pgGaugeInitialized) {
     help: 'node postgres write waiting count',
     collect() {
       this.set(pgDbWrite.waitingCount);
+    },
+  });
+
+  // Labeled pool metrics for all pools
+  new client.Gauge({
+    name: 'node_postgres_pool_total_count',
+    help: 'Total connections in pg pool',
+    labelNames: ['pool'],
+    collect() {
+      this.set({ pool: 'read' }, pgDbRead?.totalCount ?? 0);
+      this.set({ pool: 'write' }, pgDbWrite?.totalCount ?? 0);
+      this.set({ pool: 'read_long' }, pgDbReadLong?.totalCount ?? 0);
+      this.set({ pool: 'notif_read' }, notifDbRead?.totalCount ?? 0);
+      this.set({ pool: 'notif_write' }, notifDbWrite?.totalCount ?? 0);
+      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.totalCount ?? 0);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_pool_idle_count',
+    help: 'Idle connections in pg pool',
+    labelNames: ['pool'],
+    collect() {
+      this.set({ pool: 'read' }, pgDbRead?.idleCount ?? 0);
+      this.set({ pool: 'write' }, pgDbWrite?.idleCount ?? 0);
+      this.set({ pool: 'read_long' }, pgDbReadLong?.idleCount ?? 0);
+      this.set({ pool: 'notif_read' }, notifDbRead?.idleCount ?? 0);
+      this.set({ pool: 'notif_write' }, notifDbWrite?.idleCount ?? 0);
+      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.idleCount ?? 0);
+    },
+  });
+  new client.Gauge({
+    name: 'node_postgres_pool_waiting_count',
+    help: 'Waiting connections in pg pool',
+    labelNames: ['pool'],
+    collect() {
+      this.set({ pool: 'read' }, pgDbRead?.waitingCount ?? 0);
+      this.set({ pool: 'write' }, pgDbWrite?.waitingCount ?? 0);
+      this.set({ pool: 'read_long' }, pgDbReadLong?.waitingCount ?? 0);
+      this.set({ pool: 'notif_read' }, notifDbRead?.waitingCount ?? 0);
+      this.set({ pool: 'notif_write' }, notifDbWrite?.waitingCount ?? 0);
+      this.set({ pool: 'datapacket_read' }, datapacketDbRead?.waitingCount ?? 0);
     },
   });
 
