@@ -69,9 +69,20 @@ export const articleWhereSchema = baseQuerySchema.extend({
   pending: z.boolean().optional(),
 });
 
+// Composite keyset cursor for stable feed pagination. `v` is the primary sort
+// value (rank column or publishedAt/updatedAt epoch); `id` is the article-id
+// tiebreaker. Without the tiebreaker, ranked sorts (MostBookmarks, etc.) would
+// terminate after a single page whenever the last row had a NULL rank — see
+// getArticles for the traversal logic.
+export const articleCursorSchema = z.object({
+  v: z.coerce.number(),
+  id: z.coerce.number(),
+});
+export type ArticleCursor = z.infer<typeof articleCursorSchema>;
+
 export type GetInfiniteArticlesSchema = z.infer<typeof getInfiniteArticlesSchema>;
 export const getInfiniteArticlesSchema = infiniteQuerySchema
-  .extend({ cursor: z.preprocess((val) => Number(val), z.number()).optional() })
+  .extend({ cursor: articleCursorSchema.optional() })
   .merge(userPreferencesForArticlesSchema)
   .merge(articleWhereSchema);
 

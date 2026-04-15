@@ -104,6 +104,8 @@ Commands:
   index <name> filterable    Get filterable attributes
   index <name> sortable      Get sortable attributes
   index <name> searchable    Get searchable attributes
+  document <index> <id>      Fetch a specific document by id
+  search <index> [filter]    Run a search with optional filter (q is empty)
 
 Options:
   --feed         Use feed/metrics search (METRICS_SEARCH_HOST)
@@ -342,6 +344,39 @@ async function main() {
           console.error('Valid subcommands: settings, filterable, sortable, searchable');
           process.exit(1);
         }
+        break;
+      }
+
+      case 'document': {
+        if (!commandArg || !commandArg2) {
+          console.error('Error: document command requires <index> and <id>');
+          process.exit(1);
+        }
+        try {
+          const data = await request(`/indexes/${commandArg}/documents/${commandArg2}`);
+          console.log(JSON.stringify(data, null, 2));
+        } catch (err) {
+          if (err.message.includes('HTTP 404')) {
+            console.log(JSON.stringify({ error: 'NOT_FOUND', index: commandArg, id: commandArg2 }, null, 2));
+          } else {
+            throw err;
+          }
+        }
+        break;
+      }
+
+      case 'search': {
+        if (!commandArg) {
+          console.error('Error: search command requires <index>');
+          process.exit(1);
+        }
+        const body = { q: '', limit };
+        if (commandArg2) body.filter = commandArg2;
+        const data = await request(`/indexes/${commandArg}/search`, {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        console.log(JSON.stringify(data, null, 2));
         break;
       }
 

@@ -12,6 +12,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
 import type {
+  ArticleCursor,
   ArticleMetadata,
   GetInfiniteArticlesSchema,
   GetModeratorArticlesSchema,
@@ -333,29 +334,59 @@ export const getArticles = async ({
       AND.push(publishedAtFilter);
     }
 
-    let orderBy = `a."publishedAt" DESC NULLS LAST`;
-    if (sort === ArticleSort.MostBookmarks)
-      orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
-    else if (sort === ArticleSort.MostComments)
-      orderBy = `rank."commentCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
-    else if (sort === ArticleSort.MostReactions)
-      orderBy = `rank."reactionCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
-    else if (sort === ArticleSort.MostCollected)
-      orderBy = `rank."collectedCount${period}Rank" ASC NULLS LAST, ${orderBy}`;
-    else if (sort === ArticleSort.RecentlyUpdated)
-      orderBy = `a."updatedAt" DESC NULLS LAST, ${orderBy}`;
+    // --- Sort & keyset-pagination setup ---
+    //
+    // `sortExpr` resolves to a non-NULL numeric value: rank columns come from a
+    // LEFT JOIN on "ArticleRank" and are NULL for articles with no ranking
+    // in the current period (the common case for recently-ingested articles),
+    // so we coalesce to INT_MAX so they sort last under ASC instead of
+    // terminating the cursor (`nextCursor` used to become `undefined` the
+    // moment a page's last row had a NULL rank → feed stopped after page 1).
+    //
+    // Pagination is a keyset on (sortExpr, a.id DESC). `a.id` is the
+    // tiebreaker so pages are deterministic even when many articles share
+    // the same sort value (e.g. the INT_MAX sentinel).
+    const NULL_RANK_SENTINEL = 2147483647; // max int32 — sorts after any real rank under ASC
+    const rankExpr = (col: string) => `COALESCE(rank."${col}${period}Rank", ${NULL_RANK_SENTINEL})`;
 
-    // eslint-disable-next-line prefer-const
-    let [cursorProp, cursorDirection] = orderBy?.split(' ');
-
-    if (cursorProp === 'a."publishedAt"' || cursorProp === 'a."updatedAt"') {
-      // treats a date as a number of seconds since epoch
-      cursorProp = `extract(epoch from ${cursorProp})`;
+    let sortExpr: string;
+    let sortDir: 'ASC' | 'DESC';
+    switch (sort) {
+      case ArticleSort.MostBookmarks:
+      case ArticleSort.MostCollected:
+        sortExpr = rankExpr('collectedCount');
+        sortDir = 'ASC';
+        break;
+      case ArticleSort.MostComments:
+        sortExpr = rankExpr('commentCount');
+        sortDir = 'ASC';
+        break;
+      case ArticleSort.MostReactions:
+        sortExpr = rankExpr('reactionCount');
+        sortDir = 'ASC';
+        break;
+      case ArticleSort.RecentlyUpdated:
+        sortExpr = `extract(epoch from a."updatedAt")`;
+        sortDir = 'DESC';
+        break;
+      case ArticleSort.Newest:
+      default:
+        sortExpr = `extract(epoch from a."publishedAt")`;
+        sortDir = 'DESC';
+        break;
     }
 
+    const sortExprSql = Prisma.raw(sortExpr);
+    const orderBy = Prisma.sql`${sortExprSql} ${Prisma.raw(sortDir)}, a.id DESC`;
+
     if (cursor) {
-      const cursorOperator = cursorDirection === 'DESC' ? '<=' : '>=';
-      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+      // Keyset predicate: strictly "after" (cursor.v, cursor.id) in the ordering.
+      // Tiebreaker is always id DESC regardless of primary sort direction.
+      const primaryOp = Prisma.raw(sortDir === 'DESC' ? '<' : '>');
+      AND.push(Prisma.sql`(
+        ${sortExprSql} ${primaryOp} ${cursor.v}
+        OR (${sortExprSql} = ${cursor.v} AND a.id < ${cursor.id})
+      )`);
     }
 
     if (clubId) {
@@ -385,7 +416,7 @@ export const getArticles = async ({
       ${clubId ? Prisma.sql`JOIN "clubArticles" ca ON ca."articleId" = a."id"` : Prisma.sql``}
       WHERE ${Prisma.join(AND, ' AND ')}
     `;
-    const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorId: number })[]>`
+    const articles = await dbRead.$queryRaw<(ArticleRaw & { cursorV: number })[]>`
       ${queryWith}
       SELECT
         a.id,
@@ -445,16 +476,16 @@ export const getArticles = async ({
           WHERE uc."userId" = a."userId" AND uc."equippedToId" IS NULL
           GROUP BY uc."userId"
         ) as "userCosmetics",
-        ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
+        ${sortExprSql} as "cursorV"
       ${queryFrom}
-      ORDER BY ${Prisma.raw(orderBy)}
+      ORDER BY ${orderBy}
       LIMIT ${take}
     `;
 
-    let nextCursor: number | undefined;
+    let nextCursor: ArticleCursor | undefined;
     if (articles.length > limit) {
       const nextItem = articles.pop();
-      nextCursor = nextItem?.cursorId || undefined;
+      if (nextItem) nextCursor = { v: Number(nextItem.cursorV), id: nextItem.id };
     }
 
     const profilePictures = await dbRead.image.findMany({
@@ -486,7 +517,7 @@ export const getArticles = async ({
 
         return true;
       })
-      .map(({ tags, user, userCosmetics, cursorId, ...article }) => {
+      .map(({ tags, user, userCosmetics, cursorV, ...article }) => {
         const { profilePictureId, ...u } = user;
         const profilePicture = profilePictures.find((p) => p.id === profilePictureId) ?? null;
         const coverImage = coverImages.find((x) => x.id === article.coverId);
