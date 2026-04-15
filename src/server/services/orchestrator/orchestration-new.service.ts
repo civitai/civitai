@@ -1322,6 +1322,19 @@ export function formatStepOutputs(
         height = params.upscaleHeight as number | undefined;
       }
 
+      // Check top-level targetDimensions (upscale workflows store per-image output
+      // dimensions here; use the matching index or first entry as fallback)
+      if (!width || !height) {
+        const targetDims = params.targetDimensions as
+          | Array<{ width?: number; height?: number }>
+          | undefined;
+        const dims = targetDims?.[index] ?? targetDims?.[0];
+        if (dims?.width && dims?.height) {
+          width = dims.width;
+          height = dims.height;
+        }
+      }
+
       // Fall back to source dimensions from params (input image dims for img2img,
       // or aspect ratio target dims for txt2img)
       if (!width || !height) {
@@ -1481,8 +1494,6 @@ function formatStep(
       stepType: step.$type,
     });
     finalParams = removeEmpty({ ...resolvedParams, ...mapped });
-  } else if (resolvedParams) {
-    finalParams = resolvedParams;
   }
 
   // For dimension resolution, use step params or fall back to workflow params
