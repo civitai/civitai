@@ -304,12 +304,14 @@ function PriorityAlertSpace({
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
+    isLoading: isBuzzLoading,
   } = useQueryBuzz(availableTypes);
   const totalCost = useTotalGenerationCost();
 
   // Check if user has insufficient buzz of the selected type
+  // Don't show insufficient buzz until the buzz query has resolved
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
-  const insufficientBuzz = totalCost > 0 && selectedBalance < totalCost;
+  const insufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
 
   // Find an alternative buzz type that has enough balance
   const alternativeType = insufficientBuzz
@@ -416,9 +418,10 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   // Check if user has enough of the selected buzz type
   const {
     data: { accounts },
+    isLoading: isBuzzLoading,
   } = useQueryBuzz([selectedType]);
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
-  const insufficientBuzz = totalCost > 0 && balance < totalCost;
+  const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
 
   const handleClick = () => {
     if (running) helpers?.next();
@@ -432,7 +435,7 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={isWhatIfLoading || isError || !canEstimateCost || insufficientBuzz}
+      disabled={isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz}
       onClick={handleClick}
     />
   );
