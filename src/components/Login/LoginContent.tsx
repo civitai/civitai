@@ -51,7 +51,7 @@ export function LoginContent(args: {
   const showCivitaiLogin = !isOnGreen && !!greenDomain;
   const civitaiLoginHref = showCivitaiLogin
     ? `//${greenDomain}/login?returnUrl=${encodeURIComponent(
-        `//${currentHost}${returnUrl}?sync-account=green`
+        `https://${currentHost}${returnUrl}?sync-account=green`
       )}`
     : undefined;
 
