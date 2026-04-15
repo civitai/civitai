@@ -37,6 +37,7 @@ export const articleDetailSelect = Prisma.validator<Prisma.ArticleSelect>()({
       collectedCountAllTime: true,
     },
   },
+  ingestion: true,
   availability: true,
   userId: true,
   coverImage: { select: imageSelect },

@@ -286,3 +286,10 @@ export const buzzToUsdc = (buzzAmount: number): number => {
   // Returns USDC amount (e.g., 5.00 for 5000 Buzz)
   return buzzAmount / constants.buzz.buzzDollarRatio;
 };
+
+/** Format a multiplier for display, avoiding floating point artifacts like 1.5000000000000002 */
+export function formatMultiplier(value: number): string {
+  if (!Number.isFinite(value)) return '1x';
+  const rounded = Number(value.toFixed(2));
+  return `${rounded}x`;
+}

@@ -224,9 +224,9 @@ export async function getInfiniteChallenges(
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
   }
 
-  // Content level filter - only show challenges whose nsfwLevel is within the browsing level
+  // Content level filter - only show challenges whose allowedNsfwLevel intersects the browsing level
   if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
+    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
   }
 
   // User participation filter (requires logged-in user)
@@ -2234,7 +2234,7 @@ export async function getCompletedChallengesWithWinners(
   }
 
   if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
+    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
   }
 
   if (query) {

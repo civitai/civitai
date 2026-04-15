@@ -2487,6 +2487,15 @@ enum ArticleStatus {
   Published
   Unpublished
   UnpublishedViolation
+  Processing
+}
+
+enum ArticleIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+  Rescan
 }
 
 model Article {
@@ -2502,6 +2511,9 @@ model Article {
   coverId          Int?          @unique
   coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
+  contentScannedAt DateTime?              // Set when both image + text scans complete successfully
+  ingestion        ArticleIngestionStatus @default(Pending)
+  scanRequestedAt  DateTime?
   userId           Int
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   availability     Availability  @default(Public)
@@ -2521,6 +2533,8 @@ model Article {
   engagements     ArticleEngagement[]
   associations    ModelAssociations[]
   collectionItems CollectionItem[]
+
+  @@index([status, ingestion, nsfwLevel])
 }
 
 model PressMention {

@@ -13,7 +13,8 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
+import { ModalSubmitButton } from '~/components/Orchestrator/components/GenerateButton';
+import { generationFormStore } from '~/store/generation-form.store';
 import { GenForm } from '~/components/Generation/Form/GenForm';
 import { useForm } from '~/libs/form';
 import { Radio } from '~/libs/form/components/RadioGroup';
@@ -122,6 +123,7 @@ export function VideoInterpolationModal({
     const totalCost = whatIf.data?.cost?.total ?? 0;
 
     async function performTransaction() {
+      const { buzzType } = generationFormStore.getState();
       await generateMutation.mutateAsync({
         input: {
           workflow: 'vid2vid:interpolate',
@@ -129,6 +131,7 @@ export function VideoInterpolationModal({
           interpolationFactor: data.interpolationFactor,
         },
         sourceMetadata: metadata,
+        ...(buzzType ? { buzzType } : {}),
       });
       dialog.onClose();
     }
@@ -196,16 +199,14 @@ export function VideoInterpolationModal({
                   {generateMutation.error.message}
                 </Notification>
               )}
-              <GenerateButton
+              <ModalSubmitButton
                 type="submit"
-                loading={whatIf.isInitialLoading || generateMutation.isLoading}
+                loading={generateMutation.isLoading}
+                disabled={whatIf.isInitialLoading || whatIf.isError}
                 cost={whatIf.data?.cost?.total ?? 0}
-                disabled={whatIf.isError}
-                allowMatureContent={whatIf.data?.allowMatureContent}
-                transactions={whatIf.data?.transactions}
               >
                 Interpolate
-              </GenerateButton>
+              </ModalSubmitButton>
             </>
           )}
         </GenForm>

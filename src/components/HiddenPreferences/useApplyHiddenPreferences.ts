@@ -648,10 +648,22 @@ function filterPreferences<
       const challenges = value.filter((challenge) => {
         const isOwner = challenge.createdBy.id === currentUser?.id;
         if ((isOwner || isModerator) && challenge.nsfwLevel === 0) return true;
-        if (!Flags.intersects(challenge.nsfwLevel, browsingLevel)) {
+
+        // Content allowed by the challenge must intersect the user's browsing level
+        if (!Flags.intersects(challenge.allowedNsfwLevel, browsingLevel)) {
           hidden.browsingLevel++;
           return false;
         }
+
+        // Must have a cover image whose own nsfwLevel is visible at this browsing level
+        if (
+          !challenge.coverImage ||
+          !Flags.intersects(challenge.coverImage.nsfwLevel, browsingLevel)
+        ) {
+          hidden.browsingLevel++;
+          return false;
+        }
+
         return true;
       });
       return { items: challenges, hidden };
@@ -788,6 +800,8 @@ type BaseComic = {
 type BaseChallenge = {
   id: number;
   nsfwLevel: number;
+  allowedNsfwLevel: number;
+  coverImage: { id: number; nsfwLevel: number } | null;
   createdBy: { id: number };
 };
 

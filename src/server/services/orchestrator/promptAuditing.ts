@@ -278,10 +278,10 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     let message: string;
 
     if (isGreen) {
-      // civitai.green - stricter message for SFW-only domain
+      // SFW-only domain (civitai.com) - stricter message
       message = `Your prompt was flagged: ${error.blockedFor.join(
         ', '
-      )}.\n\nCivitai.green is intended for SFW content only. For NSFW content generation, please visit civitai.com where you have more freedom to generate mature content.`;
+      )}.\n\nCivitai.com is intended for SFW content only. For NSFW content generation, please visit civitai.red where you have more freedom to generate mature content.`;
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 

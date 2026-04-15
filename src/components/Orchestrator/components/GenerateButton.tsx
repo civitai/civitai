@@ -1,46 +1,35 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Text } from '@mantine/core';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+
+import { useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { buzzSpendTypes, BuzzTypes } from '~/shared/constants/buzz.constants';
-import type { TransactionInfo } from '@civitai/client';
-import { isDefined } from '~/utils/type-guards';
 
 export function GenerateButton({
-  cost = 0,
   loading,
   children = 'Generate',
-  error,
   onClick,
   disabled,
-  transactions,
-  allowMatureContent,
+  // Legacy props — accepted for backwards compatibility but no longer used
+  cost: _cost,
+  error: _error,
+  transactions: _transactions,
+  allowMatureContent: _allowMatureContent,
   ...buttonProps
 }: {
   cost?: number;
-  transactions?: TransactionInfo[];
-  loading?: boolean;
   error?: string;
-  onClick?: () => void;
+  transactions?: unknown[];
+  loading?: boolean;
+  onClick?: (() => void) | React.MouseEventHandler<HTMLButtonElement>;
   allowMatureContent?: boolean | null;
 } & ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
-  const currentUser = useCurrentUser();
-  const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
-  const availableBuzzTypes = useAvailableBuzz([allowMatureContent ? 'yellow' : 'blue']);
-
   const { size = 'lg' } = buttonProps;
-  const accountTypes = transactions
-    ?.filter((x) => x.accountType)
-    .map((x) => BuzzTypes.toSpendType(x.accountType!))
-    .filter(isDefined);
 
-  return !status.charge || !currentUser ? (
+  return (
     <LoginRedirect reason="image-gen">
       <Button
         {...buttonProps}
@@ -48,23 +37,35 @@ export function GenerateButton({
         loading={loading}
         disabled={!canGenerate || disabled}
         onClick={onClick}
+        className={buttonProps.className}
+        style={{
+          ...buttonProps.style,
+          borderWidth: '1px 0 1px 1px',
+          borderStyle: 'solid',
+          borderColor: 'var(--mantine-color-default-border)',
+        }}
       >
         <Text ta="center">{children}</Text>
       </Button>
     </LoginRedirect>
-  ) : (
-    <BuzzTransactionButton
-      {...buttonProps}
-      size={size}
-      label={children}
-      loading={loading}
-      disabled={!canGenerate || !cost || disabled}
-      buzzAmount={cost}
-      onPerformTransaction={onClick}
-      error={error}
-      accountTypes={!!accountTypes?.length ? accountTypes : availableBuzzTypes}
-      showPurchaseModal
-      showTypePct
-    />
+  );
+}
+
+/**
+ * Generate button colored by the user's selected buzz type.
+ * For use in modals (UpscaleImageModal, UpscaleVideoModal, etc.).
+ */
+export function ModalSubmitButton({
+  children = 'Generate',
+  cost: _cost,
+  ...buttonProps
+}: { cost?: number } & ButtonProps & Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
+  const { selectedType } = useSelectedBuzzType();
+  const { color } = useBuzzCurrencyConfig(selectedType);
+
+  return (
+    <GenerateButton {...buttonProps} color={color}>
+      {children}
+    </GenerateButton>
   );
 }

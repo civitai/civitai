@@ -106,7 +106,9 @@ export type CosmeticEntity = "Model" | "Image" | "Article" | "Post";
 
 export type BuzzAccountType = "user" | "generation" | "club" | "green" | "fakered";
 
-export type ArticleStatus = "Draft" | "Published" | "Unpublished" | "UnpublishedViolation";
+export type ArticleStatus = "Draft" | "Published" | "Unpublished" | "UnpublishedViolation" | "Processing";
+
+export type ArticleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error" | "Rescan";
 
 export type ArticleEngagementType = "Favorite" | "Hide";
 
@@ -1963,6 +1965,9 @@ export interface Article {
   coverId: number | null;
   coverImage?: Image | null;
   publishedAt: Date | null;
+  contentScannedAt: Date | null;
+  ingestion: ArticleIngestionStatus;
+  scanRequestedAt: Date | null;
   userId: number;
   user?: User;
   availability: Availability;
