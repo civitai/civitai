@@ -39,7 +39,6 @@ import type { useActiveSubscription } from '~/components/Stripe/memberships.util
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import { colorDomains } from '~/shared/constants/domain.constants';
 
 interface MembershipPlansProps {
   reason?: JoinRedirectReason;

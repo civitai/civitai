@@ -5,8 +5,8 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
-import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useServerDomains } from '~/providers/AppProvider';
 import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -20,6 +20,7 @@ const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 
 export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
   const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
 
   return async function (props: BuyBuzzModalProps) {
     if (!features.canBuyBuzz) {
@@ -29,7 +30,7 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
       };
 
       window.open(
-        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN as string}/purchase/buzz?${QS.stringify(query)}`,
+        `//${serverDomains.green as string}/purchase/buzz?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );

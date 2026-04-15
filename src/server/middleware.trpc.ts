@@ -7,7 +7,7 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { UserPreferencesInput } from '~/server/schema/base.schema';
 import { getAllHiddenForUser } from '~/server/services/user-preferences.service';
 import { middleware } from '~/server/trpc';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 import type { ExtendedUser } from '~/types/next-auth';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { hashifyObject, slugit } from '~/utils/string-helpers';

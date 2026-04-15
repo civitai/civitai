@@ -2,12 +2,12 @@ import { showNotification } from '@mantine/notifications';
 import type { SessionUser } from 'next-auth';
 import { useEffect } from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
-import type { ColorDomain } from '~/shared/constants/domain.constants';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { useServerDomains } from '~/providers/AppProvider';
+import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 
-async function getSyncToken(syncAccount: ColorDomain = 'blue') {
-  const domain = colorDomains[syncAccount];
+async function getSyncToken(serverDomains: ServerDomains, syncAccount: ColorDomain = 'blue') {
+  const domain = serverDomains[syncAccount];
   const res = await fetch(`//${domain}/api/auth/sync`, {
     credentials: 'include',
   });
@@ -19,6 +19,7 @@ async function getSyncToken(syncAccount: ColorDomain = 'blue') {
 let isSyncing = false;
 export function useDomainSync(currentUser: SessionUser | undefined, status: string) {
   const { swapAccount } = useAccountContext();
+  const serverDomains = useServerDomains();
 
   useEffect(() => {
     if (isSyncing || typeof window === 'undefined') return;
@@ -26,10 +27,10 @@ export function useDomainSync(currentUser: SessionUser | undefined, status: stri
     const { searchParams, host } = new URL(window.location.href);
     const syncColor = searchParams.get('sync-account') as ColorDomain | null;
     if (!syncColor) return;
-    const syncDomain = colorDomains[syncColor];
+    const syncDomain = serverDomains[syncColor];
     if (!syncDomain || host === syncDomain || status === 'loading') return;
 
-    getSyncToken(syncColor).then((data) => {
+    getSyncToken(serverDomains, syncColor).then((data) => {
       if (!data) return;
       const { token, userId, username } = data;
       if (currentUser?.id === userId) return;

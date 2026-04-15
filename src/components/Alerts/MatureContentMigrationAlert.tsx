@@ -3,15 +3,16 @@ import { Button, CloseButton, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
 import { useSession } from 'next-auth/react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useServerDomains } from '~/providers/AppProvider';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { colorDomains } from '~/shared/constants/domain.constants';
 import { trpc } from '~/utils/trpc';
 
 const ALERT_ID = 'mature-content-migration';
 
 export function MatureContentMigrationAlert() {
   const { isGreen } = useFeatureFlags();
+  const serverDomains = useServerDomains();
   const { data: session } = useSession();
   const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery();
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
@@ -57,7 +58,7 @@ export function MatureContentMigrationAlert() {
 
   if (!isGreen || !hasNsfwEnabled || settingsLoading || isDismissed) return null;
 
-  const redDomain = colorDomains.red;
+  const redDomain = serverDomains.red;
   const redUrl = redDomain
     ? `//${redDomain}?sync-account=green`
     : 'https://civitai.red?sync-account=green';

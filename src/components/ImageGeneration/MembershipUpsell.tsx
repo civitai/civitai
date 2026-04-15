@@ -4,7 +4,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { useServerDomains } from '~/providers/AppProvider';
 
 const BLUE_BUZZ_ACKNOWLEDGED_KEY = 'blue-buzz-mature-acknowledged';
 
@@ -41,12 +41,13 @@ export function useMembershipUpsell() {
 export function MembershipUpsell() {
   const { canShow, acknowledged } = useMembershipUpsell();
   const { setBuzzType } = useSelectedBuzzType();
+  const serverDomains = useServerDomains();
   const [, setAcknowledged] = useLocalStorage({
     key: BLUE_BUZZ_ACKNOWLEDGED_KEY,
     defaultValue: false,
   });
 
-  const pricingUrl = colorDomains.green ? `//${colorDomains.green}/pricing` : '/pricing';
+  const pricingUrl = serverDomains.green ? `//${serverDomains.green}/pricing` : '/pricing';
 
   if (!canShow) return null;
 

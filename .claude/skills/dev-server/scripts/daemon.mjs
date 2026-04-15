@@ -112,7 +112,7 @@ function updateEnvUrlsForPort(envVars, port) {
     'NEXTAUTH_URL',
     'NEXTAUTH_URL_INTERNAL',
     'NEXT_PUBLIC_BASE_URL',
-    'NEXT_PUBLIC_SERVER_DOMAIN_BLUE', // This one uses domain:port format
+    'SERVER_DOMAIN_BLUE', // This one uses domain:port format
   ];
 
   for (const varName of urlVars) {

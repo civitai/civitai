@@ -1,5 +1,4 @@
 import { NextResponse } from 'next/server';
-import { env } from '~/env/client';
 import { createMiddleware } from '~/server/middleware/middleware-utils';
 import {
   regionMiddlewareMatcher,
@@ -15,7 +14,7 @@ export const regionRestrictionMiddleware = createMiddleware({
 
     // Don't run if we're already on the green domain
     const host = request.headers.get('host');
-    if (host === env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN) {
+    if (host === process.env.SERVER_DOMAIN_GREEN) {
       return false;
     }
 
@@ -32,10 +31,10 @@ export const regionRestrictionMiddleware = createMiddleware({
     // Check if the user is from a restricted region
     if (isRegionRestricted(region)) {
       // Get the green domain URL
-      const greenDomain = env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN;
+      const greenDomain = process.env.SERVER_DOMAIN_GREEN;
 
       if (!greenDomain) {
-        console.warn('NEXT_PUBLIC_SERVER_DOMAIN_GREEN is not configured');
+        console.warn('SERVER_DOMAIN_GREEN is not configured');
         return;
       }
 

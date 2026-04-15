@@ -20,7 +20,7 @@ import {
 import { useSession } from 'next-auth/react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { useServerDomains } from '~/providers/AppProvider';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
 export function SensitiveShield({
@@ -38,6 +38,7 @@ export function SensitiveShield({
   const router = useRouter();
   const { canViewNsfw } = useFeatureFlags();
   const { status } = useSession();
+  const redDomain = useServerDomains().red;
 
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
 
@@ -45,7 +46,6 @@ export function SensitiveShield({
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
     if (isLoading) return <PageLoader />;
 
-    const redDomain = colorDomains.red;
     const redUrl = redDomain
       ? `//${redDomain}${router.asPath}?sync-account=green`
       : `https://civitai.red${router.asPath}?sync-account=green`;

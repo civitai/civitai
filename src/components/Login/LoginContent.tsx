@@ -14,7 +14,7 @@ import { providers, SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 import { Currency } from '~/shared/utils/prisma/enums';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { useServerDomains } from '~/providers/AppProvider';
 import { handleSignIn } from '~/utils/auth-helpers';
 import { setCookie } from '~/utils/cookies-helpers';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
@@ -45,7 +45,7 @@ export function LoginContent(args: {
   const message = reason ? loginRedirectReasons[reason] : args.message;
 
   // Show "Login with [green domain]" on any domain that isn't green (.com)
-  const greenDomain = colorDomains.green;
+  const greenDomain = useServerDomains().green;
   const currentHost = typeof window !== 'undefined' ? window.location.host : '';
   const isOnGreen = currentHost === greenDomain;
   const showCivitaiLogin = !isOnGreen && !!greenDomain;
