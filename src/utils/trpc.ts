@@ -20,6 +20,46 @@ type RequestHeaders = {
 };
 
 const url = '/api/trpc';
+
+/**
+ * Max URL length before we convert a GET query to POST.
+ * Keeps total header size (URL + cookies) under typical proxy limits (~8KB).
+ */
+const MAX_GET_URL_LENGTH = 4000;
+
+/**
+ * Custom fetch that converts large GET requests to POST with a method override
+ * header. This prevents HTTP 431 (Request Header Fields Too Large) when query
+ * inputs are large (e.g. whatIfFromGraph with many resources and long prompts).
+ *
+ * The server-side handler in `[trpc].ts` reads `x-trpc-method-override` and
+ * translates the request back to GET so tRPC resolves it as a query — preserving
+ * the full query cache on the client.
+ */
+const largeFetch: typeof fetch = (input, init) => {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : '';
+  if (init?.method === 'GET' && url.length > MAX_GET_URL_LENGTH) {
+    const [base, query] = url.split('?', 2);
+    const params = new URLSearchParams(query);
+    const body = params.get('input');
+    // Strip input from URL, keep other params (like batch=1)
+    params.delete('input');
+    const remaining = params.toString();
+    const newUrl = remaining ? `${base}?${remaining}` : base;
+
+    return fetch(newUrl, {
+      ...init,
+      method: 'POST',
+      body,
+      headers: {
+        ...(init?.headers as Record<string, string>),
+        'content-type': 'application/json',
+        'x-trpc-method-override': 'GET',
+      },
+    });
+  }
+  return fetch(input, init);
+};
 const headers: RequestHeaders = {
   'x-client-version': process.env.version,
   'x-client-date': Date.now().toString(),
@@ -74,6 +114,7 @@ export const trpcVanilla: CreateTRPCProxyClient<AppRouter> = createTRPCProxyClie
     }),
     httpLink({
       url,
+      fetch: largeFetch,
       headers: getHeaders(),
     }),
   ],
@@ -96,6 +137,7 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
         }),
         httpLink({
           url: isClient ? url : `${env.NEXT_PUBLIC_BASE_URL as string}${url}`,
+          fetch: isClient ? largeFetch : undefined,
           headers: getHeaders(ctx),
         }),
         // splitLink({
