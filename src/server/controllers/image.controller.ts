@@ -52,7 +52,7 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean, getFliptVariant } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { buildFliptContext } from '~/server/services/feature-flags.service';
 import type {
   GetEntitiesCoverImage,
@@ -297,21 +297,9 @@ export const getInfiniteImagesHandler = async ({
       );
   const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
-  // Meili cache-ops flag: when on, route postId/postIds queries to PG instead of
-  // the search index (Meili or otherwise). Single-post queries are ~2ms in PG via
-  // the covered index and create unique cache keys in Meili that hurt hit rate.
-  const meiliCacheOps = await getFliptBoolean(
-    FLIPT_FEATURE_FLAGS.MEILI_CACHE_OPS,
-    user?.id?.toString() || 'anonymous',
-    buildFliptContext(user)
-  );
-  const forcePgForPostId =
-    meiliCacheOps && (!!input.postId || !!input.postIds?.length);
-
   // Use getAllImagesIndex when useIndex is true OR BitDex is active.
   // Use getAllImages (DB) otherwise.
-  const useIndex =
-    !forcePgForPostId && (useBitdex || (features.imageIndexFeed && input.useIndex));
+  const useIndex = useBitdex || (features.imageIndexFeed && input.useIndex);
 
   if (!useIndex) {
     imagesFeedWithoutIndexCounter.inc();

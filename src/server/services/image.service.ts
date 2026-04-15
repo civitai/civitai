@@ -2052,14 +2052,6 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   offset?: number;
   entry?: number;
   blockedFor?: string[];
-  /**
-   * When true, apply cache-friendly Meilisearch ops:
-   * - skip per-user excludedTagIds / excludedUserIds filters
-   * - gate NSFW license compound behind includesNsfwContent
-   * (Second-pass split for user-own nsfw/publish content — item 4 — is a
-   * follow-up PR. This flag ships only the safe unconditional wins.)
-   */
-  meiliCacheOps?: boolean;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -2288,14 +2280,6 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       context: {},
     });
     if (flag.enabled) searchFn = getImagesFromSearchPostFilter;
-
-    // Evaluate cache-ops flag once; thread through input for the builders to gate on.
-    const cacheOpsFlag = fliptClient.evaluateBoolean({
-      flagKey: FLIPT_FEATURE_FLAGS.MEILI_CACHE_OPS,
-      entityId: input.currentUserId?.toString() || 'anonymous',
-      context: {},
-    });
-    input = { ...input, meiliCacheOps: cacheOpsFlag.enabled };
   }
 
   // Check BitDex mode (off / shadow / primary)
@@ -2645,14 +2629,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   // NSFW License Restrictions Filter
-  // Filter out images with R/X/XXX NSFW levels that use restricted base models.
-  // Cache-ops mode: gate behind includesNsfwContent. The outer nsfwLevel IN filter
-  // already excludes [4,8,16,32] on SFW queries, so this compound is a no-op but
-  // still costs per-query. Mirrors the BitDex fix.
-  if (
-    nsfwRestrictedBaseModels.length > 0 &&
-    (!input.meiliCacheOps || includesNsfwContent)
-  ) {
+  // Filter out images with R/X/XXX NSFW levels that use restricted base models
+  if (nsfwRestrictedBaseModels.length > 0) {
     const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
 
     // Exclude images that have BOTH restricted NSFW levels AND restricted base models
@@ -2690,10 +2668,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
-  // Cache-ops mode: skip per-user excludedTagIds. Injected by tRPC middleware from
-  // the user's hidden tags — unique per user, destroys cache. Frontend already
-  // filters via useApplyHiddenPreferences.
-  if (!input.meiliCacheOps && excludedTagIds?.length) {
+  if (excludedTagIds?.length) {
     // Needed support for this in order to properly support multiple domains.
     filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
   }
@@ -2763,10 +2738,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
   // }
 
-  // Cache-ops mode: skip per-user excludedUserIds NOT IN. Middleware injects the
-  // user's hidden users; destroys cache. Frontend filters via useApplyHiddenPreferences.
   if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
-  else if (!input.meiliCacheOps && excludedUserIds)
+  else if (excludedUserIds)
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
@@ -3471,13 +3444,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
-  // NSFW License Restrictions Filter — gate behind includesNsfwContent in cache-ops
-  // mode. On SFW queries the outer nsfwLevel filter already excludes restricted levels,
-  // so this compound is a no-op but still costs per-query.
-  if (
-    nsfwRestrictedBaseModels.length > 0 &&
-    (!input.meiliCacheOps || includesNsfwContent)
-  ) {
+  // NSFW License Restrictions Filter
+  // Filter out images with R/X/XXX NSFW levels that use restricted base models
+  if (nsfwRestrictedBaseModels.length > 0) {
     const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
 
     // Exclude images that have BOTH restricted NSFW levels AND restricted base models
@@ -3515,10 +3484,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
-  // Cache-ops mode: skip per-user excludedTagIds. Injected by tRPC middleware from
-  // the user's hidden tags — unique per user, destroys cache. Frontend already
-  // filters via useApplyHiddenPreferences.
-  if (!input.meiliCacheOps && excludedTagIds?.length) {
+  if (excludedTagIds?.length) {
     // Needed support for this in order to properly support multiple domains.
     filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
   }
@@ -3590,10 +3556,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
   // }
 
-  // Cache-ops mode: skip per-user excludedUserIds NOT IN. Middleware injects the
-  // user's hidden users; destroys cache. Frontend filters via useApplyHiddenPreferences.
   if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
-  else if (!input.meiliCacheOps && excludedUserIds)
+  else if (excludedUserIds)
     filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
 
   // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
