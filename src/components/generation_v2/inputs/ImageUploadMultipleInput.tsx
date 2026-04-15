@@ -260,7 +260,7 @@ export function ImageUploadMultipleInput({
                     {previewItems.map((item, i) => (
                       <div
                         key={i}
-                        className={clsx('w-[200px]', imageLayout !== 'wrap' && 'shrink-0')}
+                        className={clsx('relative w-[200px]', imageLayout !== 'wrap' && 'shrink-0')}
                       >
                         <SourceImageUploadMultiple.Image index={i} {...item} />
                         {imageAnnotations?.[i] && (

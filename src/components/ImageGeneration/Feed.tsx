@@ -1,7 +1,7 @@
 import { Alert, Center, Loader, Stack, Text, Anchor } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import {
   matchesMarkerTags,
   useGetTextToImageRequestsImages,
@@ -21,7 +21,7 @@ export function Feed() {
   const images = useMemo(
     () =>
       requests.flatMap((r) =>
-        r.succeededImages.filter((img) => matchesMarkerTags(img, markerTags))
+        r.succeededOutput.filter((img) => matchesMarkerTags(img, markerTags))
       ),
     [requests, markerTags]
   );
@@ -84,7 +84,7 @@ export function Feed() {
       {/* <GeneratedImagesBuzzPrompt /> */}
       <div className={classes.grid} data-testid="generation-feed-list">
         {images.map((image) => (
-          <GeneratedImage key={`${image.workflow.id}_${image.id}`} image={image} />
+          <GeneratedOutput key={`${image.workflow.id}_${image.id}`} image={image} />
         ))}
       </div>
 

@@ -26,7 +26,7 @@ import {
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
-import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
   useGenerationConfig,
@@ -98,12 +98,12 @@ export function QueueItem({
   const params = request.params;
   const resources = request.resources;
 
-  const allImages = request.steps.flatMap((s) => s.images);
+  const allImages = request.steps.flatMap((s) => s.output);
 
   const stepErrors = request.steps.flatMap((s) => s.errors ?? []);
   const failureReason = stepErrors.length
     ? stepErrors.join(',\n')
-    : allImages.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
+    : allImages.find((x) => !x.available && x.blockedReason)?.blockedReason;
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
@@ -324,28 +324,30 @@ export function QueueItem({
             )}
 
             {stepDisplay === 'separate' ? (
-              request.steps.map((step) => {
-                const stepConfig =
-                  workflowConfigs[step.params.workflow as keyof typeof workflowConfigs];
-                return (
-                  <div key={step.name} className="flex flex-col gap-2">
-                    <Text size="xs" c="dimmed" fw={500}>
-                      {stepConfig?.label ?? step.name}
-                    </Text>
-                    <StepImages
-                      step={step}
-                      request={request}
-                      features={features}
-                      pending={pending}
-                      processing={processing}
-                      queuePosition={queuePosition}
-                      markerTags={markerTags}
-                    />
-                  </div>
-                );
-              })
+              request.steps
+                .filter((step) => !step.suppressOutput)
+                .map((step) => {
+                  const stepConfig =
+                    workflowConfigs[step.params.workflow as keyof typeof workflowConfigs];
+                  return (
+                    <div key={step.name} className="flex flex-col gap-2">
+                      <Text size="xs" c="dimmed" fw={500}>
+                        {stepConfig?.label ?? step.name}
+                      </Text>
+                      <StepOutputs
+                        step={step}
+                        request={request}
+                        features={features}
+                        pending={pending}
+                        processing={processing}
+                        queuePosition={queuePosition}
+                        markerTags={markerTags}
+                      />
+                    </div>
+                  );
+                })
             ) : (
-              <StepImages
+              <StepOutputs
                 step={null}
                 request={request}
                 features={features}
@@ -425,7 +427,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
  * Renders the image grid for a single step or all steps (inline mode).
  * When `step` is null, renders all workflow images flattened.
  */
-function StepImages({
+function StepOutputs({
   step,
   request,
   features,
@@ -442,14 +444,14 @@ function StepImages({
   queuePosition?: WorkflowData['steps'][number]['queuePosition'];
   markerTags?: string[];
 }) {
-  const images = step ? step.images : request.steps.flatMap((s) => s.images);
-  const allDisplayImages = step ? step.displayImages : request.displayImages;
+  const images = step ? step.output : request.steps.flatMap((s) => s.output);
+  const allDisplayImages = step ? step.displayOutput : request.displayOutput;
   const displayImages = allDisplayImages.filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
 
   const stepFailure = step
     ? step.errors?.join(',\n') ||
-      step.images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason
+      step.output.find((x) => !x.available && x.blockedReason)?.blockedReason
     : undefined;
 
   return (
@@ -461,17 +463,17 @@ function StepImages({
         })}
       >
         {displayImages.map((image) => (
-          <GeneratedImage key={image.id} image={image} />
+          <GeneratedOutput key={image.id} image={image} />
         ))}
         <BlockedBlocks
           blockedReasons={blockedReasons}
           workflowId={request.id}
           transactions={request.transactions}
         />
-        {(pending || processing) && images[0] && (
+        {(pending || processing) && (
           <TwCard
             className="items-center justify-center border"
-            style={{ aspectRatio: images[0].aspect }}
+            style={{ aspectRatio: images[0]?.aspect ?? 1 }}
           >
             {processing && (
               <>

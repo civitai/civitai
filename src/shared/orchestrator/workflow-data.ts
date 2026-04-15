@@ -1,18 +1,16 @@
-import type {
-  ImageBlob,
-  VideoBlob,
-  NsfwLevel,
-  WorkflowCost,
-  WorkflowStatus,
-} from '@civitai/client';
+import type { NsfwLevel, WorkflowCost } from '@civitai/client';
 import type {
   NormalizedWorkflow,
   NormalizedWorkflowMetadata,
   NormalizedStep,
   NormalizedWorkflowStepOutput,
+  NormalizedImageOutput,
+  NormalizedVideoOutput,
+  NormalizedAudioOutput,
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
+import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Defaults
@@ -33,6 +31,8 @@ export interface WorkflowDataOptions {
   nsfwEnabled: boolean;
 }
 
+type BlobOptions = WorkflowDataOptions & { allowMatureContent?: boolean | null };
+
 // =============================================================================
 // WorkflowData
 // =============================================================================
@@ -43,7 +43,7 @@ export interface WorkflowDataOptions {
  *
  * Handles the full initialization chain:
  * - Wraps raw steps in StepData (metadata fallback)
- * - Wraps raw images in BlobData (NSFW blocking)
+ * - Wraps raw outputs in BlobData subclasses (NSFW blocking)
  * - Wires parent references (StepData.workflow, BlobData.step)
  */
 export interface WorkflowData extends NormalizedWorkflow {
@@ -57,14 +57,14 @@ export class WorkflowData {
     Object.assign(this, workflow);
 
     // Initialize chain: StepData → BlobData with parent refs
-    const blobOptions = { allowMatureContent: this.allowMatureContent, ...options };
+    const blobOptions: BlobOptions = { allowMatureContent: this.allowMatureContent, ...options };
     this.steps = (this.steps ?? []).map((rawStep: any) => {
       if (rawStep instanceof StepData) {
         rawStep._setWorkflow(this);
         return rawStep;
       }
 
-      return new StepData(rawStep, this.metadata, this, blobOptions);
+      return new StepData(rawStep, this, blobOptions);
     });
   }
 
@@ -78,24 +78,24 @@ export class WorkflowData {
     return this.metadata?.remixOfId;
   }
 
-  /** All succeeded, non-blocked, non-hidden images across all steps. */
-  get succeededImages(): BlobData[] {
-    return this.steps.flatMap((s) => s.succeededImages);
+  /** All succeeded, non-blocked, non-hidden outputs across all steps. */
+  get succeededOutput() {
+    return this.steps.flatMap((s) => s.succeededOutput);
   }
-  /** All displayable images across all steps (includes upgradeable). */
-  get displayImages(): BlobData[] {
-    return this.steps.flatMap((s) => s.displayImages);
+  /** All displayable outputs across all steps (includes upgradeable). */
+  get displayOutput() {
+    return this.steps.flatMap((s) => s.displayOutput);
   }
 
-  /** Total completed images across all steps. */
+  /** Total completed outputs across all steps. */
   get completedCount() {
     return this.steps.reduce((n, s) => n + s.completedCount, 0);
   }
-  /** Total processing images across all steps. */
+  /** Total processing outputs across all steps. */
   get processingCount() {
     return this.steps.reduce((n, s) => n + s.processingCount, 0);
   }
-  /** Total blocked images across all steps. */
+  /** Total blocked outputs across all steps. */
   get blockedCount() {
     return this.steps.reduce((n, s) => n + s.blockedCount, 0);
   }
@@ -104,9 +104,9 @@ export class WorkflowData {
     return this.steps.flatMap((s) => s.blockedReasons);
   }
 
-  /** Create a StepData bound to this workflow's metadata. */
+  /** Create a StepData bound to this workflow. */
   step(step: Record<string, any> & Pick<NormalizedStep, 'metadata'>) {
-    return new StepData(step, this.metadata, this);
+    return new StepData(step, this);
   }
 }
 
@@ -119,43 +119,36 @@ export class WorkflowData {
  * getters that fall back to workflow metadata when step metadata is empty.
  */
 export interface StepData extends NormalizedStep {
-  images: BlobData[];
+  output: Array<ImageBlob | VideoBlob | AudioBlob>;
 }
 export class StepData {
-  #wfMeta: NormalizedWorkflowMetadata | undefined;
-  #workflow: WorkflowData | undefined;
+  #workflow: WorkflowData;
 
   constructor(
     step: Record<string, any> & Pick<NormalizedStep, 'metadata'>,
-    wfMetadata?: NormalizedWorkflowMetadata,
-    workflow?: WorkflowData,
-    blobOptions?: WorkflowDataOptions & { allowMatureContent?: boolean | null }
+    workflow: WorkflowData,
+    blobOptions?: BlobOptions
   ) {
     Object.assign(this, step);
-    this.#wfMeta = wfMetadata;
     this.#workflow = workflow;
 
-    // Wrap raw images in BlobData when options are provided
+    // Wrap raw outputs in the appropriate BlobData subclass when options are provided.
+    // BlobData is abstract, so any instanceof BlobData is one of the concrete subclasses.
     if (blobOptions) {
-      this.images = (this.images ?? ([] as any[])).map((img: any, index: number) =>
-        img instanceof BlobData
-          ? img
-          : new BlobData({
-              data: img,
-              step: this,
-              index,
-              ...blobOptions,
-            })
+      this.output = (this.output ?? ([] as any[])).map((item: any, index: number) =>
+        item instanceof BlobData
+          ? (item as ImageBlob | VideoBlob | AudioBlob)
+          : BlobData.from(item, { step: this, index, ...blobOptions })
       );
     }
   }
 
-  /** @internal Update parent workflow (used when re-parenting an existing StepData). */
+  /** @internal Re-parent onto a different WorkflowData (used when rebuilding WorkflowData from existing StepData instances). */
   _setWorkflow(workflow: WorkflowData) {
     this.#workflow = workflow;
   }
 
-  get workflow(): WorkflowData | undefined {
+  get workflow(): WorkflowData {
     return this.#workflow;
   }
 
@@ -168,14 +161,14 @@ export class StepData {
     if (stepParams && ('workflow' in stepParams || 'ecosystem' in stepParams)) {
       return stepParams;
     }
-    return this.#wfMeta?.params ?? stepParams ?? {};
+    return this.#workflow.metadata?.params ?? stepParams ?? {};
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;
-    return this.#wfMeta?.resources ?? [];
+    return this.#workflow.metadata?.resources ?? [];
   }
   get remixOfId() {
-    return this.metadata.remixOfId ?? this.#wfMeta?.remixOfId;
+    return this.metadata.remixOfId ?? this.#workflow.metadata?.remixOfId;
   }
   get prompt() {
     return (this.params as Record<string, unknown>)?.prompt as string | undefined;
@@ -190,86 +183,77 @@ export class StepData {
     return (this.metadata as any)?.suppressOutput === true;
   }
 
-  /** Images that completed successfully, aren't blocked/moderated, and aren't hidden. */
-  get succeededImages(): BlobData[] {
+  /** Outputs that have landed, not blocked, and not hidden. */
+  get succeededOutput(): Array<ImageBlob | VideoBlob | AudioBlob> {
     if (this.suppressOutput) return [];
-    return this.images.filter((x) => x.status === 'succeeded' && !x.blockedReason && !x.hidden);
+    return this.output.filter((x) => x.available && !x.blockedReason && !x.hidden);
   }
-  /** Images suitable for display — not hidden, not hard-blocked (upgradeable images included). */
-  get displayImages(): BlobData[] {
+  /** Outputs suitable for display — not hidden, not hard-blocked (upgradeable + errored items included). */
+  get displayOutput(): Array<ImageBlob | VideoBlob | AudioBlob> {
     if (this.suppressOutput) return [];
-    return this.images.filter((x) => x.displayable);
+    return this.output.filter((x) => x.displayable);
   }
-  /** Count of images with status 'succeeded'. */
+  /** Count of outputs that have landed (available). */
   get completedCount(): number {
-    return this.images.filter((x) => x.status === 'succeeded').length;
+    return this.output.filter((x) => x.available).length;
   }
-  /** Count of images with status 'processing'. */
+  /** Count of outputs still waiting on a result (step hasn't terminated, blob not yet available, not blocked). */
   get processingCount(): number {
-    return this.images.filter((x) => x.status === 'processing').length;
+    if (this.status && orchestratorCompletedStatuses.includes(this.status)) return 0;
+    return this.output.filter((x) => !x.available && !x.blockedReason).length;
   }
-  /** Count of images with a blockedReason. */
+  /** Count of outputs with a blockedReason. */
   get blockedCount(): number {
-    return this.images.filter((x) => !!x.blockedReason).length;
+    return this.output.filter((x) => !!x.blockedReason).length;
   }
   /** Blocked reason strings (for display grouping). */
   get blockedReasons(): string[] {
-    return this.images.map((x) => x.blockedReason).filter((x): x is string => !!x);
+    return this.output.map((x) => x.blockedReason).filter((x): x is string => !!x);
   }
 }
 
 // =============================================================================
-// BlobData
+// BlobData (abstract base)
 // =============================================================================
 
+type BlobConstructorArgs = {
+  data: NormalizedWorkflowStepOutput;
+  step: StepData;
+  index: number;
+} & BlobOptions;
+
 /**
- * Image/video output with NSFW blocking logic and parent references.
- * Extends NormalizedWorkflowStepOutput with `canUpgrade`, `step`, `workflow`.
+ * Abstract base for workflow output blobs. Concrete subclasses:
+ * - ImageBlob  (type: 'image')
+ * - VideoBlob  (type: 'video')
+ * - AudioBlob  (type: 'audio')
+ *
+ * Subclasses carry no normalization logic — everything is pre-shaped by
+ * `formatStepOutputs` before the raw payload reaches here. The base handles:
+ * - Shared blob fields (id, url, available, blockedReason, nsfwLevel, ...)
+ * - NSFW blocking / upgrade / private-gen rules
+ * - Parent-step ref and resolved metadata accessors (params/resources/remixOfId)
  */
-export class BlobData implements NormalizedWorkflowStepOutput {
+export abstract class BlobData {
+  abstract readonly type: 'image' | 'video' | 'audio';
+
   url!: string;
-  workflowId!: string;
-  stepName!: string;
   seed?: number | null;
-  status!: WorkflowStatus;
-  aspect!: number;
-  type!: 'image' | 'video';
   id!: string;
   available!: boolean;
   urlExpiresAt?: string | null;
-  jobId?: string | null;
   nsfwLevel?: NsfwLevel;
   blockedReason?: string | null;
-  previewUrl?: string | null;
-  previewUrlExpiresAt?: string | null;
-  width!: number;
-  height!: number;
 
   #step: StepData;
   #index: number;
 
-  constructor({
-    data,
-    allowMatureContent,
-    step,
-    index,
-    domain,
-    nsfwEnabled,
-  }: {
-    data: ImageBlob | VideoBlob;
-    /** workflow.allowMatureContent */
-    allowMatureContent?: boolean | null;
-    step: StepData;
-    /** Position of this image within the step's images array. */
-    index: number;
-    domain: Record<ColorDomain, boolean>;
-    nsfwEnabled: boolean;
-  }) {
+  constructor({ data, allowMatureContent, step, index, domain, nsfwEnabled }: BlobConstructorArgs) {
     Object.assign(this, data);
     this.#step = step;
     this.#index = index;
 
-    // Derive seed from step params base seed + image index
+    // Derive seed from step params base seed + output index
     const baseSeed = step.params?.seed as number | undefined;
     if (baseSeed != null) this.seed = baseSeed + index;
 
@@ -292,28 +276,78 @@ export class BlobData implements NormalizedWorkflowStepOutput {
     }
   }
 
+  /** Factory: instantiate the correct subclass based on `data.type`. */
+  static from(
+    data: NormalizedWorkflowStepOutput,
+    opts: Omit<BlobConstructorArgs, 'data'>
+  ): ImageBlob | VideoBlob | AudioBlob {
+    const args = { data, ...opts } as BlobConstructorArgs;
+    switch (data.type) {
+      case 'image':
+        return new ImageBlob(args as BlobConstructorArgs & { data: NormalizedImageOutput });
+      case 'video':
+        return new VideoBlob(args as BlobConstructorArgs & { data: NormalizedVideoOutput });
+      case 'audio':
+        return new AudioBlob(args as BlobConstructorArgs & { data: NormalizedAudioOutput });
+      default: {
+        const _exhaustive: never = data;
+        void _exhaustive;
+        throw new Error('Unknown blob type');
+      }
+    }
+  }
+
   get canUpgrade() {
     return this.blockedReason === 'canUpgrade';
   }
 
-  /** Whether this image should be shown in the UI (not hidden, not hard-blocked). */
+  /**
+   * Whether the output failed to materialize. True when the parent step reached a
+   * terminal state (`succeeded` / `failed` / `expired` / `canceled`) but the blob
+   * itself never became `available` — indicates the worker finished without producing
+   * a usable output (e.g. blob upload failed post-job).
+   */
+  get errored(): boolean {
+    if (this.available) return false;
+    const status = this.#step.status;
+    return !!status && orchestratorCompletedStatuses.includes(status);
+  }
+
+  /** Whether this output should be shown in the UI (not hidden, not hard-blocked). */
   get displayable(): boolean {
     return !this.hidden && (!this.blockedReason || this.canUpgrade);
   }
 
-  /** Per-image metadata from step (hidden, feedback, favorite, etc.). */
-  get imageMeta() {
-    return (this.#step.metadata as any)?.images?.[this.id] as
-      | { hidden?: boolean; feedback?: 'liked' | 'disliked'; favorite?: boolean }
-      | undefined;
+  /**
+   * Per-output metadata from step (hidden, feedback, favorite, etc.).
+   *
+   * Merges the current `metadata.output` field with the legacy `metadata.images`
+   * field (pre-rename workflows). The new-key value wins per-field for a given
+   * blob id, so post-rename writes override legacy state cleanly while still
+   * preserving any legacy fields that haven't been re-written.
+   */
+  get outputMeta():
+    | {
+        hidden?: boolean;
+        feedback?: 'liked' | 'disliked';
+        favorite?: boolean;
+        comments?: string;
+        postId?: number;
+      }
+    | undefined {
+    const meta = this.#step.metadata as any;
+    const legacy = meta?.images?.[this.id];
+    const current = meta?.output?.[this.id];
+    if (!legacy && !current) return undefined;
+    return { ...legacy, ...current };
   }
 
-  /** Whether the user has marked this image as hidden (deleted). */
+  /** Whether the user has marked this output as hidden (deleted). */
   get hidden(): boolean {
-    return this.imageMeta?.hidden ?? false;
+    return this.outputMeta?.hidden ?? false;
   }
 
-  /** Position of this image within the step's images array. */
+  /** Position of this output within the step's output array. */
   get index(): number {
     return this.#index;
   }
@@ -325,7 +359,17 @@ export class BlobData implements NormalizedWorkflowStepOutput {
 
   /** Parent workflow. */
   get workflow(): WorkflowData {
-    return this.step.workflow!;
+    return this.step.workflow;
+  }
+
+  /** Parent step name (derived from the parent StepData). */
+  get stepName(): string {
+    return this.#step.name;
+  }
+
+  /** Parent workflow id (derived from the parent WorkflowData). */
+  get workflowId(): string {
+    return this.workflow.id;
   }
 
   /** Resolved params from the parent step (step metadata → workflow metadata fallback). */
@@ -346,5 +390,40 @@ export class BlobData implements NormalizedWorkflowStepOutput {
   /** Ecosystem key from params (ecosystem or baseModel). */
   get ecosystemKey(): string | undefined {
     return (this.params as any)?.ecosystem ?? this.params?.baseModel;
+  }
+}
+
+// =============================================================================
+// Concrete blob subclasses
+// =============================================================================
+
+export class ImageBlob extends BlobData {
+  readonly type = 'image' as const;
+  width!: number;
+  height!: number;
+  aspect!: number;
+  previewUrl?: string | null;
+  previewUrlExpiresAt?: string | null;
+  constructor(args: BlobConstructorArgs & { data: NormalizedImageOutput }) {
+    super(args);
+  }
+}
+
+export class VideoBlob extends BlobData {
+  readonly type = 'video' as const;
+  width!: number;
+  height!: number;
+  aspect!: number;
+  constructor(args: BlobConstructorArgs & { data: NormalizedVideoOutput }) {
+    super(args);
+  }
+}
+
+export class AudioBlob extends BlobData {
+  readonly type = 'audio' as const;
+  readonly aspect = 1;
+  duration?: number | null;
+  constructor(args: BlobConstructorArgs & { data: NormalizedAudioOutput }) {
+    super(args);
   }
 }

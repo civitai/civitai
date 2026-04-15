@@ -1006,6 +1006,7 @@ export async function whatIfFromGraph({
 // =============================================================================
 
 import type {
+  AudioBlob,
   ImageBlob,
   NsfwLevel,
   TransactionInfo,
@@ -1025,26 +1026,51 @@ import { parseAIR } from '~/shared/utils/air';
 // Types
 // =============================================================================
 
-/** Normalized output (image or video) from a workflow step */
-export interface NormalizedWorkflowStepOutput {
-  url: string;
-  workflowId: string;
-  stepName: string;
-  seed?: number | null;
-  status: WorkflowStatus;
-  aspect: number;
-  type: 'image' | 'video';
+/**
+ * Fields shared by all normalized blob outputs.
+ * Note: `workflowId`, `stepName`, and `jobId` are intentionally absent — on the client,
+ * consumers read workflow/step info via parent refs on `BlobData` (`blob.workflow.id`,
+ * `blob.step.name`), and `jobId` has no client-side consumers.
+ */
+interface NormalizedBlobBase {
   id: string;
+  url: string;
+  seed?: number | null;
   available: boolean;
   urlExpiresAt?: string | null;
-  jobId?: string | null;
   nsfwLevel?: NsfwLevel;
   blockedReason?: string | null;
-  previewUrl?: string | null;
-  previewUrlExpiresAt?: string | null;
+}
+
+/** Normalized image output. */
+export interface NormalizedImageOutput extends NormalizedBlobBase {
+  type: 'image';
   width: number;
   height: number;
+  aspect: number;
+  previewUrl?: string | null;
+  previewUrlExpiresAt?: string | null;
 }
+
+/** Normalized video output. */
+export interface NormalizedVideoOutput extends NormalizedBlobBase {
+  type: 'video';
+  width: number;
+  height: number;
+  aspect: number;
+}
+
+/** Normalized audio output. */
+export interface NormalizedAudioOutput extends NormalizedBlobBase {
+  type: 'audio';
+  duration?: number | null;
+}
+
+/** Normalized output (image, video, or audio) from a workflow step. */
+export type NormalizedWorkflowStepOutput =
+  | NormalizedImageOutput
+  | NormalizedVideoOutput
+  | NormalizedAudioOutput;
 
 /** Step metadata with mapped params and enriched resources */
 export interface NormalizedStepMetadata {
@@ -1060,7 +1086,24 @@ export interface NormalizedStepMetadata {
   resources?: GenerationResource[];
   /** Remix reference (legacy — new writes put this on workflow.metadata) */
   remixOfId?: number;
-  /** Per-image metadata (favorite, feedback, hidden, etc.) */
+  /**
+   * Per-output metadata keyed by blob id (favorite, feedback, hidden, etc.).
+   * Current/canonical key. New writes target this.
+   */
+  output?: Record<
+    string,
+    {
+      hidden?: boolean;
+      feedback?: 'liked' | 'disliked';
+      favorite?: boolean;
+      comments?: string;
+      postId?: number;
+    }
+  >;
+  /**
+   * Legacy per-output metadata key. Present on workflows created before the
+   * rename; merged into `output` by client readers for display. Do not write.
+   */
   images?: Record<
     string,
     {
@@ -1094,8 +1137,8 @@ export interface NormalizedStep {
   queuePosition?: WorkflowStepJobQueuePosition;
   /** Metadata with resolved params/resources */
   metadata: NormalizedStepMetadata;
-  /** Output images/videos */
-  images: NormalizedWorkflowStepOutput[];
+  /** Output items (image / video / audio) */
+  output: NormalizedWorkflowStepOutput[];
   /** Step errors */
   errors?: string[];
 }
@@ -1232,17 +1275,20 @@ type StepWithOutput = WorkflowStep & {
     images?: ImageBlob[];
     video?: VideoBlob;
     blobs?: ImageBlob[];
-    blob?: ImageBlob;
+    // For aceStepAudio: blob.type is 'audio' (audio-only) or 'video' (audio + cover image).
+    blob?: ImageBlob | VideoBlob | AudioBlob;
     errors?: string[];
     externalTOSViolation?: boolean;
     message?: string;
   };
 };
 
+type NormalizedBlobItem = ImageBlob | VideoBlob | AudioBlob;
+
 /**
- * Normalizes step output (images/videos) to a common format
+ * Normalizes step output (images/videos/audio) to a common format
  */
-function normalizeStepOutput(step: StepWithOutput): Array<ImageBlob | VideoBlob> {
+function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
   const output = step.output;
   if (!output) return [];
 
@@ -1253,12 +1299,18 @@ function normalizeStepOutput(step: StepWithOutput): Array<ImageBlob | VideoBlob>
     case 'textToImage':
       return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
     case 'imageUpscaler':
-      return output.blob ? [{ ...output.blob, type: 'image' as const }] : [];
+      return output.blob ? [{ ...(output.blob as ImageBlob), type: 'image' as const }] : [];
     case 'videoGen':
     case 'videoUpscaler':
     case 'videoEnhancement':
     case 'videoInterpolation':
       return output.video ? [{ ...output.video, type: 'video' as const }] : [];
+    case 'aceStepAudio':
+      // Cover-image mode returns VideoBlob; audio-only returns AudioBlob. Discriminate on blob.type.
+      if (!output.blob) return [];
+      if (output.blob.type === 'video')
+        return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
+      return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
     default:
       return [];
   }
@@ -1268,10 +1320,9 @@ function normalizeStepOutput(step: StepWithOutput): Array<ImageBlob | VideoBlob>
  * Formats step outputs into normalized images array
  */
 export function formatStepOutputs(
-  workflowId: string,
   step: StepWithOutput,
   resolvedParams?: Record<string, unknown>
-): { images: NormalizedWorkflowStepOutput[]; errors: string[] } {
+): { output: NormalizedWorkflowStepOutput[]; errors: string[] } {
   const items = normalizeStepOutput(step);
   const metadata = (step.metadata as Record<string, unknown>) ?? {};
   const params = resolvedParams ?? ((metadata.params ?? {}) as Record<string, unknown>);
@@ -1280,12 +1331,35 @@ export function formatStepOutputs(
     params?: Record<string, unknown>;
   }>;
 
-  const images: NormalizedWorkflowStepOutput[] = items.map((item, index) => {
-    const job = step.jobs?.find((j) => j.id === item.jobId);
-    let { width, height } = item;
+  const output: NormalizedWorkflowStepOutput[] = items.map((item, index) => {
+    // Common fields for every output type.
+    const base = {
+      id: item.id,
+      seed: seed ? seed + index : undefined,
+      available: item.available,
+      urlExpiresAt: item.urlExpiresAt,
+      nsfwLevel: item.nsfwLevel,
+      blockedReason: item.blockedReason,
+    };
 
-    // Try to get dimensions from various sources
-    if (!width || !height) {
+    if (item.type === 'audio') {
+      return {
+        ...base,
+        type: 'audio' as const,
+        url: item.url as string,
+        duration: item.duration,
+      } satisfies NormalizedAudioOutput;
+    }
+
+    // image / video: resolve width/height/aspect.
+    // For `aceStepAudio` steps that emit a VideoBlob (audio + cover image), force aspect=1
+    // because cover-image dimensions aren't meaningful as a display aspect.
+    const isAudioCoverVideo = step.$type === 'aceStepAudio' && item.type === 'video';
+
+    let width = item.width as number | null | undefined;
+    let height = item.height as number | null | undefined;
+
+    if (!isAudioCoverVideo && (!width || !height)) {
       // Check transformations from last to first to find dimensions
       if (transformations.length > 0) {
         for (let i = transformations.length - 1; i >= 0; i--) {
@@ -1374,36 +1448,47 @@ export function formatStepOutputs(
       height = 512;
     }
 
-    const aspect = width / height;
+    const aspect = isAudioCoverVideo ? 1 : width / height;
+    const url = item.url && item.type === 'video' ? `${item.url}.mp4` : (item.url as string);
+
+    if (item.type === 'video') {
+      return {
+        ...base,
+        type: 'video' as const,
+        url,
+        width,
+        height,
+        aspect,
+      } satisfies NormalizedVideoOutput;
+    }
 
     return {
-      ...(item as ImageBlob | VideoBlob),
-      url: item.url && item.type === 'video' ? `${item.url}.mp4` : (item.url as string),
-      workflowId,
-      stepName: step.name,
-      seed: seed ? seed + index : undefined,
-      status: item.available ? 'succeeded' : ((job?.status ?? 'unassigned') as WorkflowStatus),
-      aspect,
+      ...base,
+      type: 'image' as const,
+      url,
       width,
       height,
-    };
+      aspect,
+      previewUrl: (item as ImageBlob).previewUrl,
+      previewUrlExpiresAt: (item as ImageBlob).previewUrlExpiresAt,
+    } satisfies NormalizedImageOutput;
   });
 
   // Collect errors
   const errors: string[] = [];
-  const output = step.output;
-  if (output) {
-    if ('errors' in output && output.errors) errors.push(...output.errors);
+  const stepOutput = step.output;
+  if (stepOutput) {
+    if ('errors' in stepOutput && stepOutput.errors) errors.push(...stepOutput.errors);
     if (
-      'externalTOSViolation' in output &&
-      'message' in output &&
-      typeof output.message === 'string'
+      'externalTOSViolation' in stepOutput &&
+      'message' in stepOutput &&
+      typeof stepOutput.message === 'string'
     ) {
-      errors.push(output.message);
+      errors.push(stepOutput.message);
     }
   }
 
-  return { images, errors };
+  return { output, errors };
 }
 
 // =============================================================================
@@ -1500,11 +1585,7 @@ function formatStep(
   const paramsForDimensions = finalParams ?? (workflowMetadata?.params as Record<string, unknown>);
 
   // Format outputs
-  const { images, errors } = formatStepOutputs(
-    workflowId,
-    step as StepWithOutput,
-    paramsForDimensions
-  );
+  const { output, errors } = formatStepOutputs(step as StepWithOutput, paramsForDimensions);
 
   return {
     $type: step.$type,
@@ -1517,12 +1598,18 @@ function formatStep(
       ...removeEmpty({
         params: finalParams,
         remixOfId,
+        // Pass both raw keys through. Client merges `output + images` for display
+        // via `BlobData.outputMeta`; client's patch builder inspects `output`
+        // directly to decide whether to emit init ops for legacy workflows
+        // (legacy = `images` populated, `output` absent — first patch must create
+        // the `output` parent path in orchestrator storage).
+        output: (metadata as any).output as NormalizedStepMetadata['output'],
         images: metadata.images as NormalizedStepMetadata['images'],
         suppressOutput: metadata.suppressOutput as boolean | undefined,
       }),
       ...(resolvedResources?.length ? { resources: resolvedResources } : {}),
     },
-    images,
+    output,
     errors: errors.length > 0 ? errors : undefined,
   };
 }
@@ -1709,17 +1796,13 @@ export async function getWorkflowStatusUpdate({
         const paramsForDimensions = Object.keys(stepParams).length > 0 ? stepParams : wfParams;
 
         // Format step outputs using the shared utility
-        const { images, errors } = formatStepOutputs(
-          workflowId,
-          step as StepWithOutput,
-          paramsForDimensions
-        );
+        const { output, errors } = formatStepOutputs(step as StepWithOutput, paramsForDimensions);
 
         return {
           name: step.name,
           status: step.status,
           completedAt: step.completedAt,
-          images,
+          output,
           errors: errors.length > 0 ? errors : undefined,
         };
       }),

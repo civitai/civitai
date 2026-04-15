@@ -12,9 +12,9 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
-import { GeneratedImage } from './GeneratedImage';
+import { GeneratedOutput } from './GeneratedOutput';
 
-export default function GeneratedImageLightbox({
+export default function GeneratedOutputLightbox({
   imageId,
   workflowId,
 }: {
@@ -33,18 +33,14 @@ export default function GeneratedImageLightbox({
     ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
-  // Build flat image list across all loaded workflows
   const images = useMemo(
     () =>
       (requests ?? []).flatMap((r) =>
-        r.succeededImages.filter((img) => matchesMarkerTags(img, markerTags))
+        r.succeededOutput.filter((img) => matchesMarkerTags(img, markerTags))
       ),
     [requests, markerTags]
   );
 
-  // Close only when there are no images left to display across all workflows.
-  // Guard on `requests !== undefined` to avoid closing during the initial load
-  // before any data has arrived.
   useEffect(() => {
     if (!isLoading && requests !== undefined && images.length === 0) dialog.onClose();
   }, [isLoading, requests, images.length]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -57,8 +53,6 @@ export default function GeneratedImageLightbox({
   );
   const [slide, setSlide] = useState(initialSlide > -1 ? initialSlide : 0);
 
-  // Keep a ref so stale closures (EmblaCarouselProvider captures onSlideChange once at mount
-  // via an empty-deps useCallback) always read the current images array.
   const imagesRef = useRef(images);
   imagesRef.current = images;
 
@@ -70,17 +64,12 @@ export default function GeneratedImageLightbox({
     }
   };
 
-  // When images change, manually reInit Embla (since watchSlides is disabled) and
-  // restore position to the tracked image. If the tracked image was deleted,
-  // advance to the next available one instead.
   useEffect(() => {
     if (!embla) return;
 
     const desiredIndex = images.findIndex((item) => imageKey(item) === currentImageKeyRef.current);
 
     if (desiredIndex === -1) {
-      // Tracked image was removed (deleted) — navigate to the next available image.
-      // Don't close here; the hasWorkflow effect handles closing when appropriate.
       if (images.length > 0) {
         const nextIndex = Math.min(slide, images.length - 1);
         currentImageKeyRef.current = imageKey(images[nextIndex]);
@@ -88,8 +77,6 @@ export default function GeneratedImageLightbox({
         setSlide(nextIndex);
       }
     } else {
-      // New images may have been added — reInit with startIndex so Embla registers
-      // the new slides AND positions itself at the correct image in one step.
       embla.reInit({ startIndex: desiredIndex });
       if (desiredIndex !== slide) setSlide(desiredIndex);
     }
@@ -136,7 +123,7 @@ export default function GeneratedImageLightbox({
                   {image.url &&
                     (Math.abs(index - slide) <= 1 ||
                       Math.abs(index - slide) >= images.length - 1) && (
-                      <GeneratedImage image={image} isLightbox isActiveSlide={index === slide} />
+                      <GeneratedOutput image={image} isLightbox isActiveSlide={index === slide} />
                     )}
                 </Embla.Slide>
               ))}
