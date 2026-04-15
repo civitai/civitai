@@ -196,6 +196,7 @@ export async function createTextModerationRequest({
             text: content,
             mode: 'text',
             labels,
+            storeFullResponse: false,
           },
         } as XGuardModerationStepTemplate,
       ],
