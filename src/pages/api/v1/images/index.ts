@@ -32,7 +32,7 @@ import {
   numericString,
 } from '~/utils/zod-helpers';
 import { usernameSchema } from '~/shared/zod/username.schema';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 export const config = {
   api: {

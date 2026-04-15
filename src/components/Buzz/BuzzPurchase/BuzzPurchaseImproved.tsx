@@ -45,7 +45,7 @@ import { useQueryBuzzPackages } from '~/components/Buzz/useQueryBuzzPackages';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
-import { useAppContext } from '~/providers/AppProvider';
+import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
@@ -73,7 +73,6 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
-import { env } from '~/env/client';
 import { QS } from '~/utils/qs';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
@@ -270,6 +269,7 @@ export const BuzzPurchaseImproved = ({
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { region } = useAppContext();
+  const serverDomains = useServerDomains();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
@@ -359,14 +359,12 @@ export const BuzzPurchaseImproved = ({
       };
 
       window.open(
-        `//${
-          env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN || 'green.civitai.com'
-        }/purchase/buzz?${QS.stringify(query)}`,
+        `//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`,
         '_blank',
         'noreferrer'
       );
     }
-  }, [selectedBuzzType, features.isGreen, minBuzzAmount]);
+  }, [selectedBuzzType, features.isGreen, minBuzzAmount, serverDomains.green]);
 
   const minBuzzAmountPrice = minBuzzAmount
     ? Math.max(minBuzzAmount / 10, effectiveMinCharge)

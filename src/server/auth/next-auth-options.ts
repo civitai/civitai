@@ -22,7 +22,7 @@ import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
 import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { getRandomInt } from '~/utils/number-helpers';
 import { generateToken } from '~/utils/string-helpers';
 import { civTokenDecrypt } from './civ-token';

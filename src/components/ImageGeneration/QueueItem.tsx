@@ -64,7 +64,7 @@ import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.const
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { useServerDomains } from '~/providers/AppProvider';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
@@ -626,7 +626,7 @@ function countOccurrences(arr: string[]): Record<string, number> {
  * Displays a prompt/seed summary and a CTA to view on civitai.red.
  */
 function SiteRestrictedBlock({ image }: { image: BlobData }) {
-  const redDomain = colorDomains.red;
+  const redDomain = useServerDomains().red;
 
   return (
     <TwCard className="flex aspect-square size-full flex-col items-center justify-center gap-2 border p-3">

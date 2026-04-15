@@ -4,7 +4,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { useServerDomains } from '~/providers/AppProvider';
 
 const BLUE_BUZZ_ACKNOWLEDGED_KEY = 'blue-buzz-mature-acknowledged';
 
@@ -41,12 +41,13 @@ export function useMembershipUpsell() {
 export function MembershipUpsell() {
   const { canShow, acknowledged } = useMembershipUpsell();
   const { setBuzzType } = useSelectedBuzzType();
+  const serverDomains = useServerDomains();
   const [, setAcknowledged] = useLocalStorage({
     key: BLUE_BUZZ_ACKNOWLEDGED_KEY,
     defaultValue: false,
   });
 
-  const pricingUrl = colorDomains.green ? `//${colorDomains.green}/pricing` : '/pricing';
+  const pricingUrl = `//${serverDomains.green}/pricing`;
 
   if (!canShow) return null;
 
@@ -54,7 +55,12 @@ export function MembershipUpsell() {
   if (!acknowledged) {
     return (
       <Alert color="yellow" className="-m-2 rounded-none rounded-t-xl">
-        <Text size="sm" fw={700} c="var(--mantine-color-yellow-light-color)" className="flex items-center gap-1.5">
+        <Text
+          size="sm"
+          fw={700}
+          c="var(--mantine-color-yellow-light-color)"
+          className="flex items-center gap-1.5"
+        >
           <IconAlertTriangle size={16} />
           Blue Buzz can&apos;t generate mature content
         </Text>

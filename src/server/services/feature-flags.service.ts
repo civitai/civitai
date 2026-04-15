@@ -6,14 +6,16 @@ import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
-import { serverDomainMap, type ServerAvailability } from '~/shared/utils/server-domain';
+import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+
+export type ServerAvailability = ColorDomain;
 
 // --------------------------
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
 const regionAvailability = ['restricted', 'nonRestricted'] as const;
-const serverAvailability = Object.keys(serverDomainMap) as ServerAvailability[];
+const serverAvailability = colorDomainNames;
 export const userTiers = ['free', 'founder', 'bronze', 'silver', 'gold'] as const;
 const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTiers] as const;
 type RoleAvailability = (typeof roleAvailablity)[number];
@@ -310,9 +312,12 @@ const hasFeature = (
   );
   if (!availableServers.length || !host) serverMatch = true;
   else {
-    const domains = Object.entries(serverDomainMap).filter(
-      ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
-    );
+    const domains = colorDomainNames
+      .map(
+        (color) =>
+          [color, process.env[`SERVER_DOMAIN_${color.toUpperCase()}`] as string | undefined] as const
+      )
+      .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability));
 
     serverMatch = domains.some(([, domain]) => {
       if (host === domain) return true;
