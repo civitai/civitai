@@ -20,10 +20,17 @@ import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
 import { amIBlockedByUser } from '~/server/services/user.service';
 
-export const getUserContentOverviewHandler = async ({ input }: { input: GetUserProfileSchema }) => {
+export const getUserContentOverviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetUserProfileSchema;
+  ctx: Context;
+}) => {
   try {
     const overview = await getUserContentOverview({
       username: input.username,
+      sfw: ctx.domain === 'green',
     });
 
     return overview;

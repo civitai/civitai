@@ -11,7 +11,7 @@ import {
   ProfileSectionComponent,
   shouldDisplayUserNullState,
 } from '~/components/Profile/profile.utils';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -39,15 +39,10 @@ function ProfileOverview() {
   const router = useRouter();
   const { username } = router.query as { username: string };
 
-  const { canViewNsfw } = useFeatureFlags();
-
   const { isLoading, data: user } = trpc.userProfile.get.useQuery({
     username,
   });
-  const { data: userOverview } = trpc.userProfile.overview.useQuery(
-    { username },
-    { enabled: canViewNsfw }
-  );
+  const { data: userOverview } = trpc.userProfile.overview.useQuery({ username });
 
   const sections = useMemo(
     () =>

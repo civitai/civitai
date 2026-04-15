@@ -46,7 +46,8 @@ export function SensitiveShield({
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
     if (isLoading) return <PageLoader />;
 
-    const redUrl = `//${redDomain}${router.asPath}?sync-account=green`;
+    const separator = router.asPath.includes('?') ? '&' : '?';
+    const redUrl = `//${redDomain}${router.asPath}${separator}sync-account=green`;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
@@ -165,7 +166,6 @@ function MatureContentRedirect({ redUrl }: { redUrl: string }) {
         <Button
           component="a"
           href={redUrl}
-          target="_blank"
           rel="noreferrer nofollow"
           color="red"
           size="lg"
