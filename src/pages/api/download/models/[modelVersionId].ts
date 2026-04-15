@@ -44,7 +44,7 @@ const downloadLimiter = createLimiter({
 export default PublicEndpoint(
   async function downloadModel(req: NextApiRequest, res: NextApiResponse) {
     const colorDomain = getRequestDomainColor(req);
-    if (colorDomain !== 'blue') return res.redirect(`https://${serverDomainMap.blue}${req.url}`);
+    if (colorDomain !== 'green') return res.redirect(`//${serverDomainMap.green}${req.url}`);
 
     const isBrowser = isRequestFromBrowser(req);
     function errorResponse(status: number, message: string) {

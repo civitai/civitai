@@ -35,10 +35,7 @@ export const applyUserPreferences = middleware(async ({ input, ctx, next }) => {
 
       _input.excludedTagIds = [...(_input.excludedTagIds ?? []), ...tagsToHide];
       _input.excludedImageIds = [...(_input.excludedImageIds ?? []), ...imagesToHide];
-      _input.excludedUserIds = [
-        ...(_input.excludedUserIds ?? []),
-        ...hiddenUsers.map((x) => x.id),
-      ];
+      _input.excludedUserIds = [...(_input.excludedUserIds ?? []), ...hiddenUsers.map((x) => x.id)];
       _input.excludedModelIds = [
         ...(_input.excludedModelIds ?? []),
         ...hiddenModels.map((x) => x.id),

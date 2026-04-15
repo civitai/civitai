@@ -130,8 +130,7 @@ export default function UserMembership() {
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
 
   const handleRedirectToOtherEnvironment = () => {
-    const targetDomain =
-      otherBuzzType === 'green' ? serverDomains.green : serverDomains.blue;
+    const targetDomain = otherBuzzType === 'green' ? serverDomains.green : serverDomains.blue;
     const syncParam = otherBuzzType === 'green' ? 'yellow' : 'green';
 
     window.open(
@@ -470,26 +469,25 @@ export default function UserMembership() {
                 </Stack>
               </Paper>
 
-              {isCivitaiProvider && (
-                <PrepaidTimelineProgress subscription={subscription} />
-              )}
+              {isCivitaiProvider && <PrepaidTimelineProgress subscription={subscription} />}
 
-              {isCivitaiProvider && (() => {
-                const prepaidTokens = getPrepaidTokens({
-                  metadata: subscription.metadata as SubscriptionMetadata,
-                });
-                const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
-                // Always render for Civitai members — even with 0 tokens,
-                // the component fetches historical deliveries from the buzz service
-                return (
-                  <PrepaidTokenOverview
-                    tokens={prepaidTokens}
-                    nextUnlockDate={nextUnlockDate}
-                    defaultExpanded
-                    subscription={subscription}
-                  />
-                );
-              })()}
+              {isCivitaiProvider &&
+                (() => {
+                  const prepaidTokens = getPrepaidTokens({
+                    metadata: subscription.metadata as SubscriptionMetadata,
+                  });
+                  const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
+                  // Always render for Civitai members — even with 0 tokens,
+                  // the component fetches historical deliveries from the buzz service
+                  return (
+                    <PrepaidTokenOverview
+                      tokens={prepaidTokens}
+                      nextUnlockDate={nextUnlockDate}
+                      defaultExpanded
+                      subscription={subscription}
+                    />
+                  );
+                })()}
 
               {isCivitaiProvider && <PurchasedCodesCard defaultFilter="Membership" />}
 

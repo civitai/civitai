@@ -46,9 +46,7 @@ export function SensitiveShield({
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
     if (isLoading) return <PageLoader />;
 
-    const redUrl = redDomain
-      ? `//${redDomain}${router.asPath}?sync-account=green`
-      : `https://civitai.red${router.asPath}?sync-account=green`;
+    const redUrl = `//${redDomain}${router.asPath}?sync-account=green`;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
@@ -120,8 +118,8 @@ function MatureContentRedirect({ redUrl }: { redUrl: string }) {
           className="pointer-events-none absolute inset-0 transition-opacity duration-500"
           style={{ opacity: 0 }}
         />
-        <div className="pointer-events-none absolute -bottom-16 -left-16 h-48 w-48 rounded-full bg-red-9/10 blur-3xl" />
-        <div className="pointer-events-none absolute -right-12 -top-12 h-36 w-36 rounded-full bg-orange-9/8 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-red-9/10 blur-3xl" />
+        <div className="bg-orange-9/8 pointer-events-none absolute -right-12 -top-12 size-36 rounded-full blur-3xl" />
 
         <ThemeIcon
           variant="filled"
@@ -135,7 +133,7 @@ function MatureContentRedirect({ redUrl }: { redUrl: string }) {
 
         <Text
           fw={800}
-          className="relative text-center font-display text-2xl leading-tight tracking-tight text-gray-0"
+          className="font-display relative text-center text-2xl leading-tight tracking-tight text-gray-0"
         >
           This content
           <br />
@@ -144,7 +142,7 @@ function MatureContentRedirect({ redUrl }: { redUrl: string }) {
       </div>
 
       {/* Right panel — information and CTA */}
-      <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 dark:border-white/5 md:border-l md:border-t-0 md:px-10">
+      <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 md:border-l md:border-t-0 md:px-10 dark:border-white/5">
         <div className="flex flex-col gap-1">
           <Text size="lg" fw={600} className="text-gray-1">
             Mature content now lives on{' '}

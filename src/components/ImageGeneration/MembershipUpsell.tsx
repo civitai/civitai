@@ -47,7 +47,7 @@ export function MembershipUpsell() {
     defaultValue: false,
   });
 
-  const pricingUrl = serverDomains.green ? `//${serverDomains.green}/pricing` : '/pricing';
+  const pricingUrl = `//${serverDomains.green}/pricing`;
 
   if (!canShow) return null;
 
@@ -55,7 +55,12 @@ export function MembershipUpsell() {
   if (!acknowledged) {
     return (
       <Alert color="yellow" className="-m-2 rounded-none rounded-t-xl">
-        <Text size="sm" fw={700} c="var(--mantine-color-yellow-light-color)" className="flex items-center gap-1.5">
+        <Text
+          size="sm"
+          fw={700}
+          c="var(--mantine-color-yellow-light-color)"
+          className="flex items-center gap-1.5"
+        >
           <IconAlertTriangle size={16} />
           Blue Buzz can&apos;t generate mature content
         </Text>
