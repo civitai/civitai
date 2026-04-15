@@ -1,5 +1,5 @@
 import { Button, Progress } from '@mantine/core';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
@@ -58,8 +58,17 @@ export function PostImageDropzone({
         return images;
       });
     },
+    onError: (_err, payload) => {
+      // Release the dedupe slot so a retry (if ever wired up) isn't blocked.
+      submittedUrlsRef.current.delete(payload.url);
+    },
   });
   // #endregion
+
+  // Dedupe by S3 key across this component's lifetime. Each pre-sign call
+  // generates a unique key, so two mutations for the same key indicate a
+  // duplicate submission that would otherwise create two image records.
+  const submittedUrlsRef = useRef(new Set<string>());
 
   // #region [upload images]
   const { files, canAdd, error, upload, progress, loading } = useMediaUpload<{ postId: number }>({
@@ -67,32 +76,40 @@ export function PostImageDropzone({
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
-      setImages((images) => {
-        // const index = Math.max(0, ...images.map((x) => x.data.index)) + 1;
-        switch (props.status) {
-          case 'added':
-            const externalDetailsUrl = useExternalMetaStore.getState().getUrl();
 
-            const payload = addPostImageSchema.parse({
-              ...props,
-              postId,
-              modelVersionId,
-              width: props.metadata.width,
-              height: props.metadata.height,
-              hash: props.metadata.hash,
-              externalDetailsUrl,
-            });
+      switch (props.status) {
+        case 'added': {
+          if (submittedUrlsRef.current.has(props.url)) {
+            console.warn(`[upload] Skipping duplicate addImage for url=${props.url}`);
+            return;
+          }
+          submittedUrlsRef.current.add(props.url);
 
-            addImageMutation.mutate(payload);
-            return [...images, { type: 'resolving', data: { ...props } }];
-          case 'blocked':
-            return [...images, { type: 'blocked', data: { ...props } }];
-          case 'error':
-            return [...images, { type: 'error', data: { ...props } }];
-          default:
-            return images;
+          const externalDetailsUrl = useExternalMetaStore.getState().getUrl();
+          const payload = addPostImageSchema.parse({
+            ...props,
+            postId,
+            modelVersionId,
+            width: props.metadata.width,
+            height: props.metadata.height,
+            hash: props.metadata.hash,
+            externalDetailsUrl,
+          });
+
+          // Update state first, then fire the mutation. Keeping side-effects
+          // out of the zustand updater ensures the mutation can't be double-
+          // invoked if the updater is ever re-run.
+          setImages((images) => [...images, { type: 'resolving', data: { ...props } }]);
+          addImageMutation.mutate(payload);
+          break;
         }
-      });
+        case 'blocked':
+          setImages((images) => [...images, { type: 'blocked', data: { ...props } }]);
+          break;
+        case 'error':
+          setImages((images) => [...images, { type: 'error', data: { ...props } }]);
+          break;
+      }
     },
   });
   // #endregion

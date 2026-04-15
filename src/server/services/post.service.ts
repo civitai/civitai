@@ -1012,6 +1012,28 @@ export const addPostImage = async ({
 
   const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
+  // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
+  // a retried mutation or a duplicated client submission — return the existing
+  // record instead of creating a second one. The client generates a unique S3
+  // key per upload, so a collision here means the same upload is being saved
+  // twice.
+  if (props.url) {
+    const existing = await dbRead.image.findFirst({
+      where: { postId: props.postId, url: props.url },
+      select: { id: true },
+    });
+    if (existing) {
+      const existingResult = await dbWrite.image.findUnique({
+        where: { id: existing.id },
+        select: editPostImageSelect,
+      });
+      if (existingResult) {
+        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        return existingImage;
+      }
+    }
+  }
+
   const partialResult = await createImage({
     ...props,
     meta,
