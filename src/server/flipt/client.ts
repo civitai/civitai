@@ -52,6 +52,8 @@ export enum FLIPT_FEATURE_FLAGS {
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
   WILDCARDS = 'wildcards',
+  MEILI_CACHE_OPS = 'meili-cache-ops',
+  MEILI_USER_OWN_PASS = 'meili-user-own-pass',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
@@ -199,6 +201,26 @@ export async function getFliptVariant(
   } catch (e) {
     console.error('Flipt variant evaluation error:', e);
     return null;
+  }
+}
+
+export async function getFliptBoolean(
+  flag: string,
+  entityId = 'global',
+  context: Record<string, string> = {}
+): Promise<boolean> {
+  const fliptClient = await FliptSingleton.getInstance();
+  if (!fliptClient) return false;
+
+  try {
+    const evaluation = fliptClient.evaluateBoolean({
+      flagKey: flag,
+      entityId,
+      context,
+    });
+    return evaluation.enabled;
+  } catch (e) {
+    return false;
   }
 }
 
