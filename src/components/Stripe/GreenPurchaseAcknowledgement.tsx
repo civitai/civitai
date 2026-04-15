@@ -23,7 +23,7 @@ export function GreenPurchaseAcknowledgement({
     }
   };
 
-  const purchaseTypeLabel = purchaseType === 'membership' ? 'Green Membership' : 'Green Buzz';
+  const purchaseTypeLabel = purchaseType === 'membership' ? 'Membership' : 'Green Buzz';
 
   return (
     <Modal
@@ -49,17 +49,15 @@ export function GreenPurchaseAcknowledgement({
           variant="light"
         >
           <Text size="sm">
-            You are about to purchase <strong>{purchaseTypeLabel}</strong>. Please understand the
-            following before proceeding:
+            You are about to purchase {purchaseType === 'membership' ? 'a ' : ''}
+            <strong>{purchaseTypeLabel}</strong>. Please understand the following before proceeding:
           </Text>
         </Alert>
 
         <Stack gap="xs">
-          <Text fw={600}>What is Civitai Green?</Text>
           <List size="sm" spacing="xs">
             <List.Item>
-              <strong>Civitai.green</strong> is our <strong>Safe-For-Work (SFW) only</strong>{' '}
-              platform
+              <strong>Civitai.com</strong> is our <strong>Safe-For-Work (SFW) only</strong> platform
             </List.Item>
             <List.Item>
               Green Buzz <strong>cannot</strong> generate NSFW or mature content
@@ -70,7 +68,11 @@ export function GreenPurchaseAcknowledgement({
         <Alert color="red" variant="light">
           <Text size="sm" fw={500}>
             This purchase is <strong>non-refundable</strong>. If you want to use Buzz to generate
-            NSFW content, please purchase Yellow Buzz instead.
+            NSFW content, please purchase Yellow Buzz on{' '}
+            <a href="https://civitai.red/purchase/buzz" target="_blank" rel="noopener noreferrer">
+              civitai.red
+            </a>{' '}
+            instead.
           </Text>
         </Alert>
 
@@ -79,8 +81,8 @@ export function GreenPurchaseAcknowledgement({
           onChange={(e) => setAcknowledged(e.currentTarget.checked)}
           label={
             <Text size="sm">
-              I understand that {purchaseTypeLabel} can only be used for{' '}
-              <strong>Safe-For-Work content</strong>
+              I understand that {purchaseType === 'membership' ? 'a ' : ''}
+              {purchaseTypeLabel} can only be used for <strong>Safe-For-Work content</strong>
             </Text>
           }
         />

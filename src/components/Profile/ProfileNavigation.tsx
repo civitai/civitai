@@ -23,13 +23,13 @@ const overviewPath = '[username]';
 
 export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
-  const { articles, canViewNsfw, comicCreator } = useFeatureFlags();
+  const { articles, comicCreator } = useFeatureFlags();
 
   const {
     data: userOverview,
     isInitialLoading,
     isRefetching,
-  } = trpc.userProfile.overview.useQuery({ username }, { enabled: canViewNsfw });
+  } = trpc.userProfile.overview.useQuery({ username });
   const { data: user } = trpc.userProfile.get.useQuery({ username });
 
   const activePath = router.pathname.split('/').pop() || overviewPath;

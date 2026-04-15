@@ -13,7 +13,7 @@ import {
 import type { IconProps } from '@tabler/icons-react';
 import React from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+
 import classes from './HomeStyleSegmentedControl.module.css';
 
 export function HomeStyleSegmentedControl({
@@ -26,8 +26,6 @@ export function HomeStyleSegmentedControl({
 }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const { canViewNsfw } = useFeatureFlags();
-
   const options: SegmentedControlItem[] = Object.entries(data).map(([key, value]) => ({
     label: (
       <Link legacyBehavior href={value.url} passHref>
@@ -46,8 +44,7 @@ export function HomeStyleSegmentedControl({
             <Text size="sm" tt="capitalize" className="text-black dark:text-white" inline>
               {value.label ?? key}
             </Text>
-            {/* Ideally this is a temporary solution. We should be using the `canViewNsfw` feature flag to return the correct numbers to the users */}
-            {canViewNsfw && value.count != null && (
+            {value.count != null && (
               <Badge classNames={{ label: 'overflow-visible' }}>
                 {loading ? <Loader size="xs" type="dots" /> : value.count.toLocaleString()}
               </Badge>
