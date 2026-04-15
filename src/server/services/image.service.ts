@@ -1687,13 +1687,27 @@ export const getAllImages = async (
 
     // Merge user votes into tags
     if (tagsVar && userVotes) {
+      const voteMap = new Map(
+        userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote])
+      );
       for (const tag of tagsVar) {
-        const userVote = userVotes.find(
-          (vote) => vote.tagId === tag.id && vote.imageId === tag.imageId
-        );
-        if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+        const vote = voteMap.get(`${tag.imageId}:${tag.id}`);
+        if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
       }
     }
+
+    // Pre-index tags by imageId to avoid O(n*m) filter inside map
+    const tagsByImageId = tagsVar
+      ? tagsVar.reduce(
+          (acc, tag) => {
+            const arr = acc.get(tag.imageId);
+            if (arr) arr.push(tag);
+            else acc.set(tag.imageId, [tag]);
+            return acc;
+          },
+          new Map<number, typeof tagsVar>()
+        )
+      : undefined;
 
     const now = new Date();
     const filtered = rawImages.filter((x) => {
@@ -1769,7 +1783,7 @@ export const getAllImages = async (
         },
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
-        tags: tagsVar?.filter((x) => x.imageId === i.id),
+        tags: tagsByImageId?.get(i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
         thumbnailUrl: thumbnail?.url,
@@ -4699,11 +4713,12 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
       select: { tagId: true, vote: true },
     });
 
+    const voteByTagId = new Map(userVotes.map((v) => [v.tagId, v.vote]));
     for (const key in dictionary) {
       if (dictionary.hasOwnProperty(key)) {
         for (const tag of dictionary[key].tags ?? []) {
-          const userVote = userVotes.find((vote) => vote.tagId === tag.id);
-          if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+          const vote = voteByTagId.get(tag.id);
+          if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
         }
       }
     }
