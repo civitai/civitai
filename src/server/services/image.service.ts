@@ -6634,8 +6634,8 @@ type ContestCollectionItem = {
 };
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
-  max: 10_000,
-  ttl: 5 * 60 * 1000, // 5 minutes
+  max: 100_000,
+  ttl: 30 * 60 * 1000, // 30 minutes
   keyFn: (imageId: number) => `image:${imageId}`,
   fetchFn: async (imageId: number) => {
     return dbRead.$queryRaw<ContestCollectionItem[]>`
