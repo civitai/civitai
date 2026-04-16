@@ -24,16 +24,30 @@ export function useDomainSync(currentUser: SessionUser | undefined, status: stri
   useEffect(() => {
     if (isSyncing || typeof window === 'undefined') return;
     isSyncing = true;
-    const { searchParams, host } = new URL(window.location.href);
+    const { searchParams, host, origin } = new URL(window.location.href);
     const syncColor = searchParams.get('sync-account') as ColorDomain | null;
+    const syncRedirect = searchParams.get('sync-redirect');
     if (!syncColor) return;
     const syncDomain = serverDomains[syncColor];
     if (!syncDomain || host === syncDomain || status === 'loading') return;
 
+    // Only allow same-origin path redirects — reject protocol-relative or absolute URLs.
+    const redirectPath =
+      syncRedirect && syncRedirect.startsWith('/') && !syncRedirect.startsWith('//')
+        ? syncRedirect
+        : null;
+    const callbackUrl = redirectPath ? `${origin}${redirectPath}` : window.location.href;
+
     getSyncToken(serverDomains, syncColor).then((data) => {
-      if (!data) return;
+      if (!data) {
+        if (redirectPath) window.location.replace(callbackUrl);
+        return;
+      }
       const { token, userId, username } = data;
-      if (currentUser?.id === userId) return;
+      if (currentUser?.id === userId) {
+        if (redirectPath) window.location.replace(callbackUrl);
+        return;
+      }
       showNotification({
         id: 'domain-sync',
         loading: true,
@@ -42,7 +56,7 @@ export function useDomainSync(currentUser: SessionUser | undefined, status: stri
         message: `Switching to ${username} account`,
       });
       setTimeout(() => {
-        swapAccount(token).catch(() => undefined);
+        swapAccount(token, callbackUrl).catch(() => undefined);
       }, 1000);
     });
   }, [status]);

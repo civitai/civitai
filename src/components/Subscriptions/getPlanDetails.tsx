@@ -108,7 +108,10 @@ export const getPlanDetails: (
                       ?.maxPrivateModels ??
                     0
                 )}{' '}
-                Private Models{!features.isGreen && ' (PG and PG-13 Generation)'}
+                <Text td="underline" component="a" href="/train" target="_blank">
+                  Private Models
+                </Text>
+                {!features.isGreen && ' (PG and PG-13 Generation)'}
               </Text>
             ),
           }

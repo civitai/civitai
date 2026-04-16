@@ -49,9 +49,10 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   const show = enabled && !buzzLoading && !settingsLoading && !isDismissed && yellowBalance > 0;
 
   const redDomain = serverDomains.red;
+  const syncParams = 'sync-account=green&sync-redirect=%2Fuser%2Fbuzz-dashboard';
   const redUrl = redDomain
-    ? `//${redDomain}/user/buzz-dashboard?sync-account=green`
-    : 'https://civitai.red/user/buzz-dashboard?sync-account=green';
+    ? `//${redDomain}/?${syncParams}`
+    : `https://civitai.red/?${syncParams}`;
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 

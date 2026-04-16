@@ -81,7 +81,7 @@ export function LoginContent(args: {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-center">
-        <Logo className="max-h-10" accentColor={isOnGreen ? '#2f9e44' : '#1971c2'} />
+        <Logo className="max-h-10" accentColor={!isOnGreen ? '#e03131' : undefined} />
       </div>
       <Title order={1} className="text-center text-xl font-bold">
         Sign Up or Log In

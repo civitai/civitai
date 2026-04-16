@@ -23,7 +23,6 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { logToAxiom } from '~/server/logging/client';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
@@ -45,9 +44,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const region = getRegion(req);
   const isRestricted = isRegionRestricted(region);
-  const domainColor = getRequestDomainColor(req);
-  const allowedBrowsingLevels =
-    isRestricted || domainColor === 'green' ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   try {
     const modelVersion = await dbRead.$queryRaw<ModelVersionApiReturn[]>`
