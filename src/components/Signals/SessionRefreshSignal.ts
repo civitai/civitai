@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react';
-import { useSession } from 'next-auth/react';
+import { signOut, useSession } from 'next-auth/react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 
@@ -13,8 +13,14 @@ export const useSessionRefreshSignal = () => {
   updateRef.current = update;
 
   const onSessionRefresh = useCallback((data: SessionRefreshSignalData) => {
-    // Trigger session refresh - this will update the client's session cookie
-    // with fresh user data from the server
+    // 'invalid' means the server has revoked this session (delete account, ban, etc.).
+    // update() would re-issue a fresh JWT cookie and clear the Redis 'invalid' marker,
+    // leaving the user logged in. Force a signOut instead.
+    if (data?.type === 'invalid') {
+      signOut();
+      return;
+    }
+    // 'refresh' (or unknown): pull fresh session data into the client cookie.
     updateRef.current?.();
   }, []);
 
