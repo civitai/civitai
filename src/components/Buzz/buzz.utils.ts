@@ -11,6 +11,7 @@ import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -24,13 +25,10 @@ export const useBuyBuzz = (): ((props: BuyBuzzModalProps) => void) => {
 
   return async function (props: BuyBuzzModalProps) {
     if (!features.canBuyBuzz) {
-      const query = {
-        minBuzzAmount: props.minBuzzAmount,
-        'sync-account': 'blue',
-      };
+      const query = { minBuzzAmount: props.minBuzzAmount };
 
       window.open(
-        `//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`,
+        syncAccount(`//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`),
         '_blank',
         'noreferrer'
       );

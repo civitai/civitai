@@ -135,16 +135,32 @@ function useTotalGenerationCost() {
 
 /**
  * Returns the available buzz types for generation and the currently selected type.
- * On .com: green + blue. On .red: yellow + blue.
+ * On .com: green + blue (+ yellow if the user has a yellow balance, so we can
+ * surface it in the selector and route them to .red via the upsell alert).
+ * On .red: yellow + blue.
  * Defaults to the site's primary type (green on .com, yellow on .red).
  */
 export function useSelectedBuzzType() {
-  const availableTypes = useAvailableBuzz(['blue']);
+  const features = useFeatureFlags();
+  const baseAvailableTypes = useAvailableBuzz(['blue']);
   const storedType = useGenerationFormStore((s) => s.buzzType);
   const setBuzzType = useGenerationFormStore((s) => s.setBuzzType);
 
-  // Default to the site's primary type (first non-blue type, or first available)
-  const primaryType = availableTypes.find((t) => t !== 'blue') ?? availableTypes[0];
+  const {
+    data: { accounts: yellowAccounts },
+  } = useQueryBuzz(['yellow']);
+  const yellowBalance = yellowAccounts.find((a) => a.type === 'yellow')?.balance ?? 0;
+  const showYellowOnGreen = features.isGreen && yellowBalance > 0;
+
+  const availableTypes: BuzzSpendType[] = showYellowOnGreen
+    ? [...baseAvailableTypes, 'yellow']
+    : baseAvailableTypes;
+
+  // Default to the site's primary spendable type (skip yellow on .com — it's
+  // shown only as a routing hint, not as a real default).
+  const primaryType =
+    availableTypes.find((t) => t !== 'blue' && !(features.isGreen && t === 'yellow')) ??
+    availableTypes[0];
   const selectedType = storedType && availableTypes.includes(storedType) ? storedType : primaryType;
 
   return { availableTypes, selectedType, setBuzzType };

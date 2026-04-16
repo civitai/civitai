@@ -6,6 +6,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import { syncAccount } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 
 const ALERT_ID = 'mature-content-migration';
@@ -59,9 +60,7 @@ export function MatureContentMigrationAlert() {
   if (!isGreen || !hasNsfwEnabled || settingsLoading || isDismissed) return null;
 
   const redDomain = serverDomains.red;
-  const redUrl = redDomain
-    ? `//${redDomain}?sync-account=green`
-    : 'https://civitai.red?sync-account=green';
+  const redUrl = syncAccount(`//${redDomain}`);
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 
@@ -97,8 +96,8 @@ export function MatureContentMigrationAlert() {
                 className="text-red-4 underline decoration-red-4/40 underline-offset-2 transition-colors hover:text-red-3 hover:decoration-red-3"
               >
                 civitai.red
-              </Text>
-              {' '}&mdash; same account, same Buzz, new home.
+              </Text>{' '}
+              &mdash; same account, same Buzz, new home.
             </Text>
 
             <Button

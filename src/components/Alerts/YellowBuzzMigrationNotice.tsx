@@ -6,6 +6,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 import { BuzzBoltSvg } from '~/components/User/BuzzBoltSvg';
 import { abbreviateNumber } from '~/utils/number-helpers';
+import { syncAccount } from '~/utils/sync-account';
 
 const ALERT_ID = 'yellow-buzz-migration';
 
@@ -23,10 +24,9 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
     undefined,
     { enabled }
   );
-  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery(
-    undefined,
-    { enabled }
-  );
+  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery(undefined, {
+    enabled,
+  });
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
   const utils = trpc.useUtils();
@@ -49,22 +49,12 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   const show = enabled && !buzzLoading && !settingsLoading && !isDismissed && yellowBalance > 0;
 
   const redDomain = serverDomains.red;
-  const syncParams = 'sync-account=green&sync-redirect=%2Fuser%2Fbuzz-dashboard';
-  const redUrl = redDomain
-    ? `//${redDomain}/?${syncParams}`
-    : `https://civitai.red/?${syncParams}`;
+  const redUrl = syncAccount(`//${redDomain}/`, '/user/buzz-dashboard');
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 
   return (
-    <Popover
-      width={280}
-      position="bottom-end"
-      shadow="lg"
-      opened={show}
-      withArrow
-      arrowSize={10}
-    >
+    <Popover width={280} position="bottom-end" shadow="lg" opened={show} withArrow arrowSize={10}>
       <Popover.Target>
         <div className="inline-flex">{children}</div>
       </Popover.Target>

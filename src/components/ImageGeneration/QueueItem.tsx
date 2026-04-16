@@ -65,6 +65,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
@@ -641,7 +642,7 @@ function SiteRestrictedBlock({ image }: { image: BlobData }) {
       {redDomain && (
         <Button
           component="a"
-          href={`//${redDomain}/generate`}
+          href={syncAccount(`//${redDomain}/generate`)}
           target="_blank"
           rel="noreferrer nofollow"
           color="red"
@@ -739,9 +740,7 @@ function CanUpgradeBlock({
   const features = useFeatureFlags();
   const serverDomains = useServerDomains();
   const isPaidMember = currentUser?.tier && currentUser.tier !== 'free';
-  const pricingHref = features.isGreen
-    ? '/pricing'
-    : `//${serverDomains.green}/pricing?sync-account=green`;
+  const pricingHref = syncAccount(`//${serverDomains.green}/pricing`);
 
   const yellowBuzzRequired = transactions.reduce<number>((acc, transaction) => {
     if (transaction.accountType === 'yellow') return acc;
@@ -789,15 +788,15 @@ function CanUpgradeBlock({
       {!isPaidMember && (
         <Text align="center" size="xs" c="dimmed">
           Or{' '}
-          <Anchor
-            component={Link}
-            href={pricingHref}
-            target={features.isGreen ? undefined : '_blank'}
-            rel={features.isGreen ? undefined : 'noreferrer nofollow'}
-            size="xs"
-          >
-            become a member
-          </Anchor>{' '}
+          {features.isGreen ? (
+            <Anchor component={Link} href={pricingHref} size="xs">
+              become a member
+            </Anchor>
+          ) : (
+            <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
+              become a member
+            </Anchor>
+          )}{' '}
           to use Blue Buzz for mature content
         </Text>
       )}

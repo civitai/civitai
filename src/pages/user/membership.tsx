@@ -58,6 +58,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { syncAccount } from '~/utils/sync-account';
 import { booleanString } from '~/utils/zod-helpers';
 import styles from './membership.module.scss';
 
@@ -130,14 +131,9 @@ export default function UserMembership() {
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
 
   const handleRedirectToOtherEnvironment = () => {
-    const targetDomain = otherBuzzType === 'green' ? serverDomains.green : serverDomains.blue;
-    const syncParam = otherBuzzType === 'green' ? 'yellow' : 'green';
+    const targetDomain = otherBuzzType === 'green' ? serverDomains.green : serverDomains.red;
 
-    window.open(
-      `//${targetDomain}/user/membership?sync-account=${syncParam}`,
-      '_blank',
-      'noreferrer'
-    );
+    window.open(syncAccount(`//${targetDomain}/user/membership`), '_blank', 'noreferrer');
   };
 
   const handleRefreshSubscription = async () => {

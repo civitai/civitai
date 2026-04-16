@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState } from 'react';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 
 type AppProviderProps = {
@@ -45,6 +46,10 @@ export function AppProvider({
   ...appContext
 }: AppProviderProps) {
   trpc.user.getSettings.useQuery(undefined, { initialData: settings });
+  // Populate the module-level server domain map so `syncAccount(url)` can
+  // resolve hosts to colors without pulling from React context.
+  setServerDomains(serverDomains);
+  console.log({ serverDomains });
   const [state] = useState(() => ({
     ...appContext,
     allowMatureContent: domain !== 'green',
