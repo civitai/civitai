@@ -12,6 +12,7 @@ import {
   getFilesForModelVersionCache,
   updateFile,
 } from '~/server/services/model-file.service';
+import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { registerFileLocation } from '~/utils/storage-resolver';
 
@@ -46,7 +47,9 @@ export const createFileHandler = async ({
           select: {
             id: true,
             modelId: true,
+            baseModel: true,
             status: true,
+            model: { select: { type: true } },
             _count: { select: { posts: { where: { publishedAt: { not: null } } } } },
           },
         },
@@ -73,6 +76,17 @@ export const createFileHandler = async ({
     ctx.track
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);
+
+    // Submit model file scan workflow to orchestrator
+    createModelFileScanRequest({
+      fileId: file.id,
+      modelVersionId: file.modelVersion.id,
+      modelId: file.modelVersion.modelId,
+      modelType: file.modelVersion.model.type,
+      baseModel: file.modelVersion.baseModel,
+    }).catch((err) => {
+      console.error('Failed to submit model file scan workflow:', err);
+    });
 
     return file;
   } catch (error) {

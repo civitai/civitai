@@ -1,9 +1,11 @@
 import type { Priority, WorkflowStepTemplate, XGuardModerationStepTemplate } from '@civitai/client';
 import { submitWorkflow } from '@civitai/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import { stringifyAIR } from '~/shared/utils/air';
 
 export async function createImageIngestionRequest({
   imageId,
@@ -226,6 +228,93 @@ export async function createTextModerationRequest({
       entityId,
       responseStatus: response?.status,
       serverTiming,
+      error,
+    });
+  }
+
+  return data;
+}
+
+export async function createModelFileScanRequest({
+  fileId,
+  modelVersionId,
+  modelId,
+  modelType,
+  baseModel,
+  priority = 'normal',
+}: {
+  fileId: number;
+  modelVersionId: number;
+  modelId: number;
+  modelType: ModelType;
+  baseModel: string;
+  priority?: Priority;
+}) {
+  const air = stringifyAIR({
+    baseModel,
+    type: modelType,
+    modelId,
+    id: modelVersionId,
+  });
+
+  const metadata = { fileId, modelVersionId };
+  const callbackUrl = `${env.NEXTAUTH_URL}/api/webhooks/model-file-scan-result?token=${env.WEBHOOK_TOKEN}`;
+
+  const { data, error, response } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    body: {
+      metadata,
+      currencies: [],
+      tags: ['civitai', 'model-scan'],
+      steps: [
+        {
+          $type: 'modelClamScan',
+          name: 'clamScan',
+          metadata,
+          priority,
+          input: { model: air },
+        } as WorkflowStepTemplate,
+        {
+          $type: 'modelPickleScan',
+          name: 'pickleScan',
+          metadata,
+          priority,
+          input: { model: air },
+        } as WorkflowStepTemplate,
+        {
+          $type: 'modelHash',
+          name: 'hash',
+          metadata,
+          priority,
+          input: { model: air },
+        } as WorkflowStepTemplate,
+        {
+          $type: 'modelParseMetadata',
+          name: 'parseMetadata',
+          metadata,
+          priority,
+          input: { model: air },
+        } as WorkflowStepTemplate,
+      ],
+      callbacks: [
+        {
+          url: callbackUrl,
+          type: ['workflow:succeeded', 'workflow:failed', 'workflow:expired', 'workflow:canceled'],
+        },
+      ],
+    },
+  });
+
+  console.log({ workflowId: data?.id });
+
+  if (!data) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-scan',
+      fileId,
+      modelVersionId,
+      air,
+      responseStatus: response.status,
       error,
     });
   }

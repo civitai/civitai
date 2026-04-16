@@ -67,7 +67,7 @@ import { resourceGenerationAvailability } from '~/server/jobs/resource-generatio
 import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
-import { scanFilesJob } from '~/server/jobs/scan-files';
+import { scanFilesJob, scanFilesFallbackJob } from '~/server/jobs/scan-files';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -89,6 +89,7 @@ import { booleanString } from '~/utils/zod-helpers';
 
 export const jobs: Job[] = [
   scanFilesJob,
+  scanFilesFallbackJob,
   processImportsJob,
   sendNotificationsJob,
   sendWebhooksJob,

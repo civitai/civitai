@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -12,6 +13,8 @@ import {
   isStorageResolverEnabled,
 } from '~/utils/delivery-worker';
 import { logToAxiom } from '~/server/logging/client';
+import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
@@ -186,3 +189,75 @@ type FileScanRequest = {
 
 export const ScannerTasks = ['Import', 'Hash', 'Scan', 'Convert', 'ParseMetadata'] as const;
 export type ScannerTask = (typeof ScannerTasks)[number];
+
+// Fallback job: resubmits orchestrator scan workflows for files that were missed
+// or whose scans stalled. Runs every 5 minutes, picks up files where:
+// - virusScanResult is still Pending
+// - scanRequestedAt is null (never submitted) or older than 1 day (stalled)
+const SCAN_FALLBACK_CONCURRENCY = 10;
+const SCAN_FALLBACK_BATCH_SIZE = 200;
+
+export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * *', async () => {
+  const scanCutOff = dayjs().subtract(1, 'day').toDate();
+
+  const files = await dbWrite.modelFile.findMany({
+    where: {
+      virusScanResult: ScanResultCode.Pending,
+      AND: [
+        { OR: [{ exists: null }, { exists: true }] },
+        { OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: scanCutOff } }] },
+      ],
+    },
+    select: {
+      id: true,
+      modelVersion: {
+        select: {
+          id: true,
+          baseModel: true,
+          model: { select: { id: true, type: true } },
+        },
+      },
+    },
+    take: SCAN_FALLBACK_BATCH_SIZE,
+  });
+
+  if (files.length === 0) return { submitted: 0 };
+
+  // Mark batch as requested upfront so overlapping runs won't re-process
+  await dbWrite.modelFile.updateMany({
+    where: { id: { in: files.map((f) => f.id) } },
+    data: { scanRequestedAt: new Date() },
+  });
+
+  let submitted = 0;
+  let failed = 0;
+  await limitConcurrency(
+    files.map((file) => async () => {
+      try {
+        await createModelFileScanRequest({
+          fileId: file.id,
+          modelVersionId: file.modelVersion.id,
+          modelId: file.modelVersion.model.id,
+          modelType: file.modelVersion.model.type as ModelType,
+          baseModel: file.modelVersion.baseModel,
+          priority: 'low',
+        });
+        submitted++;
+      } catch (err) {
+        failed++;
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'scan-files-fallback',
+            message: `Failed to submit scan workflow for file ${file.id}`,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'webhooks'
+        ).catch();
+      }
+    }),
+    SCAN_FALLBACK_CONCURRENCY
+  );
+
+  return { submitted, failed };
+});
