@@ -55,6 +55,8 @@ const featureFlags = createFeatureFlags({
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
+  trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption' },
+  trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
