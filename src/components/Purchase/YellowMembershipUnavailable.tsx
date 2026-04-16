@@ -4,13 +4,13 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 
 export function YellowMembershipUnavailable() {
   const serverDomains = useServerDomains();
-  const greenPricingUrl = `//${serverDomains.green}/pricing?${QS.stringify({
-    buzzType: 'green',
-    'sync-account': 'blue',
-  })}`;
+  const greenPricingUrl = syncAccount(
+    `//${serverDomains.green}/pricing?${QS.stringify({ buzzType: 'green' })}`
+  );
 
   return (
     <Stack gap="lg" style={{ maxWidth: 600, margin: '0 auto' }}>

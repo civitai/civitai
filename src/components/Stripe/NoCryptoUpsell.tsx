@@ -7,6 +7,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { formatRewardsBoost, getAccountTypeLabel } from '~/utils/buzz';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
+import { syncAccount } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -30,8 +31,8 @@ export function NoCryptoUpsell() {
   const headlinePlan = bronze ?? products[0];
 
   const greenDomain = serverDomains.green;
-  const greenBuzzUrl = `//${greenDomain}/purchase/buzz?sync-account=green`;
-  const greenPricingUrl = `//${greenDomain}/pricing?sync-account=green`;
+  const greenBuzzUrl = syncAccount(`//${greenDomain}/purchase/buzz`);
+  const greenPricingUrl = syncAccount(`//${greenDomain}/pricing`);
 
   if (!headlinePlan) {
     // Fall back to a simpler version when plan data hasn't loaded.

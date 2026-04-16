@@ -75,6 +75,7 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
 import { InlineMembershipUpsell } from '~/components/Stripe/InlineMembershipUpsell';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
@@ -360,13 +361,10 @@ export const BuzzPurchaseImproved = ({
   useEffect(() => {
     if (selectedBuzzType === 'green' && !features.isGreen) {
       // Redirect:
-      const query = {
-        minBuzzAmount: minBuzzAmount,
-        'sync-account': 'blue',
-      };
+      const query = { minBuzzAmount: minBuzzAmount };
 
       window.open(
-        `//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`,
+        syncAccount(`//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`),
         '_blank',
         'noreferrer'
       );

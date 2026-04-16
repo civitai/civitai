@@ -2,6 +2,7 @@ import { Button, Center, Container, Group, Loader, Stack, Text, Title } from '@m
 import clsx from 'clsx';
 import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { Meta } from '~/components/Meta/Meta';
@@ -39,13 +40,11 @@ export function GreenEnvironmentRedirect({
   const serverDomains = useServerDomains();
 
   const handleManualRedirect = () => {
-    const query = {
-      buzzType: 'green',
-      'sync-account': 'blue',
-      ...queryParams,
-    };
+    const query = { buzzType: 'green', ...queryParams };
 
-    window.location.href = `//${serverDomains.green}${destinationPath}?${QS.stringify(query)}`;
+    window.location.href = syncAccount(
+      `//${serverDomains.green}${destinationPath}?${QS.stringify(query)}`
+    );
   };
 
   const redirectContent = (

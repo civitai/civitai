@@ -24,6 +24,7 @@ import { useSession } from 'next-auth/react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
 import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
 export function SensitiveShield({
@@ -60,8 +61,7 @@ export function SensitiveShield({
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
     if (isLoading) return <PageLoader />;
 
-    const separator = router.asPath.includes('?') ? '&' : '?';
-    const redUrl = `//${redDomain}${router.asPath}${separator}sync-account=green`;
+    const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">

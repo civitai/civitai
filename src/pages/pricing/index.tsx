@@ -11,6 +11,7 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -47,14 +48,10 @@ export default function Pricing() {
   // Auto-redirect to green environment if green is selected but we're not in green
   useEffect(() => {
     if (!features.isGreen && selectedBuzzType === 'green') {
-      const query = {
-        reason,
-        buzzType: 'green',
-        'sync-account': 'blue',
-      };
+      const query = { reason, buzzType: 'green' };
 
       window.open(
-        `//${serverDomains.green}/pricing?${QS.stringify(query)}`,
+        syncAccount(`//${serverDomains.green}/pricing?${QS.stringify(query)}`),
         '_blank',
         'noreferrer'
       );

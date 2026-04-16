@@ -1139,6 +1139,12 @@ export interface NormalizedStep {
   metadata: NormalizedStepMetadata;
   /** Output items (image / video / audio) */
   output: NormalizedWorkflowStepOutput[];
+  /**
+   * TEMPORARY: legacy alias of `output` emitted by the server during the rollout
+   * window so pre-rename clients that read `step.images` keep rendering. Always
+   * identical to `output`. Remove once stale clients are expected to have updated.
+   */
+  images?: NormalizedWorkflowStepOutput[];
   /** Step errors */
   errors?: string[];
 }
@@ -1610,6 +1616,10 @@ function formatStep(
       ...(resolvedResources?.length ? { resources: resolvedResources } : {}),
     },
     output,
+    // TEMPORARY: dual-emit under the legacy `images` key so pre-rename clients
+    // (which read `step.images`) keep rendering their queue while users refresh.
+    // Remove after the rollout window closes.
+    images: output,
     errors: errors.length > 0 ? errors : undefined,
   };
 }
@@ -1803,6 +1813,8 @@ export async function getWorkflowStatusUpdate({
           status: step.status,
           completedAt: step.completedAt,
           output,
+          // TEMPORARY: dual-emit under the legacy `images` key for pre-rename clients.
+          images: output,
           errors: errors.length > 0 ? errors : undefined,
         };
       }),
