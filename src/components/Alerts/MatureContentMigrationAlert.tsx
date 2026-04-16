@@ -3,19 +3,19 @@ import { Button, CloseButton, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
 import { useSession } from 'next-auth/react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import { useServerDomains } from '~/providers/AppProvider';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { colorDomains } from '~/shared/constants/domain.constants';
 import { trpc } from '~/utils/trpc';
 
 const ALERT_ID = 'mature-content-migration';
 
 export function MatureContentMigrationAlert() {
   const { isGreen } = useFeatureFlags();
+  const serverDomains = useServerDomains();
   const { data: session } = useSession();
-  const settings = useCurrentUserSettings();
-  const isDismissed = (settings.dismissedAlerts ?? []).includes(ALERT_ID);
+  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery();
+  const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
   // Check the raw session user preferences (before domain override).
   // On green, the BrowserSettingsProvider forces showNsfw=false, so we
@@ -56,9 +56,9 @@ export function MatureContentMigrationAlert() {
     if (el) el.style.opacity = '0';
   }, []);
 
-  if (!isGreen || !hasNsfwEnabled || isDismissed) return null;
+  if (!isGreen || !hasNsfwEnabled || settingsLoading || isDismissed) return null;
 
-  const redDomain = colorDomains.red;
+  const redDomain = serverDomains.red;
   const redUrl = redDomain
     ? `//${redDomain}?sync-account=green`
     : 'https://civitai.red?sync-account=green';

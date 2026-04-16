@@ -733,24 +733,24 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
-    console.log('skipping image ingestion');
-    const updated = await dbClient.image.update({
-      where: { id: image.id },
-      select: { postId: true },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-        nsfwLevel: NsfwLevel.PG,
-      },
-    });
+  // if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
+  //   console.log('skipping image ingestion');
+  //   const updated = await dbClient.image.update({
+  //     where: { id: image.id },
+  //     select: { postId: true },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
 
-    // Update post NSFW level
-    if (updated.postId) await updatePostNsfwLevel(updated.postId);
+  //   // Update post NSFW level
+  //   if (updated.postId) await updatePostNsfwLevel(updated.postId);
 
-    return true;
-  }
+  //   return true;
+  // }
 
   const parsedImage = ingestImageSchema.safeParse(image);
   if (!parsedImage.success) throw new Error('Failed to parse image data');
@@ -876,18 +876,20 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
-  if (!isProd || !callbackUrl) {
-    console.log('skip ingest');
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-      },
-    });
-    return true;
-  }
+  // TODO.articleImageScan: uncomment when ready to enable image scanning for articles
+  // if (!isProd || !callbackUrl) {
+  //   console.log('skip ingest');
+  //   await dbClient.image.updateMany({
+  //     where: { id: { in: imageIds } },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
+  //   return true;
+  // }
 
   const needsPrompts = !images.some((x) => x.prompt);
   if (needsPrompts) {
@@ -924,6 +926,7 @@ export const ingestImageBulk = async ({
     });
     return true;
   }
+
   return false;
 };
 
@@ -3191,7 +3194,10 @@ export async function getImagesFromBitdexPreFilter(
   filters.push(_in(nsfwLevelField, browsingLevels.map(_int)));
 
   // NSFW license restrictions
-  if (nsfwRestrictedBaseModels.length > 0) {
+  // Only add when the browsing level actually includes NSFW levels — otherwise the outer
+  // nsfwLevel filter (line above) already excludes [4,8,16,32] and the inner AND is
+  // guaranteed false, making the compound NOT a no-op but still ~273ms to evaluate in BitDex.
+  if (nsfwRestrictedBaseModels.length > 0 && includesNsfwContent) {
     filters.push(
       _not(
         _and(

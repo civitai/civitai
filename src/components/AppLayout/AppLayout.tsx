@@ -18,6 +18,7 @@ import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
+import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
@@ -122,10 +123,15 @@ export function MainContent({
   return scrollable ? (
     <ScrollArea {...props}>
       <main className="flex-1">
-        {subNav && <SubNav>{subNav}</SubNav>}
+        {subNav && (
+          <SubNav>
+            <RewardsBonusBanner />
+            {subNav}
+          </SubNav>
+        )}
+        {!subNav && <RewardsBonusBanner />}
         {announcements && <Announcements />}
-        {/* TODO: Re-enable when environment swap is ready */}
-        {/* {announcements && <MatureContentMigrationAlert />} */}
+        {announcements && <MatureContentMigrationAlert />}
         {children}
       </main>
       {footer}
@@ -133,7 +139,13 @@ export function MainContent({
   ) : (
     <div className="no-scroll group flex flex-1 flex-col overflow-hidden">
       <main className="flex flex-1 flex-col overflow-hidden">
-        {subNav && <SubNav>{subNav}</SubNav>}
+        {subNav && (
+          <SubNav>
+            <RewardsBonusBanner />
+            {subNav}
+          </SubNav>
+        )}
+        {!subNav && <RewardsBonusBanner />}
         {children}
       </main>
       {footer}

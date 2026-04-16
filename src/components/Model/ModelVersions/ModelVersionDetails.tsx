@@ -600,7 +600,7 @@ function ModelVersionDetailsContent({
       <Group gap={4}>
         <Text size="xs" c="dimmed">
           {file.type === 'Pruned Model' ? 'Pruned ' : ''}
-          {file.metadata.format}
+          {file.metadata?.format}
         </Text>
         <FileInfo file={file} />
       </Group>
@@ -629,7 +629,7 @@ function ModelVersionDetailsContent({
     ) : (
       <Menu.Item key={file.id} py={4} leftSection={<VerifiedText file={file} iconOnly />} disabled>
         {`${startCase(file.type)}${
-          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata.format : ''
+          ['Model', 'Pruned Model'].includes(file.type) ? ' ' + file.metadata?.format : ''
         } (${formatKBytes(file.sizeKB)})`}
       </Menu.Item>
     )
@@ -1520,7 +1520,7 @@ function ModelVersionDetailsContent({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.nsfw && !model.poi && <AdUnitSide_2 />}
+          {!model.poi && <AdUnitSide_2 />}
         </Stack>
       </ContainerGrid2.Col>
 

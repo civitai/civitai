@@ -169,6 +169,10 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       if (split.resources.length) graphInput.resources = split.resources;
       if (split.vae) graphInput.vae = split.vae;
 
+      // Strip prompt/negativePrompt — they don't affect cost and shouldn't be sent until submission.
+      delete (graphInput as any).prompt;
+      delete (graphInput as any).negativePrompt;
+
       setQuery(graphInput);
     });
   }, [watched, promptFocused]);

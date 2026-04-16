@@ -26,7 +26,7 @@ import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient } from '~/server/meilisearch/client';
 import { isDefined } from '~/utils/type-guards';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 type Metadata = {
   currentPage?: number;

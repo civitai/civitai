@@ -16,7 +16,7 @@ export function TrackView({
 }: AddViewSchema) {
   const trackMutation = trpc.track.addView.useMutation();
   const observedEntityId = useRef<number | null>(null);
-  const { adsEnabled, adsBlocked } = useAdsContext();
+  const { adsEnabled, adsBlocked, useDirectAds } = useAdsContext();
 
   const nsfw = useBrowsingSettings((x) => x.showNsfw);
   const browsingLevel = useBrowsingLevelDebounced();
@@ -30,7 +30,8 @@ export function TrackView({
           entityType,
           entityId,
           details,
-          ads: adsBlocked ? 'Blocked' : adsEnabled ? 'Served' : 'Off',
+          // Direct ads on .red are tracked separately; only report Snigel/programmatic ad status here.
+          ads: useDirectAds ? 'Off' : adsBlocked ? 'Blocked' : adsEnabled ? 'Served' : 'Off',
           nsfw: nsfwOverride ?? nsfw,
           browsingLevel,
           nsfwLevel,

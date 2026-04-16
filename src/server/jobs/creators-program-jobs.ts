@@ -2,7 +2,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
-import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
+import { TransactionType } from '~/shared/constants/buzz.constants';
 import { createBuzzTransactionMany, getAccountsBalances } from '~/server/services/buzz.service';
 import {
   bustCompensationPoolCache,
@@ -47,57 +47,57 @@ export const creatorsProgramDistribute = createJob(
     let month = await dbKV.get('compensation-pool-month', FIRST_CREATOR_PROGRAM_MONTH);
     month = dayjs(month).startOf('month').toDate();
 
+    // Get unified pool data
+    const pool = await getCompensationPool({ month });
+    // Get all participants from unified bank
+    const participants = await getPoolParticipantsV2(month, false);
+
+    // Allocate pool value based on participant portion
     const allAllocations: [number, number][] = [];
     const allAffectedUsers = new Set<number>();
+    let availablePoolValue = Math.floor(pool.value * 100);
 
-    // Process each buzz type
-    for (const buzzType of buzzBankTypes) {
-      // Get pool data
-      const pool = await getCompensationPool({ month, buzzType });
-      // Get totals for all participants in bank
-      const participants = await getPoolParticipantsV2(
-        month,
-        false,
-        buzzType as 'green' | 'yellow'
-      );
-
-      // Allocate pool value based on participant portion
-      let availablePoolValue = Math.floor(pool.value * 100);
-      for (const participant of participants) {
-        // If we're out of pool value, we're done... (sorry folks)
-        if (availablePoolValue <= 0) break;
-
-        // Determine participant share
-        const participantPortion = participant.amount / pool.size.current;
-        let participantShare = Math.floor(pool.value * participantPortion * 100);
-        const perBuzzValue = participantShare / participant.amount;
-        // Cap Buzz value
-        if (perBuzzValue > CAPPED_BUZZ_VALUE)
-          participantShare = participant.amount * CAPPED_BUZZ_VALUE;
-
-        // Set allocation
-        allAllocations.push([participant.userId, participantShare]);
-        allAffectedUsers.add(participant.userId);
-        availablePoolValue -= participantShare;
-      }
-
-      // Send pending cash transactions from bank with retry
-      const monthStr = dayjs(month).format('YYYY-MM');
-      await withRetries(async () => {
-        createBuzzTransactionMany(
-          allAllocations.map(([userId, amount]) => ({
-            type: TransactionType.Compensation,
-            toAccountType: 'cashPending',
-            toAccountId: userId,
-            fromAccountId: 0, // central bank
-            amount,
-            description: `Compensation Pool for ${monthStr}`,
-            details: { month },
-            externalTransactionId: `comp-pool-${monthStr}-${userId}-${buzzType}`,
-          }))
-        );
-      });
+    if (pool.size.current <= 0 || availablePoolValue <= 0) {
+      // Nothing to distribute
+      month = dayjs(month).add(1, 'month').toDate();
+      await dbKV.set('compensation-pool-month', month);
+      return;
     }
+
+    for (const participant of participants) {
+      // If we're out of pool value, we're done... (sorry folks)
+      if (availablePoolValue <= 0) break;
+
+      // Determine participant share
+      const participantPortion = participant.amount / pool.size.current;
+      let participantShare = Math.floor(pool.value * participantPortion * 100);
+      const perBuzzValue = participantShare / participant.amount;
+      // Cap Buzz value
+      if (perBuzzValue > CAPPED_BUZZ_VALUE)
+        participantShare = participant.amount * CAPPED_BUZZ_VALUE;
+
+      // Set allocation
+      allAllocations.push([participant.userId, participantShare]);
+      allAffectedUsers.add(participant.userId);
+      availablePoolValue -= participantShare;
+    }
+
+    // Send pending cash transactions from bank with retry
+    const monthStr = dayjs(month).format('YYYY-MM');
+    await withRetries(async () => {
+      await createBuzzTransactionMany(
+        allAllocations.map(([userId, amount]) => ({
+          type: TransactionType.Compensation,
+          toAccountType: 'cashPending',
+          toAccountId: userId,
+          fromAccountId: 0, // central bank
+          amount,
+          description: `Compensation Pool for ${monthStr}`,
+          details: { month },
+          externalTransactionId: `comp-pool-unified-${monthStr}-${userId}`,
+        }))
+      );
+    });
 
     // Bust user caches
     const affectedUsers = Array.from(allAffectedUsers);
@@ -121,11 +121,7 @@ export const creatorsProgramInviteTipalti = createJob(
   async () => {
     const availability = getCreatorProgramAvailability();
     if (!availability.isAvailable) return;
-    const participants = await getPoolParticipantsV2(
-      dayjs().subtract(1, 'months').toDate(),
-      true,
-      'yellow'
-    );
+    const participants = await getPoolParticipantsV2(dayjs().subtract(1, 'months').toDate(), true);
     if (participants.length === 0) return;
     const balances = await getAccountsBalances({
       accountIds: participants.map((p) => p.userId),
@@ -174,10 +170,7 @@ export const creatorsProgramRollover = createJob(
   'creators-program-rollover',
   '0 0 1 * *',
   async () => {
-    // Flush caches for all bankable buzz types
-    for (const buzzType of buzzBankTypes) {
-      await getUserCapCache(buzzType).flush();
-    }
+    await getUserCapCache().flush();
     await flushBankedCache();
     await bustCompensationPoolCache();
   }
@@ -193,7 +186,7 @@ export const creatorsProgramSettleCash = createJob(
     if (!availability.isAvailable) return;
 
     const month = dayjs().subtract(1, 'months').toDate();
-    const participants = await getPoolParticipantsV2(month, true, 'yellow');
+    const participants = await getPoolParticipantsV2(month, true);
     const balances = await getAccountsBalances({
       accountIds: participants.map((p) => p.userId),
       accountTypes: ['cashPending'],

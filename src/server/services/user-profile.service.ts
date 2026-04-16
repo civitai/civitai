@@ -15,7 +15,10 @@ import { ingestImage } from '~/server/services/image.service';
 import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
-import { getUserContentOverview as getUserContentOverviewFromCache } from '~/server/redis/caches';
+import {
+  getUserContentOverview as getUserContentOverviewFromCache,
+  getUserContentOverviewSfw as getUserContentOverviewSfwFromCache,
+} from '~/server/redis/caches';
 import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -23,9 +26,11 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 export const getUserContentOverview = async ({
   username,
   userId,
+  sfw,
 }: {
   username?: string;
   userId?: number;
+  sfw?: boolean;
 }) => {
   if (!username && !userId) {
     throw new Error('Either username or id must be provided');
@@ -44,7 +49,8 @@ export const getUserContentOverview = async ({
     userId = user.id;
   }
 
-  const data = await getUserContentOverviewFromCache([userId]);
+  const fetchFn = sfw ? getUserContentOverviewSfwFromCache : getUserContentOverviewFromCache;
+  const data = await fetchFn([userId]);
   return data[userId];
 };
 

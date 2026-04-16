@@ -264,7 +264,12 @@ export abstract class BlobData {
       (step.metadata as any)?.isPrivateGeneration ??
       false;
 
+    if (domain.green && this.blockedReason === 'MatureContent') {
+      this.blockedReason = 'siteRestricted';
+    }
+
     if (data.blockedReason === 'none') this.blockedReason = null;
+
     if (!this.blockedReason) {
       if (isPrivateGeneration && isPrivateMature(data.nsfwLevel)) {
         this.blockedReason = 'privateGen';
@@ -301,6 +306,15 @@ export abstract class BlobData {
     return this.blockedReason === 'canUpgrade';
   }
 
+  /** Whether this image's block can be resolved in-place (upgrade or redirect). */
+  get hasResolvableBlock() {
+    return (
+      this.blockedReason === 'canUpgrade' ||
+      this.blockedReason === 'siteRestricted' ||
+      this.blockedReason === 'membershipRequired'
+    );
+  }
+
   /**
    * Whether the output failed to materialize. True when the parent step reached a
    * terminal state (`succeeded` / `failed` / `expired` / `canceled`) but the blob
@@ -315,7 +329,7 @@ export abstract class BlobData {
 
   /** Whether this output should be shown in the UI (not hidden, not hard-blocked). */
   get displayable(): boolean {
-    return !this.hidden && (!this.blockedReason || this.canUpgrade);
+    return !this.hidden && (!this.blockedReason || this.hasResolvableBlock);
   }
 
   /**

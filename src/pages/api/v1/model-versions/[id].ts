@@ -23,7 +23,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { logToAxiom } from '~/server/logging/client';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>

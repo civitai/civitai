@@ -64,6 +64,8 @@ import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.const
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { useServerDomains } from '~/providers/AppProvider';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
 
@@ -462,11 +464,15 @@ function StepOutputs({
           [classes.asSidebar]: !features.largerGenerationImages,
         })}
       >
-        {displayImages.map((image) => (
-          <GeneratedOutput key={image.id} image={image} />
-        ))}
+        {displayImages.map((image) =>
+          image.blockedReason === 'siteRestricted' ? (
+            <SiteRestrictedBlock key={image.id} image={image} />
+          ) : (
+            <GeneratedOutput key={image.id} image={image} />
+          )
+        )}
         <BlockedBlocks
-          blockedReasons={blockedReasons}
+          blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
           transactions={request.transactions}
         />
@@ -617,6 +623,38 @@ function countOccurrences(arr: string[]): Record<string, number> {
   }, {} as Record<string, number>);
 }
 
+/**
+ * Per-image card shown on .com when NSFW output is blocked.
+ * Displays a prompt/seed summary and a CTA to view on civitai.red.
+ */
+function SiteRestrictedBlock({ image }: { image: BlobData }) {
+  const redDomain = useServerDomains().red;
+
+  return (
+    <TwCard className="flex aspect-square size-full flex-col items-center justify-center gap-2 border p-3">
+      <Text c="yellow" fw="bold" align="center" size="sm">
+        Mature Content
+      </Text>
+      <Text align="center" size="xs">
+        This image was rated mature and cannot be viewed on this site.
+      </Text>
+      {redDomain && (
+        <Button
+          component="a"
+          href={`//${redDomain}/generate`}
+          target="_blank"
+          rel="noreferrer nofollow"
+          color="red"
+          variant="light"
+          size="compact-sm"
+        >
+          Unlock on civitai.red
+        </Button>
+      )}
+    </TwCard>
+  );
+}
+
 function BlockedBlocks(props: {
   blockedReasons: string[];
   workflowId: string;
@@ -697,6 +735,9 @@ function CanUpgradeBlock({
   workflowId: string;
   transactions: TransactionInfo[];
 }) {
+  const currentUser = useCurrentUser();
+  const isPaidMember = currentUser?.tier && currentUser.tier !== 'free';
+
   const yellowBuzzRequired = transactions.reduce<number>((acc, transaction) => {
     if (transaction.accountType === 'yellow') return acc;
     if (transaction.type === 'credit') return acc - transaction.amount;
@@ -740,6 +781,15 @@ function CanUpgradeBlock({
         onClick={handleClick}
         loading={isLoading}
       />
+      {!isPaidMember && (
+        <Text align="center" size="xs" c="dimmed">
+          Or{' '}
+          <Anchor component={Link} href="/pricing" size="xs">
+            become a member
+          </Anchor>{' '}
+          to use Blue Buzz for mature content
+        </Text>
+      )}
     </>
   );
 }

@@ -58,8 +58,7 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   return (
     <header
       className={clsx('z-[199] border-b border-b-gray-2 dark:border-b-dark-5', {
-        ['border-red-8 border-b-[3px]']: features.useRedTheme,
-        ['border-green-8 border-b-[3px]']: features.useGreenTheme,
+        ['border-red-8 border-b-[3px]']: features.isRed,
       })}
       style={{ height: HEADER_HEIGHT, borderBottomStyle: 'solid' }}
     >

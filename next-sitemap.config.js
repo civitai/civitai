@@ -29,9 +29,9 @@ const exclude = [
 ];
 
 const allowedDomains = [
-  process.env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  process.env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  process.env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+  process.env.SERVER_DOMAIN_BLUE,
+  process.env.SERVER_DOMAIN_GREEN,
+  process.env.SERVER_DOMAIN_RED,
 ].map((domain) => domain.includes('http') ? domain : 'https://' + domain);
 
 const disallow = exclude.filter((path) => !path.includes('sitemap.xml'));

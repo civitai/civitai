@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1597",
+  "version": "5.0.1601",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -72,7 +72,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "0.2.0-beta.51",
+    "@civitai/client": "0.2.0-beta.50",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/next-axiom": "^0.17.0",
     "@clavata/sdk": "^0.2.3",
@@ -310,6 +310,7 @@
     "eslint-plugin-import": "^2.26.0",
     "eslint-plugin-prettier": "^4.2.1",
     "eslint-plugin-tailwindcss": "^3.15.1",
+    "happy-dom": "^18.0.1",
     "husky": "^9.1.1",
     "lint-staged": "^15.2.7",
     "pg-format": "^1.0.4",

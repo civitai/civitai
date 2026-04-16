@@ -18,6 +18,7 @@ import type { CachedObject } from '~/server/utils/cache-helpers';
 import { createCachedObject } from '~/server/utils/cache-helpers';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { stringifyAIR } from '~/shared/utils/air';
+import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import dayjs from '~/shared/utils/dayjs';
 import type { Availability, CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import { CosmeticEntity, ModelStatus, TagSource, TagType } from '~/shared/utils/prisma/enums';
@@ -499,6 +500,20 @@ export const userModelCountCache = createUserContentCountCache<UserModelCount>(
     GROUP BY "userId"
   `
 );
+export const userModelCountSfwCache = createUserContentCountCache<UserModelCount>(
+  'modelCount:sfw',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "modelCount"
+    FROM "Model"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
 
 type UserPostCount = { id: number; postCount: number };
 export const userPostCountCache = createUserContentCountCache<UserPostCount>(
@@ -515,6 +530,21 @@ export const userPostCountCache = createUserContentCountCache<UserPostCount>(
     GROUP BY "userId"
   `
 );
+export const userPostCountSfwCache = createUserContentCountCache<UserPostCount>(
+  'postCount:sfw',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "postCount"
+    FROM "Post"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "publishedAt" IS NOT NULL
+      AND "publishedAt" <= NOW()
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
 
 type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
 export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
@@ -528,6 +558,27 @@ export const userImageVideoCountCache = createUserContentCountCache<UserImageVid
     WHERE "userId" IN (${Prisma.join(userIds)})
       AND "ingestion" = 'Scanned'
       AND "needsReview" IS NULL
+      AND "postId" NOT IN (
+        SELECT id
+        FROM "Post"
+        WHERE "userId" IN (${Prisma.join(userIds)})
+          AND ("publishedAt" IS NULL OR availability = 'Private' OR "publishedAt" > NOW())
+      )
+    GROUP BY "userId"
+  `
+);
+export const userImageVideoCountSfwCache = createUserContentCountCache<UserImageVideoCount>(
+  'imageVideoCount:sfw',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
+      COALESCE(SUM(IIF("type" = 'video', 1, 0)), 0)::INT as "videoCount"
+    FROM "Image"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "ingestion" = 'Scanned'
+      AND "needsReview" IS NULL
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
       AND "postId" NOT IN (
         SELECT id
         FROM "Post"
@@ -554,6 +605,22 @@ export const userArticleCountCache = createUserContentCountCache<UserArticleCoun
     GROUP BY "userId"
   `
 );
+export const userArticleCountSfwCache = createUserContentCountCache<UserArticleCount>(
+  'articleCount:sfw',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "articleCount"
+    FROM "Article"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "publishedAt" IS NOT NULL
+      AND "publishedAt" <= NOW()
+      AND availability != 'Private'
+      AND status = 'Published'::"ArticleStatus"
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
 
 type UserBountyCount = { id: number; bountyCount: number };
 export const userBountyCountCache = createUserContentCountCache<UserBountyCount>(
@@ -566,6 +633,20 @@ export const userBountyCountCache = createUserContentCountCache<UserBountyCount>
     WHERE "userId" IN (${Prisma.join(userIds)})
       AND "startsAt" <= NOW()
       AND availability != 'Private'
+    GROUP BY "userId"
+  `
+);
+export const userBountyCountSfwCache = createUserContentCountCache<UserBountyCount>(
+  'bountyCount:sfw',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "bountyCount"
+    FROM "Bounty"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "startsAt" <= NOW()
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
     GROUP BY "userId"
   `
 );
@@ -597,6 +678,20 @@ export const userCollectionCountCache = createUserContentCountCache<UserCollecti
     GROUP BY "userId"
   `
 );
+export const userCollectionCountSfwCache = createUserContentCountCache<UserCollectionCount>(
+  'collectionCount:sfw',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "collectionCount"
+    FROM "Collection"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "read" = 'Public'
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
 
 type UserComicCount = { id: number; comicCount: number };
 export const userComicCountCache = createUserContentCountCache<UserComicCount>(
@@ -608,6 +703,24 @@ export const userComicCountCache = createUserContentCountCache<UserComicCount>(
     FROM "ComicProject" p
     WHERE p."userId" IN (${Prisma.join(userIds)})
       AND p."status" = 'Active'
+      AND EXISTS (
+        SELECT 1 FROM "ComicChapter" c
+        WHERE c."projectId" = p.id
+          AND c."status" = 'Published'
+      )
+    GROUP BY p."userId"
+  `
+);
+export const userComicCountSfwCache = createUserContentCountCache<UserComicCount>(
+  'comicCount:sfw',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      p."userId" as id,
+      COUNT(DISTINCT p.id)::INT as "comicCount"
+    FROM "ComicProject" p
+    WHERE p."userId" IN (${Prisma.join(userIds)})
+      AND p."status" = 'Active'
+      AND (p."nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
       AND EXISTS (
         SELECT 1 FROM "ComicChapter" c
         WHERE c."projectId" = p.id
@@ -645,14 +758,44 @@ type UserContentOverview = {
   comicCount: number;
 };
 
-// Helper function to fetch all user content overview data using individual caches
+function mergeOverviewResults(
+  ids: number[],
+  modelCounts: Record<string, UserModelCount>,
+  postCounts: Record<string, UserPostCount>,
+  imageVideoCounts: Record<string, UserImageVideoCount>,
+  articleCounts: Record<string, UserArticleCount>,
+  bountyCounts: Record<string, UserBountyCount>,
+  bountyEntryCounts: Record<string, UserBountyEntryCount>,
+  collectionCounts: Record<string, UserCollectionCount>,
+  reviewFlags: Record<string, UserHasReceivedReviews>,
+  comicCounts: Record<string, UserComicCount>
+): Record<number, UserContentOverview> {
+  return Object.fromEntries(
+    ids.map((id) => [
+      id,
+      {
+        id,
+        modelCount: modelCounts[id]?.modelCount ?? 0,
+        postCount: postCounts[id]?.postCount ?? 0,
+        imageCount: imageVideoCounts[id]?.imageCount ?? 0,
+        videoCount: imageVideoCounts[id]?.videoCount ?? 0,
+        articleCount: articleCounts[id]?.articleCount ?? 0,
+        bountyCount: bountyCounts[id]?.bountyCount ?? 0,
+        bountyEntryCount: bountyEntryCounts[id]?.bountyEntryCount ?? 0,
+        collectionCount: collectionCounts[id]?.collectionCount ?? 0,
+        comicCount: comicCounts[id]?.comicCount ?? 0,
+        hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
+      },
+    ])
+  );
+}
+
 export const getUserContentOverview = async (
   userIds: number | number[]
 ): Promise<Record<number, UserContentOverview>> => {
   const ids = Array.isArray(userIds) ? userIds : [userIds];
   if (!ids.length) return {};
 
-  // Fetch all caches in parallel
   const [
     modelCounts,
     postCounts,
@@ -675,43 +818,84 @@ export const getUserContentOverview = async (
     userComicCountCache.fetch(ids),
   ]);
 
-  // Merge results
-  return Object.fromEntries(
-    ids.map((id) => [
-      id,
-      {
-        id,
-        modelCount: modelCounts[id]?.modelCount ?? 0,
-        postCount: postCounts[id]?.postCount ?? 0,
-        imageCount: imageVideoCounts[id]?.imageCount ?? 0,
-        videoCount: imageVideoCounts[id]?.videoCount ?? 0,
-        articleCount: articleCounts[id]?.articleCount ?? 0,
-        bountyCount: bountyCounts[id]?.bountyCount ?? 0,
-        bountyEntryCount: bountyEntryCounts[id]?.bountyEntryCount ?? 0,
-        collectionCount: collectionCounts[id]?.collectionCount ?? 0,
-        comicCount: comicCounts[id]?.comicCount ?? 0,
-        hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
-      },
-    ])
+  return mergeOverviewResults(
+    ids,
+    modelCounts,
+    postCounts,
+    imageVideoCounts,
+    articleCounts,
+    bountyCounts,
+    bountyEntryCounts,
+    collectionCounts,
+    reviewFlags,
+    comicCounts
   );
 };
 
-// Keep old cache object for backward compatibility
+export const getUserContentOverviewSfw = async (
+  userIds: number | number[]
+): Promise<Record<number, UserContentOverview>> => {
+  const ids = Array.isArray(userIds) ? userIds : [userIds];
+  if (!ids.length) return {};
+
+  const [
+    modelCounts,
+    postCounts,
+    imageVideoCounts,
+    articleCounts,
+    bountyCounts,
+    bountyEntryCounts,
+    collectionCounts,
+    reviewFlags,
+    comicCounts,
+  ] = await Promise.all([
+    userModelCountSfwCache.fetch(ids),
+    userPostCountSfwCache.fetch(ids),
+    userImageVideoCountSfwCache.fetch(ids),
+    userArticleCountSfwCache.fetch(ids),
+    userBountyCountSfwCache.fetch(ids),
+    userBountyEntryCountCache.fetch(ids), // no nsfwLevel on BountyEntry
+    userCollectionCountSfwCache.fetch(ids),
+    userHasReceivedReviewsCache.fetch(ids), // not NSFW-filtered
+    userComicCountSfwCache.fetch(ids),
+  ]);
+
+  return mergeOverviewResults(
+    ids,
+    modelCounts,
+    postCounts,
+    imageVideoCounts,
+    articleCounts,
+    bountyCounts,
+    bountyEntryCounts,
+    collectionCounts,
+    reviewFlags,
+    comicCounts
+  );
+};
+
 export const userContentOverviewCache = {
   fetch: getUserContentOverview,
+  fetchSfw: getUserContentOverviewSfw,
   bust: async (userIds: number | number[]) => {
-    // Bust all individual caches
     const ids = Array.isArray(userIds) ? userIds : [userIds];
     await Promise.all([
       userModelCountCache.bust(ids),
+      userModelCountSfwCache.bust(ids),
       userPostCountCache.bust(ids),
+      userPostCountSfwCache.bust(ids),
       userImageVideoCountCache.bust(ids),
+      userImageVideoCountSfwCache.bust(ids),
       userArticleCountCache.bust(ids),
+      userArticleCountSfwCache.bust(ids),
       userBountyCountCache.bust(ids),
+      userBountyCountSfwCache.bust(ids),
       userBountyEntryCountCache.bust(ids),
       userCollectionCountCache.bust(ids),
+      userCollectionCountSfwCache.bust(ids),
       userHasReceivedReviewsCache.bust(ids),
       userComicCountCache.bust(ids),
+      userComicCountSfwCache.bust(ids),
     ]);
   },
 };

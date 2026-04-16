@@ -6,14 +6,16 @@ import { isDev } from '~/env/other';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { getDisplayName } from '~/utils/string-helpers';
-import { serverDomainMap, type ServerAvailability } from '~/shared/utils/server-domain';
+import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+
+export type ServerAvailability = ColorDomain;
 
 // --------------------------
 // Feature Availability
 // --------------------------
 const envAvailability = ['dev'] as const;
 const regionAvailability = ['restricted', 'nonRestricted'] as const;
-const serverAvailability = Object.keys(serverDomainMap) as ServerAvailability[];
+const serverAvailability = colorDomainNames;
 export const userTiers = ['free', 'founder', 'bronze', 'silver', 'gold'] as const;
 const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTiers] as const;
 type RoleAvailability = (typeof roleAvailablity)[number];
@@ -29,7 +31,7 @@ const featureFlags = createFeatureFlags({
   canWrite: ['public'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
-  articles: ['blue', 'red', 'public'],
+  articles: ['public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
@@ -111,13 +113,10 @@ const featureFlags = createFeatureFlags({
   imageIndexFeed: { availability: ['public'], fliptKey: 'image-index-feed' },
   // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
-  isBlue: ['public', 'blue'],
-  isRed: ['public', 'red'],
+  isBlue: ['public', 'blue', 'red'],
+  isRed: ['public', 'blue', 'red'],
   canViewNsfw: ['public', 'blue', 'red', 'nonRestricted'],
   canBuyBuzz: ['public'],
-  adsEnabled: ['public', 'blue'],
-  useRedTheme: ['red'],
-  useGreenTheme: ['green'],
   // #endregion
   // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],
@@ -128,7 +127,7 @@ const featureFlags = createFeatureFlags({
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
   privateModels: ['public'],
-  auctions: ['blue', 'red', 'public'],
+  auctions: ['blue', 'red', 'green', 'public'],
   newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
@@ -139,18 +138,18 @@ const featureFlags = createFeatureFlags({
   emerchantpayPayments: ['public'],
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
-  kontextAds: ['mod', 'granted'],
   datapacketRead: ['public'],
   modelVersionPopularity: ['public'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],
   auctionsMod: ['granted'],
-  challengePlatform: ['blue', 'red', 'public'],
+  challengePlatform: ['public'],
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
+  articleImageScanning: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -313,21 +312,15 @@ const hasFeature = (
   );
   if (!availableServers.length || !host) serverMatch = true;
   else {
-    const domains = Object.entries(serverDomainMap).filter(
-      ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
-    );
-
-    serverMatch = domains.some(([color, domain]) => {
-      if (
-        color === 'blue' &&
-        ['stage.civitai.com', 'stage-0.civitai.com', 'dev.civitai.com'].includes(host) &&
-        // No reason to forcefully enable `isBlue` if we can avoid it. The app doesn't rely on it for the most part.
-        key !== 'isBlue'
+    const domains = colorDomainNames
+      .map(
+        (color) =>
+          [color, process.env[`SERVER_DOMAIN_${color.toUpperCase()}`] as string | undefined] as const
       )
-        return true;
+      .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability));
+
+    serverMatch = domains.some(([, domain]) => {
       if (host === domain) return true;
-      // Match any localhost port against a localhost domain
-      if (host.startsWith('localhost:') && domain?.startsWith('localhost:')) return true;
       return false;
     });
 
