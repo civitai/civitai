@@ -1,9 +1,11 @@
 import { useCallback, useRef } from 'react';
 import { Button, Text, ThemeIcon } from '@mantine/core';
 import {
+  IconArrowLeft,
   IconArrowRight,
   IconArrowsShuffle,
   IconBolt,
+  IconClock,
   IconEyeOff,
   IconKey,
   IconPepper,
@@ -13,6 +15,7 @@ import { useRouter } from 'next/router';
 import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import {
   hasPublicBrowsingLevel,
   hasSafeBrowsingLevel,
@@ -41,6 +44,17 @@ export function SensitiveShield({
   const redDomain = useServerDomains().red;
 
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
+
+  // content hasn't been rated yet — only block on the SFW site
+  if (!canViewNsfw && contentNsfwLevel === 0) {
+    if (isLoading) return <PageLoader />;
+
+    return (
+      <div className="absolute inset-0 flex items-center justify-center">
+        <UnratedContent />
+      </div>
+    );
+  }
 
   // this content is not available on this site — redirect to red
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
@@ -175,6 +189,105 @@ function MatureContentRedirect({ redUrl }: { redUrl: string }) {
         >
           Continue on civitai.red
         </Button>
+      </div>
+    </div>
+  );
+}
+
+function UnratedContent() {
+  const hasHistory = useHasClientHistory();
+  const spotlightRef = useRef<HTMLDivElement>(null);
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = spotlightRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(234,179,8,0.12), transparent 70%)`;
+    el.style.opacity = '1';
+  }, []);
+  const handleMouseLeave = useCallback(() => {
+    const el = spotlightRef.current;
+    if (el) el.style.opacity = '0';
+  }, []);
+
+  return (
+    <div
+      className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
+      style={outerCardStyle}
+    >
+      {/* Left panel */}
+      <div
+        className="relative flex w-full flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-b from-yellow-9/30 via-yellow-9/15 to-yellow-9/5 px-10 py-12 md:w-2/5 md:bg-gradient-to-br"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
+        <div
+          ref={spotlightRef}
+          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+          style={{ opacity: 0 }}
+        />
+        <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-yellow-9/10 blur-3xl" />
+        <div className="pointer-events-none absolute -right-12 -top-12 size-36 rounded-full bg-orange-9/8 blur-3xl" />
+
+        <ThemeIcon
+          variant="filled"
+          color="yellow"
+          size={72}
+          radius="xl"
+          className="relative shadow-lg shadow-yellow-9/40"
+        >
+          <IconClock size={36} />
+        </ThemeIcon>
+
+        <Text
+          fw={800}
+          className="font-display relative text-center text-2xl leading-tight tracking-tight text-gray-0"
+        >
+          Pending
+          <br />
+          review
+        </Text>
+      </div>
+
+      {/* Right panel */}
+      <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 md:border-l md:border-t-0 md:px-10 dark:border-white/5">
+        <div className="flex flex-col gap-1">
+          <Text size="lg" fw={600} className="text-gray-1">
+            This content hasn&apos;t been rated yet
+          </Text>
+          <Text size="sm" className="text-dimmed">
+            New content goes through a rating process before it becomes available. This usually
+            doesn&apos;t take long — check back soon.
+          </Text>
+        </div>
+
+        {hasHistory ? (
+          <Button
+            onClick={() => history.go(-1)}
+            variant="light"
+            color="yellow"
+            size="lg"
+            radius="md"
+            leftSection={<IconArrowLeft size={18} />}
+            className="mt-1 w-full md:w-auto md:self-start"
+          >
+            Go back
+          </Button>
+        ) : (
+          <Button
+            component="a"
+            href="/"
+            variant="light"
+            color="yellow"
+            size="lg"
+            radius="md"
+            leftSection={<IconArrowLeft size={18} />}
+            className="mt-1 w-full md:w-auto md:self-start"
+          >
+            Go to home page
+          </Button>
+        )}
       </div>
     </div>
   );

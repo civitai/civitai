@@ -3019,7 +3019,10 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     ).catch();
 
     endTimer();
-    return { data: [], nextCursor: undefined };
+    // Let the error bubble up to tRPC. The client detects isError on the
+    // infinite query and renders the retry banner — same path that handles any
+    // other backend failure (API down, network blip, etc.).
+    throw err;
   }
 }
 
@@ -3926,7 +3929,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     ).catch();
     endTimer();
 
-    return { data: [], nextCursor: undefined };
+    throw err;
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1601",
+  "version": "5.0.1603",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -11,6 +11,9 @@
     "dev-debug": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --inspect\" next dev",
     "dev-snap": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --heapsnapshot-near-heap-limit=3\" next dev",
     "dev:daemon": "node .claude/skills/dev-server/console.mjs",
+    "dev:rgb": "node .claude/skills/dev-server/cli.mjs rgb start",
+    "dev:rgb:stop": "node .claude/skills/dev-server/cli.mjs rgb stop",
+    "dev:rgb:status": "node .claude/skills/dev-server/cli.mjs rgb status",
     "prod": "cross-env NODE_ENV=production next dev",
     "boost": "next-boost",
     "release:base": "git checkout release && git pull --rebase && git rebase main && git push --force-with-lease && git checkout main",

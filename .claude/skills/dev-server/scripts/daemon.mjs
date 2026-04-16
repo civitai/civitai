@@ -29,14 +29,16 @@ const DEFAULT_DAEMON_PORT = 9444;
 const DEFAULT_BASE_DEV_PORT = 3000;
 const MAX_LOG_LINES = 2000;
 
-// Load health check config from .env
-function loadHealthCheckConfig() {
+// Load health check + RGB proxy config from .env
+function loadSkillConfig() {
   const envPath = resolve(skillDir, '.env');
   const config = {
     healthCheckUrl: null,
     healthCheckStatus: 200,
     healthCheckInterval: 1000,
     healthCheckTimeout: 120000,
+    rgbProxyEnabled: false,
+    rgbProxyPath: '../rgb-proxy',
   };
 
   if (existsSync(envPath)) {
@@ -59,13 +61,20 @@ function loadHealthCheckConfig() {
         case 'HEALTH_CHECK_TIMEOUT':
           config.healthCheckTimeout = parseInt(value, 10);
           break;
+        case 'RGB_PROXY_ENABLED':
+          config.rgbProxyEnabled = /^(true|1|yes|on)$/i.test(value);
+          break;
+        case 'RGB_PROXY_PATH':
+          if (value) config.rgbProxyPath = value;
+          break;
       }
     }
   }
   return config;
 }
 
-const healthCheckConfig = loadHealthCheckConfig();
+const skillConfig = loadSkillConfig();
+const healthCheckConfig = skillConfig;
 
 // Ready detection patterns for log-based detection
 const readyPatterns = [
@@ -519,6 +528,168 @@ class DevSession {
   }
 }
 
+// RGB proxy manager — reverse proxy for civitai-dev.{red,green,blue}
+class RgbProxy {
+  constructor(proxyPath) {
+    this.path = resolve(projectRoot, proxyPath);
+    this.process = null;
+    this.status = 'stopped'; // stopped | starting | running | crashed | error | disabled
+    this.logs = [];
+    this.logIndex = 0;
+    this.startedAt = null;
+    this.stoppedAt = null;
+    this.exitCode = null;
+    this.lastError = null;
+  }
+
+  addLog(level, message) {
+    this.logIndex++;
+    this.logs.push({ index: this.logIndex, timestamp: new Date().toISOString(), level, message });
+    if (this.logs.length > MAX_LOG_LINES) this.logs = this.logs.slice(-MAX_LOG_LINES);
+  }
+
+  getLogs(since = 0, limit = 500) {
+    let logs = this.logs.filter(l => l.index > since);
+    if (limit && logs.length > limit) logs = logs.slice(-limit);
+    return logs;
+  }
+
+  start() {
+    if (this.process) {
+      this.addLog('info', 'RGB proxy already running');
+      return this.getStatus();
+    }
+
+    if (!existsSync(this.path)) {
+      this.status = 'error';
+      this.lastError = `RGB proxy path not found: ${this.path}`;
+      this.addLog('error', this.lastError);
+      return this.getStatus();
+    }
+
+    if (!existsSync(resolve(this.path, 'node_modules'))) {
+      this.status = 'error';
+      this.lastError = `RGB proxy dependencies not installed. Run: cd ${this.path} && npm install`;
+      this.addLog('error', this.lastError);
+      return this.getStatus();
+    }
+
+    this.status = 'starting';
+    this.lastError = null;
+    this.addLog('info', `Starting RGB proxy: ${this.path}`);
+
+    const isWindows = process.platform === 'win32';
+    const npmCmd = isWindows ? 'npm.cmd' : 'npm';
+
+    const spawnOptions = {
+      cwd: this.path,
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: isWindows,
+    };
+    if (!isWindows) spawnOptions.detached = true;
+
+    try {
+      this.process = spawn(npmCmd, ['start'], spawnOptions);
+    } catch (err) {
+      this.status = 'error';
+      this.lastError = err.message;
+      this.addLog('error', `Spawn failed: ${err.message}`);
+      return this.getStatus();
+    }
+
+    this.startedAt = new Date().toISOString();
+    this.status = 'running';
+
+    this.process.stdout.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(l => l.trim());
+      for (const line of lines) this.addLog('stdout', line);
+    });
+
+    this.process.stderr.on('data', (data) => {
+      const lines = data.toString().split('\n').filter(l => l.trim());
+      for (const line of lines) {
+        const lower = line.toLowerCase();
+        if (lower.includes('eacces') || lower.includes('permission denied')) {
+          this.lastError = 'Permission denied binding 80/443. Relaunch daemon as Administrator (Windows) or with sudo (macOS/Linux).';
+          this.addLog('error', this.lastError);
+        } else if (lower.includes('eaddrinuse')) {
+          this.lastError = 'Ports 80/443 already in use. Stop conflicting process first.';
+          this.addLog('error', this.lastError);
+        } else if (lower.includes('error') || lower.includes('failed')) {
+          this.addLog('error', line);
+        } else {
+          this.addLog('stderr', line);
+        }
+      }
+    });
+
+    this.process.on('exit', (code, signal) => {
+      this.exitCode = code;
+      this.status = code === 0 ? 'stopped' : 'crashed';
+      this.stoppedAt = new Date().toISOString();
+      this.addLog('info', `RGB proxy exited (code=${code}, signal=${signal})`);
+      this.process = null;
+    });
+
+    this.process.on('error', (err) => {
+      this.status = 'error';
+      this.lastError = err.message;
+      this.addLog('error', `Process error: ${err.message}`);
+    });
+
+    return this.getStatus();
+  }
+
+  async stop() {
+    if (!this.process) {
+      this.status = 'stopped';
+      return this.getStatus();
+    }
+
+    this.addLog('info', 'Stopping RGB proxy...');
+    const proc = this.process;
+
+    return new Promise((resolve) => {
+      proc.once('exit', () => resolve(this.getStatus()));
+      try {
+        if (process.platform === 'win32') {
+          spawn('taskkill', ['/pid', String(proc.pid), '/f', '/t'], { shell: true });
+        } else {
+          process.kill(-proc.pid, 'SIGKILL');
+        }
+      } catch (e) {}
+      setTimeout(() => resolve(this.getStatus()), 500);
+    });
+  }
+
+  async restart() {
+    await this.stop();
+    return this.start();
+  }
+
+  getStatus() {
+    return {
+      enabled: skillConfig.rgbProxyEnabled,
+      status: this.status,
+      path: this.path,
+      startedAt: this.startedAt,
+      stoppedAt: this.stoppedAt,
+      exitCode: this.exitCode,
+      lastError: this.lastError,
+      logCount: this.logs.length,
+      currentLogIndex: this.logIndex,
+      domains: [
+        'https://civitai-dev.green',
+        'https://civitai-dev.blue',
+        'https://civitai-dev.red',
+      ],
+    };
+  }
+}
+
+const rgbProxy = new RgbProxy(skillConfig.rgbProxyPath);
+
 // Session manager
 const sessions = new Map();
 
@@ -610,10 +781,54 @@ async function main() {
           pid: process.pid,
           uptime: process.uptime(),
           sessions: listSessions(),
+          rgbProxy: rgbProxy.getStatus(),
           projectRoot,
           daemonPort: config.port,
           baseDevPort: config.baseDevPort,
         }));
+        return;
+      }
+
+      // GET /rgb - RGB proxy status
+      if (path === '/rgb' && req.method === 'GET') {
+        res.writeHead(200);
+        res.end(JSON.stringify(rgbProxy.getStatus()));
+        return;
+      }
+
+      // GET /rgb/logs - RGB proxy logs
+      if (path === '/rgb/logs' && req.method === 'GET') {
+        const since = parseInt(url.searchParams.get('since') || '0', 10);
+        const limit = parseInt(url.searchParams.get('limit') || '500', 10);
+        res.writeHead(200);
+        res.end(JSON.stringify({
+          currentIndex: rgbProxy.logIndex,
+          logs: rgbProxy.getLogs(since, limit),
+        }));
+        return;
+      }
+
+      // POST /rgb/start - Start RGB proxy
+      if (path === '/rgb/start' && req.method === 'POST') {
+        const status = rgbProxy.start();
+        res.writeHead(status.status === 'error' ? 500 : 200);
+        res.end(JSON.stringify(status));
+        return;
+      }
+
+      // POST /rgb/stop - Stop RGB proxy
+      if (path === '/rgb/stop' && req.method === 'POST') {
+        const status = await rgbProxy.stop();
+        res.writeHead(200);
+        res.end(JSON.stringify(status));
+        return;
+      }
+
+      // POST /rgb/restart - Restart RGB proxy
+      if (path === '/rgb/restart' && req.method === 'POST') {
+        const status = await rgbProxy.restart();
+        res.writeHead(200);
+        res.end(JSON.stringify(status));
         return;
       }
 
@@ -780,6 +995,7 @@ async function main() {
           await session.stop();
         }
         sessions.clear();
+        await rgbProxy.stop();
 
         res.writeHead(200);
         res.end(JSON.stringify({ success: true }));
@@ -808,12 +1024,18 @@ async function main() {
     console.error(`\nDaemon running on http://127.0.0.1:${config.port}`);
     console.error(`\nReady.`);
 
+    if (skillConfig.rgbProxyEnabled) {
+      console.error('RGB_PROXY_ENABLED=true — starting RGB proxy...');
+      rgbProxy.start();
+    }
+
     // Output ready signal to stdout for parsing
     console.log(JSON.stringify({
       type: 'daemon_ready',
       port: config.port,
       pid: process.pid,
       projectRoot,
+      rgbProxy: rgbProxy.getStatus(),
     }));
   });
 
@@ -832,6 +1054,7 @@ async function main() {
     for (const session of sessions.values()) {
       await session.stop();
     }
+    await rgbProxy.stop();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);
@@ -842,6 +1065,7 @@ async function main() {
     for (const session of sessions.values()) {
       await session.stop();
     }
+    await rgbProxy.stop();
     try { unlinkSync(pidFile); } catch (e) {}
     server.close();
     process.exit(0);

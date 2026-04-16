@@ -505,7 +505,21 @@ export const getDefaultEngine = (
   if ((baseType === 'sd15' || baseType === 'sdxl') && features?.aiToolkitDefaultSd) {
     return 'ai-toolkit';
   }
+  // When Kohya is disabled via Flipt, pick best available fallback
+  if (features && features.kohyaTraining === false) {
+    // Flux defaults to rapid (its primary non-Kohya engine)
+    if (baseType === 'flux') return 'rapid';
+    // For other models, use AI Toolkit if available
+    if (isAiToolkitEnabled(baseType, features)) return 'ai-toolkit';
+    // Last resort — ai-toolkit even if not flagged (better than broken kohya)
+    return 'ai-toolkit';
+  }
   return 'kohya';
+};
+
+// Check if Kohya engine is enabled via feature flags
+export const isKohyaEnabled = (features: Record<string, boolean>): boolean => {
+  return features.kohyaTraining !== false;
 };
 
 // Check if AI Toolkit is valid for the model

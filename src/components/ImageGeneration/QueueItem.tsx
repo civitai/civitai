@@ -736,7 +736,12 @@ function CanUpgradeBlock({
   transactions: TransactionInfo[];
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
   const isPaidMember = currentUser?.tier && currentUser.tier !== 'free';
+  const pricingHref = features.isGreen
+    ? '/pricing'
+    : `//${serverDomains.green}/pricing?sync-account=green`;
 
   const yellowBuzzRequired = transactions.reduce<number>((acc, transaction) => {
     if (transaction.accountType === 'yellow') return acc;
@@ -784,7 +789,13 @@ function CanUpgradeBlock({
       {!isPaidMember && (
         <Text align="center" size="xs" c="dimmed">
           Or{' '}
-          <Anchor component={Link} href="/pricing" size="xs">
+          <Anchor
+            component={Link}
+            href={pricingHref}
+            target={features.isGreen ? undefined : '_blank'}
+            rel={features.isGreen ? undefined : 'noreferrer nofollow'}
+            size="xs"
+          >
             become a member
           </Anchor>{' '}
           to use Blue Buzz for mature content

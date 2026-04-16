@@ -15,3 +15,5 @@ export declare const dashboardGridConstrained: string;
 export declare const dashboardGridConstrainedInner: string;
 export declare const tileCard: string;
 export declare const transactionsScrollWrapper: string;
+export declare const upsellCta: string;
+export declare const upsellCtaIcon: string;
