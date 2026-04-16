@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
@@ -23,10 +23,9 @@ const AdsContext = createContext<{
   consent: boolean;
   adsBlocked?: boolean;
   adsEnabled: boolean;
+  useDirectAds: boolean;
   username?: string;
   isMember: boolean;
-  kontextReady: boolean;
-  kontextAvailable: boolean;
 } | null>(null);
 
 export function useAdsContext() {
@@ -39,14 +38,10 @@ const useAdProviderStore = create<{
   ready: boolean;
   adsBlocked: boolean;
   consent: boolean;
-  kontextReady: boolean;
-  kontextAvailable: boolean;
 }>(() => ({
   ready: false,
   adsBlocked: true,
   consent: true,
-  kontextReady: false,
-  kontextAvailable: false,
 }));
 
 const blockedUrls: string[] = [
@@ -60,8 +55,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
-  const kontextReady = useAdProviderStore((state) => state.kontextReady);
-  const kontextAvailable = useAdProviderStore((state) => state.kontextAvailable);
   const consent = useAdProviderStore((state) => state.consent);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -69,11 +62,12 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
+  // .com (isGreen) → Snigel programmatic ads. .red (isRed) → CivitaiAdUnit direct ads only.
+  // adsEnabled is domain-agnostic; useDirectAds chooses which ad system to render.
+  const useDirectAds = features.isRed;
   const adsEnabled = isDev
     ? false
-    : !features.isGreen &&
-      features.isBlue &&
-      (allowAds || !isMember) &&
+    : (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
       !router.asPath.split('?')[0].endsWith('/edit');
 
@@ -84,6 +78,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   function handleLoaded() {
     useAdProviderStore.setState({ adsBlocked: false });
   }
+
+  // For direct ads (.red), probe the ad server to detect adblockers.
+  // Snigel's onLoad/onError callbacks don't fire since the script isn't loaded.
+  useEffect(() => {
+    if (!useDirectAds || !adsEnabled) return;
+    const url = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
+    fetch(`${url}/api/v1/serve`, { method: 'HEAD', credentials: 'include' })
+      .then(() => useAdProviderStore.setState({ adsBlocked: false }))
+      .catch(() => useAdProviderStore.setState({ adsBlocked: true }));
+  }, [useDirectAds, adsEnabled]);
 
   useEffect(() => {
     function callback() {
@@ -112,29 +116,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  useEffect(() => {
-    if (!!window.fetchKontextAd) return;
-
-    function callback() {
-      useAdProviderStore.setState({ kontextReady: true });
-    }
-
-    window.addEventListener('kontext-ad-script-loaded', callback);
-    return () => {
-      window.removeEventListener('kontext-ad-script-loaded', callback);
-    };
-  }, []);
-
-  const kontextAvailableCheckedRef = useRef(false);
-  useEffect(() => {
-    if (!kontextAvailableCheckedRef.current) {
-      kontextAvailableCheckedRef.current = true;
-      kontextPrecheck().then((kontextAvailable) =>
-        useAdProviderStore.setState({ kontextAvailable })
-      );
-    }
-  }, []);
-
   return (
     <AdsContext.Provider
       value={{
@@ -142,14 +123,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         adsBlocked,
         consent,
         adsEnabled,
+        useDirectAds,
         username: currentUser?.username,
         isMember,
-        kontextReady,
-        kontextAvailable,
       }}
     >
       {children}
-      {adsEnabled && isDev && (
+      {adsEnabled && !useDirectAds && isDev && (
         <Script
           id="snigel-ads-domain-spoof"
           data-cfasync="false"
@@ -169,7 +149,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           }}
         />
       )}
-      {adsEnabled && (
+      {adsEnabled && !useDirectAds && (
         <Script
           id="snigel-config"
           data-cfasync="false"
@@ -186,7 +166,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           }}
         />
       )}
-      {adsEnabled && (
+      {adsEnabled && !useDirectAds && (
         <Script
           defer
           src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
@@ -195,7 +175,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         />
       )}
       {/* Cleanup old ad tags */}
-      {adsEnabled && (
+      {adsEnabled && !useDirectAds && (
         <Script
           id="ad-cleanup"
           type="text/javascript"
@@ -215,24 +195,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
           }}
         />
       )}
-      {adsEnabled && <ImpressionTracker />}
-
-      {features.kontextAds && (
-        <Script
-          id="kontext-ad-script"
-          async
-          type="module"
-          dangerouslySetInnerHTML={{
-            __html: `
-          import('https://server.megabrain.co/sdk/js').then(({fetchAd, markAdAsViewed}) => {
-            window.fetchKontextAd = fetchAd
-            dispatchEvent(new CustomEvent('kontext-ad-script-loaded'))
-          })
-
-          `,
-          }}
-        />
-      )}
+      {adsEnabled && !useDirectAds && <ImpressionTracker />}
     </AdsContext.Provider>
   );
 }
@@ -262,19 +225,4 @@ function ImpressionTracker() {
   }, [fingerprint, worker, currentUser]);
 
   return null;
-}
-
-type KontextPrecheckResponse = {
-  canShowAds: boolean;
-};
-async function kontextPrecheck() {
-  if (isDev) return true;
-  const response = await fetch('https://server.megabrain.co/api/v1/precheck', {
-    method: 'POST',
-    body: JSON.stringify({ publisherToken: isDev ? 'civitai-dev' : 'civitai-b9c3s0xx6u' }),
-  });
-
-  if (!response.ok) return false;
-  const json: KontextPrecheckResponse = await response.json();
-  return json.canShowAds;
 }

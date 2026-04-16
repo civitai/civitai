@@ -3,9 +3,10 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
 import { useImageFilters, useQueryImages } from '~/components/Image/image.utils';
@@ -18,6 +19,10 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
+
+const SEARCH_RETRY_MAX_ATTEMPTS = 10;
+const SEARCH_RETRY_MAX_DELAY_MS = 60_000;
+const SEARCH_RETRY_BASE_DELAY_MS = 2000;
 
 type ImagesInfiniteProps = {
   withTags?: boolean;
@@ -61,7 +66,17 @@ export function ImagesInfiniteContent({
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const browsingLevel = useBrowsingLevelDebounced();
-  const { images, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryImages(
+  const {
+    images,
+    fetchNextPage,
+    refetch,
+    hasNextPage,
+    isRefetching,
+    isFetching,
+    isError,
+    debugRetryActive,
+    debugDelayMs,
+  } = useQueryImages(
     { ...debouncedFilters, browsingLevel, include: ['cosmetics'] },
     { keepPreviousData: true }
   );
@@ -72,12 +87,72 @@ export function ImagesInfiniteContent({
   }, [cancel, debouncedFilters, filters]);
   //#endregion
 
+  //#region [search retry] — any backend failure (Meili, API, network)
+  const [retryAttempt, setRetryAttempt] = useState(0);
+  const imagesCount = images.length;
+  const prevImagesCount = useRef(imagesCount);
+
+  // Reset retry attempt counter whenever new items successfully load.
+  useEffect(() => {
+    if (imagesCount > prevImagesCount.current) {
+      prevImagesCount.current = imagesCount;
+      if (retryAttempt !== 0) setRetryAttempt(0);
+    } else {
+      prevImagesCount.current = imagesCount;
+    }
+  }, [imagesCount, retryAttempt]);
+
+  // Reset retry state when filters change (new query = fresh slate).
+  useEffect(() => {
+    setRetryAttempt(0);
+  }, [debouncedFilters, browsingLevel]);
+
+  const handleRetry = useCallback(() => {
+    // After exhaustion, manual retry resets the attempt counter for a fresh cycle.
+    setRetryAttempt((prev) => (prev >= SEARCH_RETRY_MAX_ATTEMPTS ? 0 : prev + 1));
+    // In debug mode we deliberately skip the real fetch so the retry UI can
+    // cycle faithfully — otherwise real fetches succeed, more images load,
+    // and the retry counter resets every cycle.
+    if (debugRetryActive) return;
+    // Use refetch when there are no pages yet (initial-load failure);
+    // fetchNextPage retries the next page when prior pages already succeeded.
+    if (imagesCount === 0) refetch();
+    else fetchNextPage();
+  }, [fetchNextPage, refetch, debugRetryActive, imagesCount]);
+
+  const isRetrying = isError || debugRetryActive;
+  const baseDelay = debugRetryActive ? debugDelayMs : SEARCH_RETRY_BASE_DELAY_MS;
+  const retryDelay = isRetrying
+    ? Math.min(baseDelay * Math.pow(2, retryAttempt), SEARCH_RETRY_MAX_DELAY_MS)
+    : 0;
+  //#endregion
+
+  // In debug mode we block real fetches so isFetching never toggles — treat it
+  // as countdown-active always. For real errors, the countdown pauses while a
+  // retry request is in flight so we don't queue up concurrent duplicates.
+  const countdownActive = debugRetryActive || !isFetching;
+
+  const retryBanner = (
+    <SearchRetryBanner
+      delayMs={retryDelay}
+      attempt={retryAttempt + 1}
+      maxAttempts={SEARCH_RETRY_MAX_ATTEMPTS}
+      onRetry={handleRetry}
+      debugMode={debugRetryActive}
+      browsingLevel={browsingLevel}
+      countdownActive={countdownActive}
+      isInitialLoad={imagesCount === 0}
+    />
+  );
+
   return (
     <>
       {!images.length && isFetching ? (
         <Center p="xl">
           <Loader />
         </Center>
+      ) : !images.length && isRetrying ? (
+        retryBanner
       ) : !!images.length || hasNextPage ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
@@ -100,7 +175,9 @@ export function ImagesInfiniteContent({
               withAds={showAds}
             />
           </ImagesProvider>
-          {hasNextPage && (
+          {isRetrying ? (
+            retryBanner
+          ) : hasNextPage ? (
             <InViewLoader
               loadFn={fetchNextPage}
               loadCondition={!isFetching}
@@ -111,8 +188,8 @@ export function ImagesInfiniteContent({
                 <Loader />
               </Center>
             </InViewLoader>
-          )}
-          {!hasNextPage && showEof && <EndOfFeed />}
+          ) : null}
+          {!hasNextPage && !isRetrying && showEof && <EndOfFeed />}
         </div>
       ) : (
         <NoContent py="lg">

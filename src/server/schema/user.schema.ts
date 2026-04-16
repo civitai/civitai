@@ -306,6 +306,15 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
     userReferralCode: z.string().optional(),
     source: z.string().optional(),
     recaptchaToken: z.string(),
+    captchaDebug: z
+      .object({
+        tokenAgeMs: z.number().optional(),
+        submitAttempt: z.number().optional(),
+        widgetStatus: z.string().optional(),
+        tokenPrefix: z.string().optional(),
+        pageSessionId: z.string().optional(),
+      })
+      .optional(),
   }),
 ]);
 

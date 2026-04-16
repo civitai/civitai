@@ -8,7 +8,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { createCallerFactory } from '@trpc/server';
 import { appRouter } from '~/server/routers';
 import { Fingerprint } from '~/server/utils/fingerprint';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -20,11 +20,7 @@ type CacheSettings = {
 };
 
 const origins = [...env.TRPC_ORIGINS];
-const hosts = [
-  env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
-];
+const hosts = [env.SERVER_DOMAIN_GREEN, env.SERVER_DOMAIN_BLUE, env.SERVER_DOMAIN_RED];
 export const createContext = async ({
   req,
   res,

@@ -733,24 +733,24 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
-    console.log('skipping image ingestion');
-    const updated = await dbClient.image.update({
-      where: { id: image.id },
-      select: { postId: true },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-        nsfwLevel: NsfwLevel.PG,
-      },
-    });
+  // if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
+  //   console.log('skipping image ingestion');
+  //   const updated = await dbClient.image.update({
+  //     where: { id: image.id },
+  //     select: { postId: true },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
 
-    // Update post NSFW level
-    if (updated.postId) await updatePostNsfwLevel(updated.postId);
+  //   // Update post NSFW level
+  //   if (updated.postId) await updatePostNsfwLevel(updated.postId);
 
-    return true;
-  }
+  //   return true;
+  // }
 
   const parsedImage = ingestImageSchema.safeParse(image);
   if (!parsedImage.success) throw new Error('Failed to parse image data');
@@ -876,18 +876,20 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
-  if (!isProd || !callbackUrl) {
-    console.log('skip ingest');
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-      },
-    });
-    return true;
-  }
+  // TODO.articleImageScan: uncomment when ready to enable image scanning for articles
+  // if (!isProd || !callbackUrl) {
+  //   console.log('skip ingest');
+  //   await dbClient.image.updateMany({
+  //     where: { id: { in: imageIds } },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
+  //   return true;
+  // }
 
   const needsPrompts = !images.some((x) => x.prompt);
   if (needsPrompts) {
@@ -924,6 +926,7 @@ export const ingestImageBulk = async ({
     });
     return true;
   }
+
   return false;
 };
 
@@ -1687,13 +1690,27 @@ export const getAllImages = async (
 
     // Merge user votes into tags
     if (tagsVar && userVotes) {
+      const voteMap = new Map(
+        userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote])
+      );
       for (const tag of tagsVar) {
-        const userVote = userVotes.find(
-          (vote) => vote.tagId === tag.id && vote.imageId === tag.imageId
-        );
-        if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+        const vote = voteMap.get(`${tag.imageId}:${tag.id}`);
+        if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
       }
     }
+
+    // Pre-index tags by imageId to avoid O(n*m) filter inside map
+    const tagsByImageId = tagsVar
+      ? tagsVar.reduce(
+          (acc, tag) => {
+            const arr = acc.get(tag.imageId);
+            if (arr) arr.push(tag);
+            else acc.set(tag.imageId, [tag]);
+            return acc;
+          },
+          new Map<number, typeof tagsVar>()
+        )
+      : undefined;
 
     const now = new Date();
     const filtered = rawImages.filter((x) => {
@@ -1769,7 +1786,7 @@ export const getAllImages = async (
         },
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
-        tags: tagsVar?.filter((x) => x.imageId === i.id),
+        tags: tagsByImageId?.get(i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
         thumbnailUrl: thumbnail?.url,
@@ -3016,7 +3033,10 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     ).catch();
 
     endTimer();
-    return { data: [], nextCursor: undefined };
+    // Let the error bubble up to tRPC. The client detects isError on the
+    // infinite query and renders the retry banner — same path that handles any
+    // other backend failure (API down, network blip, etc.).
+    throw err;
   }
 }
 
@@ -3191,7 +3211,10 @@ export async function getImagesFromBitdexPreFilter(
   filters.push(_in(nsfwLevelField, browsingLevels.map(_int)));
 
   // NSFW license restrictions
-  if (nsfwRestrictedBaseModels.length > 0) {
+  // Only add when the browsing level actually includes NSFW levels — otherwise the outer
+  // nsfwLevel filter (line above) already excludes [4,8,16,32] and the inner AND is
+  // guaranteed false, making the compound NOT a no-op but still ~273ms to evaluate in BitDex.
+  if (nsfwRestrictedBaseModels.length > 0 && includesNsfwContent) {
     filters.push(
       _not(
         _and(
@@ -3920,7 +3943,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     ).catch();
     endTimer();
 
-    return { data: [], nextCursor: undefined };
+    throw err;
   }
 }
 
@@ -4699,11 +4722,12 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
       select: { tagId: true, vote: true },
     });
 
+    const voteByTagId = new Map(userVotes.map((v) => [v.tagId, v.vote]));
     for (const key in dictionary) {
       if (dictionary.hasOwnProperty(key)) {
         for (const tag of dictionary[key].tags ?? []) {
-          const userVote = userVotes.find((vote) => vote.tagId === tag.id);
-          if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+          const vote = voteByTagId.get(tag.id);
+          if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
         }
       }
     }
@@ -6610,8 +6634,8 @@ type ContestCollectionItem = {
 };
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
-  max: 10_000,
-  ttl: 5 * 60 * 1000, // 5 minutes
+  max: 100_000,
+  ttl: 30 * 60 * 1000, // 30 minutes
   keyFn: (imageId: number) => `image:${imageId}`,
   fetchFn: async (imageId: number) => {
     return dbRead.$queryRaw<ContestCollectionItem[]>`

@@ -12,7 +12,7 @@ import { useState } from 'react';
 import classes from './GeneratedImage.module.css';
 
 // Standalone card without Next.js dependencies
-function ImageCard({ children, className }: { children: React.ReactNode; className?: string }) {
+function OutputCard({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <div
       className={clsx(
@@ -26,7 +26,7 @@ function ImageCard({ children, className }: { children: React.ReactNode; classNa
   );
 }
 
-function GeneratedImagePreview({
+function GeneratedOutputPreview({
   aspect = '1 / 1',
   favorite = false,
   feedback,
@@ -39,8 +39,8 @@ function GeneratedImagePreview({
   const [fb, setFb] = useState<'liked' | 'disliked' | undefined>(feedback);
 
   return (
-    <ImageCard className={classes.imageWrapper}>
-      {/* Image area */}
+    <OutputCard className={classes.imageWrapper}>
+      {/* Output area */}
       <div className="relative flex items-center justify-center" style={{ aspectRatio: aspect }}>
         {/* Placeholder gradient */}
         <div
@@ -51,7 +51,7 @@ function GeneratedImagePreview({
           }}
         />
         <span className="relative text-xs" style={{ color: '#555' }}>
-          image
+          output
         </span>
 
         {/* Top-left checkbox */}
@@ -105,44 +105,44 @@ function GeneratedImagePreview({
           <IconThumbDown size={16} />
         </button>
       </div>
-    </ImageCard>
+    </OutputCard>
   );
 }
 
 export const Square = () => (
   <div style={{ width: 240 }}>
-    <GeneratedImagePreview aspect="1 / 1" />
+    <GeneratedOutputPreview aspect="1 / 1" />
   </div>
 );
 
 export const Portrait = () => (
   <div style={{ width: 200 }}>
-    <GeneratedImagePreview aspect="2 / 3" />
+    <GeneratedOutputPreview aspect="2 / 3" />
   </div>
 );
 
 export const Landscape = () => (
   <div style={{ width: 320 }}>
-    <GeneratedImagePreview aspect="16 / 9" />
+    <GeneratedOutputPreview aspect="16 / 9" />
   </div>
 );
 
 export const WithFavorite = () => (
   <div style={{ width: 240 }}>
-    <GeneratedImagePreview aspect="1 / 1" favorite />
+    <GeneratedOutputPreview aspect="1 / 1" favorite />
   </div>
 );
 
 export const WithFeedback = () => (
   <div style={{ width: 240 }}>
-    <GeneratedImagePreview aspect="1 / 1" feedback="liked" />
+    <GeneratedOutputPreview aspect="1 / 1" feedback="liked" />
   </div>
 );
 
 export const Grid = () => (
   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 180px)', gap: 8 }}>
-    <GeneratedImagePreview aspect="1 / 1" />
-    <GeneratedImagePreview aspect="2 / 3" />
-    <GeneratedImagePreview aspect="1 / 1" favorite />
+    <GeneratedOutputPreview aspect="1 / 1" />
+    <GeneratedOutputPreview aspect="2 / 3" />
+    <GeneratedOutputPreview aspect="1 / 1" favorite />
   </div>
 );

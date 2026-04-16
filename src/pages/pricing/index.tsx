@@ -9,14 +9,14 @@ import { MembershipPageWrapper } from '~/components/Purchase/MembershipPageWrapp
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { env } from '~/env/client';
+import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Button, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
-import { colorDomains } from '~/shared/constants/domain.constants';
 
 export default function Pricing() {
   const router = useRouter();
@@ -26,6 +26,7 @@ export default function Pricing() {
     buzzType?: 'green' | 'red' | 'yellow';
   };
   const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
   const paymentProvider = usePaymentProvider();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
@@ -47,19 +48,15 @@ export default function Pricing() {
   // Auto-redirect to green environment if green is selected but we're not in green
   useEffect(() => {
     if (!features.isGreen && selectedBuzzType === 'green') {
-      const query = {
-        reason,
-        buzzType: 'green',
-        'sync-account': 'blue',
-      };
+      const query = { reason, buzzType: 'green' };
 
       window.open(
-        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN as string}/pricing?${QS.stringify(query)}`,
+        syncAccount(`//${serverDomains.green}/pricing?${QS.stringify(query)}`),
         '_blank',
         'noreferrer'
       );
     }
-  }, [selectedBuzzType, features.isGreen, reason]);
+  }, [selectedBuzzType, features.isGreen, reason, serverDomains.green]);
 
   // If no buzz type is selected and not on green environment, show selection screen
   if (!features.isGreen && !selectedBuzzType) {
@@ -125,7 +122,7 @@ export default function Pricing() {
   }
 
   // Main membership plans view
-  const redDomain = colorDomains.red;
+  const redDomain = serverDomains.red;
   const redPricingUrl = redDomain ? `//${redDomain}/pricing` : 'https://civitai.red/pricing';
 
   return (
@@ -136,8 +133,7 @@ export default function Pricing() {
       showBuzzTopUp={!features.isGreen}
       buzzType={selectedBuzzType}
     >
-      {/* TODO: Re-enable when environment swap to .com + .red is ready */}
-      {/* {features.isGreen && (
+      {features.isGreen && (
         <Stack gap="md" align="center" mb="sm">
           <Stack gap={4} align="center">
             <Title order={1} className="text-center text-3xl font-bold sm:text-4xl">
@@ -173,7 +169,7 @@ export default function Pricing() {
             </Button>
           </div>
         </Stack>
-      )} */}
+      )}
       <div
         style={{
           // @ts-ignore

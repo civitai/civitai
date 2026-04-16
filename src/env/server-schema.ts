@@ -293,4 +293,9 @@ export const serverSchema = z.object({
 
   // BitDex
   BITDEX_URL: z.string().optional().default(''),
+
+  // Color environment domains (server-only; delivered to client via AppProvider).
+  SERVER_DOMAIN_GREEN: z.string().optional(),
+  SERVER_DOMAIN_BLUE: z.string().optional(),
+  SERVER_DOMAIN_RED: z.string().optional(),
 });

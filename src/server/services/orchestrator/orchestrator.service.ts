@@ -9,12 +9,14 @@ export async function createImageIngestionRequest({
   imageId,
   url,
   callbackUrl,
+  wait,
   priority = 'normal',
   type = 'image',
 }: {
   imageId: number;
   url: string;
   callbackUrl?: string;
+  wait?: number;
   priority?: Priority;
   type?: MediaType;
 }) {
@@ -23,6 +25,7 @@ export async function createImageIngestionRequest({
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
+    query: wait ? { wait } : undefined,
     body: {
       metadata,
       arguments: {
@@ -193,6 +196,7 @@ export async function createTextModerationRequest({
             text: content,
             mode: 'text',
             labels,
+            storeFullResponse: false,
           },
         } as XGuardModerationStepTemplate,
       ],
@@ -212,7 +216,7 @@ export async function createTextModerationRequest({
     },
   });
 
-  const serverTiming = response.headers.get('Server-Timing');
+  const serverTiming = response?.headers?.get('Server-Timing');
 
   if (!data) {
     logToAxiom({
@@ -220,7 +224,7 @@ export async function createTextModerationRequest({
       name: 'text-moderation',
       entityType,
       entityId,
-      responseStatus: response.status,
+      responseStatus: response?.status,
       serverTiming,
       error,
     });

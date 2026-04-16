@@ -1,7 +1,8 @@
 import { Button, Center, Container, Group, Loader, Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
-import { env } from '~/env/client';
+import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { Meta } from '~/components/Meta/Meta';
@@ -36,17 +37,14 @@ export function GreenEnvironmentRedirect({
   fullPageLayout = true,
 }: GreenEnvironmentRedirectProps) {
   const { classNames: greenClassNames } = useBuzzCurrencyConfig('green');
+  const serverDomains = useServerDomains();
 
   const handleManualRedirect = () => {
-    const query = {
-      buzzType: 'green',
-      'sync-account': 'blue',
-      ...queryParams,
-    };
+    const query = { buzzType: 'green', ...queryParams };
 
-    window.location.href = `//${
-      env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN
-    }${destinationPath}?${QS.stringify(query)}`;
+    window.location.href = syncAccount(
+      `//${serverDomains.green}${destinationPath}?${QS.stringify(query)}`
+    );
   };
 
   const redirectContent = (

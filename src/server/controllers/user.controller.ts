@@ -322,13 +322,14 @@ export const completeOnboardingHandler = async ({
         break;
       }
       case OnboardingSteps.Buzz: {
-        const { recaptchaToken } = input;
+        const { recaptchaToken, captchaDebug } = input;
         if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
         const validCaptcha = await verifyCaptchaToken({
           token: recaptchaToken,
           secret: env.CF_MANAGED_TURNSTILE_SECRET,
           ip: ctx.ip,
+          meta: { source: 'onboarding-buzz', userId: id, ...(captchaDebug ?? {}) },
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
@@ -346,7 +347,7 @@ export const completeOnboardingHandler = async ({
           createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: ctx.user.id,
-            amount: getUserBuzzBonusAmount(ctx.user),
+            amount: getUserBuzzBonusAmount(),
             description: 'Onboarding bonus',
             type: TransactionType.Reward,
             externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
@@ -401,21 +402,28 @@ export const updateUserHandler = async ({
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
     const payloadCosmeticIds: number[] = [];
+    const unequipPromises: Promise<unknown>[] = [];
     if (badgeId) payloadCosmeticIds.push(badgeId);
     else if (badgeId === null)
-      await unequipCosmeticByType({ userId: id, type: CosmeticType.Badge });
+      unequipPromises.push(unequipCosmeticByType({ userId: id, type: CosmeticType.Badge }));
 
     if (nameplateId) payloadCosmeticIds.push(nameplateId);
     else if (nameplateId === null)
-      await unequipCosmeticByType({ userId: id, type: CosmeticType.NamePlate });
+      unequipPromises.push(unequipCosmeticByType({ userId: id, type: CosmeticType.NamePlate }));
 
     if (profileDecorationId) payloadCosmeticIds.push(profileDecorationId);
     else if (profileDecorationId === null)
-      await unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileDecoration });
+      unequipPromises.push(
+        unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileDecoration })
+      );
 
     if (profileBackgroundId) payloadCosmeticIds.push(profileBackgroundId);
     else if (profileBackgroundId === null)
-      await unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileBackground });
+      unequipPromises.push(
+        unequipCosmeticByType({ userId: id, type: CosmeticType.ProfileBackground })
+      );
+
+    await Promise.all(unequipPromises);
 
     const isSettingCosmetics = payloadCosmeticIds.length > 0;
 
@@ -445,9 +453,12 @@ export const updateUserHandler = async ({
       updateSource: 'updateUser',
     });
 
+    // Post-update operations — parallelize independent work
+    const postUpdatePromises: Promise<unknown>[] = [];
+
     // Delete old profilePic and ingest new one
     if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
-      await deleteImageById({ id: user.profilePictureId });
+      postUpdatePromises.push(deleteImageById({ id: user.profilePictureId }));
     }
 
     if (
@@ -455,35 +466,43 @@ export const updateUserHandler = async ({
       updatedUser.profilePictureId &&
       user.profilePictureId !== profilePicture?.id
     ) {
-      await ingestImage({
-        image: {
-          id: updatedUser.profilePictureId,
-          url: profilePicture.url,
-          type: profilePicture.type,
-          height: profilePicture.height,
-          width: profilePicture.width,
-        },
-      });
-      await deleteUserProfilePictureCache(id);
+      postUpdatePromises.push(
+        ingestImage({
+          image: {
+            id: updatedUser.profilePictureId,
+            url: profilePicture.url,
+            type: profilePicture.type,
+            height: profilePicture.height,
+            width: profilePicture.width,
+          },
+        }).then(() => deleteUserProfilePictureCache(id))
+      );
     }
 
-    if (isSettingCosmetics) await equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds });
+    if (isSettingCosmetics)
+      postUpdatePromises.push(equipCosmetic({ userId: id, cosmeticId: payloadCosmeticIds }));
 
     if (userReferralCode || source || landingPage) {
-      await createUserReferral({
-        id: updatedUser.id,
-        userReferralCode,
-        source,
-        landingPage,
-        ip: ctx.ip,
-      });
+      postUpdatePromises.push(
+        createUserReferral({
+          id: updatedUser.id,
+          userReferralCode,
+          source,
+          landingPage,
+          ip: ctx.ip,
+        })
+      );
     }
 
-    await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    postUpdatePromises.push(
+      usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }])
+    );
 
     purgeCache({ tags: [`user-creator-${id}`] }).catch();
 
-    await refreshSession(id);
+    postUpdatePromises.push(refreshSession(id));
+
+    await Promise.all(postUpdatePromises);
 
     return updatedUser;
   } catch (error) {

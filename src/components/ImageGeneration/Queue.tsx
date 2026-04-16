@@ -6,9 +6,6 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { KontextProvider } from '~/components/Ads/Kontext/KontextProvider';
-import { KontextAd } from '~/components/Ads/Kontext/KontextAd';
-import { Fragment, useMemo } from 'react';
 
 export function Queue() {
   const filters = useFiltersContext((state) => state.generation);

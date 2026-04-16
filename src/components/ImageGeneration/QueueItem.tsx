@@ -26,7 +26,7 @@ import {
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
-import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
   useGenerationConfig,
@@ -64,6 +64,9 @@ import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.const
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
+import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
 
@@ -98,12 +101,12 @@ export function QueueItem({
   const params = request.params;
   const resources = request.resources;
 
-  const allImages = request.steps.flatMap((s) => s.images);
+  const allImages = request.steps.flatMap((s) => s.output);
 
   const stepErrors = request.steps.flatMap((s) => s.errors ?? []);
   const failureReason = stepErrors.length
     ? stepErrors.join(',\n')
-    : allImages.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason;
+    : allImages.find((x) => !x.available && x.blockedReason)?.blockedReason;
 
   const processing = status === 'processing';
   const pending = orchestratorPendingStatuses.includes(status);
@@ -324,28 +327,30 @@ export function QueueItem({
             )}
 
             {stepDisplay === 'separate' ? (
-              request.steps.map((step) => {
-                const stepConfig =
-                  workflowConfigs[step.params.workflow as keyof typeof workflowConfigs];
-                return (
-                  <div key={step.name} className="flex flex-col gap-2">
-                    <Text size="xs" c="dimmed" fw={500}>
-                      {stepConfig?.label ?? step.name}
-                    </Text>
-                    <StepImages
-                      step={step}
-                      request={request}
-                      features={features}
-                      pending={pending}
-                      processing={processing}
-                      queuePosition={queuePosition}
-                      markerTags={markerTags}
-                    />
-                  </div>
-                );
-              })
+              request.steps
+                .filter((step) => !step.suppressOutput)
+                .map((step) => {
+                  const stepConfig =
+                    workflowConfigs[step.params.workflow as keyof typeof workflowConfigs];
+                  return (
+                    <div key={step.name} className="flex flex-col gap-2">
+                      <Text size="xs" c="dimmed" fw={500}>
+                        {stepConfig?.label ?? step.name}
+                      </Text>
+                      <StepOutputs
+                        step={step}
+                        request={request}
+                        features={features}
+                        pending={pending}
+                        processing={processing}
+                        queuePosition={queuePosition}
+                        markerTags={markerTags}
+                      />
+                    </div>
+                  );
+                })
             ) : (
-              <StepImages
+              <StepOutputs
                 step={null}
                 request={request}
                 features={features}
@@ -425,7 +430,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
  * Renders the image grid for a single step or all steps (inline mode).
  * When `step` is null, renders all workflow images flattened.
  */
-function StepImages({
+function StepOutputs({
   step,
   request,
   features,
@@ -442,14 +447,14 @@ function StepImages({
   queuePosition?: WorkflowData['steps'][number]['queuePosition'];
   markerTags?: string[];
 }) {
-  const images = step ? step.images : request.steps.flatMap((s) => s.images);
-  const allDisplayImages = step ? step.displayImages : request.displayImages;
+  const images = step ? step.output : request.steps.flatMap((s) => s.output);
+  const allDisplayImages = step ? step.displayOutput : request.displayOutput;
   const displayImages = allDisplayImages.filter((img) => matchesMarkerTags(img, markerTags));
   const blockedReasons = step ? step.blockedReasons : request.blockedReasons;
 
   const stepFailure = step
     ? step.errors?.join(',\n') ||
-      step.images.find((x) => x.status === 'failed' && x.blockedReason)?.blockedReason
+      step.output.find((x) => !x.available && x.blockedReason)?.blockedReason
     : undefined;
 
   return (
@@ -460,18 +465,22 @@ function StepImages({
           [classes.asSidebar]: !features.largerGenerationImages,
         })}
       >
-        {displayImages.map((image) => (
-          <GeneratedImage key={image.id} image={image} />
-        ))}
+        {displayImages.map((image) =>
+          image.blockedReason === 'siteRestricted' ? (
+            <SiteRestrictedBlock key={image.id} image={image} />
+          ) : (
+            <GeneratedOutput key={image.id} image={image} />
+          )
+        )}
         <BlockedBlocks
-          blockedReasons={blockedReasons}
+          blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
           transactions={request.transactions}
         />
-        {(pending || processing) && images[0] && (
+        {(pending || processing) && (
           <TwCard
             className="items-center justify-center border"
-            style={{ aspectRatio: images[0].aspect }}
+            style={{ aspectRatio: images[0]?.aspect ?? 1 }}
           >
             {processing && (
               <>
@@ -615,6 +624,38 @@ function countOccurrences(arr: string[]): Record<string, number> {
   }, {} as Record<string, number>);
 }
 
+/**
+ * Per-image card shown on .com when NSFW output is blocked.
+ * Displays a prompt/seed summary and a CTA to view on civitai.red.
+ */
+function SiteRestrictedBlock({ image }: { image: BlobData }) {
+  const redDomain = useServerDomains().red;
+
+  return (
+    <TwCard className="flex aspect-square size-full flex-col items-center justify-center gap-2 border p-3">
+      <Text c="yellow" fw="bold" align="center" size="sm">
+        Mature Content
+      </Text>
+      <Text align="center" size="xs">
+        This image was rated mature and cannot be viewed on this site.
+      </Text>
+      {redDomain && (
+        <Button
+          component="a"
+          href={syncAccount(`//${redDomain}/generate`)}
+          target="_blank"
+          rel="noreferrer nofollow"
+          color="red"
+          variant="light"
+          size="compact-sm"
+        >
+          Unlock on civitai.red
+        </Button>
+      )}
+    </TwCard>
+  );
+}
+
 function BlockedBlocks(props: {
   blockedReasons: string[];
   workflowId: string;
@@ -695,6 +736,12 @@ function CanUpgradeBlock({
   workflowId: string;
   transactions: TransactionInfo[];
 }) {
+  const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
+  const isPaidMember = currentUser?.tier && currentUser.tier !== 'free';
+  const pricingHref = syncAccount(`//${serverDomains.green}/pricing`);
+
   const yellowBuzzRequired = transactions.reduce<number>((acc, transaction) => {
     if (transaction.accountType === 'yellow') return acc;
     if (transaction.type === 'credit') return acc - transaction.amount;
@@ -738,6 +785,21 @@ function CanUpgradeBlock({
         onClick={handleClick}
         loading={isLoading}
       />
+      {!isPaidMember && (
+        <Text align="center" size="xs" c="dimmed">
+          Or{' '}
+          {features.isGreen ? (
+            <Anchor component={Link} href={pricingHref} size="xs">
+              become a member
+            </Anchor>
+          ) : (
+            <Anchor href={pricingHref} target="_blank" rel="noreferrer nofollow" size="xs">
+              become a member
+            </Anchor>
+          )}{' '}
+          to use Blue Buzz for mature content
+        </Text>
+      )}
     </>
   );
 }

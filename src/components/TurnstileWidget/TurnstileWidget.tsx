@@ -2,7 +2,7 @@ import type { TextProps } from '@mantine/core';
 import { Anchor, Text } from '@mantine/core';
 import type { TurnstileProps, TurnstileInstance } from '@marsidev/react-turnstile';
 import { Turnstile } from '@marsidev/react-turnstile';
-import { useRef } from 'react';
+import { forwardRef, useImperativeHandle, useRef } from 'react';
 import { env } from '~/env/client';
 import { showExpiredCaptchaTokenNotification } from '~/utils/notifications';
 
@@ -12,12 +12,18 @@ export type CaptchaState = {
   error: string | null;
 };
 
-export function TurnstileWidget({
-  siteKey = env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY ||
-    env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY,
-  ...props
-}: Props) {
+export type TurnstileWidgetRef = TurnstileInstance;
+
+export const TurnstileWidget = forwardRef<TurnstileInstance, Props>(function TurnstileWidget(
+  {
+    siteKey = env.NEXT_PUBLIC_CF_INVISIBLE_TURNSTILE_SITEKEY ||
+      env.NEXT_PUBLIC_CLOUDFLARE_TURNSTILE_SITEKEY,
+    ...props
+  },
+  forwardedRef
+) {
   const ref = useRef<TurnstileInstance>(null);
+  useImperativeHandle(forwardedRef, () => ref.current as TurnstileInstance, []);
 
   const handleExpired: Props['onExpire'] = (token) => {
     const instance = ref.current;
@@ -37,7 +43,7 @@ export function TurnstileWidget({
       onExpire={handleExpired}
     />
   );
-}
+});
 
 type Props = Omit<TurnstileProps, 'siteKey' | 'injectScript'> & { siteKey?: string };
 

@@ -99,12 +99,29 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
   function enqueueJobs(jobs: UploadJob[]) {
     if (!jobs.length) return;
 
+    // Dedupe against anything currently queued or already uploading.
+    // Guards against accidental double-enqueue (rapid re-drops, effect re-fires,
+    // consumer bugs) that would otherwise result in the same File being uploaded
+    // twice and creating duplicate image records on the server.
+    const inFlight = new Set<File>();
+    for (const queued of jobQueueRef.current) inFlight.add(queued.processing.file);
+    if (fileUploadContext) {
+      const [existing] = fileUploadContext;
+      for (const tracked of existing) {
+        if (tracked.status === 'pending' || tracked.status === 'uploading') {
+          inFlight.add(tracked.file);
+        }
+      }
+    }
+    const uniqueJobs = jobs.filter((j) => !inFlight.has(j.processing.file));
+    if (!uniqueJobs.length) return;
+
     // Pre-register pending entries so the UI reflects queued items.
     if (fileUploadContext) {
       const [, setFiles] = fileUploadContext;
       setFiles((prev) => {
         const existing = new Set(prev.map((x) => x.file));
-        const additions = jobs
+        const additions = uniqueJobs
           .filter((job) => !existing.has(job.processing.file))
           .map((job) => ({
             file: job.processing.file,
@@ -127,7 +144,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
       });
     }
 
-    jobQueueRef.current.push(...jobs);
+    jobQueueRef.current.push(...uniqueJobs);
     while (activeWorkersRef.current < MAX_CONCURRENT_UPLOADS && jobQueueRef.current.length > 0) {
       activeWorkersRef.current++;
       runWorker().catch((e) => {

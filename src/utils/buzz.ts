@@ -286,3 +286,23 @@ export const buzzToUsdc = (buzzAmount: number): number => {
   // Returns USDC amount (e.g., 5.00 for 5000 Buzz)
   return buzzAmount / constants.buzz.buzzDollarRatio;
 };
+
+/** Format a multiplier for display, avoiding floating point artifacts like 1.5000000000000002 */
+export function formatMultiplier(value: number): string {
+  if (!Number.isFinite(value)) return '1x';
+  const rounded = Number(value.toFixed(2));
+  return `${rounded}x`;
+}
+
+/**
+ * Rewards-boost copy: percent below 2x ("50% more"), multiplier at or above 2x ("4x").
+ * Percent reads strongest for small boosts; multiplier hits harder at scale.
+ */
+export function formatRewardsBoost(value: number): string {
+  if (!Number.isFinite(value) || value <= 1) return '';
+  if (value < 2) {
+    const pct = Math.round((value - 1) * 100);
+    return `${pct}% more`;
+  }
+  return formatMultiplier(value);
+}

@@ -17,12 +17,16 @@ import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import {
+  getEligibleUpgradePlans,
+  pickClosestPlanByPrice,
+  useActiveSubscription,
+} from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
+import { formatPriceForDisplay } from '~/utils/number-helpers';
+import { formatRewardsBoost } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -31,9 +35,11 @@ import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 
 export const MembershipUpsell = ({
   buzzAmount,
+  selectedUnitAmount,
   onClick,
 }: {
   buzzAmount: number;
+  selectedUnitAmount?: number;
   onClick?: () => void;
 }) => {
   const currentUser = useCurrentUser();
@@ -61,24 +67,17 @@ export const MembershipUpsell = ({
     );
   }
 
-  const subscriptionMetadata = subscription?.product?.metadata as SubscriptionProductMetadata;
+  const eligiblePlans = getEligibleUpgradePlans(products, subscription);
 
-  const targetPlan = products.find((product, index) => {
-    const metadata = (product?.metadata ?? {
-      monthlyBuzz: 0,
-      tier: 'free',
-    }) as SubscriptionProductMetadata;
-    if (
-      subscription &&
-      subscriptionMetadata &&
-      constants.memberships.tierOrder.indexOf(subscriptionMetadata.tier) >=
-        constants.memberships.tierOrder.indexOf(metadata.tier)
-    ) {
-      return false;
-    }
-
-    return (metadata.monthlyBuzz ?? 0) >= buzzAmount || index === products.length - 1;
-  });
+  const targetPlan = selectedUnitAmount
+    ? pickClosestPlanByPrice(eligiblePlans, selectedUnitAmount)
+    : eligiblePlans.find((product, index) => {
+        const metadata = (product?.metadata ?? {
+          monthlyBuzz: 0,
+          tier: 'free',
+        }) as SubscriptionProductMetadata;
+        return (metadata.monthlyBuzz ?? 0) >= buzzAmount || index === eligiblePlans.length - 1;
+      });
 
   if (!targetPlan) {
     return null;
@@ -129,8 +128,9 @@ export const MembershipUpsell = ({
         {/* Benefits - Compact list with expand */}
         <BenefitsList
           benefits={benefits}
-          multiplier={(metadata.purchasesMultiplier ?? 1) > 1 ? metadata.purchasesMultiplier! : undefined}
-          buzzAmount={buzzAmount}
+          rewardsMultiplier={
+            (metadata.rewardsMultiplier ?? 1) > 1 ? metadata.rewardsMultiplier! : undefined
+          }
         />
 
         {/* CTA Section - Compact */}
@@ -220,38 +220,24 @@ function BenefitRow({ content }: { content: React.ReactNode }) {
 
 function BenefitsList({
   benefits,
-  multiplier,
-  buzzAmount,
+  rewardsMultiplier,
 }: {
-  benefits: { content?: React.ReactNode }[];
-  multiplier?: number;
-  buzzAmount: number;
+  benefits: { content?: React.ReactNode; key?: string }[];
+  rewardsMultiplier?: number;
 }) {
-  const filtered = benefits.filter((b) => b.content);
+  const filtered = benefits.filter((b) => b.content && b.key !== 'rewardsMultiplier');
 
   return (
     <Stack gap="xs">
-      {multiplier && (
+      {rewardsMultiplier && (
         <Group gap="sm" wrap="nowrap" align="flex-start" my={4}>
-          <ThemeIcon
-            size={26}
-            radius="xl"
-            color="grape"
-            variant="light"
-            className="shrink-0"
-          >
+          <ThemeIcon size={26} radius="xl" color="blue" variant="light" className="shrink-0">
             <IconBolt size={16} />
           </ThemeIcon>
           <div>
             <Text size="md" className={classes.multiplierText}>
-              {(((multiplier - 1) * 100).toFixed(0))}% Bonus Buzz on every purchase
+              {formatRewardsBoost(rewardsMultiplier)} Blue Buzz from rewards
             </Text>
-            {buzzAmount > 0 && (
-              <Text size="xs" c="dimmed">
-                +{numberWithCommas(Math.round(buzzAmount * (multiplier - 1)))} extra on this
-                purchase
-              </Text>
-            )}
           </div>
         </Group>
       )}

@@ -1012,6 +1012,28 @@ export const addPostImage = async ({
 
   const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
+  // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
+  // a retried mutation or a duplicated client submission — return the existing
+  // record instead of creating a second one. The client generates a unique S3
+  // key per upload, so a collision here means the same upload is being saved
+  // twice.
+  if (props.url) {
+    const existing = await dbRead.image.findFirst({
+      where: { postId: props.postId, url: props.url },
+      select: { id: true },
+    });
+    if (existing) {
+      const existingResult = await dbWrite.image.findUnique({
+        where: { id: existing.id },
+        select: editPostImageSelect,
+      });
+      if (existingResult) {
+        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        return existingImage;
+      }
+    }
+  }
+
   const partialResult = await createImage({
     ...props,
     meta,
@@ -1031,24 +1053,29 @@ export const addPostImage = async ({
   const [image] = await combinePostEditImageData([result], user);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
-  // Cache Busting
-  await bustCacheTag(`images-user:${user.id}`);
-  if (!!modelVersionIds.length) {
-    for (const modelVersionId of modelVersionIds) {
-      await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-    }
-
-    const modelVersions = await dbRead.modelVersion.findMany({
-      where: { id: { in: modelVersionIds } },
-      select: { modelId: true },
-    });
-    for (const modelVersion of modelVersions) {
-      await bustCacheTag(`images-model:${modelVersion.modelId}`);
-    }
+  // Cache Busting — parallelize independent operations
+  const cacheBustPromises: Promise<void>[] = [
+    bustCacheTag(`images-user:${user.id}`),
+    preventReplicationLag('postImages', props.postId),
+  ];
+  if (modelVersionIds.length) {
+    cacheBustPromises.push(
+      ...modelVersionIds.map((mvId) => bustCacheTag(`images-modelVersion:${mvId}`))
+    );
+    cacheBustPromises.push(
+      dbRead.modelVersion
+        .findMany({
+          where: { id: { in: modelVersionIds } },
+          select: { modelId: true },
+        })
+        .then((mvs) =>
+          Promise.all(mvs.map((mv) => bustCacheTag(`images-model:${mv.modelId}`)))
+        )
+        .then(() => undefined)
+    );
   }
-
-  await preventReplicationLag('postImages', props.postId);
-  await bustCachesForPosts(props.postId);
+  cacheBustPromises.push(bustCachesForPosts(props.postId));
+  await Promise.all(cacheBustPromises);
 
   return image;
 };

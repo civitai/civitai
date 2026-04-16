@@ -214,9 +214,7 @@ export function UserAvatar({
               </Paper>
             ) : (
               <Avatar
-                src={
-                  avatarUser.image && !blockedProfilePicture && !userDeleted ? imageUrl : undefined
-                }
+                src={avatarUser.image && !userDeleted ? imageUrl : undefined}
                 alt={
                   avatarUser.username && !userDeleted
                     ? `${avatarUser.username}'s Avatar`

@@ -30,6 +30,7 @@ export declare const giftCardTitle: string;
 export declare const giftIcon: string;
 export declare const giftIconWrapper: string;
 export declare const headerCard: string;
+export declare const inlineUpsellCard: string;
 export declare const mantineBadgeRoot: string;
 export declare const mantineButtonRoot: string;
 export declare const mantineCardRoot: string;

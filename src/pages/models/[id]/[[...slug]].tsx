@@ -245,7 +245,20 @@ export const getServerSideProps = createServerSideProps({
         const correctSlug = slugit(model.name);
         const currentSlug = params.slug?.join('/');
         if (correctSlug && currentSlug !== correctSlug) {
-          const queryString = modelVersionId ? `?modelVersionId=${modelVersionId}` : '';
+          // Preserve all inbound query params (dialog, commentId, highlight,
+          // modelVersionId, etc.) — Next.js merges path params into ctx.query
+          // for catch-all routes, so strip the path keys before re-serializing.
+          const passthrough = new URLSearchParams();
+          for (const [key, value] of Object.entries(ctx.query)) {
+            if (key === 'id' || key === 'slug') continue;
+            if (Array.isArray(value)) {
+              for (const v of value) passthrough.append(key, v);
+            } else if (value != null) {
+              passthrough.append(key, value);
+            }
+          }
+          const qs = passthrough.toString();
+          const queryString = qs ? `?${qs}` : '';
           return {
             redirect: {
               destination: `/models/${id}/${correctSlug}${queryString}`,
@@ -457,7 +470,9 @@ export default function ModelDetailsV2({
       const { sent = 0, failed = 0 } = (data ?? {}) as { sent?: number; failed?: number };
       if (sent === 0 && failed > 0) {
         showErrorNotification({
-          error: new Error(`All ${failed} file(s) failed to send for scanning. Please try again later.`),
+          error: new Error(
+            `All ${failed} file(s) failed to send for scanning. Please try again later.`
+          ),
           title: 'Rescan failed',
         });
       } else if (failed > 0) {
@@ -696,7 +711,7 @@ export default function ModelDetailsV2({
       />
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
-        {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
+        <RenderAdUnitOutstream minContainerWidth={2800} />
         <Container size="xl" data-tour="model:start" className="pb-8">
           <Stack gap="xl">
             <Stack gap="xs">

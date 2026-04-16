@@ -180,7 +180,10 @@ export const ECO = {
   AceStep: 66,
 
   // Utility ecosystems
-  Upscaler: 67,
+  Upscaler: 66,
+
+  // Baidu
+  Ernie: 67,
 
   // Child ecosystems of SDXL
   Pony: 100,
@@ -589,6 +592,16 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 110,
   },
 
+  // Baidu Family (familyId: 17)
+  {
+    id: ECO.Ernie,
+    key: 'Ernie',
+    name: 'ernie',
+    displayName: 'Ernie',
+    familyId: 17,
+    sortOrder: 120,
+  },
+
   // Standalone ecosystems (no family)
   { id: ECO.Anima, key: 'Anima', name: 'anima', displayName: 'Anima', sortOrder: 199 },
   { id: ECO.AuraFlow, key: 'AuraFlow', name: 'auraflow', displayName: 'AuraFlow', sortOrder: 200 },
@@ -993,6 +1006,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2836417 },
+      modelLocked: true,
     },
   },
   {
@@ -1705,8 +1719,8 @@ export const BM = {
   Qwen2: 79,
   WanImage27: 80,
   WanVideo27: 81,
-  AceStep: 82,
-  Upscaler: 83,
+  Upscaler: 82,
+  Ernie: 83,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -1964,6 +1978,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Lightricks',
     description: "Lightricks' video generation models",
   },
+  {
+    id: 17,
+    name: 'Baidu',
+    description: "Baidu's image generation models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -2013,6 +2032,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.CogVideoX,
     licenseId: 17,
+  },
+
+  // Ernie
+  {
+    id: BM.Ernie,
+    name: 'Ernie',
+    description: "Baidu's image generation model",
+    type: 'image',
+    ecosystemId: ECO.Ernie,
+    licenseId: 13,
   },
 
   // Flux.1

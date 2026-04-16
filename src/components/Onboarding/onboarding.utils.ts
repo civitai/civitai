@@ -4,6 +4,7 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
 
 const onboardingSteps: Record<string, OnboardingSteps[]> = {
   default: [
@@ -12,6 +13,9 @@ const onboardingSteps: Record<string, OnboardingSteps[]> = {
     OnboardingSteps.BrowsingLevels,
     OnboardingSteps.Buzz,
   ],
+  // Green domain is SFW-only. BrowsingLevels step only exposes mature-content
+  // controls, so skip it entirely on green.
+  green: [OnboardingSteps.TOS, OnboardingSteps.Profile, OnboardingSteps.Buzz],
 };
 
 export const useGetRequiredOnboardingSteps = () => {
@@ -26,7 +30,8 @@ export const useGetRequiredOnboardingSteps = () => {
 
 export const useOnboardingStepCompleteMutation = () => {
   const currentUser = useCurrentUser();
-  return trpc.user.completeOnboardingStep.useMutation({
+  const { isPreview } = useOnboardingContext();
+  const realMutation = trpc.user.completeOnboardingStep.useMutation({
     async onSuccess() {
       await currentUser?.refresh();
     },
@@ -37,4 +42,18 @@ export const useOnboardingStepCompleteMutation = () => {
       });
     },
   });
+
+  if (!isPreview) return realMutation;
+
+  return {
+    ...realMutation,
+    mutate: ((_input: unknown, opts?: { onSuccess?: () => void }) => {
+      opts?.onSuccess?.();
+    }) as unknown as typeof realMutation.mutate,
+    mutateAsync: (async (_input: unknown, opts?: { onSuccess?: () => void }) => {
+      opts?.onSuccess?.();
+    }) as unknown as typeof realMutation.mutateAsync,
+    isLoading: false,
+    error: null,
+  };
 };

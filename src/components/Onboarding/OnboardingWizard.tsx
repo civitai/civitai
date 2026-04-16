@@ -51,10 +51,24 @@ const steps: StepPropsCustom[] = [
   },
 ];
 
-export default function OnboardingWizard({ onComplete }: { onComplete: () => void }) {
-  const onboardingSteps = useGetRequiredOnboardingSteps();
-  const onboardingStepsRef = useRef(onboardingSteps);
-  const [active, setActive] = useState(0);
+export default function OnboardingWizard({
+  onComplete,
+  stepsOverride,
+  isPreview,
+  startStep,
+}: {
+  onComplete: () => void;
+  stepsOverride?: OnboardingSteps[];
+  isPreview?: boolean;
+  startStep?: OnboardingSteps;
+}) {
+  const requiredSteps = useGetRequiredOnboardingSteps();
+  const effectiveSteps = stepsOverride ?? requiredSteps;
+  const onboardingStepsRef = useRef(effectiveSteps);
+  const initialAvailable = steps.filter((item) => onboardingStepsRef.current.includes(item.step));
+  const initialIndex =
+    startStep !== undefined ? initialAvailable.findIndex((s) => s.step === startStep) : 0;
+  const [active, setActive] = useState(initialIndex >= 0 ? initialIndex : 0);
   const domain = useDomainColor();
 
   const next = () => {
@@ -72,17 +86,17 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
     <div className="size-full overflow-y-auto">
       <div className="container my-3 flex max-w-md flex-col">
         {!isReturningUser && (
-          <div className="mx-auto flex items-center gap-1">
-            <Box w={86}>
+          <div className="mx-auto flex items-center gap-4">
+            <Box w={56}>
               <LogoBadge />
             </Box>
-            <Stack gap={0} mt={-5}>
+            <Stack gap={0}>
               <Title style={{ lineHeight: 1 }}>Welcome!</Title>
               <Text>{`Let's setup your account`}</Text>
             </Stack>
           </div>
         )}
-        <OnboardingProvider next={next} isReturningUser={isReturningUser}>
+        <OnboardingProvider next={next} isReturningUser={isReturningUser} isPreview={isPreview}>
           {availableSteps.length > 1 ? (
             <Stepper
               active={active}

@@ -66,13 +66,13 @@ export async function updateWorkflowsStatus(workflowIds: string[]) {
                   // (e.g. Wan 2.2 interpolation) where the later step starts with zero images
                   // and only materializes outputs on completion — the previous per-index
                   // loop only updated existing entries and dropped new ones until reload.
-                  for (const [index, image] of step.images.entries()) {
-                    const imageMatch = stepMatch.images.find((x) => x.id === image.id);
-                    if (imageMatch) step.images[index] = imageMatch;
+                  for (const [index, item] of step.output.entries()) {
+                    const itemMatch = stepMatch.output.find((x) => x.id === item.id);
+                    if (itemMatch) step.output[index] = itemMatch;
                   }
-                  const existingIds = new Set(step.images.map((x) => x.id));
-                  for (const image of stepMatch.images) {
-                    if (!existingIds.has(image.id)) step.images.push(image);
+                  const existingIds = new Set(step.output.map((x) => x.id));
+                  for (const item of stepMatch.output) {
+                    if (!existingIds.has(item.id)) step.output.push(item);
                   }
                 }
               }

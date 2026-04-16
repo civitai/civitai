@@ -3,15 +3,10 @@
  *
  * Hook that fetches cost estimation (what-if) data for the generation graph.
  *
- * Uses prompt focus tracking to avoid race conditions when clicking submit:
- * - When prompt is focused, we use the last committed prompt value
- * - When prompt loses focus, we update to the current value
- * - This prevents blur from triggering a new whatIf request that interferes with submit
- *
- * Exposes `isPromptDirty` so consumers can detect when pricing is stale due to
- * prompt edits. The submit button uses this to show loading immediately when the
- * user starts editing (rather than only on blur) and to queue a pending submit
- * that auto-fires once the whatIf resolves.
+ * Prompt changes do NOT trigger re-fetches — the site identity (not prompt content)
+ * determines the buzz type, and prompt moderation happens at submission time.
+ * The user-selected buzz type from the generation form store is included in the
+ * query payload so the backend resolves the correct currency.
  */
 
 import { isEqual, omit } from 'lodash-es';
@@ -25,7 +20,6 @@ import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
 import { trpc } from '~/utils/trpc';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
-import { usePromptFocusedStore } from '../inputs/PromptInput';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
 
 // =============================================================================
@@ -35,9 +29,10 @@ import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/Sou
 /**
  * Graph keys that don't affect cost estimation at all.
  * Changes to these fields will NOT trigger a new whatIf query.
- * Note: 'prompt' IS included because it affects SFW/NSFW classification and pricing.
+ * Note: 'prompt' is now ignored because the site identity (not prompt content)
+ * determines the buzz type, and prompt moderation happens at submission time.
  */
-const IGNORED_KEYS_FOR_WHATIF = ['negativePrompt', 'seed', 'denoise'] as const;
+const IGNORED_KEYS_FOR_WHATIF = ['prompt', 'negativePrompt', 'seed', 'denoise'] as const;
 
 /** Strip resource strength values from a snapshot so they don't trigger whatIf re-fetches. */
 function stripResourceStrengths(snapshot: Record<string, unknown>): Record<string, unknown> {
@@ -84,15 +79,11 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const graph = useGraph<GenerationGraphTypes>();
   const currentUser = useCurrentUser();
   const { isLoading: resourcesLoading } = useResourceDataContext();
-  const promptFocused = usePromptFocusedStore((x) => x.focused);
   const imagesPending = useImagesUploadingOrVerifying();
 
   // Track graph changes with a revision counter
   const [revision, incrementRevision] = useReducer((r: number) => r + 1, 0);
   const prevSnapshotRef = useRef<Record<string, unknown> | null>(null);
-
-  // Track the last committed prompt value (updated when prompt loses focus)
-  const promptRef = useRef<string>('');
 
   useEffect(() => {
     const keysToOmit = [...IGNORED_KEYS_FOR_WHATIF, ...graph.getComputedKeys()];
@@ -100,7 +91,6 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     // Initialize with current snapshot
     const initialSnapshot = graph.getSnapshot() as Record<string, unknown>;
     prevSnapshotRef.current = stripResourceStrengths(omit(initialSnapshot, keysToOmit));
-    promptRef.current = (initialSnapshot.prompt as string) ?? '';
 
     return graph.subscribe(() => {
       const snapshot = graph.getSnapshot() as Record<string, unknown>;
@@ -117,16 +107,9 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const snapshot = useMemo(() => graph.getSnapshot() as Record<string, unknown>, [revision, graph]);
 
-  // Update committed prompt when not focused
-  useEffect(() => {
-    if (!promptFocused && snapshot?.prompt !== undefined) {
-      promptRef.current = snapshot.prompt as string;
-    }
-  }, [promptFocused, snapshot?.prompt]);
-
   // Validate snapshot with a placeholder prompt for cost estimation.
-  // The prompt value affects SFW/NSFW classification and pricing, but we don't want
-  // to block cost estimation when the user hasn't typed a prompt yet.
+  // Prompt doesn't affect pricing (site identity determines buzz type), but the
+  // graph may require a non-empty prompt for validation.
   const validationResult = useMemo(() => {
     if (!snapshot) return null;
     return graph.validate({
@@ -138,21 +121,22 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const canEstimateCost = validationResult?.success ?? false;
 
   // Build the query payload from validated data.
-  // When prompt is focused, use the last committed value to avoid race conditions with submit.
+  // Note: buzz type is NOT included here — cost is the same regardless of which
+  // buzz type the user selects. Buzz type only matters at submission time.
+  // Prompt/negativePrompt are stripped — they don't affect cost and shouldn't
+  // be sent to the server until actual submission.
   const queryPayload = useMemo(() => {
     if (!validationResult?.success) return null;
 
-    const outputSnapshot = validationResult.data as Record<string, unknown>;
+    const outputSnapshot = omit(validationResult.data as Record<string, unknown>, [
+      'prompt',
+      'negativePrompt',
+    ]);
 
-    // When focused, use committed prompt value to avoid race conditions with submit
-    // When not focused, use current snapshot value directly (effect updates ref for next focus)
-    const promptValue = promptFocused ? promptRef.current : (outputSnapshot.prompt as string);
-    const snapshotForQuery = { ...outputSnapshot, prompt: promptValue || 'cost estimation' };
-
-    return filterSnapshotForSubmit(snapshotForQuery, {
+    return filterSnapshotForSubmit(outputSnapshot, {
       computedKeys: graph.getComputedKeys(),
     });
-  }, [validationResult, graph, promptFocused]);
+  }, [validationResult, graph]);
 
   // Disable whatIf for workflows that don't submit (e.g. img2meta)
   const isNoSubmit = workflowConfigByKey.get(snapshot?.workflow as string)?.noSubmit === true;
@@ -181,17 +165,10 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const validationErrors =
     validationResult && !validationResult.success ? validationResult.errors : null;
 
-  // True when the current prompt differs from the value used in the active whatIf query.
-  // Used by the submit button to show a clickable overlay that queues a pending submit,
-  // so clicking generate while prompt is dirty auto-fires once the whatIf resolves.
-  const isPromptDirty =
-    snapshot?.prompt !== undefined && (snapshot.prompt as string) !== promptRef.current;
-
   return {
     ...queryResult,
     data,
     isLoading: queryResult.isFetching || imagesPending,
-    isPromptDirty,
     canEstimateCost,
     validationErrors,
   };

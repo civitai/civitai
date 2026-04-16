@@ -5,7 +5,8 @@ import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { AdUnitRenderable, useAdunitRenderableContext } from '~/components/Ads/AdUnitRenderable';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
@@ -122,8 +123,7 @@ function AdWrapper({
 }) {
   // const router = useRouter();
   // const key = router.asPath.split('?')[0];
-  const { adsBlocked, ready, isMember, consent } = useAdsContext();
-  const { nsfw } = useAdunitRenderableContext();
+  const { adsBlocked, ready, isMember, consent, useDirectAds } = useAdsContext();
 
   const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
@@ -134,7 +134,7 @@ function AdWrapper({
     <>
       {adsBlocked || !consent ? (
         <SupportUsImage sizes={adSizes ?? undefined} />
-      ) : nsfw ? (
+      ) : useDirectAds ? (
         <CivitaiAdUnit adUnit={adUnit} id={id} />
       ) : inView && ready && adSizes !== undefined ? (
         <AdUnitContent
@@ -247,21 +247,19 @@ export function adUnitFactory(factoryArgs: {
 }) {
   function AdUnit({
     withFeedback,
-    browsingLevel,
     className,
     maxHeight,
     maxWidth,
     preserveLayout,
   }: {
     withFeedback?: boolean;
-    browsingLevel?: number;
     className?: string;
     maxHeight?: number;
     maxWidth?: number;
     preserveLayout?: boolean;
   }) {
     return (
-      <AdUnitRenderable browsingLevel={browsingLevel}>
+      <AdUnitRenderable>
         <AdWrapper
           {...factoryArgs}
           withFeedback={withFeedback}
@@ -417,7 +415,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
   const { nodeRef } = useContainerContext();
   const containerWidth = useContainerWidth();
   const node = useScrollAreaRef();
-  const { browsingLevel } = useAdunitRenderableContext();
+  const browsingLevel = useBrowsingLevelDebounced();
   const fetchingRef = React.useRef(false);
   const impressionRef = React.useRef(false);
   const [data, setData] = useState<{
@@ -450,17 +448,22 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
     if (traceRef.current) searchParams.append('trace', traceRef.current);
     fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
       credentials: 'include',
-    }).then(async (res) => {
-      if (res.ok) {
-        const data = await res.json();
-        setData(data);
-        traceRef.current = data.trace;
-        fetchingRef.current = !data?.next;
-      } else {
+    })
+      .then(async (res) => {
+        if (res.ok) {
+          const data = await res.json();
+          setData(data);
+          traceRef.current = data.trace;
+          fetchingRef.current = !data?.next;
+        } else {
+          fetchingRef.current = false;
+        }
+        impressionRef.current = false;
+      })
+      .catch(() => {
         fetchingRef.current = false;
-      }
-      impressionRef.current = false;
-    });
+        impressionRef.current = false;
+      });
   }, [browsingLevel, props.adUnit, props.id]);
 
   const interval = usePausableInterval(handleServe, 30 * 1000);
@@ -508,11 +511,16 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
           headers: {
             'Content-Type': 'application/json',
           },
-        }).then(() => {
-          window.dispatchEvent(
-            new CustomEvent('civitai-custom-ad-impression', { detail: props.adUnit })
-          );
-        });
+        })
+          .then(() => {
+            window.dispatchEvent(
+              new CustomEvent('civitai-custom-ad-impression', { detail: props.adUnit })
+            );
+          })
+          .catch(() => {
+            // Impression tracking failed — not critical, allow retry on next cycle
+            impressionRef.current = false;
+          });
       }
     }
 

@@ -19,9 +19,11 @@ import {
   deleteArticleById,
   getArticleById,
   getArticles,
+  getArticleScanStatus,
   getCivitaiEvents,
   getCivitaiNews,
   getDraftArticlesByUserId,
+  rescanArticle,
 } from '~/server/services/article.service';
 import {
   unpublishArticleHandler,
@@ -33,6 +35,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { isModerator } from '~/server/routers/base.router';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -64,11 +67,16 @@ export const articleRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(() => getCivitaiNews()),
   getEvents: publicProcedure.query(() => getCivitaiEvents()),
-  getById: publicProcedure
-    .input(getByIdSchema)
-    .query(({ input, ctx }) =>
-      getArticleById({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
-    ),
+  getById: publicProcedure.input(getByIdSchema).query(({ input, ctx }) =>
+    getArticleById({
+      ...input,
+      userId: ctx.user?.id,
+      isModerator: ctx.user?.isModerator,
+      // On domains that disallow NSFW (e.g. civitai green), force the SFW mask
+      // so articles whose nsfwLevel doesn't include PG/PG13 return as not found.
+      browsingLevel: ctx.features.canViewNsfw ? undefined : publicBrowsingLevelsFlag,
+    })
+  ),
   getMyDraftArticles: protectedProcedure
     .input(getAllQuerySchema)
     .use(isFlagProtected('articles'))
@@ -94,4 +102,13 @@ export const articleRouter = router({
     .use(isFlagProtected('articles'))
     .use(isModerator)
     .mutation(restoreArticleHandler),
+  rescan: protectedProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('articleImageScanning'))
+    .use(isOwnerOrModerator)
+    .mutation(({ input, ctx }) => rescanArticle({ ...input, isModerator: ctx.user.isModerator })),
+  getScanStatus: publicProcedure
+    .input(getByIdSchema)
+    .use(isFlagProtected('articleImageScanning'))
+    .query(({ input }) => getArticleScanStatus(input)),
 });
