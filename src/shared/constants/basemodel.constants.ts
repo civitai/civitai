@@ -1721,6 +1721,7 @@ export const BM = {
   WanVideo27: 81,
   Upscaler: 82,
   Ernie: 83,
+  AceStep: 84,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
