@@ -7,7 +7,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { IconArrowRight, IconBolt, IconRocket, IconSparkles, IconWand } from '@tabler/icons-react';
+import { IconArrowRight, IconBolt, IconRocket, IconWand } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import classes from '~/pages/train.module.scss';
@@ -27,7 +27,7 @@ const faqs = [
   },
   {
     q: 'How much does training cost?',
-    a: 'Training starts at 500 Buzz, about 50 cents (1,000 Buzz = $1). New Civitai accounts get 500 Buzz on signup, so your first training is effectively covered. Final cost scales with engine, dataset size, and training length, and is quoted to you before you submit. Generating with your trained model afterward runs at standard generator rates.',
+    a: 'Training starts at 500 Buzz, about 50 cents (1,000 Buzz = $1). Final cost scales with engine, dataset size, and training length, and is quoted to you before you submit. Generating with your trained model afterward runs at standard generator rates.',
   },
   {
     q: 'Do I need a membership to train?',
@@ -110,15 +110,11 @@ export default function TrainPage() {
         <section className={classes.hero}>
           <Container size="xl">
             <Stack align="center" gap="md">
-              <span className={classes.ribbon}>
-                <IconSparkles size={16} /> New accounts get 500 Buzz on signup, enough for a full
-                training run
-              </span>
               <h1 className={classes.heroTitle}>The AI model that finally knows your thing.</h1>
               <p className={classes.heroSubhead}>
                 Train a custom AI model on your own characters, styles, and concepts, then generate
-                them on demand inside Civitai. Consistent every time. First training starts around
-                50 cents, with a 30-day free window to experiment before you commit.
+                them on demand inside Civitai. Consistent every time. Training starts around 50
+                cents, with a 30-day free window on every model you train.
               </p>
               <Group gap="sm" mt="sm">
                 <Button
@@ -369,8 +365,8 @@ export default function TrainPage() {
             </Group>
 
             <p className={classes.priceCallout}>
-              Training starts at <strong>500 Buzz (~50¢)</strong>. New accounts get 500 Buzz on
-              signup, enough for a full run. Your first trained model is free to use for 30 days.
+              Training starts at <strong>500 Buzz (~50¢)</strong>. Once it&apos;s done, your
+              trained model is free to use for 30 days.
             </p>
           </Container>
         </section>
