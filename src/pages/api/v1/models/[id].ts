@@ -18,7 +18,6 @@ import {
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 const hashesAsObject = (hashes: { type: ModelHashType; hash: string }[]) =>
   hashes.reduce((acc, { type, hash }) => ({ ...acc, [type]: hash }), {});
@@ -36,9 +35,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
 
   const region = getRegion(req);
   const isRestricted = isRegionRestricted(region);
-  const domainColor = getRequestDomainColor(req);
-  const browsingLevel =
-    isRestricted || domainColor === 'green' ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const browsingLevel = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   try {
     const { items } = await getModelsWithVersions({
