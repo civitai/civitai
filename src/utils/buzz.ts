@@ -293,3 +293,16 @@ export function formatMultiplier(value: number): string {
   const rounded = Number(value.toFixed(2));
   return `${rounded}x`;
 }
+
+/**
+ * Rewards-boost copy: percent below 2x ("50% more"), multiplier at or above 2x ("4x").
+ * Percent reads strongest for small boosts; multiplier hits harder at scale.
+ */
+export function formatRewardsBoost(value: number): string {
+  if (!Number.isFinite(value) || value <= 1) return '';
+  if (value < 2) {
+    const pct = Math.round((value - 1) * 100);
+    return `${pct}% more`;
+  }
+  return formatMultiplier(value);
+}

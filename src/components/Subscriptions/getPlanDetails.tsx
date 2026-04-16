@@ -75,6 +75,7 @@ export const getPlanDetails: (
         : undefined,
       features.membershipsV2
         ? {
+            key: 'rewardsMultiplier',
             icon: <IconBolt size={benefitIconSize} />,
             iconColor: (metadata?.rewardsMultiplier ?? 1) === 1 ? 'gray' : `rgb(var(--buzz-color))`,
             iconVariant: 'light' as ThemeIconVariant,

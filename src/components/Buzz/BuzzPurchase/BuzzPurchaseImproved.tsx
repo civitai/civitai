@@ -73,6 +73,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
+import { InlineMembershipUpsell } from '~/components/Stripe/InlineMembershipUpsell';
 import { QS } from '~/utils/qs';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
@@ -87,6 +88,7 @@ export type BuzzPurchaseImprovedProps = {
   minBuzzAmount?: number;
   onCancel?: () => void;
   initialBuzzType?: BuzzSpendType;
+  onSelectedUnitAmountChange?: (unitAmount: number | undefined) => void;
 };
 
 const BuzzPurchasePaymentButton = ({
@@ -265,6 +267,7 @@ export const BuzzPurchaseImproved = ({
   onCancel,
   purchaseSuccessMessage,
   initialBuzzType,
+  onSelectedUnitAmountChange,
 }: BuzzPurchaseImprovedProps) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
@@ -293,6 +296,10 @@ export const BuzzPurchaseImproved = ({
   const buzzAmount = customAmount
     ? customAmount * 10
     : selectedPrice?.buzzAmount ?? (selectedPrice?.unitAmount ?? 0) * 10;
+
+  useEffect(() => {
+    onSelectedUnitAmountChange?.(unitAmount || undefined);
+  }, [unitAmount, onSelectedUnitAmountChange]);
 
   // Calculate total buzz including bonuses
   const buzzCalculation = useBuzzPurchaseCalculation(buzzAmount);
@@ -495,6 +502,12 @@ export const BuzzPurchaseImproved = ({
                           );
                         })}
                       </SimpleGrid>
+
+                      {/* Inline Membership Upsell */}
+                      <InlineMembershipUpsell
+                        selectedUnitAmount={unitAmount}
+                        className={classes.inlineUpsellCard}
+                      />
 
                       {/* Custom Amount Section */}
                       <Card className={classes.customAmountCard} padding="sm" radius="md">

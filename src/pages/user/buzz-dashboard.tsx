@@ -2,6 +2,7 @@ import {
   Alert,
   Anchor,
   Badge,
+  Button,
   Center,
   Container,
   Grid,
@@ -12,9 +13,10 @@ import {
   Stack,
   Text,
   Title,
-  Tooltip,
 } from '@mantine/core';
-import { IconSparkles } from '@tabler/icons-react';
+import { IconArrowRight, IconSparkles } from '@tabler/icons-react';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useRouter } from 'next/router';
 import React from 'react';
 import classes from '~/components/Buzz/buzz.module.scss';
@@ -31,7 +33,10 @@ import { RedeemCodeCard } from '~/components/RedeemCode/RedeemCodeCard';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
-import type { SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
+import type {
+  SubscriptionMetadata,
+  SubscriptionProductMetadata,
+} from '~/server/schema/subscriptions.schema';
 import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
@@ -40,7 +45,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
-import { formatMultiplier, getAccountTypeLabel } from '~/utils/buzz';
+import { formatMultiplier, formatRewardsBoost, getAccountTypeLabel } from '~/utils/buzz';
 import { trpc } from '~/utils/trpc';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
@@ -94,6 +99,18 @@ export default function UserBuzzDashboard() {
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
     { enabled: !!currentUser }
+  );
+
+  const paymentProvider = usePaymentProvider();
+  const showBlueBuzzUpsell =
+    !isMember && features.membershipsV2 && selectedAccountType === 'blue';
+  const { data: plans = [] } = trpc.subscriptions.getPlans.useQuery(
+    { paymentProvider },
+    { enabled: showBlueBuzzUpsell }
+  );
+  const maxRewardsMultiplier = Math.max(
+    1,
+    ...plans.map((p) => (p.metadata as SubscriptionProductMetadata)?.rewardsMultiplier ?? 1)
   );
 
   const { multipliers, multipliersLoading } = useUserMultipliers();
@@ -217,17 +234,23 @@ export default function UserBuzzDashboard() {
                       </Badge>
                     </div>
                   ) : isMember && rewardsMultiplier > 1 && features.membershipsV2 ? (
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <Badge size="lg" radius="xl" variant="light" color="gray">
-                        Membership {formatMultiplier(rewardsMultiplier)}
-                      </Badge>
-                      <Text size="xs" c="dimmed">
-                        =
-                      </Text>
-                      <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
-                        Total {formatMultiplier(rewardsMultiplier)}
-                      </Badge>
-                    </div>
+                    <Badge size="lg" radius="xl" variant="light" color="blue" fw={700}>
+                      Membership {formatMultiplier(rewardsMultiplier)}
+                    </Badge>
+                  ) : showBlueBuzzUpsell && maxRewardsMultiplier > 1 ? (
+                    <Button
+                      component={NextLink}
+                      href="/pricing"
+                      size="sm"
+                      radius="xl"
+                      className={classes.upsellCta}
+                      leftSection={
+                        <IconSparkles size={16} className={classes.upsellCtaIcon} />
+                      }
+                      rightSection={<IconArrowRight size={16} />}
+                    >
+                      Earn {formatRewardsBoost(maxRewardsMultiplier)} Blue Buzz with a membership
+                    </Button>
                   ) : (
                     isMember &&
                     features.membershipsV2 && (

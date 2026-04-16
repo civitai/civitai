@@ -136,4 +136,5 @@ export type BenefitItem = {
   icon?: React.ReactNode;
   iconColor?: DefaultMantineColor;
   iconVariant?: ThemeIconVariant;
+  key?: string;
 };

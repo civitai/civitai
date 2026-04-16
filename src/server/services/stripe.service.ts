@@ -405,6 +405,12 @@ export const cancelSubscriptionWithFallback = async ({
   }
 };
 
+// DEAD CODE: no live callers. Buzz purchases go through `getPaymentIntent` below,
+// which charges `unitAmount` from our DB `Price` rows and does NOT reference
+// Stripe Price objects. Therefore Stripe's buzz Prices are allowed to drift from
+// our DB (intentionally). Do not resurrect this path without also aligning the
+// Stripe Price catalog — and note that our DB Price IDs for buzz packages may be
+// synthetic (e.g. `price_civitai_buzz_25`) and not valid in Stripe.
 export const createBuzzSession = async ({
   customerId,
   user,
@@ -782,6 +788,12 @@ export const cancelSubscription = async ({
   await stripe.subscriptions.del(subscriptionId);
 };
 
+// NOTE: The Price rows returned here are the source of truth for the buzz
+// purchase UI AND for the actual charge (via `getPaymentIntent`, which uses
+// `unitAmount` directly). Stripe's own Price catalog is intentionally NOT kept
+// in sync with these rows — some buzz Price IDs are synthetic (e.g.
+// `price_civitai_buzz_25`) and won't exist in Stripe. Don't reintroduce a flow
+// that passes these IDs back to Stripe without first aligning the catalog.
 export const getBuzzPackages = async () => {
   const [buzzProduct] = await dbRead.product.findMany({
     where: { active: true, metadata: { path: ['tier'], equals: 'buzz' } },

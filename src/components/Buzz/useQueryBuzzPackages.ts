@@ -53,6 +53,9 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
       },
     });
 
+  // DEAD CODE: no callers. Left in place for backwards compat. Buzz purchases
+  // use the PaymentIntent flow instead (see BuzzPurchaseImproved), which charges
+  // `unitAmount` from our DB directly — Stripe Price objects are not consulted.
   const createCheckoutSession = (data: CreateBuzzSessionInput) => {
     return createBuzzSessionMutation.mutateAsync(data);
   };
