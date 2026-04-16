@@ -1031,24 +1031,29 @@ export const addPostImage = async ({
   const [image] = await combinePostEditImageData([result], user);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
-  // Cache Busting
-  await bustCacheTag(`images-user:${user.id}`);
-  if (!!modelVersionIds.length) {
-    for (const modelVersionId of modelVersionIds) {
-      await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-    }
-
-    const modelVersions = await dbRead.modelVersion.findMany({
-      where: { id: { in: modelVersionIds } },
-      select: { modelId: true },
-    });
-    for (const modelVersion of modelVersions) {
-      await bustCacheTag(`images-model:${modelVersion.modelId}`);
-    }
+  // Cache Busting — parallelize independent operations
+  const cacheBustPromises: Promise<void>[] = [
+    bustCacheTag(`images-user:${user.id}`),
+    preventReplicationLag('postImages', props.postId),
+  ];
+  if (modelVersionIds.length) {
+    cacheBustPromises.push(
+      ...modelVersionIds.map((mvId) => bustCacheTag(`images-modelVersion:${mvId}`))
+    );
+    cacheBustPromises.push(
+      dbRead.modelVersion
+        .findMany({
+          where: { id: { in: modelVersionIds } },
+          select: { modelId: true },
+        })
+        .then((mvs) =>
+          Promise.all(mvs.map((mv) => bustCacheTag(`images-model:${mv.modelId}`)))
+        )
+        .then(() => undefined)
+    );
   }
-
-  await preventReplicationLag('postImages', props.postId);
-  await bustCachesForPosts(props.postId);
+  cacheBustPromises.push(bustCachesForPosts(props.postId));
+  await Promise.all(cacheBustPromises);
 
   return image;
 };
