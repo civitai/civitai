@@ -32,7 +32,9 @@ export const tagIdsForImagesCache = createCachedObject<{
 }>({
   key: REDIS_KEYS.CACHES.TAG_IDS_FOR_IMAGES,
   idKey: 'imageId',
-  ttl: CacheTTL.day,
+  // Reduced from day to 8h on DP — 296B/key but ~16M keys/shard (~4.4 GiB).
+  // With stale-while-revalidate, effective Redis EX = 16h.
+  ttl: env.IS_DATAPACKET ? CacheTTL.hour * 8 : CacheTTL.day,
   async lookupFn(imageId, fromWrite) {
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
@@ -918,7 +920,10 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
+  // Reduced from day to 4h on DP to prevent Redis OOM — image-meta is ~2.8KB/key
+  // and accounts for ~72% of Redis memory at scale (26 GiB/shard with 10M keys).
+  // With stale-while-revalidate, effective Redis EX = 8h.
+  ttl: env.IS_DATAPACKET ? CacheTTL.hour * 4 : CacheTTL.hour,
 });
 
 type ImageWithMetadata = {
@@ -939,7 +944,8 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     `;
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
-  ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.hour,
+  // Reduced from day to 4h on DP — same rationale as imageMetaCache.
+  ttl: env.IS_DATAPACKET ? CacheTTL.hour * 4 : CacheTTL.hour,
 });
 
 export const thumbnailCache = createCachedObject<{
