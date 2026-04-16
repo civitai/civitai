@@ -80,7 +80,7 @@ export function MembershipUpsell() {
         <div className="mt-3 flex items-center gap-3">
           <Button
             component="a"
-            href={pricingUrl}
+            href={`${pricingUrl}?sync-account=blue`}
             target="_blank"
             rel="noreferrer nofollow"
             variant="filled"

@@ -280,6 +280,14 @@ interface PriorityAlertSpaceProps {
   onClearSubmitError: () => void;
   missingFieldMessage?: string | null;
   snackbarRight?: ReactNode;
+  /**
+   * When true, force the insufficient-buzz alert (with switch-buzz-type prompt)
+   * even if the client-side balance check currently passes. Set by the submit
+   * handler when the server rejects with `insufficientBuzz` — the client-side
+   * balance may be stale vs. the server's view, so we trust the server signal.
+   */
+  forceInsufficientBuzz?: boolean;
+  onClearInsufficientBuzz?: () => void;
 }
 
 /**
@@ -299,6 +307,8 @@ function PriorityAlertSpace({
   onClearSubmitError,
   missingFieldMessage,
   snackbarRight,
+  forceInsufficientBuzz,
+  onClearInsufficientBuzz,
 }: PriorityAlertSpaceProps) {
   const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
@@ -311,7 +321,8 @@ function PriorityAlertSpace({
   // Check if user has insufficient buzz of the selected type
   // Don't show insufficient buzz until the buzz query has resolved
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
-  const insufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
+  const clientInsufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
+  const insufficientBuzz = clientInsufficientBuzz || !!forceInsufficientBuzz;
 
   // Find an alternative buzz type that has enough balance
   const alternativeType = insufficientBuzz
@@ -367,24 +378,37 @@ function PriorityAlertSpace({
         className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
         withCloseButton={false}
       >
-        <Text size="sm">
-          Not enough {typeName} Buzz ({abbreviateNumber(selectedBalance)}/
-          {abbreviateNumber(totalCost)}).{' '}
-          {alternativeType ? (
-            <Text
-              span
-              c="blue.4"
-              className="cursor-pointer"
-              onClick={() => setBuzzType(alternativeType)}
+        <div className="flex w-full items-center justify-between gap-2">
+          <Text size="sm">
+            Not enough {typeName} Buzz
+            {clientInsufficientBuzz
+              ? ` (${abbreviateNumber(selectedBalance)}/${abbreviateNumber(totalCost)})`
+              : ''}
+            .
+            {!alternativeType && (
+              <>
+                {' '}
+                <Text span c="blue.4" component="a" href="/purchase/buzz" target="_blank">
+                  Get more Buzz
+                </Text>
+              </>
+            )}
+          </Text>
+          {alternativeType && (
+            <Button
+              variant="light"
+              color="yellow"
+              radius="xl"
+              size="compact-sm"
+              onClick={() => {
+                setBuzzType(alternativeType);
+                onClearInsufficientBuzz?.();
+              }}
             >
               Switch to {alternativeType.charAt(0).toUpperCase() + alternativeType.slice(1)} Buzz
-            </Text>
-          ) : (
-            <Text span c="blue.4" component="a" href="/purchase/buzz" target="_blank">
-              Get more Buzz
-            </Text>
+            </Button>
           )}
-        </Text>
+        </div>
       </Notification>
     );
   }
@@ -486,6 +510,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
+  const [insufficientBuzzError, setInsufficientBuzzError] = useState(false);
   const [isMinLoading, setIsMinLoading] = useState(false);
   const minLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
@@ -510,6 +535,10 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       if (isPOI) {
         setPromptWarning(error.message);
         currentUser?.refresh();
+      } else if (error.message === 'insufficientBuzz') {
+        // Route through the insufficient-buzz alert (with switch-buzz-type prompt)
+        // instead of the generic submit-error notification.
+        setInsufficientBuzzError(true);
       } else {
         setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
       }
@@ -527,6 +556,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     }
 
     setSubmitError(undefined);
+    setInsufficientBuzzError(false);
     setPromptWarning(null);
 
     // Ensure loading state shows for at least 1 second
@@ -687,6 +717,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         onClearSubmitError={() => setSubmitError(undefined)}
         missingFieldMessage={missingFieldMessage}
         snackbarRight={<CostBreakdown />}
+        forceInsufficientBuzz={insufficientBuzzError}
+        onClearInsufficientBuzz={() => setInsufficientBuzzError(false)}
       />
 
       {!membershipUpsell.needsAcknowledgment && (
