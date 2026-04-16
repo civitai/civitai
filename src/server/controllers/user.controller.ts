@@ -322,13 +322,19 @@ export const completeOnboardingHandler = async ({
         break;
       }
       case OnboardingSteps.Buzz: {
-        const { recaptchaToken } = input;
+        const { recaptchaToken, captchaDebug } = input;
         if (!recaptchaToken) throw throwAuthorizationError('recaptchaToken required');
 
         const validCaptcha = await verifyCaptchaToken({
           token: recaptchaToken,
           secret: env.CF_MANAGED_TURNSTILE_SECRET,
           ip: ctx.ip,
+          context: {
+            source: 'onboarding-buzz',
+            userId: id,
+            ip: ctx.ip,
+            ...(captchaDebug ?? {}),
+          },
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
@@ -346,7 +352,7 @@ export const completeOnboardingHandler = async ({
           createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: ctx.user.id,
-            amount: getUserBuzzBonusAmount(ctx.user),
+            amount: getUserBuzzBonusAmount(),
             description: 'Onboarding bonus',
             type: TransactionType.Reward,
             externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
