@@ -329,12 +329,7 @@ export const completeOnboardingHandler = async ({
           token: recaptchaToken,
           secret: env.CF_MANAGED_TURNSTILE_SECRET,
           ip: ctx.ip,
-          context: {
-            source: 'onboarding-buzz',
-            userId: id,
-            ip: ctx.ip,
-            ...(captchaDebug ?? {}),
-          },
+          meta: { source: 'onboarding-buzz', userId: id, ...(captchaDebug ?? {}) },
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 

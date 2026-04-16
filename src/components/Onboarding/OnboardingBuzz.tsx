@@ -8,7 +8,7 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { Currency } from '~/shared/utils/prisma/enums';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
@@ -22,13 +22,17 @@ import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortBu
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
-import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
+import type {
+  CaptchaState,
+  TurnstileWidgetRef,
+} from '~/components/TurnstileWidget/TurnstileWidget';
 import {
   TurnstilePrivacyNotice,
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';
 import { showErrorNotification } from '~/utils/notifications';
 import { env } from '~/env/client';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function OnboardingBuzz() {
   const { next } = useOnboardingContext();
@@ -39,11 +43,21 @@ export function OnboardingBuzz() {
   const blueConfig = useBuzzCurrencyConfig('blue');
   const paidConfig = useBuzzCurrencyConfig(paidAccountType);
   const paidLabel = isGreen ? 'Green' : 'Yellow';
+  const features = useFeatureFlags();
   const [captchaState, setCaptchaState] = useState<CaptchaState>({
     status: null,
     token: null,
     error: null,
   });
+
+  const turnstileRef = useRef<TurnstileWidgetRef | null>(null);
+  const tokenReceivedAtRef = useRef<number | null>(null);
+  const submitAttemptRef = useRef(0);
+  const pageSessionIdRef = useRef<string>(
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2)
+  );
 
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
   const handleStepComplete = () => {
@@ -59,12 +73,41 @@ export function OnboardingBuzz() {
         error: new Error('Captcha token is missing'),
       });
 
+    submitAttemptRef.current += 1;
+    const token = captchaState.token;
+    const tokenAgeMs = tokenReceivedAtRef.current
+      ? Date.now() - tokenReceivedAtRef.current
+      : undefined;
+    const captchaDebug = {
+      tokenAgeMs,
+      submitAttempt: submitAttemptRef.current,
+      widgetStatus: captchaState.status ?? undefined,
+      tokenPrefix: token.slice(0, 8),
+      pageSessionId: pageSessionIdRef.current,
+    };
+
+    const refreshCaptcha = () => {
+      if (!features.onboardingCaptchaReset) return;
+      turnstileRef.current?.reset();
+      tokenReceivedAtRef.current = null;
+      setCaptchaState({ status: null, token: null, error: null });
+    };
+
     mutate(
       {
         step: OnboardingSteps.Buzz,
-        recaptchaToken: captchaState.token,
+        recaptchaToken: token,
+        captchaDebug,
       },
-      { onSuccess: () => next() }
+      {
+        onSuccess: () => {
+          refreshCaptcha();
+          next();
+        },
+        onError: () => {
+          refreshCaptcha();
+        },
+      }
     );
   };
 
@@ -153,19 +196,25 @@ export function OnboardingBuzz() {
             }
           />
           <TurnstileWidget
+            ref={turnstileRef}
             options={{ size: 'normal' }}
-            onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
-            onError={(error) =>
+            onSuccess={(token) => {
+              tokenReceivedAtRef.current = Date.now();
+              setCaptchaState({ status: 'success', token, error: null });
+            }}
+            onError={(error) => {
+              tokenReceivedAtRef.current = null;
               setCaptchaState({
                 status: 'error',
                 token: null,
                 error: `There was an error generating the captcha: ${error}`,
-              })
-            }
+              });
+            }}
             siteKey={env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY}
-            onExpire={(token) =>
-              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
-            }
+            onExpire={(token) => {
+              tokenReceivedAtRef.current = null;
+              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' });
+            }}
           />
           {captchaState.status === 'error' && (
             <Text size="xs" c="red">

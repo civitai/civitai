@@ -46,6 +46,7 @@ const featureFlags = createFeatureFlags({
   aiToolkitChroma: { availability: ['mod'], fliptKey: 'ai-toolkit-chroma' },
   aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
   kohyaTraining: { availability: ['public'], fliptKey: 'kohya-training' },
+  onboardingCaptchaReset: { availability: ['public'], fliptKey: 'onboarding-captcha-reset' },
   qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
   flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
   zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
@@ -316,7 +317,10 @@ const hasFeature = (
     const domains = colorDomainNames
       .map(
         (color) =>
-          [color, process.env[`SERVER_DOMAIN_${color.toUpperCase()}`] as string | undefined] as const
+          [
+            color,
+            process.env[`SERVER_DOMAIN_${color.toUpperCase()}`] as string | undefined,
+          ] as const
       )
       .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability));
 
