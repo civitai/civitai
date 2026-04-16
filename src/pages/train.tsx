@@ -8,7 +8,6 @@ import {
   Title,
 } from '@mantine/core';
 import { IconArrowRight, IconBolt, IconRocket, IconSparkles, IconWand } from '@tabler/icons-react';
-import Image from 'next/image';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
 import classes from '~/pages/train.module.scss';
@@ -136,23 +135,21 @@ export default function TrainPage() {
 
               <div className={classes.heroGrid}>
                 <div className={classes.heroTile}>
-                  <Image
+                  <img
                     src="/images/training-landing/hero-stock-inconsistent.jpg"
                     alt="Eight portraits of the same character produced by a stock AI model, visibly drifting in face, outfit, and art style."
                     width={1024}
                     height={576}
-                    sizes="(max-width: 768px) 100vw, 512px"
+                    loading="lazy"
                   />
                   <div className={classes.heroTileLabel}>Stock model, drifting every render</div>
                 </div>
                 <div className={classes.heroTile}>
-                  <Image
+                  <img
                     src="/images/training-landing/hero-trained-consistent.jpg"
                     alt="Eight consistent, on-model portraits of the same character produced by a custom-trained AI model on Civitai."
                     width={1024}
                     height={576}
-                    sizes="(max-width: 768px) 100vw, 512px"
-                    priority
                   />
                   <div className={classes.heroTileLabel}>
                     Your trained model, same character every time
@@ -246,12 +243,12 @@ export default function TrainPage() {
             <h2 className={classes.sectionTitle}>What training your own model unlocks.</h2>
             <div className={classes.benefitGrid}>
               <div className={classes.benefitCard}>
-                <Image
+                <img
                   src="/images/training-landing/benefit-consistency.jpg"
                   alt="Nine consistent portraits of the same character, showing perfect character consistency across lighting, pose, and expression."
                   width={1024}
                   height={1024}
-                  sizes="(max-width: 768px) 100vw, 480px"
+                  loading="lazy"
                 />
                 <div className={classes.benefitBody}>
                   <div className={classes.benefitTitle}>
@@ -264,12 +261,12 @@ export default function TrainPage() {
                 </div>
               </div>
               <div className={classes.benefitCard}>
-                <Image
+                <img
                   src="/images/training-landing/benefit-style.jpg"
                   alt="The same landscape scene rendered in four distinct artistic styles, demonstrating fine-tuned style capture."
                   width={1024}
                   height={1024}
-                  sizes="(max-width: 768px) 100vw, 480px"
+                  loading="lazy"
                 />
                 <div className={classes.benefitBody}>
                   <div className={classes.benefitTitle}>A signature style, not a preset</div>
@@ -280,12 +277,12 @@ export default function TrainPage() {
                 </div>
               </div>
               <div className={classes.benefitCard}>
-                <Image
+                <img
                   src="/images/training-landing/benefit-concept.jpg"
                   alt="An invented mascot creature rendered consistently across four different scenarios, demonstrating a custom concept trained into an AI model."
                   width={1024}
                   height={1024}
-                  sizes="(max-width: 768px) 100vw, 480px"
+                  loading="lazy"
                 />
                 <div className={classes.benefitBody}>
                   <div className={classes.benefitTitle}>
@@ -299,12 +296,12 @@ export default function TrainPage() {
                 </div>
               </div>
               <div className={classes.benefitCard}>
-                <Image
+                <img
                   src="/images/training-landing/benefit-economics.jpg"
                   alt="Cost comparison between per-edit commercial AI tools and a flat-rate custom-trained model, where the per-edit curve climbs while the trained-model line stays flat."
                   width={1024}
                   height={1024}
-                  sizes="(max-width: 768px) 100vw, 480px"
+                  loading="lazy"
                 />
                 <div className={classes.benefitBody}>
                   <div className={classes.benefitTitle}>Predictable, affordable costs</div>
