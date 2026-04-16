@@ -488,7 +488,8 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
 export const getDefaultEngine = (
   baseType: TrainingBaseModelType,
   baseModel?: string,
-  features?: Record<string, boolean>
+  features?: Record<string, boolean>,
+  opts?: { ignoreDefaultPreference?: boolean }
 ): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
@@ -502,7 +503,12 @@ export const getDefaultEngine = (
     return 'flux2-dev'; // Default for flux2_dev
   }
   // When flag is on, default sd15/sdxl to ai-toolkit
-  if ((baseType === 'sd15' || baseType === 'sdxl') && features?.aiToolkitDefaultSd) {
+  // Skipped when caller is computing a fallback after user explicitly toggled AT off
+  if (
+    !opts?.ignoreDefaultPreference &&
+    (baseType === 'sd15' || baseType === 'sdxl') &&
+    features?.aiToolkitDefaultSd
+  ) {
     return 'ai-toolkit';
   }
   // When Kohya is disabled via Flipt, pick best available fallback
