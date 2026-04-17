@@ -29,6 +29,7 @@ export const getServerProxySSGHelpers = async (
       req: ctx.req as any,
       fingerprint: null as any,
       domain,
+      signal: new AbortController().signal,
       // Now we can properly get domain from the request
     },
     transformer: superjson,

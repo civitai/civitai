@@ -272,7 +272,7 @@ export const getInfiniteImagesHandler = async ({
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
-  const { user, features } = ctx;
+  const { user, features, signal } = ctx;
 
   // Check BitDex mode first — if active (shadow or primary), always route through
   // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
@@ -314,6 +314,7 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        signal,
       });
     } else {
       return await getAllImages({

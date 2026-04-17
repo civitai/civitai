@@ -38,7 +38,7 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { metricsSearchClient } from '~/server/meilisearch/client';
+import { fetchDocumentsAbortable, metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
@@ -1022,6 +1022,7 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   user?: SessionUser;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
+  signal?: AbortSignal;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -2061,6 +2062,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   offset?: number;
   entry?: number;
   blockedFor?: string[];
+  signal?: AbortSignal;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -2826,9 +2828,23 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   requestTotal.inc({ route }); // count every request up front
 
   try {
-    const { results } = await metricsSearchClient
-      .index(METRICS_SEARCH_INDEX)
-      .getDocuments<ImageMetricsSearchIndexRecord>(request);
+    // Use the abortable raw fetch when a signal is available so client
+    // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
+    // underlying Meili request. The meilisearch-js client on 0.33/0.34 doesn't
+    // expose signal on getDocuments.
+    const { results } = input.signal
+      ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
+          METRICS_SEARCH_INDEX,
+          request,
+          {
+            host: env.METRICS_SEARCH_HOST as string,
+            apiKey: env.METRICS_SEARCH_API_KEY,
+            signal: input.signal,
+          }
+        )
+      : await metricsSearchClient
+          .index(METRICS_SEARCH_INDEX)
+          .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
     let nextCursor: number | undefined;
     if (results.length > limit) {
@@ -3658,9 +3674,21 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       request.limit = requestLimit;
       request.offset = currentOffset;
 
-      const { results } = await metricsSearchClient
-        .index(METRICS_SEARCH_INDEX)
-        .getDocuments<ImageMetricsSearchIndexRecord>(request);
+      // See PreFilter path for why we fall back to raw fetch when a signal is
+      // provided.
+      const { results } = input.signal
+        ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
+            METRICS_SEARCH_INDEX,
+            request,
+            {
+              host: env.METRICS_SEARCH_HOST as string,
+              apiKey: env.METRICS_SEARCH_API_KEY,
+              signal: input.signal,
+            }
+          )
+        : await metricsSearchClient
+            .index(METRICS_SEARCH_INDEX)
+            .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
       // If no more results, break the loop
       if (results.length === 0) {
