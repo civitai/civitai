@@ -571,6 +571,11 @@ export function Collection({
         )}
         <SensitiveShield
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
+          bypassRating={
+            permissions?.manage ||
+            currentUser?.id === collection.user.id ||
+            (currentUser?.isModerator ?? false)
+          }
         >
           <MasonryProvider
             columnWidth={constants.cardSizes.model}

@@ -176,6 +176,7 @@ export function PostDetailContent({ postId }: Props) {
       <SensitiveShield
         contentNsfwLevel={forcedBrowsingLevel || post.nsfwLevel}
         isLoading={!!(post?.collectionId && isLoadingPostCollection)}
+        bypassRating={isOwnerOrMod}
       >
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
         <RenderAdUnitOutstream minContainerWidth={1964} />

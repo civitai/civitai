@@ -139,6 +139,7 @@ export const getServerSideProps = createServerSideProps({
 function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const mobile = useContainerSmallerThan('sm');
   const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
   const { bounty, loading } = useQueryBounty({ id });
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
@@ -146,6 +147,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
   const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const isOwnerOrMod =
+    currentUser?.id === bounty?.user?.id || (currentUser?.isModerator ?? false);
 
   useDidUpdate(() => {
     if (bounty?.id && !isDeletingImage) queryUtils.bounty.getById.invalidate({ id: bounty.id });
@@ -205,7 +208,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
         alternate={`/bounties/${bounty.id}`}
         deIndex={bounty?.availability === Availability.Unsearchable}
       />
-      <SensitiveShield contentNsfwLevel={bounty.nsfwLevel}>
+      <SensitiveShield contentNsfwLevel={bounty.nsfwLevel} bypassRating={isOwnerOrMod}>
         <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
         <Container size="xl" mb={32}>
           <Stack gap="xs" mb="xl">

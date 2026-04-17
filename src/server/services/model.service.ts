@@ -15,7 +15,11 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { type BaseModel, DEPRECATED_BASE_MODELS, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -3375,7 +3379,14 @@ export const privateModelFromTraining = async ({
 
     await dbWrite.modelVersion.updateMany({
       where: { modelId: id },
-      data: { status: ModelStatus.Draft, publishedAt: null },
+      data: {
+        status: ModelStatus.Draft,
+        publishedAt: null,
+        // Revert availability too — the success path flips versions to Private
+        // before the post creation step, so a failure there would otherwise
+        // leave versions orphaned at Private with a Public parent model.
+        availability: Availability.Public,
+      },
     });
 
     throw throwDbError(error);

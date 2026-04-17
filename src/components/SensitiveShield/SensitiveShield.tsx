@@ -32,11 +32,13 @@ export function SensitiveShield({
   nsfw,
   contentNsfwLevel,
   isLoading,
+  bypassRating,
 }: {
   children: React.ReactNode;
   nsfw?: boolean;
   contentNsfwLevel: number;
   isLoading?: boolean;
+  bypassRating?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -47,7 +49,8 @@ export function SensitiveShield({
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
 
   // content hasn't been rated yet — only block on the SFW site
-  if (!canViewNsfw && contentNsfwLevel === 0) {
+  // owners/mods bypass so they can preview their own drafts before publishing
+  if (!canViewNsfw && contentNsfwLevel === 0 && !bypassRating) {
     if (isLoading) return <PageLoader />;
 
     return (

@@ -248,7 +248,10 @@ export function ImageDetail2() {
         canonical={`/images/${image.id}`}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
-      <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
+      <SensitiveShield
+        contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
+        bypassRating={isOwner || !!currentUser?.isModerator}
+      >
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
         <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
           <BrowsingSettingsAddonsProvider>

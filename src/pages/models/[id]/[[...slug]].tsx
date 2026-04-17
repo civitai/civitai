@@ -709,7 +709,7 @@ export default function ModelDetailsV2({
           model.status !== ModelStatus.Published || model.availability === Availability.Unsearchable
         }
       />
-      <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
+      <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel} bypassRating={isOwner}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         <RenderAdUnitOutstream minContainerWidth={2800} />
         <Container size="xl" data-tour="model:start" className="pb-8">
