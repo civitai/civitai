@@ -5,6 +5,7 @@ import {
   Divider,
   Group,
   Loader,
+  Notification,
   Paper,
   SegmentedControl,
   Stack,
@@ -25,9 +26,14 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import {
+  useSelectedBuzzType,
+  BuzzTypeSelector,
+} from '~/components/generation_v2/FormFooter';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -64,7 +70,7 @@ import {
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { numberWithCommas } from '~/utils/number-helpers';
+import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
   getTrainingFields,
   getAiToolkitEcosystem,
@@ -102,6 +108,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisNumImages = thisMetadata?.numImages;
   const thisMediaType = thisTrainingDetails?.mediaType ?? 'image';
   const availableBuzzTypes = useAvailableBuzz(['blue']);
+  const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
+  const {
+    data: { accounts: buzzAccounts },
+    isLoading: isBuzzLoading,
+  } = useQueryBuzz(availableTypes);
+  const { color: buzzColor } = useBuzzCurrencyConfig(selectedType);
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs, imageList, initialImageList } = useTrainingImageStore(
@@ -160,6 +172,20 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const hasIssue = runs.some((r) => r.hasIssue);
   const totalBuzzCost = hasIssue ? -1 : runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
+
+  // Check if user has insufficient buzz of the selected type
+  const selectedBalance = buzzAccounts.find((a) => a.type === selectedType)?.balance ?? 0;
+  const clientInsufficientBuzz =
+    !isBuzzLoading && totalBuzzCost > 0 && selectedBalance < totalBuzzCost;
+
+  // Find an alternative buzz type that has enough balance
+  const alternativeType = clientInsufficientBuzz
+    ? availableTypes.find((t) => {
+        if (t === selectedType) return false;
+        const balance = buzzAccounts.find((a) => a.type === t)?.balance ?? 0;
+        return balance >= totalBuzzCost;
+      })
+    : undefined;
 
   const whatIfData = useMemo(() => {
     const baseData = {
@@ -310,7 +336,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const doTrainingMut = async (modelVersionId: number, idx: number, runId: number) => {
     try {
-      await doTraining.mutateAsync({ modelVersionId });
+      await doTraining.mutateAsync({ modelVersionId, buzzType: selectedType });
 
       finishedRuns++;
 
@@ -1048,26 +1074,70 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Divider mt="md" />
 
+      {clientInsufficientBuzz && (
+        <Notification
+          icon={<IconAlertTriangle size={18} />}
+          color="yellow"
+          className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+          withCloseButton={false}
+          mt="md"
+        >
+          <div className="flex w-full items-center justify-between gap-2">
+            <Text size="sm">
+              Not enough {selectedType.charAt(0).toUpperCase() + selectedType.slice(1)} Buzz (
+              {abbreviateNumber(selectedBalance)}/{abbreviateNumber(totalBuzzCost)}).
+              {!alternativeType && (
+                <>
+                  {' '}
+                  <Text span c="blue.4" component="a" href="/purchase/buzz" target="_blank">
+                    Get more Buzz
+                  </Text>
+                </>
+              )}
+            </Text>
+            {alternativeType && (
+              <Button
+                variant="light"
+                color="yellow"
+                radius="xl"
+                size="compact-sm"
+                onClick={() => setBuzzType(alternativeType)}
+              >
+                Switch to {alternativeType.charAt(0).toUpperCase() + alternativeType.slice(1)} Buzz
+              </Button>
+            )}
+          </div>
+        </Notification>
+      )}
+
       <Group mt="lg" justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
           Back
         </Button>
-        <BuzzTransactionButton
-          loading={awaitInvalidate || dryRunResult.isLoading}
-          disabled={
-            blockedModels.includes(formBaseModel ?? '') ||
-            !status.available ||
-            !allLabeled ||
-            awaitInvalidate ||
-            dryRunResult.isLoading
-          }
-          label={`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
-          buzzAmount={totalBuzzCost}
-          accountTypes={availableBuzzTypes}
-          onPerformTransaction={handleSubmit}
-          error={hasIssue ? 'Error computing cost' : undefined}
-          showTypePct
-        />
+        <Button.Group className="flex h-[36px] [&>*]:h-full">
+          <Button
+            loading={awaitInvalidate || dryRunResult.isLoading}
+            disabled={
+              blockedModels.includes(formBaseModel ?? '') ||
+              !status.available ||
+              !allLabeled ||
+              awaitInvalidate ||
+              dryRunResult.isLoading ||
+              clientInsufficientBuzz ||
+              hasIssue
+            }
+            color={buzzColor}
+            onClick={handleSubmit}
+          >
+            {`Submit${runs.length > 1 ? ` (${runs.length} runs)` : ''}`}
+          </Button>
+          <BuzzTypeSelector
+            cost={totalBuzzCost}
+            loading={dryRunResult.isLoading}
+            error={hasIssue}
+            onRetry={() => dryRunResult.refetch()}
+          />
+        </Button.Group>
       </Group>
     </Stack>
   );

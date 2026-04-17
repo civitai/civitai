@@ -1,5 +1,16 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import { Anchor, Button, Group, Input, Paper, Stack, Text, Title, Tooltip } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Button,
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -335,7 +346,23 @@ export function ArticleUpsertForm({ article }: Props) {
                   <ContentPolicyLink size="xs" variant="text" c="dimmed" td="underline" />
                 </Group>
               }
+              description="Final rating = max of your selection, cover image, and any content images. Image scans can raise it but never lower it."
             />
+            {article?.nsfwLevel != null &&
+              article.nsfwLevel > (article.userNsfwLevel ?? 0) &&
+              browsingLevelLabels[article.nsfwLevel as keyof typeof browsingLevelLabels] && (
+                <Alert color="yellow" py="xs">
+                  <Text size="xs">
+                    This article is currently rated{' '}
+                    <Text span fw={600}>
+                      {browsingLevelLabels[article.nsfwLevel as keyof typeof browsingLevelLabels]}
+                    </Text>{' '}
+                    because the cover image or content images were scanned at that level. Your
+                    selection above is respected as a floor but cannot lower the rating below what
+                    the scanned images require.
+                  </Text>
+                </Alert>
+              )}
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"

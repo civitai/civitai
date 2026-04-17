@@ -3,6 +3,7 @@ import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import {
   getWanVersion,
   wan21BaseModelMap,
@@ -208,7 +209,8 @@ export const getGenerationResources = async (
 
 export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchema) {
   const unavailableGenResources = await getUnavailableResources();
-  const result = await dbRead.generationCoverage.findFirst({
+  const db = await getDbWithoutLag('modelVersion', id);
+  const result = await db.generationCoverage.findFirst({
     where: { modelVersionId: id },
     select: { covered: true },
   });
@@ -667,7 +669,8 @@ export async function getResourceData(
       .filter((x) => !x.covered || !x.hasAccess)
       .map((x) => x.model.id);
 
-    const substituteIds = await dbRead.modelVersion
+    const substituteDb = await getDbWithoutLagBatch('model', modelIdsThatRequireSubstitutes);
+    const substituteIds = await substituteDb.modelVersion
       .findMany({
         where: {
           status: 'Published',

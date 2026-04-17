@@ -131,7 +131,7 @@ async function republishOne(c: Candidate): Promise<Result> {
 
     // Cache + search index
     await bustMvCache(c.versionId, c.modelId);
-    await dataForModelsCache.bust(c.modelId);
+    await dataForModelsCache.refresh(c.modelId);
     await modelsSearchIndex.queueUpdate([
       { id: c.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);

@@ -46,6 +46,25 @@ export async function preventReplicationLagBatch(type: LaggingType, ids: (number
   );
 }
 
+// Readers route via getDbWithoutLag('model', modelId) for model-page queries AND
+// getDbWithoutLag('modelVersion', versionId) for direct version lookups. Any
+// mutation touching a ModelVersion row must flag both so either access path
+// catches the lag window.
+export async function preventModelVersionLagBatch(
+  modelIds: number | number[],
+  versionIds: number | number[]
+) {
+  const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
+  const vIds = Array.isArray(versionIds) ? versionIds : [versionIds];
+  await Promise.all([
+    preventReplicationLagBatch('model', mIds),
+    preventReplicationLagBatch('modelVersion', vIds),
+  ]);
+}
+
+export const preventModelVersionLag = (modelId: number, versionId: number) =>
+  preventModelVersionLagBatch(modelId, versionId);
+
 // Same as getDbWithoutLag / getDbWithoutLagBatch but for the notifDb pool.
 export async function getNotifDbWithoutLag(type: LaggingType, id?: number | string) {
   if (env.REPLICATION_LAG_DELAY <= 0 || id === undefined || id === null) return notifDbRead;

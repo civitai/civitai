@@ -2215,14 +2215,16 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
       break;
   }
 
-  const items = await dbWrite.modelVersion.findMany({
-    select,
-    skip,
-    take,
-    where,
-    orderBy,
-  });
-  const count = await dbWrite.modelVersion.count({ where });
+  const [items, count] = await Promise.all([
+    dbRead.modelVersion.findMany({
+      select,
+      skip,
+      take,
+      where,
+      orderBy,
+    }),
+    dbRead.modelVersion.count({ where }),
+  ]);
 
   return getPagingData({ items, count }, take, page);
 };
@@ -2913,7 +2915,7 @@ export async function setModelShowcaseCollection({
     },
   });
 
-  await dataForModelsCache.bust(updated.id);
+  await dataForModelsCache.refresh(updated.id);
 
   return updated;
 }
@@ -3028,7 +3030,7 @@ export async function migrateResourceToCollection({
 
   // Bust caches
   await Promise.all([
-    dataForModelsCache.bust(modelIds),
+    dataForModelsCache.refresh(modelIds),
     bustMvCache(
       filteredVersions.map((v) => v.id),
       modelIds
@@ -3082,7 +3084,7 @@ export async function ingestModel(data: IngestModelInput) {
   }
 
   // get version data
-  const db = await getDbWithoutLag('modelVersion');
+  const db = await getDbWithoutLag('model', data.id);
   const versions = await db.modelVersion.findMany({
     where: { modelId: data.id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
     select: { description: true, trainedWords: true },
@@ -3364,7 +3366,7 @@ export const privateModelFromTraining = async ({
 
     await preventReplicationLag('model', id);
     await userModelCountCache.refresh(user.id);
-    await dataForModelsCache.bust(id);
+    await dataForModelsCache.refresh(id);
     await bustMvCache(
       result.modelVersions.map((x) => x.id),
       result.id

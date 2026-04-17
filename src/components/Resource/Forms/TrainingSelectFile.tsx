@@ -113,7 +113,6 @@ const EpochRow = ({
                 {/* TODO will this work? */}
                 <GenerateButton
                   versionId={modelVersionId}
-                  canGenerate={true}
                   disabled={!currentUser?.isMember && !currentUser?.isModerator}
                   epochNumber={epoch.epochNumber}
                 />

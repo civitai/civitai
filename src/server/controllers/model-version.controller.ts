@@ -357,7 +357,7 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return version;
   } catch (error) {
@@ -376,7 +376,7 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
       console.error(e);
     });
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return version;
   } catch (error) {
@@ -457,7 +457,7 @@ export const publishModelVersionHandler = async ({
       });
     }
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return updatedVersion;
   } catch (error) {
@@ -489,7 +489,7 @@ export const unpublishModelVersionHandler = async ({
       nsfw: updatedVersion.model.nsfw,
     });
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return updatedVersion;
   } catch (error) {
@@ -948,7 +948,7 @@ export async function publishPrivateModelVersionHandler({
     },
   });
 
-  await dataForModelsCache.bust(version.model.id);
+  await dataForModelsCache.refresh(version.model.id);
 
   return modelVersion;
 }
