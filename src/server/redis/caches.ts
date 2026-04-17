@@ -880,25 +880,25 @@ export const getUserContentOverviewSfw = async (
 export const userContentOverviewCache = {
   fetch: getUserContentOverview,
   fetchSfw: getUserContentOverviewSfw,
-  bust: async (userIds: number | number[]) => {
+  refresh: async (userIds: number | number[]) => {
     const ids = Array.isArray(userIds) ? userIds : [userIds];
     await Promise.all([
-      userModelCountCache.bust(ids),
-      userModelCountSfwCache.bust(ids),
-      userPostCountCache.bust(ids),
-      userPostCountSfwCache.bust(ids),
-      userImageVideoCountCache.bust(ids),
-      userImageVideoCountSfwCache.bust(ids),
-      userArticleCountCache.bust(ids),
-      userArticleCountSfwCache.bust(ids),
-      userBountyCountCache.bust(ids),
-      userBountyCountSfwCache.bust(ids),
-      userBountyEntryCountCache.bust(ids),
-      userCollectionCountCache.bust(ids),
-      userCollectionCountSfwCache.bust(ids),
-      userHasReceivedReviewsCache.bust(ids),
-      userComicCountCache.bust(ids),
-      userComicCountSfwCache.bust(ids),
+      userModelCountCache.refresh(ids),
+      userModelCountSfwCache.refresh(ids),
+      userPostCountCache.refresh(ids),
+      userPostCountSfwCache.refresh(ids),
+      userImageVideoCountCache.refresh(ids),
+      userImageVideoCountSfwCache.refresh(ids),
+      userArticleCountCache.refresh(ids),
+      userArticleCountSfwCache.refresh(ids),
+      userBountyCountCache.refresh(ids),
+      userBountyCountSfwCache.refresh(ids),
+      userBountyEntryCountCache.refresh(ids),
+      userCollectionCountCache.refresh(ids),
+      userCollectionCountSfwCache.refresh(ids),
+      userHasReceivedReviewsCache.refresh(ids),
+      userComicCountCache.refresh(ids),
+      userComicCountSfwCache.refresh(ids),
     ]);
   },
 };

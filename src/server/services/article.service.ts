@@ -888,7 +888,7 @@ export const upsertArticle = async ({
           });
         }
 
-        await userArticleCountCache.bust(article.userId);
+        await userArticleCountCache.refresh(article.userId);
 
         return article;
       });
@@ -1070,7 +1070,7 @@ export const upsertArticle = async ({
         });
       }
 
-      await userArticleCountCache.bust(updated.userId);
+      await userArticleCountCache.refresh(updated.userId);
 
       return updated;
     });
@@ -1360,7 +1360,7 @@ export async function unpublishArticleById({
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
   // Bust user content cache
-  await userArticleCountCache.bust(article.userId);
+  await userArticleCountCache.refresh(article.userId);
 
   return updated;
 }
@@ -1414,7 +1414,7 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
   // Re-add to search index
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
-  await userArticleCountCache.bust(article.userId);
+  await userArticleCountCache.refresh(article.userId);
 
   return updated;
 }

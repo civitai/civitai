@@ -1587,7 +1587,7 @@ export const bustMvCache = async (
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
-  await modelVersionAccessCache.bust(versionIds);
+  await modelVersionAccessCache.refresh(versionIds);
   // TODO shouldnt this be the model IDs?
   if (modelIds) {
     const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
