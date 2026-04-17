@@ -452,6 +452,75 @@ export async function clearCacheByPattern(
   return cleared;
 }
 
+function globToRegex(pattern: string) {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp('^' + escaped + '$');
+}
+
+export type ClearCacheByPatternsProgress = {
+  total: number;
+  perPattern: { pattern: string; cleared: number }[];
+};
+
+// Single-pass purge across multiple patterns — iterates the keyspace once and
+// tests each key against every pattern regex. Replaces N full SCANs with 1.
+export async function clearCacheByPatterns(
+  patterns: string[],
+  onProgress?: (progress: ClearCacheByPatternsProgress) => void
+) {
+  const perPattern = patterns.map((pattern) => ({
+    pattern,
+    regex: globToRegex(pattern),
+    cleared: [] as string[],
+  }));
+
+  const exact = perPattern.filter((p) => !p.pattern.includes('*'));
+  const globbed = perPattern.filter((p) => p.pattern.includes('*'));
+
+  // Fast path for exact keys — no scan needed.
+  for (const p of exact) {
+    await redis.del(p.pattern as RedisKeyTemplateCache);
+    p.cleared.push(p.pattern);
+  }
+
+  if (globbed.length > 0) {
+    log('Scanning cache for', globbed.length, 'patterns in a single pass');
+    const stream = redis.scanIterator({ MATCH: '*', COUNT: 10000 });
+
+    for await (const keys of stream) {
+      const toDelete: RedisKeyTemplateCache[] = [];
+      for (const key of keys as RedisKeyTemplateCache[]) {
+        for (const p of globbed) {
+          if (p.regex.test(key)) {
+            p.cleared.push(key);
+            toDelete.push(key);
+            break;
+          }
+        }
+      }
+      if (toDelete.length === 0) continue;
+
+      const batches = chunk(toDelete, 10000);
+      for (const batch of batches) {
+        await Promise.all(batch.map((key) => redis.del(key)));
+      }
+      const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
+      onProgress?.({
+        total,
+        perPattern: perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length })),
+      });
+    }
+  } else {
+    const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
+    onProgress?.({
+      total,
+      perPattern: perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length })),
+    });
+  }
+
+  return perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length }));
+}
+
 export async function fetchCacheByPattern(pattern: string) {
   const keysArr: string[] = [];
 
