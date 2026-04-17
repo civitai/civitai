@@ -6,6 +6,7 @@ import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
@@ -89,8 +90,9 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   key: REDIS_KEYS.CACHES.USER_COSMETICS,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing new cosmetics
-  lookupFn: async (ids) => {
-    const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const userCosmeticsRaw = await db.userCosmetic.findMany({
       where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
       select: {
         userId: true,
@@ -118,8 +120,9 @@ type CosmeticLookup = {
 export const cosmeticCache = createCachedObject<CosmeticLookup>({
   key: REDIS_KEYS.CACHES.COSMETICS,
   idKey: 'id',
-  lookupFn: async (ids) => {
-    const cosmetics = await dbRead.cosmetic.findMany({
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const cosmetics = await db.cosmetic.findMany({
       where: { id: { in: ids } },
       select: { id: true, name: true, type: true, data: true, source: true },
     });
@@ -132,8 +135,9 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
-  lookupFn: async (ids) => {
-    const profilePictures = await dbRead.$queryRaw<ProfileImage[]>`
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const profilePictures = await db.$queryRaw<ProfileImage[]>`
       SELECT
         i.id,
         i.name,
@@ -221,12 +225,13 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   key: REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER,
   idKey: 'userId',
   ttl: CacheTTL.day,
-  lookupFn: async (ids) => {
+  lookupFn: async (ids, fromWrite) => {
     if (ids.length === 0) return {};
 
+    const db = fromWrite ? dbWrite : dbRead;
     // Get the highest tier subscription for each user
     // Tier priority: founder > gold > silver > bronze > free
-    const multipliers = await dbRead.$queryRaw<CachedUserMultiplier[]>`
+    const multipliers = await db.$queryRaw<CachedUserMultiplier[]>`
       WITH ranked_subscriptions AS (
         SELECT
           cs."userId",
@@ -288,10 +293,11 @@ type UserBasicLookup = {
 export const userBasicCache = createCachedObject<UserBasicLookup>({
   key: REDIS_KEYS.CACHES.BASIC_USERS,
   idKey: 'id',
-  lookupFn: async (ids) => {
+  lookupFn: async (ids, fromWrite) => {
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
-    const userBasicData = await dbRead.user.findMany({
+    const db = fromWrite ? dbWrite : dbRead;
+    const userBasicData = await db.user.findMany({
       where: { id: { in: goodIds } },
       select: {
         id: true,
@@ -326,10 +332,11 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
       data.status !== ModelStatus.Published
     );
   },
-  lookupFn: async (ids) => {
+  lookupFn: async (ids, fromWrite) => {
     const goodIds = ids.filter(isDefined);
     if (!goodIds.length) return {};
-    const entityAccessData = await dbRead.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
+    const db = fromWrite ? dbWrite : dbRead;
+    const entityAccessData = await db.$queryRaw<ModelVersionAccessCache[]>(Prisma.sql`
       SELECT
         mv.id AS "entityId",
         mmv."userId" AS "userId",
@@ -360,8 +367,9 @@ type TagLookup = {
 export const tagCache = createCachedObject<TagLookup>({
   key: REDIS_KEYS.CACHES.BASIC_TAGS,
   idKey: 'id',
-  lookupFn: async (ids) => {
-    const tagBasicData = await dbRead.tag.findMany({
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const tagBasicData = await db.tag.findMany({
       where: { id: { in: ids } },
       select: {
         id: true,
@@ -470,18 +478,18 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
 // Factory function to create user content counter caches
 const createUserContentCountCache = <T extends Record<string, any>>(
   counterName: string,
-  queryFn: (userIds: number[]) => Promise<T[]>
+  queryFn: (userIds: number[], fromWrite?: boolean) => Promise<T[]>
 ) => {
   return createCachedObject<T>({
     key: `${REDIS_KEYS.CACHES.OVERVIEW_USERS}:${counterName}`,
     idKey: 'id',
     ttl: CacheTTL.day,
     cacheNotFound: false,
-    lookupFn: async (ids) => {
+    lookupFn: async (ids, fromWrite) => {
       const goodIds = ids.filter(isDefined);
       if (!goodIds.length) return {};
 
-      const results = await queryFn(goodIds);
+      const results = await queryFn(goodIds, fromWrite);
       return Object.fromEntries(results.map((x) => [x.id, x]));
     },
   });
@@ -491,7 +499,7 @@ const createUserContentCountCache = <T extends Record<string, any>>(
 type UserModelCount = { id: number; modelCount: number };
 export const userModelCountCache = createUserContentCountCache<UserModelCount>(
   'modelCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "modelCount"
@@ -504,7 +512,7 @@ export const userModelCountCache = createUserContentCountCache<UserModelCount>(
 );
 export const userModelCountSfwCache = createUserContentCountCache<UserModelCount>(
   'modelCount:sfw',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "modelCount"
@@ -520,7 +528,7 @@ export const userModelCountSfwCache = createUserContentCountCache<UserModelCount
 type UserPostCount = { id: number; postCount: number };
 export const userPostCountCache = createUserContentCountCache<UserPostCount>(
   'postCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "postCount"
@@ -534,7 +542,7 @@ export const userPostCountCache = createUserContentCountCache<UserPostCount>(
 );
 export const userPostCountSfwCache = createUserContentCountCache<UserPostCount>(
   'postCount:sfw',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "postCount"
@@ -551,7 +559,7 @@ export const userPostCountSfwCache = createUserContentCountCache<UserPostCount>(
 type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
 export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
@@ -571,7 +579,7 @@ export const userImageVideoCountCache = createUserContentCountCache<UserImageVid
 );
 export const userImageVideoCountSfwCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount:sfw',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COALESCE(SUM(IIF("type" = 'image', 1, 0)), 0)::INT as "imageCount",
@@ -594,7 +602,7 @@ export const userImageVideoCountSfwCache = createUserContentCountCache<UserImage
 type UserArticleCount = { id: number; articleCount: number };
 export const userArticleCountCache = createUserContentCountCache<UserArticleCount>(
   'articleCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "articleCount"
@@ -609,7 +617,7 @@ export const userArticleCountCache = createUserContentCountCache<UserArticleCoun
 );
 export const userArticleCountSfwCache = createUserContentCountCache<UserArticleCount>(
   'articleCount:sfw',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "articleCount"
@@ -627,7 +635,7 @@ export const userArticleCountSfwCache = createUserContentCountCache<UserArticleC
 type UserBountyCount = { id: number; bountyCount: number };
 export const userBountyCountCache = createUserContentCountCache<UserBountyCount>(
   'bountyCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "bountyCount"
@@ -640,7 +648,7 @@ export const userBountyCountCache = createUserContentCountCache<UserBountyCount>
 );
 export const userBountyCountSfwCache = createUserContentCountCache<UserBountyCount>(
   'bountyCount:sfw',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "bountyCount"
@@ -656,7 +664,7 @@ export const userBountyCountSfwCache = createUserContentCountCache<UserBountyCou
 type UserBountyEntryCount = { id: number; bountyEntryCount: number };
 export const userBountyEntryCountCache = createUserContentCountCache<UserBountyEntryCount>(
   'bountyEntryCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "bountyEntryCount"
@@ -669,7 +677,7 @@ export const userBountyEntryCountCache = createUserContentCountCache<UserBountyE
 type UserCollectionCount = { id: number; collectionCount: number };
 export const userCollectionCountCache = createUserContentCountCache<UserCollectionCount>(
   'collectionCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "collectionCount"
@@ -682,7 +690,7 @@ export const userCollectionCountCache = createUserContentCountCache<UserCollecti
 );
 export const userCollectionCountSfwCache = createUserContentCountCache<UserCollectionCount>(
   'collectionCount:sfw',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       "userId" as id,
       COUNT(*)::INT as "collectionCount"
@@ -698,7 +706,7 @@ export const userCollectionCountSfwCache = createUserContentCountCache<UserColle
 type UserComicCount = { id: number; comicCount: number };
 export const userComicCountCache = createUserContentCountCache<UserComicCount>(
   'comicCount',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       p."userId" as id,
       COUNT(DISTINCT p.id)::INT as "comicCount"
@@ -715,7 +723,7 @@ export const userComicCountCache = createUserContentCountCache<UserComicCount>(
 );
 export const userComicCountSfwCache = createUserContentCountCache<UserComicCount>(
   'comicCount:sfw',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT
       p."userId" as id,
       COUNT(DISTINCT p.id)::INT as "comicCount"
@@ -735,7 +743,7 @@ export const userComicCountSfwCache = createUserContentCountCache<UserComicCount
 type UserHasReceivedReviews = { id: number; hasReceivedReviews: boolean };
 export const userHasReceivedReviewsCache = createUserContentCountCache<UserHasReceivedReviews>(
   'hasReceivedReviews',
-  async (userIds) => dbRead.$queryRaw`
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
     SELECT DISTINCT
       m."userId" as id,
       true as "hasReceivedReviews"
@@ -879,25 +887,25 @@ export const getUserContentOverviewSfw = async (
 export const userContentOverviewCache = {
   fetch: getUserContentOverview,
   fetchSfw: getUserContentOverviewSfw,
-  bust: async (userIds: number | number[]) => {
+  refresh: async (userIds: number | number[]) => {
     const ids = Array.isArray(userIds) ? userIds : [userIds];
     await Promise.all([
-      userModelCountCache.bust(ids),
-      userModelCountSfwCache.bust(ids),
-      userPostCountCache.bust(ids),
-      userPostCountSfwCache.bust(ids),
-      userImageVideoCountCache.bust(ids),
-      userImageVideoCountSfwCache.bust(ids),
-      userArticleCountCache.bust(ids),
-      userArticleCountSfwCache.bust(ids),
-      userBountyCountCache.bust(ids),
-      userBountyCountSfwCache.bust(ids),
-      userBountyEntryCountCache.bust(ids),
-      userCollectionCountCache.bust(ids),
-      userCollectionCountSfwCache.bust(ids),
-      userHasReceivedReviewsCache.bust(ids),
-      userComicCountCache.bust(ids),
-      userComicCountSfwCache.bust(ids),
+      userModelCountCache.refresh(ids),
+      userModelCountSfwCache.refresh(ids),
+      userPostCountCache.refresh(ids),
+      userPostCountSfwCache.refresh(ids),
+      userImageVideoCountCache.refresh(ids),
+      userImageVideoCountSfwCache.refresh(ids),
+      userArticleCountCache.refresh(ids),
+      userArticleCountSfwCache.refresh(ids),
+      userBountyCountCache.refresh(ids),
+      userBountyCountSfwCache.refresh(ids),
+      userBountyEntryCountCache.refresh(ids),
+      userCollectionCountCache.refresh(ids),
+      userCollectionCountSfwCache.refresh(ids),
+      userHasReceivedReviewsCache.refresh(ids),
+      userComicCountCache.refresh(ids),
+      userComicCountSfwCache.refresh(ids),
     ]);
   },
 };
@@ -910,8 +918,9 @@ type ImageWithMeta = {
 export const imageMetaCache = createCachedObject<ImageWithMeta>({
   key: REDIS_KEYS.CACHES.IMAGE_META,
   idKey: 'id',
-  lookupFn: async (ids) => {
-    const images = await dbRead.$queryRaw<ImageWithMeta[]>`
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const images = await db.$queryRaw<ImageWithMeta[]>`
       SELECT
         i.id,
         (CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta"
@@ -934,8 +943,9 @@ type ImageWithMetadata = {
 export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
   key: REDIS_KEYS.CACHES.IMAGE_METADATA,
   idKey: 'id',
-  lookupFn: async (ids) => {
-    const images = await dbRead.$queryRaw<ImageWithMetadata[]>`
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const images = await db.$queryRaw<ImageWithMetadata[]>`
       SELECT
         i.id,
         i.metadata
@@ -956,10 +966,11 @@ export const thumbnailCache = createCachedObject<{
 }>({
   key: REDIS_KEYS.CACHES.THUMBNAILS,
   idKey: 'parentId',
-  lookupFn: async (ids) => {
+  lookupFn: async (ids, fromWrite) => {
     if (ids.length === 0) return {};
 
-    const targets = await dbRead.$queryRaw<{ thumbnailId: string }[]>`
+    const db = fromWrite ? dbWrite : dbRead;
+    const targets = await db.$queryRaw<{ thumbnailId: string }[]>`
         SELECT
           cast(metadata->'thumbnailId' as int) as "thumbnailId"
         FROM "Image"
@@ -970,7 +981,7 @@ export const thumbnailCache = createCachedObject<{
     const thumbnailIds = targets.map((x) => x.thumbnailId).filter(isDefined);
     if (thumbnailIds.length === 0) return {};
 
-    const thumbnails = await dbRead.$queryRaw<
+    const thumbnails = await db.$queryRaw<
       { id: number; url: string; nsfwLevel: NsfwLevel; parentId: number }[]
     >`
         SELECT
@@ -1082,8 +1093,9 @@ type UserFollowsCacheItem = {
 export const userFollowsCache = createCachedObject<UserFollowsCacheItem>({
   key: REDIS_KEYS.CACHES.USER_FOLLOWS,
   idKey: 'userId',
-  lookupFn: async (ids) => {
-    const userFollows = await dbRead.userEngagement.findMany({
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const userFollows = await db.userEngagement.findMany({
       where: { userId: { in: ids }, type: 'Follow' },
       select: { userId: true, targetUserId: true },
     });
@@ -1144,8 +1156,9 @@ export const modelTagCache = createCachedObject<ModelTagCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_TAGS,
   idKey: 'modelId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new tags
-  lookupFn: async (ids) => {
-    const modelTags = await dbRead.tagsOnModels.findMany({
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const modelTags = await db.tagsOnModels.findMany({
       where: { modelId: { in: ids } },
       select: { modelId: true, tagId: true },
     });
@@ -1196,11 +1209,14 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
   ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
-  lookupFn: async (ids) => {
+  lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
 
-    const resources = await dbRead.$queryRaw<ImageResourceCacheItem[]>`
+    // refresh() passes fromWrite=true to force primary. For plain fetch() misses,
+    // fall back to the lag-aware helper so recent writes don't wedge stale rows.
+    const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('imageResource', imageIds);
+    const resources = await db.$queryRaw<ImageResourceCacheItem[]>`
       SELECT
         ir."imageId",
         ir."modelVersionId",
@@ -1244,8 +1260,9 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
   idKey: 'versionId',
   ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.md,
-  lookupFn: async (ids) => {
-    const mvInfo = await dbRead.modelVersion.findMany({
+  lookupFn: async (ids, fromWrite) => {
+    const db = fromWrite ? dbWrite : dbRead;
+    const mvInfo = await db.modelVersion.findMany({
       where: { id: { in: ids } },
       select: { id: true, baseModel: true, model: { select: { id: true, type: true } } },
     });

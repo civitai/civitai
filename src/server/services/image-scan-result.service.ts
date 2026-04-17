@@ -9,7 +9,6 @@ import type { TagType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus, NewOrderRankType, TagSource } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
-  ImageConnectionType,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
@@ -43,7 +42,7 @@ import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
+import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 
 export async function isExemptFromAiVerification(
   imageId: number,
@@ -161,6 +160,7 @@ export async function processImageScanWorkflow({
         )
       WHERE id = ${imageId}
     `;
+    if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
 
@@ -316,6 +316,11 @@ export async function processImageScanWorkflow({
     WHERE id = ${image.id}
   `;
 
+  // Fan out to articles for every terminal state (Scanned and Blocked).
+  // Article ingestion must advance on Blocked too, otherwise articles whose last
+  // image blocks stay stuck in Pending/Rescan.
+  if (articleImageScanning) await fanOutArticleImageUpdates(image.id);
+
   // handle blocked image updates
   if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {
     await queueImageSearchIndexUpdate({
@@ -335,19 +340,6 @@ export async function processImageScanWorkflow({
 
     if (image.postId) await updatePostNsfwLevel(image.postId);
     await updateComicNsfwLevelsForImage(image.id);
-
-    if (articleImageScanning) {
-      const articleConnections = await dbWrite.imageConnection.findMany({
-        where: { imageId: image.id, entityType: ImageConnectionType.Article },
-        select: { entityId: true },
-      });
-
-      if (articleConnections.length > 0) {
-        for (const { entityId } of articleConnections) {
-          await debounceArticleUpdate(entityId);
-        }
-      }
-    }
 
     await queueImageSearchIndexUpdate({
       ids: [image.id],

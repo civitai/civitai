@@ -877,7 +877,7 @@ export const upsertCollection = async ({
 
       // No need to set randomId when changing to Contest mode - hash-based ordering is computed on-the-fly
 
-      await userCollectionCountCache.bust(updated.userId);
+      await userCollectionCountCache.refresh(updated.userId);
 
       return updated;
     });
@@ -1006,7 +1006,7 @@ export const upsertCollection = async ({
     },
   });
 
-  await userCollectionCountCache.bust(userId);
+  await userCollectionCountCache.refresh(userId);
 
   return collection;
 };

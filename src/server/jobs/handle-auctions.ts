@@ -418,7 +418,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     await bustFeaturedModelsCache();
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
     await resourceDataCache.bust(winnerIds);
-    await modelVersionResourceCache.bust(winnerIds);
+    await modelVersionResourceCache.refresh(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
 
     log('busted cache', winnerIds.length);

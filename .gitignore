@@ -102,7 +102,9 @@ src/pages/api/dev-local/*
 /.serena/
 
 docs/working/
+docs/incidents/
 .claude/*.local.*
+.claude/skills/cloudflare/.port-tmp-path
 local/
 .eslintcache
 nul

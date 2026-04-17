@@ -733,7 +733,7 @@ export const createPost = async ({
   });
 
   await preventReplicationLag('post', post.id);
-  await userPostCountCache.bust(userId);
+  await userPostCountCache.refresh(userId);
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -774,7 +774,7 @@ export const updatePost = async ({
     },
   });
   await preventReplicationLag('post', post.id);
-  await userPostCountCache.bust(post.userId);
+  await userPostCountCache.refresh(post.userId);
 
   return post;
 };
@@ -1127,8 +1127,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true, url: true, userId: true },
   });
-  await imageMetadataCache.bust(image.id);
-  await imageMetaCache.bust(image.id);
+  await imageMetadataCache.refresh(image.id);
+  await imageMetaCache.refresh(image.id);
 
   if (shouldIngest) {
     // Ensures a proper rescan of this image.
@@ -1141,7 +1141,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 
   purgeImageGenerationDataCache(image.id);
-  await userPostCountCache.bust(result.userId);
+  await userPostCountCache.refresh(result.userId);
 };
 
 export const addResourceToPostImage = async ({
@@ -1254,7 +1254,7 @@ export const addResourceToPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
-  await imageResourcesCache.bust(createdResources.map((x) => x.imageId));
+  await imageResourcesCache.refresh(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
@@ -1299,7 +1299,7 @@ export const removeResourceFromPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
 

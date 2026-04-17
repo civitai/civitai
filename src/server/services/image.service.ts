@@ -345,8 +345,8 @@ export const deleteImageById = async ({
           ]
         : []),
       invalidateExistence,
-      imageMetaCache.bust(id),
-      imageMetadataCache.bust(id),
+      imageMetaCache.refresh(id),
+      imageMetadataCache.refresh(id),
     ]);
 
     return image;
@@ -382,8 +382,8 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       bustCachesForPosts(idsForPostUpdate),
       postMetrics.queueUpdate(idsForPostUpdate),
       invalidateExistence,
-      imageMetaCache.bust(imageIds),
-      imageMetadataCache.bust(imageIds),
+      imageMetaCache.refresh(imageIds),
+      imageMetadataCache.refresh(imageIds),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -636,7 +636,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await thumbnailCache.bust(ids);
+  await thumbnailCache.refresh(ids);
 }
 
 export const updateImageReportStatusByReason = ({
@@ -4663,7 +4663,7 @@ export const removeImageResource = async ({
     // if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
     purgeImageGenerationDataCache(imageId);
-    await imageResourcesCache.bust(imageId);
+    await imageResourcesCache.refresh(imageId);
 
     return resource;
   } catch (error) {
@@ -4931,7 +4931,7 @@ export async function createImage({
     });
   }
 
-  await userImageVideoCountCache.bust(image.userId);
+  await userImageVideoCountCache.refresh(image.userId);
 
   return result;
 }
@@ -5894,7 +5894,7 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await imageMetadataCache.bust(id);
+    await imageMetadataCache.refresh(id);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -6211,7 +6211,7 @@ export async function resolveIngestionError({
       metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
-  await imageMetadataCache.bust(id);
+  await imageMetadataCache.refresh(id);
 
   // Post-scan actions matching what image-scan-result does on successful scan
   await tagIdsForImagesCache.refresh(id);
@@ -6823,7 +6823,7 @@ export async function queueImageSearchIndexUpdate({
 
   if (action === SearchIndexUpdateQueueAction.Delete) {
     // Bust the thumbnail cache for deleted images
-    await thumbnailCache.bust(ids);
+    await thumbnailCache.refresh(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
       ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
@@ -6886,8 +6886,8 @@ export async function setVideoThumbnail({
   // Clear up the thumbnail cache
   await Promise.all([
     preventReplicationLag('postImages', postId),
-    thumbnailCache.bust(imageId),
-    imageMetadataCache.bust(imageId),
+    thumbnailCache.refresh(imageId),
+    imageMetadataCache.refresh(imageId),
     queueImageSearchIndexUpdate({
       ids: [imageId],
       action: SearchIndexUpdateQueueAction.Update,
@@ -7009,7 +7009,7 @@ export async function createImageResources({
     }
   }
 
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   return resources;
 }
 
@@ -7132,7 +7132,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     where: { id },
     data: { [flag]: !image[flag] },
   });
-  await imageMetadataCache.bust(id);
+  await imageMetadataCache.refresh(id);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7151,7 +7151,7 @@ export const updateImagesFlag = async ({
     where: { id: { in: ids } },
     data: { [flag]: value },
   });
-  await imageMetadataCache.bust(ids);
+  await imageMetadataCache.refresh(ids);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(
@@ -7166,7 +7166,7 @@ export async function refreshImageResources(imageId: number) {
     DELETE FROM "ImageResourceNew" WHERE "imageId" = ${imageId} AND detected
   `;
   await createImageResources({ imageId });
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   return await dbWrite.imageResourceHelper.findMany({ where: { imageId } });
 }
 

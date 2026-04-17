@@ -145,7 +145,7 @@ export async function verifyCaptchaToken({
         cfRay,
         meta,
       },
-    }).catch(() => undefined);
+    }, 'civitai-prod').catch(() => undefined);
     throw throwBadRequestError('No response from captcha service');
   }
 
@@ -164,7 +164,7 @@ export async function verifyCaptchaToken({
           action: outcome.action,
           meta,
         },
-      }).catch(() => undefined);
+      }, 'civitai-prod').catch(() => undefined);
     }
     return true;
   }
@@ -179,6 +179,6 @@ export async function verifyCaptchaToken({
       cfRay,
       meta,
     },
-  }).catch(() => undefined);
+  }, 'civitai-prod').catch(() => undefined);
   throw throwBadRequestError('Unable to verify captcha token');
 }

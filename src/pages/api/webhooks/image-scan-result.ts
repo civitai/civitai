@@ -61,7 +61,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 import { processImageScanResult } from '~/server/services/image-scan-result.service';
-import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
+import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
 
@@ -175,6 +175,22 @@ export default WebhookEndpoint(async (req, res) => {
         throw new Error('unhandled data type');
       }
     }
+
+    const featureFlags = getFeatureFlagsLazy({ req });
+    if (featureFlags.articleImageScanning) {
+      await fanOutArticleImageUpdates(data.id).catch(async (error) => {
+        await logToAxiom({
+          name: 'image-scan-result',
+          type: 'error',
+          message: `fanOutArticleImageUpdates failed: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+          imageId: data.id,
+          stack: error instanceof Error ? error.stack : undefined,
+        }).catch(() => null);
+      });
+    }
+
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     if (e.message === 'Image not found') return res.status(404).send({ error: e.message });

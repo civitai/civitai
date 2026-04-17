@@ -226,7 +226,7 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
 }
 
 export function deleteMultipliersForUserCache(userId: number) {
-  return userMultipliersCache.bust(userId);
+  return userMultipliersCache.refresh(userId);
 }
 
 export async function getUserBuzzTransactions({

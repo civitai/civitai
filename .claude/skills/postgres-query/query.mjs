@@ -73,6 +73,7 @@ const args = process.argv.slice(2);
 let query = '';
 let explain = false;
 let writable = false;
+let dataPacket = false;
 let jsonOutput = false;
 let quiet = false;
 let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
@@ -83,6 +84,8 @@ for (let i = 0; i < args.length; i++) {
     explain = true;
   } else if (arg === '--writable') {
     writable = true;
+  } else if (arg === '--data-packet') {
+    dataPacket = true;
   } else if (arg === '--json') {
     jsonOutput = true;
   } else if (arg === '--quiet' || arg === '-q') {
@@ -126,9 +129,14 @@ Examples:
 }
 
 // Select connection string
-const connectionString = writable
-  ? process.env.DATABASE_URL
-  : (process.env.DATABASE_REPLICA_URL || process.env.DATABASE_URL);
+let connectionString;
+if (dataPacket) {
+  connectionString = process.env.DATABASE_DATA_PACKET_URL;
+} else if (writable) {
+  connectionString = process.env.DATABASE_URL;
+} else {
+  connectionString = process.env.DATABASE_REPLICA_URL || process.env.DATABASE_URL;
+}
 
 if (!connectionString) {
   console.error('Error: No database connection string found in environment');
@@ -160,7 +168,11 @@ async function main() {
     await client.connect();
 
     if (!quiet) {
-      const dbType = writable ? 'PRIMARY (writable)' : 'REPLICA (read-only)';
+      const dbType = dataPacket
+        ? 'DATA-PACKET REPLICA (read-only)'
+        : writable
+          ? 'PRIMARY (writable)'
+          : 'REPLICA (read-only)';
       console.error(`Connected to ${dbType} (timeout: ${timeoutSeconds}s)\n`);
     }
 

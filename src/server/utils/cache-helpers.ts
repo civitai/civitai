@@ -397,12 +397,16 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
   await redis.packed.set(key, toCache, { KEEPTTL: true });
 }
 
-export async function clearCacheByPattern(pattern: string) {
+export async function clearCacheByPattern(
+  pattern: string,
+  onProgress?: (cleared: number) => void
+) {
   const cleared: string[] = [];
 
   if (!pattern.includes('*')) {
     await redis.del(pattern as RedisKeyTemplateCache);
     cleared.push(pattern);
+    onProgress?.(cleared.length);
     return cleared;
   }
 
@@ -422,6 +426,7 @@ export async function clearCacheByPattern(pattern: string) {
       await Promise.all(batches[i].map((key) => redis.del(key)));
       cleared.push(...batches[i]);
       log('Cleared batch:', i + 1, 'of', batches.length);
+      onProgress?.(cleared.length);
     }
   }
 

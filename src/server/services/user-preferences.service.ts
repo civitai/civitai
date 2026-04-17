@@ -594,7 +594,7 @@ async function toggleHideUser({
 
   // const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
 
-  await userFollowsCache.bust(userId);
+  await userFollowsCache.refresh(userId);
   await HiddenUsers.refreshCache({ userId });
 
   return {
@@ -633,7 +633,7 @@ async function toggleBlockUser({
       data: { type: 'Block' },
     });
 
-  await userFollowsCache.bust(userId);
+  await userFollowsCache.refresh(userId);
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
 
