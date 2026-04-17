@@ -61,7 +61,13 @@ export function SensitiveShield({
   }
 
   // this content is not available on this site — redirect to red
-  if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
+  // owners/mods previewing still-unrated content (level 0) bypass the redirect too
+  const isUnratedOwnerPreview = bypassRating && contentNsfwLevel === 0;
+  if (
+    !canViewNsfw &&
+    (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel)) &&
+    !isUnratedOwnerPreview
+  ) {
     if (isLoading) return <PageLoader />;
 
     const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
@@ -231,7 +237,7 @@ function UnratedContent() {
           style={{ opacity: 0 }}
         />
         <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-yellow-9/10 blur-3xl" />
-        <div className="pointer-events-none absolute -right-12 -top-12 size-36 rounded-full bg-orange-9/8 blur-3xl" />
+        <div className="bg-orange-9/8 pointer-events-none absolute -right-12 -top-12 size-36 rounded-full blur-3xl" />
 
         <ThemeIcon
           variant="filled"
