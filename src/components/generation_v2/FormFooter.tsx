@@ -475,7 +475,10 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz}
+      disabled={
+        !running &&
+        (isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz)
+      }
       onClick={handleClick}
     />
   );
