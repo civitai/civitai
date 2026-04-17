@@ -1276,7 +1276,10 @@ function getResourcesFromStep(
 // =============================================================================
 
 type StepWithOutput = WorkflowStep & {
-  input?: { seed?: number };
+  input?: {
+    seed?: number;
+    aspectRatio?: string | { value?: string; width?: number; height?: number };
+  };
   output?: {
     images?: ImageBlob[];
     video?: VideoBlob;
@@ -1423,7 +1426,9 @@ export function formatStepOutputs(
       }
 
       if (!width || !height) {
-        const aspectRatio = params.aspectRatio;
+        // Check params.aspectRatio first, then step.input.aspectRatio (e.g. videoGen
+        // steps where the output aspect ratio lives on the step input, not metadata params)
+        const aspectRatio = params.aspectRatio ?? step.input?.aspectRatio;
         if (aspectRatio) {
           // Handle both object format { value, width, height } and legacy string format "w:h"
           if (typeof aspectRatio === 'object' && aspectRatio !== null) {
