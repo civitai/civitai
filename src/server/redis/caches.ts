@@ -7,6 +7,7 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
@@ -1386,7 +1387,10 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
 
     // refresh() passes fromWrite=true to force primary. For plain fetch() misses,
     // fall back to the lag-aware helper so recent writes don't wedge stale rows.
-    const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('imageResource', imageIds);
+    // While the DataPacket replica is missing ImageResourceNew backfill, the
+    // image-resource-use-write Flipt flag forces reads to the writer.
+    const forceWrite = fromWrite || (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE));
+    const db = forceWrite ? dbWrite : await getDbWithoutLagBatch('imageResource', imageIds);
     const resources = await db.$queryRaw<ImageResourceCacheItem[]>`
       SELECT
         ir."imageId",

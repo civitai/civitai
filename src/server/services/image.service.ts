@@ -1072,7 +1072,19 @@ export const getAllImages = async (
     minorOnly,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
-  const { dbTarget = 'read' } = input;
+  let { dbTarget = 'read' } = input;
+
+  // While the DataPacket replica is missing ImageResourceNew backfill, force
+  // queries that join ImageResourceNew (modelId/modelVersionId/reviewId filter
+  // or baseModels filter) to the writer. Flipt flag lets us flip off post-backfill.
+  const joinsImageResourceNew = !!modelId || !!modelVersionId || !!reviewId || !!baseModels?.length;
+  if (
+    joinsImageResourceNew &&
+    dbTarget !== 'write' &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE))
+  ) {
+    dbTarget = 'write';
+  }
 
   const imageDb =
     dbTarget === 'write' ? pgDbWrite : dbTarget === 'datapacket' ? datapacketDbRead : pgDbRead;
@@ -3999,7 +4011,10 @@ export async function getTagNamesForImages(imageIds: number[]) {
 }
 
 export async function getResourceIdsForImages(imageIds: number[]) {
-  const imageResourcesArr = await dbRead.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
+  // Route to writer while DataPacket replica is missing ImageResourceNew backfill.
+  const useWrite = await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE);
+  const db = useWrite ? dbWrite : dbRead;
+  const imageResourcesArr = await db.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
     SELECT "imageId", "modelVersionId"
     FROM "ImageResourceNew"
     WHERE "imageId" IN (${Prisma.join(imageIds)});
