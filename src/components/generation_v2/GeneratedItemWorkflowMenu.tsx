@@ -58,10 +58,8 @@ export function GeneratedItemWorkflowMenu({
   const status = useGenerationStatus();
   const isMember = status.tier !== 'free';
 
-  const outputType = image.type === 'video' ? 'video' : 'image';
-
   const { groups, isCompatible } = useGeneratedItemWorkflows({
-    outputType,
+    outputType: image.mediaType,
     ecosystemKey: image.ecosystemKey,
   });
 

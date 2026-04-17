@@ -5,6 +5,7 @@ import { useState } from 'react';
 
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
+import { useGeneratedItemWorkflows } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 
 import classes from './GeneratedImage.module.css';
@@ -27,6 +28,11 @@ export function GeneratedOutputActions({
   onToggleFeedback: (feedback: 'liked' | 'disliked') => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const { groups } = useGeneratedItemWorkflows({
+    outputType: output.mediaType,
+    ecosystemKey: output.ecosystemKey,
+  });
+  const hasWorkflows = groups.some((g) => g.workflows.length > 0);
 
   if (isLightbox || isOverlay) {
     return (
@@ -35,7 +41,7 @@ export function GeneratedOutputActions({
           classes.actionsWrapper,
           (menuOpen || isLightbox) && classes.actionsVisible,
           isOverlay && classes.desktopOnly,
-          output.type === 'video' || output.type === 'audio'
+          hasWorkflows && (output.type === 'video' || output.type === 'audio')
             ? 'bottom-2 left-12'
             : 'bottom-1 left-1',
           'absolute flex flex-wrap items-center gap-1 p-1'
@@ -69,29 +75,31 @@ export function GeneratedOutputActions({
           <IconThumbDown size={16} />
         </LegacyActionIcon>
 
-        <Menu
-          zIndex={400}
-          trigger="click-hover"
-          openDelay={100}
-          closeDelay={100}
-          transitionProps={{
-            transition: 'fade',
-            duration: 150,
-          }}
-          withinPortal
-          position="top"
-          onChange={setMenuOpen}
-          withArrow
-        >
-          <Menu.Target>
-            <LegacyActionIcon size="md">
-              <IconWand size={16} />
-            </LegacyActionIcon>
-          </Menu.Target>
-          <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
-            <GeneratedItemWorkflowMenu image={output} workflowsOnly isLightbox={isLightbox} />
-          </Menu.Dropdown>
-        </Menu>
+        {hasWorkflows && (
+          <Menu
+            zIndex={400}
+            trigger="click-hover"
+            openDelay={100}
+            closeDelay={100}
+            transitionProps={{
+              transition: 'fade',
+              duration: 150,
+            }}
+            withinPortal
+            position="top"
+            onChange={setMenuOpen}
+            withArrow
+          >
+            <Menu.Target>
+              <LegacyActionIcon size="md">
+                <IconWand size={16} />
+              </LegacyActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
+              <GeneratedItemWorkflowMenu image={output} workflowsOnly isLightbox={isLightbox} />
+            </Menu.Dropdown>
+          </Menu>
+        )}
       </div>
     );
   }
@@ -131,26 +139,30 @@ export function GeneratedOutputActions({
         <IconThumbDown size={16} />
       </LegacyActionIcon>
 
-      <div className={classes.footerDivider} />
+      {hasWorkflows && (
+        <>
+          <div className={classes.footerDivider} />
 
-      <Menu
-        zIndex={400}
-        trigger="click"
-        transitionProps={{ transition: 'fade', duration: 150 }}
-        withinPortal
-        position="top"
-        onChange={setMenuOpen}
-        withArrow
-      >
-        <Menu.Target>
-          <LegacyActionIcon className={classes.footerActionIcon}>
-            <IconWand size={16} />
-          </LegacyActionIcon>
-        </Menu.Target>
-        <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
-          <GeneratedItemWorkflowMenu image={output} workflowsOnly />
-        </Menu.Dropdown>
-      </Menu>
+          <Menu
+            zIndex={400}
+            trigger="click"
+            transitionProps={{ transition: 'fade', duration: 150 }}
+            withinPortal
+            position="top"
+            onChange={setMenuOpen}
+            withArrow
+          >
+            <Menu.Target>
+              <LegacyActionIcon className={classes.footerActionIcon}>
+                <IconWand size={16} />
+              </LegacyActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
+              <GeneratedItemWorkflowMenu image={output} workflowsOnly />
+            </Menu.Dropdown>
+          </Menu>
+        </>
+      )}
     </div>
   );
 }

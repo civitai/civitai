@@ -1,8 +1,8 @@
 /**
- * ACE Step Audio Graph
+ * ACE Audio Audio Graph
  *
- * Controls for ACE Step 1.5 music generation ecosystem.
- * Supports txt2aud workflow — generates music from text description and structured lyrics.
+ * Controls for ACE Audio 1.5 music generation ecosystem.
+ * Supports txt2music workflow — generates music from text description and structured lyrics.
  *
  * Cover Image Modes:
  * - generateCover=true: Multi-step workflow (imageGen → aceStepAudio with $ref to generated cover)
@@ -30,26 +30,26 @@ import { seedNode, imagesNode } from './common';
 // Constants
 // =============================================================================
 
-/** ACE Step duration range */
-const ACE_STEP_MIN_DURATION = 1;
-const ACE_STEP_MAX_DURATION = 190;
-const ACE_STEP_DEFAULT_DURATION = 60;
+/** ACE Audio duration range */
+const ACE_AUDIO_MIN_DURATION = 1;
+const ACE_AUDIO_MAX_DURATION = 190;
+const ACE_AUDIO_DEFAULT_DURATION = 60;
 
-/** ACE Step BPM range */
-const ACE_STEP_MIN_BPM = 40;
-const ACE_STEP_MAX_BPM = 200;
-const ACE_STEP_DEFAULT_BPM = 120;
+/** ACE Audio BPM range */
+const ACE_AUDIO_MIN_BPM = 40;
+const ACE_AUDIO_MAX_BPM = 200;
+const ACE_AUDIO_DEFAULT_BPM = 120;
 
 // =============================================================================
-// ACE Step Graph
+// ACE Audio Graph
 // =============================================================================
 
-/** Context shape for ace-step graph */
-type AceStepCtx = { ecosystem: string; workflow: string };
+/** Context shape for ace-audio graph */
+type AceAudioCtx = { ecosystem: string; workflow: string };
 
 const MAX_DESCRIPTION_LENGTH = 1000;
 
-export const aceStepGraph = new DataGraph<AceStepCtx, GenerationCtx>()
+export const aceAudioGraph = new DataGraph<AceAudioCtx, GenerationCtx>()
   // Music description — style, genre, mood, instruments, etc.
   .node('musicDescription', {
     input: z.string().optional(),
@@ -71,7 +71,7 @@ export const aceStepGraph = new DataGraph<AceStepCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ min: 0, max: 1 }),
+      ...imagesNode({ min: 0, max: 1, aspectRatios: ['1:1'] }),
       when: !('generateCover' in ctx && ctx.generateCover),
     }),
     ['generateCover']
@@ -87,22 +87,22 @@ export const aceStepGraph = new DataGraph<AceStepCtx, GenerationCtx>()
   // Duration in seconds (1-190)
   .node('duration', {
     input: z.coerce.number().optional(),
-    output: z.number().min(ACE_STEP_MIN_DURATION).max(ACE_STEP_MAX_DURATION),
-    defaultValue: ACE_STEP_DEFAULT_DURATION,
+    output: z.number().min(ACE_AUDIO_MIN_DURATION).max(ACE_AUDIO_MAX_DURATION),
+    defaultValue: ACE_AUDIO_DEFAULT_DURATION,
     meta: {
-      min: ACE_STEP_MIN_DURATION,
-      max: ACE_STEP_MAX_DURATION,
+      min: ACE_AUDIO_MIN_DURATION,
+      max: ACE_AUDIO_MAX_DURATION,
     },
   })
 
   // BPM (40-200)
   .node('bpm', {
     input: z.coerce.number().optional(),
-    output: z.number().min(ACE_STEP_MIN_BPM).max(ACE_STEP_MAX_BPM),
-    defaultValue: ACE_STEP_DEFAULT_BPM,
+    output: z.number().min(ACE_AUDIO_MIN_BPM).max(ACE_AUDIO_MAX_BPM),
+    defaultValue: ACE_AUDIO_DEFAULT_BPM,
     meta: {
-      min: ACE_STEP_MIN_BPM,
-      max: ACE_STEP_MAX_BPM,
+      min: ACE_AUDIO_MIN_BPM,
+      max: ACE_AUDIO_MAX_BPM,
     },
   })
 
@@ -124,10 +124,10 @@ export const aceStepGraph = new DataGraph<AceStepCtx, GenerationCtx>()
 
 // Export constants for use in components
 export {
-  ACE_STEP_MIN_DURATION,
-  ACE_STEP_MAX_DURATION,
-  ACE_STEP_DEFAULT_DURATION,
-  ACE_STEP_MIN_BPM,
-  ACE_STEP_MAX_BPM,
-  ACE_STEP_DEFAULT_BPM,
+  ACE_AUDIO_MIN_DURATION,
+  ACE_AUDIO_MAX_DURATION,
+  ACE_AUDIO_DEFAULT_DURATION,
+  ACE_AUDIO_MIN_BPM,
+  ACE_AUDIO_MAX_BPM,
+  ACE_AUDIO_DEFAULT_BPM,
 };

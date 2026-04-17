@@ -43,7 +43,7 @@ import { createHiDreamInput } from './hi-dream.handler';
 import { createPonyV7Input } from './pony-v7.handler';
 
 // Audio ecosystem handlers
-import { createAceStepInput } from './ace-step.handler';
+import { createAceAudioInput } from './ace-audio.handler';
 
 // Video ecosystem handlers
 import { createWanSteps } from './wan.handler';
@@ -162,8 +162,8 @@ export type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 /** Grok context */
 export type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 
-/** AceStep context */
-export type AceStepCtx = EcosystemGraphOutput & { ecosystem: 'AceStep' };
+/** AceAudio context */
+export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'AceAudio' };
 
 // =============================================================================
 // Exports - Individual handlers
@@ -187,7 +187,7 @@ export { createHiDreamInput } from './hi-dream.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 
 // Audio ecosystems
-export { createAceStepInput } from './ace-step.handler';
+export { createAceAudioInput } from './ace-audio.handler';
 
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
@@ -390,8 +390,8 @@ async function createEcosystemStep(
     // Audio Ecosystems - aceStepAudio step type
     // =========================================================================
 
-    case 'AceStep':
-      return createAceStepInput(normalizedData, handlerCtx);
+    case 'AceAudio':
+      return createAceAudioInput(normalizedData, handlerCtx);
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

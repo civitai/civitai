@@ -12,6 +12,7 @@ import {
   IconArrowLeft,
   IconChevronDown,
   IconCheck,
+  IconMusic,
   IconPhoto,
   IconVideo,
   IconDiamond,
@@ -408,18 +409,21 @@ export function WorkflowInput({
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [imageOpened, { close: closeImage, open: openImage }] = useDisclosure(false);
   const [videoOpened, { close: closeVideo, open: openVideo }] = useDisclosure(false);
+  const [audioOpened, { close: closeAudio, open: openAudio }] = useDisclosure(false);
 
   // Get all workflows grouped by category (static - no ecosystem filtering)
   const options = useMemo(() => getAllWorkflowsGrouped(), []);
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
-  // Separate image and video categories
+  // Separate image, video, and audio categories
   const imageCategories = options.filter((cat) => cat.category === 'image');
   const videoCategories = options.filter((cat) => cat.category === 'video');
+  const audioCategories = options.filter((cat) => cat.category === 'audio');
 
-  // Check if current selection is image or video
+  // Check if current selection is image, video, or audio
   const isImageWorkflow = selected && selected.category.category === 'image';
   const isVideoWorkflow = selected && selected.category.category === 'video';
+  const isAudioWorkflow = selected && selected.category.category === 'audio';
 
   const handleImageSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
@@ -429,6 +433,11 @@ export function WorkflowInput({
   const handleVideoSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
     closeVideo();
+  };
+
+  const handleAudioSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
+    onChange?.(graphKey, ecosystemIds, optionId);
+    closeAudio();
   };
 
   const openImageModal = () => {
@@ -463,8 +472,25 @@ export function WorkflowInput({
     });
   };
 
-  // Check if video workflows are available
+  const openAudioModal = () => {
+    dialogStore.trigger({
+      id: 'workflow-select-audio',
+      component: WorkflowSelectModal,
+      props: {
+        title: 'Select Audio Workflow',
+        categories: audioCategories,
+        selectedValue: selected?.workflow.id,
+        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
+          onChange?.(graphKey, ecosystemIds, optionId),
+        isCompatible,
+        isMember,
+      },
+    });
+  };
+
+  // Check if video/audio workflows are available
   const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
+  const hasAudioWorkflows = audioCategories.some((cat) => cat.workflows.length > 0);
 
   // Mobile: use dialogStore modal
   if (isMobile) {
@@ -488,6 +514,16 @@ export function WorkflowInput({
             onClick={openVideoModal}
           />
         )}
+        {hasAudioWorkflows && (
+          <WorkflowTypeButton
+            icon={null}
+            label="Audio"
+            isActive={isAudioWorkflow ?? false}
+            opened={false}
+            disabled={disabled}
+            onClick={openAudioModal}
+          />
+        )}
       </Group>
     );
   }
@@ -496,6 +532,7 @@ export function WorkflowInput({
   const handleImageMouseEnter = () => {
     if (!disabled) {
       closeVideo();
+      closeAudio();
       openImage();
     }
   };
@@ -503,7 +540,16 @@ export function WorkflowInput({
   const handleVideoMouseEnter = () => {
     if (!disabled) {
       closeImage();
+      closeAudio();
       openVideo();
+    }
+  };
+
+  const handleAudioMouseEnter = () => {
+    if (!disabled) {
+      closeImage();
+      closeVideo();
+      openAudio();
     }
   };
 
@@ -576,6 +622,44 @@ export function WorkflowInput({
               categories={videoCategories}
               selectedValue={selected?.workflow.id}
               onSelect={handleVideoSelect}
+              isCompatible={isCompatible}
+              isMember={isMember}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      )}
+
+      {hasAudioWorkflows && (
+        <Popover
+          opened={audioOpened}
+          onChange={(isOpen) => !isOpen && closeAudio()}
+          position="bottom-start"
+          width={300}
+          shadow="md"
+          withinPortal
+        >
+          <Popover.Target>
+            <WorkflowTypeButton
+              icon={<IconMusic size={16} />}
+              label="Audio"
+              isActive={isAudioWorkflow ?? false}
+              opened={audioOpened}
+              disabled={disabled}
+              onClick={() => undefined}
+              onMouseEnter={handleAudioMouseEnter}
+              onMouseLeave={closeAudio}
+            />
+          </Popover.Target>
+          <Popover.Dropdown
+            p="xs"
+            onMouseEnter={openAudio}
+            onMouseLeave={closeAudio}
+            className="before:absolute before:-top-2 before:left-0 before:h-2 before:w-full"
+          >
+            <WorkflowListContent
+              categories={audioCategories}
+              selectedValue={selected?.workflow.id}
+              onSelect={handleAudioSelect}
               isCompatible={isCompatible}
               isMember={isMember}
             />

@@ -1,7 +1,7 @@
 /**
- * ACE Step Ecosystem Handler
+ * ACE Audio Ecosystem Handler
  *
- * Handles ACE Step 1.5 audio generation workflows using aceStepAudio step type.
+ * Handles ACE Audio 1.5 audio generation workflows using aceStepAudio step type.
  * Generates music from text descriptions and structured lyrics.
  *
  * Cover Image Modes:
@@ -23,16 +23,16 @@ import type { StepInput } from '.';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
-type AceStepCtx = EcosystemGraphOutput & { ecosystem: 'AceStep' };
+type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'AceAudio' };
 
 /**
- * Creates step input(s) for ACE Step ecosystem.
+ * Creates step input(s) for ACE Audio ecosystem.
  *
  * Returns either:
  * - [imageGen, aceStepAudio] when generateCover is true (multi-step with $ref)
  * - [aceStepAudio] when a cover image is provided or no cover at all
  */
-export const createAceStepInput = defineHandler<AceStepCtx, StepInput[]>((data) => {
+export const createAceAudioInput = defineHandler<AceAudioCtx, StepInput[]>((data) => {
   const generateCover = 'generateCover' in data ? (data.generateCover as boolean) : false;
   const images = 'images' in data ? (data.images as { url: string }[] | undefined) : undefined;
   const hasCoverImage = !!images?.length;
@@ -54,7 +54,7 @@ export const createAceStepInput = defineHandler<AceStepCtx, StepInput[]>((data) 
   if (generateCover) {
     const coverPrompt = `Generate an album cover for a song with the following description (dont include text): ${musicDescription}`;
 
-    const imageGenStep: ImageGenStepTemplate = {
+    const imageGenStep: ImageGenStepTemplate & { metadata: { suppressOutput: true } } = {
       $type: 'imageGen',
       input: {
         engine: 'flux2',
@@ -64,9 +64,10 @@ export const createAceStepInput = defineHandler<AceStepCtx, StepInput[]>((data) 
         steps: 8,
         prompt: coverPrompt,
       } as ImageGenStepTemplate['input'],
+      metadata: { suppressOutput: true },
     };
 
-    const aceStep: AceStepAudioStepTemplate = {
+    const aceAudio: AceStepAudioStepTemplate = {
       $type: 'aceStepAudio',
       input: {
         ...removeEmpty(aceInput),
@@ -76,7 +77,7 @@ export const createAceStepInput = defineHandler<AceStepCtx, StepInput[]>((data) 
       } as AceStepAudioInput,
     };
 
-    return [imageGenStep, aceStep];
+    return [imageGenStep, aceAudio];
   }
 
   // Mode 2: user-supplied cover image — single step with cover URL
@@ -85,10 +86,10 @@ export const createAceStepInput = defineHandler<AceStepCtx, StepInput[]>((data) 
   }
 
   // Mode 2 & 3: single aceStepAudio step (with or without cover)
-  const aceStep: AceStepAudioStepTemplate = {
+  const aceAudio: AceStepAudioStepTemplate = {
     $type: 'aceStepAudio',
     input: removeEmpty(aceInput) as AceStepAudioInput,
   };
 
-  return [aceStep];
+  return [aceAudio];
 });

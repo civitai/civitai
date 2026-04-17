@@ -345,21 +345,24 @@ export function GenerationForm() {
     <GenerationLayout>
       {/* Workflow and ecosystem selectors — always visible */}
       <>
-        <Group gap="xs" wrap="nowrap" className="w-full justify-between">
-          <Controller
-            graph={graph}
-            name="workflow"
-            render={({ value }) => (
-              <WorkflowInput
-                value={value}
-                ecosystemId={compatibility.currentEcosystemId}
-                onChange={handleWorkflowChange}
-                isCompatible={compatibility.isWorkflowCompatible}
-                isMember={isMember}
-              />
-            )}
-          />
+        <Controller
+          graph={graph}
+          name="workflow"
+          render={({ value }) => (
+            <WorkflowInput
+              value={value}
+              ecosystemId={compatibility.currentEcosystemId}
+              onChange={handleWorkflowChange}
+              isCompatible={compatibility.isWorkflowCompatible}
+              isMember={isMember}
+            />
+          )}
+        />
 
+        <Group gap="xs" wrap="nowrap">
+          <Text size="xs" c="dimmed" fw={500}>
+            Ecosystem
+          </Text>
           <Controller
             graph={graph}
             name="ecosystem"
@@ -719,7 +722,7 @@ export function GenerationForm() {
             />
 
             {/* Prompt with Trigger Words (hidden for audio workflows which use musicDescription) */}
-            {snapshot.workflow !== 'txt2aud' && <Controller
+            {snapshot.workflow !== 'txt2music' && <Controller
               graph={graph}
               name="prompt"
               render={({ value, onChange, meta, error }) => (

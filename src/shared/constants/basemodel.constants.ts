@@ -177,7 +177,7 @@ export const ECO = {
   Grok: 61,
 
   // Root ecosystems - Audio models
-  AceStep: 66,
+  AceAudio: 66,
 
   // Utility ecosystems
   Upscaler: 66,
@@ -730,10 +730,10 @@ export const ecosystems: EcosystemRecord[] = [
 
   // Audio ecosystems
   {
-    id: ECO.AceStep,
-    key: 'AceStep',
-    name: 'acestep',
-    displayName: 'ACE Step',
+    id: ECO.AceAudio,
+    key: 'AceAudio',
+    name: 'aceaudio',
+    displayName: 'ACE Audio',
     sortOrder: 300,
   },
 ];
@@ -906,8 +906,8 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // LTXV2.3 - checkpoint and LORA
   { ecosystemId: ECO.LTXV23, supportType: 'generation', modelTypes: checkpointAndLora },
 
-  // AceStep - checkpoint only (audio generation)
-  { ecosystemId: ECO.AceStep, supportType: 'generation', modelTypes: checkpointOnly },
+  // AceAudio - checkpoint only (audio generation)
+  { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -1277,7 +1277,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
     },
   },
   {
-    ecosystemId: ECO.AceStep,
+    ecosystemId: ECO.AceAudio,
     defaults: {
       modelLocked: true,
     },
@@ -1721,7 +1721,7 @@ export const BM = {
   WanVideo27: 81,
   Upscaler: 82,
   Ernie: 83,
-  AceStep: 84,
+  AceAudio: 84,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -2788,13 +2788,13 @@ export const baseModelRecords: BaseModelRecord[] = [
     licenseId: 23,
   },
 
-  // ACE Step (audio)
+  // ACE Audio
   {
-    id: BM.AceStep,
-    name: 'ACE Step',
-    description: 'ACE Step 1.5 music generation model',
+    id: BM.AceAudio,
+    name: 'ACE Audio',
+    description: 'ACE Audio music generation model',
     type: 'audio',
-    ecosystemId: ECO.AceStep,
+    ecosystemId: ECO.AceAudio,
   },
 ];
 

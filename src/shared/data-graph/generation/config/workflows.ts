@@ -307,12 +307,12 @@ export const workflowConfigs: WorkflowConfigs = {
   // Audio Workflows
   // ===========================================================================
 
-  txt2aud: {
-    label: 'Create Audio',
-    modeLabel: 'Text to Audio',
+  txt2music: {
+    label: 'Create Music',
+    modeLabel: 'Text to Music',
     description: 'Generate music from text description and lyrics',
     category: 'audio',
-    ecosystemIds: [ECO.AceStep],
+    ecosystemIds: [ECO.AceAudio],
     stepDisplay: 'separate',
   },
 
@@ -651,7 +651,7 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
   ['vid2vid:extend', true],
 
   // Audio workflows - no legacy equivalent
-  ['txt2aud', true],
+  ['txt2music', true],
 ]);
 
 /**

@@ -68,7 +68,7 @@ export const WORKFLOW_TAGS = {
     VID_INTERPOLATION: 'process:vid-interpolation',
     VID_ENHANCEMENT: 'process:vid-enhancement',
     // Audio processes
-    TXT2AUD: 'process:txt2aud',
+    TXT2MUSIC: 'process:txt2music',
   },
 };
 
@@ -92,7 +92,7 @@ export function getProcessTagFromWorkflow(
 
   // Audio workflows
   if (mediaType === 'audio') {
-    return WORKFLOW_TAGS.PROCESS.TXT2AUD;
+    return WORKFLOW_TAGS.PROCESS.TXT2MUSIC;
   }
 
   // Default based on media type and source image
@@ -116,7 +116,7 @@ export const PROCESS_TYPE_OPTIONS = [
   { value: WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION, label: 'Interpolation' },
   { value: WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT, label: 'Enhancement' },
   // Audio processes
-  { value: WORKFLOW_TAGS.PROCESS.TXT2AUD, label: 'Text to Audio' },
+  { value: WORKFLOW_TAGS.PROCESS.TXT2MUSIC, label: 'Text to Music' },
 ] as const;
 
 export const generationServiceCookie = {

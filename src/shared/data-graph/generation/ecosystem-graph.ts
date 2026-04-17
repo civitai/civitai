@@ -54,7 +54,7 @@ import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
-import { aceStepGraph } from './ace-step-graph';
+import { aceAudioGraph } from './ace-audio-graph';
 
 // =============================================================================
 // Helper Functions
@@ -98,7 +98,7 @@ export const ecosystemGraph = new DataGraph<
         .filter((key): key is string => !!key);
       // Default ecosystem by output type
       const outputDefault =
-        ctx.output === 'audio' ? 'AceStep' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
+        ctx.output === 'audio' ? 'AceAudio' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
       const defaultValue = compatibleEcosystems.includes(outputDefault)
         ? outputDefault
         : compatibleEcosystems[0] ?? 'SDXL';
@@ -266,7 +266,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
     // Audio ecosystems
-    { values: ['AceStep'] as const, graph: aceStepGraph },
+    { values: ['AceAudio'] as const, graph: aceAudioGraph },
   ])
   // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
   .node(
@@ -284,7 +284,7 @@ export const ecosystemGraph = new DataGraph<
   .node(
     'prompt',
     (ctx) => {
-      const isAudio = ctx.ecosystem === 'AceStep';
+      const isAudio = ctx.ecosystem === 'AceAudio';
       const images = 'images' in ctx ? (ctx.images as unknown[]) : undefined;
       // const multiShot = 'multiShot' in ctx ? (ctx.multiShot as boolean) : false;
       const isKlingV3 = ctx.ecosystem === 'Kling' && ctx.model?.id === klingVersionIds.v3;

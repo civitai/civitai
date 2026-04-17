@@ -54,7 +54,7 @@ export interface GeneratedItemWorkflowGroup {
 
 export interface UseGeneratedItemWorkflowsOptions {
   /** Output type of the generated item */
-  outputType: 'image' | 'video';
+  outputType: 'image' | 'video' | 'audio';
   /** Ecosystem key from the generated output (step.params.baseModel) */
   ecosystemKey?: string;
   /**
@@ -82,11 +82,12 @@ const categoryLabels: Record<WorkflowCategory, string> = {
   audio: 'Audio',
 };
 
-/** Categories relevant for image outputs (workflows that accept image input) */
-const imageCategoryOrder: WorkflowCategory[] = ['image', 'video'];
-
-/** Categories relevant for video outputs (workflows that accept video input) */
-const videoCategoryOrder: WorkflowCategory[] = ['video'];
+/** Categories relevant per output type — which workflow categories can act on that output. */
+const categoryOrderByOutputType: Record<'image' | 'video' | 'audio', WorkflowCategory[]> = {
+  image: ['image', 'video'],
+  video: ['video'],
+  audio: ['audio'],
+};
 
 // =============================================================================
 // Hook
@@ -125,7 +126,7 @@ export function useGeneratedItemWorkflows({
     };
 
     // Group workflows by category
-    const categoryOrder = outputType === 'image' ? imageCategoryOrder : videoCategoryOrder;
+    const categoryOrder = categoryOrderByOutputType[outputType];
 
     const groups: GeneratedItemWorkflowGroup[] = categoryOrder
       .map((category) => ({
@@ -152,8 +153,7 @@ interface ApplyWorkflowOptions {
 
 /** Check if workflow switches media type (e.g., img2vid) */
 function isCrossMediaWorkflow(image: BlobData, workflowId: string): boolean {
-  const currentOutputType = image.type === 'video' ? 'video' : 'image';
-  return currentOutputType !== getOutputTypeForWorkflow(workflowId);
+  return image.mediaType !== getOutputTypeForWorkflow(workflowId);
 }
 
 /**
@@ -250,7 +250,7 @@ async function applyWorkflowToForm({
   // Build images in graph format { url, width, height }[]
   // Pass image for workflows that require it (inputType: 'image') OR
   // for text-input workflows whose graph has an 'images' node.
-  const isImageType = image.type !== 'video';
+  const isImageType = image.mediaType === 'image';
   const acceptsImages =
     inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
 
@@ -421,7 +421,7 @@ export async function applyWorkflowWithCheck({
     generationGraphPanel.setView('generate');
 
     const inputType = getInputTypeForWorkflow(workflowId);
-    const isImageType = image.type !== 'video';
+    const isImageType = image.mediaType === 'image';
     const acceptsImages =
       inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
 
