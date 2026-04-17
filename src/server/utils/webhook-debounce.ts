@@ -11,6 +11,8 @@
 import type { RedisKeyStringsCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { logToAxiom } from '~/server/logging/client';
+import { dbRead } from '~/server/db/client';
+import { ImageConnectionType } from '~/server/common/enums';
 import { updateArticleImageScanStatus } from '~/server/services/article.service';
 
 /**
@@ -81,5 +83,25 @@ export async function debounceArticleUpdate(articleId: number): Promise<void> {
         stack: err instanceof Error ? err.stack : undefined,
       }).catch(() => null);
     });
+  }
+}
+
+/**
+ * Fan out an image's terminal-state update to any articles that embed it.
+ * Each article debounce call coalesces concurrent webhooks and runs
+ * `recomputeArticleIngestion` so Blocked/Error/Scanned transitions all advance
+ * article state.
+ *
+ * Callers are responsible for gating on the `articleImageScanning` feature flag
+ * because the two webhook entrypoints resolve the flag differently (one reads
+ * from a request context, the other receives it as a parameter).
+ */
+export async function fanOutArticleImageUpdates(imageId: number): Promise<void> {
+  const articleConnections = await dbRead.imageConnection.findMany({
+    where: { imageId, entityType: ImageConnectionType.Article },
+    select: { entityId: true },
+  });
+  for (const { entityId } of articleConnections) {
+    await debounceArticleUpdate(entityId);
   }
 }

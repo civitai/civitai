@@ -177,10 +177,14 @@ async function runRollback(params: MigrationParams): Promise<{
 
 // --- Reconcile Mode ---
 //
-// Recomputes `Article.ingestion` for Published articles stuck in `Pending` or
-// `Rescan`. `recomputeArticleIngestion` is idempotent: articles that are
-// genuinely still scanning stay `Pending`; articles whose images/text already
-// finished get promoted to `Scanned` (or `Blocked`/`Error` as appropriate).
+// Recomputes `Article.ingestion` for articles stuck mid-scan. Covers:
+// - Published articles with ingestion Pending/Rescan (webhook fanout drift)
+// - Processing articles regardless of ingestion — `recomputeArticleIngestion`
+//   now also flips status: Processing → Published when scans complete, so the
+//   Processing + Scanned cohort (status flip never fired) is reconcilable here.
+// `recomputeArticleIngestion` is idempotent: articles that are genuinely still
+// scanning stay Pending; finished articles get promoted to Scanned / Blocked /
+// Error and their status is flipped where appropriate.
 
 async function runReconcile(params: MigrationParams): Promise<{
   articlesFound: number;
@@ -194,12 +198,18 @@ async function runReconcile(params: MigrationParams): Promise<{
   const articles = await dbWrite.$queryRaw<{ id: number }[]>`
     SELECT a.id
     FROM "Article" a
-    WHERE a.status = ${ArticleStatus.Published}::"ArticleStatus"
-      AND a.ingestion IN ('Pending', 'Rescan')
+    WHERE
+      (
+        a.status = ${ArticleStatus.Published}::"ArticleStatus"
+        AND a.ingestion IN ('Pending', 'Rescan')
+      )
+      OR a.status = ${ArticleStatus.Processing}::"ArticleStatus"
     ORDER BY a.id ASC
   `;
 
-  log(`Found ${articles.length} Published articles in Pending/Rescan`);
+  log(
+    `Found ${articles.length} articles to reconcile (Published+Pending/Rescan or any Processing)`
+  );
 
   if (dryRun) {
     return { articlesFound: articles.length, recomputed: 0, errors: 0 };
