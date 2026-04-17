@@ -141,7 +141,9 @@ export async function getUserNotificationCount({
   // this seems unused
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
-  const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
+  // Read from primary to avoid replica lag repopulating the cache with stale
+  // unread counts right after markRead writes to primary.
+  const query = await notifDbWrite.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
     SELECT
       n.category,
       COUNT(*) AS count
@@ -226,7 +228,7 @@ async function _markNotificationsReadImpl({
 
     // Update cache if the notification was marked read
     if (resp.rowCount) {
-      const catQuery = await notifDbRead.cancellableQuery<{
+      const catQuery = await notifDbWrite.cancellableQuery<{
         category: NotificationCategory;
       }>(Prisma.sql`
         SELECT
