@@ -1561,7 +1561,8 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 
   const where: Prisma.ModelVersionWhereInput = { AND };
 
-  const items = await dbRead.modelVersion.findMany({
+  // TODO(replica-toast): moderator-only training-review caller reads ModelFile.metadata; revert to dbRead once replication fixed.
+  const items = await dbWrite.modelVersion.findMany({
     where,
     cursor: cursor ? { id: cursor } : undefined,
     take: limit + 1,
@@ -1597,7 +1598,8 @@ export const bustMvCache = async (
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
-  const modelVersion = await dbRead.modelVersion.findFirst({
+  // TODO(replica-toast): revert to dbRead once the data-packet logical subscriber replicates ModelFile.metadata TOAST correctly
+  const modelVersion = await dbWrite.modelVersion.findFirst({
     where: { id },
     select: {
       id: true,
@@ -1626,7 +1628,8 @@ export const createModelVersionPostFromTraining = async ({
   user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
 }) => {
   const now = new Date();
-  const files = await dbRead.modelFile.findMany({
+  // TODO(replica-toast): revert to dbRead once the data-packet logical subscriber replicates ModelFile.metadata TOAST correctly
+  const files = await dbWrite.modelFile.findMany({
     where: { modelVersionId },
     select: { id: true, metadata: true },
   });
@@ -1713,7 +1716,8 @@ export async function updateModelVersionTrainingStatus({
   trainingStatus: TrainingStatus;
   modelFileId: number;
 }) {
-  const modelFile = await dbRead.modelFile.findUnique({
+  // TODO(replica-toast): read-then-write; reading from replica would wipe epochs (empty TOAST). Revert when replication fixed.
+  const modelFile = await dbWrite.modelFile.findUnique({
     where: { id: modelFileId },
     select: { id: true, modelVersionId: true, metadata: true },
   });
