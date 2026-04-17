@@ -137,7 +137,7 @@ export async function verifyCaptchaToken({
     logToAxiom({
       name: 'captcha-failure',
       type: 'error',
-      payload: {
+      error: {
         reason: 'siteverify-not-ok',
         status: result.status,
         tokenPrefix,
@@ -155,7 +155,7 @@ export async function verifyCaptchaToken({
       logToAxiom({
         name: 'captcha-success-sample',
         type: 'info',
-        payload: {
+        error: {
           tokenPrefix,
           verifyLatencyMs,
           cfRay,
@@ -172,7 +172,7 @@ export async function verifyCaptchaToken({
   logToAxiom({
     name: 'captcha-failure',
     type: 'error',
-    payload: {
+    error: {
       response: outcome,
       tokenPrefix,
       verifyLatencyMs,
