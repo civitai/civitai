@@ -1691,27 +1691,25 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
 }
 
 /**
- * Update article scan status after images complete scanning
+ * Update article scan status after images complete scanning.
  *
- * Uses PostgreSQL advisory locks to prevent race conditions from concurrent webhook calls
- * Implements transaction-safe status updates with automatic rollback on errors
- *
- * @param articleIds - Array of article IDs to update
+ * Recomputes the article's nsfwLevel once all images reach a terminal state,
+ * then delegates all status/ingestion transitions (Processing→Published,
+ * Pending/Rescan→Scanned/Blocked/Error) and author notifications to
+ * `recomputeArticleIngestion`, which is the single source of truth for
+ * article scan state.
  */
 export async function updateArticleImageScanStatus(articleIds: number[]): Promise<void> {
   for (const articleId of articleIds) {
     await dbWrite.$transaction(
       async (tx) => {
-        // Acquire PostgreSQL advisory lock (prevents concurrent webhooks)
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
 
-        // Get all connected images
         const connections = await tx.imageConnection.findMany({
           where: { entityId: articleId, entityType: ImageConnectionType.Article },
           include: { image: { select: { ingestion: true } } },
         });
 
-        // Calculate scan status
         const totalImages = connections.length;
         const scannedImages = connections.filter(
           (c) => c.image.ingestion === ImageIngestionStatus.Scanned
@@ -1725,83 +1723,41 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
             c.image.ingestion === ImageIngestionStatus.NotFound
         ).length;
 
-        // Check if all images have been processed (scanned, blocked, or error)
         const allProcessed = scannedImages + blockedImages + errorImages === totalImages;
-
-        // Only publish if ALL images scanned successfully (no blocked or error images)
-        const allScannedSuccessfully = scannedImages === totalImages;
-        const hasProblematicImages = blockedImages > 0 || errorImages > 0;
 
         if (allProcessed) {
           await updateArticleNsfwLevels([articleId]);
-
-          const article = await tx.article.findUnique({
-            where: { id: articleId },
-            select: { status: true, publishedAt: true, userId: true },
-          });
-
-          if (article?.status === ArticleStatus.Processing) {
-            if (allScannedSuccessfully && !hasProblematicImages) {
-              // All images scanned successfully - safe to publish
-              await tx.article.update({
-                where: { id: articleId },
-                data: {
-                  status: ArticleStatus.Published,
-                  publishedAt: article.publishedAt || new Date(),
-                },
-              });
-
-              // Success notification
-              await createNotification({
-                userId: article.userId,
-                category: NotificationCategory.System,
-                type: 'system-message',
-                key: `article-published-${articleId}`,
-                details: {
-                  message: `Your article has been published successfully!`,
-                  url: `/articles/${articleId}`,
-                },
-              });
-            } else if (hasProblematicImages) {
-              // Has blocked or error images - keep in Processing, notify user
-              await createNotification({
-                userId: article.userId,
-                category: NotificationCategory.System,
-                type: 'system-message',
-                key: `article-images-blocked-${articleId}`,
-                details: {
-                  message: `Your article cannot be published: ${
-                    blockedImages > 0
-                      ? `${blockedImages} image(s) blocked (policy violation)`
-                      : `${errorImages} image(s) failed to scan`
-                  }. Please remove or replace these images and resubmit.`,
-                  url: `/articles/${articleId}/edit`,
-                },
-              });
-            }
-          }
         }
       },
       { timeout: 30000, maxWait: 10000 }
     );
 
-    // Recompute article ingestion status after image scan processing
     await recomputeArticleIngestion(articleId);
   }
 }
 
 /**
- * Recompute Article.ingestion from ground truth (Image.ingestion + EntityModeration).
+ * Recompute Article.ingestion from ground truth (Image.ingestion + EntityModeration)
+ * and drive associated status transitions.
  *
- * This is the single source of truth for article ingestion state. Call it after:
+ * Single source of truth for article scan state. Call it after:
  * - Image scan webhooks (via updateArticleImageScanStatus)
  * - Text moderation webhooks (success or failure)
  * - Article upsert (to lock in Pending state)
- * - Backfill completion per article
+ * - Backfill / reconcile per article
  *
- * Sets contentScannedAt when ingestion transitions to Scanned.
+ * Transitions handled:
+ * - ingestion -> Scanned: sets contentScannedAt; if status == Processing, flips
+ *   status to Published and sends the "article published" notification.
+ * - ingestion -> Blocked/Error (all images terminal) while status == Processing:
+ *   sends the "images blocked/failed" notification so the author can fix and
+ *   resubmit. Status is left at Processing so the author can edit.
  */
 export async function recomputeArticleIngestion(articleId: number): Promise<void> {
+  let publishedNotificationUserId: number | null = null;
+  let problemsNotification: { userId: number; blockedImages: number; errorImages: number } | null =
+    null;
+
   await dbWrite.$transaction(
     async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
@@ -1859,23 +1815,56 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
         next = ArticleIngestionStatus.Pending;
       }
 
-      // Only set contentScannedAt on the *transition* to Scanned (not if already Scanned)
-      // to preserve the original scan-completion timestamp for observability.
       const current = await tx.article.findUniqueOrThrow({
         where: { id: articleId },
-        select: { ingestion: true },
-      });
-
-      await tx.article.update({
-        where: { id: articleId },
-        data: {
-          ingestion: next,
-          ...(next === ArticleIngestionStatus.Scanned &&
-          current.ingestion !== ArticleIngestionStatus.Scanned
-            ? { contentScannedAt: new Date() }
-            : {}),
+        select: {
+          ingestion: true,
+          status: true,
+          publishedAt: true,
+          userId: true,
         },
       });
+
+      const flipToPublished =
+        next === ArticleIngestionStatus.Scanned && current.status === ArticleStatus.Processing;
+
+      const data: Prisma.ArticleUpdateInput = { ingestion: next };
+      if (
+        next === ArticleIngestionStatus.Scanned &&
+        current.ingestion !== ArticleIngestionStatus.Scanned
+      ) {
+        data.contentScannedAt = new Date();
+      }
+      if (flipToPublished) {
+        data.status = ArticleStatus.Published;
+        data.publishedAt = current.publishedAt ?? new Date();
+      }
+
+      await tx.article.update({ where: { id: articleId }, data });
+
+      // Queue notifications for post-transaction dispatch so notification failures
+      // don't roll back the state update. Notifications dedupe via `key`
+      // (article-published-$id / article-images-blocked-$id) so re-notifying
+      // on repeated terminal-state recomputes is safe.
+      if (flipToPublished) {
+        publishedNotificationUserId = current.userId;
+      } else if (
+        current.status === ArticleStatus.Processing &&
+        imageDone &&
+        (next === ArticleIngestionStatus.Blocked || next === ArticleIngestionStatus.Error) &&
+        (blockedImages > 0 || errorImages > 0)
+      ) {
+        // Fire once all images are terminal and at least one is problematic.
+        // No ingestion-transition guard: if an early image blocks, ingestion
+        // moves to Blocked before the remaining Pending images finish; by the
+        // time they do, ingestion is unchanged and a transition check would
+        // miss the notification.
+        problemsNotification = {
+          userId: current.userId,
+          blockedImages,
+          errorImages,
+        };
+      }
     },
     { timeout: 30000, maxWait: 10000 }
   );
@@ -1885,6 +1874,37 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
   await articlesSearchIndex.queueUpdate([
     { id: articleId, action: SearchIndexUpdateQueueAction.Update },
   ]);
+
+  if (publishedNotificationUserId !== null) {
+    await createNotification({
+      userId: publishedNotificationUserId,
+      category: NotificationCategory.System,
+      type: 'system-message',
+      key: `article-published-${articleId}`,
+      details: {
+        message: `Your article has been published successfully!`,
+        url: `/articles/${articleId}`,
+      },
+    }).catch((e) => handleLogError(e, 'article-ingestion-published-notification', { articleId }));
+  }
+
+  if (problemsNotification) {
+    const { userId, blockedImages, errorImages } = problemsNotification;
+    await createNotification({
+      userId,
+      category: NotificationCategory.System,
+      type: 'system-message',
+      key: `article-images-blocked-${articleId}`,
+      details: {
+        message: `Your article cannot be published: ${
+          blockedImages > 0
+            ? `${blockedImages} image(s) blocked (policy violation)`
+            : `${errorImages} image(s) failed to scan`
+        }. Please remove or replace these images and resubmit.`,
+        url: `/articles/${articleId}/edit`,
+      },
+    }).catch((e) => handleLogError(e, 'article-ingestion-problems-notification', { articleId }));
+  }
 }
 
 const RESCAN_LIMIT = 3;
