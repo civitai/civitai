@@ -429,12 +429,13 @@ export const orchestratorRouter = router({
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
+      const { buzzType, ...rest } = input;
       const args = {
-        ...input,
+        ...rest,
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);
     }),

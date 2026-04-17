@@ -208,6 +208,7 @@ export type ImageTrainingStepSchema = z.infer<typeof imageTrainingStepSchema>;
 
 export const imageTrainingRouterInputSchema = z.object({
   modelVersionId: z.number(),
+  buzzType: z.string().optional(),
 });
 
 const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
