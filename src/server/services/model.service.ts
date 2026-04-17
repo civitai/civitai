@@ -2215,14 +2215,16 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
       break;
   }
 
-  const items = await dbRead.modelVersion.findMany({
-    select,
-    skip,
-    take,
-    where,
-    orderBy,
-  });
-  const count = await dbRead.modelVersion.count({ where });
+  const [items, count] = await Promise.all([
+    dbRead.modelVersion.findMany({
+      select,
+      skip,
+      take,
+      where,
+      orderBy,
+    }),
+    dbRead.modelVersion.count({ where }),
+  ]);
 
   return getPagingData({ items, count }, take, page);
 };
