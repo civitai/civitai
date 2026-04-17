@@ -1690,9 +1690,7 @@ export const getAllImages = async (
 
     // Merge user votes into tags
     if (tagsVar && userVotes) {
-      const voteMap = new Map(
-        userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote])
-      );
+      const voteMap = new Map(userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote]));
       for (const tag of tagsVar) {
         const vote = voteMap.get(`${tag.imageId}:${tag.id}`);
         if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
@@ -1701,15 +1699,12 @@ export const getAllImages = async (
 
     // Pre-index tags by imageId to avoid O(n*m) filter inside map
     const tagsByImageId = tagsVar
-      ? tagsVar.reduce(
-          (acc, tag) => {
-            const arr = acc.get(tag.imageId);
-            if (arr) arr.push(tag);
-            else acc.set(tag.imageId, [tag]);
-            return acc;
-          },
-          new Map<number, typeof tagsVar>()
-        )
+      ? tagsVar.reduce((acc, tag) => {
+          const arr = acc.get(tag.imageId);
+          if (arr) arr.push(tag);
+          else acc.set(tag.imageId, [tag]);
+          return acc;
+        }, new Map<number, typeof tagsVar>())
       : undefined;
 
     const now = new Date();
