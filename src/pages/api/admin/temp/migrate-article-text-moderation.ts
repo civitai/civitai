@@ -387,13 +387,12 @@ export default WebhookEndpoint(async (req, res) => {
             await recomputeArticleIngestion(article.id);
             stats.succeeded++;
 
-            // Apply Article-specific moderation logic (mirrors webhook handler)
+            // Apply Article-specific moderation logic (mirrors webhook handler).
+            // The EntityModeration record was persisted above by
+            // recordEntityModerationSuccess, so the moderation_floor subquery
+            // in updateArticleNsfwLevels picks up the R floor automatically.
             const isNsfw = blocked || triggeredLabels.some((l) => l.toLowerCase() === 'nsfw');
             if (isNsfw) {
-              await dbWrite.article.update({
-                where: { id: article.id },
-                data: { nsfw: true },
-              });
               await updateArticleNsfwLevels([article.id]);
               stats.flaggedNsfw++;
             }

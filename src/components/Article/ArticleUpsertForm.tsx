@@ -76,7 +76,7 @@ const tooltipProps: Partial<TooltipProps> = {
   withinPortal: true,
 };
 
-const lockableProperties = ['nsfw', 'userNsfwLevel'];
+const lockableProperties = ['userNsfwLevel'];
 
 export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
   label: browsingLevelLabels[level],

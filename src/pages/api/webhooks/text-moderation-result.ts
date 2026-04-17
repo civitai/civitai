@@ -29,13 +29,11 @@ const entityHandlers: Record<string, (result: TextModerationResult) => Promise<v
     // Blocked content is treated as NSFW regardless of triggered labels.
     const isNsfw = blocked || triggeredLabels.some((label) => label.toLowerCase() === 'nsfw');
 
-    // Elevate the nsfw flag only — never downgrade, since image content or the user
-    // may have already flagged the article as NSFW for reasons unrelated to text.
+    // recordEntityModerationSuccess has already persisted the moderation
+    // result above. updateArticleNsfwLevels's moderation_floor subquery reads
+    // that record directly, so the R floor is applied intrinsically — no
+    // parameter or prior write needed.
     if (isNsfw) {
-      await dbWrite.article.update({
-        where: { id: entityId },
-        data: { nsfw: true },
-      });
       await updateArticleNsfwLevels([entityId]);
     }
 

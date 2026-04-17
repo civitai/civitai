@@ -774,7 +774,6 @@ export const upsertArticle = async ({
 }: UpsertArticleInput & {
   userId: number;
   isModerator?: boolean;
-  nsfw?: boolean;
   metadata?: ArticleMetadata;
   scanContent?: boolean;
 }) => {

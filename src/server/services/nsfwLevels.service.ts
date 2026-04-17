@@ -314,17 +314,43 @@ export async function updateArticleNsfwLevels(articleIds: number[]) {
 
         WHERE a.id IN (${Prisma.join(articleIds)})
         GROUP BY a.id
+      ),
+      -- Durable moderation floor: R whenever a Successful text-moderation
+      -- record flagged the article as NSFW (via triggeredLabels or blocked),
+      -- OR an Actioned NSFW user report exists. Computed fresh on every
+      -- recompute so the floor survives image rescans / userNsfwLevel edits
+      -- without needing a persisted flag on the Article row. When those
+      -- records disappear (e.g. a mod Unactions the report), the floor drops
+      -- on the next recompute and the article's level re-derives from
+      -- user + image ground truth.
+      moderation_floor AS (
+        SELECT
+          a.id,
+          CASE
+            WHEN EXISTS (
+              SELECT 1 FROM "EntityModeration" em
+              WHERE em."entityType" = 'Article'
+                AND em."entityId" = a.id
+                AND em.status = 'Succeeded'::"EntityModerationStatus"
+                AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))
+            ) OR EXISTS (
+              SELECT 1 FROM "ArticleReport" ar
+              JOIN "Report" r ON r.id = ar."reportId"
+              WHERE ar."articleId" = a.id
+                AND r.reason = 'NSFW'::"ReportReason"
+                AND r.status = 'Actioned'::"ReportStatus"
+            ) THEN 4 -- NsfwLevel.R
+            ELSE 0
+          END AS "floor"
+        FROM "Article" a
+        WHERE a.id IN (${Prisma.join(articleIds)})
       )
       UPDATE "Article" a
-      SET "nsfwLevel" = (
-        CASE
-          WHEN a.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-          ELSE GREATEST(a."userNsfwLevel", level."nsfwLevel")
-        END
-      )
+      SET "nsfwLevel" = GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
       FROM level
+      JOIN moderation_floor mf ON mf.id = level.id
       WHERE level.id = a.id
-        AND (level."nsfwLevel" != a."nsfwLevel" OR a.nsfw = TRUE)
+        AND GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor") != a."nsfwLevel"
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(
