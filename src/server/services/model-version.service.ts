@@ -11,7 +11,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -359,9 +359,9 @@ export const upsertModelVersion = async ({
     ]);
 
     await Promise.all([
-      preventReplicationLag('modelVersion', version.id),
+      preventModelVersionLag(version.modelId, version.id),
       bustMvCache(version.id, version.modelId),
-      dataForModelsCache.bust(version.modelId),
+      dataForModelsCache.refresh(version.modelId),
     ]);
 
     return version;
@@ -545,9 +545,9 @@ export const upsertModelVersion = async ({
     });
 
     await Promise.all([
-      preventReplicationLag('modelVersion', version.id),
+      preventModelVersionLag(version.modelId, version.id),
       bustMvCache(version.id, version.modelId),
-      dataForModelsCache.bust(version.modelId),
+      dataForModelsCache.refresh(version.modelId),
     ]);
 
     // Run it in the background to avoid blocking the request.
@@ -581,12 +581,17 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
 
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
-    await preventReplicationLag('modelVersion', deleted.modelId);
-    await bustMvCache(deleted.id, deleted.modelId);
     await deleteBidsForModelVersion({ modelVersionId: id });
 
     return deleted;
   });
+
+  // Post-commit: Redis-level flags and cache busts must run only after the
+  // Postgres transaction actually commits. Running them inside the txn would
+  // invalidate caches on rollback, and would publish a lag flag for a delete
+  // that never happened.
+  await preventModelVersionLag(version.modelId, version.id);
+  await bustMvCache(version.id, version.modelId);
 
   return version;
 };
@@ -615,8 +620,7 @@ export const updateModelVersionById = async ({
   }
 
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
-  await preventReplicationLag('model', result.modelId);
-  await preventReplicationLag('modelVersion', id);
+  await preventModelVersionLag(result.modelId, id);
   await bustMvCache(id, result.modelId);
 };
 
@@ -906,8 +910,7 @@ export const publishModelVersionById = async ({
     await updateModelLastVersionAt({ id: version.modelId });
   await bustMvCache(version.id, version.modelId);
 
-  await preventReplicationLag('model', version.modelId);
-  await preventReplicationLag('modelVersion', id);
+  await preventModelVersionLag(version.modelId, id);
 
   // Update search index for model and images
   await modelsSearchIndex.queueUpdate([
@@ -972,8 +975,7 @@ export const unpublishModelVersionById = async ({
         AND "modelVersionId" = ${updatedVersion.id}
       `;
 
-      await preventReplicationLag('model', updatedVersion.model.id);
-      await preventReplicationLag('modelVersion', updatedVersion.id);
+      await preventModelVersionLag(updatedVersion.model.id, updatedVersion.id);
 
       return updatedVersion;
     },

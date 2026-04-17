@@ -419,7 +419,10 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
   cacheNotFound: false,
   staleWhileRevalidate: false,
   lookupFn: async (ids, fromWrite) => {
-    const db = fromWrite ? dbWrite : dbRead;
+    // refresh() passes fromWrite=true to force primary. For plain fetch() misses,
+    // fall back to the lag-aware helper so recent ModelVersion mutations don't
+    // wedge stale rows into this 1-day cache.
+    const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('model', ids);
 
     const versions = await db.$queryRaw<(ModelVersionDetails & { modelId: number })[]>`
       SELECT

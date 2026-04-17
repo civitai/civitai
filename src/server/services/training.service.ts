@@ -8,7 +8,9 @@ import type {
 } from '@civitai/client';
 import type { WorkflowStatus } from '@civitai/client';
 import { dbWrite } from '~/server/db/client';
+import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -603,6 +605,8 @@ export async function updateTrainingWorkflowRecords(
       },
     })
   );
+  await preventModelVersionLag(model.id, modelVersion.id);
+  await dataForModelsCache.refresh(model.id);
 
   return {
     trainingStatus,

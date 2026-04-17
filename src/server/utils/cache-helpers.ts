@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
 import { cacheHitCounter, cacheMissCounter, cacheRevalidateCounter } from '~/server/prom/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -265,21 +266,38 @@ export function createCachedArray<T extends object>({
   }
 
   async function refresh(id: number | number[]) {
-    if (!Array.isArray(id)) id = [id];
+    const ids = Array.isArray(id) ? id : [id];
 
-    const results = await lookupFn(id, true);
-    const cachedAt = new Date();
-    await Promise.all(
-      Object.entries(results).map(
-        ([id, x]) => redis.packed.set(`${key}:${id}`, { ...x, cachedAt }),
+    try {
+      const results = await lookupFn(ids, true);
+      if (appendFn) await appendFn(new Set(Object.values(results)));
+      const cachedAt = new Date();
+      const EX = staleWhileRevalidate ? ttl * 2 : ttl;
+      await Promise.all(
+        Object.entries(results).map(([rid, x]) =>
+          redis.packed.set(`${key}:${rid}`, { ...x, cachedAt }, { EX })
+        )
+      );
+
+      const toRemove = ids.filter((x) => !results[x]).map(String);
+      await Promise.all(toRemove.map((rid) => redis.del(`${key}:${rid}`)));
+    } catch (error) {
+      // Refresh is best-effort: swallow and fall back to bust semantics so the
+      // next reader re-fetches from primary via lookupFn. A committed mutation
+      // must not surface a 500 just because the cache refill failed.
+      logToAxiom(
         {
-          EX: ttl,
-        }
-      )
-    );
-
-    const toRemove = id.filter((x) => !results[x]).map(String);
-    await Promise.all(toRemove.map((id) => redis.del(`${key}:${id}`)));
+          type: 'error',
+          name: 'cache-refresh-failed',
+          cacheKey: key,
+          ids: ids.join(','),
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+      const fallbackBust = staleWhileRevalidate ? invalidate : bust;
+      await fallbackBust(ids).catch(() => undefined);
+    }
   }
 
   async function flush() {

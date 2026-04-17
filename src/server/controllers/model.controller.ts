@@ -530,7 +530,7 @@ export const upsertModelHandler = async ({
       nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
 
-    if (input.id) await dataForModelsCache.bust(input.id);
+    if (input.id) await dataForModelsCache.refresh(input.id);
 
     return model;
   } catch (error) {
@@ -589,7 +589,7 @@ export const publishModelHandler = async ({
       });
     }
 
-    await dataForModelsCache.bust(input.id);
+    await dataForModelsCache.refresh(input.id);
 
     return updatedModel;
   } catch (error) {
@@ -627,7 +627,7 @@ export const unpublishModelHandler = async ({
       nsfw: model.nsfw,
     });
 
-    await dataForModelsCache.bust(input.id);
+    await dataForModelsCache.refresh(input.id);
 
     return updatedModel;
   } catch (error) {
@@ -657,7 +657,7 @@ export const deleteModelHandler = async ({
       nsfw: !getIsSafeBrowsingLevel(model.nsfwLevel),
     });
 
-    await dataForModelsCache.bust(id);
+    await dataForModelsCache.refresh(id);
 
     return model;
   } catch (error) {
@@ -1001,7 +1001,7 @@ export const restoreModelHandler = async ({
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
-    await dataForModelsCache.bust(input.id);
+    await dataForModelsCache.refresh(input.id);
 
     return model;
   } catch (error) {
@@ -1156,7 +1156,7 @@ export const reorderModelVersionsHandler = async ({
 
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    await dataForModelsCache.bust(input.id);
+    await dataForModelsCache.refresh(input.id);
 
     return model;
   } catch (error) {
@@ -1715,7 +1715,7 @@ export async function toggleCheckpointCoverageHandler({
     await modelsSearchIndex.queueUpdate([
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
-    await dataForModelsCache.bust(input.id);
+    await dataForModelsCache.refresh(input.id);
 
     return affectedVersionIds;
   } catch (error) {
@@ -1859,7 +1859,7 @@ export const privateModelFromTrainingHandler = async ({
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    if (input.id) await dataForModelsCache.bust(input.id);
+    if (input.id) await dataForModelsCache.refresh(input.id);
 
     return model;
   } catch (error) {
@@ -1893,7 +1893,7 @@ export const publishPrivateModelHandler = async ({
     }
 
     const { versionIds } = await publishPrivateModel(input);
-    await dataForModelsCache.bust(input.modelId);
+    await dataForModelsCache.refresh(input.modelId);
     await bustMvCache(versionIds, input.modelId);
     await modelsSearchIndex.queueUpdate([
       { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
