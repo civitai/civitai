@@ -11,13 +11,16 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
-  const [images, connections, articles] = await Promise.all([
+  const [images, connections, articles, collectionItems] = await Promise.all([
     dbRead.image.findMany({
       where: { id: { in: imageIds } },
       select: { postId: true },
@@ -30,10 +33,10 @@ async function getImageConnectedEntities(imageIds: number[]) {
       where: { coverId: { in: imageIds } },
       select: { id: true },
     }),
-    // dbRead.collectionItem.findMany({
-    //   where: { imageId: { in: imageIds } },
-    //   select: { collectionId: true },
-    // }),
+    dbRead.collectionItem.findMany({
+      where: { imageId: { in: imageIds }, status: CollectionItemStatus.ACCEPTED },
+      select: { collectionId: true },
+    }),
   ]);
 
   const comicPanels = await dbRead.comicPanel.findMany({
@@ -58,25 +61,25 @@ async function getImageConnectedEntities(imageIds: number[]) {
       .filter((x) => x.entityType === ImageConnectionType.BountyEntry)
       .map((x) => x.entityId),
     comicProjectIds: comicPanels.map((x) => x.projectId),
-    // collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
 async function getPostConnectedEntities(postIds: number[]) {
-  const [posts] = await Promise.all([
+  const [posts, collectionItems] = await Promise.all([
     dbRead.post.findMany({
       where: { id: { in: postIds } },
       select: { modelVersionId: true },
     }),
-    // dbRead.collectionItem.findMany({
-    //   where: { postId: { in: postIds } },
-    //   select: { collectionId: true },
-    // }),
+    dbRead.collectionItem.findMany({
+      where: { postId: { in: postIds }, status: CollectionItemStatus.ACCEPTED },
+      select: { collectionId: true },
+    }),
   ]);
 
   return {
     modelVersionIds: posts.map((x) => x.modelVersionId).filter(isDefined),
-    // collectionIds: collectionItems.map((x) => x.collectionId),
+    collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
@@ -92,24 +95,24 @@ async function getModelVersionConnectedEntities(modelVersionIds: number[]) {
 }
 
 async function getModelConnectedEntities(modelIds: number[]) {
-  // const collectionItems = await dbRead.collectionItem.findMany({
-  //   where: { modelId: { in: modelIds } },
-  //   select: { collectionId: true },
-  // });
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: { modelId: { in: modelIds }, status: CollectionItemStatus.ACCEPTED },
+    select: { collectionId: true },
+  });
 
   return {
-    collectionIds: [], // collectionItems.map((x) => x.collectionId),
+    collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
 async function getArticleConnectedEntities(articleIds: number[]) {
-  // const collectionItems = await dbRead.collectionItem.findMany({
-  //   where: { articleId: { in: articleIds } },
-  //   select: { collectionId: true },
-  // });
+  const collectionItems = await dbRead.collectionItem.findMany({
+    where: { articleId: { in: articleIds }, status: CollectionItemStatus.ACCEPTED },
+    select: { collectionId: true },
+  });
 
   return {
-    collectionIds: [], // collectionItems.map((x) => x.collectionId),
+    collectionIds: collectionItems.map((x) => x.collectionId),
   };
 }
 
@@ -377,6 +380,19 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
   `);
 }
 
+// Collection nsfwLevel is bucketed: 0=unrated, 1=safe-only, 28=nsfw-only, 29=mixed.
+// Safe bucket is stored as PG (1) so unauthed/public browsingLevel=1 matches.
+// NSFW bucket = R|X|XXX (28). Blocked (32) is intentionally excluded from the
+// bucket value: blocked items are hidden everywhere and shouldn't classify the
+// collection. The nsfw-probe still matches on (level & 60) so blocked-only
+// items still flip the collection into the nsfw bucket.
+//
+// Precedence:
+//   1. metadata.forcedBrowsingLevel set → map forced bits to bucket
+//   2. otherwise → two-probe scan of ACCEPTED items
+// Collection.nsfw boolean is ignored — it's auto-flipped by user NSFW reports
+// (report.service.ts) so it's not a reliable signal of collection content.
+const COLLECTION_NSFW_BUCKET = 28; // R|X|XXX
 export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
   if (!collectionIds.length) return;
   const collections = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
@@ -385,41 +401,45 @@ export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
         c.id,
         (
           CASE
-            WHEN (c."nsfw" IS TRUE) THEN ${nsfwBrowsingLevelsFlag}
-            ELSE COALESCE((
-              SELECT bit_or(COALESCE(item_nsfw."nsfwLevel", 0))
-              FROM (
-                SELECT
-                  ci."collectionId",
-                  COALESCE(
-                    CASE WHEN ci."imageId" IS NOT NULL THEN i."nsfwLevel" END,
-                    CASE WHEN ci."postId" IS NOT NULL THEN p."nsfwLevel" END,
-                    CASE WHEN ci."modelId" IS NOT NULL THEN m."nsfwLevel" END,
-                    CASE WHEN ci."articleId" IS NOT NULL THEN a."nsfwLevel" END,
-                    0
-                  ) AS "nsfwLevel"
-                FROM "CollectionItem" ci
-                LEFT JOIN "Image" i ON ci."imageId" = i.id
-                LEFT JOIN "Post" p ON ci."postId" = p.id AND p."publishedAt" IS NOT NULL
-                LEFT JOIN "Model" m ON ci."modelId" = m.id AND m."status" = 'Published'
-                LEFT JOIN "Article" a ON ci."articleId" = a.id AND a."publishedAt" IS NOT NULL
-                WHERE ci."collectionId" = c.id
-                  AND ci."status" = 'ACCEPTED'
-                ORDER BY ci."createdAt" DESC
-                LIMIT 50
-              ) AS item_nsfw
-              GROUP BY item_nsfw."collectionId"
-            ), 0)
+            WHEN (c.metadata->>'forcedBrowsingLevel') IS NOT NULL
+              AND (c.metadata->>'forcedBrowsingLevel') ~ '^[0-9]+$' THEN
+              (
+                (CASE WHEN ((c.metadata->>'forcedBrowsingLevel')::int & ${sfwBrowsingLevelsFlag}) != 0 THEN 1 ELSE 0 END)
+                | (CASE WHEN ((c.metadata->>'forcedBrowsingLevel')::int & ${nsfwBrowsingLevelsFlag}) != 0 THEN ${COLLECTION_NSFW_BUCKET} ELSE 0 END)
+              )
+            ELSE
+              (
+                (CASE WHEN EXISTS (
+                  SELECT 1 FROM "CollectionItem" ci
+                  LEFT JOIN "Image"   i ON i.id = ci."imageId"
+                  LEFT JOIN "Post"    p ON p.id = ci."postId"    AND p."publishedAt" IS NOT NULL
+                  LEFT JOIN "Model"   m ON m.id = ci."modelId"   AND m."status" = 'Published'
+                  LEFT JOIN "Article" a ON a.id = ci."articleId" AND a."publishedAt" IS NOT NULL
+                  WHERE ci."collectionId" = c.id AND ci.status = 'ACCEPTED'
+                    AND (COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel", 0) & ${sfwBrowsingLevelsFlag}) != 0
+                ) THEN 1 ELSE 0 END)
+                | (CASE WHEN EXISTS (
+                  SELECT 1 FROM "CollectionItem" ci
+                  LEFT JOIN "Image"   i ON i.id = ci."imageId"
+                  LEFT JOIN "Post"    p ON p.id = ci."postId"    AND p."publishedAt" IS NOT NULL
+                  LEFT JOIN "Model"   m ON m.id = ci."modelId"   AND m."status" = 'Published'
+                  LEFT JOIN "Article" a ON a.id = ci."articleId" AND a."publishedAt" IS NOT NULL
+                  WHERE ci."collectionId" = c.id AND ci.status = 'ACCEPTED'
+                    AND (COALESCE(i."nsfwLevel", p."nsfwLevel", m."nsfwLevel", a."nsfwLevel", 0) & ${nsfwBrowsingLevelsFlag}) != 0
+                ) THEN ${COLLECTION_NSFW_BUCKET} ELSE 0 END)
+              )
           END
         ) AS "nsfwLevel"
       FROM "Collection" c
-      WHERE c."id" in (${Prisma.join(collectionIds)}) AND c."availability" = 'Public'
+      WHERE c."id" IN (${Prisma.join(collectionIds)})
+        AND c."availability" = 'Public'
+        AND c."read" IN ('Public', 'Unlisted')
     )
     UPDATE "Collection" c
     SET "nsfwLevel" = c2."nsfwLevel"
-    FROM (SELECT * FROM collections) AS c2
+    FROM collections c2
     WHERE c.id = c2.id
-    AND c."nsfwLevel" != c2."nsfwLevel"
+      AND c."nsfwLevel" != c2."nsfwLevel"
     RETURNING c.id;
   `);
   await collectionsSearchIndex.queueUpdate(
