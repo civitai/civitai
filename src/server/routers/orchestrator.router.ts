@@ -67,17 +67,7 @@ import {
   grokSizes,
 } from '~/server/common/constants';
 import type { SessionUser } from 'next-auth';
-import {
-  getFlagged,
-  getReasons,
-  getConsumerStrikes,
-  reviewConsumerStrikes,
-} from '../http/orchestrator/flagged-consumers';
-import {
-  getFlaggedConsumersSchema,
-  getFlaggedReasonsSchema,
-  getFlaggedConsumerStrikesSchema,
-} from '~/server/schema/orchestrator/flagged-consumers.schema';
+import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
@@ -489,15 +479,6 @@ export const orchestratorRouter = router({
       return normalized;
     }),
 
-  getFlaggedConsumers: moderatorProcedure
-    .input(getFlaggedConsumersSchema)
-    .query(({ input }) => getFlagged(input)),
-  getFlaggedReasons: moderatorProcedure
-    .input(getFlaggedReasonsSchema)
-    .query(({ input }) => getReasons(input)),
-  getFlaggedConsumerStrikes: moderatorProcedure
-    .input(getFlaggedConsumerStrikesSchema)
-    .query(({ input }) => getConsumerStrikes(input)),
   reviewConsumerStrikes: moderatorProcedure
     .input(z.object({ userId: z.number() }))
     .mutation(({ input, ctx }) =>
