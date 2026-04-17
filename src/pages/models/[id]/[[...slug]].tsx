@@ -763,14 +763,9 @@ export default function ModelDetailsV2({
                         </Text>
                       </IconBadge>
                     </StatHoverCard>
-                    {/* TODO this isn't quite right, we need to check the other couldGenerate options */}
                     {latestGenerationVersion && (
                       <GenerateButton
-                        model={model}
-                        version={latestGenerationVersion}
-                        image={image}
                         versionId={latestGenerationVersion.id}
-                        canGenerate={model.canGenerate}
                         data-activity="create:model-stat"
                       >
                         <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>

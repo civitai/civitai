@@ -47,6 +47,10 @@ import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import {
+  BidModelButton,
+  getEntityDataForBidModelButton,
+} from '~/components/Auction/BidModelButton';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import {
   DescriptionTable,
@@ -413,11 +417,7 @@ function ModelVersionDetailsContent({
           )}
           {canGenerate ? (
             <GenerateButton
-              model={model}
-              version={version}
               versionId={version.id}
-              image={image}
-              canGenerate={canGenerate}
               data-activity="create:version-stat"
               disabled={isLoadingAccess}
               generationPrice={
@@ -750,13 +750,9 @@ function ModelVersionDetailsContent({
             </Button>
           ) : showPublishButton ? (
             <Stack gap={4}>
-              {couldGenerate && isOwnerOrMod && (
+              {canGenerate && isOwnerOrMod && (
                 <GenerateButton
-                  model={model}
-                  version={version}
                   versionId={version.id}
-                  image={image}
-                  canGenerate={canGenerate}
                   data-tour="model:create"
                   data-activity="create:model"
                   py={8}
@@ -820,13 +816,9 @@ function ModelVersionDetailsContent({
               )}
               <Group gap="xs" className={classes.ctaContainer}>
                 <Group gap="xs" className="flex-1" wrap="nowrap">
-                  {couldGenerate && (
+                  {canGenerate ? (
                     <GenerateButton
-                      model={model}
-                      version={version}
                       versionId={version.id}
-                      image={image}
-                      canGenerate={canGenerate}
                       data-tour="model:create"
                       data-activity="create:model"
                       style={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
@@ -840,7 +832,25 @@ function ModelVersionDetailsContent({
                       }
                       onPurchase={() => onPurchase('generation')}
                     />
-                  )}
+                  ) : couldGenerate &&
+                    model.availability !== Availability.Private &&
+                    model.status === ModelStatus.Published &&
+                    !model.poi ? (
+                    <BidModelButton
+                      entityData={getEntityDataForBidModelButton({
+                        version,
+                        model,
+                        image,
+                      })}
+                      asButton
+                      buttonProps={{
+                        className: 'pl-[8px] pr-[12px] w-full',
+                        color: 'cyan',
+                        style: { flex: '2 !important' },
+                      }}
+                      divProps={{ className: 'flex-[2]' }}
+                    />
+                  ) : null}
                   {displayCivitaiLink && (
                     <CivitaiLinkManageButton
                       modelId={model.id}
