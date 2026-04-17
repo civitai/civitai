@@ -20,11 +20,14 @@
  * Run with:
  *   GET /api/admin/temp/republish-orphaned-drafts?token=WEBHOOK_TOKEN&dryRun=true
  *   GET /api/admin/temp/republish-orphaned-drafts?token=WEBHOOK_TOKEN
- *   GET /api/admin/temp/republish-orphaned-drafts?token=WEBHOOK_TOKEN&limit=10
+ *   GET /api/admin/temp/republish-orphaned-drafts?token=WEBHOOK_TOKEN&batchSize=10&concurrency=3
+ *   GET /api/admin/temp/republish-orphaned-drafts?token=WEBHOOK_TOKEN&modelIds=2548032,160433
  */
 
 import type { NextApiResponse } from 'next';
 import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
+import * as z from 'zod';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -35,6 +38,29 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { bustMvCache } from '~/server/services/model-version.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { booleanString } from '~/utils/zod-helpers';
+
+const schema = z.object({
+  dryRun: booleanString().default(false),
+  concurrency: z.coerce.number().min(1).max(20).default(5),
+  batchSize: z.coerce.number().min(1).max(500).default(25),
+  limit: z.coerce.number().min(1).optional(),
+  // Comma-separated list of Model IDs to target. When set, bypasses the
+  // 30-day recency filter so you can fix specific user reports, but still
+  // enforces the Draft/has-file/safety-flag guards.
+  modelIds: z
+    .string()
+    .optional()
+    .transform((val) =>
+      val
+        ? val
+            .split(',')
+            .map((id) => parseInt(id.trim(), 10))
+            .filter((id) => !isNaN(id))
+        : undefined
+    ),
+});
 
 type Candidate = {
   versionId: number;
@@ -46,9 +72,105 @@ type Candidate = {
   versionAvailability: string;
 };
 
+type Result = {
+  versionId: number;
+  modelId: number;
+  userId: number;
+  modelName: string;
+  publishedAt: string;
+  status: 'ok' | 'error';
+  error?: string;
+};
+
+async function republishOne(c: Candidate): Promise<Result> {
+  const publishedAt = c.postPublishedAt;
+
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      // Use raw SQL here so we can surgically strip only the unpublish keys
+      // from Model.meta (Prisma's typed update can't do JSON key subtraction).
+      // Strip keys set by the auto-unpublish-models-with-no-versions cron
+      // while stuck in Draft; preserve anything else a mod/user may have set.
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "Model"
+        SET "status"      = 'Published',
+            "publishedAt" = ${publishedAt},
+            "meta"        = COALESCE("meta", '{}'::jsonb)
+                              - 'unpublishedAt'
+                              - 'unpublishedReason'
+                              - 'unpublishedBy'
+        WHERE id = ${c.modelId}
+      `);
+
+      await tx.modelVersion.update({
+        where: { id: c.versionId },
+        data: {
+          status: 'Published',
+          publishedAt,
+          availability: 'Public',
+        },
+      });
+
+      // Defensive: sync any other Posts on this version to the same
+      // publishedAt if they were orphaned similarly. Matches the logic in
+      // publishModelById but with the specific versionId scope.
+      await tx.$executeRaw(Prisma.sql`
+        UPDATE "Post" p
+        SET "publishedAt" = ${publishedAt},
+            "metadata"    = COALESCE(p."metadata", '{}'::jsonb) - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+        WHERE p."modelVersionId" = ${c.versionId}
+          AND p."userId"         = ${c.userId}
+          AND (p."publishedAt" IS NULL OR p."publishedAt" <> ${publishedAt})
+      `);
+    });
+
+    // Recompute NSFW levels (version first, then model, since Model
+    // aggregates from Published versions only).
+    await updateModelVersionNsfwLevels([c.versionId]);
+    await updateModelNsfwLevels([c.modelId]);
+
+    // Cache + search index
+    await bustMvCache(c.versionId, c.modelId);
+    await dataForModelsCache.bust(c.modelId);
+    await modelsSearchIndex.queueUpdate([
+      { id: c.modelId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+    return {
+      versionId: c.versionId,
+      modelId: c.modelId,
+      userId: c.userId,
+      modelName: c.modelName,
+      publishedAt: publishedAt.toISOString(),
+      status: 'ok',
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      versionId: c.versionId,
+      modelId: c.modelId,
+      userId: c.userId,
+      modelName: c.modelName,
+      publishedAt: publishedAt.toISOString(),
+      status: 'error',
+      error: message,
+    };
+  }
+}
+
 export default WebhookEndpoint(async (req, res: NextApiResponse) => {
-  const dryRun = req.query.dryRun === 'true';
-  const limit = req.query.limit ? Number(req.query.limit) : undefined;
+  const parsed = schema.safeParse(req.query);
+  if (!parsed.success) {
+    return res.status(400).json({ error: z.treeifyError(parsed.error) });
+  }
+  const { dryRun, concurrency, batchSize, limit, modelIds } = parsed.data;
+
+  // When modelIds is provided we bypass the 30-day window (explicit targeting
+  // for user reports) but still enforce the Draft/has-file/safety-flag guards.
+  const modelIdFilter =
+    modelIds && modelIds.length > 0
+      ? Prisma.sql`AND m.id IN (${Prisma.join(modelIds)})`
+      : Prisma.sql`AND p."publishedAt" > NOW() - INTERVAL '30 days'`;
 
   const candidates = await dbRead.$queryRaw<Candidate[]>(Prisma.sql`
     SELECT DISTINCT ON (mv.id)
@@ -66,7 +188,7 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
     WHERE mv.status       = 'Draft'
       AND m.status        = 'Draft'
       AND p."publishedAt" IS NOT NULL
-      AND p."publishedAt" > NOW() - INTERVAL '30 days'
+      ${modelIdFilter}
       AND m."deletedAt"   IS NULL
       AND COALESCE(m.poi, false)   = false
       AND COALESCE(m.minor, false) = false
@@ -77,24 +199,18 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
     ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}
   `);
 
+  const targetingSuffix =
+    modelIds && modelIds.length > 0 ? ` modelIds=[${modelIds.join(',')}]` : '';
   console.log(
-    `[republish-orphaned-drafts] dryRun=${dryRun} candidates=${candidates.length}`
+    `[republish-orphaned-drafts] dryRun=${dryRun} candidates=${candidates.length} batchSize=${batchSize} concurrency=${concurrency}${targetingSuffix}`
   );
-
-  const results: Array<{
-    versionId: number;
-    modelId: number;
-    userId: number;
-    modelName: string;
-    publishedAt: string;
-    status: 'ok' | 'error';
-    error?: string;
-  }> = [];
 
   if (dryRun) {
     return res.status(200).json({
       dryRun: true,
       candidateCount: candidates.length,
+      batchSize,
+      concurrency,
       candidates: candidates.map((c) => ({
         ...c,
         postPublishedAt: c.postPublishedAt.toISOString(),
@@ -102,91 +218,44 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
     });
   }
 
-  for (const c of candidates) {
-    try {
-      const publishedAt = c.postPublishedAt;
+  const startTime = Date.now();
+  const results: Result[] = [];
+  const batches = chunk(candidates, batchSize);
 
-      await dbWrite.$transaction(async (tx) => {
-        await tx.model.update({
-          where: { id: c.modelId },
-          data: {
-            status: 'Published',
-            publishedAt,
-            // Clear leftover unpublish metadata if present (set by the
-            // auto-unpublish-models-with-no-versions cron while stuck in Draft).
-            meta: Prisma.JsonNull,
-          },
-        });
+  for (const [batchIndex, batch] of batches.entries()) {
+    console.log(
+      `[republish-orphaned-drafts] batch ${batchIndex + 1}/${batches.length} (${
+        batch.length
+      } items)`
+    );
 
-        await tx.modelVersion.update({
-          where: { id: c.versionId },
-          data: {
-            status: 'Published',
-            publishedAt,
-            availability: 'Public',
-          },
-        });
-
-        // Defensive: sync any other Posts on this version to the same
-        // publishedAt if they were orphaned similarly. Matches the logic in
-        // publishModelById but with the specific versionId scope.
-        await tx.$executeRaw(Prisma.sql`
-          UPDATE "Post" p
-          SET "publishedAt" = ${publishedAt},
-              "metadata"    = COALESCE(p."metadata", '{}'::jsonb) - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
-          WHERE p."modelVersionId" = ${c.versionId}
-            AND p."userId"         = ${c.userId}
-            AND (p."publishedAt" IS NULL OR p."publishedAt" <> ${publishedAt})
-        `);
-      });
-
-      // Recompute NSFW levels (version first, then model, since Model
-      // aggregates from Published versions only).
-      await updateModelVersionNsfwLevels([c.versionId]);
-      await updateModelNsfwLevels([c.modelId]);
-
-      // Cache + search index
-      await bustMvCache(c.versionId, c.modelId);
-      await dataForModelsCache.bust(c.modelId);
-      await modelsSearchIndex.queueUpdate([
-        { id: c.modelId, action: SearchIndexUpdateQueueAction.Update },
-      ]);
-
-      results.push({
-        versionId: c.versionId,
-        modelId: c.modelId,
-        userId: c.userId,
-        modelName: c.modelName,
-        publishedAt: publishedAt.toISOString(),
-        status: 'ok',
-      });
-
+    const tasks = batch.map((c) => async () => {
+      const result = await republishOne(c);
+      results.push(result);
+      const suffix = result.error ? ` error=${result.error}` : '';
       console.log(
-        `[republish-orphaned-drafts] ok modelId=${c.modelId} versionId=${c.versionId}`
+        `[republish-orphaned-drafts] ${result.status} modelId=${c.modelId} versionId=${c.versionId}${suffix}`
       );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(
-        `[republish-orphaned-drafts] error modelId=${c.modelId} versionId=${c.versionId}: ${message}`
-      );
-      results.push({
-        versionId: c.versionId,
-        modelId: c.modelId,
-        userId: c.userId,
-        modelName: c.modelName,
-        publishedAt: c.postPublishedAt.toISOString(),
-        status: 'error',
-        error: message,
-      });
-    }
+    });
+
+    await limitConcurrency(tasks, concurrency);
   }
 
   const okCount = results.filter((r) => r.status === 'ok').length;
   const errorCount = results.filter((r) => r.status === 'error').length;
+  const durationSec = ((Date.now() - startTime) / 1000).toFixed(2);
+
+  console.log(
+    `[republish-orphaned-drafts] done ok=${okCount} error=${errorCount} duration=${durationSec}s`
+  );
 
   return res.status(200).json({
     dryRun: false,
     candidateCount: candidates.length,
+    batches: batches.length,
+    batchSize,
+    concurrency,
+    durationSec: Number(durationSec),
     okCount,
     errorCount,
     results,
