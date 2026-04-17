@@ -54,6 +54,7 @@ import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
+import { ernieGraph } from './ernie-graph';
 
 // =============================================================================
 // Helper Functions
@@ -234,6 +235,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
     { values: ['Anima'] as const, graph: animaGraph },
+    { values: ['Ernie'] as const, graph: ernieGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {

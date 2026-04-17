@@ -856,6 +856,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Seedream - checkpoint only
   { ecosystemId: ECO.Seedream, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // Ernie - checkpoint only
+  { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Sora2 - checkpoint only
   { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -1252,6 +1255,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Grok,
     defaults: {
       model: { id: 2738377 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Ernie,
+    defaults: {
+      model: { id: 2863858 },
       modelLocked: true,
     },
   },

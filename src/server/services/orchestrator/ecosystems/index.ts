@@ -37,6 +37,7 @@ import { createOpenAIInput } from './openai.handler';
 import { createNanoBananaInput } from './nano-banana.handler';
 import { createAnimaInput } from './anima.handler';
 import { createChromaInput } from './chroma.handler';
+import { createErnieInput } from './ernie.handler';
 import { createZImageInput } from './z-image.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createPonyV7Input } from './pony-v7.handler';
@@ -118,6 +119,9 @@ export type AnimaCtx = EcosystemGraphOutput & { ecosystem: 'Anima' };
 /** PonyV7 context */
 export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 
+/** Ernie context */
+export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
+
 /** Wan video ecosystems context */
 export type WanCtx = EcosystemGraphOutput & {
   ecosystem:
@@ -177,6 +181,7 @@ export { createChromaInput } from './chroma.handler';
 export { createZImageInput } from './z-image.handler';
 export { createHiDreamInput } from './hi-dream.handler';
 export { createPonyV7Input } from './pony-v7.handler';
+export { createErnieInput } from './ernie.handler';
 
 // Video ecosystems
 export { createWanSteps } from './wan.handler';
@@ -316,6 +321,10 @@ async function createEcosystemStep(
     // NanoBanana
     case 'NanoBanana':
       return createNanoBananaInput(normalizedData, handlerCtx);
+
+    // Ernie
+    case 'Ernie':
+      return createErnieInput(normalizedData, handlerCtx);
 
     // =========================================================================
     // Video Ecosystems - videoGen step type
