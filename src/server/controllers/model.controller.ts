@@ -177,9 +177,20 @@ export const getModelHandler = async ({
 
     const features = ctx.features;
     const isOwner = ctx.user?.id === model.user.id || ctx.user?.isModerator;
+
+    // Prevent non-owners from viewing scheduled/draft/unpublished models
+    if (!isOwner && model.status !== ModelStatus.Published) {
+      throw throwNotFoundError(`No model with id ${input.id}`);
+    }
+
+    const now = new Date();
     const filteredVersions = isOwner
       ? model.modelVersions
-      : model.modelVersions.filter((version) => version.status === ModelStatus.Published);
+      : model.modelVersions.filter(
+          (version) =>
+            version.status === ModelStatus.Published &&
+            (!version.publishedAt || version.publishedAt <= now)
+        );
     const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {

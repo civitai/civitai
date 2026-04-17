@@ -128,10 +128,12 @@ export const getDefaultModelVersion = async ({
   modelId,
   modelVersionId,
   userId,
+  isModerator,
 }: {
   modelId: number;
   modelVersionId?: number;
   userId?: number;
+  isModerator?: boolean;
 }) => {
   const db = await getDbWithoutLag('model', modelId);
   const result = await db.model.findUnique({
@@ -144,7 +146,8 @@ export const getDefaultModelVersion = async ({
         select: {
           id: true,
           status: true,
-          model: { select: { id: true, userId: true, availability: true } },
+          publishedAt: true,
+          model: { select: { id: true, userId: true, availability: true, status: true } },
           availability: true,
           trainingStatus: true,
         },
@@ -154,9 +157,21 @@ export const getDefaultModelVersion = async ({
 
   if (!result) throw throwNotFoundError();
 
+  const isOwner =
+    isModerator || (userId != null && result.modelVersions[0]?.model?.userId === userId);
+
+  // If the model itself is scheduled/draft and the user is not the owner, return nothing
+  const modelStatus = result.modelVersions[0]?.model?.status;
+  if (!isOwner && modelStatus && modelStatus !== ModelStatus.Published) {
+    return undefined;
+  }
+
   // Attempt to return the first published version. Otherwise, return whatever is available.
-  const published = result.modelVersions.find((v) => v.status === ModelStatus.Published);
-  return published ?? result.modelVersions[0];
+  const now = new Date();
+  const published = result.modelVersions.find(
+    (v) => v.status === ModelStatus.Published && (isOwner || !v.publishedAt || v.publishedAt <= now)
+  );
+  return published ?? (isOwner ? result.modelVersions[0] : undefined);
 };
 
 export const toggleModelVersionEngagement = async ({
@@ -783,12 +798,10 @@ export const publishModelVersionById = async ({
       },
     },
   } as const;
-  const currentVersion = await dbRead.modelVersion
-    .findUniqueOrThrow(versionFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
-      return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
-    });
+  const currentVersion = await dbRead.modelVersion.findUniqueOrThrow(versionFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
+    return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
+  });
 
   // Validate NSFW + restricted base model combination
   if (
@@ -1500,12 +1513,10 @@ export const modelVersionDonationGoals = async ({
       },
     },
   } as const;
-  const version = await dbRead.modelVersion
-    .findFirstOrThrow(donationFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
-      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
-    });
+  const version = await dbRead.modelVersion.findFirstOrThrow(donationFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+    return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+  });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 

@@ -40,7 +40,12 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId: versionId }).catch(
+    const version = await getDefaultModelVersion({
+      modelId: id,
+      modelVersionId: versionId,
+      userId: session.user?.id,
+      isModerator,
+    }).catch(
       (err) => {
         console.error(err);
         return null;

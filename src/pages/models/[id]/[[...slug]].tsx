@@ -152,7 +152,12 @@ export const getServerSideProps = createServerSideProps({
     const id = Number(params.id);
     const modelVersionId = query.modelVersionId ? Number(query.modelVersionId) : undefined;
     if (!isNumber(id)) return { notFound: true };
-    const version = await getDefaultModelVersion({ modelId: id, modelVersionId }).catch(() => null);
+    const version = await getDefaultModelVersion({
+      modelId: id,
+      modelVersionId,
+      userId: session?.user?.id,
+      isModerator: session?.user?.isModerator,
+    }).catch(() => null);
     const modelVersionIdParsed = modelVersionId ?? version?.id;
 
     if (!modelVersionIdParsed && !session?.user?.isModerator) {
