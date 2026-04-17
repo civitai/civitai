@@ -34,6 +34,10 @@ type SearchRetryBannerProps = {
   // True when zero pages have loaded yet — copy changes to "loading images"
   // instead of "loading more images".
   isInitialLoad?: boolean;
+  // True when the current request has exceeded the slow threshold. Swaps copy
+  // to "taking longer than usual" and reframes the countdown as time until
+  // abort instead of time until retry.
+  slow?: boolean;
 };
 
 // Phrase pools gated by feed browsing level flags. "minLevel" is the NsfwLevel
@@ -113,6 +117,7 @@ export function SearchRetryBanner({
   browsingLevel = NsfwLevel.PG,
   countdownActive = true,
   isInitialLoad = false,
+  slow = false,
 }: SearchRetryBannerProps) {
   const noun = isInitialLoad ? 'images' : 'more images';
   const exhausted = attempt > maxAttempts;
@@ -243,7 +248,9 @@ export function SearchRetryBanner({
         <Stack gap="sm" align="center">
           <Group gap={8}>
             <Text size="sm" fw={600}>
-              {effectiveCountdownActive
+              {slow
+                ? `Taking longer than usual`
+                : effectiveCountdownActive
                 ? `Having trouble loading ${noun}`
                 : 'Retrying now — hang tight'}
             </Text>
@@ -257,7 +264,7 @@ export function SearchRetryBanner({
             {phrase}
           </Text>
           <Text size="xs" c="dimmed">
-            {effectiveCountdownActive
+            {slow || effectiveCountdownActive
               ? `Retrying in ${seconds}s · Attempt ${attempt} of ${maxAttempts}`
               : `Attempt ${attempt} of ${maxAttempts}`}
           </Text>

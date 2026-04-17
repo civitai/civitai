@@ -139,7 +139,12 @@ export const useQueryImages = (
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      trpc: { context: { skipBatch: true } },
+      // abortOnUnmount: true forces tRPC to forward React Query's AbortSignal
+      // to the underlying fetch. Without it, queryClient.cancelQueries is a
+      // no-op on the actual HTTP request — needed here so the slow-fetch
+      // timeout can truly abort a hung request instead of waiting for it to
+      // resolve naturally.
+      trpc: { context: { skipBatch: true }, abortOnUnmount: true },
       // Disable React Query's silent auto-retry so our retry banner drives
       // every attempt. Otherwise the user sees nothing for the first failure,
       // then the banner appears belatedly.
