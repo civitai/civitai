@@ -2,6 +2,7 @@ import { ImageResponse } from 'next/og';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { ArticleIngestionStatus } from '~/shared/utils/prisma/enums';
@@ -691,8 +692,23 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { type, id } = parsed.data;
+  const cacheKey = `${REDIS_KEYS.CACHES.EDGE_CACHED}:og:${type}:${id}` as const;
 
   try {
+    // Check Redis cache first
+    const cached = await redis?.get(cacheKey).catch(() => null);
+    if (cached) {
+      const buffer = Buffer.from(cached, 'base64');
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader(
+        'Cache-Control',
+        'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400'
+      );
+      res.setHeader('CDN-Cache-Control', 'max-age=604800');
+      res.setHeader('X-Cache', 'HIT');
+      return res.send(buffer);
+    }
+
     const fetcher = dataFetchers[type];
     const data = await fetcher(id);
 
@@ -705,12 +721,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const buffer = Buffer.from(await imageResponse.arrayBuffer());
 
+    // Cache successful entity renders for 4 hours (skip fallback)
+    if (data) {
+      await redis?.set(cacheKey, buffer.toString('base64'), { EX: 14400 }).catch(() => {});
+    }
+
     res.setHeader('Content-Type', 'image/png');
     res.setHeader(
       'Cache-Control',
       'public, max-age=86400, s-maxage=604800, stale-while-revalidate=86400'
     );
     res.setHeader('CDN-Cache-Control', 'max-age=604800');
+    res.setHeader('X-Cache', 'MISS');
     res.send(buffer);
   } catch (error) {
     console.error('OG image generation failed:', error);
