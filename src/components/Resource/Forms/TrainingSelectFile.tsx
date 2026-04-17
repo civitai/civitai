@@ -11,7 +11,12 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconArrowRight, IconFileDownload } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconAlertTriangle,
+  IconArrowRight,
+  IconFileDownload,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
@@ -96,11 +101,7 @@ const EpochRow = ({
             Epoch #{epoch.epochNumber}
           </Text>
           <Group gap={8} wrap="nowrap">
-            <DownloadButton
-              onClick={handleDownload}
-              canDownload
-              variant="light"
-            >
+            <DownloadButton onClick={handleDownload} canDownload variant="light">
               <Text align="center">
                 {epoch.modelSize > 0
                   ? `Download (${formatKBytes(bytesToKB(epoch.modelSize))})`
@@ -384,6 +385,19 @@ export default function TrainingSelectFile({
   }
   epochs = [...epochs].sort((a, b) => b.epochNumber - a.epochNumber);
 
+  // Check if epoch images may be blurred due to buzz type.
+  // Images are blurred when paid with green buzz or blue buzz without a membership.
+  // Images are NOT blurred when paid with yellow buzz or blue buzz with a membership.
+  const tResultsV2 =
+    trainingResults?.version === 2 ||
+    !!(trainingResults as unknown as TrainingResultsV2)?.transactionData
+      ? (trainingResults as unknown as TrainingResultsV2)
+      : undefined;
+  const buzzType = tResultsV2?.transactionData?.find((t) => t.accountType)?.accountType;
+  console.log({ tResultsV2, buzzType });
+  // Show alert when NOT paid with yellow buzz (yellow is the only type that guarantees no blur)
+  const epochImagesMayBeBlurred = buzzType !== 'yellow';
+
   const errorMessage =
     modelVersion.trainingStatus === TrainingStatus.Paused
       ? 'Your training will resume or terminate within 1 business day. No action is required on your part.'
@@ -510,6 +524,37 @@ export default function TrainingSelectFile({
                 </Text>
               </Stack>
             </DismissibleAlert>
+          )}
+          {epochImagesMayBeBlurred && (
+            <Paper
+              p="md"
+              radius="md"
+              withBorder
+              style={{
+                borderColor: 'var(--mantine-color-yellow-6)',
+                backgroundColor: 'var(--mantine-color-yellow-light)',
+              }}
+            >
+              <Group gap="sm" wrap="nowrap" align="flex-start">
+                <IconAlertTriangle
+                  size={24}
+                  color="var(--mantine-color-yellow-6)"
+                  style={{ flexShrink: 0, marginTop: 2 }}
+                />
+                <Stack gap={4}>
+                  <Text fw={700} size="sm">
+                    Why are my epoch images blurred?
+                  </Text>
+                  <Text size="sm">
+                    {buzzType === 'green'
+                      ? 'This training was submitted with Green Buzz. Epoch sample images containing mature content will appear blurred when using Green Buzz.'
+                      : 'Epoch sample images containing mature content are blurred for non-members.'}{' '}
+                    To get unblurred epoch images, use Yellow Buzz or Blue Buzz with a Civitai
+                    Membership.
+                  </Text>
+                </Stack>
+              </Group>
+            </Paper>
           )}
           <Stack gap="xs">
             <Flex justify="flex-end" align="center" gap="md">

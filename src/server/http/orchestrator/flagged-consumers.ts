@@ -8,7 +8,6 @@ async function orchestratorFetch(path: string, opts?: RequestInit) {
   const headers: Record<string, string> = {
     Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
   };
-  console.log(url, { ...opts, headers: { ...headers, ...opts?.headers } });
   const response = await fetch(url, { ...opts, headers: { ...headers, ...opts?.headers } });
   if (!response.ok) {
     throw new Error(`Orchestrator fetch failed: ${response.status} ${response.statusText}`);
