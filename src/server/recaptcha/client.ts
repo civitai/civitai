@@ -137,12 +137,14 @@ export async function verifyCaptchaToken({
     logToAxiom({
       name: 'captcha-failure',
       type: 'error',
-      reason: 'siteverify-not-ok',
-      status: result.status,
-      tokenPrefix,
-      verifyLatencyMs,
-      cfRay,
-      meta,
+      payload: {
+        reason: 'siteverify-not-ok',
+        status: result.status,
+        tokenPrefix,
+        verifyLatencyMs,
+        cfRay,
+        meta,
+      },
     }).catch(() => undefined);
     throw throwBadRequestError('No response from captcha service');
   }
@@ -153,13 +155,15 @@ export async function verifyCaptchaToken({
       logToAxiom({
         name: 'captcha-success-sample',
         type: 'info',
-        tokenPrefix,
-        verifyLatencyMs,
-        cfRay,
-        challenge_ts: outcome.challenge_ts,
-        hostname: outcome.hostname,
-        action: outcome.action,
-        meta,
+        payload: {
+          tokenPrefix,
+          verifyLatencyMs,
+          cfRay,
+          challenge_ts: outcome.challenge_ts,
+          hostname: outcome.hostname,
+          action: outcome.action,
+          meta,
+        },
       }).catch(() => undefined);
     }
     return true;
@@ -168,11 +172,13 @@ export async function verifyCaptchaToken({
   logToAxiom({
     name: 'captcha-failure',
     type: 'error',
-    response: outcome,
-    tokenPrefix,
-    verifyLatencyMs,
-    cfRay,
-    meta,
+    payload: {
+      response: outcome,
+      tokenPrefix,
+      verifyLatencyMs,
+      cfRay,
+      meta,
+    },
   }).catch(() => undefined);
   throw throwBadRequestError('Unable to verify captcha token');
 }
