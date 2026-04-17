@@ -11,7 +11,11 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventModelVersionLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  preventModelVersionLag,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
