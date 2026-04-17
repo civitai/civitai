@@ -52,6 +52,7 @@ import { createMochiInput } from './mochi.handler';
 import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
+import { createSeedanceInput } from './seedance.handler';
 
 // =============================================================================
 // Types - Derived from GenerationGraph
@@ -161,6 +162,9 @@ export type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 /** Grok context */
 export type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 
+/** Seedance context */
+export type SeedanceCtx = EcosystemGraphOutput & { ecosystem: 'Seedance' };
+
 // =============================================================================
 // Exports - Individual handlers
 // =============================================================================
@@ -193,6 +197,7 @@ export { createMochiInput } from './mochi.handler';
 export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
+export { createSeedanceInput } from './seedance.handler';
 
 // Shared utilities
 export { createComfyInput } from './comfy-input';
@@ -371,6 +376,10 @@ async function createEcosystemStep(
     // Veo3
     case 'Veo3':
       return createVeo3Input(normalizedData, handlerCtx);
+
+    // Seedance
+    case 'Seedance':
+      return createSeedanceInput(normalizedData, handlerCtx);
 
     // Grok (image + video)
     case 'Grok': {

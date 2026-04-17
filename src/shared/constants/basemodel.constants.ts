@@ -872,7 +872,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Seedance - checkpoint only
-  // { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Anima - checkpoint only
   { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1246,7 +1246,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Seedance,
     defaults: {
-      model: { id: 2623856 },
+      model: { id: 2864671 },
       modelLocked: true,
       engine: 'seedance',
     },

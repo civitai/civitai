@@ -111,6 +111,7 @@ const TXT2VID_IDS = [
   // ECO.Haiper,
   // ECO.Lightricks,
   ECO.Grok,
+  ECO.Seedance,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -593,7 +594,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27,
+      ecoId === ECO.WanVideo27 ||
+      ecoId === ECO.Seedance,
   ],
   [
     'img2vid',
@@ -601,7 +603,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27,
+      ecoId === ECO.WanVideo27 ||
+      ecoId === ECO.Seedance,
   ],
 
   // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow

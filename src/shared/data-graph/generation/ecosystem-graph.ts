@@ -55,6 +55,7 @@ import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
 import { ernieGraph } from './ernie-graph';
+import { seedanceGraph } from './seedance-graph';
 
 // =============================================================================
 // Helper Functions
@@ -265,6 +266,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
+    { values: ['Seedance'] as const, graph: seedanceGraph },
   ])
   // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
   .node(
