@@ -551,11 +551,8 @@ export const getArticles = async ({
           coverImage: coverImage
             ? {
                 ...coverImage,
-                // !important - when article `userNsfwLevel` equals article `nsfwLevel`, it's possible that the article `userNsfwLevel` is higher than the cover image `nsfwLevel`. In this case, we update the image to the higher `nsfwLevel` so that it will still pass through front end filters
-                nsfwLevel:
-                  article.nsfwLevel === article.userNsfwLevel
-                    ? article.nsfwLevel
-                    : coverImage.nsfwLevel,
+                // Lift the cover image nsfwLevel to the article's aggregate so card-level NSFW filtering (ImageGuard blur, browsingLevel mask) reflects content images or userNsfwLevel that may have raised the rating above the cover's own level.
+                nsfwLevel: Math.max(article.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
                 meta: coverImage.meta as ImageMetaProps,
                 metadata: coverImage.metadata as ImageMetadata,
                 tags: coverImage?.tags.flatMap((x) => x.tag.id),
