@@ -1758,5 +1758,7 @@ export async function updateModelVersionTrainingStatus({
     }),
   ]);
 
+  await preventReplicationLag('modelVersion', id);
+
   return updatedVersion;
 }
