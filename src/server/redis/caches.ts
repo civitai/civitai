@@ -6,6 +6,7 @@ import { CacheTTL } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
@@ -1196,11 +1197,14 @@ export const imageResourcesCache = createCachedObject<ImageResourcesCacheItem>({
   key: REDIS_KEYS.CACHES.IMAGE_RESOURCES,
   idKey: 'imageId',
   ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
-  lookupFn: async (ids) => {
+  lookupFn: async (ids, fromWrite) => {
     const imageIds = Array.isArray(ids) ? ids : [ids];
     if (imageIds.length === 0) return {};
 
-    const resources = await dbRead.$queryRaw<ImageResourceCacheItem[]>`
+    // refresh() passes fromWrite=true to force primary. For plain fetch() misses,
+    // fall back to the lag-aware helper so recent writes don't wedge stale rows.
+    const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('imageResource', imageIds);
+    const resources = await db.$queryRaw<ImageResourceCacheItem[]>`
       SELECT
         ir."imageId",
         ir."modelVersionId",

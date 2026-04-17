@@ -4663,7 +4663,7 @@ export const removeImageResource = async ({
     // if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
     purgeImageGenerationDataCache(imageId);
-    await imageResourcesCache.bust(imageId);
+    await imageResourcesCache.refresh(imageId);
 
     return resource;
   } catch (error) {
@@ -7009,7 +7009,7 @@ export async function createImageResources({
     }
   }
 
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   return resources;
 }
 
@@ -7166,7 +7166,7 @@ export async function refreshImageResources(imageId: number) {
     DELETE FROM "ImageResourceNew" WHERE "imageId" = ${imageId} AND detected
   `;
   await createImageResources({ imageId });
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   return await dbWrite.imageResourceHelper.findMany({ where: { imageId } });
 }
 

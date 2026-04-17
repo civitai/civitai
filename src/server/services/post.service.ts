@@ -1254,7 +1254,7 @@ export const addResourceToPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
-  await imageResourcesCache.bust(createdResources.map((x) => x.imageId));
+  await imageResourcesCache.refresh(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
@@ -1299,7 +1299,7 @@ export const removeResourceFromPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
 
