@@ -1757,6 +1757,7 @@ export async function updateModelVersionTrainingStatus({
     dbWrite.modelVersion.update({
       where: { id },
       data: { trainingStatus },
+      include: { model: { select: { userId: true } } },
     }),
     dbWrite.modelFile.update({
       where: { id: modelFile.id },
@@ -1765,6 +1766,11 @@ export async function updateModelVersionTrainingStatus({
   ]);
 
   await preventReplicationLag('modelVersion', id);
+  // getTrainingModelsByUserId filters by userId, so flag by user too — the
+  // modelVersion id alone can't help that list query.
+  if (updatedVersion.model?.userId) {
+    await preventReplicationLag('userTrainingModels', updatedVersion.model.userId);
+  }
 
   return updatedVersion;
 }

@@ -12,7 +12,8 @@ type LaggingType =
   | 'postImages'
   | 'article'
   | 'imageResource'
-  | 'notification';
+  | 'notification'
+  | 'userTrainingModels';
 
 function lagKey(type: LaggingType, id: number | string) {
   return `${REDIS_KEYS.LAG_HELPER}:${type}:${id}` as const;

@@ -1636,6 +1636,11 @@ export const upsertModel = async (
 
     await modelTagCache.refresh(result.id);
     await preventReplicationLag('model', result.id);
+    if (data.uploadType === ModelUploadType.Trained) {
+      // getTrainingModelsByUserId filters by userId — flag that path so the
+      // dashboard refresh right after create reads from primary.
+      await preventReplicationLag('userTrainingModels', userId);
+    }
     return { ...result, meta: modelMeta };
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
@@ -2215,15 +2220,19 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
       break;
   }
 
+  // Route to primary when the user just wrote to their training models so the
+  // list reflects the change. Flag is set by updateModelVersionTrainingStatus
+  // and by upsertModel on create-training.
+  const db = await getDbWithoutLag('userTrainingModels', userId);
   const [items, count] = await Promise.all([
-    dbRead.modelVersion.findMany({
+    db.modelVersion.findMany({
       select,
       skip,
       take,
       where,
       orderBy,
     }),
-    dbRead.modelVersion.count({ where }),
+    db.modelVersion.count({ where }),
   ]);
 
   return getPagingData({ items, count }, take, page);
