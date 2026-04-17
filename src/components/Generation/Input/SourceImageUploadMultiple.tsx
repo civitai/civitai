@@ -1252,7 +1252,7 @@ SourceImageUploadMultiple.CloseButton = function CloseButton({
 }) {
   return (
     <ActionIcon
-      className="absolute right-0 top-0"
+      className="absolute right-0 top-0 z-30"
       variant="filled"
       color="red"
       size="sm"

@@ -1241,6 +1241,11 @@ export function GenerationForm() {
                     max={meta.max}
                     step={meta.step}
                     presets={meta.presets}
+                    warning={
+                      value <= 1
+                        ? 'Low CLIP Skip values may not work well depending on the model'
+                        : undefined
+                    }
                   />
                 )}
               />
