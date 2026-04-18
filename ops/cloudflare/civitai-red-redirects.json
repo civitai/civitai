@@ -10,7 +10,7 @@
         "from_value": {
           "status_code": 302,
           "target_url": {
-            "expression": "concat(\"https://civitai.com/support?sync-account=red&sync-redirect=\", url_encode(http.request.uri.path))"
+            "expression": "concat(\"https://civitai.com/support?sync-account=red&sync-redirect=\", http.request.uri.path)"
           },
           "preserve_query_string": false
         }
