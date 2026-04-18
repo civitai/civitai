@@ -6,6 +6,7 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { eventEngine } from '~/server/events';
 import { userArticleCountCache, articleStatCache } from '~/server/redis/caches';
 import { logToAxiom } from '~/server/logging/client';
@@ -673,7 +674,8 @@ export const getArticleById = async ({
   browsingLevel,
 }: GetByIdInput & { userId?: number; isModerator?: boolean; browsingLevel?: number }) => {
   try {
-    const article = await dbRead.article.findFirst({
+    const db = await getDbWithoutLag('article', id);
+    const article = await db.article.findFirst({
       where: {
         id,
         OR: !isModerator
@@ -889,6 +891,9 @@ export const upsertArticle = async ({
         return article;
       });
 
+      await preventReplicationLag('article', result.id);
+      await preventReplicationLag('userArticles', userId);
+
       // Link content images for new article (creates Image entities and ImageConnections)
       if (result.content && scanContent) {
         try {
@@ -1072,6 +1077,9 @@ export const upsertArticle = async ({
     });
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
+
+    await preventReplicationLag('article', result.id);
+    await preventReplicationLag('userArticles', result.userId);
 
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {
@@ -1260,7 +1268,8 @@ export const getDraftArticlesByUserId = async ({
       status: { in: [ArticleStatus.Draft, ArticleStatus.Unpublished] },
     };
 
-    const articles = await dbRead.article.findMany({
+    const db = await getDbWithoutLag('userArticles', userId);
+    const articles = await db.article.findMany({
       take,
       skip,
       where,
@@ -1277,7 +1286,7 @@ export const getDraftArticlesByUserId = async ({
         },
       },
     });
-    const count = await dbRead.article.count({ where });
+    const count = await db.article.count({ where });
 
     const items = articles.map(({ tags, ...article }) => ({
       ...article,
@@ -1306,7 +1315,8 @@ export async function unpublishArticleById({
   isModerator?: boolean;
 }) {
   // Fetch article
-  const article = await dbRead.article.findUnique({
+  const db = await getDbWithoutLag('article', id);
+  const article = await db.article.findUnique({
     where: { id },
     select: { userId: true, publishedAt: true, status: true },
   });
@@ -1357,12 +1367,15 @@ export async function unpublishArticleById({
 
   // Bust user content cache
   await userArticleCountCache.refresh(article.userId);
+  await preventReplicationLag('article', id);
+  await preventReplicationLag('userArticles', article.userId);
 
   return updated;
 }
 
 export async function restoreArticleById({ id, userId }: { id: number; userId: number }) {
-  const article = await dbRead.article.findUnique({
+  const db = await getDbWithoutLag('article', id);
+  const article = await db.article.findUnique({
     where: { id },
     select: {
       userId: true,
@@ -1411,6 +1424,8 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
   await userArticleCountCache.refresh(article.userId);
+  await preventReplicationLag('article', id);
+  await preventReplicationLag('userArticles', article.userId);
 
   return updated;
 }
@@ -1933,7 +1948,8 @@ export async function rescanArticle({
   }
 
   // --- Fetch article ---
-  const article = await dbRead.article.findUnique({
+  const db = await getDbWithoutLag('article', id);
+  const article = await db.article.findUnique({
     where: { id },
     select: { id: true, userId: true, content: true, title: true, coverId: true },
   });
@@ -1948,6 +1964,8 @@ export async function rescanArticle({
       contentScannedAt: null,
     },
   });
+  await preventReplicationLag('article', id);
+  await preventReplicationLag('userArticles', article.userId);
 
   // Remove from search index immediately — article should not be searchable while rescanning.
   await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
