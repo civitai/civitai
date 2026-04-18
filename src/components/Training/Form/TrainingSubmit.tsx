@@ -1,5 +1,6 @@
 import {
   Accordion,
+  Alert,
   Badge,
   Button,
   Divider,
@@ -51,6 +52,8 @@ import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelec
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
 import type {
@@ -114,6 +117,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     isLoading: isBuzzLoading,
   } = useQueryBuzz(availableTypes);
   const { color: buzzColor } = useBuzzCurrencyConfig(selectedType);
+  const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
+  const yellowOnGreen = features.isGreen && selectedType === 'yellow';
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs, imageList, initialImageList } = useTrainingImageStore(
@@ -1009,25 +1015,29 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             className="self-end bg-gray-0 dark:bg-dark-6"
           >
             <Group gap="sm">
-              <Badge>
-                <Group gap={4} wrap="nowrap">
-                  <Text inherit>Queue</Text>
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
-                    <Text size="sm">How many jobs are in the queue before you</Text>
-                  </InfoPopover>
-                </Group>
-              </Badge>
+              {(dryRunResult.isLoading || isDefined(dryRunResult.data?.precedingJobs)) && (
+                <>
+                  <Badge>
+                    <Group gap={4} wrap="nowrap">
+                      <Text inherit>Queue</Text>
+                      <InfoPopover type="hover" size="xs" iconProps={{ size: 16 }} withinPortal>
+                        <Text size="sm">How many jobs are in the queue before you</Text>
+                      </InfoPopover>
+                    </Group>
+                  </Badge>
 
-              {dryRunResult.isLoading ? (
-                <Loader size="sm" />
-              ) : (
-                <Text>{dryRunResult.data?.precedingJobs ?? 'Unknown'}</Text>
+                  {dryRunResult.isLoading ? (
+                    <Loader size="sm" />
+                  ) : (
+                    <Text>{dryRunResult.data?.precedingJobs}</Text>
+                  )}
+
+                  <Divider orientation="vertical" />
+                </>
               )}
 
               {selectedRun.params.engine !== 'ai-toolkit' && (
                 <>
-                  <Divider orientation="vertical" />
-
                   <Badge>
                     <Group gap={4} wrap="nowrap">
                       <Text inherit>ETA</Text>
@@ -1050,10 +1060,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                         : minsToHours(dryRunResult.data?.eta)}
                     </Text>
                   )}
+
+                  <Divider orientation="vertical" />
                 </>
               )}
-
-              <Divider orientation="vertical" />
 
               <Badge>Cost</Badge>
               {dryRunResult.isLoading ? (
@@ -1074,7 +1084,52 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
       <Divider mt="md" />
 
-      {clientInsufficientBuzz && (
+      {yellowOnGreen ? (
+        <Alert color="yellow" mt="md" className="rounded-md">
+          <Text
+            size="sm"
+            fw={700}
+            c="var(--mantine-color-yellow-light-color)"
+            className="flex items-center gap-1.5"
+          >
+            <IconAlertTriangle size={16} />
+            Yellow Buzz can&apos;t be used on Civitai.com
+          </Text>
+          <Text size="xs" mt={4}>
+            Yellow Buzz is unrestricted. However, Civitai.com only allows safe for work content
+            creation. To train with your Yellow Buzz, go to Civitai.red.
+          </Text>
+          <div className="mt-3 flex items-center gap-3">
+            <Button
+              component="a"
+              href={syncAccount(`//${serverDomains.red}${router.asPath}`)}
+              onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
+                e.preventDefault();
+                window.open(
+                  syncAccount(`//${serverDomains.red}${router.asPath}`),
+                  '_blank',
+                  'noopener,noreferrer'
+                );
+              }}
+              target="_blank"
+              rel="noreferrer nofollow"
+              variant="filled"
+              className="flex-1"
+            >
+              Go to Civitai.red
+            </Button>
+            <Text
+              size="xs"
+              fw={700}
+              className="cursor-pointer hover:underline"
+              style={{ opacity: 0.6 }}
+              onClick={() => setBuzzType('green')}
+            >
+              Switch to Green Buzz
+            </Text>
+          </div>
+        </Alert>
+      ) : clientInsufficientBuzz ? (
         <Notification
           icon={<IconAlertTriangle size={18} />}
           color="yellow"
@@ -1108,7 +1163,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             )}
           </div>
         </Notification>
-      )}
+      ) : null}
 
       <Group mt="lg" justify="flex-end">
         <Button variant="default" onClick={() => goBack(model.id, thisStep)}>
@@ -1124,7 +1179,8 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               awaitInvalidate ||
               dryRunResult.isLoading ||
               clientInsufficientBuzz ||
-              hasIssue
+              hasIssue ||
+              yellowOnGreen
             }
             color={buzzColor}
             onClick={handleSubmit}

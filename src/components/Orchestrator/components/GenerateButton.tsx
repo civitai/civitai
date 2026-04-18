@@ -5,6 +5,7 @@ import { useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export function GenerateButton({
   loading,
@@ -27,6 +28,7 @@ export function GenerateButton({
 } & ButtonProps &
   Partial<React.ButtonHTMLAttributes<HTMLButtonElement>>) {
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const { running } = useTourContext();
   const { size = 'lg' } = buttonProps;
 
   return (
@@ -35,7 +37,7 @@ export function GenerateButton({
         {...buttonProps}
         size={size}
         loading={loading}
-        disabled={!canGenerate || disabled}
+        disabled={!running && (!canGenerate || disabled)}
         onClick={onClick}
         className={buttonProps.className}
         style={{
