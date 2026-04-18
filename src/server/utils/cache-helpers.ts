@@ -270,7 +270,10 @@ export function createCachedArray<T extends object>({
 
     try {
       const results = await lookupFn(ids, true);
-      if (appendFn) await appendFn(new Set(Object.values(results)));
+      // appendFn is a read-side decorator (attaches computed fields, may mutate
+      // records in place). refresh() is fire-and-forget — its output isn't
+      // returned to a caller — so running appendFn here only risks persisting
+      // post-mutation shape to Redis. Leave it to fetch().
       const cachedAt = new Date();
       const EX = staleWhileRevalidate ? ttl * 2 : ttl;
       await Promise.all(
