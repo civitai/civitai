@@ -172,25 +172,11 @@ export default defineNextConfig(
     },
     poweredByHeader: false,
     redirects: async () => {
-      const redHost = process.env.SERVER_DOMAIN_RED;
-      const primaryHost = process.env.SERVER_DOMAIN_GREEN;
-      const supportPaths = ['/canny/bugs', '/bugs', '/support-portal'];
-      // On civitai.red, bounce support links through civitai.com with a session-sync
-      // trampoline (AppProvider mounts useDomainSync on /support, which picks up
-      // ?sync-account=red and swaps the .red session into .com before replacing
-      // location with sync-redirect — which is /bugs → 308 → Freshworks SSO).
-      const redSupportRedirects =
-        redHost && primaryHost
-          ? supportPaths.map((path) => ({
-              source: path,
-              has: [{ type: /** @type {const} */ ('host'), value: redHost }],
-              destination: `https://${primaryHost}/support?sync-account=red&sync-redirect=${encodeURIComponent(path)}`,
-              permanent: false,
-            }))
-          : [];
-
+      // Note: the .red-host support-portal bounce lives in
+      // src/server/middleware/redirects.middleware.ts — redirects() evaluates
+      // at build time and SERVER_DOMAIN_* aren't ARG-exposed in Dockerfile, so
+      // any env-dependent rule here would be pruned to an empty array.
       return [
-        ...redSupportRedirects,
         {
           source: '/api/download/training-data/:modelVersionId',
           destination: '/api/download/models/:modelVersionId?type=Training%20Data',
