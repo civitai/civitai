@@ -3,7 +3,7 @@ import { createNextApiHandler } from '@trpc/server/adapters/next';
 import { withAxiom } from '@civitai/next-axiom';
 import { isProd } from '~/env/other';
 import { createContext } from '~/server/createContext';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { appRouter } from '~/server/routers';
 
 export const config = {
@@ -69,10 +69,8 @@ const trpcHandler = createNextApiHandler({
 
       await logToAxiom(
         {
-          name: error.name,
+          ...safeError(error),
           code: error.code,
-          message: error.message,
-          stack: error.stack,
           path,
           type,
           user: ctx?.user?.id,
