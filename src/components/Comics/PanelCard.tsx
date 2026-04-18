@@ -22,7 +22,7 @@ import { NsfwLevel, SignalMessages } from '~/server/common/enums';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
 import { IconEyeOff } from '@tabler/icons-react';
@@ -97,7 +97,7 @@ export function PanelCard({
   const isNsfwBlocked =
     isGreen &&
     status === 'Ready' &&
-    (panel.image ? !hasPublicBrowsingLevel(panel.image.nsfwLevel) : true);
+    (panel.image ? !hasSafeBrowsingLevel(panel.image.nsfwLevel) : true);
 
   const isActive = status === 'Generating' || status === 'Pending' || status === 'Enqueued';
 
