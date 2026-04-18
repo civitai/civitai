@@ -1175,7 +1175,10 @@ export const addResourceToPostImage = async ({
 
   if (!modelVersion) throw throwNotFoundError('Model version not found.');
 
-  const images = await dbRead.image.findMany({
+  // Read from primary — users can attach a resource within seconds of posting
+  // the image, so the replica (5-10s lag) would return fewer rows and throw
+  // a spurious "Image not found".
+  const images = await dbWrite.image.findMany({
     where: { id: { in: imageIds } },
     select: { postId: true, meta: true, resourceHelper: true, type: true },
   });
