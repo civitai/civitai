@@ -43,6 +43,11 @@ export enum FLIPT_FEATURE_FLAGS {
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
   IMAGE_RESOURCE_USE_WRITE = 'image-resource-use-write',
+  // Global kill-switch: when on, getDbWithoutLag routes every lag-aware read to
+  // primary regardless of per-id Redis flags. Use during an elevated rep-lag
+  // incident so RAW reads (e.g. reaction toggles) stay consistent without
+  // paying the per-flag Redis write/read cost.
+  HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
