@@ -95,9 +95,11 @@ export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing new cosmetics
   lookupFn: async (ids, fromWrite) => {
+    const goodIds = ids.filter(isDefined);
+    if (!goodIds.length) return {};
     const db = fromWrite ? dbWrite : dbRead;
     const userCosmeticsRaw = await db.userCosmetic.findMany({
-      where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
+      where: { userId: { in: goodIds }, equippedAt: { not: null }, equippedToId: null },
       select: {
         userId: true,
         cosmeticId: true,
@@ -125,9 +127,11 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
   key: REDIS_KEYS.CACHES.COSMETICS,
   idKey: 'id',
   lookupFn: async (ids, fromWrite) => {
+    const goodIds = ids.filter(isDefined);
+    if (!goodIds.length) return {};
     const db = fromWrite ? dbWrite : dbRead;
     const cosmetics = await db.cosmetic.findMany({
-      where: { id: { in: ids } },
+      where: { id: { in: goodIds } },
       select: { id: true, name: true, type: true, data: true, source: true },
     });
     return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
@@ -140,6 +144,8 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
   idKey: 'userId',
   staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
   lookupFn: async (ids, fromWrite) => {
+    const goodIds = (ids as (number | undefined)[]).filter(isDefined);
+    if (!goodIds.length) return {};
     const db = fromWrite ? dbWrite : dbRead;
     const profilePictures = await db.$queryRaw<ProfileImage[]>`
       SELECT
@@ -156,7 +162,7 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
         i.metadata
       FROM "User" u
       JOIN "Image" i ON i.id = u."profilePictureId"
-      WHERE u.id IN (${Prisma.join(ids as number[])})
+      WHERE u.id IN (${Prisma.join(goodIds)})
     `;
     return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
   },
@@ -230,7 +236,8 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   idKey: 'userId',
   ttl: CacheTTL.day,
   lookupFn: async (ids, fromWrite) => {
-    if (ids.length === 0) return {};
+    const goodIds = ids.filter(isDefined);
+    if (!goodIds.length) return {};
 
     const db = fromWrite ? dbWrite : dbRead;
     // Get the highest tier subscription for each user
@@ -261,7 +268,7 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
           ) as rn
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
-        WHERE cs."userId" IN (${Prisma.join(ids)})
+        WHERE cs."userId" IN (${Prisma.join(goodIds)})
           AND cs.status NOT IN ('canceled')
       )
       SELECT
@@ -277,7 +284,7 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
         END as "purchasesMultiplier"
       FROM "User" u
       LEFT JOIN ranked_subscriptions rs ON u.id = rs."userId" AND rs.rn = 1
-      WHERE u.id IN (${Prisma.join(ids)});
+      WHERE u.id IN (${Prisma.join(goodIds)});
     `;
 
     const records: Record<number, CachedUserMultiplier> = Object.fromEntries(
