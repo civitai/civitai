@@ -681,7 +681,7 @@ type ReferralSubMetadata = {
   [key: string]: unknown;
 };
 
-function collapseTierQueue(items: ReferralQueueEntry[]): ReferralQueueEntry[] {
+export function collapseTierQueue(items: ReferralQueueEntry[]): ReferralQueueEntry[] {
   // Sort highest tier first using memberships.tierOrder. Within the same tier,
   // collapse consecutive entries into one so we don't bloat the metadata.
   const ladder = constants.memberships.tierOrder as readonly string[];
