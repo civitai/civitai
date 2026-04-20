@@ -134,6 +134,8 @@ Two sections:
    },
    ```
 
+3. **`crossEcosystemRules`** (only if the ecosystem is cross-compatible with another) — add explicit rules for every directional pair that should allow cross-ecosystem LoRAs (or other addon types). See the "Cross-ecosystem compatibility" section below before writing any.
+
 #### 5b. `src/shared/data-graph/generation/config/workflows.ts`
 
 - Add `ECO.<Name>` to the appropriate workflow array (`TXT2IMG_IDS`, `TXT2VID_IDS`, `EDIT_IMG_IDS`, `I2V_ONLY_IDS`, etc.)
@@ -275,6 +277,47 @@ If a dev server is running (check via the `dev-server` skill), ask the user to:
 - Select the new ecosystem in the form
 - Verify controls render correctly
 - Verify the whatIf query returns without errors
+
+## Cross-ecosystem compatibility
+
+Cross-ecosystem compatibility (e.g. "Pony LoRAs work on Illustrious checkpoints") is driven **entirely by explicit entries in `crossEcosystemRules`** in [basemodel.constants.ts](src/shared/constants/basemodel.constants.ts). The `parentEcosystemId` relationship does **not** infer compatibility — it exists solely for identity (AIR URN ecosystem, classification) and for support/defaults inheritance.
+
+This is a deliberate separation because `parentEcosystemId` serves identity concerns that are unrelated to compat. For example, `Flux2Klein_9B` / `Flux2Klein_9B_base` / `Flux2Klein_4B` / `Flux2Klein_4B_base` all declare `parentEcosystemId: ECO.Flux2` so their AIRs emit `urn:air:flux2:...`, but their architectures are distinct and LoRAs do NOT cross between the variants.
+
+### When to add rules
+
+Add explicit rules whenever you expect cross-ecosystem LoRAs (or other addon types) to work. Common patterns:
+
+- **Parent ↔ child ecosystems** (bidirectional, both rules required):
+
+  ```ts
+  { sourceEcosystemId: ECO.Parent, targetEcosystemId: ECO.Child, supportType: 'generation', modelTypes: [...], support: 'partial' },
+  { sourceEcosystemId: ECO.Child, targetEcosystemId: ECO.Parent, supportType: 'generation', modelTypes: [...], support: 'partial' },
+  ```
+
+- **Sibling ecosystems** (both directions between each pair, e.g. Pony ↔ Illustrious ↔ NoobAI is 6 rules)
+- **Unidirectional compat** (e.g. base model LoRAs work on distilled variant but not reverse — add only the supported direction)
+
+### Which `modelTypes` list to use
+
+- `[ModelType.LORA]` — most common; LoRAs trained on one variant work on another
+- `sdxlCrossAddonTypes` — for SDXL parent↔child (includes VAE, TextualInversion, LoRA variants)
+- `sdxlSiblingAddonTypes` — for SDXL sibling↔sibling (excludes VAE)
+- Custom array — for ecosystem-specific cases (e.g. `[ModelType.TextualInversion]` for SD1→SDXL)
+
+### The target-root fallback
+
+`getGenerationSupport` has a fallback: if no direct rule matches, it retries using the checkpoint ecosystem's root (via `parentEcosystemId` chain). This means **one rule targeting a root ecosystem covers all its children**. Example: `SD1 TextualInversion → SDXL` automatically extends to Pony, Illustrious, and NoobAI.
+
+Use this to avoid combinatorial rule duplication, but **be aware**: adding a rule that targets a root ecosystem (e.g. `targetEcosystemId: ECO.Flux2`) would apply it to every child (Flux2Klein variants included) — even if that wasn't the intent. When unsure, prefer explicit per-child rules.
+
+### Checklist when adding a new ecosystem with cross-compat
+
+1. Identify each cross-compatible peer ecosystem.
+2. For each pair, add rules in the correct direction(s).
+3. Pick the appropriate `modelTypes` set — don't default to "all" without checking what actually works.
+4. If children share a root and ALL children should support the same cross rule, target the root to avoid duplication. Otherwise list each child.
+5. If the ecosystem has `parentEcosystemId` purely for identity (not compat — like Flux2Klein variants), add explicit cross rules (if any) only for the pairs that truly work — **do not rely on the parent chain**.
 
 ## Common patterns reference
 
