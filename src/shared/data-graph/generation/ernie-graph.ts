@@ -114,6 +114,17 @@ export const ernieGraph = new DataGraph<
     base: baseGraph,
     turbo: turboGraph,
   })
+  // Reset cfgScale and steps to variant defaults when switching models.
+  // The discriminator switches branches, but the form's persisted input values
+  // remain valid in the new branch's range, so we explicitly reset them.
+  .effect(
+    (ctx, _ext, set) => {
+      const isTurbo = ctx.ernieVariant === 'turbo';
+      set('cfgScale', isTurbo ? 1 : 4);
+      set('steps', isTurbo ? 8 : 20);
+    },
+    ['ernieVariant']
+  )
   .node('aspectRatio', aspectRatioNode({ options: ernieAspectRatios, defaultValue: '1:1' }))
   .node('negativePrompt', negativePromptNode())
   .node('seed', seedNode());
