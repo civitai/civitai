@@ -1137,38 +1137,55 @@ export const upsertArticle = async ({
       }
     }
 
-    // Submit for text moderation if content or title changed (non-blocking)
+    // Submit for text moderation if content or title changed (non-blocking).
+    // If the article's text was emptied out entirely, drop any stale
+    // EntityModeration row — otherwise the retry cron would keep re-submitting
+    // and recomputeArticleIngestion could still read the old blocked/error
+    // state (the hasText guard inside recompute handles the latter, but we
+    // don't want a ghost row in either case).
     {
       const currentTitle = data.title ?? article.title ?? '';
       const currentContent = data.content ?? article.content ?? '';
-      const textForModeration = [currentTitle, removeTags(currentContent)]
-        .filter(Boolean)
-        .join(' ');
-      const newHash = hashContent(textForModeration);
+      const hasText = articleHasText(currentTitle, currentContent);
 
-      const existingModeration = await dbRead.entityModeration.findUnique({
-        where: { entityType_entityId: { entityType: 'Article', entityId: id } },
-        select: { contentHash: true },
-      });
-
-      if (!existingModeration || existingModeration.contentHash !== newHash) {
-        submitTextModeration({
-          entityType: 'Article',
-          entityId: id,
-          content: textForModeration,
-          labels: ['nsfw'],
-        }).catch((e) => {
-          logToAxiom({
-            type: 'error',
-            name: 'article-text-moderation',
-            message: (e as Error).message,
-            articleId: id,
-          }).catch();
+      if (!hasText) {
+        await dbWrite.entityModeration.deleteMany({
+          where: { entityType: 'Article', entityId: id },
         });
+      } else {
+        const textForModeration = [currentTitle, removeTags(currentContent)]
+          .filter(Boolean)
+          .join(' ');
+        const newHash = hashContent(textForModeration);
+
+        const existingModeration = await dbRead.entityModeration.findUnique({
+          where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+          select: { contentHash: true },
+        });
+
+        if (!existingModeration || existingModeration.contentHash !== newHash) {
+          submitTextModeration({
+            entityType: 'Article',
+            entityId: id,
+            content: textForModeration,
+            labels: ['nsfw'],
+          }).catch((e) => {
+            logToAxiom({
+              type: 'error',
+              name: 'article-text-moderation',
+              message: (e as Error).message,
+              articleId: id,
+            }).catch();
+          });
+        }
       }
     }
 
-    await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Lock ingestion state and queue the search-index update. recompute also
+    // queues the index update internally, so no separate queueUpdate call here.
+    await recomputeArticleIngestion(id).catch((e) =>
+      handleLogError(e, 'article-update-recompute', { articleId: id })
+    );
 
     // If it was published, process it.
     if (result.publishedAt && result.publishedAt <= new Date()) {
@@ -1420,8 +1437,12 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
     { timeout: 30000, maxWait: 10000 }
   );
 
-  // Re-add to search index
-  await articlesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+  // Re-derive ingestion state (also queues the search index update internally).
+  // Handles the case where the article was sitting at Pending before being
+  // unpublished and now needs to be re-evaluated against current image/text state.
+  await recomputeArticleIngestion(id).catch((e) =>
+    handleLogError(e, 'article-restore-recompute', { articleId: id })
+  );
 
   await userArticleCountCache.refresh(article.userId);
   await preventReplicationLag('article', id);
@@ -1712,7 +1733,11 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
  */
 export async function updateArticleImageScanStatus(articleIds: number[]): Promise<void> {
   for (const articleId of articleIds) {
-    await dbWrite.$transaction(
+    // One atomic transaction: advisory lock → image-status read → (optional)
+    // NSFW level update → ingestion recompute. Closes the drift window where
+    // a crash between the NSFW update and the recompute would leave the
+    // Article row with updated nsfwLevel but stale ingestion.
+    const result = await dbWrite.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
 
@@ -1737,14 +1762,29 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
         const allProcessed = scannedImages + blockedImages + errorImages === totalImages;
 
         if (allProcessed) {
-          await updateArticleNsfwLevels([articleId]);
+          await updateArticleNsfwLevels([articleId], tx);
         }
+
+        return recomputeArticleIngestionInTx(tx, articleId);
       },
       { timeout: 30000, maxWait: 10000 }
     );
 
-    await recomputeArticleIngestion(articleId);
+    await dispatchArticleIngestionPostCommit(result);
   }
+}
+
+/**
+ * Does this article have any text worth sending to the text-moderation pipeline?
+ * Shared between the submit-text-moderation gate and the recomputeArticleIngestion
+ * empty-content branch so the two can't drift: anything that wouldn't be submitted
+ * must also be treated as "textDone" by the state machine, otherwise the article
+ * gets trapped in Pending waiting for a moderation callback that will never come.
+ */
+export function articleHasText(title: string | null, content: string | null): boolean {
+  const titleText = title?.trim() ?? '';
+  const contentText = removeTags(content ?? '').trim();
+  return titleText.length > 0 || contentText.length > 0;
 }
 
 /**
@@ -1764,121 +1804,164 @@ export async function updateArticleImageScanStatus(articleIds: number[]): Promis
  *   sends the "images blocked/failed" notification so the author can fix and
  *   resubmit. Status is left at Processing so the author can edit.
  */
-export async function recomputeArticleIngestion(articleId: number): Promise<void> {
+export type RecomputeIngestionResult = {
+  articleId: number;
+  publishedNotificationUserId: number | null;
+  problemsNotification: { userId: number; blockedImages: number; errorImages: number } | null;
+};
+
+/**
+ * In-transaction half of the ingestion state machine. Takes the advisory lock,
+ * reads ground truth (image connections + EntityModeration + article fields),
+ * derives the next ingestion state, and writes the Article row. Returns hints
+ * for post-commit dispatch (search index queue + notifications) — those MUST be
+ * run after commit via `dispatchArticleIngestionPostCommit`, otherwise Redis
+ * queue / notification failures would roll back the state write.
+ *
+ * Exposed as a primitive so callers that need to combine ingestion recompute
+ * with other writes (text-moderation webhook, updateArticleImageScanStatus) can
+ * run everything under a single advisory-locked transaction. The advisory lock
+ * is re-entrant within the same session, so taking it again here if the caller
+ * already did is safe.
+ */
+export async function recomputeArticleIngestionInTx(
+  tx: Prisma.TransactionClient,
+  articleId: number
+): Promise<RecomputeIngestionResult> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+
+  // --- Image side ---
+  const connections = await tx.imageConnection.findMany({
+    where: { entityId: articleId, entityType: ImageConnectionType.Article },
+    include: { image: { select: { ingestion: true } } },
+  });
+
+  const totalImages = connections.length;
+  const scannedImages = connections.filter(
+    (c) => c.image.ingestion === ImageIngestionStatus.Scanned
+  ).length;
+  const blockedImages = connections.filter(
+    (c) => c.image.ingestion === ImageIngestionStatus.Blocked
+  ).length;
+  const errorImages = connections.filter(
+    (c) =>
+      c.image.ingestion === ImageIngestionStatus.Error ||
+      c.image.ingestion === ImageIngestionStatus.NotFound
+  ).length;
+
+  const imageBlocked = blockedImages > 0;
+  const imageError = errorImages > 0;
+  const imageDone =
+    totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
+
+  // --- Text moderation side ---
+  const textModeration = await tx.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
+    select: { status: true, blocked: true },
+  });
+
+  const current = await tx.article.findUniqueOrThrow({
+    where: { id: articleId },
+    select: {
+      ingestion: true,
+      status: true,
+      publishedAt: true,
+      userId: true,
+      title: true,
+      content: true,
+    },
+  });
+
+  // Articles with no text to scan (empty/null title AND content) can never
+  // receive a moderation callback, so we must treat them as textDone here.
+  // Also guards blocked/error on any stale EntityModeration row whose
+  // content has since been emptied.
+  const hasText = articleHasText(current.title, current.content);
+  const textErrorStatuses: string[] = [
+    EntityModerationStatus.Failed,
+    EntityModerationStatus.Expired,
+    EntityModerationStatus.Canceled,
+  ];
+  const textBlocked =
+    hasText &&
+    textModeration?.status === EntityModerationStatus.Succeeded &&
+    textModeration.blocked === true;
+  const textError =
+    hasText && !!textModeration && textErrorStatuses.includes(textModeration.status);
+  const textDone = !hasText || textModeration?.status === EntityModerationStatus.Succeeded;
+
+  // --- Derive ingestion state ---
+  let next: ArticleIngestionStatus;
+  if (imageBlocked || textBlocked) {
+    next = ArticleIngestionStatus.Blocked;
+  } else if (imageError || textError) {
+    next = ArticleIngestionStatus.Error;
+  } else if (imageDone && textDone) {
+    next = ArticleIngestionStatus.Scanned;
+  } else {
+    next = ArticleIngestionStatus.Pending;
+  }
+
+  const flipToPublished =
+    next === ArticleIngestionStatus.Scanned && current.status === ArticleStatus.Processing;
+
+  const data: Prisma.ArticleUpdateInput = { ingestion: next };
+  if (
+    next === ArticleIngestionStatus.Scanned &&
+    current.ingestion !== ArticleIngestionStatus.Scanned
+  ) {
+    data.contentScannedAt = new Date();
+  }
+  if (flipToPublished) {
+    data.status = ArticleStatus.Published;
+    data.publishedAt = current.publishedAt ?? new Date();
+  }
+
+  await tx.article.update({ where: { id: articleId }, data });
+
+  // Populate post-commit hints. Notifications dedupe via `key`
+  // (article-published-$id / article-images-blocked-$id) so re-notifying on
+  // repeated terminal-state recomputes is safe.
   let publishedNotificationUserId: number | null = null;
   let problemsNotification: { userId: number; blockedImages: number; errorImages: number } | null =
     null;
 
-  await dbWrite.$transaction(
-    async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
+  if (flipToPublished) {
+    publishedNotificationUserId = current.userId;
+  } else if (
+    current.status === ArticleStatus.Processing &&
+    imageDone &&
+    (next === ArticleIngestionStatus.Blocked || next === ArticleIngestionStatus.Error) &&
+    (blockedImages > 0 || errorImages > 0)
+  ) {
+    // Fire once all images are terminal and at least one is problematic.
+    // No ingestion-transition guard: if an early image blocks, ingestion
+    // moves to Blocked before the remaining Pending images finish; by the
+    // time they do, ingestion is unchanged and a transition check would
+    // miss the notification.
+    problemsNotification = {
+      userId: current.userId,
+      blockedImages,
+      errorImages,
+    };
+  }
 
-      // --- Image side ---
-      const connections = await tx.imageConnection.findMany({
-        where: { entityId: articleId, entityType: ImageConnectionType.Article },
-        include: { image: { select: { ingestion: true } } },
-      });
+  return { articleId, publishedNotificationUserId, problemsNotification };
+}
 
-      const totalImages = connections.length;
-      const scannedImages = connections.filter(
-        (c) => c.image.ingestion === ImageIngestionStatus.Scanned
-      ).length;
-      const blockedImages = connections.filter(
-        (c) => c.image.ingestion === ImageIngestionStatus.Blocked
-      ).length;
-      const errorImages = connections.filter(
-        (c) =>
-          c.image.ingestion === ImageIngestionStatus.Error ||
-          c.image.ingestion === ImageIngestionStatus.NotFound
-      ).length;
-
-      const imageBlocked = blockedImages > 0;
-      const imageError = errorImages > 0;
-      const imageDone =
-        totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
-
-      // --- Text moderation side ---
-      const textModeration = await tx.entityModeration.findUnique({
-        where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
-        select: { status: true, blocked: true },
-      });
-
-      const textBlocked =
-        textModeration?.status === EntityModerationStatus.Succeeded &&
-        textModeration.blocked === true;
-      const textErrorStatuses: string[] = [
-        EntityModerationStatus.Failed,
-        EntityModerationStatus.Expired,
-        EntityModerationStatus.Canceled,
-      ];
-      const textError = !!textModeration && textErrorStatuses.includes(textModeration.status);
-      const textDone = textModeration?.status === EntityModerationStatus.Succeeded;
-
-      // --- Derive ingestion state ---
-      let next: ArticleIngestionStatus;
-      if (imageBlocked || textBlocked) {
-        next = ArticleIngestionStatus.Blocked;
-      } else if (imageError || textError) {
-        next = ArticleIngestionStatus.Error;
-      } else if (imageDone && textDone) {
-        next = ArticleIngestionStatus.Scanned;
-      } else {
-        next = ArticleIngestionStatus.Pending;
-      }
-
-      const current = await tx.article.findUniqueOrThrow({
-        where: { id: articleId },
-        select: {
-          ingestion: true,
-          status: true,
-          publishedAt: true,
-          userId: true,
-        },
-      });
-
-      const flipToPublished =
-        next === ArticleIngestionStatus.Scanned && current.status === ArticleStatus.Processing;
-
-      const data: Prisma.ArticleUpdateInput = { ingestion: next };
-      if (
-        next === ArticleIngestionStatus.Scanned &&
-        current.ingestion !== ArticleIngestionStatus.Scanned
-      ) {
-        data.contentScannedAt = new Date();
-      }
-      if (flipToPublished) {
-        data.status = ArticleStatus.Published;
-        data.publishedAt = current.publishedAt ?? new Date();
-      }
-
-      await tx.article.update({ where: { id: articleId }, data });
-
-      // Queue notifications for post-transaction dispatch so notification failures
-      // don't roll back the state update. Notifications dedupe via `key`
-      // (article-published-$id / article-images-blocked-$id) so re-notifying
-      // on repeated terminal-state recomputes is safe.
-      if (flipToPublished) {
-        publishedNotificationUserId = current.userId;
-      } else if (
-        current.status === ArticleStatus.Processing &&
-        imageDone &&
-        (next === ArticleIngestionStatus.Blocked || next === ArticleIngestionStatus.Error) &&
-        (blockedImages > 0 || errorImages > 0)
-      ) {
-        // Fire once all images are terminal and at least one is problematic.
-        // No ingestion-transition guard: if an early image blocks, ingestion
-        // moves to Blocked before the remaining Pending images finish; by the
-        // time they do, ingestion is unchanged and a transition check would
-        // miss the notification.
-        problemsNotification = {
-          userId: current.userId,
-          blockedImages,
-          errorImages,
-        };
-      }
-    },
-    { timeout: 30000, maxWait: 10000 }
-  );
+/**
+ * Post-commit side effects for `recomputeArticleIngestionInTx`. Must run after
+ * the transaction commits so that:
+ *   - the search-index indexer reads committed state when it dequeues the id,
+ *   - notification failures don't roll back the ingestion state write.
+ *
+ * Search index queue and notifications dedupe on their own, so calling this
+ * twice for the same result is safe.
+ */
+export async function dispatchArticleIngestionPostCommit(
+  result: RecomputeIngestionResult
+): Promise<void> {
+  const { articleId, publishedNotificationUserId, problemsNotification } = result;
 
   // Sync search index — the index filters on ingestion = 'Scanned', so any
   // ingestion state change must be reflected (add when Scanned, remove otherwise).
@@ -1916,6 +1999,17 @@ export async function recomputeArticleIngestion(articleId: number): Promise<void
       },
     }).catch((e) => handleLogError(e, 'article-ingestion-problems-notification', { articleId }));
   }
+}
+
+export async function recomputeArticleIngestion(articleId: number): Promise<void> {
+  const result = await dbWrite.$transaction(
+    async (tx) => recomputeArticleIngestionInTx(tx, articleId),
+    {
+      timeout: 30000,
+      maxWait: 10000,
+    }
+  );
+  await dispatchArticleIngestionPostCommit(result);
 }
 
 const RESCAN_LIMIT = 3;
@@ -2030,6 +2124,13 @@ export async function rescanArticle({
     attempts.filter((t) => t > cutoff)
   );
   await redis.expire(cacheKey, RESCAN_WINDOW_SECONDS);
+
+  // --- Lock ingestion state ---
+  // Covers articles with no content and no images, where no webhook will fire
+  // to advance state back to Scanned.
+  await recomputeArticleIngestion(id).catch((e) =>
+    handleLogError(e, 'article-rescan-recompute', { articleId: id })
+  );
 
   // --- Log for observability ---
   logToAxiom({
