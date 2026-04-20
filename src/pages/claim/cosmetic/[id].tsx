@@ -17,6 +17,10 @@ import { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import {
+  GRANNY_GRIPPERS_COSMETIC_ID,
+  GrannyGrippersClaim,
+} from '~/components/Claim/GrannyGrippersClaim';
 import { useQueryCosmetic } from '~/components/Cosmetics/cosmetics.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
@@ -47,6 +51,7 @@ export const getServerSideProps = createServerSideProps({
     if (!queryParse.success) return { notFound: true };
 
     const id = queryParse.data?.id;
+    if (id === GRANNY_GRIPPERS_COSMETIC_ID) return { props: { id } };
     if (ssg) await ssg.cosmetic.getById.prefetch({ id });
     return { props: { id } };
   },
@@ -54,7 +59,13 @@ export const getServerSideProps = createServerSideProps({
 
 const availableCosmeticTypes: string[] = ['Badge', 'ContentDecoration'];
 type ClaimStatus = 'unavailable' | 'pending' | 'claimed' | 'equipped';
+
 export default function ClaimCosmeticPage({ id }: { id: number }) {
+  if (id === GRANNY_GRIPPERS_COSMETIC_ID) return <GrannyGrippersClaim />;
+  return <ClaimCosmeticPageInner id={id} />;
+}
+
+function ClaimCosmeticPageInner({ id }: { id: number }) {
   const queryUtils = trpc.useUtils();
   const [status, setStatus] = useState<ClaimStatus | null>();
   const { cosmetic, isLoading: cosmeticLoading } = useQueryCosmetic({ id });
