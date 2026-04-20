@@ -186,7 +186,30 @@ export const constants = {
   defaultCurrency: Currency.BUZZ,
   referrals: {
     referralCodeMinLength: 6,
-    referralCodeMaxCount: 3,
+    referralCodeMaxCount: 1,
+    cookieDurationDays: 30,
+    settlementWindowDays: 7,
+    tokenExpiryDays: 90,
+    minReferrerAccountAgeDays: 7,
+    maxPaidMonthsPerReferee: 3,
+    tokensPerTier: { bronze: 1, silver: 2, gold: 3 } as Record<string, number>,
+    refereeBonusBuzzPct: 0.25,
+    buzzKickbackPct: 0.1,
+    shopItems: [
+      { cost: 1, tier: 'bronze', durationDays: 14 },
+      { cost: 2, tier: 'bronze', durationDays: 30 },
+      { cost: 3, tier: 'silver', durationDays: 14 },
+      { cost: 4, tier: 'silver', durationDays: 30 },
+      { cost: 5, tier: 'gold', durationDays: 14 },
+      { cost: 6, tier: 'gold', durationDays: 30 },
+    ] as ReadonlyArray<{ cost: number; tier: string; durationDays: number }>,
+    milestones: [
+      { threshold: 1_000, bonus: 500 },
+      { threshold: 10_000, bonus: 2_500 },
+      { threshold: 50_000, bonus: 15_000 },
+      { threshold: 200_000, bonus: 50_000 },
+      { threshold: 1_000_000, bonus: 250_000 },
+    ] as ReadonlyArray<{ threshold: number; bonus: number }>,
   },
   leaderboard: {
     legendScoring: {

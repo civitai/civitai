@@ -16,12 +16,14 @@ import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useHasPaddleSubscription, useMutatePaddle } from '~/components/Paddle/util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 
 function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props) {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const mutateCount = useIsMutating();
   const featureFlags = useFeatureFlags();
+  const { code: refCode } = useReferralsContext();
 
   const { mutate: stripeCreateSubscriptionSession, isLoading } =
     trpc.stripe.createSubscriptionSession.useMutation({
@@ -47,7 +49,7 @@ function StripeSubscribeButton({ children, priceId, onSuccess, disabled }: Props
     });
 
   const proceedWithSubscription = () => {
-    stripeCreateSubscriptionSession({ priceId });
+    stripeCreateSubscriptionSession({ priceId, refCode });
   };
 
   const handleClick = () => {

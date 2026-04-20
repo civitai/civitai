@@ -58,6 +58,7 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
 
 export const createSubscribeSession = async ({
   priceId,
+  refCode,
   customerId,
   user,
 }: Schema.CreateSubscribeSessionInput & {
@@ -221,6 +222,9 @@ export const createSubscribeSession = async ({
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
     allow_promotion_codes: true,
+    ...(refCode
+      ? { subscription_data: { metadata: { ref_code: refCode } }, metadata: { ref_code: refCode } }
+      : {}),
   });
 
   return { sessionId: session.id, url: session.url };
@@ -754,6 +758,26 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
         details: { invoiceId: invoice.id },
       })
     ).catch(handleLogError);
+
+    const { bindReferralCodeForUser, recordMembershipPaymentReward } = await import(
+      '~/server/services/referral.service'
+    );
+
+    const subscriptionMetadata =
+      (invoice as any).subscription_details?.metadata ?? (invoice as any).metadata ?? {};
+    const refCode = typeof subscriptionMetadata.ref_code === 'string'
+      ? subscriptionMetadata.ref_code
+      : undefined;
+    if (refCode) {
+      await bindReferralCodeForUser(user.id, refCode).catch(handleLogError);
+    }
+
+    await recordMembershipPaymentReward({
+      refereeId: user.id,
+      tier: billedProductMeta.tier,
+      monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
+      sourceEventId: invoice.id,
+    }).catch(handleLogError);
   }
 };
 

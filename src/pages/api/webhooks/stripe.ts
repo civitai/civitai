@@ -19,9 +19,15 @@ import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  recordBuzzPurchaseKickback,
+  recordMembershipPaymentReward,
+  revokeForChargeback,
+} from '~/server/services/referral.service';
 
 const log = (data: MixedObject) =>
   logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks').catch(() => null);
+
 // Stripe requires the raw body to construct the event.
 export const config = {
   api: {
@@ -50,6 +56,8 @@ const relevantEvents = new Set([
   'product.updated',
   'invoice.paid',
   'payment_intent.succeeded',
+  'charge.refunded',
+  'charge.dispute.created',
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -161,6 +169,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 details: metadata,
                 userId: metadata.userId,
               });
+
+              const pmFingerprint =
+                typeof paymentIntent.payment_method === 'string'
+                  ? undefined
+                  : paymentIntent.payment_method?.card?.fingerprint ?? undefined;
+
+              await recordBuzzPurchaseKickback({
+                refereeId: metadata.userId,
+                buzzAmount: metadata.buzzAmount,
+                sourceEventId: paymentIntent.id,
+                payment: {
+                  paymentProvider: 'Stripe',
+                  stripePaymentIntentId: paymentIntent.id,
+                  stripeChargeId:
+                    typeof paymentIntent.latest_charge === 'string'
+                      ? paymentIntent.latest_charge
+                      : paymentIntent.latest_charge?.id ?? undefined,
+                  paymentMethodFingerprint: pmFingerprint,
+                },
+              }).catch(() => null);
             }
 
             if (metadata.type === 'clubMembershipPayment') {
@@ -179,6 +207,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
 
             break;
+          case 'charge.refunded':
+          case 'charge.dispute.created': {
+            const charge = event.data.object as Stripe.Charge | Stripe.Dispute;
+            const paymentIntentId =
+              typeof charge.payment_intent === 'string'
+                ? charge.payment_intent
+                : charge.payment_intent?.id;
+            if (paymentIntentId) {
+              await revokeForChargeback({
+                sourceEventId: paymentIntentId,
+                reason: event.type,
+              }).catch(() => null);
+            }
+            break;
+          }
           default:
             throw new Error('Unhandled relevant event!');
         }

@@ -144,6 +144,14 @@ export enum SignalMessages {
   SessionRefresh = 'session:refresh',
   CryptoDepositUpdate = 'crypto-deposit:update',
   ComicPanelUpdate = 'comic:panel-update',
+  ReferralClick = 'referral:click',
+  ReferralCheckoutViewed = 'referral:checkout-viewed',
+  ReferralPurchasePending = 'referral:purchase-pending',
+  ReferralSettled = 'referral:settled',
+  ReferralMilestone = 'referral:milestone',
+  ReferralTierGranted = 'referral:tier-granted',
+  ReferralClawback = 'referral:clawback',
+  ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
 }
 
 export enum BountySort {
