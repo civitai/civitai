@@ -393,8 +393,10 @@ export default function ReferralsPage() {
           <Divider />
           <Text size="xs" c="dimmed">
             Perks granted through redemption do not include a monthly Buzz stipend or tier-specific
-            badge. Redeeming a tier equal to or lower than your active paid Membership will not
-            grant additional benefits.
+            badge. Each chunk keeps its own tier and duration &mdash; higher tiers activate first,
+            then lower tiers queue up behind them. While an active paid Membership of equal or
+            higher tier is running, redeemed perks provide no additional benefit for that window,
+            but the duration is preserved and still counts down.
           </Text>
         </Stack>
       </Modal>

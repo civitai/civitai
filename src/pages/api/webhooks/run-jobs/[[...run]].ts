@@ -29,6 +29,7 @@ import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { deliverAnnualSubscriptionBuzz } from '~/server/jobs/deliver-annual-sub-buzz';
 import {
+  advanceReferralSubs,
   expireReferralTokens,
   settleReferralRewards,
 } from '~/server/jobs/referral-program-jobs';
@@ -168,6 +169,7 @@ export const jobs: Job[] = [
   deliverAnnualSubscriptionBuzz,
   settleReferralRewards,
   expireReferralTokens,
+  advanceReferralSubs,
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
   retryFailedTextModeration,

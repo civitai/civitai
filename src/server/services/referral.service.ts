@@ -674,28 +674,44 @@ async function findReferralProductForTier(tier: string) {
   return null;
 }
 
+type ReferralQueueEntry = { tier: string; durationDays: number };
+type ReferralSubMetadata = {
+  source?: string;
+  referralQueue?: ReferralQueueEntry[];
+  [key: string]: unknown;
+};
+
+function collapseTierQueue(items: ReferralQueueEntry[]): ReferralQueueEntry[] {
+  // Sort highest tier first using memberships.tierOrder. Within the same tier,
+  // collapse consecutive entries into one so we don't bloat the metadata.
+  const ladder = constants.memberships.tierOrder as readonly string[];
+  const rank = (t: string) => {
+    const i = ladder.indexOf(t);
+    return i < 0 ? -1 : i;
+  };
+  const sorted = [...items]
+    .filter((i) => i.durationDays > 0)
+    .sort((a, b) => rank(b.tier) - rank(a.tier));
+  const collapsed: ReferralQueueEntry[] = [];
+  for (const item of sorted) {
+    const last = collapsed[collapsed.length - 1];
+    if (last && last.tier === item.tier) last.durationDays += item.durationDays;
+    else collapsed.push({ ...item });
+  }
+  return collapsed;
+}
+
 async function grantReferralSubscription(
   tx: Prisma.TransactionClient,
   userId: number,
   tier: string,
   durationDays: number
 ) {
-  const product = await findReferralProductForTier(tier);
-  if (!product || !product.defaultPriceId) {
-    logToAxiom({
-      name: 'referral-grant-missing-product',
-      type: 'error',
-      userId,
-      tier,
-    }).catch(() => undefined);
-    throw new Error(
-      'Referral tier products are not yet configured. Your tokens have not been spent.'
-    );
-  }
-
-  // Use buzzType: 'referral' so grants stack alongside paid yellow/green/blue subs
-  // without colliding with the @@unique([userId, buzzType]) constraint. Session-user
-  // iterates all subs and picks the highest tier.
+  // Referral grants are "tier-time chunks" queued on a single CustomerSubscription
+  // keyed by buzzType='referral'. Each chunk keeps its original tier. Higher tiers
+  // always active first; on expiry a cron (advanceReferralSubs) promotes the next
+  // chunk. Blocks the "stack cheap Bronze + one Gold = all Gold" exploit Justin
+  // flagged — each chunk only ever grants its own tier for its own duration.
   const existing = await tx.customerSubscription.findUnique({
     where: { userId_buzzType: { userId, buzzType: REFERRAL_BUZZ_TYPE } },
     select: {
@@ -710,32 +726,51 @@ async function grantReferralSubscription(
 
   const now = new Date();
 
-  // If an existing referral sub is still active and covers a same-or-higher tier,
-  // extend its end date. If it covers a lower tier, upgrade it (same row).
-  if (existing && existing.status === 'active' && existing.currentPeriodEnd > now) {
-    const existingTier = (existing.product.metadata as { tier?: string } | null)?.tier ?? 'free';
-    const ladder = constants.memberships.tierOrder as readonly string[];
-    const upgrade = ladder.indexOf(tier) > ladder.indexOf(existingTier);
-    const base = existing.currentPeriodEnd;
-    const extension = dayjs(upgrade ? now : base)
-      .add(durationDays, 'day')
-      .toDate();
+  // Pool all unspent tier-time: the currently-active chunk's remaining days + the
+  // queued chunks + the new redemption. Collapse + sort by tier DESC. First goes
+  // active, rest queue.
+  const pool: ReferralQueueEntry[] = [];
 
-    await tx.customerSubscription.update({
-      where: { id: existing.id },
-      data: {
-        productId: upgrade ? product.id : existing.productId,
-        priceId: upgrade ? product.defaultPriceId : undefined,
-        currentPeriodStart: upgrade ? now : undefined,
-        currentPeriodEnd: extension,
-        cancelAtPeriodEnd: true,
-        metadata: { ...(existing.metadata as object), source: 'referral-redemption' },
-      },
-    });
-    return { extended: true };
+  if (existing && existing.status === 'active' && existing.currentPeriodEnd > now) {
+    const existingTier = (existing.product.metadata as { tier?: string } | null)?.tier;
+    if (existingTier) {
+      const remainingDays = Math.max(
+        0,
+        Math.ceil((existing.currentPeriodEnd.getTime() - now.getTime()) / 86_400_000)
+      );
+      if (remainingDays > 0) pool.push({ tier: existingTier, durationDays: remainingDays });
+    }
   }
 
-  const extension = dayjs(now).add(durationDays, 'day').toDate();
+  const existingMeta = (existing?.metadata as ReferralSubMetadata | null) ?? {};
+  if (Array.isArray(existingMeta.referralQueue)) {
+    pool.push(...existingMeta.referralQueue);
+  }
+  pool.push({ tier, durationDays });
+
+  const ordered = collapseTierQueue(pool);
+  if (ordered.length === 0) throw new Error('Nothing to grant');
+
+  const [active, ...queue] = ordered;
+  const product = await findReferralProductForTier(active.tier);
+  if (!product || !product.defaultPriceId) {
+    await logToAxiom({
+      name: 'referral-grant-missing-product',
+      type: 'error',
+      userId,
+      tier: active.tier,
+    }).catch(() => undefined);
+    throw new Error(
+      'Referral tier products are not yet configured. Your tokens have not been spent.'
+    );
+  }
+
+  const newPeriodEnd = dayjs(now).add(active.durationDays, 'day').toDate();
+  const nextMetadata: ReferralSubMetadata = {
+    ...existingMeta,
+    source: 'referral-redemption',
+    referralQueue: queue,
+  };
 
   if (!existing) {
     await tx.customerSubscription.create({
@@ -748,16 +783,15 @@ async function grantReferralSubscription(
         priceId: product.defaultPriceId,
         cancelAtPeriodEnd: true,
         currentPeriodStart: now,
-        currentPeriodEnd: extension,
+        currentPeriodEnd: newPeriodEnd,
         createdAt: now,
         updatedAt: now,
-        metadata: { source: 'referral-redemption' },
+        metadata: nextMetadata as Prisma.InputJsonValue,
       },
     });
-    return { created: true };
+    return { created: true, activeTier: active.tier, queuedCount: queue.length };
   }
 
-  // Existing referral sub expired or inactive — reactivate with new tier.
   await tx.customerSubscription.update({
     where: { id: existing.id },
     data: {
@@ -765,12 +799,77 @@ async function grantReferralSubscription(
       productId: product.id,
       priceId: product.defaultPriceId,
       currentPeriodStart: now,
-      currentPeriodEnd: extension,
+      currentPeriodEnd: newPeriodEnd,
       cancelAtPeriodEnd: true,
-      metadata: { ...(existing.metadata as object), source: 'referral-redemption' },
+      metadata: nextMetadata as Prisma.InputJsonValue,
     },
   });
-  return { reactivated: true };
+  return { updated: true, activeTier: active.tier, queuedCount: queue.length };
+}
+
+// Cron-facing: advance any referral sub whose current period has ended by
+// promoting the next-highest-tier chunk from its queue. If the queue is empty,
+// cancel the sub.
+export async function advanceReferralSubscriptions(now: Date = new Date()) {
+  const due = await dbWrite.customerSubscription.findMany({
+    where: {
+      buzzType: REFERRAL_BUZZ_TYPE,
+      status: 'active',
+      currentPeriodEnd: { lte: now },
+    },
+    select: { id: true, userId: true, metadata: true },
+    take: 500,
+  });
+  if (!due.length) return { advanced: 0, canceled: 0 };
+
+  let advanced = 0;
+  let canceled = 0;
+
+  for (const sub of due) {
+    const meta = (sub.metadata as ReferralSubMetadata | null) ?? {};
+    const queue = Array.isArray(meta.referralQueue) ? meta.referralQueue : [];
+    const ordered = collapseTierQueue(queue);
+
+    if (ordered.length === 0) {
+      await dbWrite.customerSubscription.update({
+        where: { id: sub.id },
+        data: { status: 'canceled', canceledAt: now, endedAt: now },
+      });
+      canceled++;
+      continue;
+    }
+
+    const [next, ...rest] = ordered;
+    const product = await findReferralProductForTier(next.tier);
+    if (!product || !product.defaultPriceId) {
+      await logToAxiom({
+        name: 'referral-advance-missing-product',
+        type: 'error',
+        subId: sub.id,
+        tier: next.tier,
+      }).catch(() => undefined);
+      continue;
+    }
+
+    const newEnd = dayjs(now).add(next.durationDays, 'day').toDate();
+    await dbWrite.customerSubscription.update({
+      where: { id: sub.id },
+      data: {
+        productId: product.id,
+        priceId: product.defaultPriceId,
+        currentPeriodStart: now,
+        currentPeriodEnd: newEnd,
+        metadata: {
+          ...meta,
+          source: 'referral-redemption',
+          referralQueue: rest,
+        } as Prisma.InputJsonValue,
+      },
+    });
+    advanced++;
+  }
+
+  return { advanced, canceled };
 }
 
 export async function redeemTokens(params: { userId: number; offerIndex: number }) {
