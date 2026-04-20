@@ -537,6 +537,12 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   // Get whatIf data for buzz transaction checking
   const { data: whatIfData } = useWhatIfContext();
 
+  // Resolved buzz type shown in the UI — defaults to the site's primary type
+  // (e.g. green on .com) when the user hasn't explicitly picked one. Sent with
+  // the mutation so the server charges the account the user sees selected,
+  // instead of falling through to the orchestrator's priority-ordered list.
+  const { selectedType: selectedBuzzType } = useSelectedBuzzType();
+
   // Setup buzz transaction handling
   const { conditionalPerformTransaction } = useBuzzTransaction({
     accountTypes: buzzSpendTypes,
@@ -634,9 +640,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Check if any resources have early access
     const hasEarlyAccess = resourceData.some((x) => x.earlyAccessConfig);
 
-    // Get the user-selected buzz type for this generation
-    const { buzzType: selectedBuzzType } = useGenerationFormStore.getState();
-
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
@@ -648,7 +651,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         creatorTip: hasCreatorTip ? creatorTip : 0,
         civitaiTip,
         tags: [WORKFLOW_TAGS.SOURCE.NEW],
-        ...(selectedBuzzType ? { buzzType: selectedBuzzType } : {}),
+        buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
       });
