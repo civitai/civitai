@@ -1,4 +1,4 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -10,7 +10,25 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { logToAxiom } from '~/server/logging/client';
 
-const REFERRAL_SYSTEM_ACCOUNT_ID = -1;
+export const REFERRAL_SYSTEM_ACCOUNT_ID = -1;
+const EXPIRY_WARN_WINDOW_DAYS = 7;
+const PRISMA_UNIQUE_VIOLATION = 'P2002';
+
+const REWARD_DESCRIPTIONS: Record<ReferralRewardKind, string> = {
+  RefereeBonus: 'Referral bonus for joining via a code',
+  BuzzKickback: 'Referral kickback from a referee Buzz purchase',
+  MilestoneBonus: 'Referral milestone bonus',
+  MembershipToken: 'Referral token (tracked separately, no buzz grant)',
+};
+
+function isUniqueViolation(err: unknown) {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: string }).code === PRISMA_UNIQUE_VIOLATION
+  );
+}
 
 function emitSignal(userId: number, target: SignalMessages, data: Record<string, unknown>) {
   return signalClient.send({ userId, target, data }).catch((err) =>
@@ -24,8 +42,19 @@ function emitSignal(userId: number, target: SignalMessages, data: Record<string,
   );
 }
 
+function logFraudEvent(event: Record<string, unknown>) {
+  return logToAxiom({ name: 'referral-fraud', ...event }).catch(() => undefined);
+}
+
 function tokensForTier(tier: ProductTier): number {
   return constants.referrals.tokensPerTier[tier] ?? 0;
+}
+
+function settlementDate(from: Date = new Date()) {
+  return dayjs(from).add(constants.referrals.settlementWindowDays, 'day').toDate();
+}
+function expiryDate(from: Date = new Date()) {
+  return dayjs(from).add(constants.referrals.tokenExpiryDays, 'day').toDate();
 }
 
 async function resolveReferrerForReferee(refereeId: number) {
@@ -36,25 +65,41 @@ async function resolveReferrerForReferee(refereeId: number) {
       userReferralCodeId: true,
       firstPaidAt: true,
       paidMonthCount: true,
-      userReferralCode: { select: { userId: true, deletedAt: true } },
+      userReferralCode: {
+        select: {
+          userId: true,
+          deletedAt: true,
+          user: { select: { createdAt: true } },
+        },
+      },
     },
   });
   if (!referral || !referral.userReferralCode || referral.userReferralCode.deletedAt) return null;
   const referrerId = referral.userReferralCode.userId;
   if (referrerId === refereeId) return null;
+
+  const minAgeDays = constants.referrals.minReferrerAccountAgeDays;
+  const referrerCreatedAt = referral.userReferralCode.user?.createdAt;
+  if (referrerCreatedAt) {
+    const ageDays = dayjs().diff(referrerCreatedAt, 'day');
+    if (ageDays < minAgeDays) {
+      logFraudEvent({
+        type: 'referrer_too_young',
+        referrerId,
+        refereeId,
+        ageDays,
+        required: minAgeDays,
+      });
+      return null;
+    }
+  }
+
   return {
     referralId: referral.id,
     referrerId,
     firstPaidAt: referral.firstPaidAt,
     paidMonthCount: referral.paidMonthCount,
   };
-}
-
-function settlementDate(from: Date = new Date()) {
-  return dayjs(from).add(constants.referrals.settlementWindowDays, 'day').toDate();
-}
-function expiryDate(from: Date = new Date()) {
-  return dayjs(from).add(constants.referrals.tokenExpiryDays, 'day').toDate();
 }
 
 export async function bindReferralCodeForUser(userId: number, code: string) {
@@ -79,10 +124,6 @@ export async function bindReferralCodeForUser(userId: number, code: string) {
   return existing;
 }
 
-function logFraudEvent(event: Record<string, unknown>) {
-  return logToAxiom({ name: 'referral-fraud', ...event }).catch(() => undefined);
-}
-
 export async function recordMembershipPaymentReward(params: {
   refereeId: number;
   tier: ProductTier;
@@ -95,89 +136,79 @@ export async function recordMembershipPaymentReward(params: {
   if (!ctx) return null;
   if (ctx.paidMonthCount >= constants.referrals.maxPaidMonthsPerReferee) return null;
 
-  logFraudEvent({
-    type: 'membership_payment',
-    refereeId,
-    referrerId: ctx.referrerId,
-    tier,
-    sourceEventId,
-    paidMonthCount: ctx.paidMonthCount + 1,
-  });
-
   const tokenAmount = tokensForTier(tier);
   if (tokenAmount <= 0) return null;
-
-  const existing = await dbRead.referralReward.findFirst({
-    where: { sourceEventId, kind: ReferralRewardKind.MembershipToken },
-    select: { id: true },
-  });
-  if (existing) return existing.id;
 
   const now = paidAt ?? new Date();
   const isFirstPayment = ctx.paidMonthCount === 0;
 
-  return dbWrite.$transaction(async (tx) => {
-    await tx.userReferral.update({
-      where: { id: ctx.referralId },
-      data: {
-        paidMonthCount: { increment: 1 },
-        firstPaidAt: isFirstPayment ? now : undefined,
-      },
+  try {
+    const result = await dbWrite.$transaction(async (tx) => {
+      const reward = await tx.referralReward.create({
+        data: {
+          userId: ctx.referrerId,
+          refereeId,
+          kind: ReferralRewardKind.MembershipToken,
+          status: ReferralRewardStatus.Pending,
+          tokenAmount,
+          tierGranted: tier,
+          sourceEventId,
+          earnedAt: now,
+          settledAt: settlementDate(now),
+          expiresAt: expiryDate(now),
+        },
+      });
+
+      await tx.userReferral.update({
+        where: { id: ctx.referralId },
+        data: {
+          paidMonthCount: { increment: 1 },
+          firstPaidAt: isFirstPayment ? now : undefined,
+        },
+      });
+
+      if (isFirstPayment && monthlyBuzzAmount > 0) {
+        const bonus = Math.floor(monthlyBuzzAmount * constants.referrals.refereeBonusBuzzPct);
+        if (bonus > 0) {
+          await tx.referralReward.create({
+            data: {
+              userId: refereeId,
+              kind: ReferralRewardKind.RefereeBonus,
+              status: ReferralRewardStatus.Pending,
+              buzzAmount: bonus,
+              tierGranted: tier,
+              sourceEventId: `referee-bonus:${sourceEventId}`,
+              settledAt: settlementDate(now),
+            },
+          });
+        }
+      }
+
+      return reward;
     });
 
-    const reward = await tx.referralReward.create({
-      data: {
-        userId: ctx.referrerId,
-        refereeId,
-        kind: ReferralRewardKind.MembershipToken,
-        status: ReferralRewardStatus.Pending,
-        tokenAmount,
-        tierGranted: tier,
-        sourceEventId,
-        earnedAt: now,
-        settledAt: settlementDate(now),
-        expiresAt: expiryDate(now),
-      },
+    logFraudEvent({
+      type: 'membership_payment',
+      refereeId,
+      referrerId: ctx.referrerId,
+      tier,
+      sourceEventId,
+      paidMonthCount: ctx.paidMonthCount + 1,
     });
-
-    if (isFirstPayment) {
-      await grantRefereeBonus({ tx, refereeId, tier, monthlyBuzzAmount, sourceEventId });
-    }
 
     emitSignal(ctx.referrerId, SignalMessages.ReferralPurchasePending, {
-      rewardId: reward.id,
+      rewardId: result.id,
       type: 'membership',
       tier,
       tokens: tokenAmount,
-      settlesAt: reward.settledAt,
+      settlesAt: result.settledAt,
     });
 
-    return reward.id;
-  });
-}
-
-async function grantRefereeBonus(params: {
-  tx: Prisma.TransactionClient;
-  refereeId: number;
-  tier: ProductTier;
-  monthlyBuzzAmount: number;
-  sourceEventId: string;
-}) {
-  const { tx, refereeId, tier, monthlyBuzzAmount, sourceEventId } = params;
-  const bonus = Math.floor(monthlyBuzzAmount * constants.referrals.refereeBonusBuzzPct);
-  if (bonus <= 0) return;
-
-  await tx.referralReward.create({
-    data: {
-      userId: refereeId,
-      kind: ReferralRewardKind.RefereeBonus,
-      status: ReferralRewardStatus.Pending,
-      buzzAmount: bonus,
-      tierGranted: tier,
-      sourceEventId: `referee-bonus:${sourceEventId}`,
-      settledAt: settlementDate(),
-    },
-  });
+    return result.id;
+  } catch (err) {
+    if (isUniqueViolation(err)) return null;
+    throw err;
+  }
 }
 
 export async function recordBuzzPurchaseKickback(params: {
@@ -196,42 +227,42 @@ export async function recordBuzzPurchaseKickback(params: {
   const kickback = Math.floor(buzzAmount * constants.referrals.buzzKickbackPct);
   if (kickback <= 0) return null;
 
-  const existing = await dbRead.referralReward.findFirst({
-    where: { sourceEventId, kind: ReferralRewardKind.BuzzKickback },
-    select: { id: true },
-  });
-  if (existing) return existing.id;
-
-  logFraudEvent({
-    type: 'buzz_kickback',
-    refereeId,
-    referrerId: ctx.referrerId,
-    buzzAmount,
-    sourceEventId,
-  });
-
   const now = purchasedAt ?? new Date();
-  const reward = await dbWrite.referralReward.create({
-    data: {
-      userId: ctx.referrerId,
+
+  try {
+    const reward = await dbWrite.referralReward.create({
+      data: {
+        userId: ctx.referrerId,
+        refereeId,
+        kind: ReferralRewardKind.BuzzKickback,
+        status: ReferralRewardStatus.Pending,
+        buzzAmount: kickback,
+        sourceEventId,
+        earnedAt: now,
+        settledAt: settlementDate(now),
+      },
+    });
+
+    logFraudEvent({
+      type: 'buzz_kickback',
       refereeId,
-      kind: ReferralRewardKind.BuzzKickback,
-      status: ReferralRewardStatus.Pending,
-      buzzAmount: kickback,
+      referrerId: ctx.referrerId,
+      buzzAmount,
       sourceEventId,
-      earnedAt: now,
-      settledAt: settlementDate(now),
-    },
-  });
+    });
 
-  emitSignal(ctx.referrerId, SignalMessages.ReferralPurchasePending, {
-    rewardId: reward.id,
-    type: 'buzz',
-    blueBuzz: kickback,
-    settlesAt: reward.settledAt,
-  });
+    emitSignal(ctx.referrerId, SignalMessages.ReferralPurchasePending, {
+      rewardId: reward.id,
+      type: 'buzz',
+      blueBuzz: kickback,
+      settlesAt: reward.settledAt,
+    });
 
-  return reward.id;
+    return reward.id;
+  } catch (err) {
+    if (isUniqueViolation(err)) return null;
+    throw err;
+  }
 }
 
 export async function settleDueRewards(now: Date = new Date()) {
@@ -259,7 +290,7 @@ export async function settleDueRewards(now: Date = new Date()) {
   return { settled: settledCount };
 }
 
-async function settleRewardRow(reward: {
+type SettleableReward = {
   id: number;
   userId: number;
   kind: ReferralRewardKind;
@@ -267,15 +298,20 @@ async function settleRewardRow(reward: {
   tokenAmount: number;
   refereeId: number | null;
   tierGranted: string | null;
-}) {
-  await dbWrite.$transaction(async (tx) => {
-    const updated = await tx.referralReward.updateMany({
-      where: { id: reward.id, status: ReferralRewardStatus.Pending },
-      data: { status: ReferralRewardStatus.Settled },
-    });
-    if (updated.count === 0) return;
+};
 
-    if (reward.buzzAmount > 0) {
+async function settleRewardRow(reward: SettleableReward) {
+  // Grant buzz first so a failed transaction propagates through the tx and rolls
+  // back the status update. The CAS updateMany makes this safe against duplicate
+  // runs of the cron — only one caller will see count > 0.
+  const claimed = await dbWrite.referralReward.updateMany({
+    where: { id: reward.id, status: ReferralRewardStatus.Pending },
+    data: { status: ReferralRewardStatus.Settled, settledAt: new Date() },
+  });
+  if (claimed.count === 0) return;
+
+  if (reward.buzzAmount > 0) {
+    try {
       await createBuzzTransaction({
         fromAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
         fromAccountType: 'blue',
@@ -283,22 +319,18 @@ async function settleRewardRow(reward: {
         toAccountType: 'blue',
         amount: reward.buzzAmount,
         type: TransactionType.Reward,
-        description:
-          reward.kind === ReferralRewardKind.RefereeBonus
-            ? 'Referral bonus for joining via a code'
-            : reward.kind === ReferralRewardKind.BuzzKickback
-            ? 'Referral kickback from a referee Buzz purchase'
-            : 'Referral milestone bonus',
+        description: REWARD_DESCRIPTIONS[reward.kind],
         externalTransactionId: `referral-reward:${reward.id}`,
-      }).catch(async (err) => {
-        await tx.referralReward.update({
-          where: { id: reward.id },
-          data: { status: ReferralRewardStatus.Pending, revokedReason: String(err) },
-        });
-        throw err;
       });
+    } catch (err) {
+      // Buzz grant failed — revert claim so next cron retries.
+      await dbWrite.referralReward.update({
+        where: { id: reward.id },
+        data: { status: ReferralRewardStatus.Pending, revokedReason: String(err) },
+      });
+      throw err;
     }
-  });
+  }
 
   if (reward.kind !== ReferralRewardKind.RefereeBonus) {
     emitSignal(reward.userId, SignalMessages.ReferralSettled, {
@@ -316,15 +348,35 @@ async function settleRewardRow(reward: {
 
 export async function revokeForChargeback(params: { sourceEventId: string; reason: string }) {
   const { sourceEventId, reason } = params;
-  const rewards = await dbWrite.referralReward.findMany({
+  const affected = await dbWrite.referralReward.findMany({
     where: {
       OR: [{ sourceEventId }, { sourceEventId: `referee-bonus:${sourceEventId}` }],
-      status: ReferralRewardStatus.Pending,
+      status: { in: [ReferralRewardStatus.Pending, ReferralRewardStatus.Settled] },
     },
+    select: { id: true, userId: true, status: true, buzzAmount: true },
   });
-  if (!rewards.length) return { revoked: 0 };
+  if (!affected.length) return { revoked: 0 };
 
-  for (const reward of rewards) {
+  for (const reward of affected) {
+    if (reward.status === ReferralRewardStatus.Settled && reward.buzzAmount > 0) {
+      await createBuzzTransaction({
+        fromAccountId: reward.userId,
+        fromAccountType: 'blue',
+        toAccountId: REFERRAL_SYSTEM_ACCOUNT_ID,
+        toAccountType: 'blue',
+        amount: reward.buzzAmount,
+        type: TransactionType.ChargeBack,
+        description: `Referral reward clawback (${reason})`,
+        externalTransactionId: `referral-clawback:${reward.id}`,
+      }).catch((err) =>
+        logToAxiom({
+          name: 'referral-clawback',
+          type: 'error',
+          rewardId: reward.id,
+          err: String(err),
+        }).catch(() => undefined)
+      );
+    }
     await dbWrite.referralReward.update({
       where: { id: reward.id },
       data: {
@@ -338,7 +390,7 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
       reason,
     });
   }
-  return { revoked: rewards.length };
+  return { revoked: affected.length };
 }
 
 export async function awardMilestones(userId: number) {
@@ -353,38 +405,37 @@ export async function awardMilestones(userId: number) {
   const lifetime = agg._sum.buzzAmount ?? 0;
   if (lifetime <= 0) return;
 
-  const already = await dbRead.referralMilestone.findMany({
-    where: { userId },
-    select: { threshold: true },
-  });
-  const seen = new Set(already.map((m) => m.threshold));
-
   for (const m of constants.referrals.milestones) {
-    if (lifetime < m.threshold || seen.has(m.threshold)) continue;
-    await dbWrite.$transaction(async (tx) => {
-      const created = await tx.referralMilestone.create({
-        data: { userId, threshold: m.threshold, bonusAmount: m.bonus },
+    if (lifetime < m.threshold) continue;
+    try {
+      await dbWrite.$transaction(async (tx) => {
+        await tx.referralMilestone.create({
+          data: { userId, threshold: m.threshold, bonusAmount: m.bonus },
+        });
+        await tx.referralReward.create({
+          data: {
+            userId,
+            kind: ReferralRewardKind.MilestoneBonus,
+            status: ReferralRewardStatus.Pending,
+            buzzAmount: m.bonus,
+            sourceEventId: `milestone:${userId}:${m.threshold}`,
+            settledAt: settlementDate(),
+          },
+        });
       });
-      await tx.referralReward.create({
-        data: {
-          userId,
-          kind: ReferralRewardKind.MilestoneBonus,
-          status: ReferralRewardStatus.Pending,
-          buzzAmount: m.bonus,
-          sourceEventId: `milestone:${created.id}`,
-          settledAt: settlementDate(),
-        },
+      emitSignal(userId, SignalMessages.ReferralMilestone, {
+        threshold: m.threshold,
+        bonusAmount: m.bonus,
       });
-    });
-    emitSignal(userId, SignalMessages.ReferralMilestone, {
-      threshold: m.threshold,
-      bonusAmount: m.bonus,
-    });
+    } catch (err) {
+      if (isUniqueViolation(err)) continue;
+      throw err;
+    }
   }
 }
 
 export async function expireSettledTokens(now: Date = new Date()) {
-  const warnWindow = dayjs(now).add(7, 'day').toDate();
+  const warnWindow = dayjs(now).add(EXPIRY_WARN_WINDOW_DAYS, 'day').toDate();
   const expiringSoon = await dbRead.referralReward.groupBy({
     by: ['userId'],
     where: {
@@ -414,52 +465,131 @@ export async function expireSettledTokens(now: Date = new Date()) {
 }
 
 export async function getReferrerBalance(userId: number) {
-  const [settledTokensAgg, pendingTokensAgg, blueBuzzSettledAgg, blueBuzzPendingAgg] =
-    await Promise.all([
-      dbRead.referralReward.aggregate({
-        where: {
-          userId,
-          kind: ReferralRewardKind.MembershipToken,
-          status: ReferralRewardStatus.Settled,
-        },
-        _sum: { tokenAmount: true },
-      }),
-      dbRead.referralReward.aggregate({
-        where: {
-          userId,
-          kind: ReferralRewardKind.MembershipToken,
-          status: ReferralRewardStatus.Pending,
-        },
-        _sum: { tokenAmount: true },
-      }),
-      dbRead.referralReward.aggregate({
-        where: {
-          userId,
-          kind: { in: [ReferralRewardKind.BuzzKickback, ReferralRewardKind.MilestoneBonus] },
-          status: ReferralRewardStatus.Settled,
-        },
-        _sum: { buzzAmount: true },
-      }),
-      dbRead.referralReward.aggregate({
-        where: {
-          userId,
-          kind: { in: [ReferralRewardKind.BuzzKickback, ReferralRewardKind.MilestoneBonus] },
-          status: ReferralRewardStatus.Pending,
-        },
-        _sum: { buzzAmount: true },
-      }),
-    ]);
+  const groups = await dbRead.referralReward.groupBy({
+    by: ['kind', 'status'],
+    where: {
+      userId,
+      status: {
+        in: [
+          ReferralRewardStatus.Pending,
+          ReferralRewardStatus.Settled,
+          ReferralRewardStatus.Redeemed,
+        ],
+      },
+    },
+    _sum: { tokenAmount: true, buzzAmount: true },
+  });
 
-  return {
-    settledTokens: settledTokensAgg._sum.tokenAmount ?? 0,
-    pendingTokens: pendingTokensAgg._sum.tokenAmount ?? 0,
-    settledBlueBuzzLifetime: blueBuzzSettledAgg._sum.buzzAmount ?? 0,
-    pendingBlueBuzz: blueBuzzPendingAgg._sum.buzzAmount ?? 0,
-  };
+  let settledTokens = 0;
+  let pendingTokens = 0;
+  let settledBlueBuzzLifetime = 0;
+  let pendingBlueBuzz = 0;
+
+  for (const g of groups) {
+    const tokens = g._sum.tokenAmount ?? 0;
+    const buzz = g._sum.buzzAmount ?? 0;
+    if (g.kind === ReferralRewardKind.MembershipToken) {
+      if (g.status === ReferralRewardStatus.Settled) settledTokens += tokens;
+      if (g.status === ReferralRewardStatus.Pending) pendingTokens += tokens;
+    }
+    if (
+      g.kind === ReferralRewardKind.BuzzKickback ||
+      g.kind === ReferralRewardKind.MilestoneBonus
+    ) {
+      if (g.status === ReferralRewardStatus.Settled || g.status === ReferralRewardStatus.Redeemed) {
+        settledBlueBuzzLifetime += buzz;
+      }
+      if (g.status === ReferralRewardStatus.Pending) pendingBlueBuzz += buzz;
+    }
+  }
+
+  return { settledTokens, pendingTokens, settledBlueBuzzLifetime, pendingBlueBuzz };
 }
 
 export async function getShopOffers() {
   return constants.referrals.shopItems;
+}
+
+async function findReferralProductForTier(tier: string) {
+  const products = await dbRead.product.findMany({
+    select: { id: true, defaultPriceId: true, metadata: true },
+  });
+  const match = products.find((p) => {
+    const meta = (p.metadata ?? {}) as Record<string, unknown>;
+    return meta.tier === tier && meta.referralGrantable === true;
+  });
+  if (match) return match;
+  // Fallback: any Civitai-provider product matching the tier with monthlyBuzz>0 is NOT ideal
+  // because it'd hand out buzz — leave strict requirement for referralGrantable flag.
+  return null;
+}
+
+async function grantReferralSubscription(
+  tx: Prisma.TransactionClient,
+  userId: number,
+  tier: string,
+  durationDays: number
+) {
+  const product = await findReferralProductForTier(tier);
+  if (!product || !product.defaultPriceId) {
+    logToAxiom({
+      name: 'referral-grant-missing-product',
+      type: 'error',
+      userId,
+      tier,
+    }).catch(() => undefined);
+    throw new Error(
+      'Referral tier products are not yet configured. Your tokens have not been spent.'
+    );
+  }
+
+  const existing = await tx.customerSubscription.findUnique({
+    where: { userId_buzzType: { userId, buzzType: 'yellow' } },
+    select: { id: true, status: true, currentPeriodEnd: true, metadata: true, productId: true },
+  });
+
+  const now = new Date();
+  const extension = dayjs(now).add(durationDays, 'day').toDate();
+
+  if (!existing) {
+    await tx.customerSubscription.create({
+      data: {
+        id: `referral:${userId}:${Date.now()}`,
+        userId,
+        buzzType: 'yellow',
+        status: 'active',
+        productId: product.id,
+        priceId: product.defaultPriceId,
+        cancelAtPeriodEnd: true,
+        currentPeriodStart: now,
+        currentPeriodEnd: extension,
+        createdAt: now,
+        updatedAt: now,
+        metadata: { source: 'referral-redemption' },
+      },
+    });
+    return { created: true };
+  }
+
+  if (existing.status !== 'active' || existing.currentPeriodEnd < now) {
+    await tx.customerSubscription.update({
+      where: { id: existing.id },
+      data: {
+        status: 'active',
+        productId: product.id,
+        priceId: product.defaultPriceId,
+        currentPeriodStart: now,
+        currentPeriodEnd: extension,
+        cancelAtPeriodEnd: true,
+        metadata: { ...(existing.metadata as object), source: 'referral-redemption' },
+      },
+    });
+    return { reactivated: true };
+  }
+
+  throw new Error(
+    'You already have an active Membership. Save your tokens for when your membership lapses.'
+  );
 }
 
 export async function redeemTokens(params: { userId: number; offerIndex: number }) {
@@ -467,55 +597,67 @@ export async function redeemTokens(params: { userId: number; offerIndex: number 
   const offer = constants.referrals.shopItems[offerIndex];
   if (!offer) throw new Error('Invalid shop offer');
 
-  return dbWrite.$transaction(async (tx) => {
-    const settled = await tx.referralReward.findMany({
-      where: {
-        userId,
-        kind: ReferralRewardKind.MembershipToken,
-        status: ReferralRewardStatus.Settled,
-      },
-      orderBy: { expiresAt: 'asc' },
-    });
+  const redemption = await dbWrite.$transaction(async (tx) => {
+    // Lock settled token rows so parallel redemptions cannot double-spend.
+    const rows = await tx.$queryRaw<{ id: number; tokenAmount: number }[]>(Prisma.sql`
+      SELECT id, "tokenAmount"
+      FROM "ReferralReward"
+      WHERE "userId" = ${userId}
+        AND kind = ${ReferralRewardKind.MembershipToken}::"ReferralRewardKind"
+        AND status = ${ReferralRewardStatus.Settled}::"ReferralRewardStatus"
+      ORDER BY "expiresAt" ASC NULLS LAST, id ASC
+      FOR UPDATE
+    `);
 
     let remaining = offer.cost;
-    const toConsume: { id: number; consume: number; available: number }[] = [];
-    for (const row of settled) {
+    const fullyConsumed: number[] = [];
+    let partial: { id: number; newAmount: number } | null = null;
+    for (const row of rows) {
       if (remaining <= 0) break;
-      const take = Math.min(row.tokenAmount, remaining);
-      toConsume.push({ id: row.id, consume: take, available: row.tokenAmount });
-      remaining -= take;
+      if (row.tokenAmount <= remaining) {
+        fullyConsumed.push(row.id);
+        remaining -= row.tokenAmount;
+      } else {
+        partial = { id: row.id, newAmount: row.tokenAmount - remaining };
+        remaining = 0;
+      }
     }
     if (remaining > 0) throw new Error('Insufficient tokens');
 
-    for (const entry of toConsume) {
-      if (entry.consume === entry.available) {
-        await tx.referralReward.update({
-          where: { id: entry.id },
-          data: { status: ReferralRewardStatus.Redeemed, redeemedAt: new Date() },
-        });
-      } else {
-        await tx.referralReward.update({
-          where: { id: entry.id },
-          data: { tokenAmount: entry.available - entry.consume },
-        });
-      }
+    // Grant first — if it throws (e.g. user already has active sub, products missing),
+    // the whole tx rolls back and tokens are NOT consumed.
+    await grantReferralSubscription(tx, userId, offer.tier, offer.durationDays);
+
+    if (fullyConsumed.length) {
+      await tx.referralReward.updateMany({
+        where: { id: { in: fullyConsumed } },
+        data: { status: ReferralRewardStatus.Redeemed, redeemedAt: new Date() },
+      });
+    }
+    if (partial) {
+      await tx.referralReward.update({
+        where: { id: partial.id },
+        data: { tokenAmount: partial.newAmount, redeemedAt: new Date() },
+      });
     }
 
-    const redemption = await tx.referralRedemption.create({
+    return tx.referralRedemption.create({
       data: {
         userId,
         tokensSpent: offer.cost,
         tier: offer.tier,
         durationDays: offer.durationDays,
+        subscriptionId: `referral:${userId}:${offer.tier}`,
       },
+      select: { id: true, tier: true, durationDays: true, createdAt: true, tokensSpent: true },
     });
-
-    emitSignal(userId, SignalMessages.ReferralTierGranted, {
-      redemptionId: redemption.id,
-      tier: offer.tier,
-      durationDays: offer.durationDays,
-    });
-
-    return redemption;
   });
+
+  emitSignal(userId, SignalMessages.ReferralTierGranted, {
+    redemptionId: redemption.id,
+    tier: offer.tier,
+    durationDays: offer.durationDays,
+  });
+
+  return redemption;
 }

@@ -11,12 +11,12 @@ function formatBuzz(n: number) {
   return n.toLocaleString();
 }
 
-export function ReferralCheckoutBanner({
-  monthlyBuzzByTier,
-}: {
-  monthlyBuzzByTier?: Partial<Record<string, number>>;
-}) {
+export function ReferralCheckoutBanner() {
   const { code } = useReferralsContext();
+  const { data: tierBonuses } = trpc.referral.getTierBonuses.useQuery(undefined, {
+    staleTime: 60 * 60 * 1000,
+  });
+  const monthlyBuzzByTier = tierBonuses?.monthlyBuzzByTier;
   const [entry, setEntry] = useState('');
   const [applied, setApplied] = useState<string | undefined>(code);
 
@@ -49,11 +49,12 @@ export function ReferralCheckoutBanner({
   };
 
   if (applied) {
+    const pct = tierBonuses?.refereeBonusPct ?? constants.referrals.refereeBonusBuzzPct;
     const bonusLines = ['bronze', 'silver', 'gold']
       .map((tier) => {
         const monthlyBuzz = monthlyBuzzByTier?.[tier];
         if (!monthlyBuzz) return null;
-        const bonus = Math.floor(monthlyBuzz * constants.referrals.refereeBonusBuzzPct);
+        const bonus = Math.floor(monthlyBuzz * pct);
         return `${tier.charAt(0).toUpperCase()}${tier.slice(1)}: ${formatBuzz(bonus)} Blue Buzz`;
       })
       .filter(Boolean) as string[];

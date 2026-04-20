@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { protectedProcedure, router } from '~/server/trpc';
+import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
   getReferrerBalance,
   getShopOffers,
@@ -9,6 +9,9 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { TRPCError } from '@trpc/server';
 import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/enums';
+import { signalClient } from '~/utils/signal-client';
+import { SignalMessages } from '~/server/common/enums';
+import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 const redeemInput = z.object({ offerIndex: z.number().int().min(0) });
 
@@ -100,7 +103,19 @@ export const referralRouter = router({
     return getShopOffers();
   }),
 
-  trackCheckoutView: protectedProcedure
+  getTierBonuses: publicProcedure.query(async () => {
+    const products = await dbRead.product.findMany({ select: { metadata: true } });
+    const byTier: Record<string, number> = {};
+    for (const p of products) {
+      const meta = (p.metadata ?? {}) as SubscriptionProductMetadata;
+      if (!meta.tier || !meta.monthlyBuzz) continue;
+      const existing = byTier[meta.tier];
+      if (!existing || meta.monthlyBuzz > existing) byTier[meta.tier] = meta.monthlyBuzz;
+    }
+    return { monthlyBuzzByTier: byTier, refereeBonusPct: constants.referrals.refereeBonusBuzzPct };
+  }),
+
+  trackCheckoutView: publicProcedure
     .input(z.object({ code: z.string() }))
     .mutation(async ({ input }) => {
       const code = await dbRead.userReferralCode.findUnique({
@@ -108,8 +123,6 @@ export const referralRouter = router({
         select: { userId: true, deletedAt: true },
       });
       if (!code || code.deletedAt) return { ok: false };
-      const { signalClient } = await import('~/utils/signal-client');
-      const { SignalMessages } = await import('~/server/common/enums');
       await signalClient
         .send({
           userId: code.userId,

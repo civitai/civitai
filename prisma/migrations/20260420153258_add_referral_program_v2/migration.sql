@@ -19,7 +19,7 @@ CREATE TABLE "ReferralReward" (
     "tokenAmount" INTEGER NOT NULL DEFAULT 0,
     "buzzAmount" INTEGER NOT NULL DEFAULT 0,
     "tierGranted" TEXT,
-    "sourceEventId" TEXT,
+    "sourceEventId" TEXT NOT NULL,
     "metadata" JSONB NOT NULL DEFAULT '{}',
     "earnedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "settledAt" TIMESTAMP(3),
@@ -30,6 +30,9 @@ CREATE TABLE "ReferralReward" (
 
     CONSTRAINT "ReferralReward_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateIndex
+CREATE UNIQUE INDEX "ReferralReward_kind_sourceEventId_key" ON "ReferralReward"("kind", "sourceEventId");
 
 -- CreateIndex
 CREATE INDEX "ReferralReward_userId_status_idx" ON "ReferralReward"("userId", "status");
@@ -44,7 +47,7 @@ CREATE INDEX "ReferralReward_refereeId_idx" ON "ReferralReward"("refereeId");
 CREATE INDEX "ReferralReward_expiresAt_idx" ON "ReferralReward"("expiresAt");
 
 -- CreateIndex
-CREATE INDEX "ReferralReward_sourceEventId_idx" ON "ReferralReward"("sourceEventId");
+CREATE INDEX "ReferralReward_status_settledAt_idx" ON "ReferralReward"("status", "settledAt");
 
 -- AddForeignKey
 ALTER TABLE "ReferralReward"

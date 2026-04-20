@@ -280,7 +280,7 @@ export interface ReferralReward {
   tokenAmount: number;
   buzzAmount: number;
   tierGranted: string | null;
-  sourceEventId: string | null;
+  sourceEventId: string;
   metadata: JsonValue;
   earnedAt: Date;
   settledAt: Date | null;

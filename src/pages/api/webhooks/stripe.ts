@@ -214,9 +214,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               typeof charge.payment_intent === 'string'
                 ? charge.payment_intent
                 : charge.payment_intent?.id;
-            if (paymentIntentId) {
+            let invoiceId: string | undefined;
+            try {
+              if (paymentIntentId) {
+                const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+                if (pi.invoice) {
+                  invoiceId = typeof pi.invoice === 'string' ? pi.invoice : pi.invoice.id;
+                }
+              }
+            } catch {
+              // lookup failed — still try with PI id so buzz-purchase path revokes
+            }
+            for (const sourceEventId of [paymentIntentId, invoiceId].filter(Boolean) as string[]) {
               await revokeForChargeback({
-                sourceEventId: paymentIntentId,
+                sourceEventId,
                 reason: event.type,
               }).catch(() => null);
             }

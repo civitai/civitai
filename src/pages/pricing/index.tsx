@@ -174,6 +174,7 @@ export default function Pricing() {
       <div className="mb-4">
         <ReferralCheckoutBanner />
       </div>
+      {/* ReferralCheckoutBanner self-fetches tier bonuses via trpc.referral.getTierBonuses */}
       <div
         style={{
           // @ts-ignore
