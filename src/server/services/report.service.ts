@@ -405,13 +405,13 @@ export async function bulkSetReportStatus({
       userIds: [report.userId, ...report.alsoReportedBy],
     }));
 
-    for (const report of prepReports) {
-      await Promise.all(
+    await Promise.allSettled(
+      prepReports.flatMap((report) =>
         report.userIds.map((userId) =>
           reportAcceptedReward.apply({ userId, reportId: report.id }, { ip })
         )
-      );
-    }
+      )
+    );
   }
 }
 

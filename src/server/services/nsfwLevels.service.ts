@@ -280,9 +280,14 @@ export async function updatePostNsfwLevels(postIds: number[]) {
   `);
 }
 
-export async function updateArticleNsfwLevels(articleIds: number[]) {
+export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.TransactionClient) {
   if (!articleIds.length) return;
-  const articles = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  // Run the UPDATE under the caller's transaction when one is supplied so the
+  // write participates in any advisory lock / snapshot the caller established
+  // (see updateArticleImageScanStatus). The search index queue call below is
+  // idempotent and stays out-of-band either way.
+  const dbClient = tx ?? dbWrite;
+  const articles = await dbClient.$queryRaw<{ id: number }[]>(Prisma.sql`
       WITH level AS (
         SELECT
           a.id,

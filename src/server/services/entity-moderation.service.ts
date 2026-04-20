@@ -105,7 +105,7 @@ export async function upsertEntityModerationPending({
 }: {
   entityType: string;
   entityId: number;
-  workflowId: string;
+  workflowId: string | null;
   contentHash?: string;
 }) {
   return dbWrite.entityModeration.upsert({
@@ -134,19 +134,23 @@ export async function upsertEntityModerationPending({
  * callback from a stale workflow from clobbering a newer in-flight workflow.
  * Returns `true` if the row was updated, `false` if the callback was stale.
  */
-export async function recordEntityModerationSuccess({
-  entityType,
-  entityId,
-  workflowId,
-  output,
-}: {
-  entityType: string;
-  entityId: number;
-  workflowId: string;
-  output: XGuardModerationOutput;
-}) {
+export async function recordEntityModerationSuccess(
+  {
+    entityType,
+    entityId,
+    workflowId,
+    output,
+  }: {
+    entityType: string;
+    entityId: number;
+    workflowId: string;
+    output: XGuardModerationOutput;
+  },
+  tx?: Prisma.TransactionClient
+) {
+  const client = tx ?? dbWrite;
   const { blocked, triggeredLabels } = output;
-  const result = await dbWrite.entityModeration.updateMany({
+  const result = await client.entityModeration.updateMany({
     where: { entityType, entityId, workflowId },
     data: {
       status: EntityModerationStatus.Succeeded,
@@ -163,18 +167,22 @@ export async function recordEntityModerationSuccess({
  * if the stored `workflowId` matches — see `recordEntityModerationSuccess`.
  * Returns `true` if the row was updated, `false` if the callback was stale.
  */
-export async function recordEntityModerationFailure({
-  entityType,
-  entityId,
-  workflowId,
-  status,
-}: {
-  entityType: string;
-  entityId: number;
-  workflowId: string;
-  status: Exclude<EntityModerationStatus, 'Pending' | 'Succeeded'>;
-}) {
-  const result = await dbWrite.entityModeration.updateMany({
+export async function recordEntityModerationFailure(
+  {
+    entityType,
+    entityId,
+    workflowId,
+    status,
+  }: {
+    entityType: string;
+    entityId: number;
+    workflowId: string;
+    status: Exclude<EntityModerationStatus, 'Pending' | 'Succeeded'>;
+  },
+  tx?: Prisma.TransactionClient
+) {
+  const client = tx ?? dbWrite;
+  const result = await client.entityModeration.updateMany({
     where: { entityType, entityId, workflowId },
     data: {
       status,

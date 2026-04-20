@@ -1,3 +1,15 @@
+/**
+ * Text moderation result webhook.
+ *
+ * Non-atomicity note: `recordEntityModerationSuccess` and the entity handler
+ * (which calls `recomputeArticleIngestion`) run in separate transactions. If
+ * the process crashes between them, the orchestrator's webhook retry will
+ * redeliver the callback — `recordEntityModerationSuccess` is idempotent
+ * (updateMany on a matching workflowId) and `recomputeArticleIngestion`
+ * derives state from ground truth, so replay is safe. For the rare case
+ * where the orchestrator already received a 200 and won't retry, the
+ * `article-ingestion-reconcile` cron picks up the drift within 10 minutes.
+ */
 import type { WorkflowEvent, XGuardModerationOutput, XGuardModerationStep } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import { logToAxiom } from '~/server/logging/client';
