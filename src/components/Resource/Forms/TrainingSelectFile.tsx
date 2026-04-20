@@ -31,7 +31,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
-import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
@@ -199,7 +199,8 @@ export default function TrainingSelectFile({
 
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
-  const modelFile = modelVersion.files.find((f) => f.type === 'Training Data');
+  const trainingDataFiles = modelVersion.files.filter((f) => f.type === 'Training Data');
+  const modelFile = pickBestTrainingFile(trainingDataFiles);
   const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
   const trainingResults = modelFile?.metadata?.trainingResults;
   const isVideo = modelVersion.trainingDetails?.mediaType === 'video';
