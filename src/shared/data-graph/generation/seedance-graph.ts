@@ -33,10 +33,14 @@ import { isWorkflowOrVariant } from './config/workflows';
 /** Seedance version IDs */
 export const seedanceVersionIds = {
   v2: 2864671,
+  'v2-fast': 2868300,
 } as const;
 
 /** Options for seedance version selector */
-const seedanceVersionOptions = [{ label: 'v2', value: seedanceVersionIds.v2 }];
+const seedanceVersionOptions = [
+  { label: 'v2', value: seedanceVersionIds.v2 },
+  { label: 'v2 fast', value: seedanceVersionIds['v2-fast'] },
+];
 
 // =============================================================================
 // Aspect Ratios
