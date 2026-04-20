@@ -267,6 +267,7 @@ export interface UserReferralCode {
   deletedAt: Date | null;
   createdAt: Date;
   referees?: UserReferral[];
+  attributions?: ReferralAttribution[];
 }
 
 export interface ReferralReward {
@@ -307,6 +308,26 @@ export interface ReferralRedemption {
   tier: string;
   durationDays: number;
   subscriptionId: string | null;
+  createdAt: Date;
+}
+
+export interface ReferralAttribution {
+  id: number;
+  referralCodeId: number;
+  referralCode?: UserReferralCode;
+  refereeId: number;
+  referee?: User;
+  eventType: string;
+  sourceEventId: string | null;
+  tier: string | null;
+  amount: number | null;
+  paymentProvider: string | null;
+  stripePaymentIntentId: string | null;
+  stripeInvoiceId: string | null;
+  stripeChargeId: string | null;
+  paymentMethodFingerprint: string | null;
+  ipAddress: string | null;
+  metadata: JsonValue;
   createdAt: Date;
 }
 
@@ -511,6 +532,7 @@ export interface User {
   referralRewardsAsReferee?: ReferralReward[];
   referralMilestones?: ReferralMilestone[];
   referralRedemptions?: ReferralRedemption[];
+  referralAttributions?: ReferralAttribution[];
   clubs?: Club[];
   memberships?: ClubMembership[];
   addedClubPosts?: ClubPost[];

@@ -81,6 +81,8 @@ model UserReferral {
   userId              Int               @unique
   user                User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   note                String?
+  firstPaidAt         DateTime?
+  paidMonthCount      Int               @default(0)
 }
 
 model UserReferralCode {
@@ -92,9 +94,103 @@ model UserReferralCode {
   deletedAt DateTime?
   createdAt DateTime  @default(now())
 
-  referees UserReferral[]
+  referees     UserReferral[]
+  attributions ReferralAttribution[]
 
   @@index([userId], type: Hash)
+}
+
+enum ReferralRewardStatus {
+  Pending
+  Settled
+  Redeemed
+  Expired
+  Revoked
+}
+
+enum ReferralRewardKind {
+  MembershipToken
+  BuzzKickback
+  MilestoneBonus
+  RefereeBonus
+}
+
+model ReferralReward {
+  id            Int                  @id @default(autoincrement())
+  userId        Int
+  user          User                 @relation("ReferralRewardUser", fields: [userId], references: [id], onDelete: Cascade)
+  refereeId     Int?
+  referee       User?                @relation("ReferralRewardReferee", fields: [refereeId], references: [id], onDelete: SetNull)
+  kind          ReferralRewardKind
+  status        ReferralRewardStatus @default(Pending)
+  tokenAmount   Int                  @default(0)
+  buzzAmount    Int                  @default(0)
+  tierGranted   String?
+  sourceEventId String
+  metadata      Json                 @default("{}")
+  earnedAt      DateTime             @default(now())
+  settledAt     DateTime?
+  redeemedAt    DateTime?
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  revokedReason String?
+
+  @@unique([kind, sourceEventId])
+  @@index([userId, status])
+  @@index([userId, kind])
+  @@index([refereeId])
+  @@index([expiresAt])
+  @@index([status, settledAt])
+}
+
+model ReferralMilestone {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  threshold   Int
+  bonusAmount Int
+  awardedAt   DateTime @default(now())
+
+  @@unique([userId, threshold])
+}
+
+model ReferralRedemption {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokensSpent    Int
+  tier           String
+  durationDays   Int
+  subscriptionId String?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+model ReferralAttribution {
+  id                       Int              @id @default(autoincrement())
+  referralCodeId           Int
+  referralCode             UserReferralCode @relation(fields: [referralCodeId], references: [id], onDelete: Cascade)
+  refereeId                Int
+  referee                  User             @relation(fields: [refereeId], references: [id], onDelete: Cascade)
+  eventType                String
+  sourceEventId            String?
+  tier                     String?
+  amount                   Int?
+  paymentProvider          String?
+  stripePaymentIntentId    String?
+  stripeInvoiceId          String?
+  stripeChargeId           String?
+  paymentMethodFingerprint String?
+  ipAddress                String?
+  metadata                 Json             @default("{}")
+  createdAt                DateTime         @default(now())
+
+  @@index([referralCodeId, createdAt])
+  @@index([refereeId])
+  @@index([paymentMethodFingerprint])
+  @@index([ipAddress])
+  @@index([stripePaymentIntentId])
 }
 
 model UserPaymentConfiguration {
@@ -373,6 +469,11 @@ model User {
   engagedBounties            BountyEngagement[]
   bountyEntryReactions       BountyEntryReaction[]
   referralCodes              UserReferralCode[]
+  referralRewards            ReferralReward[]                @relation("ReferralRewardUser")
+  referralRewardsAsReferee   ReferralReward[]                @relation("ReferralRewardReferee")
+  referralMilestones         ReferralMilestone[]
+  referralRedemptions        ReferralRedemption[]
+  referralAttributions       ReferralAttribution[]
   clubs                      Club[]
   memberships                ClubMembership[]
   addedClubPosts             ClubPost[]

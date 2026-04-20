@@ -408,6 +408,55 @@ No data migration. Legacy `UserReferral` rows stay intact (signup-only rewards a
 
 11. **@ai:** Referee bonus amount: 1,000 Blue Buzz feels right (matches 10% of a $10 membership at $1=1k). Sound OK, or want higher/lower? @justin: Let's make the bonus be 10% extra Buzz for the month granted as Blue Buzz (for example, 1k Blue Buzz if you got the Bronze Membership which grants 10k Buzz). @ai: Locked. Bonus = `Product.metadata.monthlyBuzz * 0.10` as Blue Buzz. Scales with tier — Bronze 10k buzz → 1k blue, Silver/Gold proportionally higher. Only on first paid membership (not renewals). @justin: What if it was like a bigger portion, like maybe 25% or even 20%? @ai: Final: **25%** of tier's monthlyBuzz as Blue Buzz, displayed at checkout (not post-pay). Tiers $10/$25/$50 → Bronze 2.5k, Silver 6.25k, Gold 12.5k blue buzz. Zero cash cost to us (compute). Surfacing at checkout makes this a conversion lever, not just a reward.
 
-12. **@ai:*** Checkout manual code entry: adding an input field to checkout (pre-filled from cookie if present, manually enterable if not). This requires auditing the existing Stripe/Paddle checkout flow — will scout `src/server/services/stripe.service.ts` and related checkout components in Phase 1 prep to find the correct injection point.
+12. **@ai:** Checkout manual code entry: adding an input field to checkout (pre-filled from cookie if present, manually enterable if not). This requires auditing the existing Stripe/Paddle checkout flow — will scout `src/server/services/stripe.service.ts` and related checkout components in Phase 1 prep to find the correct injection point. @ai: Implemented via `ReferralCheckoutBanner` on `/pricing`. Stripe checkout session now carries `ref_code` via `subscription_data.metadata` → reconciled on `invoice.paid` webhook.
+
+## Overlap Stacking Approach (v1)
+
+`CustomerSubscription` has `@@unique([userId, buzzType])`. Paid subs use `yellow` (.com), `green` (.green), `blue` (.red). Using any of those for referral grants collides with paid subs of the same flavor.
+
+**V1 solution**: Referral grants write `CustomerSubscription.buzzType = 'referral'`. The column is `String` (not enum), session-user iterates all sub rows and picks the highest tier across buzz types via `constants.memberships.tierOrder`. Result: a user can hold paid yellow + paid green + referral Gold simultaneously, and feature flags / perk checks see Gold.
+
+Behavior when a user redeems while they already have an active referral sub:
+- **Same or lower tier**: extends `currentPeriodEnd` by `durationDays` starting from the existing end date
+- **Higher tier**: swaps `productId` to the new tier, restarts `currentPeriodStart` at `now`, sets `currentPeriodEnd = now + durationDays`
+
+Behavior when an existing referral sub is expired or inactive: reactivate with new tier.
+
+**V1 does not** pause or offset the referral grant against a concurrent paid sub. If a paid Gold user redeems a Gold referral, they "double up" and the referral clock ticks during the paid period. User has agency to time the redemption.
+
+**V2 follow-ups** (not blocking launch):
+- Add `activatesAt` field or metadata flag so referral grants can queue to activate after a paid sub expires
+- Dashboard UI warning when the redemption tier is less-or-equal to the user's active paid tier
+- Support multiple queued referral grants (stack in metadata, advance on each expiry)
+
+## Attribution + Fraud Detection
+
+`ReferralAttribution` Postgres table logs every attribution-relevant event:
+- `membership_payment`, `membership_payment_over_cap`
+- `buzz_kickback`, `buzz_kickback_skipped_no_membership`
+- `referrer_too_young`
+
+Each row captures `referralCodeId` (FK to `UserReferralCode`), `refereeId`, event type, source event id (Stripe invoice or PI), payment provider, Stripe PI / invoice / charge IDs, card fingerprint (from Stripe `PaymentIntent.payment_method.card.fingerprint`), IP address (when available), and a JSON metadata blob.
+
+**Indexes**: `(referralCodeId, createdAt)`, `(refereeId)`, `(paymentMethodFingerprint)`, `(ipAddress)`, `(stripePaymentIntentId)` — optimized for the "show me everything tied to this code / card / IP" queries.
+
+Use postgres-query skill for ad-hoc mod review. Paddle events are not attributed (Paddle is deprecated; see paddle.ts header comment).
+
+## Notifications
+
+Referral reward events fire both **signals** (live UI updates) and **Notifications** (persistent in-app + email when subscribed):
+
+| Event | Signal | Notification |
+|---|---|---|
+| Pending purchase | `referral:purchase-pending` | — |
+| Reward settled (referrer) | `referral:settled` | `referral-reward-settled` |
+| Welcome bonus settled (referee) | — | `referral-welcome-bonus` |
+| Milestone hit | `referral:milestone` | `referral-milestone-hit` |
+| Tokens expiring in 7d | `referral:token-expiring-soon` | `referral-token-expiring` (daily cron, deduped per-user-per-expiry-date) |
+| Tier granted via redemption | `referral:tier-granted` | — |
+| Click / checkout-viewed | `referral:click`, `referral:checkout-viewed` | — |
+| Chargeback clawback | `referral:clawback` | — |
+
+Types live in `src/server/notifications/referral.notifications.ts` and are registered in `utils.notifications.ts`.
 
 

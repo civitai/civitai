@@ -765,18 +765,30 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
 
     const subscriptionMetadata =
       (invoice as any).subscription_details?.metadata ?? (invoice as any).metadata ?? {};
-    const refCode = typeof subscriptionMetadata.ref_code === 'string'
-      ? subscriptionMetadata.ref_code
-      : undefined;
+    const refCode =
+      typeof subscriptionMetadata.ref_code === 'string' ? subscriptionMetadata.ref_code : undefined;
     if (refCode) {
       await bindReferralCodeForUser(user.id, refCode).catch(handleLogError);
     }
+
+    const stripePaymentIntentId =
+      typeof invoice.payment_intent === 'string'
+        ? invoice.payment_intent
+        : invoice.payment_intent?.id ?? undefined;
+    const stripeChargeId =
+      typeof invoice.charge === 'string' ? invoice.charge : invoice.charge?.id ?? undefined;
 
     await recordMembershipPaymentReward({
       refereeId: user.id,
       tier: billedProductMeta.tier,
       monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
       sourceEventId: invoice.id,
+      payment: {
+        paymentProvider: 'Stripe',
+        stripeInvoiceId: invoice.id,
+        stripePaymentIntentId,
+        stripeChargeId,
+      },
     }).catch(handleLogError);
   }
 };

@@ -11,6 +11,9 @@ import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { logToAxiom } from '~/server/logging/client';
 
 export const REFERRAL_SYSTEM_ACCOUNT_ID = -1;
+// Distinct CustomerSubscription.buzzType so referral grants stack with paid
+// yellow/green/blue subscriptions without tripping @@unique([userId, buzzType]).
+const REFERRAL_BUZZ_TYPE = 'referral';
 const EXPIRY_WARN_WINDOW_DAYS = 7;
 const PRISMA_UNIQUE_VIOLATION = 'P2002';
 
@@ -42,8 +45,55 @@ function emitSignal(userId: number, target: SignalMessages, data: Record<string,
   );
 }
 
-function logFraudEvent(event: Record<string, unknown>) {
-  return logToAxiom({ name: 'referral-fraud', ...event }).catch(() => undefined);
+type AttributionPayment = {
+  paymentProvider?: string;
+  stripePaymentIntentId?: string;
+  stripeInvoiceId?: string;
+  stripeChargeId?: string;
+  paymentMethodFingerprint?: string;
+  ipAddress?: string;
+};
+
+async function recordAttribution(params: {
+  referralCodeId?: number | null;
+  refereeId: number;
+  eventType: string;
+  sourceEventId?: string;
+  tier?: string;
+  amount?: number;
+  metadata?: Record<string, unknown>;
+  payment?: AttributionPayment;
+}) {
+  const { referralCodeId, refereeId, eventType, sourceEventId, tier, amount, metadata, payment } =
+    params;
+  if (!referralCodeId) return;
+  try {
+    await dbWrite.referralAttribution.create({
+      data: {
+        referralCodeId,
+        refereeId,
+        eventType,
+        sourceEventId: sourceEventId ?? null,
+        tier: tier ?? null,
+        amount: amount ?? null,
+        paymentProvider: payment?.paymentProvider ?? null,
+        stripePaymentIntentId: payment?.stripePaymentIntentId ?? null,
+        stripeInvoiceId: payment?.stripeInvoiceId ?? null,
+        stripeChargeId: payment?.stripeChargeId ?? null,
+        paymentMethodFingerprint: payment?.paymentMethodFingerprint ?? null,
+        ipAddress: payment?.ipAddress ?? null,
+        metadata: (metadata ?? {}) as Prisma.InputJsonValue,
+      },
+    });
+  } catch (err) {
+    // Attribution logging is best-effort — never block core reward flow on it.
+    await logToAxiom({
+      name: 'referral-attribution-write-failed',
+      err: String(err),
+      refereeId,
+      eventType,
+    }).catch(() => undefined);
+  }
 }
 
 function tokensForTier(tier: ProductTier): number {
@@ -67,6 +117,7 @@ async function resolveReferrerForReferee(refereeId: number) {
       paidMonthCount: true,
       userReferralCode: {
         select: {
+          id: true,
           userId: true,
           deletedAt: true,
           user: { select: { createdAt: true } },
@@ -83,12 +134,11 @@ async function resolveReferrerForReferee(refereeId: number) {
   if (referrerCreatedAt) {
     const ageDays = dayjs().diff(referrerCreatedAt, 'day');
     if (ageDays < minAgeDays) {
-      logFraudEvent({
-        type: 'referrer_too_young',
-        referrerId,
+      await recordAttribution({
+        referralCodeId: referral.userReferralCode.id,
         refereeId,
-        ageDays,
-        required: minAgeDays,
+        eventType: 'referrer_too_young',
+        metadata: { referrerId, ageDays, required: minAgeDays },
       });
       return null;
     }
@@ -96,6 +146,7 @@ async function resolveReferrerForReferee(refereeId: number) {
 
   return {
     referralId: referral.id,
+    referralCodeId: referral.userReferralCode.id,
     referrerId,
     firstPaidAt: referral.firstPaidAt,
     paidMonthCount: referral.paidMonthCount,
@@ -130,11 +181,23 @@ export async function recordMembershipPaymentReward(params: {
   monthlyBuzzAmount: number;
   sourceEventId: string;
   paidAt?: Date;
+  payment?: AttributionPayment;
 }) {
-  const { refereeId, tier, monthlyBuzzAmount, sourceEventId, paidAt } = params;
+  const { refereeId, tier, monthlyBuzzAmount, sourceEventId, paidAt, payment } = params;
   const ctx = await resolveReferrerForReferee(refereeId);
   if (!ctx) return null;
-  if (ctx.paidMonthCount >= constants.referrals.maxPaidMonthsPerReferee) return null;
+  if (ctx.paidMonthCount >= constants.referrals.maxPaidMonthsPerReferee) {
+    await recordAttribution({
+      referralCodeId: ctx.referralCodeId,
+      refereeId,
+      eventType: 'membership_payment_over_cap',
+      sourceEventId,
+      tier,
+      metadata: { paidMonthCount: ctx.paidMonthCount },
+      payment,
+    });
+    return null;
+  }
 
   const tokenAmount = tokensForTier(tier);
   if (tokenAmount <= 0) return null;
@@ -187,13 +250,15 @@ export async function recordMembershipPaymentReward(params: {
       return reward;
     });
 
-    logFraudEvent({
-      type: 'membership_payment',
+    await recordAttribution({
+      referralCodeId: ctx.referralCodeId,
       refereeId,
-      referrerId: ctx.referrerId,
-      tier,
+      eventType: 'membership_payment',
       sourceEventId,
-      paidMonthCount: ctx.paidMonthCount + 1,
+      tier,
+      amount: monthlyBuzzAmount,
+      metadata: { paidMonthCount: ctx.paidMonthCount + 1, tokens: tokenAmount },
+      payment,
     });
 
     emitSignal(ctx.referrerId, SignalMessages.ReferralPurchasePending, {
@@ -216,13 +281,24 @@ export async function recordBuzzPurchaseKickback(params: {
   buzzAmount: number;
   sourceEventId: string;
   purchasedAt?: Date;
+  payment?: AttributionPayment;
 }) {
-  const { refereeId, buzzAmount, sourceEventId, purchasedAt } = params;
+  const { refereeId, buzzAmount, sourceEventId, purchasedAt, payment } = params;
   if (buzzAmount <= 0) return null;
 
   const ctx = await resolveReferrerForReferee(refereeId);
   if (!ctx) return null;
-  if (!ctx.firstPaidAt) return null;
+  if (!ctx.firstPaidAt) {
+    await recordAttribution({
+      referralCodeId: ctx.referralCodeId,
+      refereeId,
+      eventType: 'buzz_kickback_skipped_no_membership',
+      sourceEventId,
+      amount: buzzAmount,
+      payment,
+    });
+    return null;
+  }
 
   const kickback = Math.floor(buzzAmount * constants.referrals.buzzKickbackPct);
   if (kickback <= 0) return null;
@@ -243,12 +319,14 @@ export async function recordBuzzPurchaseKickback(params: {
       },
     });
 
-    logFraudEvent({
-      type: 'buzz_kickback',
+    await recordAttribution({
+      referralCodeId: ctx.referralCodeId,
       refereeId,
-      referrerId: ctx.referrerId,
-      buzzAmount,
+      eventType: 'buzz_kickback',
       sourceEventId,
+      amount: buzzAmount,
+      metadata: { kickback },
+      payment,
     });
 
     emitSignal(ctx.referrerId, SignalMessages.ReferralPurchasePending, {
@@ -332,13 +410,35 @@ async function settleRewardRow(reward: SettleableReward) {
     }
   }
 
-  if (reward.kind !== ReferralRewardKind.RefereeBonus) {
+  const { createNotification } = await import('~/server/services/notification.service');
+  const { NotificationCategory } = await import('~/server/common/enums');
+
+  if (reward.kind === ReferralRewardKind.RefereeBonus) {
+    await createNotification({
+      type: 'referral-welcome-bonus',
+      userId: reward.userId,
+      category: NotificationCategory.Buzz,
+      key: `referral-welcome-bonus:${reward.id}`,
+      details: { blueBuzz: reward.buzzAmount },
+    }).catch(() => undefined);
+  } else {
     emitSignal(reward.userId, SignalMessages.ReferralSettled, {
       rewardId: reward.id,
       type: reward.kind === ReferralRewardKind.MembershipToken ? 'membership' : 'buzz',
       tokens: reward.tokenAmount || undefined,
       blueBuzz: reward.buzzAmount || undefined,
     });
+    await createNotification({
+      type: 'referral-reward-settled',
+      userId: reward.userId,
+      category: NotificationCategory.Buzz,
+      key: `referral-reward-settled:${reward.id}`,
+      details: {
+        tokens: reward.tokenAmount,
+        blueBuzz: reward.buzzAmount,
+        kind: reward.kind,
+      },
+    }).catch(() => undefined);
   }
 
   if (reward.buzzAmount > 0 && reward.kind === ReferralRewardKind.BuzzKickback) {
@@ -405,6 +505,8 @@ export async function awardMilestones(userId: number) {
   const lifetime = agg._sum.buzzAmount ?? 0;
   if (lifetime <= 0) return;
 
+  const topAffiliateCosmeticId = await getTopAffiliateCosmeticId();
+
   for (const m of constants.referrals.milestones) {
     if (lifetime < m.threshold) continue;
     try {
@@ -427,11 +529,42 @@ export async function awardMilestones(userId: number) {
         threshold: m.threshold,
         bonusAmount: m.bonus,
       });
+      {
+        const { createNotification } = await import('~/server/services/notification.service');
+        const { NotificationCategory } = await import('~/server/common/enums');
+        await createNotification({
+          type: 'referral-milestone-hit',
+          userId,
+          category: NotificationCategory.Buzz,
+          key: `referral-milestone-hit:${userId}:${m.threshold}`,
+          details: { threshold: m.threshold, bonusAmount: m.bonus },
+        }).catch(() => undefined);
+      }
+      // Top Affiliate badge on the 1M threshold. Uses the most recent available
+      // cosmetic as a placeholder until a bespoke one is authored.
+      if (m.threshold >= 1_000_000 && topAffiliateCosmeticId) {
+        const { grantCosmetics } = await import('~/server/services/cosmetic.service');
+        await grantCosmetics({ userId, cosmeticIds: [topAffiliateCosmeticId] }).catch(
+          () => undefined
+        );
+      }
     } catch (err) {
       if (isUniqueViolation(err)) continue;
       throw err;
     }
   }
+}
+
+async function getTopAffiliateCosmeticId(): Promise<number | null> {
+  // @ai:* Placeholder: grab the most recently created active Cosmetic. Replace
+  // with a bespoke "Top Affiliate" cosmetic once Ally designs one. Cache
+  // shouldn't matter here since the 1M milestone is extremely rare.
+  const cosmetic = await dbRead.cosmetic.findFirst({
+    where: { availableStart: { lte: new Date() } },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+  return cosmetic?.id ?? null;
 }
 
 export async function expireSettledTokens(now: Date = new Date()) {
@@ -451,6 +584,23 @@ export async function expireSettledTokens(now: Date = new Date()) {
       tokens: row._sum.tokenAmount ?? 0,
       expiresAt: row._min.expiresAt,
     });
+    const { createNotification } = await import('~/server/services/notification.service');
+    const { NotificationCategory } = await import('~/server/common/enums');
+    const expiresAtKey = row._min.expiresAt
+      ? row._min.expiresAt.toISOString().slice(0, 10)
+      : 'soon';
+    // Dedupe per-user per-expiry-date so the daily cron doesn't spam. If the
+    // key already exists the notification service upserts / dedupes.
+    await createNotification({
+      type: 'referral-token-expiring',
+      userId: row.userId,
+      category: NotificationCategory.Buzz,
+      key: `referral-token-expiring:${row.userId}:${expiresAtKey}`,
+      details: {
+        tokens: row._sum.tokenAmount ?? 0,
+        expiresAt: row._min.expiresAt,
+      },
+    }).catch(() => undefined);
   }
 
   const { count } = await dbWrite.referralReward.updateMany({
@@ -543,12 +693,48 @@ async function grantReferralSubscription(
     );
   }
 
+  // Use buzzType: 'referral' so grants stack alongside paid yellow/green/blue subs
+  // without colliding with the @@unique([userId, buzzType]) constraint. Session-user
+  // iterates all subs and picks the highest tier.
   const existing = await tx.customerSubscription.findUnique({
-    where: { userId_buzzType: { userId, buzzType: 'yellow' } },
-    select: { id: true, status: true, currentPeriodEnd: true, metadata: true, productId: true },
+    where: { userId_buzzType: { userId, buzzType: REFERRAL_BUZZ_TYPE } },
+    select: {
+      id: true,
+      status: true,
+      currentPeriodEnd: true,
+      metadata: true,
+      productId: true,
+      product: { select: { metadata: true } },
+    },
   });
 
   const now = new Date();
+
+  // If an existing referral sub is still active and covers a same-or-higher tier,
+  // extend its end date. If it covers a lower tier, upgrade it (same row).
+  if (existing && existing.status === 'active' && existing.currentPeriodEnd > now) {
+    const existingTier = (existing.product.metadata as { tier?: string } | null)?.tier ?? 'free';
+    const ladder = constants.memberships.tierOrder as readonly string[];
+    const upgrade = ladder.indexOf(tier) > ladder.indexOf(existingTier);
+    const base = existing.currentPeriodEnd;
+    const extension = dayjs(upgrade ? now : base)
+      .add(durationDays, 'day')
+      .toDate();
+
+    await tx.customerSubscription.update({
+      where: { id: existing.id },
+      data: {
+        productId: upgrade ? product.id : existing.productId,
+        priceId: upgrade ? product.defaultPriceId : undefined,
+        currentPeriodStart: upgrade ? now : undefined,
+        currentPeriodEnd: extension,
+        cancelAtPeriodEnd: true,
+        metadata: { ...(existing.metadata as object), source: 'referral-redemption' },
+      },
+    });
+    return { extended: true };
+  }
+
   const extension = dayjs(now).add(durationDays, 'day').toDate();
 
   if (!existing) {
@@ -556,7 +742,7 @@ async function grantReferralSubscription(
       data: {
         id: `referral:${userId}:${Date.now()}`,
         userId,
-        buzzType: 'yellow',
+        buzzType: REFERRAL_BUZZ_TYPE,
         status: 'active',
         productId: product.id,
         priceId: product.defaultPriceId,
@@ -571,25 +757,20 @@ async function grantReferralSubscription(
     return { created: true };
   }
 
-  if (existing.status !== 'active' || existing.currentPeriodEnd < now) {
-    await tx.customerSubscription.update({
-      where: { id: existing.id },
-      data: {
-        status: 'active',
-        productId: product.id,
-        priceId: product.defaultPriceId,
-        currentPeriodStart: now,
-        currentPeriodEnd: extension,
-        cancelAtPeriodEnd: true,
-        metadata: { ...(existing.metadata as object), source: 'referral-redemption' },
-      },
-    });
-    return { reactivated: true };
-  }
-
-  throw new Error(
-    'You already have an active Membership. Save your tokens for when your membership lapses.'
-  );
+  // Existing referral sub expired or inactive — reactivate with new tier.
+  await tx.customerSubscription.update({
+    where: { id: existing.id },
+    data: {
+      status: 'active',
+      productId: product.id,
+      priceId: product.defaultPriceId,
+      currentPeriodStart: now,
+      currentPeriodEnd: extension,
+      cancelAtPeriodEnd: true,
+      metadata: { ...(existing.metadata as object), source: 'referral-redemption' },
+    },
+  });
+  return { reactivated: true };
 }
 
 export async function redeemTokens(params: { userId: number; offerIndex: number }) {

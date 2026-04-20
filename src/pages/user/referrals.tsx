@@ -18,7 +18,16 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconCheck, IconCopy, IconGift, IconShare3, IconTrophy } from '@tabler/icons-react';
+import {
+  IconBrandDiscord,
+  IconBrandReddit,
+  IconBrandX,
+  IconCheck,
+  IconCopy,
+  IconGift,
+  IconShare3,
+  IconTrophy,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -147,6 +156,49 @@ export default function ReferralsPage() {
                     )}
                   </CopyButton>
                 </Group>
+              </Group>
+              <Group gap="xs" wrap="wrap">
+                <Button
+                  component="a"
+                  href={`https://twitter.com/intent/tweet?${new URLSearchParams({
+                    text: `Create with me on Civitai. Use my code ${data.code} to get free Blue Buzz on your first Membership.`,
+                    url: shareLink,
+                  }).toString()}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  variant="default"
+                  size="compact-sm"
+                  leftSection={<IconBrandX size={14} />}
+                >
+                  Share on X
+                </Button>
+                <Button
+                  component="a"
+                  href={`https://www.reddit.com/submit?${new URLSearchParams({
+                    url: shareLink,
+                    title: `Free Blue Buzz on Civitai with my referral code ${data.code}`,
+                  }).toString()}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  variant="default"
+                  size="compact-sm"
+                  leftSection={<IconBrandReddit size={14} />}
+                >
+                  Share on Reddit
+                </Button>
+                <Button
+                  component="a"
+                  href={`https://discord.com/channels/@me?${new URLSearchParams({
+                    content: `Try Civitai with my code ${data.code} — ${shareLink}`,
+                  }).toString()}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  variant="default"
+                  size="compact-sm"
+                  leftSection={<IconBrandDiscord size={14} />}
+                >
+                  Share on Discord
+                </Button>
               </Group>
             </Stack>
           </Card>
