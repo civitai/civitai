@@ -1,13 +1,22 @@
 /**
- * Article Problematic Images Component
+ * Article Problematic Content Component
  *
- * Displays a detailed list of blocked and error images for article content
+ * Displays a detailed list of blocked/error images and text moderation issues
+ * that are blocking an article from being published.
  */
 
 import { Alert, Text, Stack, Group, Paper } from '@mantine/core';
-import { IconAlertTriangle, IconX, IconExclamationCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconX, IconExclamationCircle, IconFileText } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import type { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import type { EntityModerationStatus, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+
+export type TextModerationIssue = {
+  // Terminal-state reason the text pipeline produced an article-blocking result.
+  kind: 'blocked' | 'failed' | 'expired' | 'canceled';
+  status: EntityModerationStatus;
+  retryCount: number;
+  updatedAt: Date | null;
+};
 
 interface ArticleProblematicImagesProps {
   blockedImages: Array<{
@@ -17,26 +26,99 @@ interface ArticleProblematicImagesProps {
     blockedFor: string | null;
   }>;
   errorImages: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
+  textIssue?: TextModerationIssue | null;
+}
+
+function TextModerationSection({ issue }: { issue: TextModerationIssue }) {
+  const isBlocked = issue.kind === 'blocked';
+  const accentColor = isBlocked ? 'red' : 'yellow';
+  const Icon = isBlocked ? IconX : IconExclamationCircle;
+
+  const heading = isBlocked
+    ? 'Text Content Blocked - Policy Violation'
+    : 'Text Moderation Failed - Scan Error';
+
+  const description = isBlocked
+    ? 'Your article title and/or body was flagged as violating our Terms of Service. Please edit the content and resubmit.'
+    : issue.kind === 'failed'
+    ? 'Automated text scanning could not complete. This sometimes happens with very long articles or transient service issues.'
+    : issue.kind === 'expired'
+    ? 'The text scan timed out before completing. A rescan usually resolves this.'
+    : 'The text scan was canceled before completing. A rescan usually resolves this.';
+
+  return (
+    <Stack gap="sm">
+      <Group gap="xs">
+        <Icon size={16} className={isBlocked ? 'text-red-6' : 'text-yellow-6'} />
+        <Text size="sm" fw={600}>
+          {heading}
+        </Text>
+      </Group>
+      <Paper
+        p="xs"
+        withBorder
+        className={isBlocked ? 'bg-red-1 dark:bg-red-9/20' : 'bg-yellow-1 dark:bg-yellow-9/20'}
+      >
+        <Group gap="sm" wrap="nowrap" align="flex-start">
+          <div
+            className={`flex size-16 shrink-0 items-center justify-center overflow-hidden rounded border ${
+              isBlocked
+                ? 'border-red-6 bg-red-2 dark:bg-red-9/40'
+                : 'border-yellow-6 bg-yellow-2 dark:bg-yellow-9/40'
+            }`}
+          >
+            <IconFileText size={28} className={isBlocked ? 'text-red-7' : 'text-yellow-7'} />
+          </div>
+          <Stack gap={4} className="flex-1">
+            <Text size="xs" fw={500} c={`${accentColor}.7`}>
+              {description}
+            </Text>
+            <Text size="xs" c="dimmed">
+              Status: {issue.status}
+              {issue.retryCount > 0 ? ` • Retries: ${issue.retryCount}` : ''}
+            </Text>
+          </Stack>
+        </Group>
+      </Paper>
+    </Stack>
+  );
 }
 
 export function ArticleProblematicImages({
   blockedImages,
   errorImages,
+  textIssue,
 }: ArticleProblematicImagesProps) {
-  const hasProblems = blockedImages.length > 0 || errorImages.length > 0;
-  if (!hasProblems) return null;
+  const hasImageProblems = blockedImages.length > 0 || errorImages.length > 0;
+  const hasTextProblem = !!textIssue;
+  if (!hasImageProblems && !hasTextProblem) return null;
+
+  const title =
+    hasImageProblems && hasTextProblem
+      ? 'Action Required - Problematic Content'
+      : hasTextProblem
+      ? 'Action Required - Text Moderation'
+      : 'Action Required - Problematic Images';
+
+  const leadText =
+    hasImageProblems && hasTextProblem
+      ? 'The following content issues must be resolved before your article can be published:'
+      : hasTextProblem
+      ? 'A text moderation issue is preventing your article from being published:'
+      : 'The following images must be removed or replaced before your article can be published:';
 
   return (
     <Alert
       icon={<IconAlertTriangle size={16} />}
-      title="Action Required - Problematic Images"
+      title={title}
       color="red"
       className="border-l-4 border-red-6"
     >
       <Stack gap="md">
-        <Text size="sm">
-          The following images must be removed or replaced before your article can be published:
-        </Text>
+        <Text size="sm">{leadText}</Text>
+
+        {/* Text Moderation Section */}
+        {textIssue && <TextModerationSection issue={textIssue} />}
 
         {/* Blocked Images Section */}
         {blockedImages.length > 0 && (
@@ -114,11 +196,32 @@ export function ArticleProblematicImages({
             How to fix:
           </Text>
           <Text size="xs" mt={4}>
-            1. Locate these images in your article content
-            <br />
-            2. Remove or replace them with appropriate images
-            <br />
-            3. Save your article to trigger a new scan
+            {hasImageProblems && (
+              <>
+                1. Locate problematic images in your article content
+                <br />
+                2. Remove or replace them with appropriate content
+                <br />
+              </>
+            )}
+            {hasTextProblem && !hasImageProblems && (
+              <>
+                1. Edit the article title and body if the content was flagged
+                <br />
+              </>
+            )}
+            {hasImageProblems && hasTextProblem && (
+              <>
+                3. Edit the article text if it was flagged for policy violation
+                <br />
+              </>
+            )}
+            {(hasImageProblems || hasTextProblem) && (
+              <>
+                {hasImageProblems && hasTextProblem ? '4. ' : hasImageProblems ? '3. ' : '2. '}
+                Save your article or click Rescan Article below to trigger a new scan
+              </>
+            )}
           </Text>
         </Alert>
       </Stack>
