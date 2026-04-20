@@ -197,12 +197,14 @@ export const setTosViolationHandler = async ({
       status: ReportStatus.Actioned,
     });
     // Reward users for accepted reports
-    for (const report of affectedReports) {
-      reportAcceptedReward.apply(
-        { userId: report.userId, reportId: report.id },
-        { ip, fingerprint }
-      );
-    }
+    await Promise.allSettled(
+      affectedReports.map((report) =>
+        reportAcceptedReward.apply(
+          { userId: report.userId, reportId: report.id },
+          { ip, fingerprint }
+        )
+      )
+    );
 
     await createNotification({
       userId: image.userId,
