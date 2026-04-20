@@ -41,7 +41,7 @@ function generateCode() {
 export const referralRouter = router({
   getDashboard: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.user.id;
-    const [code, balance, recentRewards, milestones, redemptions, conversionStats] =
+    const [code, balance, recentRewards, milestones, redemptions, conversionStats, referralSub] =
       await Promise.all([
         getOrCreateCode(userId),
         getReferrerBalance(userId),
@@ -77,7 +77,26 @@ export const referralRouter = router({
             firstPaidAt: { not: null },
           },
         }),
+        dbRead.customerSubscription.findFirst({
+          where: { userId, buzzType: 'referral' },
+          select: {
+            status: true,
+            currentPeriodStart: true,
+            currentPeriodEnd: true,
+            metadata: true,
+            product: { select: { metadata: true } },
+          },
+        }),
       ]);
+
+    const activeTier = (
+      (referralSub?.product?.metadata ?? null) as {
+        tier?: string;
+      } | null
+    )?.tier;
+    const referralQueue =
+      (referralSub?.metadata as { referralQueue?: { tier: string; durationDays: number }[] } | null)
+        ?.referralQueue ?? [];
 
     return {
       code: code.code,
@@ -88,6 +107,15 @@ export const referralRouter = router({
       shopItems: constants.referrals.shopItems,
       milestoneLadder: constants.referrals.milestones,
       conversionCount: conversionStats,
+      referralGrant:
+        referralSub && activeTier && referralSub.status === 'active'
+          ? {
+              activeTier,
+              currentPeriodStart: referralSub.currentPeriodStart,
+              currentPeriodEnd: referralSub.currentPeriodEnd,
+              queue: referralQueue,
+            }
+          : null,
     };
   }),
 

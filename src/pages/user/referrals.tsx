@@ -31,6 +31,7 @@ import {
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
+import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -231,6 +232,8 @@ export default function ReferralsPage() {
               />
             </Grid.Col>
           </Grid>
+
+          {data.referralGrant && <ReferralTimelineProgress grant={data.referralGrant} />}
 
           <Card withBorder p="lg" radius="md">
             <Stack gap="md">
