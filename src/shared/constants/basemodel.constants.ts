@@ -1618,6 +1618,18 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: [ModelType.LORA],
     support: 'partial',
   },
+
+  // ==========================================================================
+  // AuraFlow ↔ PonyV7 (parent ↔ child)
+  // ==========================================================================
+  // AuraFlow LoRA works partially in PonyV7
+  {
+    sourceEcosystemId: ECO.AuraFlow,
+    targetEcosystemId: ECO.PonyV7,
+    supportType: 'generation',
+    modelTypes: [ModelType.LORA],
+    support: 'partial',
+  },
 ];
 
 // =============================================================================
@@ -2848,15 +2860,6 @@ export function getRootEcosystem(ecosystemIdOrBaseModel: number | string): Ecosy
 }
 
 /**
- * Check if two ecosystems are in the same family tree
- */
-export function areEcosystemsRelated(ecosystemId1: number, ecosystemId2: number): boolean {
-  const root1 = getRootEcosystem(ecosystemId1);
-  const root2 = getRootEcosystem(ecosystemId2);
-  return root1.id === root2.id;
-}
-
-/**
  * Get ecosystem support, with inheritance from parent
  */
 export function getEcosystemSupport(
@@ -3043,12 +3046,11 @@ export function getGenerationSupport(
   const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
   if (!support || support.disabled) return null;
 
-  // For related ecosystems, require the model type to be in the ecosystem's supported types
-  if (support.modelTypes.includes(addonModelType)) {
-    if (areEcosystemsRelated(checkpointEcosystemId, addonEcosystemId)) {
-      return 'partial';
-    }
-  }
+  // Cross-ecosystem compatibility is driven entirely by explicit rules below.
+  // The parent-chain relationship is NOT used to infer compatibility because it
+  // is also used for identity concerns (AIR URN ecosystem, classification) —
+  // e.g. Flux2Klein variants list Flux2 as parent so their AIRs emit `flux2`,
+  // but LoRAs trained for one Klein variant are NOT compatible with others.
 
   // Check cross-ecosystem rules — these define their own modelTypes so they bypass
   // the ecosystem's primary modelTypes list (e.g. SD1 TextualInversion → SDXL family)
