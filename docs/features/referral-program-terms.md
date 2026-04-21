@@ -46,7 +46,7 @@ title: Civitai Referral Program Terms
 description: Terms of Service for the Civitai Referral Program
 ---
 
-**Effective Date**: [CONFIRM: launch date]
+**Effective Date**: April 21, 2026
 
 These Referral Program Terms ("Referral Terms") govern your participation in the Civitai Referral Program ("Program") and are Additional Terms under the [Civitai Terms of Service](/content/tos) ("Terms of Service"), which is a legally binding contract between you and Civit AI, Inc. ("Civitai," "we," "us") and incorporated into these Referral Terms by this reference. Your use of Buzz earned through the Program is also subject to the [Buzz Terms and Conditions](/content/buzz/terms). Capitalized terms used but not defined here have the meanings set forth in the Terms of Service.
 
@@ -212,8 +212,6 @@ Participation in the Program does not guarantee any particular level of earnings
 ## 12. Governing Law
 
 These Referral Terms are governed by the laws of the State of Delaware, without regard to conflict-of-law principles, consistent with the governing-law clause of the Terms of Service. Any disputes arising out of or relating to these Referral Terms are subject to the dispute-resolution and arbitration provisions of the Terms of Service.
-
-[CONFIRM: Keep Delaware to match main TOS Section 19.2, or prefer a different forum for Program-specific disputes?]
 
 ---
 
