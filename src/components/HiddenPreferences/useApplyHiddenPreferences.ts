@@ -352,6 +352,23 @@ function filterPreferences<
             return false;
           }
 
+          // Blocked covers violate ToS regardless of the article's own rating —
+          // never serve them, even to the owner.
+          if (article.coverImage.blockedFor) {
+            hidden.browsingLevel++;
+            return false;
+          }
+
+          // Defense-in-depth against Article.nsfwLevel drift: the cover may be
+          // rated higher than the article when `updateArticleNsfwLevels` hasn't
+          // caught up with the cover scan. The service layer already lifts
+          // coverImage.nsfwLevel to max(article, cover), so checking it here
+          // catches stale article-level ratings without relying on the DB value.
+          if (!Flags.intersects(article.coverImage.nsfwLevel, browsingLevel)) {
+            hidden.browsingLevel++;
+            return false;
+          }
+
           if (article.coverImage.poi && poiDisabled && !isOwner) {
             hidden.poi++;
             return false;
@@ -715,6 +732,7 @@ type BaseArticle = {
     id: number;
     tags: number[];
     nsfwLevel: number;
+    blockedFor?: string | null;
     poi?: boolean;
     minor?: boolean;
   };

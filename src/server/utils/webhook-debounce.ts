@@ -87,21 +87,37 @@ export async function debounceArticleUpdate(articleId: number): Promise<void> {
 }
 
 /**
- * Fan out an image's terminal-state update to any articles that embed it.
- * Each article debounce call coalesces concurrent webhooks and runs
- * `recomputeArticleIngestion` so Blocked/Error/Scanned transitions all advance
- * article state.
+ * Fan out an image's terminal-state update to any articles that embed it, either
+ * as a content image (via `ImageConnection`) or as the article cover (via
+ * `Article.coverId`). Each article debounce call coalesces concurrent webhooks
+ * and runs `recomputeArticleIngestion` so Blocked/Error/Scanned transitions all
+ * advance article state, and `updateArticleNsfwLevels` picks up the new cover
+ * rating so `Article.nsfwLevel` no longer lags the cover.
  *
  * Callers are responsible for gating on the `articleImageScanning` feature flag
  * because the two webhook entrypoints resolve the flag differently (one reads
  * from a request context, the other receives it as a parameter).
  */
 export async function fanOutArticleImageUpdates(imageId: number): Promise<void> {
-  const articleConnections = await dbRead.imageConnection.findMany({
-    where: { imageId, entityType: ImageConnectionType.Article },
-    select: { entityId: true },
-  });
-  for (const { entityId } of articleConnections) {
-    await debounceArticleUpdate(entityId);
+  const [articleConnections, coverArticles] = await Promise.all([
+    dbRead.imageConnection.findMany({
+      where: { imageId, entityType: ImageConnectionType.Article },
+      select: { entityId: true },
+    }),
+    // Cover images live on `Article.coverId` and are NOT duplicated into
+    // `ImageConnection`, so fan-out must query them separately. Without this,
+    // a cover scan that resolves to R/X/XXX/Blocked never triggers
+    // `updateArticleNsfwLevels`, leaving `Article.nsfwLevel` pinned to the
+    // author-declared `userNsfwLevel` — the exact drift that lets PG-rated
+    // articles keep NSFW covers in the public feed.
+    dbRead.article.findMany({ where: { coverId: imageId }, select: { id: true } }),
+  ]);
+
+  const articleIds = new Set<number>([
+    ...articleConnections.map((c) => c.entityId),
+    ...coverArticles.map((a) => a.id),
+  ]);
+  for (const articleId of articleIds) {
+    await debounceArticleUpdate(articleId);
   }
 }
