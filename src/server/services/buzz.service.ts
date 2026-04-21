@@ -1102,23 +1102,15 @@ export const getDailyCompensationRewardByUser = async ({
   const minDate = dayjs.utc(date).startOf('day').startOf('month').toDate();
   const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
 
-  // TODO.resourceCompensations: we should use the new `resourceCompensations` table instead of this,
-  // but we need to migrate the data first, otherwise, this data makes no sense. After 1 month, we can just migrate.
+  const versionIds = modelVersions.map((v) => v.id);
   const generationData = await clickhouse.$query<Row>`
-    WITH user_resources AS (
-      SELECT
-        mv.id as id
-      FROM civitai_pg.Model m
-      JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
-      WHERE m.userId = ${userId}
-    )
     SELECT
       date,
       modelVersionId,
-	    SUM(FLOOR(amount))::int AS total
+      SUM(FLOOR(amount))::int AS total
     FROM orchestration.resourceCompensations
     WHERE date BETWEEN ${minDate} AND ${maxDate}
-      AND modelVersionId IN (SELECT id FROM user_resources)
+      AND modelVersionId IN (${versionIds})
       AND amount > 0
       -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
       AND ${
