@@ -45,6 +45,7 @@ import {
 import { BuzzTypes, buzzSpendTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
@@ -482,12 +483,14 @@ export async function completeStripeBuzzTransaction({
 }: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
   transactionId: string;
 }> {
+  let stage = 'init';
   try {
     const stripe = await getServerStripe();
     if (!stripe) {
       throw throwBadRequestError('Stripe not available');
     }
 
+    stage = 'stripe.paymentIntents.retrieve';
     const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId, {
       expand: ['payment_method'],
     });
@@ -504,6 +507,7 @@ export async function completeStripeBuzzTransaction({
       return { transactionId: metadata.transactionId };
     }
 
+    stage = 'getMultipliersForUser';
     const { purchasesMultiplier } = await getMultipliersForUser(userId);
     const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
 
@@ -522,6 +526,7 @@ export async function completeStripeBuzzTransaction({
       externalTransactionId: paymentIntent.id,
     });
 
+    stage = 'buzzApi.transaction';
     const data: { transactionId: string } = await buzzApiFetch(`/transaction`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -530,6 +535,7 @@ export async function completeStripeBuzzTransaction({
 
     // Update the payment intent with the transaction id
     // A payment intent without a transaction ID can be tied to a DB failure delivering buzz.
+    stage = 'stripe.paymentIntents.update';
     await stripe.paymentIntents.update(stripePaymentIntentId, {
       metadata: {
         transactionId: data.transactionId,
@@ -546,7 +552,28 @@ export async function completeStripeBuzzTransaction({
 
     return data;
   } catch (error) {
-    if (retry < MAX_RETRIES) {
+    const err = error as Error;
+    const willRetry = retry < MAX_RETRIES;
+    logToAxiom(
+      {
+        name: 'stripe-webhook',
+        type: willRetry ? 'warning' : 'error',
+        stage: `completeStripeBuzzTransaction:${stage}`,
+        stripePaymentIntentId,
+        userId,
+        amount,
+        buzzType: (details as any)?.buzzType,
+        retry,
+        maxRetries: MAX_RETRIES,
+        willRetry,
+        message: `completeStripeBuzzTransaction failed at ${stage}: ${err?.message ?? String(err)}`,
+        error: err?.message ?? String(err),
+        stack: err?.stack,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    if (willRetry) {
       return completeStripeBuzzTransaction({
         amount,
         stripePaymentIntentId,

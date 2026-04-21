@@ -18,6 +18,10 @@ import { completeClubMembershipCharge } from '~/server/services/clubMembership.s
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
+
+const log = (data: MixedObject) =>
+  logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks').catch(() => null);
 // Stripe requires the raw body to construct the event.
 export const config = {
   api: {
@@ -68,7 +72,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
       event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
     } catch (error: any) {
-      console.log(`❌ Error message: ${error.message}`);
+      log({
+        type: 'error',
+        stage: 'signature-verification',
+        message: `Signature verification failed: ${error.message}`,
+        error: error.message,
+      });
       return res.status(400).send(`Webhook Error: ${error.message}`);
     }
 
@@ -162,6 +171,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             throw new Error('Unhandled relevant event!');
         }
       } catch (error: any) {
+        const object = (event.data?.object ?? {}) as { id?: string; metadata?: MixedObject };
+        log({
+          type: 'error',
+          stage: 'event-handler',
+          eventType: event.type,
+          eventId: event.id,
+          objectId: object.id,
+          metadata: object.metadata,
+          message: `Event handler threw: ${error.message}`,
+          error: error.message,
+          stack: error.stack,
+        });
         return res.status(400).send({
           error: error.message,
         });
