@@ -439,8 +439,8 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
 // Precedence:
 //   1. metadata.forcedBrowsingLevel set → map forced bits to bucket
 //   2. otherwise → two-probe scan of ACCEPTED items
-// Collection.nsfw boolean is ignored — it's auto-flipped by user NSFW reports
-// (report.service.ts) so it's not a reliable signal of collection content.
+// Collection.nsfw boolean is ignored — it's a legacy flag and not a reliable
+// signal of collection content.
 const COLLECTION_NSFW_BUCKET = 28; // R|X|XXX
 export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
   if (!collectionIds.length) return;
