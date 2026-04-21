@@ -671,8 +671,7 @@ export const getArticleById = async ({
   id,
   userId,
   isModerator,
-  browsingLevel,
-}: GetByIdInput & { userId?: number; isModerator?: boolean; browsingLevel?: number }) => {
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   try {
     const db = await getDbWithoutLag('article', id);
     const article = await db.article.findFirst({
@@ -696,15 +695,6 @@ export const getArticleById = async ({
     if (userId && !isModerator) {
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
-    }
-
-    // NSFW level enforcement — moderators and the article owner always bypass.
-    // On green (or any caller that passes a browsingLevel), articles whose
-    // nsfwLevel doesn't intersect the allowed mask are treated as not found.
-    if (browsingLevel && !isModerator && article.userId !== userId) {
-      if ((article.nsfwLevel & browsingLevel) === 0) {
-        throw throwNotFoundError(`No article with id ${id}`);
-      }
     }
 
     // Fetch connected images with ingestion status
@@ -1665,6 +1655,18 @@ export async function linkArticleContentImages({
  * @param articleId - Article ID to get scan status for
  * @returns Object with scan progress counts, completion status, and detailed image lists
  */
+export type ArticleTextModerationStatus = {
+  // True when the article has text to moderate (title or HTML-stripped content).
+  // When false, the text pipeline is a no-op and textDone is implicitly true.
+  required: boolean;
+  // null when no EntityModeration row exists yet (either not required or
+  // the submit call is still in flight and hasn't written a Pending row).
+  status: EntityModerationStatus | null;
+  blocked: boolean | null;
+  retryCount: number;
+  updatedAt: Date | null;
+};
+
 export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
   total: number;
   scanned: number;
@@ -1682,14 +1684,25 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     error: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
     pending: Array<{ id: number; url: string; ingestion: ImageIngestionStatus }>;
   };
+  textModeration: ArticleTextModerationStatus;
 }> {
-  const connections = await dbRead.imageConnection.findMany({
-    where: {
-      entityId: id,
-      entityType: ImageConnectionType.Article,
-    },
-    include: { image: { select: { id: true, url: true, ingestion: true, blockedFor: true } } },
-  });
+  const [connections, article, moderation] = await Promise.all([
+    dbRead.imageConnection.findMany({
+      where: {
+        entityId: id,
+        entityType: ImageConnectionType.Article,
+      },
+      include: { image: { select: { id: true, url: true, ingestion: true, blockedFor: true } } },
+    }),
+    dbRead.article.findUnique({
+      where: { id },
+      select: { title: true, content: true },
+    }),
+    dbRead.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Article', entityId: id } },
+      select: { status: true, blocked: true, retryCount: true, updatedAt: true },
+    }),
+  ]);
 
   const total = connections.length;
   const scannedImages = connections.filter(
@@ -1707,17 +1720,33 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
     (c) => c.image.ingestion === ImageIngestionStatus.Pending
   );
 
+  const required = article ? articleHasText(article.title, article.content) : false;
+  const textTerminalStatuses = new Set<EntityModerationStatus>([
+    EntityModerationStatus.Succeeded,
+    EntityModerationStatus.Failed,
+    EntityModerationStatus.Expired,
+    EntityModerationStatus.Canceled,
+  ]);
+  const textDone = !required || (!!moderation && textTerminalStatuses.has(moderation.status));
+
   return {
     total,
     scanned: scannedImages.length,
     blocked: blockedImages.length,
     error: errorImages.length,
     pending: pendingImages.length,
-    allComplete: pendingImages.length === 0,
+    allComplete: pendingImages.length === 0 && textDone,
     images: {
       blocked: blockedImages.map((c) => c.image),
       error: errorImages.map((c) => c.image),
       pending: pendingImages.map((c) => c.image),
+    },
+    textModeration: {
+      required,
+      status: moderation?.status ?? null,
+      blocked: moderation?.blocked ?? null,
+      retryCount: moderation?.retryCount ?? 0,
+      updatedAt: moderation?.updatedAt ?? null,
     },
   };
 }
@@ -1905,19 +1934,27 @@ export async function recomputeArticleIngestionInTx(
   const flipToPublished =
     next === ArticleIngestionStatus.Scanned && current.status === ArticleStatus.Processing;
 
-  const data: Prisma.ArticleUpdateInput = { ingestion: next };
-  if (
-    next === ArticleIngestionStatus.Scanned &&
-    current.ingestion !== ArticleIngestionStatus.Scanned
-  ) {
-    data.contentScannedAt = new Date();
+  const setScannedAt =
+    next === ArticleIngestionStatus.Scanned && current.ingestion !== ArticleIngestionStatus.Scanned;
+  const flipPublishedAt = flipToPublished ? current.publishedAt ?? new Date() : null;
+
+  // Raw SQL because Prisma's @updatedAt on Article.updatedAt fires on every
+  // client-side update(), which would bump "Recently Updated" feed position
+  // every time a scan webhook or the reconcile cron touches the row. Writing
+  // only the scan-state columns via $executeRaw bypasses that.
+  const setFragments: Prisma.Sql[] = [Prisma.sql`ingestion = ${next}::"ArticleIngestionStatus"`];
+  if (setScannedAt) {
+    setFragments.push(Prisma.sql`"contentScannedAt" = ${new Date()}`);
   }
   if (flipToPublished) {
-    data.status = ArticleStatus.Published;
-    data.publishedAt = current.publishedAt ?? new Date();
+    setFragments.push(Prisma.sql`status = ${ArticleStatus.Published}::"ArticleStatus"`);
+    setFragments.push(Prisma.sql`"publishedAt" = ${flipPublishedAt}`);
   }
-
-  await tx.article.update({ where: { id: articleId }, data });
+  await tx.$executeRaw`
+    UPDATE "Article"
+    SET ${Prisma.join(setFragments, ', ')}
+    WHERE id = ${articleId}
+  `;
 
   // Populate post-commit hints. Notifications dedupe via `key`
   // (article-published-$id / article-images-blocked-$id) so re-notifying on
@@ -2050,14 +2087,15 @@ export async function rescanArticle({
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
 
   // --- Reset ingestion state ---
-  await dbWrite.article.update({
-    where: { id },
-    data: {
-      ingestion: ArticleIngestionStatus.Rescan,
-      scanRequestedAt: new Date(),
-      contentScannedAt: null,
-    },
-  });
+  // Raw SQL to avoid bumping Article.updatedAt — a rescan is not a user-edit
+  // and shouldn't reorder the "Recently Updated" feed.
+  await dbWrite.$executeRaw`
+    UPDATE "Article"
+    SET ingestion = ${ArticleIngestionStatus.Rescan}::"ArticleIngestionStatus",
+        "scanRequestedAt" = ${new Date()},
+        "contentScannedAt" = NULL
+    WHERE id = ${id}
+  `;
   await preventReplicationLag('article', id);
   await preventReplicationLag('userArticles', article.userId);
 

@@ -239,6 +239,11 @@ export default defineNextConfig(
           permanent: false,
         },
         {
+          source: '/v/ally-parting-message',
+          destination: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+          permanent: false,
+        },
+        {
           source: '/gallery/:path*',
           destination: '/images/:path*',
           permanent: true,
