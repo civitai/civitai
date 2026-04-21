@@ -10,13 +10,10 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import {
-  IconAlertTriangle,
-  IconCircleCheck,
-  IconShieldCheck,
-  IconSparkles,
-} from '@tabler/icons-react';
+import { IconCircleCheck, IconSparkles } from '@tabler/icons-react';
+import clsx from 'clsx';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -28,8 +25,13 @@ import animationClasses from '~/libs/animations.module.scss';
 export const GRANNY_GRIPPERS_COSMETIC_ID = 1026;
 
 const DEADLINE = new Date('2026-05-01T23:59:59Z');
-const BADGE_ART_UUID = '5b6e4ec7-b4a7-4044-9f03-c82b64dac830';
+// Mystery placeholder shown before the user claims; hides the real art.
+const PLACEHOLDER_ART_UUID = '9023ae0d-e80a-40ce-86e6-c12fa08e4f53';
+// Real badge art revealed after claim.
+const REVEAL_ART_UUID = '5b6e4ec7-b4a7-4044-9f03-c82b64dac830';
 const FAREWELL_ARTICLE_URL = '/articles/28893/farewell-civitans';
+const ALLY_PARTING_GIFT_URL = '/v/ally-parting-message';
+const REVEAL_ANIMATION_MS = 1800;
 
 type Remaining = { days: number; hours: number; minutes: number; seconds: number; done: boolean };
 
@@ -49,7 +51,7 @@ function getRemaining(to: Date): Remaining {
 export function GrannyGrippersClaim() {
   return (
     <>
-      <Meta title="Claim Granny Grippers | Civitai" deIndex />
+      <Meta title="Unlock Prestige | Civitai" deIndex />
       <IsClient>
         <GrannyGrippersClaimBody />
       </IsClient>
@@ -58,30 +60,40 @@ export function GrannyGrippersClaim() {
 }
 
 function GrannyGrippersClaimBody() {
+  const router = useRouter();
+  const previewMode = router.query.preview === '1';
   const queryUtils = trpc.useUtils();
-  const { data: status, isLoading } = trpc.user.cosmeticStatus.useQuery({
-    id: GRANNY_GRIPPERS_COSMETIC_ID,
-  });
+  const { data: status, isLoading } = trpc.user.cosmeticStatus.useQuery(
+    { id: GRANNY_GRIPPERS_COSMETIC_ID },
+    { enabled: !previewMode }
+  );
   const [remaining, setRemaining] = useState<Remaining>(() => getRemaining(DEADLINE));
+  const [isUnlocking, setIsUnlocking] = useState(false);
+  const [previewClaimed, setPreviewClaimed] = useState(false);
+  const [previewEquipped, setPreviewEquipped] = useState(false);
 
-  const prevented = !!status?.obtained;
-  const equipped = !!status?.equipped;
-  const expired = remaining.done && !prevented;
+  const claimed = previewMode ? previewClaimed : !!status?.obtained;
+  const equipped = previewMode ? previewEquipped : !!status?.equipped;
+  const expired = remaining.done && !claimed;
 
   useEffect(() => {
-    if (prevented) return;
+    if (claimed) return;
     const handle = window.setInterval(() => setRemaining(getRemaining(DEADLINE)), 1000);
     return () => window.clearInterval(handle);
-  }, [prevented]);
+  }, [claimed]);
 
   const claimMutation = trpc.user.claimCosmetic.useMutation({
-    onSuccess: async () => {
-      await queryUtils.user.cosmeticStatus.invalidate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
-      await queryUtils.user.getById.invalidate();
+    onSuccess: () => {
+      setIsUnlocking(true);
+      window.setTimeout(async () => {
+        await queryUtils.user.cosmeticStatus.invalidate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
+        await queryUtils.user.getById.invalidate();
+        setIsUnlocking(false);
+      }, REVEAL_ANIMATION_MS);
     },
     onError: (error) => {
       showErrorNotification({
-        title: 'Unable to prevent the grippers',
+        title: 'Unable to unlock',
         error: new Error(error.message),
       });
     },
@@ -94,16 +106,33 @@ function GrannyGrippersClaimBody() {
     },
     onError: (error) => {
       showErrorNotification({
-        title: 'Unable to equip the grippers',
+        title: 'Unable to equip',
         error: new Error(error.message),
       });
     },
   });
 
-  const handlePrevent = () => claimMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
-  const handleEquip = () => equipMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
+  const handleClaim = () => {
+    if (previewMode) {
+      setIsUnlocking(true);
+      window.setTimeout(() => {
+        setPreviewClaimed(true);
+        setIsUnlocking(false);
+      }, REVEAL_ANIMATION_MS);
+      return;
+    }
+    claimMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
+  };
 
-  if (isLoading) {
+  const handleEquip = () => {
+    if (previewMode) {
+      setPreviewEquipped(true);
+      return;
+    }
+    equipMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
+  };
+
+  if (isLoading && !previewMode) {
     return (
       <Center mt="xl">
         <Loader />
@@ -111,81 +140,86 @@ function GrannyGrippersClaimBody() {
     );
   }
 
+  const artUuid = claimed ? REVEAL_ART_UUID : PLACEHOLDER_ART_UUID;
+  const claimInProgress = claimMutation.isLoading || isUnlocking;
+
   return (
     <Container size="xs" mb="lg">
       <Stack gap={0}>
-        {!prevented && !expired && (
-          <Center>
-            <Alert radius="sm" color="red" className="z-10">
-              <Group gap="xs" wrap="nowrap" justify="center">
-                <ThemeIcon color="red" size="md" variant="light">
-                  <IconAlertTriangle />
-                </ThemeIcon>
-                <Text size="md" fw={500}>
-                  Incoming cosmetic! Act fast!
-                </Text>
-              </Group>
-            </Alert>
-          </Center>
-        )}
-
-        <Center className={animationClasses.jelloFall} h={180} my="lg">
+        <Center
+          key={claimed ? 'reveal' : 'mystery'}
+          h={200}
+          my="lg"
+          className={clsx(
+            !isUnlocking && animationClasses.jelloFall,
+            isUnlocking && animationClasses.vibrate
+          )}
+        >
           <EdgeMedia
-            src={BADGE_ART_UUID}
-            alt="TheAlly's Granny Grippers"
-            width={180}
-            style={{ height: 180, width: 180, objectFit: 'contain' }}
+            src={artUuid}
+            alt={claimed ? "TheAlly's Granny Grippers" : 'Exclusive profile cosmetic'}
+            width={200}
+            style={{ height: 200, width: 200, objectFit: 'contain' }}
           />
         </Center>
 
         <Title order={1} ta="center" mb={5}>
-          {prevented
-            ? 'Whew! Close one!'
+          {claimed
+            ? "TheAlly's Granny Grippers"
             : expired
-            ? 'Wait... nothing happened?'
-            : "TheAlly's Granny Grippers"}
+            ? 'The moment has passed'
+            : 'Exclusive Profile Cosmetic'}
         </Title>
 
-        {!prevented && !expired && (
+        {!claimed && !expired && (
           <>
-            <Text size="lg" ta="center">
-              {`You've got until the timer runs out to prevent TheAlly's Granny Grippers from being applied to your profile. Varicose veins. Balls of yarn. Knitting needles. You do not want this.`}
+            <Text size="lg" ta="center" mt="md">
+              A small thank you to the community from TheAlly. A truly exclusive profile badge,
+              designed for individuals of exceptional taste and cultural refinement. This limited
+              cosmetic explores themes of mortality, texture, and circulation.
+            </Text>
+            <Text size="md" ta="center" c="dimmed" mt="sm" fs="italic">
+              It&apos;s not for everyone. It&apos;s for true Civitai connoisseurs.
             </Text>
             <Center mt="xl">
-              <Text fz={40} fw={600} ff="monospace" ta="center">
+              <Text fz={32} fw={600} ff="monospace" ta="center">
                 {String(remaining.days).padStart(2, '0')}d{' '}
                 {String(remaining.hours).padStart(2, '0')}h{' '}
                 {String(remaining.minutes).padStart(2, '0')}m{' '}
                 {String(remaining.seconds).padStart(2, '0')}s
               </Text>
             </Center>
+            <Text size="xs" ta="center" c="dimmed">
+              Available until May 1st
+            </Text>
             <Center mt="xl">
               <Button
-                onClick={handlePrevent}
+                onClick={handleClaim}
                 size="lg"
                 w={300}
-                color="red"
-                loading={claimMutation.isLoading}
+                loading={claimInProgress}
+                variant="gradient"
+                gradient={{ from: 'yellow.7', to: 'yellow.4', deg: 45 }}
               >
-                Prevent!
+                {isUnlocking ? 'Unlocking...' : 'Unlock Prestige Now'}
               </Button>
             </Center>
           </>
         )}
 
-        {prevented && (
+        {claimed && (
           <>
-            <Text size="lg" ta="center">
-              You successfully dodged TheAlly&apos;s parting gift. The badge is yours now, a quiet
-              trophy for your quick reflexes.
+            <Text size="lg" ta="center" mt="md">
+              Congratulations, connoisseur. You&apos;re now the proud owner of TheAlly&apos;s Granny
+              Grippers. Wear it with pride.
             </Text>
             <Center mt="xl">
-              <Alert radius="sm" color="green" className="z-10">
+              <Alert radius="sm" color="yellow" className="z-10">
                 <Group gap="xs" wrap="nowrap" justify="center">
-                  <ThemeIcon color="green" size="lg">
-                    <IconShieldCheck />
+                  <ThemeIcon color="yellow" size="lg">
+                    <IconSparkles />
                   </ThemeIcon>
-                  <Title order={2}>Prevention successful</Title>
+                  <Title order={2}>Prestige unlocked</Title>
                 </Group>
               </Alert>
             </Center>
@@ -211,25 +245,29 @@ function GrannyGrippersClaimBody() {
                 </Button>
               )}
             </Center>
+            <Text size="sm" ta="center" c="dimmed" fs="italic" mt="xl">
+              But truly, TheAlly wanted to leave you with something meaningful.
+              <br />A heartfelt{' '}
+              <Text
+                component="a"
+                href={ALLY_PARTING_GIFT_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                c="blue.4"
+                span
+              >
+                parting message
+              </Text>{' '}
+              from him to you.
+            </Text>
           </>
         )}
 
         {expired && (
           <>
-            <Text size="lg" ta="center">
-              Timer ran out and... nothing happened. Turns out TheAlly would never do that to you.
-              Probably.
+            <Text size="lg" ta="center" mt="md">
+              The claim window has closed. TheAlly&apos;s farewell cosmetic is no longer available.
             </Text>
-            <Center mt="xl">
-              <Alert radius="sm" color="yellow" className="z-10">
-                <Group gap="xs" wrap="nowrap" justify="center">
-                  <ThemeIcon color="yellow" size="lg">
-                    <IconSparkles />
-                  </ThemeIcon>
-                  <Title order={2}>You escaped!</Title>
-                </Group>
-              </Alert>
-            </Center>
             <Center mt="xl">
               <Button component={Link} href={FAREWELL_ARTICLE_URL} size="lg" w={300}>
                 Read TheAlly&apos;s farewell
