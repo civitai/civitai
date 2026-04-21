@@ -138,6 +138,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             break;
           case 'payment_intent.succeeded':
             const paymentIntent = event.data.object as Stripe.PaymentIntent;
+            // payment_intent.succeeded fires for every successful PaymentIntent — including
+            // subscription invoice payments and any other Stripe-managed flows that don't
+            // carry our `type` discriminator. Bail before schema validation so we don't 400
+            // Stripe into a retry loop for payments we were never going to process here.
+            const metadataType = paymentIntent.metadata?.type;
+            if (metadataType !== 'buzzPurchase' && metadataType !== 'clubMembershipPayment') {
+              break;
+            }
             // Stripe serializes all PaymentIntent.metadata values as strings, so a raw cast
             // would leak string userId/buzzAmount into downstream `$queryRaw` IN clauses and
             // hit "integer = text". Parse through the schema (which uses z.coerce.number) to
@@ -147,7 +155,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const parsedMetadata = paymentIntentMetadataSchema.safeParse(paymentIntent.metadata);
             if (!parsedMetadata.success) {
               throw new Error(
-                `payment_intent.succeeded metadata failed schema validation: ${parsedMetadata.error.message}`
+                `payment_intent.succeeded metadata failed schema validation: ${
+                  parsedMetadata.error.message
+                } | rawMetadata=${JSON.stringify(paymentIntent.metadata)}`
               );
             }
             const metadata = parsedMetadata.data;
