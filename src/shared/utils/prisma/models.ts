@@ -502,6 +502,7 @@ export interface User {
   challengeWins?: ChallengeWinner[];
   challengeJudges?: ChallengeJudge[];
   challengeEventsCreated?: ChallengeEvent[];
+  rewardsBonusEventsCreated?: RewardsBonusEvent[];
   strikes?: UserStrike[];
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
@@ -1846,6 +1847,23 @@ export interface Announcement {
   disabled: boolean;
 }
 
+export interface RewardsBonusEvent {
+  id: number;
+  name: string;
+  description: string | null;
+  multiplier: number;
+  articleId: number | null;
+  article?: Article | null;
+  bannerLabel: string | null;
+  enabled: boolean;
+  startsAt: Date | null;
+  endsAt: Date | null;
+  createdById: number;
+  createdBy?: User;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface Cosmetic {
   id: number;
   name: string;
@@ -1986,6 +2004,7 @@ export interface Article {
   engagements?: ArticleEngagement[];
   associations?: ModelAssociations[];
   collectionItems?: CollectionItem[];
+  rewardsBonusEvents?: RewardsBonusEvent[];
 }
 
 export interface PressMention {
