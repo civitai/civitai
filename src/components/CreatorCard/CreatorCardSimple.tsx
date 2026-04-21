@@ -13,7 +13,7 @@ import {
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
-import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
+import { constants, creatorCardStatsDefaults, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -127,7 +127,7 @@ const CreatorCardSimpleContent = ({
             type={backgroundImage.data.type ?? 'image'}
             // transcode={isVideo}
             anim={true}
-            width={450}
+            width={DEFAULT_EDGE_IMAGE_WIDTH}
             wrapperProps={{
               style: {
                 position: 'absolute',

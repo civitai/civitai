@@ -19,7 +19,7 @@ import {
   Title,
   useStyles,
 } from '@mantine/core';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { IconClock, IconClubs, IconPlus, IconSettings } from '@tabler/icons-react';
 import { ClubFeedNavigation } from '~/components/Club/ClubFeedNavigation';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -264,7 +264,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                           ) : (
                             <ImagePreview
                               image={image}
-                              edgeImageProps={{ width: 450 }}
+                              edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                               radius="md"
                               style={{ width: '100%', height: '100%' }}
                               aspectRatio={0}

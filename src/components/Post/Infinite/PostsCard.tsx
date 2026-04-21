@@ -11,6 +11,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import classes from './PostsCard.module.css';
@@ -69,7 +70,7 @@ export function PostsCard({
                     skip={getSkipValue(image)}
                     type={image.type}
                     imageId={image.id}
-                    width={450}
+                    width={DEFAULT_EDGE_IMAGE_WIDTH}
                     placeholder="empty"
                   />
                 )}

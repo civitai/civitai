@@ -20,10 +20,10 @@ import { IconAlertCircle, IconArticle, IconFiles, IconUsers } from '@tabler/icon
 import { abbreviateNumber } from '../../utils/number-helpers';
 import { IconBadge } from '../IconBadge/IconBadge';
 import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import clsx from 'clsx';
 
-const IMAGE_CARD_WIDTH = 450;
+const IMAGE_CARD_WIDTH = DEFAULT_EDGE_IMAGE_WIDTH;
 
 export function ClubCard({ data }: Props) {
   const router = useRouter();

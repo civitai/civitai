@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { NsfwLevel, SignalMessages } from '~/server/common/enums';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
@@ -256,7 +257,7 @@ export function PanelCard({
       ) : imageUrl ? (
         <>
           <img
-            src={getEdgeUrl(imageUrl, { width: 450 })}
+            src={getEdgeUrl(imageUrl, { width: DEFAULT_EDGE_IMAGE_WIDTH })}
             alt={prompt}
             className={styles.panelImage}
           />

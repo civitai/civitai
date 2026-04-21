@@ -14,6 +14,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { formatRelativeDate } from '~/utils/comic-helpers';
 import type { RouterOutput } from '~/types/router';
@@ -213,7 +214,7 @@ function ProjectCard({ project }: { project: ProjectItem }) {
           </div>
         ) : imageUrl ? (
           <img
-            src={getEdgeUrl(imageUrl, { width: 450 })}
+            src={getEdgeUrl(imageUrl, { width: DEFAULT_EDGE_IMAGE_WIDTH })}
             alt={project.name}
             className="h-full w-full object-cover"
           />

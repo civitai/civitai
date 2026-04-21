@@ -14,7 +14,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { postgresSlugify, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -65,7 +65,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
       <MasonryProvider
         columnWidth={constants.cardSizes.image}
         maxColumnCount={7}
-        maxSingleColumnWidth={450}
+        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
       >
         <MasonryContainer p={0}>
           <Stack gap="xs">

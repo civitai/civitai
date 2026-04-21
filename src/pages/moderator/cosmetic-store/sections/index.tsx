@@ -34,7 +34,7 @@ import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { Meta } from '~/components/Meta/Meta';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -188,7 +188,7 @@ export default function CosmeticStoreSections() {
                                   ) : (
                                     <ImagePreview
                                       image={image}
-                                      edgeImageProps={{ width: 450 }}
+                                      edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                                       radius="md"
                                       style={{ width: '100%', height: '100%' }}
                                       aspectRatio={0}

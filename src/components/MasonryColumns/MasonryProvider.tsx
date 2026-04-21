@@ -3,6 +3,7 @@ import { Box } from '@mantine/core';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { useDebouncer } from '~/utils/debouncer';
 
 export type MasonryContextState = {
@@ -39,7 +40,7 @@ export function MasonryProvider({
   gap = 16,
   columnGap = gap,
   rowGap = gap,
-  maxSingleColumnWidth = 450,
+  maxSingleColumnWidth = DEFAULT_EDGE_IMAGE_WIDTH,
   ...boxProps
 }: Props) {
   // width will be set to the inner width of the element. (clientWidth - paddingX)

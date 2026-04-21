@@ -23,6 +23,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useInView } from '~/hooks/useInView';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
@@ -69,7 +70,11 @@ export default function JudgmentHistoryModal() {
             ]}
           />
         </div>
-        <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
+        <MasonryProvider
+          columnWidth={310}
+          maxColumnCount={7}
+          maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
+        >
           <MasonryContainer py="xl">
             {isLoading ? (
               <Center>
@@ -144,7 +149,12 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
     >
       {inView && (
         <>
-          <EdgeMedia2 src={image.url} className="h-full object-cover" type="image" width={450} />
+          <EdgeMedia2
+            src={image.url}
+            className="h-full object-cover"
+            type="image"
+            width={DEFAULT_EDGE_IMAGE_WIDTH}
+          />
 
           <LegacyActionIcon
             component={Link}

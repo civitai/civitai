@@ -14,6 +14,7 @@ import {
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCallback } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -61,7 +62,7 @@ export function CsamImageSelection({
     <div className="relative">
       <MasonryProvider
         maxColumnCount={7}
-        maxSingleColumnWidth={450}
+        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
         style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
       >
         <div className="pb-3">
@@ -73,8 +74,8 @@ export function CsamImageSelection({
               <MasonryColumns
                 data={images}
                 imageDimensions={(data) => {
-                  const width = data?.width ?? 450;
-                  const height = data?.height ?? 450;
+                  const width = data?.width ?? DEFAULT_EDGE_IMAGE_WIDTH;
+                  const height = data?.height ?? DEFAULT_EDGE_IMAGE_WIDTH;
                   return { width, height };
                 }}
                 maxItemHeight={600}
@@ -146,7 +147,7 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
             name={image.name ?? image.id.toString()}
             alt={image.name ?? undefined}
             type={image.type}
-            width={450}
+            width={DEFAULT_EDGE_IMAGE_WIDTH}
             placeholder="empty"
             style={{ width: '100%' }}
             onClick={toggleSelected}

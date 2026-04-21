@@ -28,6 +28,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -142,7 +143,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       skip={getSkipValue(image)}
                       type={image.type}
                       wrapperProps={{ className: 'flex-1 h-full' }}
-                      width={450}
+                      width={DEFAULT_EDGE_IMAGE_WIDTH}
                       placeholder="empty"
                       contain
                       loading="lazy"

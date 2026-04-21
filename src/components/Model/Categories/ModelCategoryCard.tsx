@@ -39,7 +39,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
@@ -369,7 +369,7 @@ function ModelCategoryCardContent({
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         type={image.type}
-                        width={450}
+                        width={DEFAULT_EDGE_IMAGE_WIDTH}
                         placeholder="empty"
                       />
                     )}

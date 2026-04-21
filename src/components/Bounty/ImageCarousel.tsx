@@ -12,6 +12,7 @@ import {
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { breakpoints } from '~/utils/tailwind';
@@ -118,7 +119,7 @@ export function ImageCarouselContent({
                         <ImagePreview
                           image={image}
                           edgeImageProps={{
-                            width: 450,
+                            width: DEFAULT_EDGE_IMAGE_WIDTH,
                             style: { objectPosition: mobile ? 'top' : 'center' },
                           }}
                           // radius="md"

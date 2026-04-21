@@ -15,7 +15,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { IconFiles } from '@tabler/icons-react';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import clsx from 'clsx';
@@ -27,7 +27,7 @@ const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEn
 });
 const openBountyEntryFilesModal = createDialogTrigger(BountyEntryFilesModal);
 
-const IMAGE_CARD_WIDTH = 450;
+const IMAGE_CARD_WIDTH = DEFAULT_EDGE_IMAGE_WIDTH;
 
 export function BountyEntryCard({ data, currency, renderActions }: Props) {
   const router = useRouter();

@@ -9,6 +9,7 @@ import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBa
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -155,11 +156,15 @@ export function WinnerPodiumCard({
                       src={winner.imageUrl!}
                       type={MediaType.image}
                       imageId={winner.imageId!}
-                      width={450}
+                      width={DEFAULT_EDGE_IMAGE_WIDTH}
                       className="size-full object-cover transition-transform duration-300 hover:scale-105"
                     />
                   ) : (
-                    <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />
+                    <MediaHash
+                      hash={winner.imageHash ?? null}
+                      width={DEFAULT_EDGE_IMAGE_WIDTH}
+                      height={DEFAULT_EDGE_IMAGE_WIDTH}
+                    />
                   )}
                 </Link>
                 <div className="absolute left-2 top-2 z-10 flex items-center gap-1">

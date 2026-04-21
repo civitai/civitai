@@ -8,7 +8,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 
@@ -61,7 +61,7 @@ function UserPostsPage() {
       <MasonryProvider
         columnWidth={constants.cardSizes.image}
         maxColumnCount={7}
-        maxSingleColumnWidth={450}
+        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
       >
         <MasonryContainer p={0}>
           <Stack gap="xs">

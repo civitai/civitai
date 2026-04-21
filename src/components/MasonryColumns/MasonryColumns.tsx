@@ -10,6 +10,7 @@ import type {
 } from '~/components/MasonryColumns/masonry.types';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import clsx from 'clsx';
 
 type Props<TData> = {
@@ -51,13 +52,13 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div
           key={colIndex}
-          className={clsx(
-            'flex max-w-[450px] flex-col gap-4',
-            columnCount === 1 ? 'w-full' : 'w-[320px]'
-          )}
-          style={columnCount > 1 ? { width: columnWidth } : undefined}
+          className={clsx('flex flex-col gap-4', columnCount === 1 ? 'w-full' : 'w-[320px]')}
+          style={{
+            maxWidth: DEFAULT_EDGE_IMAGE_WIDTH,
+            ...(columnCount > 1 ? { width: columnWidth } : undefined),
+          }}
         >
-          {staticItem?.({ columnWidth, height: 450 })}
+          {staticItem?.({ columnWidth, height: DEFAULT_EDGE_IMAGE_WIDTH })}
           {items.map(({ height, data }, index) => {
             switch (data.type) {
               case 'data':

@@ -36,7 +36,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useDebouncedValue } from '@mantine/hooks';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { formatDate } from '~/utils/date-helpers';
@@ -129,7 +129,7 @@ const RewardDetailsModal = ({
                       ) : (
                         <ImagePreview
                           image={image}
-                          edgeImageProps={{ width: 450 }}
+                          edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                           radius="md"
                           style={{ width: '100%', height: '100%' }}
                           // aspectRatio={0}
@@ -264,7 +264,7 @@ const PurchasableRewardListItem = ({
                   ) : (
                     <ImagePreview
                       image={image}
-                      edgeImageProps={{ width: 450 }}
+                      edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                       radius="md"
                       style={{ width: '100%', height: '100%' }}
                       // aspectRatio={0}
@@ -354,7 +354,7 @@ const PurchasableRewardCard = ({
                     ) : (
                       <ImagePreview
                         image={image}
-                        edgeImageProps={{ width: 450 }}
+                        edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                         // radius="md"
                         style={{ width: '100%', height: '100%' }}
                         // aspectRatio={0}

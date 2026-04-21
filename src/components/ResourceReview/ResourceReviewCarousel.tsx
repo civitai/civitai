@@ -12,6 +12,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
@@ -87,7 +88,7 @@ export function ResourceReviewCarousel({
                                 name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
                                 type={image.type}
-                                width={450}
+                                width={DEFAULT_EDGE_IMAGE_WIDTH}
                                 placeholder="empty"
                                 style={{ width: '100%', objectPosition: 'top' }}
                               />
@@ -131,7 +132,10 @@ export function ResourceReviewCarousel({
                 ))}
                 {viewMore && (
                   <Embla.Slide className="flex flex-[0_0_100%] items-center justify-center pl-3 @md:flex-[0_0_50%] @md:pl-6">
-                    <div className="aspect-square w-full max-w-[450px]">
+                    <div
+                      className="aspect-square w-full"
+                      style={{ maxWidth: DEFAULT_EDGE_IMAGE_WIDTH }}
+                    >
                       <Button
                         component={Link}
                         href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}

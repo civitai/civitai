@@ -7,6 +7,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { ImageGetInfinite } from '~/types/router';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import clsx from 'clsx';
@@ -88,7 +89,7 @@ function ChallengeSelectableImageCard({ image, challenge, selected, onToggle }: 
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
                   type={image.type}
-                  width={450}
+                  width={DEFAULT_EDGE_IMAGE_WIDTH}
                   placeholder="empty"
                   style={{ width: '100%' }}
                 />

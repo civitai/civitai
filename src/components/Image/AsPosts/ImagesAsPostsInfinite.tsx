@@ -38,6 +38,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils/flags';
@@ -159,7 +160,7 @@ export function ImagesAsPostsInfinite({
       <MasonryProvider
         columnWidth={320}
         maxColumnCount={6}
-        maxSingleColumnWidth={450}
+        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
         style={{ flex: 1 }}
       >
         <MasonryContainer>
@@ -276,8 +277,8 @@ export function ImagesAsPostsInfinite({
                       return aHeight > bHeight ? -1 : 1;
                     })[0];
 
-                    const width = tallestImage?.width ?? 450;
-                    const height = tallestImage?.height ?? 450;
+                    const width = tallestImage?.width ?? DEFAULT_EDGE_IMAGE_WIDTH;
+                    const height = tallestImage?.height ?? DEFAULT_EDGE_IMAGE_WIDTH;
                     return { width, height };
                   }}
                   adjustHeight={({ height }, data) => {

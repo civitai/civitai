@@ -8,6 +8,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import {
   browsingLevelDescriptions,
   browsingLevelLabels,
@@ -125,7 +126,7 @@ function BrowsingLevelCarousel({
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         <ImagePreview
                           image={image}
-                          edgeImageProps={{ width: 450 }}
+                          edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                           aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
                           // radius="md"
                           style={{ width: '100%', maxHeight: mobile ? 510 : 370 }}

@@ -15,7 +15,7 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { ClubMembershipOnClub, ClubTier } from '~/types/router';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { formatDate } from '~/utils/date-helpers';
@@ -140,7 +140,7 @@ export const TierCoverImage = ({
                     ) : (
                       <ImagePreview
                         image={image}
-                        edgeImageProps={{ width: 450 }}
+                        edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                         radius="md"
                         style={{ width: '100%', height: '100%' }}
                         aspectRatio={0}

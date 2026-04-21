@@ -38,6 +38,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -291,7 +292,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   alt={image.name ?? undefined}
                   type={image.type}
                   imageId={image.id}
-                  width={450}
+                  width={DEFAULT_EDGE_IMAGE_WIDTH}
                   placeholder="empty"
                   wrapperProps={{ style: { zIndex: 1 } }}
                   skip={getSkipValue(image)}
@@ -382,7 +383,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                             alt={image.name ?? undefined}
                             type={image.type}
                             imageId={image.id}
-                            width={450}
+                            width={DEFAULT_EDGE_IMAGE_WIDTH}
                             placeholder="empty"
                             wrapperProps={{ style: { zIndex: 1 } }}
                             skip={getSkipValue(image)}

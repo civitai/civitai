@@ -8,7 +8,7 @@ import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDr
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { env } from '~/env/client';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { TagPageSeoData } from '~/server/services/tag.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -109,7 +109,7 @@ export default function TagPage({
       <MasonryProvider
         columnWidth={constants.cardSizes.model}
         maxColumnCount={7}
-        maxSingleColumnWidth={450}
+        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
       >
         <MasonryContainer>
           <Stack gap="xs">

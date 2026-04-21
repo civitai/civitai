@@ -30,7 +30,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import {
   addSimpleImagePostInput,
@@ -161,7 +161,7 @@ export function AddUserContentModal({ collectionId }: Props) {
           <MasonryProvider
             columnWidth={constants.cardSizes.image}
             maxColumnCount={4}
-            maxSingleColumnWidth={450}
+            maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
           >
             <MasonryContainer m={0} p={0} px={0}>
               <ImagesInfinite
@@ -253,7 +253,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
                   type={image.type}
-                  width={450}
+                  width={DEFAULT_EDGE_IMAGE_WIDTH}
                   placeholder="empty"
                   style={{ width: '100%' }}
                 />

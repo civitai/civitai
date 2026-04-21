@@ -12,7 +12,7 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
@@ -209,8 +209,8 @@ function ImagesHitList() {
           <MasonryColumnsVirtual
             data={items as any}
             imageDimensions={(data) => {
-              const width = data?.width ?? 450;
-              const height = data?.height ?? 450;
+              const width = data?.width ?? DEFAULT_EDGE_IMAGE_WIDTH;
+              const height = data?.height ?? DEFAULT_EDGE_IMAGE_WIDTH;
               return { width, height };
             }}
             adjustHeight={({ height }) => {

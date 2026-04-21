@@ -18,6 +18,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
@@ -201,8 +202,8 @@ export function ImagesInfiniteContent({
             <MasonryColumnsVirtual
               data={images}
               imageDimensions={(data) => {
-                const width = data?.width ? data.width : 450;
-                const height = data?.height ? data.height : 450;
+                const width = data?.width ? data.width : DEFAULT_EDGE_IMAGE_WIDTH;
+                const height = data?.height ? data.height : DEFAULT_EDGE_IMAGE_WIDTH;
                 return { width, height };
               }}
               adjustHeight={({ height }) => {

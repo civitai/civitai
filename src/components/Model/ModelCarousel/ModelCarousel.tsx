@@ -15,6 +15,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -127,7 +128,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                           >
                             <ImagePreview
                               image={image}
-                              edgeImageProps={{ width: 450 }}
+                              edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                               aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
                               // radius="md"
                               style={{ width: '100%' }}

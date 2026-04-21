@@ -77,7 +77,7 @@ import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants } from '~/server/common/constants';
+import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import {
@@ -580,7 +580,7 @@ export function Collection({
           <MasonryProvider
             columnWidth={constants.cardSizes.model}
             maxColumnCount={7}
-            maxSingleColumnWidth={450}
+            maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
           >
             <MasonryContainer {...containerProps} p={0}>
               <Stack gap="xl" w="100%">

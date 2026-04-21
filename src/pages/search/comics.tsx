@@ -10,7 +10,7 @@ import {
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
-import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
+import { COMICS_SEARCH_INDEX, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ComicsSearchIndexSortBy } from '~/components/Search/parsers/comic.parser';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
@@ -128,7 +128,7 @@ export function ComicHitList() {
                     src={hit.coverImageUrl}
                     alt={hit.name}
                     type="image"
-                    width={450}
+                    width={DEFAULT_EDGE_IMAGE_WIDTH}
                     style={{ width: '100%', height: 200, objectFit: 'cover' }}
                   />
                 ) : (
