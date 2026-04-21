@@ -346,7 +346,7 @@ export function ArticleUpsertForm({ article }: Props) {
                   <ContentPolicyLink size="xs" variant="text" c="dimmed" td="underline" />
                 </Group>
               }
-              description="Final rating = max of your selection, cover image, and any content images. Image scans can raise it but never lower it."
+              description="Your preferred rating. The final rating is the max of your choice, cover and content images, text moderation, and any actioned NSFW reports. Updates automatically when those signals change."
             />
             {article?.nsfwLevel != null &&
               article.nsfwLevel > (article.userNsfwLevel ?? 0) &&
@@ -357,9 +357,25 @@ export function ArticleUpsertForm({ article }: Props) {
                     <Text span fw={600}>
                       {browsingLevelLabels[article.nsfwLevel as keyof typeof browsingLevelLabels]}
                     </Text>{' '}
-                    because the cover image or content images were scanned at that level. Your
-                    selection above is respected as a floor but cannot lower the rating below what
-                    the scanned images require.
+                    because an image, text-moderation scan, or an actioned NSFW report raised it
+                    above your preference
+                    {article.userNsfwLevel &&
+                    browsingLevelLabels[
+                      article.userNsfwLevel as keyof typeof browsingLevelLabels
+                    ] ? (
+                      <>
+                        {' '}
+                        of{' '}
+                        <Text span fw={600}>
+                          {
+                            browsingLevelLabels[
+                              article.userNsfwLevel as keyof typeof browsingLevelLabels
+                            ]
+                          }
+                        </Text>
+                      </>
+                    ) : null}
+                    . Your selection is saved and will apply again if those signals clear.
                   </Text>
                 </Alert>
               )}
