@@ -1992,6 +1992,7 @@ export interface Article {
   unlisted: boolean;
   nsfwLevel: number;
   userNsfwLevel: number;
+  moderatorNsfwLevel: number | null;
   lockedProperties: string[];
   status: ArticleStatus;
   thread?: Thread | null;

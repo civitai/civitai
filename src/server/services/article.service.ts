@@ -774,6 +774,11 @@ export const upsertArticle = async ({
     if (!isModerator) {
       // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+      // moderatorNsfwLevel is a mod-only field. Silently strip it from
+      // non-moderator payloads rather than throwing: the form never exposes
+      // this control to owners, so a client sending it indicates either a
+      // stale client or an attempt to forge the override — either way, drop.
+      delete data.moderatorNsfwLevel;
     }
 
     // For updates, fetch article early so we can check cover image ownership and NSFW level
@@ -786,6 +791,9 @@ export const upsertArticle = async ({
       publishedAt: Date | null;
       status: string;
       nsfwLevel: number;
+      userNsfwLevel: number;
+      moderatorNsfwLevel: number | null;
+      lockedProperties: string[];
       metadata: Prisma.JsonValue;
       content: string | null;
     } | null = null;
@@ -801,6 +809,9 @@ export const upsertArticle = async ({
           publishedAt: true,
           status: true,
           nsfwLevel: true,
+          userNsfwLevel: true,
+          moderatorNsfwLevel: true,
+          lockedProperties: true,
           metadata: true,
           content: true,
         },
@@ -981,6 +992,35 @@ export const upsertArticle = async ({
       }
     }
 
+    // moderatorNsfwLevel is the mod override layer that takes precedence over
+    // the GREATEST derivation (see updateArticleNsfwLevels). Determine whether
+    // anything in this save can move the derived nsfwLevel so we know to
+    // recompute post-commit — plain upsert doesn't normally trigger recompute,
+    // only the scan/text-mod/report webhooks do, so without this hook a mod's
+    // override or user preference change would sit dormant until something
+    // else kicked the pipeline.
+    const moderatorOverrideChanged =
+      !!isModerator &&
+      data.moderatorNsfwLevel !== undefined &&
+      data.moderatorNsfwLevel !== article.moderatorNsfwLevel;
+    const userNsfwLevelChanged =
+      data.userNsfwLevel !== undefined && data.userNsfwLevel !== article.userNsfwLevel;
+    const shouldRecomputeNsfwLevel = moderatorOverrideChanged || userNsfwLevelChanged;
+
+    // When a mod sets an override, lock the user's picker so a subsequent
+    // owner save can't quietly drift userNsfwLevel underneath it. When the
+    // mod clears the override (sets back to null) we unlock the picker and
+    // the article returns to auto-derivation on the next recompute.
+    if (moderatorOverrideChanged) {
+      const lockedSet = new Set<string>(data.lockedProperties ?? article.lockedProperties ?? []);
+      if (data.moderatorNsfwLevel != null) {
+        lockedSet.add('userNsfwLevel');
+      } else {
+        lockedSet.delete('userNsfwLevel');
+      }
+      data.lockedProperties = Array.from(lockedSet);
+    }
+
     const republishing =
       (article.status === ArticleStatus.Unpublished && data.status === ArticleStatus.Published) ||
       !!article.publishedAt;
@@ -1074,6 +1114,14 @@ export const upsertArticle = async ({
 
     await preventReplicationLag('article', result.id);
     await preventReplicationLag('userArticles', result.userId);
+
+    // Recompute the derived nsfwLevel when the save touched any of its
+    // inputs. Scan / text-mod / report webhooks already call this on their
+    // own triggers; this hook covers the gap for direct edits so a mod
+    // override or userNsfwLevel change takes effect immediately.
+    if (shouldRecomputeNsfwLevel) {
+      await updateArticleNsfwLevels([result.id]);
+    }
 
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {

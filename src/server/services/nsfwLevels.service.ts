@@ -355,12 +355,25 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         FROM "Article" a
         WHERE a.id IN (${Prisma.join(articleIds)})
       )
+      -- moderatorNsfwLevel is the moderator override and takes precedence over
+      -- every other signal when set. It can force the rating either direction:
+      -- mods can pin a wholesome article that got mis-scanned back down to PG,
+      -- or raise a borderline article that the auto-derivation undersold.
+      -- When null we fall back to GREATEST(userNsfwLevel, scanned images,
+      -- moderation floor) as before. A mod clearing the override (setting it
+      -- back to NULL) immediately returns the article to auto-derivation.
       UPDATE "Article" a
-      SET "nsfwLevel" = GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
+      SET "nsfwLevel" = COALESCE(
+        a."moderatorNsfwLevel",
+        GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
+      )
       FROM level
       JOIN moderation_floor mf ON mf.id = level.id
       WHERE level.id = a.id
-        AND GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor") != a."nsfwLevel"
+        AND COALESCE(
+          a."moderatorNsfwLevel",
+          GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
+        ) != a."nsfwLevel"
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(

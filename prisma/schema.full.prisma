@@ -2540,6 +2540,7 @@ model Article {
   unlisted         Boolean       @default(false)
   nsfwLevel        Int           @default(0)
   userNsfwLevel    Int           @default(0)
+  moderatorNsfwLevel Int?
   lockedProperties String[]      @default([])
   status           ArticleStatus @default(Draft)
 
