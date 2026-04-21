@@ -71,6 +71,7 @@ export const useUserMultipliers = () => {
       rewardsMultiplier: 1,
       baseRewardsMultiplier: 1,
       globalRewardsBonus: 1,
+      rewardsBonusEvent: null,
     },
     isLoading,
   } = trpc.buzz.getUserMultipliers.useQuery(undefined, {
