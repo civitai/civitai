@@ -1,3 +1,37 @@
+/**
+ * Debug endpoint for the Referral Program v2.
+ * =============================================================================
+ *
+ * Hidden testing route. Guarded by the WEBHOOK_TOKEN header (same as
+ * /api/testing/strikes). Not reachable without the secret; no public UI.
+ *
+ * Usage:
+ *   POST /api/testing/referrals
+ *   Authorization: Bearer $WEBHOOK_TOKEN
+ *   Content-Type: application/json
+ *   Body: { "action": "<action>", ...params }
+ *
+ * Actions (see the switch below for authoritative param list):
+ *   dump                          - {userId}                                   Full referral state snapshot
+ *   bind-code                     - {userId, code}                             Bind a referral code to a user's UserReferral
+ *   grant-tokens                  - {userId, tier, tokens, settleImmediately?} Insert a MembershipToken reward
+ *   grant-blue-buzz               - {userId, blueBuzz, settleImmediately?}     Insert a BuzzKickback reward
+ *   enqueue-chunk                 - {userId, tier, durationDays}               Push a chunk onto the referral-sub queue
+ *   simulate-membership-payment   - {refereeId, tier, monthlyBuzz?}            Fires recordMembershipPaymentReward
+ *   simulate-buzz-purchase        - {refereeId, blueBuzz}                      Fires recordBuzzPurchaseKickback (blueBuzz here = yellow amount spent)
+ *   simulate-chargeback           - {sourceEventId}                            Fires revokeForChargeback
+ *   settle-all                    - {userId?}                                  Fast-forward Pending rewards, run settle cron
+ *   advance-subs                  - {userId?}                                  Expire referral sub, run advance cron (promotes next queue chunk)
+ *   expire-tokens                 - {userId}                                   Expire all settled tokens for the user
+ *   reset                         - {userId, confirm: true}                    Wipe all referral data for one user
+ *
+ * Flow: grant-tokens (settleImmediately=true) -> visit /user/referrals ->
+ * redeem -> enqueue-chunk -> advance-subs -> reset.
+ *
+ * Permanent changes are scoped to a single userId/refereeId per call so a
+ * misuse never cascades across the DB.
+ */
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import dayjs from 'dayjs';

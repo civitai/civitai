@@ -210,6 +210,18 @@ Use the S3 upload hooks and providers in the codebase.
 ### Image Handling
 Use EdgeImage component for optimized image loading with CDN support.
 
+## Debug Endpoints (`src/pages/api/testing/*`)
+
+`src/pages/api/testing/*.ts` is the convention for hidden debug endpoints. Each endpoint is guarded by the `WEBHOOK_TOKEN` header (via `WebhookEndpoint(...)`) and exposes a handful of POST actions for experimenting with a feature without paying real money or hand-editing the DB.
+
+**To use one**: read the endpoint's source file directly — the top-of-file comment documents the available actions and required params, and the zod schema is the authoritative contract. Agents should never need a wrapper skill; cURL with `Authorization: Bearer $WEBHOOK_TOKEN` is enough.
+
+**When adding a new debug endpoint**:
+1. Drop it at `src/pages/api/testing/<feature>.ts`
+2. Use `WebhookEndpoint(handler)` for auth
+3. Lead the file with a block comment listing each action + its params + a one-line description (see `src/pages/api/testing/referrals.ts` for the pattern)
+4. Scope every destructive action to a single `userId`/`refereeId` per call so a misuse can't cascade
+
 ## Feature Documentation
 
 Feature-specific documentation lives in `docs/features/`. Before implementing a feature, check if documentation exists:
