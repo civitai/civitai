@@ -35,10 +35,6 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { isModerator } from '~/server/routers/base.router';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -75,13 +71,6 @@ export const articleRouter = router({
       ...input,
       userId: ctx.user?.id,
       isModerator: ctx.user?.isModerator,
-      // Cap by auth + domain: anonymous → PG only, logged-in on green → PG/PG-13,
-      // logged-in on blue/red → no cap.
-      browsingLevel: !ctx.user
-        ? publicBrowsingLevelsFlag
-        : !ctx.features.canViewNsfw
-        ? sfwBrowsingLevelsFlag
-        : undefined,
     })
   ),
   getMyDraftArticles: protectedProcedure

@@ -671,8 +671,7 @@ export const getArticleById = async ({
   id,
   userId,
   isModerator,
-  browsingLevel,
-}: GetByIdInput & { userId?: number; isModerator?: boolean; browsingLevel?: number }) => {
+}: GetByIdInput & { userId?: number; isModerator?: boolean }) => {
   try {
     const db = await getDbWithoutLag('article', id);
     const article = await db.article.findFirst({
@@ -696,15 +695,6 @@ export const getArticleById = async ({
     if (userId && !isModerator) {
       const blocked = await amIBlockedByUser({ userId, targetUserId: article.userId });
       if (blocked) throw throwNotFoundError(`No article with id ${id}`);
-    }
-
-    // NSFW level enforcement — moderators and the article owner always bypass.
-    // On green (or any caller that passes a browsingLevel), articles whose
-    // nsfwLevel doesn't intersect the allowed mask are treated as not found.
-    if (browsingLevel && !isModerator && article.userId !== userId) {
-      if ((article.nsfwLevel & browsingLevel) === 0) {
-        throw throwNotFoundError(`No article with id ${id}`);
-      }
     }
 
     // Fetch connected images with ingestion status
