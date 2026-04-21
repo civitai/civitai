@@ -5,7 +5,6 @@ import {
   Card,
   CloseButton,
   CopyButton,
-  Divider,
   Grid,
   Group,
   Paper,
@@ -16,7 +15,7 @@ import {
   Title,
 } from '@mantine/core';
 import {
-  IconBolt,
+  IconBoltFilled,
   IconBrandDiscord,
   IconBrandReddit,
   IconBrandX,
@@ -285,28 +284,32 @@ export function ReferralDashboard({
             </Text>
           )}
 
-          <Divider />
-
-          <Group grow>
-            <RankStat
-              label="Paid referrals"
-              value={formatNum(data.conversionCount)}
-              icon={<IconUsersGroup size={18} />}
-              accent={rankColor}
-            />
-            <RankStat
-              label="Lifetime Blue Buzz"
-              value={formatNum(lifetimeBuzz)}
-              icon={<IconBolt size={18} />}
-              accent="blue"
-            />
-            <RankStat
-              label="Recruiter Score"
-              value={formatNum(score)}
-              icon={<IconSparkles size={18} />}
-              accent={rankColor}
-            />
-          </Group>
+          <Grid>
+            <Grid.Col span={{ base: 12, sm: 4 }}>
+              <RankStatCard
+                label="Paid referrals"
+                value={formatNum(data.conversionCount)}
+                icon={<IconUsersGroup size={20} />}
+                accent={rankColor}
+              />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, sm: 4 }}>
+              <RankStatCard
+                label="Lifetime Blue Buzz"
+                value={formatNum(lifetimeBuzz)}
+                icon={<IconBoltFilled size={20} />}
+                accent="blue"
+              />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, sm: 4 }}>
+              <RankStatCard
+                label="Recruiter Score"
+                value={formatNum(score)}
+                icon={<IconSparkles size={20} />}
+                accent={rankColor}
+              />
+            </Grid.Col>
+          </Grid>
         </Stack>
       </Card>
 
@@ -332,8 +335,8 @@ export function ReferralDashboard({
                 body="When a friend pays for Membership, you earn 1 / 2 / 3 Tokens per Bronze / Silver / Gold month. Up to 3 months per friend."
               />
               <HowStep
-                icon={<IconBolt size={28} />}
-                color="yellow"
+                icon={<IconBoltFilled size={28} />}
+                color="blue"
                 title="3. Earn Blue Buzz"
                 body="Every Buzz your friends buy after they join earns you 10% back as Blue Buzz. Milestones pay lump-sum bonuses."
               />
@@ -356,7 +359,7 @@ export function ReferralDashboard({
             <Paper withBorder radius="xl" px="md" py="xs" className="bg-blue-9/10">
               <Group gap={8} wrap="nowrap">
                 <ThemeIcon variant="filled" color="blue" size="md" radius="xl">
-                  <IconBolt size={16} />
+                  <IconBoltFilled size={16} />
                 </ThemeIcon>
                 <Stack gap={0}>
                   <Text size="xs" tt="uppercase" c="dimmed">
@@ -422,7 +425,7 @@ export function ReferralDashboard({
                     <Group gap="sm" wrap="nowrap">
                       <ThemeIcon
                         variant={unlocked ? 'filled' : isNext ? 'light' : 'default'}
-                        color={unlocked ? 'yellow' : isNext ? 'blue' : 'gray'}
+                        color={unlocked ? 'blue' : isNext ? 'blue' : 'gray'}
                         size="lg"
                         radius="xl"
                       >
@@ -431,18 +434,18 @@ export function ReferralDashboard({
                       <Stack gap={2}>
                         <Text fw={700}>{milestoneName}</Text>
                         <Group gap={4} align="center" wrap="nowrap">
-                          <IconBolt size={12} />
+                          <IconBoltFilled size={12} color="var(--mantine-color-blue-5)" />
                           <Text size="sm" c="dimmed">
                             {formatNum(m.threshold)} earned
                           </Text>
                           <Text size="sm" c="dimmed">
                             →
                           </Text>
-                          <Text size="sm" fw={700} c="yellow.6">
+                          <Text size="sm" fw={700} c="blue.4">
                             +{formatNum(m.bonus)}
                           </Text>
-                          <IconBolt size={12} color="var(--mantine-color-yellow-6)" />
-                          <Text size="sm" fw={600} c="yellow.6">
+                          <IconBoltFilled size={12} color="var(--mantine-color-blue-5)" />
+                          <Text size="sm" fw={600} c="blue.4">
                             bonus
                           </Text>
                         </Group>
@@ -450,7 +453,7 @@ export function ReferralDashboard({
                     </Group>
                     <Badge
                       variant={unlocked ? 'filled' : 'light'}
-                      color={unlocked ? 'yellow' : isNext ? 'blue' : 'gray'}
+                      color={unlocked ? 'blue' : isNext ? 'blue' : 'gray'}
                     >
                       {unlocked ? 'Unlocked' : isNext ? 'Up next' : 'Locked'}
                     </Badge>
@@ -616,7 +619,7 @@ export function ReferralDashboard({
                           {isRecruit ? (
                             <IconUsersGroup size={18} />
                           ) : isKickback ? (
-                            <IconBolt size={18} />
+                            <IconBoltFilled size={18} />
                           ) : (
                             <IconTrophy size={18} />
                           )}
@@ -642,7 +645,7 @@ export function ReferralDashboard({
                           {rewardValue}
                         </Text>
                         <Group gap={2} align="center">
-                          {rewardLabel === 'Blue Buzz' && <IconBolt size={12} />}
+                          {rewardLabel === 'Blue Buzz' && <IconBoltFilled size={12} />}
                           <Text size="xs" c="dimmed">
                             {rewardLabel}
                           </Text>
@@ -699,7 +702,7 @@ export function ReferralDashboard({
   );
 }
 
-function RankStat({
+function RankStatCard({
   label,
   value,
   icon,
@@ -711,19 +714,21 @@ function RankStat({
   accent: string;
 }) {
   return (
-    <Stack gap={4}>
-      <Group gap={6} align="center">
-        <ThemeIcon variant="light" color={accent} size="sm" radius="xl">
+    <Paper withBorder radius="md" p="md" h="100%">
+      <Group gap="md" wrap="nowrap">
+        <ThemeIcon variant="light" color={accent} size={44} radius="md">
           {icon}
         </ThemeIcon>
-        <Text size="xs" c="dimmed" tt="uppercase">
-          {label}
-        </Text>
+        <Stack gap={2}>
+          <Text size="xs" c="dimmed" tt="uppercase">
+            {label}
+          </Text>
+          <Text size="xl" fw={800} className="leading-none">
+            {value}
+          </Text>
+        </Stack>
       </Group>
-      <Text size="2xl" fw={800} className="leading-none">
-        {value}
-      </Text>
-    </Stack>
+    </Paper>
   );
 }
 
