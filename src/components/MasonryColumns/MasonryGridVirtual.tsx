@@ -1,8 +1,4 @@
-import {
-  Button,
-  Text,
-  useComputedColorScheme,
-} from '@mantine/core';
+import { Button, Text, useComputedColorScheme } from '@mantine/core';
 import { IconCaretRightFilled } from '@tabler/icons-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import Image from 'next/image';
