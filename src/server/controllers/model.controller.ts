@@ -229,7 +229,9 @@ export const getModelHandler = async ({
       model.modelVersions.flatMap((version) =>
         version?.recommendedResources.map((x) => x.resource.id)
       ) ?? [];
-    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user);
+    const generationResources = await getResourceData(recommendedResourceIds, {
+      user: ctx?.user,
+    });
 
     return {
       ...model,

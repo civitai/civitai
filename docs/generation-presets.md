@@ -234,3 +234,6 @@ All presets are private. No public toggle, no sharing, no copy. This defers the 
 ### Resource references store `{ id, strength? }`
 
 Storing just `id` (plus `strength` where applicable) keeps rows small and ensures that model metadata (availability, baseModel, permissions) is always re-resolved at apply time. This matches the remix flow.
+
+
+@dev - in the client, we will show a save button next to the help icon that starts the tour at the top of the generation panel. This will open the modal to save the preset. When a preset is selected, we will show the preset name above the generation form workflow selectors. When the form values have diverged from the preset values, we will show something that indicates that the preset is dirty. There will be a "save" button as well as a "save as" button when the preset is dirty. Save will simply update the preset, while "save as" will opent the preset modal so that the user can enter a different name for the preset.

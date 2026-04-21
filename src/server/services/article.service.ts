@@ -939,10 +939,14 @@ export const upsertArticle = async ({
     // article is guaranteed non-null here since the `if (id)` block above fetches it
     if (!article) throw throwNotFoundError();
 
-    // Auto-clamp userNsfwLevel to system floor instead of blocking edits
-    if (data.userNsfwLevel != null && !isModerator) {
-      data.userNsfwLevel = Math.max(data.userNsfwLevel, article.nsfwLevel);
-    }
+    // userNsfwLevel is the user's preference and is preserved verbatim. The
+    // effective article.nsfwLevel is derived by updateArticleNsfwLevels as
+    // GREATEST(userNsfwLevel, cover, content images, moderation floor), so
+    // writing a lower userNsfwLevel cannot leak content past filters — the
+    // higher signals keep nsfwLevel raised. When those signals later drop
+    // (images removed, moderation unactioned), nsfwLevel falls back to the
+    // user's original choice instead of being permanently anchored by a
+    // prior clamp.
 
     // Prevent owners from re-publishing articles unpublished for ToS violations
     if (

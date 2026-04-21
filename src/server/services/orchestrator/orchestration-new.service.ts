@@ -299,7 +299,7 @@ async function validateAndEnrichResources(
     };
   }
 
-  const resources = await getResourceData(resourceRefs, user);
+  const resources = await getResourceData(resourceRefs, { user });
 
   // Check for private/epoch resources requiring subscription
   const hasPrivateOrEpoch = resources.some(
@@ -1660,7 +1660,8 @@ export async function formatGenerationResponse2(
   const uniqueRefs = Array.from(
     new Map(allResourceRefs.map((r) => [`${r.id}_${r.epoch ?? ''}`, r])).values()
   );
-  const enrichedResources = uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, user) : [];
+  const enrichedResources =
+    uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, { user }) : [];
 
   // Format each workflow
   return workflows.map((workflow) => {

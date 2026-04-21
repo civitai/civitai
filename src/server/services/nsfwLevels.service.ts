@@ -304,10 +304,15 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
           ) AS "nsfwLevel"
         FROM "Article" a
 
-        -- Cover image (left join - may not exist)
+        -- Cover image (left join - may not exist).
+        -- Include Blocked covers too: a blocked cover has a real nsfwLevel
+        -- (32 == NsfwLevel.Blocked) and MUST contribute to the derivation so
+        -- the article drops out of any browsingLevel that doesn't include
+        -- Blocked — otherwise a post-publish cover block silently leaves the
+        -- article at its author-declared PG/PG13 level.
         LEFT JOIN "Image" cover
           ON a."coverId" = cover.id
-          AND cover."ingestion" = 'Scanned'
+          AND cover."ingestion" IN ('Scanned', 'Blocked')
 
         -- Content images (left join - may not exist)
         LEFT JOIN "ImageConnection" ic

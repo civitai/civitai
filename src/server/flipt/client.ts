@@ -38,7 +38,6 @@ export enum FLIPT_FEATURE_FLAGS {
   WAN22_MULTI_STEP = 'wan22-multi-step',
   IMAGE_INDEX_FEED = 'image-index-feed',
   BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
-  REWARDS_BONUS_MULTIPLIER = 'rewards-bonus-multiplier',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
