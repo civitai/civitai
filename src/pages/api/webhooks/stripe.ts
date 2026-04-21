@@ -11,7 +11,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { env } from '~/env/server';
 import type Stripe from 'stripe';
 import type { Readable } from 'node:stream';
-import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 import { completeClubMembershipCharge } from '~/server/services/clubMembership.service';
@@ -138,7 +138,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             break;
           case 'payment_intent.succeeded':
             const paymentIntent = event.data.object as Stripe.PaymentIntent;
-            const metadata = paymentIntent.metadata as PaymentIntentMetadataSchema;
+            // Stripe serializes all PaymentIntent.metadata values as strings, so a raw cast
+            // would leak string userId/buzzAmount into downstream `$queryRaw` IN clauses and
+            // hit "integer = text". Parse through the schema (which uses z.coerce.number) to
+            // guarantee numeric types at runtime. Throwing on parse failure routes the event
+            // into the outer catch, which logs to Axiom and returns 400 so Stripe retries —
+            // we never want to 200 a payment we can't process.
+            const parsedMetadata = paymentIntentMetadataSchema.safeParse(paymentIntent.metadata);
+            if (!parsedMetadata.success) {
+              throw new Error(
+                `payment_intent.succeeded metadata failed schema validation: ${parsedMetadata.error.message}`
+              );
+            }
+            const metadata = parsedMetadata.data;
 
             // Wait the processing time on the FE to avoid racing conditions and granting double buzz.
 
