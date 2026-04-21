@@ -1514,6 +1514,14 @@ export const earlyAccessPurchase = async ({
         externalTransactionIdPrefix: buzzTransactionId,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
+
+      logToAxiom({ 
+        type: 'error',
+        name: 'early-access-purchase-refund',
+        error,
+        modelVersionId,
+        buzzTransactionId,
+       });
     }
     throw throwDbError(error);
   }
