@@ -1,4 +1,5 @@
 import {
+  ActionIcon,
   Alert,
   Badge,
   Button,
@@ -35,7 +36,7 @@ import {
   IconUsersGroup,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
 import { trpc } from '~/utils/trpc';
 import {
@@ -144,91 +145,10 @@ export function ReferralDashboard({
           Share your code. Earn Tokens on paid Memberships, Blue Buzz on Buzz purchases, and unlock
           bonus milestones as you level up.
         </Text>
-        <Text size="xs" c="dimmed">
-          <a href="/content/referrals/terms" target="_blank" rel="noreferrer" className="underline">
-            Program Terms
-          </a>
-        </Text>
       </Stack>
 
-      {/* Code + share */}
-      <Card withBorder p="lg" radius="md">
-        <Stack gap="md">
-          <Group justify="space-between" align="flex-end" wrap="wrap">
-            <Stack gap={2}>
-              <Text size="xs" tt="uppercase" c="dimmed">
-                Your referral code
-              </Text>
-              <Title order={1} className="font-mono tracking-widest">
-                {data.code}
-              </Title>
-            </Stack>
-            <Group gap="xs">
-              <CopyButton value={data.code}>
-                {({ copied, copy }) => (
-                  <Button
-                    leftSection={copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                    variant="light"
-                    onClick={copy}
-                  >
-                    {copied ? 'Copied' : 'Copy code'}
-                  </Button>
-                )}
-              </CopyButton>
-              <CopyButton value={shareLink}>
-                {({ copied, copy }) => (
-                  <Button leftSection={<IconShare3 size={16} />} onClick={copy}>
-                    {copied ? 'Link copied' : 'Copy link'}
-                  </Button>
-                )}
-              </CopyButton>
-            </Group>
-          </Group>
-          <Group gap="xs" wrap="wrap">
-            <Button
-              component="a"
-              href={`https://twitter.com/intent/tweet?${new URLSearchParams({
-                text: `Create with me on Civitai. Use my code ${data.code} to get free Blue Buzz on your first Membership.`,
-                url: shareLink,
-              }).toString()}`}
-              target="_blank"
-              rel="noreferrer"
-              variant="default"
-              size="compact-sm"
-              leftSection={<IconBrandX size={14} />}
-            >
-              Share on X
-            </Button>
-            <Button
-              component="a"
-              href={`https://www.reddit.com/submit?${new URLSearchParams({
-                url: shareLink,
-                title: `Free Blue Buzz on Civitai with my referral code ${data.code}`,
-              }).toString()}`}
-              target="_blank"
-              rel="noreferrer"
-              variant="default"
-              size="compact-sm"
-              leftSection={<IconBrandReddit size={14} />}
-            >
-              Share on Reddit
-            </Button>
-            <Button
-              component="a"
-              href={`https://discord.com/channels/@me?${new URLSearchParams({
-                content: `Try Civitai with my code ${data.code} — ${shareLink}`,
-              }).toString()}`}
-              target="_blank"
-              rel="noreferrer"
-              variant="default"
-              size="compact-sm"
-              leftSection={<IconBrandDiscord size={14} />}
-            >
-              Share on Discord
-            </Button>
-          </Group>
-        </Stack>
-      </Card>
+      {/* Code + share — premium block inspired by crypto deposit card */}
+      <ReferralCodeBlock code={data.code} shareLink={shareLink} />
 
       {/* How it works — feature-card style, dismissible */}
       {!howItWorksDismissed && (
@@ -243,25 +163,25 @@ export function ReferralDashboard({
                 icon={<IconShare3 size={28} />}
                 color="blue"
                 title="1. Share"
-                body="Copy your code or share link. Everyone has one."
+                body="Copy your referral code or share link. Everyone gets one."
               />
               <HowStep
                 icon={<IconUsersGroup size={28} />}
                 color="teal"
-                title="2. Earn tokens"
-                body="When a friend pays for Membership, you earn 1 / 2 / 3 Tokens per Bronze / Silver / Gold month. Up to 3 months per friend."
+                title="2. Earn Tokens"
+                body="Every paid Membership month by a friend earns you Tokens. Bigger tiers, more Tokens."
               />
               <HowStep
                 icon={<IconBoltFilled size={28} />}
                 color="blue"
                 title="3. Earn Blue Buzz"
-                body="Every Buzz your friends buy after they join earns you 10% back as Blue Buzz. Milestones pay lump-sum bonuses."
+                body="Get 10% back as Blue Buzz on your friends' Buzz purchases. Hit milestones for bonuses."
               />
               <HowStep
                 icon={<IconGift size={28} />}
                 color="grape"
-                title="4. Spend"
-                body="Redeem Tokens in the Token Bank for Membership perks."
+                title="4. Redeem"
+                body="Spend Tokens in the Token Bank to unlock temporary Membership perks."
               />
             </Grid>
           </Stack>
@@ -332,7 +252,7 @@ export function ReferralDashboard({
 
           <Grid>
             <Grid.Col span={{ base: 12, sm: 4 }}>
-              <RankStatCard
+              <StatBlock
                 label="Paid referrals"
                 value={formatNum(data.conversionCount)}
                 icon={<IconUsersGroup size={20} />}
@@ -340,7 +260,7 @@ export function ReferralDashboard({
               />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 4 }}>
-              <RankStatCard
+              <StatBlock
                 label="Lifetime Blue Buzz"
                 value={formatNum(lifetimeBuzz)}
                 icon={<IconBoltFilled size={20} />}
@@ -348,7 +268,7 @@ export function ReferralDashboard({
               />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 4 }}>
-              <RankStatCard
+              <StatBlock
                 label="Recruiter Score"
                 value={formatNum(score)}
                 icon={<IconSparkles size={20} />}
@@ -362,31 +282,28 @@ export function ReferralDashboard({
       {/* Blue Buzz milestones */}
       <Card withBorder p="lg" radius="md">
         <Stack gap="md">
-          <Group justify="space-between" wrap="wrap" gap="md">
-            <Title order={4}>Blue Buzz milestones</Title>
-            <Paper withBorder radius="xl" px="md" py="xs" className="bg-blue-9/10">
-              <Group gap={8} wrap="nowrap">
-                <ThemeIcon variant="filled" color="blue" size="md" radius="xl">
-                  <IconBoltFilled size={16} />
-                </ThemeIcon>
-                <Stack gap={0}>
-                  <Text size="xs" tt="uppercase" c="dimmed">
-                    Lifetime earned
-                  </Text>
-                  <Group gap={6} align="baseline">
-                    <Text size="xl" fw={800} className="leading-none">
-                      {formatNum(lifetimeBuzz)}
-                    </Text>
-                    {data.balance.pendingBlueBuzz > 0 && (
-                      <Text size="xs" c="dimmed">
-                        +{formatNum(data.balance.pendingBlueBuzz)} pending
-                      </Text>
-                    )}
-                  </Group>
-                </Stack>
-              </Group>
-            </Paper>
-          </Group>
+          <Title order={4}>Blue Buzz milestones</Title>
+
+          <Grid>
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <StatBlock
+                label="Earned"
+                value={formatNum(lifetimeBuzz)}
+                icon={<IconBoltFilled size={20} />}
+                accent="blue"
+                tooltip="Total Blue Buzz you've earned from buzz kickbacks and milestone bonuses."
+              />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <StatBlock
+                label="Pending"
+                value={formatNum(data.balance.pendingBlueBuzz)}
+                icon={<IconClock size={20} />}
+                accent="gray"
+                tooltip="Blue Buzz from recent kickbacks. Settles 7 days after the purchase in case of refund."
+              />
+            </Grid.Col>
+          </Grid>
 
           {!kickbackAlertDismissed && (
             <Alert
@@ -506,22 +423,26 @@ export function ReferralDashboard({
             </Alert>
           )}
 
-          <Group grow>
-            <TokenTile
-              icon={<IconCoin size={22} />}
-              label="Spendable"
-              value={data.balance.settledTokens}
-              color="green"
-              tooltip="Tokens ready to redeem. Spendable tokens move from Pending after a 7-day hold once a referee's membership payment settles."
-            />
-            <TokenTile
-              icon={<IconClock size={22} />}
-              label="Pending"
-              value={data.balance.pendingTokens}
-              color="gray"
-              tooltip="Tokens from recent referee payments. They settle and become spendable 7 days after the payment, so they can be clawed back on refund."
-            />
-          </Group>
+          <Grid>
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <StatBlock
+                icon={<IconCoin size={20} />}
+                label="Spendable"
+                value={formatNum(data.balance.settledTokens)}
+                accent="green"
+                tooltip="Tokens ready to redeem. Spendable tokens move from Pending after a 7-day hold once a referee's membership payment settles."
+              />
+            </Grid.Col>
+            <Grid.Col span={{ base: 12, sm: 6 }}>
+              <StatBlock
+                icon={<IconClock size={20} />}
+                label="Pending"
+                value={formatNum(data.balance.pendingTokens)}
+                accent="gray"
+                tooltip="Tokens from recent referee payments. They settle and become spendable 7 days after the payment, so they can be clawed back on refund."
+              />
+            </Grid.Col>
+          </Grid>
 
           <Grid>
             {groupedShopItems.map((group) => {
@@ -732,20 +653,173 @@ export function ReferralDashboard({
           </Stack>
         </Card>
       )}
+
+      <Text size="xs" c="dimmed" ta="center">
+        <a href="/content/referrals/terms" target="_blank" rel="noreferrer" className="underline">
+          Program Terms
+        </a>
+      </Text>
     </Stack>
   );
 }
 
-function RankStatCard({
+function useSpotlight() {
+  const spotlightRef = useRef<HTMLDivElement>(null);
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = spotlightRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    el.style.background = `radial-gradient(400px circle at ${x}px ${y}px, light-dark(rgba(0,0,0,0.03), rgba(255,255,255,0.05)), transparent 70%)`;
+    el.style.opacity = '1';
+  }, []);
+  const handleMouseLeave = useCallback(() => {
+    const el = spotlightRef.current;
+    if (el) el.style.opacity = '0';
+  }, []);
+  return { spotlightRef, handleMouseMove, handleMouseLeave };
+}
+
+function ReferralCodeBlock({ code, shareLink }: { code: string; shareLink: string }) {
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight();
+
+  return (
+    <Paper
+      radius="md"
+      withBorder
+      className="relative overflow-hidden"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div
+        ref={spotlightRef}
+        className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+        style={{ opacity: 0 }}
+      />
+      <div className="absolute inset-y-[15%] left-0 z-[1] w-[3px] rounded-sm bg-gradient-to-b from-blue-500 via-violet-500 to-pink-500" />
+      <div
+        className="absolute inset-0 bg-gradient-to-br from-blue-500/5 to-pink-500/5 dark:from-blue-500/[0.06] dark:to-pink-500/[0.06]"
+        style={{ pointerEvents: 'none' }}
+      />
+
+      <Stack gap="lg" p="lg" pl="xl" className="relative z-[1]">
+        <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
+          <Stack gap={6}>
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+              Your referral code
+            </Text>
+            <Group gap={8} wrap="nowrap" align="center">
+              <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-2 dark:border-white/10 dark:bg-white/[0.04]">
+                <Text
+                  fw={800}
+                  ff="monospace"
+                  className="tracking-widest"
+                  style={{ fontSize: 28, lineHeight: 1 }}
+                >
+                  {code}
+                </Text>
+              </div>
+              <CopyButton value={code}>
+                {({ copied, copy }) => (
+                  <Tooltip label={copied ? 'Copied' : 'Copy code'} withArrow>
+                    <ActionIcon
+                      size="lg"
+                      variant="subtle"
+                      color={copied ? 'green' : 'gray'}
+                      onClick={copy}
+                      aria-label="Copy referral code"
+                    >
+                      {copied ? <IconCheck size={18} /> : <IconCopy size={18} />}
+                    </ActionIcon>
+                  </Tooltip>
+                )}
+              </CopyButton>
+            </Group>
+          </Stack>
+
+          <CopyButton value={shareLink}>
+            {({ copied, copy }) => (
+              <Button
+                leftSection={copied ? <IconCheck size={16} /> : <IconShare3 size={16} />}
+                onClick={copy}
+                variant="gradient"
+                gradient={{ from: 'blue', to: 'violet', deg: 45 }}
+                radius="md"
+              >
+                {copied ? 'Link copied' : 'Copy share link'}
+              </Button>
+            )}
+          </CopyButton>
+        </Group>
+
+        <Divider className="opacity-15 dark:opacity-15" />
+
+        <Stack gap={6}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+            Share it
+          </Text>
+          <Group gap="xs" wrap="wrap">
+            <Button
+              component="a"
+              href={`https://twitter.com/intent/tweet?${new URLSearchParams({
+                text: `Create with me on Civitai. Use my code ${code} to get free Blue Buzz on your first Membership.`,
+                url: shareLink,
+              }).toString()}`}
+              target="_blank"
+              rel="noreferrer"
+              variant="default"
+              size="compact-sm"
+              leftSection={<IconBrandX size={14} />}
+            >
+              Share on X
+            </Button>
+            <Button
+              component="a"
+              href={`https://www.reddit.com/submit?${new URLSearchParams({
+                url: shareLink,
+                title: `Free Blue Buzz on Civitai with my referral code ${code}`,
+              }).toString()}`}
+              target="_blank"
+              rel="noreferrer"
+              variant="default"
+              size="compact-sm"
+              leftSection={<IconBrandReddit size={14} />}
+            >
+              Share on Reddit
+            </Button>
+            <Button
+              component="a"
+              href={`https://discord.com/channels/@me?${new URLSearchParams({
+                content: `Try Civitai with my code ${code} — ${shareLink}`,
+              }).toString()}`}
+              target="_blank"
+              rel="noreferrer"
+              variant="default"
+              size="compact-sm"
+              leftSection={<IconBrandDiscord size={14} />}
+            >
+              Share on Discord
+            </Button>
+          </Group>
+        </Stack>
+      </Stack>
+    </Paper>
+  );
+}
+
+function StatBlock({
   label,
   value,
   icon,
   accent,
+  tooltip,
 }: {
   label: string;
   value: string;
   icon: React.ReactNode;
   accent: string;
+  tooltip?: string;
 }) {
   return (
     <Paper withBorder radius="md" p="md" h="100%">
@@ -754,51 +828,21 @@ function RankStatCard({
           {icon}
         </ThemeIcon>
         <Stack gap={2}>
-          <Text size="xs" c="dimmed" tt="uppercase">
-            {label}
-          </Text>
-          <Text size="xl" fw={800} className="leading-none">
-            {value}
-          </Text>
-        </Stack>
-      </Group>
-    </Paper>
-  );
-}
-
-function TokenTile({
-  icon,
-  label,
-  value,
-  color,
-  tooltip,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: number;
-  color: string;
-  tooltip: string;
-}) {
-  return (
-    <Paper withBorder radius="md" p="md">
-      <Group gap="md" wrap="nowrap">
-        <ThemeIcon variant="light" color={color} size={44} radius="md">
-          {icon}
-        </ThemeIcon>
-        <Stack gap={0}>
           <Group gap={4} align="center">
-            <Text size="xs" tt="uppercase" c="dimmed">
+            <Text size="xs" c="dimmed" tt="uppercase">
               {label}
             </Text>
-            <Tooltip label={tooltip} multiline maw={260} withArrow>
-              <IconInfoCircle
-                size={12}
-                style={{ color: 'var(--mantine-color-dimmed)', cursor: 'help' }}
-              />
-            </Tooltip>
+            {tooltip && (
+              <Tooltip label={tooltip} multiline maw={260} withArrow>
+                <IconInfoCircle
+                  size={12}
+                  style={{ color: 'var(--mantine-color-dimmed)', cursor: 'help' }}
+                />
+              </Tooltip>
+            )}
           </Group>
-          <Text size="2xl" fw={800} className="leading-none">
-            {formatNum(value)}
+          <Text size="xl" fw={800} className="leading-none">
+            {value}
           </Text>
         </Stack>
       </Group>
@@ -817,11 +861,26 @@ function HowStep({
   title: string;
   body: string;
 }) {
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight();
+
   return (
     <Grid.Col span={{ base: 12, sm: 6, md: 3 }}>
-      <Paper withBorder radius="md" p={0} h="100%" className="overflow-hidden">
+      <Paper
+        withBorder
+        radius="md"
+        p={0}
+        h="100%"
+        className="relative overflow-hidden"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
+      >
         <div
-          className="flex items-center justify-center p-6"
+          ref={spotlightRef}
+          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+          style={{ opacity: 0, zIndex: 2 }}
+        />
+        <div
+          className="relative flex items-center justify-center p-6"
           style={{
             background: `linear-gradient(135deg, var(--mantine-color-${color}-light) 0%, transparent 100%)`,
             borderBottom: `1px solid var(--mantine-color-${color}-light)`,
@@ -838,7 +897,7 @@ function HowStep({
             {icon}
           </div>
         </div>
-        <Stack gap={4} p="md" align="center">
+        <Stack gap={4} p="md" align="center" className="relative">
           <Text fw={600} ta="center">
             {title}
           </Text>
