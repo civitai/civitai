@@ -2,12 +2,12 @@
  * Debug endpoint for the Referral Program v2.
  * =============================================================================
  *
- * Hidden testing route. Guarded by the WEBHOOK_TOKEN header (same as
- * /api/testing/strikes). Not reachable without the secret; no public UI.
+ * Hidden testing route. Guarded by the WEBHOOK_TOKEN via `?token=` query
+ * param (not Bearer header — see TokenSecuredEndpoint). Not reachable
+ * without the secret; no public UI.
  *
  * Usage:
- *   POST /api/testing/referrals
- *   Authorization: Bearer $WEBHOOK_TOKEN
+ *   POST /api/testing/referrals?token=$WEBHOOK_TOKEN
  *   Content-Type: application/json
  *   Body: { "action": "<action>", ...params }
  *

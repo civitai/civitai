@@ -300,3 +300,154 @@ Flag the Flipt flag ON for your user, then:
 - [ ] Manual smoke test passed
 - [ ] Design questions in section 5 answered
 - [ ] Approve PR
+
+---
+
+## 7. Staged Experiment Scenarios (user ID 1)
+
+Phase 1 data is pre-seeded directly into Postgres so Justin can walk the UI without waiting for any deploy. Later phases rely on `/api/testing/referrals` — that endpoint only lands in prod once this branch deploys. Until then, later phases need either (a) this branch deployed, or (b) a local dev server pointed at the staging or production DB.
+
+**Prereq before any UI walk-through**:
+- Branch code deployed to an env the browser can hit (prod after merge, or local `pnpm run dev`)
+- Flipt flag `referral-program-v2` enabled (done; default-on globally)
+- Logged in as user 1
+
+Use this as a driver — once Justin (or I) verify each scenario end-to-end, tick the box.
+
+### Phase 1 — already seeded
+
+Seeded on prod DB (idempotent via `sourceEventId`): `MembershipToken` = 6 settled Bronze, `BuzzKickback` = 500 Blue Buzz settled (display-only, no buzz txn created).
+
+- [ ] **1a. Dashboard renders with seeded state**
+  - Visit `/user/referrals`
+  - Hero shows code `5SFRSKKV` (user 1's existing code)
+  - Stats card: "Lifetime Blue Buzz" = 500
+  - Tokens panel: 6 settled, 0 pending
+  - No timeline bar yet (no active referral sub)
+- [ ] **1b. Share buttons work**
+  - Copy code and copy link both put something in clipboard
+  - X, Reddit, Discord buttons open the right prefilled intent pages
+- [ ] **1c. Buzz dashboard + membership page callouts visible**
+  - `/user/buzz-dashboard`: gradient ReferralCallout at top links to `/user/referrals`
+  - `/user/membership`: compact ReferralCallout between title and alerts
+- [ ] **1d. Redemption — 1 month Bronze (2 tokens)**
+  - Open Redeem modal
+  - Pick "1 month Bronze perks" (2 tokens)
+  - After redeem: timeline bar appears (Bronze segment full width), remaining 4 tokens still settled
+  - `CustomerSubscription` row created with `buzzType='referral'`, `productId='civitai-referral-bronze'`
+  - `sessionUser.tier` should reflect Bronze (or higher if Justin already has a paid sub)
+
+### Phase 2 — queue stacking (needs debug endpoint or manual SQL)
+
+Purpose: verify the "chunks never cross tiers" queue logic.
+
+```bash
+# Grant a Gold-tier chunk on top of the active Bronze
+curl -X POST "<base>/api/testing/referrals?token=$WEBHOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"enqueue-chunk","userId":1,"tier":"gold","durationDays":14}'
+```
+
+- [ ] **2a. Enqueue Gold behind Bronze**
+  - Before: active Bronze, queue empty
+  - After enqueue: active Bronze stays, queue has `[{tier:"gold", durationDays:14}]`
+  - **Expected via queue sort**: Gold actually comes out FIRST if redeemed separately. This test mirrors cron advance behavior below.
+- [ ] **2b. Advance subs — Gold promotes after Bronze expires**
+  - `{"action":"advance-subs","userId":1}` — expires the active Bronze sub and promotes the next queue entry
+  - Active should now be Gold
+  - Timeline bar re-renders with Gold active + empty queue
+
+### Phase 3 — spend events + settlement
+
+```bash
+# Fake an incoming paid membership attributed to user 1
+curl -X POST "<base>/api/testing/referrals?token=$WEBHOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"bind-code","userId":<OTHER_USER>,"code":"5SFRSKKV"}'
+
+curl -X POST "<base>/api/testing/referrals?token=$WEBHOOK_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"simulate-membership-payment","refereeId":<OTHER_USER>,"tier":"silver"}'
+```
+
+- [ ] **3a. Referee first paid Silver → referrer gets 2 pending tokens + welcome-bonus pending**
+  - Pending card count increments by 2
+  - User 1 sees `referral:purchase-pending` signal (live), notification arrives once settled
+  - Other user gets `referral-welcome-bonus` notification + 6,250 Blue Buzz (25% of 25k monthly) once settled
+- [ ] **3b. Settle immediately**
+  - `{"action":"settle-all","userId":1}`
+  - Pending → Settled
+  - Activity feed shows two fresh rows
+  - `ReferralAttribution` gets a `membership_payment` row (query Postgres to verify)
+- [ ] **3c. Second month's payment**
+  - `simulate-membership-payment` again with same tier
+  - Pending tokens = 2 more, `paidMonthCount` on `UserReferral` now 2
+- [ ] **3d. Third month — cap kicks in**
+  - One more `simulate-membership-payment`, then a FOURTH
+  - Fourth returns `rewardId: null`
+  - `ReferralAttribution` row has `eventType='membership_payment_over_cap'`
+
+### Phase 4 — buzz kickback + milestone
+
+```bash
+# Referee purchases 10k yellow buzz
+curl -X POST "<base>/api/testing/referrals?token=$WEBHOOK_TOKEN" \
+  -d '{"action":"simulate-buzz-purchase","refereeId":<OTHER_USER>,"blueBuzz":10000}'
+```
+
+- [ ] **4a. Pending 1,000 Blue Buzz kickback appears for user 1**
+- [ ] **4b. Settle**
+  - `{"action":"settle-all","userId":1}`
+  - Blue Buzz actually credited to user 1's blue buzz account (verify via buzz dashboard)
+  - `referral:settled` signal fires → notification arrives
+- [ ] **4c. 1k milestone hit**
+  - `awardMilestones` runs inside settle — if lifetime ≥ 1000, `ReferralMilestone` row appears, +500 bonus reward created
+  - Next settle cycle credits the +500 bonus
+
+### Phase 5 — chargeback clawback
+
+```bash
+# Simulate a chargeback for the Phase 3 invoice
+curl -X POST "<base>/api/testing/referrals?token=$WEBHOOK_TOKEN" \
+  -d '{"action":"simulate-chargeback","sourceEventId":"<invoice-id-from-phase-3>"}'
+```
+
+- [ ] **5a. Pending reward → Revoked (no buzz movement)**
+- [ ] **5b. Settled reward → Revoked + negative `createBuzzTransaction`**
+  - `ChargeBack` transaction type
+  - `externalTransactionId: 'referral-clawback:<id>'`
+  - User 1's Blue Buzz balance drops by the revoked amount
+
+### Phase 6 — token expiry
+
+```bash
+curl -X POST "<base>/api/testing/referrals?token=$WEBHOOK_TOKEN" \
+  -d '{"action":"expire-tokens","userId":1}'
+```
+
+- [ ] All settled tokens flip to Expired
+- [ ] `referral:token-expiring-soon` signal + notification fire at the T-7 warn window (today's run fires both since we force expiry immediately)
+- [ ] Tokens panel now shows 0 settled
+
+### Phase 7 — checkout banner
+
+- [ ] Sign out / open incognito
+- [ ] Visit `/?ref_code=5SFRSKKV` then `/pricing`
+- [ ] ReferralCheckoutBanner shows:
+  - "Using referral code 5SFRSKKV"
+  - Per-tier bonus lines (Bronze 2,500 / Silver 6,250 / Gold 12,500 Blue Buzz)
+  - "Program Terms" link resolves to `/content/referrals/terms`
+- [ ] Clear code → input field re-appears
+- [ ] Enter a different code manually → banner re-renders with that code
+- [ ] Signed-in user who subscribes with the cookie set → Stripe subscription metadata carries `ref_code` (verify in Stripe dashboard)
+
+### Phase 8 — reset
+
+When done experimenting:
+
+```bash
+curl -X POST "<base>/api/testing/referrals?token=$WEBHOOK_TOKEN" \
+  -d '{"action":"reset","userId":1,"confirm":true}'
+```
+
+Wipes all referral data for user 1 back to clean slate.
