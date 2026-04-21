@@ -1,7 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { articleHasText, recomputeArticleIngestion } from '~/server/services/article.service';
+import { articleHasText, updateArticleImageScanStatus } from '~/server/services/article.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
@@ -91,7 +91,13 @@ export const articleIngestionReconcile = createJob(
         });
         if (!before) return;
 
-        await recomputeArticleIngestion(id);
+        // Use the full scan-status path so a reconcile that flips Processing
+        // → Published also re-derives `Article.nsfwLevel` from current cover
+        // and content image ratings. A bare `recomputeArticleIngestion` would
+        // only advance ingestion state and leave a stale nsfwLevel in place,
+        // which is the exact thing that let stuck-Processing articles flip to
+        // Published with a stored PG level while holding an R/X/XXX cover.
+        await updateArticleImageScanStatus([id]);
 
         const after = await dbRead.article.findUnique({
           where: { id },

@@ -1175,9 +1175,14 @@ export const upsertArticle = async ({
       }
     }
 
-    // Lock ingestion state and queue the search-index update. recompute also
-    // queues the index update internally, so no separate queueUpdate call here.
-    await recomputeArticleIngestion(id).catch((e) =>
+    // Lock ingestion state, recompute nsfwLevel from current cover/content
+    // signals, and queue the search-index update. Running the full
+    // `updateArticleImageScanStatus` (rather than bare `recomputeArticleIngestion`)
+    // guarantees that any edit or publish/republish re-derives
+    // `Article.nsfwLevel` from ground truth — otherwise a cover whose scan
+    // finished between save and republish would leak at its stale
+    // author-declared level. Dispatches the search-index update internally.
+    await updateArticleImageScanStatus([id]).catch((e) =>
       handleLogError(e, 'article-update-recompute', { articleId: id })
     );
 
@@ -1431,10 +1436,15 @@ export async function restoreArticleById({ id, userId }: { id: number; userId: n
     { timeout: 30000, maxWait: 10000 }
   );
 
-  // Re-derive ingestion state (also queues the search index update internally).
-  // Handles the case where the article was sitting at Pending before being
-  // unpublished and now needs to be re-evaluated against current image/text state.
-  await recomputeArticleIngestion(id).catch((e) =>
+  // Re-derive ingestion state AND nsfwLevel (also queues the search index
+  // update internally). Handles the case where the article was sitting at
+  // Pending before being unpublished and now needs to be re-evaluated against
+  // current image/text state. Using `updateArticleImageScanStatus` rather
+  // than bare `recomputeArticleIngestion` guarantees `Article.nsfwLevel` is
+  // re-derived from the current cover/content image ratings — otherwise a
+  // cover that was raised to R/X/XXX while the article sat unpublished would
+  // leak into the SFW feed the moment we flip status back to Published.
+  await updateArticleImageScanStatus([id]).catch((e) =>
     handleLogError(e, 'article-restore-recompute', { articleId: id })
   );
 
@@ -1766,37 +1776,23 @@ export async function getArticleScanStatus({ id }: GetByIdInput): Promise<{
  */
 export async function updateArticleImageScanStatus(articleIds: number[]): Promise<void> {
   for (const articleId of articleIds) {
-    // One atomic transaction: advisory lock → image-status read → (optional)
-    // NSFW level update → ingestion recompute. Closes the drift window where
-    // a crash between the NSFW update and the recompute would leave the
-    // Article row with updated nsfwLevel but stale ingestion.
+    // One atomic transaction: advisory lock → NSFW level update → ingestion
+    // recompute. Closes the drift window where a crash between the NSFW
+    // update and the recompute would leave the Article row with updated
+    // nsfwLevel but stale ingestion.
+    //
+    // NSFW recompute runs unconditionally: the SQL in `updateArticleNsfwLevels`
+    // already filters to Scanned/Blocked cover + Scanned content, so it is
+    // safe on partial state. Gating this on "all content images terminal"
+    // historically let R/X/XXX covers leak into the SFW feed whenever any
+    // content image was still Pending — the cover had already resolved but
+    // the article's nsfwLevel stayed pinned to userNsfwLevel until the last
+    // content image finished.
     const result = await dbWrite.$transaction(
       async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
 
-        const connections = await tx.imageConnection.findMany({
-          where: { entityId: articleId, entityType: ImageConnectionType.Article },
-          include: { image: { select: { ingestion: true } } },
-        });
-
-        const totalImages = connections.length;
-        const scannedImages = connections.filter(
-          (c) => c.image.ingestion === ImageIngestionStatus.Scanned
-        ).length;
-        const blockedImages = connections.filter(
-          (c) => c.image.ingestion === ImageIngestionStatus.Blocked
-        ).length;
-        const errorImages = connections.filter(
-          (c) =>
-            c.image.ingestion === ImageIngestionStatus.Error ||
-            c.image.ingestion === ImageIngestionStatus.NotFound
-        ).length;
-
-        const allProcessed = scannedImages + blockedImages + errorImages === totalImages;
-
-        if (allProcessed) {
-          await updateArticleNsfwLevels([articleId], tx);
-        }
+        await updateArticleNsfwLevels([articleId], tx);
 
         return recomputeArticleIngestionInTx(tx, articleId);
       },
@@ -1863,34 +1859,29 @@ export async function recomputeArticleIngestionInTx(
 ): Promise<RecomputeIngestionResult> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(${articleId})`;
 
-  // --- Image side ---
+  // --- Image side (content images + cover) ---
+  //
+  // Cover lives on `Article.coverId` and is *not* duplicated into
+  // `ImageConnection`, so we have to read it separately and fold it into the
+  // terminal-state counts. Without this, an article with zero content images
+  // and a still-Pending cover would compute `imageDone=true` and flip to
+  // `ingestion=Scanned`, publishing the article while its cover rating is
+  // still unknown. A cover whose scan later resolves to R/X/XXX (or Blocked)
+  // would then need the webhook-driven forward path to propagate — and any
+  // missed or disabled webhook becomes a silent leak.
+  //
+  // Counting the cover here means:
+  //   - cover still Pending → imageDone=false → ingestion=Pending → search
+  //     index drops the article until the cover resolves.
+  //   - cover Scanned/Blocked → contributes to imageDone; Blocked also
+  //     escalates to `imageBlocked` so the article transitions to
+  //     ingestion=Blocked (hidden from feed) instead of silently leaking.
+  //   - cover changed on edit (new Pending image) → ingestion falls back to
+  //     Pending automatically on the next recompute, no special-case save
+  //     logic required.
   const connections = await tx.imageConnection.findMany({
     where: { entityId: articleId, entityType: ImageConnectionType.Article },
     include: { image: { select: { ingestion: true } } },
-  });
-
-  const totalImages = connections.length;
-  const scannedImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Scanned
-  ).length;
-  const blockedImages = connections.filter(
-    (c) => c.image.ingestion === ImageIngestionStatus.Blocked
-  ).length;
-  const errorImages = connections.filter(
-    (c) =>
-      c.image.ingestion === ImageIngestionStatus.Error ||
-      c.image.ingestion === ImageIngestionStatus.NotFound
-  ).length;
-
-  const imageBlocked = blockedImages > 0;
-  const imageError = errorImages > 0;
-  const imageDone =
-    totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
-
-  // --- Text moderation side ---
-  const textModeration = await tx.entityModeration.findUnique({
-    where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
-    select: { status: true, blocked: true },
   });
 
   const current = await tx.article.findUniqueOrThrow({
@@ -1902,7 +1893,40 @@ export async function recomputeArticleIngestionInTx(
       userId: true,
       title: true,
       content: true,
+      coverId: true,
     },
+  });
+
+  const coverIngestion = current.coverId
+    ? (
+        await tx.image.findUnique({
+          where: { id: current.coverId },
+          select: { ingestion: true },
+        })
+      )?.ingestion ?? null
+    : null;
+
+  const imageStates: ImageIngestionStatus[] = [
+    ...connections.map((c) => c.image.ingestion),
+    ...(coverIngestion ? [coverIngestion] : []),
+  ];
+
+  const totalImages = imageStates.length;
+  const scannedImages = imageStates.filter((s) => s === ImageIngestionStatus.Scanned).length;
+  const blockedImages = imageStates.filter((s) => s === ImageIngestionStatus.Blocked).length;
+  const errorImages = imageStates.filter(
+    (s) => s === ImageIngestionStatus.Error || s === ImageIngestionStatus.NotFound
+  ).length;
+
+  const imageBlocked = blockedImages > 0;
+  const imageError = errorImages > 0;
+  const imageDone =
+    totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
+
+  // --- Text moderation side ---
+  const textModeration = await tx.entityModeration.findUnique({
+    where: { entityType_entityId: { entityType: 'Article', entityId: articleId } },
+    select: { status: true, blocked: true },
   });
 
   // Articles with no text to scan (empty/null title AND content) can never
