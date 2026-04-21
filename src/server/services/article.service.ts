@@ -688,7 +688,11 @@ export const getArticleById = async ({
             ]
           : undefined,
       },
-      select: articleDetailSelect,
+      // Include `moderatorNsfwLevel` here (not in the shared select) so the
+      // edit form can render the override banner / picker. The public article
+      // read payload is served by `getArticles`, not this function, so the
+      // field doesn't flow into external webhook / search-index payloads.
+      select: { ...articleDetailSelect, moderatorNsfwLevel: true },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
@@ -774,6 +778,11 @@ export const upsertArticle = async ({
     if (!isModerator) {
       // don't allow updating of locked properties
       for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
+      // moderatorNsfwLevel is a mod-only field. Silently strip it from
+      // non-moderator payloads rather than throwing: the form never exposes
+      // this control to owners, so a client sending it indicates either a
+      // stale client or an attempt to forge the override — either way, drop.
+      delete data.moderatorNsfwLevel;
     }
 
     // For updates, fetch article early so we can check cover image ownership and NSFW level
@@ -786,6 +795,9 @@ export const upsertArticle = async ({
       publishedAt: Date | null;
       status: string;
       nsfwLevel: number;
+      userNsfwLevel: number;
+      moderatorNsfwLevel: number | null;
+      lockedProperties: string[];
       metadata: Prisma.JsonValue;
       content: string | null;
     } | null = null;
@@ -801,6 +813,9 @@ export const upsertArticle = async ({
           publishedAt: true,
           status: true,
           nsfwLevel: true,
+          userNsfwLevel: true,
+          moderatorNsfwLevel: true,
+          lockedProperties: true,
           metadata: true,
           content: true,
         },
@@ -979,6 +994,30 @@ export const upsertArticle = async ({
           `Cannot publish article: ${errorParts.join(', ')}. Please remove or replace these images.`
         );
       }
+    }
+
+    // moderatorNsfwLevel is the mod override layer that takes precedence over
+    // the GREATEST derivation (see updateArticleNsfwLevels). We still need to
+    // know when the override changed so the locked-properties set below can
+    // pin/unpin userNsfwLevel accordingly — the recompute itself happens
+    // unconditionally via updateArticleImageScanStatus post-commit.
+    const moderatorOverrideChanged =
+      !!isModerator &&
+      data.moderatorNsfwLevel !== undefined &&
+      data.moderatorNsfwLevel !== article.moderatorNsfwLevel;
+
+    // When a mod sets an override, lock the user's picker so a subsequent
+    // owner save can't quietly drift userNsfwLevel underneath it. When the
+    // mod clears the override (sets back to null) we unlock the picker and
+    // the article returns to auto-derivation on the next recompute.
+    if (moderatorOverrideChanged) {
+      const lockedSet = new Set<string>(data.lockedProperties ?? article.lockedProperties ?? []);
+      if (data.moderatorNsfwLevel != null) {
+        lockedSet.add('userNsfwLevel');
+      } else {
+        lockedSet.delete('userNsfwLevel');
+      }
+      data.lockedProperties = Array.from(lockedSet);
     }
 
     const republishing =
@@ -1481,7 +1520,9 @@ export async function getModeratorArticles({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
     where: { AND },
-    select: articleDetailSelect,
+    // Mod-only list — safe to surface the moderator override value alongside
+    // the regular detail fields. See note on `articleDetailSelect`.
+    select: { ...articleDetailSelect, moderatorNsfwLevel: true },
     orderBy: { createdAt: 'desc' },
   });
 
