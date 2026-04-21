@@ -25,6 +25,13 @@ import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 // nsfwLevel. If that value exceeds `a."nsfwLevel"`, the article is stale
 // and gets queued for recompute. The service handles moderation floors and
 // search-index updates itself.
+//
+// Scoped to `status = 'Published'` because only published articles reach the
+// public feed — those are the ones that can leak. Drafts, Unpublished, and
+// Processing articles don't need reconciling here; upsertArticle now runs
+// `updateArticleImageScanStatus` on every save/publish, so any of those will
+// re-derive nsfwLevel from ground truth the moment they transition to
+// Published.
 
 type CancelFn = () => Promise<void>;
 
@@ -46,24 +53,33 @@ const querySchema = z.object({
 type Params = z.infer<typeof querySchema>;
 
 async function fetchMaxCandidateId(cancelFns: CancelFn[]) {
+  // Wrap the per-article HAVING query in an outer MAX. Without the subquery the
+  // outer `SELECT MAX(a.id)` collapses into the GROUP BY and returns one row
+  // per stale article — then `results[0].max` is whatever id Postgres
+  // happened to emit first, so the batch loop caps at a tiny id range and
+  // silently skips every stale article above it.
   const query = await pgDbRead.cancellableQuery<{ max: number | null }>(Prisma.sql`
-    SELECT MAX(a.id) "max"
-    FROM "Article" a
-    LEFT JOIN "Image" cover
-      ON a."coverId" = cover.id
-      AND cover."ingestion" IN ('Scanned', 'Blocked')
-    LEFT JOIN "ImageConnection" ic
-      ON ic."entityId" = a.id AND ic."entityType" = 'Article'
-    LEFT JOIN "Image" content_imgs
-      ON ic."imageId" = content_imgs.id
-      AND content_imgs."ingestion" = 'Scanned'
-    WHERE a."coverId" IS NOT NULL
-    GROUP BY a.id, a."nsfwLevel", a."userNsfwLevel"
-    HAVING GREATEST(
-      a."userNsfwLevel",
-      COALESCE(max(cover."nsfwLevel"), 0),
-      COALESCE(max(content_imgs."nsfwLevel"), 0)
-    ) > a."nsfwLevel"
+    SELECT MAX(stale.id) AS "max"
+    FROM (
+      SELECT a.id
+      FROM "Article" a
+      LEFT JOIN "Image" cover
+        ON a."coverId" = cover.id
+        AND cover."ingestion" IN ('Scanned', 'Blocked')
+      LEFT JOIN "ImageConnection" ic
+        ON ic."entityId" = a.id AND ic."entityType" = 'Article'
+      LEFT JOIN "Image" content_imgs
+        ON ic."imageId" = content_imgs.id
+        AND content_imgs."ingestion" = 'Scanned'
+      WHERE a."coverId" IS NOT NULL
+        AND a.status = 'Published'
+      GROUP BY a.id, a."nsfwLevel", a."userNsfwLevel"
+      HAVING GREATEST(
+        a."userNsfwLevel",
+        COALESCE(max(cover."nsfwLevel"), 0),
+        COALESCE(max(content_imgs."nsfwLevel"), 0)
+      ) > a."nsfwLevel"
+    ) stale
   `);
   cancelFns.push(query.cancel);
   const results = await query.result();
@@ -136,6 +152,7 @@ export default WebhookEndpoint(async (req, res) => {
           ON ic."imageId" = content_imgs.id
           AND content_imgs."ingestion" = 'Scanned'
         WHERE a."coverId" IS NOT NULL
+          AND a.status = 'Published'
           AND a.id >= ${cursor}
           AND a.id <= ${maxId}
         GROUP BY a.id, a."nsfwLevel", a."userNsfwLevel"
