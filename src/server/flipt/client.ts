@@ -48,6 +48,7 @@ export enum FLIPT_FEATURE_FLAGS {
   // incident so RAW reads (e.g. reaction toggles) stay consistent without
   // paying the per-flag Redis write/read cost.
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
+  SMALLER_IMAGES = 'smaller-images',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

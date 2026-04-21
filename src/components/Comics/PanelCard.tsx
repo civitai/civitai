@@ -18,7 +18,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { NsfwLevel, SignalMessages } from '~/server/common/enums';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
@@ -88,6 +88,7 @@ export function PanelCard({
   onIterativeEdit,
   onRatingChange,
 }: PanelCardProps) {
+  const cardImageWidth = useCardImageWidth();
   const { imageUrl, prompt, status, errorMessage } = panel;
   const utils = trpc.useUtils();
   const { isGreen } = useFeatureFlags();
@@ -257,7 +258,7 @@ export function PanelCard({
       ) : imageUrl ? (
         <>
           <img
-            src={getEdgeUrl(imageUrl, { width: DEFAULT_EDGE_IMAGE_WIDTH })}
+            src={getEdgeUrl(imageUrl, { width: cardImageWidth })}
             alt={prompt}
             className={styles.panelImage}
           />

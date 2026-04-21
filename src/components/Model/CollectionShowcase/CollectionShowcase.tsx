@@ -23,7 +23,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
@@ -82,6 +82,7 @@ type Props = { modelId: number; loading?: boolean };
 
 function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemProps) {
   const router = useRouter();
+  const cardImageWidth = useCardImageWidth();
   const [image] = images;
   const theme = useMantineTheme();
 
@@ -136,7 +137,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
             ) : (
               <EdgeMedia
                 src={image.url}
-                width={DEFAULT_EDGE_IMAGE_WIDTH}
+                width={cardImageWidth}
                 name={image.name ?? image.id.toString()}
                 type={image.type}
                 loading="lazy"

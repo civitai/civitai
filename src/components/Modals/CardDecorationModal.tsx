@@ -14,7 +14,8 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants } from '~/server/common/constants';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
 import classes from './CardDecorationModal.module.scss';
@@ -30,6 +31,7 @@ export default function CardDecorationModal({
   currentCosmetic,
 }: Props) {
   const dialog = useDialogContext();
+  const cardImageWidth = useCardImageWidth();
   const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
 
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
@@ -147,7 +149,7 @@ export default function CardDecorationModal({
                         src={selectedItem.entityImage.url}
                         thumbnailUrl={selectedItem.entityImage.thumbnailUrl}
                         type={selectedItem.entityImage.type}
-                        width={DEFAULT_EDGE_IMAGE_WIDTH}
+                        width={cardImageWidth}
                         alt="current item with decoration"
                         className="size-full object-cover"
                         wrapperProps={{ className: 'h-full' }}
@@ -160,7 +162,7 @@ export default function CardDecorationModal({
                         src={image.url}
                         thumbnailUrl={image.thumbnailUrl}
                         type={image.type}
-                        width={DEFAULT_EDGE_IMAGE_WIDTH}
+                        width={cardImageWidth}
                         alt="new item with decoration"
                         className="size-full object-cover"
                         wrapperProps={{ className: 'h-full' }}
@@ -201,11 +203,10 @@ export const PreviewCard = ({
   image,
   decoration,
 }: Pick<Props, 'image'> & { decoration?: ContentDecorationCosmetic }) => {
+  const cardImageWidth = useCardImageWidth();
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
   const imageWidth =
-    originalAspectRatio > 1
-      ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-      : DEFAULT_EDGE_IMAGE_WIDTH;
+    originalAspectRatio > 1 ? cardImageWidth * originalAspectRatio : cardImageWidth;
 
   if (!image) return null;
 

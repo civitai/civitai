@@ -4,7 +4,8 @@ import { Button, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import type { ClubTier } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -18,6 +19,7 @@ import classes from '~/components/Club/ClubPost/ClubFeed.module.scss';
 export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const { deleteClubTier, deletingTier } = useMutateClub();
+  const cardImageWidth = useCardImageWidth();
 
   const onDeleteClubTier = async () => {
     openConfirmModal({
@@ -79,7 +81,7 @@ export const ClubTierManageItem = ({ clubTier }: { clubTier: ClubTier }) => {
                         ) : (
                           <ImagePreview
                             image={image}
-                            edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
+                            edgeImageProps={{ width: cardImageWidth }}
                             radius="md"
                             style={{ width: '100%', height: '100%' }}
                             aspectRatio={0}

@@ -15,7 +15,7 @@ import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { ImageSort } from '~/server/common/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -37,6 +37,7 @@ export function ModelCarousel(props: Props) {
 
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
+  const cardImageWidth = useCardImageWidth();
   const { running, helpers } = useTourContext();
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
@@ -128,7 +129,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                           >
                             <ImagePreview
                               image={image}
-                              edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
+                              edgeImageProps={{ width: cardImageWidth }}
                               aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
                               // radius="md"
                               style={{ width: '100%' }}

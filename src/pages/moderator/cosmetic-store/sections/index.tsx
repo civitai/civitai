@@ -34,11 +34,13 @@ import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { Meta } from '~/components/Meta/Meta';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants } from '~/server/common/constants';
 import { showSuccessNotification } from '~/utils/notifications';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export default function CosmeticStoreSections() {
+  const cardImageWidth = useCardImageWidth();
   const { cosmeticShopSections, isLoading: isLoadingSections } = useQueryCosmeticShopSections();
   const [sections, setSections] = useState(cosmeticShopSections ?? []);
   const isLoading = isLoadingSections;
@@ -188,7 +190,7 @@ export default function CosmeticStoreSections() {
                                   ) : (
                                     <ImagePreview
                                       image={image}
-                                      edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
+                                      edgeImageProps={{ width: cardImageWidth }}
                                       radius="md"
                                       style={{ width: '100%', height: '100%' }}
                                       aspectRatio={0}

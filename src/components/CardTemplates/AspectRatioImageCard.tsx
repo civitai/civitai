@@ -10,7 +10,7 @@ import type { ConnectType } from '~/components/ImageGuard/ImageGuard2';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { MediaType } from '~/shared/utils/prisma/enums';
@@ -62,8 +62,6 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   explain?: boolean;
 } & ContentTypeProps;
 
-const IMAGE_CARD_WIDTH = DEFAULT_EDGE_IMAGE_WIDTH;
-
 export function AspectRatioImageCard<T extends DialogKey>({
   href,
   aspectRatio = 'portrait',
@@ -82,6 +80,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   isRemix,
   explain,
 }: AspectRatioImageCardProps<T>) {
+  const IMAGE_CARD_WIDTH = useCardImageWidth();
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
   return (

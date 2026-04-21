@@ -38,7 +38,8 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants } from '~/server/common/constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation-graph.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
@@ -47,8 +48,6 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
 import { TopRightIcons } from './TopRightIcons';
-
-const IMAGE_CARD_WIDTH = DEFAULT_EDGE_IMAGE_WIDTH;
 
 export function ResourceSelectCard({
   data,
@@ -61,6 +60,7 @@ export function ResourceSelectCard({
   isFavorite: boolean;
   selectSource?: ResourceSelectSource;
 }) {
+  const IMAGE_CARD_WIDTH = useCardImageWidth();
   const { onSelect } = useResourceSelectContext();
   const currentUser = useCurrentUser();
   const [loading, setLoading] = useState(false);

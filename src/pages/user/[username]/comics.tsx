@@ -14,7 +14,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { dbRead } from '~/server/db/client';
 import { formatRelativeDate } from '~/utils/comic-helpers';
 import type { RouterOutput } from '~/types/router';
@@ -188,6 +188,7 @@ type ProjectItem = RouterOutput['comics']['getMyProjects'][number];
 
 function ProjectCard({ project }: { project: ProjectItem }) {
   const { isGreen } = useFeatureFlags();
+  const cardImageWidth = useCardImageWidth();
   const imageUrl = project.coverImage?.url ?? project.thumbnailUrl;
   const hasNsfw =
     project.nsfwLevel !== 0 && Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag);
@@ -214,7 +215,7 @@ function ProjectCard({ project }: { project: ProjectItem }) {
           </div>
         ) : imageUrl ? (
           <img
-            src={getEdgeUrl(imageUrl, { width: DEFAULT_EDGE_IMAGE_WIDTH })}
+            src={getEdgeUrl(imageUrl, { width: cardImageWidth })}
             alt={project.name}
             className="h-full w-full object-cover"
           />

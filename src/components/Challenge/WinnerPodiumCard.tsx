@@ -9,7 +9,7 @@ import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBa
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -75,6 +75,7 @@ export function WinnerPodiumCard({
   compact?: boolean;
   judgeInfo?: JudgeInfo;
 }) {
+  const cardImageWidth = useCardImageWidth();
   const [reasonExpanded, setReasonExpanded] = useState(false);
   const colorScheme = useComputedColorScheme('dark');
   const isDark = colorScheme === 'dark';
@@ -156,14 +157,14 @@ export function WinnerPodiumCard({
                       src={winner.imageUrl!}
                       type={MediaType.image}
                       imageId={winner.imageId!}
-                      width={DEFAULT_EDGE_IMAGE_WIDTH}
+                      width={cardImageWidth}
                       className="size-full object-cover transition-transform duration-300 hover:scale-105"
                     />
                   ) : (
                     <MediaHash
                       hash={winner.imageHash ?? null}
-                      width={DEFAULT_EDGE_IMAGE_WIDTH}
-                      height={DEFAULT_EDGE_IMAGE_WIDTH}
+                      width={cardImageWidth}
+                      height={cardImageWidth}
                     />
                   )}
                 </Link>

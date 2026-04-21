@@ -11,7 +11,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { PostsCardMemoized } from '~/components/Post/Infinite/PostsCard';
 import { usePostFilters, useQueryPosts } from '~/components/Post/post.utils';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { PostSort } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -49,6 +49,7 @@ function PostsInfiniteContent({
   showAds,
   disableStoreFilters,
 }: PostsInfiniteProps) {
+  const cardImageWidth = useCardImageWidth();
   const postFilters = usePostFilters();
   const filters = disableStoreFilters
     ? filterOverrides
@@ -80,8 +81,8 @@ function PostsInfiniteContent({
             data={posts}
             imageDimensions={(data) => {
               const image = data.images[0];
-              const width = image.width ?? DEFAULT_EDGE_IMAGE_WIDTH;
-              const height = image.height ?? DEFAULT_EDGE_IMAGE_WIDTH;
+              const width = image.width ?? cardImageWidth;
+              const height = image.height ?? cardImageWidth;
               return { width, height };
             }}
             maxItemHeight={600}

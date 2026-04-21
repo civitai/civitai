@@ -13,7 +13,8 @@ import {
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
 import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
-import { constants, creatorCardStatsDefaults, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants, creatorCardStatsDefaults } from '~/server/common/constants';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
@@ -48,6 +49,7 @@ const CreatorCardSimpleContent = ({
   actions,
   ...cardProps
 }: CreatorCardSimpleProps) => {
+  const cardImageWidth = useCardImageWidth();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const { data } = trpc.user.getCreator.useQuery(
@@ -127,7 +129,7 @@ const CreatorCardSimpleContent = ({
             type={backgroundImage.data.type ?? 'image'}
             // transcode={isVideo}
             anim={true}
-            width={DEFAULT_EDGE_IMAGE_WIDTH}
+            width={cardImageWidth}
             wrapperProps={{
               style: {
                 position: 'absolute',

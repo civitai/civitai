@@ -15,7 +15,7 @@ import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useUserPaymentMethods } from '~/components/Stripe/stripe.utils';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { ClubMembershipOnClub, ClubTier } from '~/types/router';
 import { calculateClubTierNextBillingDate } from '~/utils/clubs';
 import { formatDate } from '~/utils/date-helpers';

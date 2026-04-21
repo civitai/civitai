@@ -7,7 +7,7 @@ import { useCollectionQueryParams } from '~/components/Collections/collection.ut
 import { SortFilter } from '~/components/Filters';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { CollectionSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
@@ -61,11 +61,7 @@ function UserCollectionsPage() {
 
   return (
     <Box mt="md">
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
-        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
-      >
+      <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
         <MasonryContainer p={0}>
           <Stack gap="xs">
             <Group gap={8} justify="flex-end">

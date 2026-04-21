@@ -153,6 +153,7 @@ const featureFlags = createFeatureFlags({
   strikes: ['dev', 'granted'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
   articleImageScanning: ['public'],
+  smallerImages: { availability: ['public'], fliptKey: 'smaller-images' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

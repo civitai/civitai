@@ -6,7 +6,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { FeatureIntroduction } from '../../components/FeatureIntroduction/FeatureIntroduction';
 import classes from './index.module.css';
@@ -44,11 +44,7 @@ export default function ClubsPage() {
         description="Create, join and share your own Civitai Clubs."
         canonical="/bounties"
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.club}
-        maxColumnCount={7}
-        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
-      >
+      <MasonryProvider columnWidth={constants.cardSizes.club} maxColumnCount={7}>
         <MasonryContainer>
           <Stack gap="xs">
             <Group justify="space-between" gap={8}>

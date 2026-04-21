@@ -102,7 +102,7 @@ import {
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { constants as appConstants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { constants as appConstants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ChallengeDiscussion } from '~/components/Challenge/ChallengeDiscussion';
@@ -1541,10 +1541,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
         background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
       }}
     >
-      <MasonryProvider
-        columnWidth={appConstants.cardSizes.image}
-        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
-      >
+      <MasonryProvider columnWidth={appConstants.cardSizes.image}>
         <MasonryContainer>
           <Stack gap="md" py={32}>
             <Group wrap="wrap" justify="space-between">

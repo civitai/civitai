@@ -30,7 +30,8 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import {
   addSimpleImagePostInput,
@@ -158,11 +159,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 
         <Divider label="or select from your library" labelPosition="center" />
         <ScrollAreaProvider style={{ maxHeight: '440px', overflowY: 'auto' }}>
-          <MasonryProvider
-            columnWidth={constants.cardSizes.image}
-            maxColumnCount={4}
-            maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
-          >
+          <MasonryProvider columnWidth={constants.cardSizes.image} maxColumnCount={4}>
             <MasonryContainer m={0} p={0} px={0}>
               <ImagesInfinite
                 filters={{
@@ -228,6 +225,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 type Props = { collectionId: number };
 
 function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }) {
+  const cardImageWidth = useCardImageWidth();
   const toggleSelected = useStore((state) => state.toggleSelected);
   const selected = useStore(useCallback((state) => !!state.selected[image.id], [image.id]));
 
@@ -253,7 +251,7 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
                   type={image.type}
-                  width={DEFAULT_EDGE_IMAGE_WIDTH}
+                  width={cardImageWidth}
                   placeholder="empty"
                   style={{ width: '100%' }}
                 />

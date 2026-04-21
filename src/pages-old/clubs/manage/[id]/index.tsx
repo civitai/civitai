@@ -29,7 +29,7 @@ import { ClubManagementNavigation } from '~/components/Club/ClubManagementNaviga
 import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
@@ -95,6 +95,7 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ManageClub({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
+  const cardImageWidth = useCardImageWidth();
   const { club, loading } = useQueryClub({ id });
   const { deleteClub, deletingClub } = useMutateClub();
   const { isOwner, isModerator, permissions } = useClubContributorStatus({ clubId: id });
@@ -228,7 +229,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
                             ) : (
                               <ImagePreview
                                 image={image}
-                                edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
+                                edgeImageProps={{ width: cardImageWidth }}
                                 radius="md"
                                 style={{ width: '100%', height: '100%' }}
                                 aspectRatio={0}

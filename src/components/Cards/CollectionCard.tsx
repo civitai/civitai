@@ -9,7 +9,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import type { SimpleUser } from '~/server/selectors/user.selector';
@@ -170,6 +171,7 @@ function CollectionCardHeader({
 }
 
 export function ImageCover({ data, coverImages }: { data: HeaderData; coverImages: ImageProps[] }) {
+  const cardImageWidth = useCardImageWidth();
   const isMultiImage = coverImages.length > 1;
   const coverImagesCount = coverImages.length;
 
@@ -194,7 +196,7 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
                   }
                   placeholder="empty"
                   loading="lazy"
-                  width={DEFAULT_EDGE_IMAGE_WIDTH}
+                  width={cardImageWidth}
                   anim={false}
                 />
               ) : (
@@ -226,13 +228,14 @@ export function ImageCover({ data, coverImages }: { data: HeaderData; coverImage
 }
 
 export function ImageSrcCover({ data, coverSrcs }: { data: HeaderData; coverSrcs: string[] }) {
+  const cardImageWidth = useCardImageWidth();
   return (
     <>
       {coverSrcs.map((src) => (
         <EdgeMedia
           src={src}
           type="image"
-          width={DEFAULT_EDGE_IMAGE_WIDTH}
+          width={cardImageWidth}
           placeholder="empty"
           className={cardClasses.image}
           loading="lazy"

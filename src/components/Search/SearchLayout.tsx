@@ -29,7 +29,7 @@ import * as z from 'zod';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import type { UiState } from 'instantsearch.js';
@@ -385,7 +385,6 @@ SearchLayout.Content = function Content({ children }: { children: React.ReactNod
     <MasonryProvider
       columnWidth={constants.cardSizes.model}
       maxColumnCount={maxColumnCount}
-      maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
       className="flex-1"
     >
       <MasonryContainer p={0}>

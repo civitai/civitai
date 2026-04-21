@@ -39,7 +39,8 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
+import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
@@ -86,6 +87,7 @@ function ModelCategoryCardContent({
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const cardImageWidth = useCardImageWidth();
 
   const [loading, setLoading] = useState(false);
 
@@ -369,7 +371,7 @@ function ModelCategoryCardContent({
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         type={image.type}
-                        width={DEFAULT_EDGE_IMAGE_WIDTH}
+                        width={cardImageWidth}
                         placeholder="empty"
                       />
                     )}

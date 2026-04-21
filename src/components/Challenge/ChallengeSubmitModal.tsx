@@ -38,7 +38,7 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { constants, DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { ChallengeReviewCostType, Currency } from '~/shared/utils/prisma/enums';
 import {
@@ -446,11 +446,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                   scrollRestore={{ enabled: false, key: 'challenge-submit-library' }}
                   style={{ maxHeight: 440, overflowY: 'auto' }}
                 >
-                  <MasonryProvider
-                    columnWidth={constants.cardSizes.image}
-                    maxColumnCount={4}
-                    maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
-                  >
+                  <MasonryProvider columnWidth={constants.cardSizes.image} maxColumnCount={4}>
                     <MasonryContainer m={0} p={0} px={0}>
                       <ImagesInfinite
                         filters={{

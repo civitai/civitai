@@ -14,7 +14,7 @@ import {
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCallback } from 'react';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { ModerationImageModel } from '~/server/services/image.service';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
@@ -34,6 +34,7 @@ export function CsamImageSelection({
   onNext: () => void;
   onMissing: () => void;
 }) {
+  const cardImageWidth = useCardImageWidth();
   const { userId, user } = useCsamContext();
 
   const { data: images, isLoading } = trpc.image.getImagesByUserIdForModeration.useQuery({
@@ -62,7 +63,6 @@ export function CsamImageSelection({
     <div className="relative">
       <MasonryProvider
         maxColumnCount={7}
-        maxSingleColumnWidth={DEFAULT_EDGE_IMAGE_WIDTH}
         style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
       >
         <div className="pb-3">
@@ -74,8 +74,8 @@ export function CsamImageSelection({
               <MasonryColumns
                 data={images}
                 imageDimensions={(data) => {
-                  const width = data?.width ?? DEFAULT_EDGE_IMAGE_WIDTH;
-                  const height = data?.height ?? DEFAULT_EDGE_IMAGE_WIDTH;
+                  const width = data?.width ?? cardImageWidth;
+                  const height = data?.height ?? cardImageWidth;
                   return { width, height };
                 }}
                 maxItemHeight={600}
@@ -121,6 +121,7 @@ function SelectedCount() {
 }
 
 function CsamImageCard({ data: image, height }: { data: ModerationImageModel; height: number }) {
+  const cardImageWidth = useCardImageWidth();
   const { ref, inView } = useInView();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
@@ -147,7 +148,7 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
             name={image.name ?? image.id.toString()}
             alt={image.name ?? undefined}
             type={image.type}
-            width={DEFAULT_EDGE_IMAGE_WIDTH}
+            width={cardImageWidth}
             placeholder="empty"
             style={{ width: '100%' }}
             onClick={toggleSelected}
