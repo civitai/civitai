@@ -54,6 +54,10 @@ export function ModerationNav() {
           hidden: !features.announcements,
         },
         {
+          label: 'Rewards Bonus Events',
+          href: '/moderator/rewards-bonus-events',
+        },
+        {
           label: 'Code Gifts',
           href: '/moderator/code-gifts',
         },

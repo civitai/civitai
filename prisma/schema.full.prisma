@@ -415,6 +415,7 @@ model User {
   challengeWins              ChallengeWinner[]
   challengeJudges            ChallengeJudge[]
   challengeEventsCreated     ChallengeEvent[]
+  rewardsBonusEventsCreated  RewardsBonusEvent[]             @relation("RewardsBonusEventCreator")
   strikes                     UserStrike[]                    @relation("userStrikes")
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
@@ -2340,6 +2341,25 @@ model Announcement {
   disabled  Boolean       @default(false)
 }
 
+model RewardsBonusEvent {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  multiplier  Int       /// Stored as multiplier * 10. e.g. 15 = 1.5x (50% MORE), 20 = 2x, 30 = 3x, 40 = 4x. Minimum effective value 10 (no bonus).
+  articleId   Int?
+  article     Article?  @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  bannerLabel String?
+  enabled     Boolean   @default(false)
+  startsAt    DateTime?
+  endsAt      DateTime?
+  createdById Int
+  createdBy   User      @relation("RewardsBonusEventCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([enabled, startsAt, endsAt])
+}
+
 enum CosmeticType {
   Badge
   NamePlate
@@ -2523,16 +2543,17 @@ model Article {
   lockedProperties String[]      @default([])
   status           ArticleStatus @default(Draft)
 
-  thread          Thread?
-  reactions       ArticleReaction[]
-  tags            TagsOnArticle[]
-  reports         ArticleReport[]
-  metrics         ArticleMetric[]
-  rank            ArticleRank?
-  stats           ArticleStat?
-  engagements     ArticleEngagement[]
-  associations    ModelAssociations[]
-  collectionItems CollectionItem[]
+  thread             Thread?
+  reactions          ArticleReaction[]
+  tags               TagsOnArticle[]
+  reports            ArticleReport[]
+  metrics            ArticleMetric[]
+  rank               ArticleRank?
+  stats              ArticleStat?
+  engagements        ArticleEngagement[]
+  associations       ModelAssociations[]
+  collectionItems    CollectionItem[]
+  rewardsBonusEvents RewardsBonusEvent[]
 
   @@index([status, ingestion, nsfwLevel])
 }
