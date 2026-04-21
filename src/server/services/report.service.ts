@@ -19,11 +19,7 @@ import type {
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import {
-  collectionsSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -236,12 +232,6 @@ export const createReport = async ({
             }),
           ]);
 
-          break;
-        case ReportEntity.Collection:
-          await tx.collection.update({ where: { id }, data: { nsfw: true } });
-          await collectionsSearchIndex.queueUpdate([
-            { id, action: SearchIndexUpdateQueueAction.Update },
-          ]);
           break;
         case ReportEntity.Article:
           // Defer the nsfwLevel recompute until after the tx commits so the
