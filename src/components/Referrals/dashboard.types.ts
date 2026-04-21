@@ -19,10 +19,10 @@ export type RecruiterRank = {
 
 export const RECRUITER_RANKS: RecruiterRank[] = [
   { key: 'rookie', name: 'Rookie', min: 0 },
-  { key: 'recruit', name: 'Recruit', min: 1 },
-  { key: 'advocate', name: 'Advocate', min: 10 },
-  { key: 'champion', name: 'Champion', min: 50 },
-  { key: 'legend', name: 'Legend', min: 200 },
+  { key: 'recruit', name: 'Recruit', min: 1_000 },
+  { key: 'advocate', name: 'Advocate', min: 10_000 },
+  { key: 'champion', name: 'Champion', min: 50_000 },
+  { key: 'legend', name: 'Legend', min: 200_000 },
 ];
 
 export const MILESTONE_NAMES: Record<number, string> = {
@@ -34,7 +34,7 @@ export const MILESTONE_NAMES: Record<number, string> = {
 };
 
 export function computeRecruiterScore(conversions: number, lifetimeBlueBuzz: number) {
-  return conversions + Math.floor(lifetimeBlueBuzz / 1_000);
+  return conversions * 1_000 + lifetimeBlueBuzz;
 }
 
 export function getRankForScore(score: number): {

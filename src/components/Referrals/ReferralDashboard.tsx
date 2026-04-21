@@ -249,8 +249,8 @@ export function ReferralDashboard({
                   {rank.name}
                 </Title>
                 <Text size="sm" c="dimmed">
-                  Score {formatNum(score)} · 1 point per paid referral month, 1 per 1,000 Blue Buzz
-                  earned
+                  Score {formatNum(score)} · 1 point per Blue Buzz earned, 1,000 per paid referral
+                  month
                 </Text>
               </Stack>
             </Group>
