@@ -132,19 +132,20 @@ export async function getUserNotificationCount({
   unread: boolean;
   category?: NotificationCategory;
 }) {
-  const cachedCount = await notificationCache.getUser(userId);
-  if (cachedCount) return cachedCount;
+  // Check lag key BEFORE cache — if a recent write is flagged for this user,
+  // bust the cache and query the primary to avoid returning stale counts.
+  const db = await getNotifDbWithoutLag('notification', userId);
+  if (db === notifDbWrite) {
+    await notificationCache.bustUser(userId);
+  } else {
+    const cachedCount = await notificationCache.getUser(userId);
+    if (cachedCount) return cachedCount;
+  }
 
   const AND = [Prisma.sql`un."userId" = ${userId}`];
   if (unread) AND.push(Prisma.sql`un.viewed IS FALSE`);
-  // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
-  // this seems unused
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
-
-  // Route to primary when markRead just wrote for this user — replica lag
-  // would otherwise repopulate the cache with stale unread counts.
-  const db = await getNotifDbWithoutLag('notification', userId);
   const query = await db.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
     SELECT
       n.category,
