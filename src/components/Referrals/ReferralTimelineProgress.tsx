@@ -1,4 +1,5 @@
 import { Box, Card, Group, Progress, Stack, Text, Title, Tooltip } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons-react';
 import type { Dayjs } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -75,11 +76,6 @@ export function ReferralTimelineProgress({ grant }: { grant: ReferralGrant | nul
             {daysRemaining} day{daysRemaining === 1 ? '' : 's'} of perks remaining
           </Text>
         </Group>
-        <Text size="xs" c="dimmed">
-          Chunks activate highest tier first. When the active chunk ends, the next queued tier takes
-          over automatically.
-        </Text>
-
         <Tooltip.Group openDelay={200} closeDelay={100}>
           <Group gap={0}>
             {segments.map((segment, index) => {
@@ -149,6 +145,17 @@ export function ReferralTimelineProgress({ grant }: { grant: ReferralGrant | nul
           </Text>
           <Text size="xs" c="dimmed">
             {totalEndDate.format('MMM D, YYYY')}
+          </Text>
+        </Group>
+
+        <Group gap="xs" wrap="nowrap" align="flex-start">
+          <IconInfoCircle
+            size={14}
+            style={{ color: 'var(--mantine-color-dimmed)', flexShrink: 0, marginTop: 2 }}
+          />
+          <Text size="xs" c="dimmed">
+            Chunks activate highest tier first. When the active chunk ends, the next queued tier
+            takes over automatically.
           </Text>
         </Group>
       </Stack>

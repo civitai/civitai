@@ -14,6 +14,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconBoltFilled,
@@ -309,7 +310,12 @@ export function ReferralDashboard({
                   {formatNum(score)} / {formatNum(nextRank.min)}
                 </Text>
               </Group>
-              <Progress value={rankProgressPct} size="lg" radius="xl" color={rankColor} />
+              <Progress
+                value={rankProgressPct}
+                size="lg"
+                radius="xl"
+                color={nextRank ? rankAccent[nextRank.key] : rankColor}
+              />
               <Text size="sm" c="dimmed">
                 {score === 0
                   ? 'Share your code to start climbing.'
@@ -444,9 +450,12 @@ export function ReferralDashboard({
                             →
                           </Text>
                           <Text size="sm" fw={700} c="blue.4">
-                            +{formatNum(m.bonus)}
+                            +
                           </Text>
                           <IconBoltFilled size={12} color="var(--mantine-color-blue-5)" />
+                          <Text size="sm" fw={700} c="blue.4">
+                            {formatNum(m.bonus)}
+                          </Text>
                           <Text size="sm" fw={600} c="blue.4">
                             bonus
                           </Text>
@@ -483,15 +492,14 @@ export function ReferralDashboard({
           {!tokenBankAlertDismissed && (
             <Alert
               variant="light"
-              color="orange"
+              color="blue"
               icon={<IconInfoCircle size={18} />}
               withCloseButton={false}
             >
               <Group justify="space-between" wrap="nowrap" gap="xs">
                 <Text size="sm">
                   Tokens come from friends paying for a Membership with your code. Earn 1 / 2 / 3
-                  Tokens per Bronze / Silver / Gold month, up to 3 months per friend. Higher tiers
-                  stack first so you never lose value when redeeming.
+                  Tokens per Bronze / Silver / Gold month, up to 3 months per friend.
                 </Text>
                 <CloseButton onClick={() => dismissAlert(ALERT_TOKEN_BANK)} aria-label="Dismiss" />
               </Group>
@@ -504,14 +512,14 @@ export function ReferralDashboard({
               label="Spendable"
               value={data.balance.settledTokens}
               color="green"
-              hint="Ready to redeem"
+              tooltip="Tokens ready to redeem. Spendable tokens move from Pending after a 7-day hold once a referee's membership payment settles."
             />
             <TokenTile
               icon={<IconClock size={22} />}
               label="Pending"
               value={data.balance.pendingTokens}
               color="gray"
-              hint="Settles in 7 days"
+              tooltip="Tokens from recent referee payments. They settle and become spendable 7 days after the payment, so they can be clawed back on refund."
             />
           </Group>
 
@@ -539,14 +547,14 @@ export function ReferralDashboard({
                         {tierLabels[group.tier]}
                       </Text>
                     </div>
-                    <Stack gap={0} p="md">
+                    <Stack gap={0}>
                       {group.offers.map((offer, i) => {
                         const canAfford = data.balance.settledTokens >= offer.cost;
                         const pending = pendingOffer === offer.originalIndex && isRedeeming;
                         return (
                           <Fragment key={offer.originalIndex}>
-                            {i > 0 && <Divider my="sm" />}
-                            <Group justify="space-between" wrap="nowrap" gap="sm">
+                            {i > 0 && <Divider />}
+                            <Group justify="space-between" wrap="nowrap" gap="sm" px="md" py="sm">
                               <Stack gap={2}>
                                 <Text fw={700}>
                                   {offer.durationDays} day{offer.durationDays === 1 ? '' : 's'}
@@ -607,22 +615,25 @@ export function ReferralDashboard({
                 const iconColor = isRecruit
                   ? tierColors[r.tierGranted ?? 'bronze']
                   : isMilestone
-                  ? '#fab005'
-                  : '#228be6';
-                const rewardValue =
-                  r.tokenAmount > 0 ? `+${r.tokenAmount}` : `+${formatNum(r.buzzAmount)}`;
-                const rewardLabel =
-                  r.tokenAmount > 0 ? (r.tokenAmount === 1 ? 'token' : 'tokens') : 'Blue Buzz';
+                  ? 'var(--mantine-color-blue-5)'
+                  : 'var(--mantine-color-blue-5)';
+                const iconBgColor = isRecruit
+                  ? `${tierColors[r.tierGranted ?? 'bronze']}26`
+                  : 'var(--mantine-color-blue-light)';
+                const isTokenReward = r.tokenAmount > 0;
+                const rewardAmount = isTokenReward ? r.tokenAmount : r.buzzAmount;
+                const rewardColor = isTokenReward ? undefined : 'blue.4';
+                const isPending = r.status === 'Pending';
+                const settlesDate = r.settledAt ? new Date(r.settledAt) : null;
 
                 return (
                   <Paper key={r.id} withBorder p="sm" radius="md">
                     <Group justify="space-between" wrap="nowrap" align="center">
                       <Group gap="sm" wrap="nowrap">
                         <ThemeIcon
-                          variant="light"
                           size="lg"
                           radius="xl"
-                          style={{ color: iconColor }}
+                          style={{ backgroundColor: iconBgColor, color: iconColor }}
                         >
                           {isRecruit ? (
                             <IconUsersGroup size={18} />
@@ -634,7 +645,7 @@ export function ReferralDashboard({
                         </ThemeIcon>
                         <Stack gap={2}>
                           <Text fw={600}>{label}</Text>
-                          <Group gap="xs">
+                          <Group gap="xs" wrap="wrap">
                             <Badge
                               variant="light"
                               color={r.status === 'Settled' ? 'green' : 'yellow'}
@@ -645,20 +656,35 @@ export function ReferralDashboard({
                             <Text size="xs" c="dimmed">
                               {new Date(r.earnedAt).toLocaleDateString()}
                             </Text>
+                            {isPending && settlesDate && (
+                              <Text size="xs" c="dimmed">
+                                · Settles {settlesDate.toLocaleDateString()}
+                              </Text>
+                            )}
                           </Group>
                         </Stack>
                       </Group>
-                      <Stack gap={0} align="flex-end">
-                        <Text fw={800} size="xl" className="leading-none">
-                          {rewardValue}
+                      <Group gap={4} align="center" wrap="nowrap">
+                        <Text fw={800} size="xl" className="leading-none" c={rewardColor}>
+                          +
                         </Text>
-                        <Group gap={2} align="center">
-                          {rewardLabel === 'Blue Buzz' && <IconBoltFilled size={12} />}
-                          <Text size="xs" c="dimmed">
-                            {rewardLabel}
-                          </Text>
-                        </Group>
-                      </Stack>
+                        {isTokenReward ? (
+                          <IconCoin
+                            size={18}
+                            color="var(--mantine-color-orange-5)"
+                            style={{ flexShrink: 0 }}
+                          />
+                        ) : (
+                          <IconBoltFilled
+                            size={18}
+                            color="var(--mantine-color-blue-5)"
+                            style={{ flexShrink: 0 }}
+                          />
+                        )}
+                        <Text fw={800} size="xl" className="leading-none" c={rewardColor}>
+                          {formatNum(rewardAmount)}
+                        </Text>
+                      </Group>
                     </Group>
                   </Paper>
                 );
@@ -745,13 +771,13 @@ function TokenTile({
   label,
   value,
   color,
-  hint,
+  tooltip,
 }: {
   icon: React.ReactNode;
   label: string;
   value: number;
   color: string;
-  hint: string;
+  tooltip: string;
 }) {
   return (
     <Paper withBorder radius="md" p="md">
@@ -760,14 +786,19 @@ function TokenTile({
           {icon}
         </ThemeIcon>
         <Stack gap={0}>
-          <Text size="xs" tt="uppercase" c="dimmed">
-            {label}
-          </Text>
+          <Group gap={4} align="center">
+            <Text size="xs" tt="uppercase" c="dimmed">
+              {label}
+            </Text>
+            <Tooltip label={tooltip} multiline maw={260} withArrow>
+              <IconInfoCircle
+                size={12}
+                style={{ color: 'var(--mantine-color-dimmed)', cursor: 'help' }}
+              />
+            </Tooltip>
+          </Group>
           <Text size="2xl" fw={800} className="leading-none">
             {formatNum(value)}
-          </Text>
-          <Text size="xs" c="dimmed">
-            {hint}
           </Text>
         </Stack>
       </Group>
@@ -790,18 +821,28 @@ function HowStep({
     <Grid.Col span={{ base: 12, sm: 6, md: 3 }}>
       <Paper withBorder radius="md" p={0} h="100%" className="overflow-hidden">
         <div
-          className="flex items-center justify-center p-4"
+          className="flex items-center justify-center p-6"
           style={{
-            background: `linear-gradient(135deg, var(--mantine-color-${color}-8), var(--mantine-color-${color}-6))`,
+            background: `linear-gradient(135deg, var(--mantine-color-${color}-light) 0%, transparent 100%)`,
+            borderBottom: `1px solid var(--mantine-color-${color}-light)`,
           }}
         >
-          <ThemeIcon size={52} radius="xl" variant="white" color={color}>
+          <div
+            className="flex size-16 items-center justify-center rounded-full"
+            style={{
+              background: `linear-gradient(135deg, var(--mantine-color-${color}-light) 0%, var(--mantine-color-${color}-filled) 100%)`,
+              color: `var(--mantine-color-white)`,
+              border: `2px solid var(--mantine-color-${color}-light)`,
+            }}
+          >
             {icon}
-          </ThemeIcon>
+          </div>
         </div>
-        <Stack gap={4} p="md">
-          <Text fw={700}>{title}</Text>
-          <Text size="sm" c="dimmed" lh={1.4}>
+        <Stack gap={4} p="md" align="center">
+          <Text fw={600} ta="center">
+            {title}
+          </Text>
+          <Text size="sm" c="dimmed" lh={1.4} ta="center">
             {body}
           </Text>
         </Stack>
