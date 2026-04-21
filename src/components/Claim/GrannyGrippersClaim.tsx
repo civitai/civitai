@@ -13,7 +13,6 @@ import {
 import { IconCircleCheck, IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
-import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -60,20 +59,15 @@ export function GrannyGrippersClaim() {
 }
 
 function GrannyGrippersClaimBody() {
-  const router = useRouter();
-  const previewMode = router.query.preview === '1';
   const queryUtils = trpc.useUtils();
-  const { data: status, isLoading } = trpc.user.cosmeticStatus.useQuery(
-    { id: GRANNY_GRIPPERS_COSMETIC_ID },
-    { enabled: !previewMode }
-  );
+  const { data: status, isLoading } = trpc.user.cosmeticStatus.useQuery({
+    id: GRANNY_GRIPPERS_COSMETIC_ID,
+  });
   const [remaining, setRemaining] = useState<Remaining>(() => getRemaining(DEADLINE));
   const [isUnlocking, setIsUnlocking] = useState(false);
-  const [previewClaimed, setPreviewClaimed] = useState(false);
-  const [previewEquipped, setPreviewEquipped] = useState(false);
 
-  const claimed = previewMode ? previewClaimed : !!status?.obtained;
-  const equipped = previewMode ? previewEquipped : !!status?.equipped;
+  const claimed = !!status?.obtained;
+  const equipped = !!status?.equipped;
   const expired = remaining.done && !claimed;
 
   useEffect(() => {
@@ -112,27 +106,10 @@ function GrannyGrippersClaimBody() {
     },
   });
 
-  const handleClaim = () => {
-    if (previewMode) {
-      setIsUnlocking(true);
-      window.setTimeout(() => {
-        setPreviewClaimed(true);
-        setIsUnlocking(false);
-      }, REVEAL_ANIMATION_MS);
-      return;
-    }
-    claimMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
-  };
+  const handleClaim = () => claimMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
+  const handleEquip = () => equipMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
 
-  const handleEquip = () => {
-    if (previewMode) {
-      setPreviewEquipped(true);
-      return;
-    }
-    equipMutation.mutate({ id: GRANNY_GRIPPERS_COSMETIC_ID });
-  };
-
-  if (isLoading && !previewMode) {
+  if (isLoading) {
     return (
       <Center mt="xl">
         <Loader />
