@@ -925,11 +925,14 @@ export async function redeemTokens(params: { userId: number; offerIndex: number 
       data: {
         userId,
         tokensSpent: offer.cost,
-        tier: offer.tier,
-        durationDays: offer.durationDays,
-        subscriptionId: `referral:${userId}:${offer.tier}`,
+        rewardType: 'MembershipPerks',
+        metadata: {
+          tier: offer.tier,
+          durationDays: offer.durationDays,
+          subscriptionId: `referral:${userId}:${offer.tier}`,
+        } as Prisma.InputJsonValue,
       },
-      select: { id: true, tier: true, durationDays: true, createdAt: true, tokensSpent: true },
+      select: { id: true, createdAt: true, tokensSpent: true, rewardType: true, metadata: true },
     });
   });
 

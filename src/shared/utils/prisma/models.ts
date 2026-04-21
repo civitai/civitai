@@ -4,6 +4,8 @@ export type ReferralRewardStatus = "Pending" | "Settled" | "Redeemed" | "Expired
 
 export type ReferralRewardKind = "MembershipToken" | "BuzzKickback" | "MilestoneBonus" | "RefereeBonus";
 
+export type ReferralRedemptionType = "MembershipPerks";
+
 export type BuzzWithdrawalRequestStatus = "Requested" | "Canceled" | "Rejected" | "Approved" | "Reverted" | "Transferred" | "ExternallyResolved";
 
 export type UserPaymentConfigurationProvider = "Stripe" | "Tipalti";
@@ -305,9 +307,8 @@ export interface ReferralRedemption {
   userId: number;
   user?: User;
   tokensSpent: number;
-  tier: string;
-  durationDays: number;
-  subscriptionId: string | null;
+  rewardType: ReferralRedemptionType;
+  metadata: JsonValue;
   createdAt: Date;
 }
 

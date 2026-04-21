@@ -18,6 +18,12 @@ export const ReferralRewardKind = {
 
 export type ReferralRewardKind = (typeof ReferralRewardKind)[keyof typeof ReferralRewardKind];
 
+export const ReferralRedemptionType = {
+  MembershipPerks: 'MembershipPerks',
+} as const;
+
+export type ReferralRedemptionType = (typeof ReferralRedemptionType)[keyof typeof ReferralRedemptionType];
+
 export const BuzzWithdrawalRequestStatus = {
   Requested: 'Requested',
   Canceled: 'Canceled',

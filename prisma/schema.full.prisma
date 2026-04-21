@@ -154,17 +154,21 @@ model ReferralMilestone {
   @@unique([userId, threshold])
 }
 
+enum ReferralRedemptionType {
+  MembershipPerks
+}
+
 model ReferralRedemption {
-  id             Int      @id @default(autoincrement())
-  userId         Int
-  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tokensSpent    Int
-  tier           String
-  durationDays   Int
-  subscriptionId String?
-  createdAt      DateTime @default(now())
+  id          Int                    @id @default(autoincrement())
+  userId      Int
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokensSpent Int
+  rewardType  ReferralRedemptionType @default(MembershipPerks)
+  metadata    Json                   @default("{}")
+  createdAt   DateTime               @default(now())
 
   @@index([userId])
+  @@index([rewardType])
 }
 
 model ReferralAttribution {

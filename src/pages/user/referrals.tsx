@@ -337,14 +337,19 @@ export default function ReferralsPage() {
                     </Table.Tr>
                   </Table.Thead>
                   <Table.Tbody>
-                    {data.redemptions.map((r) => (
-                      <Table.Tr key={r.id}>
-                        <Table.Td>{tierLabels[r.tier] ?? r.tier}</Table.Td>
-                        <Table.Td>{r.durationDays} days</Table.Td>
-                        <Table.Td>{r.tokensSpent}</Table.Td>
-                        <Table.Td>{new Date(r.createdAt).toLocaleDateString()}</Table.Td>
-                      </Table.Tr>
-                    ))}
+                    {data.redemptions.map((r) => {
+                      const meta = (r.metadata ?? {}) as { tier?: string; durationDays?: number };
+                      return (
+                        <Table.Tr key={r.id}>
+                          <Table.Td>
+                            {meta.tier ? (tierLabels[meta.tier] ?? meta.tier) : r.rewardType}
+                          </Table.Td>
+                          <Table.Td>{meta.durationDays ? `${meta.durationDays} days` : '—'}</Table.Td>
+                          <Table.Td>{r.tokensSpent}</Table.Td>
+                          <Table.Td>{new Date(r.createdAt).toLocaleDateString()}</Table.Td>
+                        </Table.Tr>
+                      );
+                    })}
                   </Table.Tbody>
                 </Table>
               </Stack>
