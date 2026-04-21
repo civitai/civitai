@@ -5,6 +5,7 @@ import {
   Card,
   CloseButton,
   CopyButton,
+  Divider,
   Grid,
   Group,
   Paper,
@@ -33,8 +34,9 @@ import {
   IconUsersGroup,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
+import { trpc } from '~/utils/trpc';
 import {
   computeRecruiterScore,
   getRankForScore,
@@ -54,12 +56,6 @@ const tierColors: Record<string, string> = {
   gold: '#fab005',
 };
 
-const tierGradient: Record<string, { from: string; to: string }> = {
-  bronze: { from: '#fd7e14', to: '#ff922b' },
-  silver: { from: '#adb5bd', to: '#ced4da' },
-  gold: { from: '#fab005', to: '#ffd43b' },
-};
-
 const rankAccent: Record<string, string> = {
   rookie: 'gray',
   recruit: 'teal',
@@ -69,8 +65,9 @@ const rankAccent: Record<string, string> = {
 };
 
 const INITIAL_ACTIVITY_COUNT = 10;
-const DISMISSED_EXPLAINER_KEY = 'referral-dashboard-kickback-alert-dismissed';
-const DISMISSED_HOW_IT_WORKS_KEY = 'referral-dashboard-how-it-works-dismissed';
+const ALERT_HOW_IT_WORKS = 'referral-how-it-works';
+const ALERT_KICKBACK = 'referral-kickback-info';
+const ALERT_TOKEN_BANK = 'referral-token-bank-info';
 
 function formatNum(n: number) {
   return n.toLocaleString();
@@ -115,23 +112,28 @@ export function ReferralDashboard({
   const visibleActivity = data.recentRewards.slice(0, activityLimit);
   const hasMoreActivity = data.recentRewards.length > activityLimit;
 
-  const [kickbackAlertDismissed, setKickbackAlertDismissed] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(DISMISSED_EXPLAINER_KEY) === '1';
-  });
-  const dismissKickbackAlert = () => {
-    setKickbackAlertDismissed(true);
-    if (typeof window !== 'undefined') window.localStorage.setItem(DISMISSED_EXPLAINER_KEY, '1');
-  };
+  const { data: userSettings } = trpc.user.getSettings.useQuery();
+  const dismissedAlerts = userSettings?.dismissedAlerts ?? [];
+  const howItWorksDismissed = dismissedAlerts.includes(ALERT_HOW_IT_WORKS);
+  const kickbackAlertDismissed = dismissedAlerts.includes(ALERT_KICKBACK);
+  const tokenBankAlertDismissed = dismissedAlerts.includes(ALERT_TOKEN_BANK);
 
-  const [howItWorksDismissed, setHowItWorksDismissed] = useState(() => {
-    if (typeof window === 'undefined') return false;
-    return window.localStorage.getItem(DISMISSED_HOW_IT_WORKS_KEY) === '1';
+  const utils = trpc.useUtils();
+  const dismissAlertMutation = trpc.user.dismissAlert.useMutation({
+    onMutate: async (vars) => {
+      await utils.user.getSettings.cancel();
+      const prev = utils.user.getSettings.getData();
+      utils.user.getSettings.setData(undefined, (old) => ({
+        ...old,
+        dismissedAlerts: [...(old?.dismissedAlerts ?? []), vars.alertId],
+      }));
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
+    },
   });
-  const dismissHowItWorks = () => {
-    setHowItWorksDismissed(true);
-    if (typeof window !== 'undefined') window.localStorage.setItem(DISMISSED_HOW_IT_WORKS_KEY, '1');
-  };
+  const dismissAlert = (alertId: string) => dismissAlertMutation.mutate({ alertId });
 
   return (
     <Stack gap="lg">
@@ -227,6 +229,44 @@ export function ReferralDashboard({
         </Stack>
       </Card>
 
+      {/* How it works — feature-card style, dismissible */}
+      {!howItWorksDismissed && (
+        <Card withBorder p="lg" radius="md">
+          <Stack gap="md">
+            <Group justify="space-between" align="flex-start">
+              <Title order={4}>How it works</Title>
+              <CloseButton onClick={() => dismissAlert(ALERT_HOW_IT_WORKS)} aria-label="Dismiss" />
+            </Group>
+            <Grid>
+              <HowStep
+                icon={<IconShare3 size={28} />}
+                color="blue"
+                title="1. Share"
+                body="Copy your code or share link. Everyone has one."
+              />
+              <HowStep
+                icon={<IconUsersGroup size={28} />}
+                color="teal"
+                title="2. Earn tokens"
+                body="When a friend pays for Membership, you earn 1 / 2 / 3 Tokens per Bronze / Silver / Gold month. Up to 3 months per friend."
+              />
+              <HowStep
+                icon={<IconBoltFilled size={28} />}
+                color="blue"
+                title="3. Earn Blue Buzz"
+                body="Every Buzz your friends buy after they join earns you 10% back as Blue Buzz. Milestones pay lump-sum bonuses."
+              />
+              <HowStep
+                icon={<IconGift size={28} />}
+                color="grape"
+                title="4. Spend"
+                body="Redeem Tokens in the Token Bank for Membership perks."
+              />
+            </Grid>
+          </Stack>
+        </Card>
+      )}
+
       {/* Rank card */}
       <Card withBorder p="lg" radius="md" className="relative overflow-hidden">
         <div
@@ -313,44 +353,6 @@ export function ReferralDashboard({
         </Stack>
       </Card>
 
-      {/* How it works — feature-card style, dismissible */}
-      {!howItWorksDismissed && (
-        <Card withBorder p="lg" radius="md">
-          <Stack gap="md">
-            <Group justify="space-between" align="flex-start">
-              <Title order={4}>How it works</Title>
-              <CloseButton onClick={dismissHowItWorks} aria-label="Dismiss" />
-            </Group>
-            <Grid>
-              <HowStep
-                icon={<IconShare3 size={28} />}
-                color="blue"
-                title="1. Share"
-                body="Copy your code or share link. Everyone has one."
-              />
-              <HowStep
-                icon={<IconUsersGroup size={28} />}
-                color="teal"
-                title="2. Earn tokens"
-                body="When a friend pays for Membership, you earn 1 / 2 / 3 Tokens per Bronze / Silver / Gold month. Up to 3 months per friend."
-              />
-              <HowStep
-                icon={<IconBoltFilled size={28} />}
-                color="blue"
-                title="3. Earn Blue Buzz"
-                body="Every Buzz your friends buy after they join earns you 10% back as Blue Buzz. Milestones pay lump-sum bonuses."
-              />
-              <HowStep
-                icon={<IconGift size={28} />}
-                color="grape"
-                title="4. Spend"
-                body="Redeem Tokens in the Token Bank for temporary Membership perks. Higher tiers run first, lower tiers queue."
-              />
-            </Grid>
-          </Stack>
-        </Card>
-      )}
-
       {/* Blue Buzz milestones */}
       <Card withBorder p="lg" radius="md">
         <Stack gap="md">
@@ -393,7 +395,7 @@ export function ReferralDashboard({
                   Membership with your code, every Buzz purchase they make earns you 10% back as
                   Blue Buzz. Cross a milestone and get a lump-sum bonus on top.
                 </Text>
-                <CloseButton onClick={dismissKickbackAlert} aria-label="Dismiss" />
+                <CloseButton onClick={() => dismissAlert(ALERT_KICKBACK)} aria-label="Dismiss" />
               </Group>
             </Alert>
           )}
@@ -468,18 +470,33 @@ export function ReferralDashboard({
         </Stack>
       </Card>
 
-      {data.referralGrant && <ReferralTimelineProgress grant={data.referralGrant} />}
-
       {/* Token Bank */}
       <Card withBorder p="lg" radius="md">
         <Stack gap="lg">
           <Stack gap={2}>
             <Title order={4}>Referral Token Bank</Title>
             <Text size="sm" c="dimmed">
-              Spend Tokens on temporary Membership perks. Higher tiers run first, lower tiers queue
-              behind them.
+              Spend referral tokens on Membership perks.
             </Text>
           </Stack>
+
+          {!tokenBankAlertDismissed && (
+            <Alert
+              variant="light"
+              color="orange"
+              icon={<IconInfoCircle size={18} />}
+              withCloseButton={false}
+            >
+              <Group justify="space-between" wrap="nowrap" gap="xs">
+                <Text size="sm">
+                  Tokens come from friends paying for a Membership with your code. Earn 1 / 2 / 3
+                  Tokens per Bronze / Silver / Gold month, up to 3 months per friend. Higher tiers
+                  stack first so you never lose value when redeeming.
+                </Text>
+                <CloseButton onClick={() => dismissAlert(ALERT_TOKEN_BANK)} aria-label="Dismiss" />
+              </Group>
+            </Alert>
+          )}
 
           <Group grow>
             <TokenTile
@@ -500,7 +517,7 @@ export function ReferralDashboard({
 
           <Grid>
             {groupedShopItems.map((group) => {
-              const gradient = tierGradient[group.tier];
+              const tierColor = tierColors[group.tier];
               return (
                 <Grid.Col key={group.tier} span={{ base: 12, md: 4 }}>
                   <Paper
@@ -509,56 +526,50 @@ export function ReferralDashboard({
                     p={0}
                     h="100%"
                     className="overflow-hidden"
-                    style={{ borderColor: tierColors[group.tier] }}
+                    style={{ borderColor: tierColor }}
                   >
                     <div
                       className="px-4 py-3"
                       style={{
-                        background: `linear-gradient(135deg, ${gradient.from}, ${gradient.to})`,
+                        borderBottom: `1px solid ${tierColor}`,
+                        background: `linear-gradient(90deg, ${tierColor}26, transparent)`,
                       }}
                     >
-                      <Group justify="space-between" align="center">
-                        <Text fw={800} size="lg" c="dark">
-                          {tierLabels[group.tier]}
-                        </Text>
-                        <ThemeIcon variant="white" color="dark" size="md" radius="xl">
-                          <IconSparkles size={14} />
-                        </ThemeIcon>
-                      </Group>
+                      <Text fw={800} size="lg" style={{ color: tierColor }}>
+                        {tierLabels[group.tier]}
+                      </Text>
                     </div>
-                    <Stack gap="xs" p="md">
-                      {group.offers.map((offer) => {
+                    <Stack gap={0} p="md">
+                      {group.offers.map((offer, i) => {
                         const canAfford = data.balance.settledTokens >= offer.cost;
                         const pending = pendingOffer === offer.originalIndex && isRedeeming;
                         return (
-                          <Group
-                            key={offer.originalIndex}
-                            justify="space-between"
-                            wrap="nowrap"
-                            gap="sm"
-                          >
-                            <Stack gap={0}>
-                              <Text fw={700}>
-                                {offer.durationDays} day{offer.durationDays === 1 ? '' : 's'}
-                              </Text>
-                              <Group gap={4} align="center">
-                                <IconCoin size={12} />
-                                <Text size="xs" c="dimmed">
-                                  {offer.cost} token{offer.cost === 1 ? '' : 's'}
+                          <Fragment key={offer.originalIndex}>
+                            {i > 0 && <Divider my="sm" />}
+                            <Group justify="space-between" wrap="nowrap" gap="sm">
+                              <Stack gap={2}>
+                                <Text fw={700}>
+                                  {offer.durationDays} day{offer.durationDays === 1 ? '' : 's'}
                                 </Text>
-                              </Group>
-                            </Stack>
-                            <Button
-                              size="compact-sm"
-                              variant={canAfford ? 'filled' : 'light'}
-                              color={canAfford ? 'dark' : 'gray'}
-                              disabled={!canAfford || isRedeeming}
-                              loading={pending}
-                              onClick={() => onRedeem(offer.originalIndex)}
-                            >
-                              Redeem
-                            </Button>
-                          </Group>
+                                <Group gap={4} align="center">
+                                  <IconCoin size={12} />
+                                  <Text size="xs" c="dimmed">
+                                    {offer.cost} token{offer.cost === 1 ? '' : 's'}
+                                  </Text>
+                                </Group>
+                              </Stack>
+                              <Button
+                                size="sm"
+                                variant={canAfford ? 'filled' : 'default'}
+                                color="blue"
+                                disabled={!canAfford || isRedeeming}
+                                loading={pending}
+                                onClick={() => onRedeem(offer.originalIndex)}
+                              >
+                                Redeem
+                              </Button>
+                            </Group>
+                          </Fragment>
                         );
                       })}
                     </Stack>
@@ -570,15 +581,12 @@ export function ReferralDashboard({
         </Stack>
       </Card>
 
+      {data.referralGrant && <ReferralTimelineProgress grant={data.referralGrant} />}
+
       {/* Recent referrals */}
       <Card withBorder p="lg" radius="md">
         <Stack gap="md">
-          <Group gap="xs">
-            <ThemeIcon variant="light" color="grape" size="lg" radius="xl">
-              <IconGift size={18} />
-            </ThemeIcon>
-            <Title order={4}>Recent referrals</Title>
-          </Group>
+          <Title order={4}>Recent referrals</Title>
           {visibleActivity.length === 0 ? (
             <Text c="dimmed" size="sm">
               Nothing yet. Share your code above to get started.
