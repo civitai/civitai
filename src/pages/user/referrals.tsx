@@ -1,7 +1,8 @@
-import { Center, Container, Loader, Stack } from '@mantine/core';
+import { Container, Stack } from '@mantine/core';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { ReferralDashboard } from '~/components/Referrals/ReferralDashboard';
+import { ReferralDashboardSkeleton } from '~/components/Referrals/ReferralDashboardSkeleton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -45,11 +46,12 @@ export default function ReferralsPage() {
 
   if (isLoading || !data) {
     return (
-      <Container size="md" className="py-8">
-        <Center>
-          <Loader />
-        </Center>
-      </Container>
+      <>
+        <Meta title="Referrals" deIndex />
+        <Container size="md" className="py-8">
+          <ReferralDashboardSkeleton />
+        </Container>
+      </>
     );
   }
 

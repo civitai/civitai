@@ -189,14 +189,8 @@ export function ReferralDashboard({
       )}
 
       {/* Rank card */}
-      <Card withBorder p="lg" radius="md" className="relative overflow-hidden">
-        <div
-          className="absolute inset-0 opacity-20"
-          style={{
-            background: `radial-gradient(circle at 100% 0%, var(--mantine-color-${rankColor}-6), transparent 60%)`,
-          }}
-        />
-        <Stack gap="lg" className="relative">
+      <Card withBorder p="lg" radius="md">
+        <Stack gap="lg">
           <Group justify="space-between" align="center" wrap="nowrap">
             <Group gap="md" wrap="nowrap">
               <ThemeIcon size={64} radius="md" variant="filled" color={rankColor}>
@@ -704,54 +698,38 @@ function ReferralCodeBlock({ code, shareLink }: { code: string; shareLink: strin
       />
 
       <Stack gap="lg" p="lg" pl="xl" className="relative z-[1]">
-        <Group justify="space-between" align="flex-end" wrap="wrap" gap="md">
-          <Stack gap={6}>
-            <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
-              Your referral code
-            </Text>
-            <Group gap={8} wrap="nowrap" align="center">
-              <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-2 dark:border-white/10 dark:bg-white/[0.04]">
-                <Text
-                  fw={800}
-                  ff="monospace"
-                  className="tracking-widest"
-                  style={{ fontSize: 28, lineHeight: 1 }}
-                >
-                  {code}
-                </Text>
-              </div>
-              <CopyButton value={code}>
-                {({ copied, copy }) => (
-                  <Tooltip label={copied ? 'Copied' : 'Copy code'} withArrow>
-                    <ActionIcon
-                      size="lg"
-                      variant="subtle"
-                      color={copied ? 'green' : 'gray'}
-                      onClick={copy}
-                      aria-label="Copy referral code"
-                    >
-                      {copied ? <IconCheck size={18} /> : <IconCopy size={18} />}
-                    </ActionIcon>
-                  </Tooltip>
-                )}
-              </CopyButton>
-            </Group>
-          </Stack>
-
-          <CopyButton value={shareLink}>
-            {({ copied, copy }) => (
-              <Button
-                leftSection={copied ? <IconCheck size={16} /> : <IconShare3 size={16} />}
-                onClick={copy}
-                variant="gradient"
-                gradient={{ from: 'blue', to: 'violet', deg: 45 }}
-                radius="md"
+        <Stack gap={6}>
+          <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
+            Your referral code
+          </Text>
+          <Group gap={8} wrap="nowrap" align="center">
+            <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-2 dark:border-white/10 dark:bg-white/[0.04]">
+              <Text
+                fw={800}
+                ff="monospace"
+                className="tracking-widest"
+                style={{ fontSize: 28, lineHeight: 1 }}
               >
-                {copied ? 'Link copied' : 'Copy share link'}
-              </Button>
-            )}
-          </CopyButton>
-        </Group>
+                {code}
+              </Text>
+            </div>
+            <CopyButton value={code}>
+              {({ copied, copy }) => (
+                <Tooltip label={copied ? 'Copied' : 'Copy code'} withArrow>
+                  <ActionIcon
+                    size="lg"
+                    variant="subtle"
+                    color={copied ? 'green' : 'gray'}
+                    onClick={copy}
+                    aria-label="Copy referral code"
+                  >
+                    {copied ? <IconCheck size={18} /> : <IconCopy size={18} />}
+                  </ActionIcon>
+                </Tooltip>
+              )}
+            </CopyButton>
+          </Group>
+        </Stack>
 
         <Divider className="opacity-15 dark:opacity-15" />
 
@@ -760,6 +738,20 @@ function ReferralCodeBlock({ code, shareLink }: { code: string; shareLink: strin
             Share it
           </Text>
           <Group gap="xs" wrap="wrap">
+            <CopyButton value={shareLink}>
+              {({ copied, copy }) => (
+                <Button
+                  leftSection={copied ? <IconCheck size={14} /> : <IconShare3 size={14} />}
+                  onClick={copy}
+                  variant="gradient"
+                  gradient={{ from: 'blue', to: 'violet', deg: 45 }}
+                  radius="md"
+                  size="compact-sm"
+                >
+                  {copied ? 'Link copied' : 'Copy link'}
+                </Button>
+              )}
+            </CopyButton>
             <Button
               component="a"
               href={`https://twitter.com/intent/tweet?${new URLSearchParams({
@@ -865,29 +857,23 @@ function HowStep({
 
   return (
     <Grid.Col span={{ base: 12, sm: 6, md: 3 }}>
-      <Paper
-        withBorder
-        radius="md"
-        p={0}
-        h="100%"
-        className="relative overflow-hidden"
-        onMouseMove={handleMouseMove}
-        onMouseLeave={handleMouseLeave}
-      >
+      <Paper withBorder radius="md" p={0} h="100%" className="overflow-hidden">
         <div
-          ref={spotlightRef}
-          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
-          style={{ opacity: 0, zIndex: 2 }}
-        />
-        <div
-          className="relative flex items-center justify-center p-6"
+          className="relative flex items-center justify-center overflow-hidden p-6"
           style={{
             background: `linear-gradient(135deg, var(--mantine-color-${color}-light) 0%, transparent 100%)`,
             borderBottom: `1px solid var(--mantine-color-${color}-light)`,
           }}
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
         >
           <div
-            className="flex size-16 items-center justify-center rounded-full"
+            ref={spotlightRef}
+            className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+            style={{ opacity: 0 }}
+          />
+          <div
+            className="relative flex size-16 items-center justify-center rounded-full"
             style={{
               background: `linear-gradient(135deg, var(--mantine-color-${color}-light) 0%, var(--mantine-color-${color}-filled) 100%)`,
               color: `var(--mantine-color-white)`,
@@ -897,7 +883,7 @@ function HowStep({
             {icon}
           </div>
         </div>
-        <Stack gap={4} p="md" align="center" className="relative">
+        <Stack gap={4} p="md" align="center">
           <Text fw={600} ta="center">
             {title}
           </Text>
