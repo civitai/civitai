@@ -506,6 +506,7 @@ export interface User {
   strikes?: UserStrike[];
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
+  generationPresets?: GenerationPreset[];
   comicProjects?: ComicProject[];
   comicReferences?: ComicReference[];
   comicProjectEngagements?: ComicProjectEngagement[];
@@ -4083,6 +4084,19 @@ export interface UserStrike {
   voidReason: string | null;
   issuedBy: number | null;
   issuedByUser?: User | null;
+}
+
+export interface GenerationPreset {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  ecosystem: string;
+  values: JsonValue;
+  sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

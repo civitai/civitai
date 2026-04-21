@@ -419,6 +419,7 @@ model User {
   strikes                     UserStrike[]                    @relation("userStrikes")
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
+  generationPresets           GenerationPreset[]
 
   // Comics
   comicProjects              ComicProject[]
@@ -5318,4 +5319,21 @@ model UserStrike {
   @@index([userId, expiresAt])
   @@index([status])
   @@index([createdAt])
+}
+
+model GenerationPreset {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String   @db.Citext
+  description String?  @db.VarChar(500)
+  ecosystem   String
+  values      Json
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([userId, ecosystem, name])
+  @@index([userId])
+  @@index([userId, ecosystem])
 }
