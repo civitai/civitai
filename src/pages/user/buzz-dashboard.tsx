@@ -40,6 +40,7 @@ import type {
 import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
+import { ReferralCallout } from '~/components/Referrals/ReferralCallout';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -161,6 +162,8 @@ export default function UserBuzzDashboard() {
               </Text>
             </Stack>
           )}
+
+          <ReferralCallout />
 
           {/* Feature cards (2x2) + Redeem/Purchased codes sidebar */}
           {selectedAccountType === 'yellow' ? (
