@@ -7,6 +7,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { ImageGetInfinite } from '~/types/router';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import clsx from 'clsx';
@@ -56,6 +57,7 @@ function getEligibility(
 }
 
 function ChallengeSelectableImageCard({ image, challenge, selected, onToggle }: Props) {
+  const cardImageWidth = useCardImageWidth();
   const eligibility = useMemo(() => getEligibility(image, challenge), [image, challenge]);
 
   const handleClick = useCallback(() => {
@@ -88,7 +90,7 @@ function ChallengeSelectableImageCard({ image, challenge, selected, onToggle }: 
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
                   type={image.type}
-                  width={450}
+                  width={cardImageWidth}
                   placeholder="empty"
                   style={{ width: '100%' }}
                 />

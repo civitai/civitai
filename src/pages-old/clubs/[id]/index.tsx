@@ -19,6 +19,7 @@ import {
   Title,
   useStyles,
 } from '@mantine/core';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { constants } from '~/server/common/constants';
 import { IconClock, IconClubs, IconPlus, IconSettings } from '@tabler/icons-react';
 import { ClubFeedNavigation } from '~/components/Club/ClubFeedNavigation';
@@ -174,6 +175,7 @@ const Feed = () => {
 
 export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
   const router = useRouter();
+  const cardImageWidth = useCardImageWidth();
   const { id: stringId } = router.query as {
     id: string;
   };
@@ -264,7 +266,7 @@ export const FeedLayout = ({ children }: { children: React.ReactNode }) => {
                           ) : (
                             <ImagePreview
                               image={image}
-                              edgeImageProps={{ width: 450 }}
+                              edgeImageProps={{ width: cardImageWidth }}
                               radius="md"
                               style={{ width: '100%', height: '100%' }}
                               aspectRatio={0}

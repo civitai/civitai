@@ -106,11 +106,7 @@ export default function TagPage({
           </Center>
         </Box>
       )}
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
+      <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
         <MasonryContainer>
           <Stack gap="xs">
             <Group justify="flex-end">

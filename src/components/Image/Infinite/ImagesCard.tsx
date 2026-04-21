@@ -28,6 +28,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -55,6 +56,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
   const currentUser = useCurrentUser();
+  const cardImageWidth = useCardImageWidth();
 
   const image = useImageStore(data);
 
@@ -142,7 +144,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       skip={getSkipValue(image)}
                       type={image.type}
                       wrapperProps={{ className: 'flex-1 h-full' }}
-                      width={450}
+                      width={cardImageWidth}
                       placeholder="empty"
                       contain
                       loading="lazy"

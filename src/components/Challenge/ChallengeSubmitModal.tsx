@@ -446,11 +446,7 @@ export function ChallengeSubmitModal({ challengeId, collectionId }: Props) {
                   scrollRestore={{ enabled: false, key: 'challenge-submit-library' }}
                   style={{ maxHeight: 440, overflowY: 'auto' }}
                 >
-                  <MasonryProvider
-                    columnWidth={constants.cardSizes.image}
-                    maxColumnCount={4}
-                    maxSingleColumnWidth={450}
-                  >
+                  <MasonryProvider columnWidth={constants.cardSizes.image} maxColumnCount={4}>
                     <MasonryContainer m={0} p={0} px={0}>
                       <ImagesInfinite
                         filters={{

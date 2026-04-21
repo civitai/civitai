@@ -10,6 +10,7 @@ import {
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
 import { ComicsSearchIndexSortBy } from '~/components/Search/parsers/comic.parser';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -68,6 +69,7 @@ const RenderFilters = () => {
 export function ComicHitList() {
   const { hits: rawItems, showMore, isLastPage } = useInfiniteHitsTransformed<'comics'>();
   const { status } = useInstantSearch();
+  const cardImageWidth = useCardImageWidth();
   const { items } = useApplyHiddenPreferences({ type: 'comics', data: rawItems });
 
   if (items.length === 0) {
@@ -128,7 +130,7 @@ export function ComicHitList() {
                     src={hit.coverImageUrl}
                     alt={hit.name}
                     type="image"
-                    width={450}
+                    width={cardImageWidth}
                     style={{ width: '100%', height: 200, objectFit: 'cover' }}
                   />
                 ) : (

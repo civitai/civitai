@@ -9,6 +9,7 @@ import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBa
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -74,6 +75,7 @@ export function WinnerPodiumCard({
   compact?: boolean;
   judgeInfo?: JudgeInfo;
 }) {
+  const cardImageWidth = useCardImageWidth();
   const [reasonExpanded, setReasonExpanded] = useState(false);
   const colorScheme = useComputedColorScheme('dark');
   const isDark = colorScheme === 'dark';
@@ -155,11 +157,15 @@ export function WinnerPodiumCard({
                       src={winner.imageUrl!}
                       type={MediaType.image}
                       imageId={winner.imageId!}
-                      width={450}
+                      width={cardImageWidth}
                       className="size-full object-cover transition-transform duration-300 hover:scale-105"
                     />
                   ) : (
-                    <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />
+                    <MediaHash
+                      hash={winner.imageHash ?? null}
+                      width={cardImageWidth}
+                      height={cardImageWidth}
+                    />
                   )}
                 </Link>
                 <div className="absolute left-2 top-2 z-10 flex items-center gap-1">

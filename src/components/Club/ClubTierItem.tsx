@@ -140,7 +140,7 @@ export const TierCoverImage = ({
                     ) : (
                       <ImagePreview
                         image={image}
-                        edgeImageProps={{ width: 450 }}
+                        edgeImageProps={{ width: DEFAULT_EDGE_IMAGE_WIDTH }}
                         radius="md"
                         style={{ width: '100%', height: '100%' }}
                         aspectRatio={0}

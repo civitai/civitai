@@ -65,11 +65,7 @@ function UserArticlesPage() {
 
   return (
     <Box mt="md">
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
+      <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
         <MasonryContainer p={0}>
           <Stack gap="xs">
             <Group gap={8} justify="space-between">

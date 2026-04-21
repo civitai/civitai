@@ -577,11 +577,7 @@ export function Collection({
             (currentUser?.isModerator ?? false)
           }
         >
-          <MasonryProvider
-            columnWidth={constants.cardSizes.model}
-            maxColumnCount={7}
-            maxSingleColumnWidth={450}
-          >
+          <MasonryProvider columnWidth={constants.cardSizes.model} maxColumnCount={7}>
             <MasonryContainer {...containerProps} p={0}>
               <Stack gap="xl" w="100%">
                 <Group gap="xl">

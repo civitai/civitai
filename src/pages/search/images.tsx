@@ -12,6 +12,7 @@ import { SearchHeader } from '~/components/Search/SearchHeader';
 import { SearchLayout } from '~/components/Search/SearchLayout';
 import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImagesSearchIndexSortBy } from '~/components/Search/parsers/image.parser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -123,6 +124,7 @@ function RenderFilters() {
 
 function ImagesHitList() {
   const { status } = useInstantSearch();
+  const cardImageWidth = useCardImageWidth();
 
   const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'images'>();
 
@@ -209,8 +211,8 @@ function ImagesHitList() {
           <MasonryColumnsVirtual
             data={items as any}
             imageDimensions={(data) => {
-              const width = data?.width ?? 450;
-              const height = data?.height ?? 450;
+              const width = data?.width ?? cardImageWidth;
+              const height = data?.height ?? cardImageWidth;
               return { width, height };
             }}
             adjustHeight={({ height }) => {

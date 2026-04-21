@@ -385,7 +385,6 @@ SearchLayout.Content = function Content({ children }: { children: React.ReactNod
     <MasonryProvider
       columnWidth={constants.cardSizes.model}
       maxColumnCount={maxColumnCount}
-      maxSingleColumnWidth={450}
       className="flex-1"
     >
       <MasonryContainer p={0}>

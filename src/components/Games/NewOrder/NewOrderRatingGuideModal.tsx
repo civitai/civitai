@@ -7,6 +7,7 @@ import { useQueryImages } from '~/components/Image/image.utils';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import {
   browsingLevelDescriptions,
@@ -77,6 +78,7 @@ function BrowsingLevelCarousel({
   limit?: number;
 }) {
   const mobile = useIsMobile({ breakpoint: 'sm' });
+  const cardImageWidth = useCardImageWidth();
   const { images, isLoading } = useQueryImages({
     limit,
     browsingLevel,
@@ -125,7 +127,7 @@ function BrowsingLevelCarousel({
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         <ImagePreview
                           image={image}
-                          edgeImageProps={{ width: 450 }}
+                          edgeImageProps={{ width: cardImageWidth }}
                           aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
                           // radius="md"
                           style={{ width: '100%', maxHeight: mobile ? 510 : 370 }}

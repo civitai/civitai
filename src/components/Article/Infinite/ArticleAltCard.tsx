@@ -12,12 +12,14 @@ import { slugit } from '~/utils/string-helpers';
 import { ArticleContextMenu } from '../ArticleContextMenu';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { AssociatedResourceArticleCardData } from '~/server/controllers/model.controller';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import React from 'react';
 import classes from './ArticleAltCard.module.scss';
 
 export function ArticleAltCard({ data, height, ...props }: Props) {
   const router = useRouter();
+  const cardImageWidth = useCardImageWidth();
 
   const { id, title, coverImage, tags, stats } = data;
   const category = tags?.find((tag) => tag.isCategory);
@@ -78,7 +80,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
                   <EdgeMedia
                     className={classes.image}
                     src={coverImage.url}
-                    width={450}
+                    width={cardImageWidth}
                     loading="lazy"
                   />
                 )}

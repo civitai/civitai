@@ -36,6 +36,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useDebouncedValue } from '@mantine/hooks';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { constants } from '~/server/common/constants';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
@@ -62,6 +63,7 @@ const RewardDetailsModal = ({
 }: {
   purchasableReward: PurchasableRewardGetPaged;
 }) => {
+  const cardImageWidth = useCardImageWidth();
   const { purchasedRewards } = useUserPurchasedRewards();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
@@ -129,7 +131,7 @@ const RewardDetailsModal = ({
                       ) : (
                         <ImagePreview
                           image={image}
-                          edgeImageProps={{ width: 450 }}
+                          edgeImageProps={{ width: cardImageWidth }}
                           radius="md"
                           style={{ width: '100%', height: '100%' }}
                           // aspectRatio={0}
@@ -229,6 +231,7 @@ const PurchasableRewardListItem = ({
 }: {
   purchasableReward: PurchasableRewardGetPaged;
 }) => {
+  const cardImageWidth = useCardImageWidth();
   const { purchasedRewards } = useUserPurchasedRewards();
   const isPurchased = purchasedRewards.some(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
@@ -264,7 +267,7 @@ const PurchasableRewardListItem = ({
                   ) : (
                     <ImagePreview
                       image={image}
-                      edgeImageProps={{ width: 450 }}
+                      edgeImageProps={{ width: cardImageWidth }}
                       radius="md"
                       style={{ width: '100%', height: '100%' }}
                       // aspectRatio={0}
@@ -312,6 +315,7 @@ const PurchasableRewardCard = ({
 }: {
   purchasableReward: PurchasableRewardGetPaged;
 }) => {
+  const cardImageWidth = useCardImageWidth();
   const { purchasedRewards } = useUserPurchasedRewards();
   const isPurchased = purchasedRewards.some(
     (pr) => pr.purchasableReward?.id === purchasableReward.id
@@ -354,7 +358,7 @@ const PurchasableRewardCard = ({
                     ) : (
                       <ImagePreview
                         image={image}
-                        edgeImageProps={{ width: 450 }}
+                        edgeImageProps={{ width: cardImageWidth }}
                         // radius="md"
                         style={{ width: '100%', height: '100%' }}
                         // aspectRatio={0}

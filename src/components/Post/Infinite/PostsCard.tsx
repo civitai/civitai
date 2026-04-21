@@ -11,6 +11,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { PostReactions } from '~/components/Reaction/Reactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import classes from './PostsCard.module.css';
@@ -25,6 +26,7 @@ export function PostsCard({
   height?: number;
 }) {
   const currentUser = useCurrentUser();
+  const cardImageWidth = useCardImageWidth();
   const image = images[0];
   const isOwner = currentUser?.id === user.id;
   return (
@@ -69,7 +71,7 @@ export function PostsCard({
                     skip={getSkipValue(image)}
                     type={image.type}
                     imageId={image.id}
-                    width={450}
+                    width={cardImageWidth}
                     placeholder="empty"
                   />
                 )}

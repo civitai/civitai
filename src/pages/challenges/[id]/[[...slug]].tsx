@@ -1541,7 +1541,7 @@ function ChallengeEntries({ challenge }: { challenge: ChallengeDetail }) {
         background: colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[1],
       }}
     >
-      <MasonryProvider columnWidth={appConstants.cardSizes.image} maxSingleColumnWidth={450}>
+      <MasonryProvider columnWidth={appConstants.cardSizes.image}>
         <MasonryContainer>
           <Stack gap="md" py={32}>
             <Group wrap="wrap" justify="space-between">

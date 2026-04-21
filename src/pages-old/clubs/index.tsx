@@ -44,11 +44,7 @@ export default function ClubsPage() {
         description="Create, join and share your own Civitai Clubs."
         canonical="/bounties"
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.club}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
-      >
+      <MasonryProvider columnWidth={constants.cardSizes.club} maxColumnCount={7}>
         <MasonryContainer>
           <Stack gap="xs">
             <Group justify="space-between" gap={8}>

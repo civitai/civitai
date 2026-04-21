@@ -39,6 +39,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
@@ -86,6 +87,7 @@ function ModelCategoryCardContent({
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
+  const cardImageWidth = useCardImageWidth();
 
   const [loading, setLoading] = useState(false);
 
@@ -369,7 +371,7 @@ function ModelCategoryCardContent({
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
                         type={image.type}
-                        width={450}
+                        width={cardImageWidth}
                         placeholder="empty"
                       />
                     )}

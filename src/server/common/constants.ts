@@ -373,6 +373,7 @@ export const POST_TAG_LIMIT = 5;
 export const POST_MINIMUM_SCHEDULE_MINUTES = 60;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
+export const SMALLER_EDGE_IMAGE_WIDTH = 320;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
 

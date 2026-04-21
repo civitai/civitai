@@ -38,6 +38,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumnsVirtual';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Flags } from '~/shared/utils/flags';
@@ -71,6 +72,7 @@ export function ImagesAsPostsInfinite({
   canReview,
 }: ImagesAsPostsInfiniteProps) {
   const currentUser = useCurrentUser();
+  const cardImageWidth = useCardImageWidth();
   const router = useRouter();
   const isMobile = useContainerSmallerThan('sm');
   const limit = isMobile ? LIMIT / 2 : LIMIT;
@@ -156,12 +158,7 @@ export function ImagesAsPostsInfinite({
 
   return (
     <ImagesAsPostsInfiniteProvider value={{ filters, modelVersions, showModerationOptions, model }}>
-      <MasonryProvider
-        columnWidth={320}
-        maxColumnCount={6}
-        maxSingleColumnWidth={450}
-        style={{ flex: 1 }}
-      >
+      <MasonryProvider columnWidth={320} maxColumnCount={6} style={{ flex: 1 }}>
         <MasonryContainer>
           <Stack gap="md">
             <Group gap="xs">
@@ -276,8 +273,8 @@ export function ImagesAsPostsInfinite({
                       return aHeight > bHeight ? -1 : 1;
                     })[0];
 
-                    const width = tallestImage?.width ?? 450;
-                    const height = tallestImage?.height ?? 450;
+                    const width = tallestImage?.width ?? cardImageWidth;
+                    const height = tallestImage?.height ?? cardImageWidth;
                     return { width, height };
                   }}
                   adjustHeight={({ height }, data) => {

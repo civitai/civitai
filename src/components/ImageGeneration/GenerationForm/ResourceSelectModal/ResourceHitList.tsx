@@ -11,6 +11,7 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { constants } from '~/server/common/constants';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import type { ResourceSelectOptions } from '../resource-select.types';
@@ -28,6 +29,7 @@ export function ResourceHitList({
   featured: GetFeaturedModels | undefined;
   selectedTab?: Tabs;
 }) {
+  const cardImageWidth = useCardImageWidth();
   const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);
   const { status } = useInstantSearch();
@@ -229,7 +231,10 @@ export function ResourceHitList({
         <MasonryColumnsVirtual
           data={restItems}
           render={renderCard}
-          imageDimensions={() => ({ width: 450, height: Math.round(450 * (9 / 7)) })}
+          imageDimensions={() => ({
+            width: cardImageWidth,
+            height: Math.round(cardImageWidth * (9 / 7)),
+          })}
           adjustHeight={({ height }) => height + 82}
           itemId={(x) => x.id}
         />

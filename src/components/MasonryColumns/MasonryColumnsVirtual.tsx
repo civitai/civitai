@@ -9,6 +9,7 @@ import type {
 } from '~/components/MasonryColumns/masonry.types';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import clsx from 'clsx';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
@@ -37,6 +38,7 @@ export function MasonryColumnsVirtual<TData>({
   overscan,
 }: Props<TData>) {
   const { columnCount, columnWidth } = useMasonryContext();
+  const cardImageWidth = useCardImageWidth();
 
   const columns = useMasonryColumns(
     data,
@@ -57,11 +59,11 @@ export function MasonryColumnsVirtual<TData>({
           render={render}
           itemId={itemId}
           columnWidth={columnWidth}
-          className={clsx(
-            'flex max-w-[450px] flex-col gap-4',
-            columnCount === 1 ? 'w-full' : 'w-[320px]'
-          )}
-          style={columnCount > 1 ? { width: columnWidth } : undefined}
+          className={clsx('flex flex-col gap-4', columnCount === 1 ? 'w-full' : 'w-[320px]')}
+          style={{
+            maxWidth: cardImageWidth,
+            ...(columnCount > 1 ? { width: columnWidth } : undefined),
+          }}
           overscan={overscan}
         />
       ))}

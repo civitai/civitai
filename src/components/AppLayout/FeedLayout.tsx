@@ -6,11 +6,7 @@ import { constants } from '~/server/common/constants';
 export function FeedLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxSingleColumnWidth={450}
-        className="z-10 m-0 flex-1"
-      >
+      <MasonryProvider columnWidth={constants.cardSizes.model} className="z-10 m-0 flex-1">
         {children}
       </MasonryProvider>
       <RenderAdUnitOutstream minContainerWidth={3200} />

@@ -2,7 +2,7 @@ import cardClasses from '~/components/Cards/Cards.module.css';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { IconCategory, IconPhoto } from '@tabler/icons-react';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -21,6 +21,7 @@ export function GenericImageCard({
   entityType?: string;
   disabled?: boolean;
 }) {
+  const cardImageWidth = useCardImageWidth();
   const url = (() => {
     if (!entityType || !entityId) return undefined;
 
@@ -95,8 +96,8 @@ export function GenericImageCard({
                         imageId={image.id}
                         width={
                           originalAspectRatio > 1
-                            ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-                            : DEFAULT_EDGE_IMAGE_WIDTH
+                            ? cardImageWidth * originalAspectRatio
+                            : cardImageWidth
                         }
                         skip={getSkipValue(image)}
                         placeholder="empty"

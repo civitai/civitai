@@ -1,6 +1,7 @@
 import type { BoxProps } from '@mantine/core';
 import { Box } from '@mantine/core';
 import React, { createContext, useContext, useMemo, useState } from 'react';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { useDebouncer } from '~/utils/debouncer';
@@ -39,9 +40,11 @@ export function MasonryProvider({
   gap = 16,
   columnGap = gap,
   rowGap = gap,
-  maxSingleColumnWidth = 450,
+  maxSingleColumnWidth,
   ...boxProps
 }: Props) {
+  const cardImageWidth = useCardImageWidth();
+  const resolvedMaxSingleColumnWidth = maxSingleColumnWidth ?? cardImageWidth;
   // width will be set to the inner width of the element. (clientWidth - paddingX)
   const [width, setWidth] = useState(0);
   const debouncer = useDebouncer(100);
@@ -73,7 +76,7 @@ export function MasonryProvider({
         columnGap,
         rowGap,
         maxColumnCount,
-        maxSingleColumnWidth,
+        maxSingleColumnWidth: resolvedMaxSingleColumnWidth,
         columnCount,
         combinedWidth,
       }}

@@ -12,6 +12,7 @@ import {
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { breakpoints } from '~/utils/tailwind';
@@ -37,6 +38,7 @@ export function ImageCarouselContent({
   onClick,
   isLoading: loading,
 }: Props) {
+  const cardImageWidth = useCardImageWidth();
   const transformed = useMemo(
     () =>
       images.map((image) => ({
@@ -118,7 +120,7 @@ export function ImageCarouselContent({
                         <ImagePreview
                           image={image}
                           edgeImageProps={{
-                            width: 450,
+                            width: cardImageWidth,
                             style: { objectPosition: mobile ? 'top' : 'center' },
                           }}
                           // radius="md"

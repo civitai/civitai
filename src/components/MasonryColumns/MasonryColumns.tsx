@@ -10,6 +10,7 @@ import type {
 } from '~/components/MasonryColumns/masonry.types';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import clsx from 'clsx';
 
 type Props<TData> = {
@@ -35,6 +36,7 @@ export function MasonryColumns<TData>({
   withAds,
 }: Props<TData>) {
   const { columnCount, columnWidth } = useMasonryContext();
+  const cardImageWidth = useCardImageWidth();
 
   const columns = useMasonryColumns(
     data,
@@ -51,13 +53,13 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div
           key={colIndex}
-          className={clsx(
-            'flex max-w-[450px] flex-col gap-4',
-            columnCount === 1 ? 'w-full' : 'w-[320px]'
-          )}
-          style={columnCount > 1 ? { width: columnWidth } : undefined}
+          className={clsx('flex flex-col gap-4', columnCount === 1 ? 'w-full' : 'w-[320px]')}
+          style={{
+            maxWidth: cardImageWidth,
+            ...(columnCount > 1 ? { width: columnWidth } : undefined),
+          }}
         >
-          {staticItem?.({ columnWidth, height: 450 })}
+          {staticItem?.({ columnWidth, height: cardImageWidth })}
           {items.map(({ height, data }, index) => {
             switch (data.type) {
               case 'data':

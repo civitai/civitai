@@ -23,6 +23,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useInView } from '~/hooks/useInView';
+import { useCardImageWidth } from '~/hooks/useCardImageWidth';
 import type { NsfwLevel } from '~/server/common/enums';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
@@ -69,7 +70,7 @@ export default function JudgmentHistoryModal() {
             ]}
           />
         </div>
-        <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
+        <MasonryProvider columnWidth={310} maxColumnCount={7}>
           <MasonryContainer py="xl">
             {isLoading ? (
               <Center>
@@ -116,6 +117,7 @@ type JudgmentHistoryProps = {
 function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
   const { ref: inViewRef, inView } = useInView();
   const theme = useMantineTheme();
+  const cardImageWidth = useCardImageWidth();
 
   const { image, rating, grantedExp, multiplier, status } = data;
   const totalExp = Math.floor(grantedExp * (multiplier ?? 1));
@@ -144,7 +146,12 @@ function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
     >
       {inView && (
         <>
-          <EdgeMedia2 src={image.url} className="h-full object-cover" type="image" width={450} />
+          <EdgeMedia2
+            src={image.url}
+            className="h-full object-cover"
+            type="image"
+            width={cardImageWidth}
+          />
 
           <LegacyActionIcon
             component={Link}
