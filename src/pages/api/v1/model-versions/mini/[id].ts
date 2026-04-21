@@ -4,7 +4,7 @@ import type { Session } from 'next-auth';
 import * as z from 'zod';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import {
   getShouldChargeForResources,
   getUnavailableResources,
@@ -64,7 +64,7 @@ export default MixedAuthEndpoint(async function handler(
   if (!user?.isModerator)
     where.push(Prisma.sql`(mv.status = 'Published' OR m."userId" = ${user?.id})`);
 
-  const [modelVersion] = await dbRead.$queryRaw<VersionRow[]>`
+  const [modelVersion] = await dbWrite.$queryRaw<VersionRow[]>`
     SELECT
       mv.id,
       mv.name as "versionName",
@@ -109,7 +109,7 @@ export default MixedAuthEndpoint(async function handler(
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
 
-  const files = await dbRead.$queryRaw<FileRow[]>`
+  const files = await dbWrite.$queryRaw<FileRow[]>`
     SELECT 
       mf.id, 
       mf.type, 

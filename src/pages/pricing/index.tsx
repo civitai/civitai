@@ -9,11 +9,14 @@ import { MembershipPageWrapper } from '~/components/Purchase/MembershipPageWrapp
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { env } from '~/env/client';
+import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import type { JoinRedirectReason } from '~/utils/join-helpers';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+import { Button, Stack, Text, ThemeIcon, Title } from '@mantine/core';
+import { IconArrowRight, IconPepper } from '@tabler/icons-react';
 
 export default function Pricing() {
   const router = useRouter();
@@ -23,6 +26,7 @@ export default function Pricing() {
     buzzType?: 'green' | 'red' | 'yellow';
   };
   const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
   const paymentProvider = usePaymentProvider();
 
   const [interval, setInterval] = useState<'month' | 'year'>('month');
@@ -44,19 +48,15 @@ export default function Pricing() {
   // Auto-redirect to green environment if green is selected but we're not in green
   useEffect(() => {
     if (!features.isGreen && selectedBuzzType === 'green') {
-      const query = {
-        reason,
-        buzzType: 'green',
-        'sync-account': 'blue',
-      };
+      const query = { reason, buzzType: 'green' };
 
       window.open(
-        `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN as string}/pricing?${QS.stringify(query)}`,
+        syncAccount(`//${serverDomains.green}/pricing?${QS.stringify(query)}`),
         '_blank',
         'noreferrer'
       );
     }
-  }, [selectedBuzzType, features.isGreen, reason]);
+  }, [selectedBuzzType, features.isGreen, reason, serverDomains.green]);
 
   // If no buzz type is selected and not on green environment, show selection screen
   if (!features.isGreen && !selectedBuzzType) {
@@ -122,20 +122,54 @@ export default function Pricing() {
   }
 
   // Main membership plans view
-  const membershipTitle =
-    selectedBuzzType === 'green'
-      ? 'Green Memberships'
-      : selectedBuzzType === 'yellow'
-      ? 'Yellow Memberships'
-      : 'Memberships';
+  const redDomain = serverDomains.red;
+  const redPricingUrl = redDomain ? `//${redDomain}/pricing` : 'https://civitai.red/pricing';
 
   return (
     <MembershipPageWrapper
-      title={membershipTitle}
+      title={features.isGreen ? '' : 'Memberships'}
+      introText={features.isGreen ? '' : undefined}
       reason={reason}
-      showBuzzTopUp={true}
+      showBuzzTopUp={!features.isGreen}
       buzzType={selectedBuzzType}
     >
+      {features.isGreen && (
+        <Stack gap="md" align="center" mb="sm">
+          <Stack gap={4} align="center">
+            <Title order={1} className="text-center text-3xl font-bold sm:text-4xl">
+              Memberships
+            </Title>
+            <Text size="md" c="dimmed" className="text-center">
+              Get Buzz each month along with a variety of Pro Creator perks
+            </Text>
+          </Stack>
+          <div className="flex items-center gap-3 rounded-lg border border-red-9/30 bg-gradient-to-r from-red-9/15 via-red-9/5 to-transparent px-4 py-2.5">
+            <ThemeIcon variant="light" color="red" size="md" radius="xl" className="shrink-0">
+              <IconPepper size={16} />
+            </ThemeIcon>
+            <Text size="sm" className="flex-1 text-gray-2">
+              Unrestricted content creation has moved to{' '}
+              <Text component="span" fw={700} c="red.4">
+                civitai.red
+              </Text>
+            </Text>
+            <Button
+              component="a"
+              href={redPricingUrl}
+              target="_blank"
+              rel="noreferrer nofollow"
+              color="red"
+              variant="outline"
+              size="compact-sm"
+              radius="xl"
+              rightSection={<IconArrowRight size={14} />}
+              className="shrink-0"
+            >
+              Visit civitai.red
+            </Button>
+          </div>
+        </Stack>
+      )}
       <div
         style={{
           // @ts-ignore

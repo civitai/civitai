@@ -9,6 +9,7 @@ import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import { MatureContentMigrationAlert } from '~/components/Alerts/MatureContentMigrationAlert';
 import { Announcements } from '~/components/Announcements/Announcements';
 import type { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
@@ -17,6 +18,7 @@ import { openReadOnlyModal } from '~/components/Dialog/triggers/read-only';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
 import { ChatPortal } from '~/components/Chat/ChatPortal';
+import { RewardsBonusBanner } from '~/components/Buzz/RewardsBonusBanner';
 import { useRegionWarning } from '~/components/RegionBlock/useRegionWarning';
 import { useRegionRedirectDetection } from '~/components/RegionBlock/useRegionRedirectDetection';
 import { useToSUpdateModal } from '~/hooks/useToSUpdateModal';
@@ -121,8 +123,15 @@ export function MainContent({
   return scrollable ? (
     <ScrollArea {...props}>
       <main className="flex-1">
-        {subNav && <SubNav>{subNav}</SubNav>}
+        {subNav && (
+          <SubNav>
+            <RewardsBonusBanner />
+            {subNav}
+          </SubNav>
+        )}
+        {!subNav && <RewardsBonusBanner />}
         {announcements && <Announcements />}
+        {announcements && <MatureContentMigrationAlert />}
         {children}
       </main>
       {footer}
@@ -130,7 +139,13 @@ export function MainContent({
   ) : (
     <div className="no-scroll group flex flex-1 flex-col overflow-hidden">
       <main className="flex flex-1 flex-col overflow-hidden">
-        {subNav && <SubNav>{subNav}</SubNav>}
+        {subNav && (
+          <SubNav>
+            <RewardsBonusBanner />
+            {subNav}
+          </SubNav>
+        )}
+        {!subNav && <RewardsBonusBanner />}
         {children}
       </main>
       {footer}

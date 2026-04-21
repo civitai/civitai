@@ -1,15 +1,13 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import dynamic from 'next/dynamic';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { useServerDomains } from '~/providers/AppProvider';
 
 const RegionRedirectModal = dynamic(
   () => import('~/components/RegionRedirect/RegionRedirectModal'),
   { ssr: false }
 );
-
-const otherDomains = [colorDomains.blue, colorDomains.red].filter(Boolean);
 
 /**
  * Hook to detect if the user was redirected due to region restrictions
@@ -17,6 +15,11 @@ const otherDomains = [colorDomains.blue, colorDomains.red].filter(Boolean);
  */
 export function useRegionRedirectDetection() {
   const { isRestricted } = useIsRegionRestricted();
+  const serverDomains = useServerDomains();
+  const otherDomains = useMemo(
+    () => [serverDomains.blue, serverDomains.red].filter(Boolean) as string[],
+    [serverDomains.blue, serverDomains.red]
+  );
 
   useEffect(() => {
     // Check localStorage to see if we've already shown this modal before
@@ -30,9 +33,7 @@ export function useRegionRedirectDetection() {
     const redirectParam = urlParams.get('region-redirect');
 
     // Check if referrer is from other servers (excluding green/main domain)
-    const isFromOtherServer = otherDomains.some(
-      (domain) => domain && document.referrer.includes(domain)
-    );
+    const isFromOtherServer = otherDomains.some((domain) => document.referrer.includes(domain));
 
     if (redirectParam === 'true' || isFromOtherServer) {
       dialogStore.trigger({
@@ -41,5 +42,5 @@ export function useRegionRedirectDetection() {
         props: { storageKey },
       });
     }
-  }, [isRestricted]);
+  }, [isRestricted, otherDomains]);
 }

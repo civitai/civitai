@@ -13,6 +13,7 @@ import {
   getPaymentIntent,
   getSetupIntent,
   createCancelSubscriptionSession,
+  cancelSubscriptionWithFallback,
 } from './../services/stripe.service';
 import type { Context } from '~/server/createContext';
 import type * as Schema from '../schema/stripe.schema';
@@ -193,6 +194,22 @@ export const createCancelSubscriptionSessionHandler = async ({
   if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
   try {
     return await createCancelSubscriptionSession({ customerId: ctx.user.customerId });
+  } catch (error) {
+    throw getTRPCErrorFromUnknown(error);
+  }
+};
+
+export const cancelSubscriptionWithFallbackHandler = async ({
+  ctx,
+}: {
+  ctx: DeepNonNullable<Context>;
+}) => {
+  if (!ctx.user.customerId) throw throwNotFoundError('customerId not found');
+  try {
+    return await cancelSubscriptionWithFallback({
+      customerId: ctx.user.customerId,
+      userId: ctx.user.id,
+    });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }

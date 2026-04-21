@@ -199,3 +199,52 @@
     margin-left: -4px;
   }
 }
+
+@keyframes upsellShimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
+
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+@keyframes upsellPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 12px rgba(255, 212, 59, 0.45),
+      0 0 24px rgba(99, 86, 245, 0.35);
+  }
+
+  50% {
+    box-shadow: 0 0 20px rgba(255, 212, 59, 0.7),
+      0 0 36px rgba(99, 86, 245, 0.55);
+  }
+}
+
+.upsellCta {
+  background: linear-gradient(
+    110deg,
+    var(--mantine-color-blue-6) 0%,
+    var(--mantine-color-grape-6) 45%,
+    var(--mantine-color-yellow-5) 100%
+  );
+  background-size: 220% 220%;
+  animation: upsellShimmer 5s ease infinite, upsellPulse 2.4s ease-in-out infinite;
+  color: var(--mantine-color-white);
+  font-weight: 700;
+  border: none;
+
+  &:hover {
+    filter: brightness(1.08);
+  }
+
+  .upsellCtaIcon {
+    filter: drop-shadow(0 0 4px rgba(255, 255, 255, 0.9));
+  }
+}

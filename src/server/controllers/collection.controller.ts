@@ -68,7 +68,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -459,11 +458,9 @@ export const collectionItemsInfiniteHandler = async ({
   ctx: Context;
 }) => {
   input.limit = input.limit ?? DEFAULT_PAGE_SIZE;
-  const features = getFeatureFlags({ user: ctx.user, req: ctx.req });
   const result = await getCollectionItemsByCollectionId({
     input,
     user: ctx.user,
-    dbTarget: features.datapacketRead ? 'datapacket' : 'read',
   });
 
   return {

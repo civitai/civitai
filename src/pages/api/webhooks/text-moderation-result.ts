@@ -1,3 +1,15 @@
+/**
+ * Text moderation result webhook.
+ *
+ * Non-atomicity note: `recordEntityModerationSuccess` and the entity handler
+ * (which calls `recomputeArticleIngestion`) run in separate transactions. If
+ * the process crashes between them, the orchestrator's webhook retry will
+ * redeliver the callback — `recordEntityModerationSuccess` is idempotent
+ * (updateMany on a matching workflowId) and `recomputeArticleIngestion`
+ * derives state from ground truth, so replay is safe. For the rare case
+ * where the orchestrator already received a 200 and won't retry, the
+ * `article-ingestion-reconcile` cron picks up the drift within 10 minutes.
+ */
 import type { WorkflowEvent, XGuardModerationOutput, XGuardModerationStep } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -6,8 +18,13 @@ import {
   recordEntityModerationFailure,
   recordEntityModerationSuccess,
 } from '~/server/services/entity-moderation.service';
+import { dbWrite } from '~/server/db/client';
+import { NotificationCategory } from '~/server/common/enums';
+import { createNotification } from '~/server/services/notification.service';
+import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { recomputeArticleIngestion } from '~/server/services/article.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 type TextModerationResult = {
   entityType: string;
@@ -19,9 +36,47 @@ type TextModerationResult = {
 
 // Entity-specific handlers keyed by entityType
 const entityHandlers: Record<string, (result: TextModerationResult) => Promise<void>> = {
-  // Article: async ({ entityId, blocked, triggeredLabels, output }) => {
-  //   TODO: update article with moderation results
-  // },
+  Article: async ({ entityId, blocked, triggeredLabels }) => {
+    // Text moderation now only returns whether the article content is NSFW or not.
+    // Blocked content is treated as NSFW regardless of triggered labels.
+    const isNsfw = blocked || triggeredLabels.some((label) => label.toLowerCase() === 'nsfw');
+
+    // recordEntityModerationSuccess has already persisted the moderation
+    // result above. updateArticleNsfwLevels's moderation_floor subquery reads
+    // that record directly, so the R floor is applied intrinsically — no
+    // parameter or prior write needed.
+    if (isNsfw) {
+      await updateArticleNsfwLevels([entityId]);
+    }
+
+    // If blocked, auto-unpublish and notify
+    if (blocked) {
+      const article = await dbWrite.article.findUnique({
+        where: { id: entityId },
+        select: { status: true, userId: true },
+      });
+      if (article && article.status !== ArticleStatus.UnpublishedViolation) {
+        await dbWrite.article.update({
+          where: { id: entityId },
+          data: { status: ArticleStatus.UnpublishedViolation },
+        });
+        await createNotification({
+          userId: article.userId,
+          category: NotificationCategory.System,
+          type: 'system-message',
+          key: `article-text-blocked-${entityId}`,
+          details: {
+            message:
+              'Your article was unpublished because its content violates our Terms of Service.',
+            url: `/articles/${entityId}`,
+          },
+        });
+      }
+    }
+
+    // Recompute article ingestion status after text moderation result
+    await recomputeArticleIngestion(entityId);
+  },
 };
 
 export default WebhookEndpoint(async (req, res) => {
@@ -115,6 +170,11 @@ export default WebhookEndpoint(async (req, res) => {
           entityType,
           entityId,
         });
+
+        // Recompute article ingestion status on text moderation failure
+        if (entityType === 'Article') {
+          await recomputeArticleIngestion(entityId);
+        }
         break;
       }
       default: {

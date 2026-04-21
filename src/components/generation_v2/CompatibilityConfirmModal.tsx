@@ -347,8 +347,27 @@ function CompatibilityConfirmModalContent({
 /**
  * Opens the compatibility confirmation modal via dialogStore.
  * This ensures proper z-index stacking when opened from other modals.
+ *
+ * When there's no ambiguity (single compatible ecosystem for workflow changes,
+ * or single target workflow for ecosystem changes), skips the modal and calls
+ * onConfirm directly.
  */
 export function openCompatibilityConfirmModal(props: CompatibilityConfirmModalProps) {
+  const { pendingChange, onConfirm } = props;
+
+  if (pendingChange.type === 'workflow' && pendingChange.compatibleEcosystemIds.length === 1) {
+    onConfirm(pendingChange.defaultEcosystemKey);
+    return;
+  }
+
+  if (pendingChange.type === 'ecosystem') {
+    const targetEcosystemIds = getEcosystemsForWorkflow(pendingChange.targetWorkflowId);
+    if (targetEcosystemIds.length === 1) {
+      onConfirm();
+      return;
+    }
+  }
+
   dialogStore.trigger({
     id: 'compatibility-confirm',
     component: CompatibilityConfirmModalContent,

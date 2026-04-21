@@ -1252,7 +1252,7 @@ SourceImageUploadMultiple.CloseButton = function CloseButton({
 }) {
   return (
     <ActionIcon
-      className="absolute right-0 top-0"
+      className="absolute right-0 top-0 z-30"
       variant="filled"
       color="red"
       size="sm"
@@ -1627,7 +1627,7 @@ SourceImageUploadMultiple.Image = function ImagePreview({
                 ) : (
                   // Desktop: Full hover overlay
                   <div
-                    className="absolute inset-0 flex cursor-pointer items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
+                    className="absolute inset-0 z-20 flex cursor-pointer items-center justify-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100"
                     onClick={handleOpenDrawingEditor}
                   >
                     <div className="flex items-center gap-2 rounded-md bg-white/90 px-3 py-2 text-dark-9">

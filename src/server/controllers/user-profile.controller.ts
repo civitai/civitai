@@ -20,10 +20,22 @@ import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
 import { amIBlockedByUser } from '~/server/services/user.service';
 
-export const getUserContentOverviewHandler = async ({ input }: { input: GetUserProfileSchema }) => {
+export const getUserContentOverviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetUserProfileSchema;
+  ctx: Context;
+}) => {
+  // Pick the overview variant so the counts match what the user can actually browse:
+  //   anonymous (any domain)     → 'public' (PG only)
+  //   logged-in on green domain  → 'sfw'    (PG + PG-13)
+  //   logged-in on blue/red      → 'all'    (respect user preference)
+  const variant = !ctx.user ? 'public' : ctx.domain === 'green' ? 'sfw' : 'all';
   try {
     const overview = await getUserContentOverview({
       username: input.username,
+      variant,
     });
 
     return overview;

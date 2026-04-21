@@ -172,6 +172,11 @@ export default defineNextConfig(
     },
     poweredByHeader: false,
     redirects: async () => {
+      // Note: the .red-host support-portal bounce is implemented as a
+      // Cloudflare Redirect Rule on the civitai.red zone. Config lives at
+      // ops/cloudflare/civitai-red-redirects.json. A host-conditional rule
+      // here would be pruned to nothing at build time anyway since
+      // SERVER_DOMAIN_* env vars aren't exposed as Docker build ARGs.
       return [
         {
           source: '/api/download/training-data/:modelVersionId',
@@ -231,6 +236,11 @@ export default defineNextConfig(
         {
           source: '/v/civitai-link-installation',
           destination: 'https://youtu.be/fs-Zs-fvxb0',
+          permanent: false,
+        },
+        {
+          source: '/v/ally-parting-message',
+          destination: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
           permanent: false,
         },
         {

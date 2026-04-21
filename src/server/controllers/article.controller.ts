@@ -35,8 +35,14 @@ export const upsertArticleHandler = async ({
     );
     // Only users with adminTags featureFlag can add adminOnly tags
     if (includesAdminOnlyTag && !ctx.features.adminTags) throw throwAuthorizationError();
+    const scanContent = ctx.features.articleImageScanning ?? false;
 
-    return upsertArticle({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator });
+    return upsertArticle({
+      ...input,
+      userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+      scanContent,
+    });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -56,7 +62,7 @@ export async function unpublishArticleHandler({
     // Fetch current metadata
     const article = await dbRead.article.findUnique({
       where: { id },
-      select: { metadata: true, nsfw: true },
+      select: { metadata: true },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${input.id}`);
@@ -70,15 +76,6 @@ export async function unpublishArticleHandler({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
-
-    // Optional: Track analytics event (if article tracking exists)
-    // if (ctx.track.articleEvent) {
-    //   await ctx.track.articleEvent({
-    //     type: 'Unpublish',
-    //     articleId: id,
-    //     nsfw: article.nsfw,
-    //   });
-    // }
 
     return {
       ...updatedArticle,

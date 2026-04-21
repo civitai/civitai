@@ -54,6 +54,8 @@ import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
+import { ernieGraph } from './ernie-graph';
+import { seedanceGraph } from './seedance-graph';
 
 // =============================================================================
 // Helper Functions
@@ -160,12 +162,20 @@ export const ecosystemGraph = new DataGraph<
       // Prefer workflows in the same category (image/video) as the current workflow,
       // and exclude enhancement and noSubmit (utility) workflows.
       const currentCategory = workflowConfigByKey.get(ctx.workflow)?.category;
-      const compatibleWorkflows = getWorkflowsForEcosystem(ecosystem.id).filter((w) => {
+      const allWorkflows = getWorkflowsForEcosystem(ecosystem.id);
+      let compatibleWorkflows = allWorkflows.filter((w) => {
         if (w.enhancement) return false;
         const config = workflowConfigByKey.get(w.graphKey);
         if (config?.noSubmit) return false;
         return true;
       });
+      // If all workflows are enhancement (e.g. Upscaler ecosystem), allow them
+      if (compatibleWorkflows.length === 0) {
+        compatibleWorkflows = allWorkflows.filter((w) => {
+          const config = workflowConfigByKey.get(w.graphKey);
+          return !config?.noSubmit;
+        });
+      }
       const sameCategory = currentCategory
         ? compatibleWorkflows.filter((w) => w.category === currentCategory)
         : [];
@@ -226,6 +236,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
     { values: ['Anima'] as const, graph: animaGraph },
+    { values: ['Ernie'] as const, graph: ernieGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {
@@ -255,6 +266,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
+    { values: ['Seedance'] as const, graph: seedanceGraph },
   ])
   // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
   .node(

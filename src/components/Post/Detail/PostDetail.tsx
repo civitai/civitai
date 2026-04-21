@@ -65,7 +65,6 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { Flags } from '~/shared/utils/flags';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -159,10 +158,6 @@ export function PostDetailContent({ postId }: Props) {
     postResources.find((resource) => resource.modelVersionId === post.modelVersionId);
 
   const scrollHeight = scrollRef?.current?.clientHeight ?? 0;
-  const aggregateBrowsingLevel = images.reduce<number>(
-    (acc, image) => Flags.addFlag(acc, image.nsfwLevel),
-    0
-  );
 
   return (
     <>
@@ -181,6 +176,7 @@ export function PostDetailContent({ postId }: Props) {
       <SensitiveShield
         contentNsfwLevel={forcedBrowsingLevel || post.nsfwLevel}
         isLoading={!!(post?.collectionId && isLoadingPostCollection)}
+        bypassRating={isOwnerOrMod}
       >
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
         <RenderAdUnitOutstream minContainerWidth={1964} />
@@ -442,12 +438,8 @@ export function PostDetailContent({ postId }: Props) {
             >
               <div className="sticky left-0 top-0 ">
                 <div className="flex w-full flex-col gap-3 py-3">
-                  {sidebarEnabled && scrollHeight >= 600 && (
-                    <AdUnitSide_1 browsingLevel={aggregateBrowsingLevel} />
-                  )}
-                  {sidebarEnabled && scrollHeight > 900 && (
-                    <AdUnitSide_2 browsingLevel={aggregateBrowsingLevel} />
-                  )}
+                  {sidebarEnabled && scrollHeight >= 600 && <AdUnitSide_1 />}
+                  {sidebarEnabled && scrollHeight > 900 && <AdUnitSide_2 />}
                 </div>
               </div>
             </div>

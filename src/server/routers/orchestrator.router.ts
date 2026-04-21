@@ -2,11 +2,14 @@ import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
   buildGenerationContext,
+  formatGenerationResponse2,
   generateFromGraph,
   getWorkflowStatusUpdate,
   queryGeneratedImageWorkflows2,
   whatIfFromGraph,
 } from '~/server/services/orchestrator/orchestration-new.service';
+import { getWorkflow as clientGetWorkflow } from '@civitai/client';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
@@ -64,21 +67,28 @@ import {
   grokSizes,
 } from '~/server/common/constants';
 import type { SessionUser } from 'next-auth';
-import {
-  getFlagged,
-  getReasons,
-  getConsumerStrikes,
-  reviewConsumerStrikes,
-} from '../http/orchestrator/flagged-consumers';
-import {
-  getFlaggedConsumersSchema,
-  getFlaggedReasonsSchema,
-  getFlaggedConsumerStrikesSchema,
-} from '~/server/schema/orchestrator/flagged-consumers.schema';
+import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
+
+/**
+ * Resolves the currencies to use for a generation request.
+ * If the user selected a specific buzz type, validates it's allowed and uses only that type.
+ * Otherwise falls back to all allowed types for the domain.
+ */
+function resolveGenerationCurrencies(
+  features: Parameters<typeof getAllowedAccountTypes>[0],
+  userBuzzType?: string
+): BuzzSpendType[] {
+  const allowed = getAllowedAccountTypes(features, ['blue']);
+  if (userBuzzType && allowed.includes(userBuzzType as BuzzSpendType)) {
+    return [userBuzzType as BuzzSpendType];
+  }
+  return allowed;
+}
 
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
@@ -331,6 +341,7 @@ export const orchestratorRouter = router({
         sourceMetadata,
         sourceMetadataMap,
         remixOfId,
+        buzzType,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
@@ -352,7 +363,7 @@ export const orchestratorRouter = router({
         experimental: ctx.experimental,
         isGreen: ctx.features.isGreen,
         allowMatureContent: ctx.allowMatureContent,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        currencies: resolveGenerationCurrencies(ctx.features, buzzType),
         isModerator: ctx.user.isModerator,
         track: ctx.track,
         civitaiTip,
@@ -418,12 +429,13 @@ export const orchestratorRouter = router({
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
+      const { buzzType, ...rest } = input;
       const args = {
-        ...input,
+        ...rest,
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);
     }),
@@ -455,15 +467,19 @@ export const orchestratorRouter = router({
       });
     }),
 
-  getFlaggedConsumers: moderatorProcedure
-    .input(getFlaggedConsumersSchema)
-    .query(({ input }) => getFlagged(input)),
-  getFlaggedReasons: moderatorProcedure
-    .input(getFlaggedReasonsSchema)
-    .query(({ input }) => getReasons(input)),
-  getFlaggedConsumerStrikes: moderatorProcedure
-    .input(getFlaggedConsumerStrikesSchema)
-    .query(({ input }) => getConsumerStrikes(input)),
+  /** Fetch any workflow by ID and normalize it (moderator only) */
+  getWorkflowForModeration: moderatorProcedure
+    .input(workflowIdSchema)
+    .query(async ({ ctx, input }) => {
+      const { data } = await clientGetWorkflow({
+        client: internalOrchestratorClient,
+        path: { workflowId: input.workflowId },
+      });
+      if (!data) throw new TRPCError({ code: 'NOT_FOUND', message: 'Workflow not found' });
+      const [normalized] = await formatGenerationResponse2([data], ctx.user);
+      return normalized;
+    }),
+
   reviewConsumerStrikes: moderatorProcedure
     .input(z.object({ userId: z.number() }))
     .mutation(({ input, ctx }) =>

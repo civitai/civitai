@@ -480,13 +480,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </Button>
           ) : showPublishButton ? (
             <Stack gap={4}>
-              {couldGenerate && isOwnerOrMod && (
+              {canGenerate && isOwnerOrMod && (
                 <GenerateButton
-                  model={model}
-                  version={version}
                   versionId={version.id}
-                  image={image}
-                  canGenerate={canGenerate}
                   data-tour="model:create"
                   data-activity="create:model"
                   py={8}
@@ -551,15 +547,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               {/* Primary Actions Card */}
               <Card withBorder p="md">
                 <Stack gap="xs">
-                  {/* Generate button - hidden when generation is unavailable */}
-                  {couldGenerate && (
+                  {canGenerate ? (
                     <GenerateButton
-                      model={model}
-                      version={version}
                       versionId={version.id}
-                      image={image}
-                      canGenerate={canGenerate}
-                      hideBidFallback
                       data-tour="model:create"
                       data-activity="create:model"
                       disabled={isLoadingAccess || !!model.mode}
@@ -573,7 +563,26 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       onPurchase={() => onPurchase('generation')}
                       fullWidth
                     />
-                  )}
+                  ) : features.auctions &&
+                    couldGenerate &&
+                    model.availability !== Availability.Private &&
+                    model.status === ModelStatus.Published &&
+                    !model.meta?.cannotPromote &&
+                    !model.poi ? (
+                    <BidModelButton
+                      entityData={getEntityDataForBidModelButton({
+                        version,
+                        model,
+                        image,
+                      })}
+                      asButton
+                      buttonProps={{
+                        className: 'pl-[8px] pr-[12px] w-full',
+                        color: 'cyan',
+                      }}
+                      divProps={{ className: 'w-full' }}
+                    />
+                  ) : null}
                   {/* Action icon buttons row */}
                   <Group gap={8} wrap="nowrap" grow>
                     <Tooltip label="Share" position="top" withArrow>
@@ -1701,7 +1710,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.nsfw && !model.poi && <AdUnitSide_2 />}
+          {!model.poi && <AdUnitSide_2 />}
         </Stack>
       </ContainerGrid2.Col>
 

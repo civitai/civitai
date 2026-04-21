@@ -71,12 +71,7 @@ export function ModerationNav() {
           href: '/moderator/auctions',
           hidden: !features.auctionsMod,
         },
-        {
-          label: 'Generator Flagged',
-          href: '/moderator/orchestrator/flagged',
-          hidden: !features.csamReports,
-        },
-        {
+{
           label: 'Generator Restrictions',
           href: '/moderator/generation-restrictions',
           hidden: !features.csamReports,

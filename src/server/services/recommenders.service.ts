@@ -1,5 +1,5 @@
 import { dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import recommendersCaller from '~/server/http/recommenders/recommenders.caller';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ModelVersionMeta } from '~/server/schema/model-version.schema';
@@ -37,8 +37,8 @@ export async function toggleResourceRecommendation({
     select: { id: true, meta: true, modelId: true },
   });
 
-  await preventReplicationLag('modelVersion', updatedVersion.id);
-  await dataForModelsCache.bust(updatedVersion.modelId);
+  await preventModelVersionLag(updatedVersion.modelId, updatedVersion.id);
+  await dataForModelsCache.refresh(updatedVersion.modelId);
 
   return { ...updatedVersion, meta: updatedVersion.meta as ModelVersionMeta };
 }

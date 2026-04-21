@@ -17,6 +17,7 @@ import {
   IconCircle,
   IconCrown,
   IconEye,
+  IconEyeOff,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconPlus,
@@ -55,7 +56,12 @@ import type {
 } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
-import { getHasExplicitBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  getHasExplicitBrowsingLevel,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -715,7 +721,21 @@ export const ModelPlacementCard = ({
 }) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
+  const { isGreen } = useFeatureFlags();
   const { selectedAuction, justBid, setJustBid } = useAuctionContext();
+
+  const isGreenBidBlocked =
+    isGreen &&
+    !!(
+      data.entityData?.model?.nsfw ||
+      data.entityData?.model?.poi ||
+      data.entityData?.model?.minor
+    );
+  const isGreenImageNsfw =
+    isGreen &&
+    !isGreenBidBlocked &&
+    !!data.entityData?.image?.nsfwLevel &&
+    Flags.intersects(data.entityData.image.nsfwLevel, nsfwBrowsingLevelsFlag);
   const animatedRef = useRef<HTMLDivElement>(null);
   const node = useScrollAreaRef();
   const { ref: viewRef, inView } = useInView({ root: node?.current, rootMargin: '1800px 0px' });
@@ -774,14 +794,32 @@ export const ModelPlacementCard = ({
         <Group className="gap-y-2 max-md:flex-col">
           {!mobile && <SectionPosition position={data.position} aboveThreshold={aboveThreshold} />}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
-            <div className="flex w-full min-w-0 gap-4">
-              <div className="shrink-0">
-                <SectionModelImage image={data.entityData?.image} />
+            {isGreenBidBlocked ? (
+              <div className="flex h-[100px] w-full items-center justify-center gap-2">
+                <IconEyeOff size={20} className="text-dimmed" />
+                <Text size="sm" c="dimmed">
+                  Not available on this site
+                </Text>
               </div>
-              <div className="min-w-0 grow">
-                <SectionModelInfo entityData={data.entityData} searchText={searchText} />
+            ) : (
+              <div className="flex w-full min-w-0 gap-4">
+                <div className="shrink-0">
+                  {isGreenImageNsfw ? (
+                    <div
+                      className="flex items-center justify-center rounded bg-gray-1 dark:bg-dark-6"
+                      style={{ width: IMAGE_HEIGHT, height: IMAGE_HEIGHT }}
+                    >
+                      <IconEyeOff size={20} className="text-dimmed" />
+                    </div>
+                  ) : (
+                    <SectionModelImage image={data.entityData?.image} />
+                  )}
+                </div>
+                <div className="min-w-0 grow">
+                  <SectionModelInfo entityData={data.entityData} searchText={searchText} />
+                </div>
               </div>
-            </div>
+            )}
           </Group>
 
           {!mobile && <Divider orientation="vertical" />}
@@ -791,7 +829,7 @@ export const ModelPlacementCard = ({
             position={data.position}
             aboveThreshold={aboveThreshold}
             right={
-              !!data.entityData && canBid ? (
+              !!data.entityData && canBid && !isGreenBidBlocked ? (
                 <Tooltip label="Support this model" position="top" withinPortal>
                   <LegacyActionIcon
                     size="lg"

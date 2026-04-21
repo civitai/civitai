@@ -46,6 +46,7 @@ import {
   isValidRapid,
   isAiToolkitEnabled,
   isAiToolkitMandatory,
+  isKohyaEnabled,
   isSamplePromptsRequired,
   getDefaultEngine,
   rapidEta,
@@ -281,19 +282,26 @@ export const AdvancedSettings = ({
 
   // Apply feature-flag-driven default engine once per run.
   // The store's defaultRun always uses 'kohya' because it can't access feature flags,
-  // so we correct it here when aiToolkitDefaultSd is enabled for sd15/sdxl.
-  // Only applies once per run ID — if the user toggles off AI Toolkit and switches
+  // so we correct it here when:
+  // 1. aiToolkitDefaultSd is enabled for sd15/sdxl
+  // 2. kohyaTraining is disabled (Kohya engine unavailable)
+  // Only applies once per run ID — if the user toggles engines and switches
   // between multi-train runs, their choice is preserved.
   useEffect(() => {
-    if (!features.aiToolkitDefaultSd) return;
-    if (selectedRun.baseType !== 'sd15' && selectedRun.baseType !== 'sdxl') return;
     if (selectedRun.params.engine !== 'kohya') return;
     if (appliedDefaultEngineRuns.current.has(selectedRun.id)) return;
 
+    const shouldOverride =
+      (!isKohyaEnabled(features)) ||
+      (features.aiToolkitDefaultSd && (selectedRun.baseType === 'sd15' || selectedRun.baseType === 'sdxl'));
+
+    if (!shouldOverride) return;
+
     appliedDefaultEngineRuns.current.add(selectedRun.id);
 
-    const defaultParams = getDefaultTrainingParams(runBase, 'ai-toolkit');
-    defaultParams.engine = 'ai-toolkit' as typeof selectedRun.params.engine;
+    const newEngine = getDefaultEngine(selectedRun.baseType, selectedRun.base, features);
+    const defaultParams = getDefaultTrainingParams(runBase, newEngine);
+    defaultParams.engine = newEngine as typeof selectedRun.params.engine;
     const repeatsTarget = selectedRun.baseType === 'sd15' ? 400 : 200;
     defaultParams.numRepeats = Math.max(
       1,
@@ -306,7 +314,7 @@ export const AdvancedSettings = ({
 
     doUpdate({ params: defaultParams });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRun.id, features.aiToolkitDefaultSd]);
+  }, [selectedRun.id, features.aiToolkitDefaultSd, features.kohyaTraining]);
 
   const engineLabel =
     selectedRun.params.engine === 'ai-toolkit'
@@ -356,7 +364,11 @@ export const AdvancedSettings = ({
             disabled={selectedRun.params.engine === 'ai-toolkit'}
             onChange={(event) =>
               updateRun(modelId, mediaType, selectedRun.id, {
-                params: { engine: event.currentTarget.checked ? 'rapid' : 'kohya' }, // TODO ideally this would revert to the previous engine, but we only have 1 now
+                params: {
+                  engine: event.currentTarget.checked
+                    ? 'rapid'
+                    : getDefaultEngine(selectedRun.baseType, selectedRun.base, features),
+                },
               })
             }
           />
@@ -403,11 +415,17 @@ export const AdvancedSettings = ({
               }
               labelPosition="left"
               checked={selectedRun.params.engine === 'ai-toolkit'}
-              disabled={selectedRun.params.engine === 'rapid'}
+              disabled={
+                selectedRun.params.engine === 'rapid' ||
+                // Can't toggle off AI Toolkit when Kohya is unavailable (no fallback engine)
+                (!isKohyaEnabled(features) && selectedRun.params.engine === 'ai-toolkit')
+              }
               onChange={(event) => {
                 const newEngine = event.currentTarget.checked
                   ? 'ai-toolkit'
-                  : getDefaultEngine(selectedRun.baseType, selectedRun.base);
+                  : getDefaultEngine(selectedRun.baseType, selectedRun.base, features, {
+                      ignoreDefaultPreference: true,
+                    });
 
                 updateRun(modelId, mediaType, selectedRun.id, {
                   params: { ...selectedRun.params, engine: newEngine },

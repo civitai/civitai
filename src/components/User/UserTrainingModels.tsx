@@ -69,6 +69,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
 import { trainingStatusFields } from '~/shared/constants/training.constants';
+import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import type { TrainingModelsSort } from '~/server/schema/model.schema';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
@@ -115,7 +116,7 @@ const DEFAULT_PAGE_SIZE = 10;
 function enrichTrainingData(items: MyTrainingModelGetAll['items']): TrainingModelRow[] {
   return items.map((mv) => {
     const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
-    const thisFile = mv.files[0];
+    const thisFile = pickBestTrainingFile(mv.files);
     const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
     const trainingResults = thisFileMetadata?.trainingResults;
 
@@ -409,7 +410,7 @@ export default function UserTrainingModels() {
         Cell: ({ row }) => {
           const mv = row.original;
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
-          const thisFile = mv.files[0];
+          const thisFile = pickBestTrainingFile(mv.files);
           const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
           const isDataPurged = thisFile?.dataPurged === true;
 
@@ -632,7 +633,7 @@ export default function UserTrainingModels() {
         Cell: ({ row }) => {
           const mv = row.original;
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
-          const thisFile = mv.files[0];
+          const thisFile = pickBestTrainingFile(mv.files);
           const isDataPurged = thisFile?.dataPurged === true;
 
           const isFailed = mv.trainingStatus === TrainingStatus.Failed;
@@ -691,7 +692,7 @@ export default function UserTrainingModels() {
         Cell: ({ row }) => {
           const mv = row.original;
           const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
-          const thisFile = mv.files[0];
+          const thisFile = pickBestTrainingFile(mv.files);
           const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
           const isDataPurged = thisFile?.dataPurged === true;
 

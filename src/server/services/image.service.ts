@@ -38,7 +38,7 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { metricsSearchClient } from '~/server/meilisearch/client';
+import { fetchDocumentsAbortable, metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
@@ -345,8 +345,8 @@ export const deleteImageById = async ({
           ]
         : []),
       invalidateExistence,
-      imageMetaCache.bust(id),
-      imageMetadataCache.bust(id),
+      imageMetaCache.refresh(id),
+      imageMetadataCache.refresh(id),
     ]);
 
     return image;
@@ -382,8 +382,8 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       bustCachesForPosts(idsForPostUpdate),
       postMetrics.queueUpdate(idsForPostUpdate),
       invalidateExistence,
-      imageMetaCache.bust(imageIds),
-      imageMetadataCache.bust(imageIds),
+      imageMetaCache.refresh(imageIds),
+      imageMetadataCache.refresh(imageIds),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -636,7 +636,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await thumbnailCache.bust(ids);
+  await thumbnailCache.refresh(ids);
 }
 
 export const updateImageReportStatusByReason = ({
@@ -733,24 +733,24 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
-    console.log('skipping image ingestion');
-    const updated = await dbClient.image.update({
-      where: { id: image.id },
-      select: { postId: true },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-        nsfwLevel: NsfwLevel.PG,
-      },
-    });
+  // if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
+  //   console.log('skipping image ingestion');
+  //   const updated = await dbClient.image.update({
+  //     where: { id: image.id },
+  //     select: { postId: true },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
 
-    // Update post NSFW level
-    if (updated.postId) await updatePostNsfwLevel(updated.postId);
+  //   // Update post NSFW level
+  //   if (updated.postId) await updatePostNsfwLevel(updated.postId);
 
-    return true;
-  }
+  //   return true;
+  // }
 
   const parsedImage = ingestImageSchema.safeParse(image);
   if (!parsedImage.success) throw new Error('Failed to parse image data');
@@ -876,18 +876,20 @@ export const ingestImageBulk = async ({
 
   if (!imageIds.length) return false;
 
-  if (!isProd || !callbackUrl) {
-    console.log('skip ingest');
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: {
-        scanRequestedAt,
-        scannedAt: scanRequestedAt,
-        ingestion: ImageIngestionStatus.Scanned,
-      },
-    });
-    return true;
-  }
+  // TODO.articleImageScan: uncomment when ready to enable image scanning for articles
+  // if (!isProd || !callbackUrl) {
+  //   console.log('skip ingest');
+  //   await dbClient.image.updateMany({
+  //     where: { id: { in: imageIds } },
+  //     data: {
+  //       scanRequestedAt,
+  //       scannedAt: scanRequestedAt,
+  //       ingestion: ImageIngestionStatus.Scanned,
+  //       nsfwLevel: NsfwLevel.PG,
+  //     },
+  //   });
+  //   return true;
+  // }
 
   const needsPrompts = !images.some((x) => x.prompt);
   if (needsPrompts) {
@@ -924,6 +926,7 @@ export const ingestImageBulk = async ({
     });
     return true;
   }
+
   return false;
 };
 
@@ -1019,6 +1022,7 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   user?: SessionUser;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
+  signal?: AbortSignal;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -1068,7 +1072,19 @@ export const getAllImages = async (
     minorOnly,
   } = input;
   let { browsingLevel, userId: targetUserId, ids } = input;
-  const { dbTarget = 'read' } = input;
+  let { dbTarget = 'read' } = input;
+
+  // While the DataPacket replica is missing ImageResourceNew backfill, force
+  // queries that join ImageResourceNew (modelId/modelVersionId/reviewId filter
+  // or baseModels filter) to the writer. Flipt flag lets us flip off post-backfill.
+  const joinsImageResourceNew = !!modelId || !!modelVersionId || !!reviewId || !!baseModels?.length;
+  if (
+    joinsImageResourceNew &&
+    dbTarget !== 'write' &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE))
+  ) {
+    dbTarget = 'write';
+  }
 
   const imageDb =
     dbTarget === 'write' ? pgDbWrite : dbTarget === 'datapacket' ? datapacketDbRead : pgDbRead;
@@ -1687,13 +1703,22 @@ export const getAllImages = async (
 
     // Merge user votes into tags
     if (tagsVar && userVotes) {
+      const voteMap = new Map(userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote]));
       for (const tag of tagsVar) {
-        const userVote = userVotes.find(
-          (vote) => vote.tagId === tag.id && vote.imageId === tag.imageId
-        );
-        if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+        const vote = voteMap.get(`${tag.imageId}:${tag.id}`);
+        if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
       }
     }
+
+    // Pre-index tags by imageId to avoid O(n*m) filter inside map
+    const tagsByImageId = tagsVar
+      ? tagsVar.reduce((acc, tag) => {
+          const arr = acc.get(tag.imageId);
+          if (arr) arr.push(tag);
+          else acc.set(tag.imageId, [tag]);
+          return acc;
+        }, new Map<number, typeof tagsVar>())
+      : undefined;
 
     const now = new Date();
     const filtered = rawImages.filter((x) => {
@@ -1769,7 +1794,7 @@ export const getAllImages = async (
         },
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
-        tags: tagsVar?.filter((x) => x.imageId === i.id),
+        tags: tagsByImageId?.get(i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
         thumbnailUrl: thumbnail?.url,
@@ -2049,6 +2074,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   offset?: number;
   entry?: number;
   blockedFor?: string[];
+  signal?: AbortSignal;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -2814,9 +2840,23 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   requestTotal.inc({ route }); // count every request up front
 
   try {
-    const { results } = await metricsSearchClient
-      .index(METRICS_SEARCH_INDEX)
-      .getDocuments<ImageMetricsSearchIndexRecord>(request);
+    // Use the abortable raw fetch when a signal is available so client
+    // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
+    // underlying Meili request. The meilisearch-js client on 0.33/0.34 doesn't
+    // expose signal on getDocuments.
+    const { results } = input.signal
+      ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
+          METRICS_SEARCH_INDEX,
+          request,
+          {
+            host: env.METRICS_SEARCH_HOST as string,
+            apiKey: env.METRICS_SEARCH_API_KEY,
+            signal: input.signal,
+          }
+        )
+      : await metricsSearchClient
+          .index(METRICS_SEARCH_INDEX)
+          .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
     let nextCursor: number | undefined;
     if (results.length > limit) {
@@ -3016,7 +3056,10 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     ).catch();
 
     endTimer();
-    return { data: [], nextCursor: undefined };
+    // Let the error bubble up to tRPC. The client detects isError on the
+    // infinite query and renders the retry banner — same path that handles any
+    // other backend failure (API down, network blip, etc.).
+    throw err;
   }
 }
 
@@ -3191,7 +3234,10 @@ export async function getImagesFromBitdexPreFilter(
   filters.push(_in(nsfwLevelField, browsingLevels.map(_int)));
 
   // NSFW license restrictions
-  if (nsfwRestrictedBaseModels.length > 0) {
+  // Only add when the browsing level actually includes NSFW levels — otherwise the outer
+  // nsfwLevel filter (line above) already excludes [4,8,16,32] and the inner AND is
+  // guaranteed false, making the compound NOT a no-op but still ~273ms to evaluate in BitDex.
+  if (nsfwRestrictedBaseModels.length > 0 && includesNsfwContent) {
     filters.push(
       _not(
         _and(
@@ -3640,9 +3686,21 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       request.limit = requestLimit;
       request.offset = currentOffset;
 
-      const { results } = await metricsSearchClient
-        .index(METRICS_SEARCH_INDEX)
-        .getDocuments<ImageMetricsSearchIndexRecord>(request);
+      // See PreFilter path for why we fall back to raw fetch when a signal is
+      // provided.
+      const { results } = input.signal
+        ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
+            METRICS_SEARCH_INDEX,
+            request,
+            {
+              host: env.METRICS_SEARCH_HOST as string,
+              apiKey: env.METRICS_SEARCH_API_KEY,
+              signal: input.signal,
+            }
+          )
+        : await metricsSearchClient
+            .index(METRICS_SEARCH_INDEX)
+            .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
       // If no more results, break the loop
       if (results.length === 0) {
@@ -3920,7 +3978,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     ).catch();
     endTimer();
 
-    return { data: [], nextCursor: undefined };
+    throw err;
   }
 }
 
@@ -3953,7 +4011,10 @@ export async function getTagNamesForImages(imageIds: number[]) {
 }
 
 export async function getResourceIdsForImages(imageIds: number[]) {
-  const imageResourcesArr = await dbRead.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
+  // Route to writer while DataPacket replica is missing ImageResourceNew backfill.
+  const useWrite = await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE);
+  const db = useWrite ? dbWrite : dbRead;
+  const imageResourcesArr = await db.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
     SELECT "imageId", "modelVersionId"
     FROM "ImageResourceNew"
     WHERE "imageId" IN (${Prisma.join(imageIds)});
@@ -4617,7 +4678,7 @@ export const removeImageResource = async ({
     // if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
     purgeImageGenerationDataCache(imageId);
-    await imageResourcesCache.bust(imageId);
+    await imageResourcesCache.refresh(imageId);
 
     return resource;
   } catch (error) {
@@ -4699,11 +4760,12 @@ export const getIngestionResults = async ({ ids, userId }: { ids: number[]; user
       select: { tagId: true, vote: true },
     });
 
+    const voteByTagId = new Map(userVotes.map((v) => [v.tagId, v.vote]));
     for (const key in dictionary) {
       if (dictionary.hasOwnProperty(key)) {
         for (const tag of dictionary[key].tags ?? []) {
-          const userVote = userVotes.find((vote) => vote.tagId === tag.id);
-          if (userVote) tag.vote = userVote.vote > 0 ? 1 : -1;
+          const vote = voteByTagId.get(tag.id);
+          if (vote !== undefined) tag.vote = vote > 0 ? 1 : -1;
         }
       }
     }
@@ -4884,7 +4946,7 @@ export async function createImage({
     });
   }
 
-  await userImageVideoCountCache.bust(image.userId);
+  await userImageVideoCountCache.refresh(image.userId);
 
   return result;
 }
@@ -5847,7 +5909,7 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await imageMetadataCache.bust(id);
+    await imageMetadataCache.refresh(id);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -6164,7 +6226,7 @@ export async function resolveIngestionError({
       metadata: { ...metadata, nsfwLevelReason: 'Moderator ingestion error review' },
     },
   });
-  await imageMetadataCache.bust(id);
+  await imageMetadataCache.refresh(id);
 
   // Post-scan actions matching what image-scan-result does on successful scan
   await tagIdsForImagesCache.refresh(id);
@@ -6610,8 +6672,8 @@ type ContestCollectionItem = {
 };
 const contestCollectionItemsCache = createLruCache({
   name: 'contest-collection-items',
-  max: 10_000,
-  ttl: 5 * 60 * 1000, // 5 minutes
+  max: 100_000,
+  ttl: 30 * 60 * 1000, // 30 minutes
   keyFn: (imageId: number) => `image:${imageId}`,
   fetchFn: async (imageId: number) => {
     return dbRead.$queryRaw<ContestCollectionItem[]>`
@@ -6776,7 +6838,7 @@ export async function queueImageSearchIndexUpdate({
 
   if (action === SearchIndexUpdateQueueAction.Delete) {
     // Bust the thumbnail cache for deleted images
-    await thumbnailCache.bust(ids);
+    await thumbnailCache.refresh(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
       ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
@@ -6839,8 +6901,8 @@ export async function setVideoThumbnail({
   // Clear up the thumbnail cache
   await Promise.all([
     preventReplicationLag('postImages', postId),
-    thumbnailCache.bust(imageId),
-    imageMetadataCache.bust(imageId),
+    thumbnailCache.refresh(imageId),
+    imageMetadataCache.refresh(imageId),
     queueImageSearchIndexUpdate({
       ids: [imageId],
       action: SearchIndexUpdateQueueAction.Update,
@@ -6962,7 +7024,7 @@ export async function createImageResources({
     }
   }
 
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   return resources;
 }
 
@@ -7085,7 +7147,7 @@ export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
     where: { id },
     data: { [flag]: !image[flag] },
   });
-  await imageMetadataCache.bust(id);
+  await imageMetadataCache.refresh(id);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7104,7 +7166,7 @@ export const updateImagesFlag = async ({
     where: { id: { in: ids } },
     data: { [flag]: value },
   });
-  await imageMetadataCache.bust(ids);
+  await imageMetadataCache.refresh(ids);
 
   // Ensure we update the search index:
   await imagesMetricsSearchIndex.queueUpdate(
@@ -7119,7 +7181,7 @@ export async function refreshImageResources(imageId: number) {
     DELETE FROM "ImageResourceNew" WHERE "imageId" = ${imageId} AND detected
   `;
   await createImageResources({ imageId });
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   return await dbWrite.imageResourceHelper.findMany({ where: { imageId } });
 }
 

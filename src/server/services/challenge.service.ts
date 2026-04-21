@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   claimChallengeForCompletion,
   closeChallengeCollection,
@@ -224,9 +225,9 @@ export async function getInfiniteChallenges(
     conditions.push(Prisma.sql`c."eventId" IS NULL`);
   }
 
-  // Content level filter - only show challenges whose nsfwLevel is within the browsing level
+  // Content level filter - only show challenges whose allowedNsfwLevel intersects the browsing level
   if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
+    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
   }
 
   // User participation filter (requires logged-in user)
@@ -1660,8 +1661,11 @@ export async function checkImageEligibility(
 
   if (!challenge) throw throwNotFoundError(`No challenge with id ${challengeId}`);
 
+  // Route to writer while DataPacket replica is missing ImageResourceNew backfill.
+  const useWrite = await isFlipt(FLIPT_FEATURE_FLAGS.IMAGE_RESOURCE_USE_WRITE);
+  const db = useWrite ? dbWrite : dbRead;
   // Get image details + their resources in one query
-  const images = await dbRead.$queryRawUnsafe<
+  const images = await db.$queryRawUnsafe<
     Array<{
       id: number;
       nsfwLevel: number;
@@ -2234,7 +2238,7 @@ export async function getCompletedChallengesWithWinners(
   }
 
   if (browsingLevel) {
-    conditions.push(Prisma.sql`(c."nsfwLevel" & ${browsingLevel}) > 0`);
+    conditions.push(Prisma.sql`(c."allowedNsfwLevel" & ${browsingLevel}) > 0`);
   }
 
   if (query) {

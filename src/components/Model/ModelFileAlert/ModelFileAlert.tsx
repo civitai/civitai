@@ -20,8 +20,8 @@ export const ModelFileAlert = ({
 
   if (files) {
     for (const file of files) {
-      if (file.metadata.format === 'PickleTensor') hasPickle = true;
-      if (file.metadata.format !== 'PickleTensor' && file.type === 'Model') onlyPickle = false;
+      if (file.metadata?.format === 'PickleTensor') hasPickle = true;
+      if (file.metadata?.format !== 'PickleTensor' && file.type === 'Model') onlyPickle = false;
       if (modelType === ModelType.TextualInversion && file.type === 'Negative')
         hasNegativeEmbed = true;
       else if (file.type === 'Config') hasConfig = true;

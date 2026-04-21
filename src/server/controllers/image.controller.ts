@@ -197,12 +197,14 @@ export const setTosViolationHandler = async ({
       status: ReportStatus.Actioned,
     });
     // Reward users for accepted reports
-    for (const report of affectedReports) {
-      reportAcceptedReward.apply(
-        { userId: report.userId, reportId: report.id },
-        { ip, fingerprint }
-      );
-    }
+    await Promise.allSettled(
+      affectedReports.map((report) =>
+        reportAcceptedReward.apply(
+          { userId: report.userId, reportId: report.id },
+          { ip, fingerprint }
+        )
+      )
+    );
 
     await createNotification({
       userId: image.userId,
@@ -272,7 +274,7 @@ export const getInfiniteImagesHandler = async ({
   input: GetInfiniteImagesOutput;
   ctx: Context;
 }) => {
-  const { user, features } = ctx;
+  const { user, features, signal } = ctx;
 
   // Check BitDex mode first — if active (shadow or primary), always route through
   // getAllImagesIndex (which handles BitDex internally), bypassing the useIndex check.
@@ -314,6 +316,7 @@ export const getInfiniteImagesHandler = async ({
         headers: { src: 'getInfiniteImagesHandler' },
         include: [...input.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        signal,
       });
     } else {
       return await getAllImages({

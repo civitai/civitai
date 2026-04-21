@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import type { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getNotifDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
@@ -141,7 +142,10 @@ export async function getUserNotificationCount({
   // this seems unused
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
-  const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
+  // Route to primary when markRead just wrote for this user — replica lag
+  // would otherwise repopulate the cache with stale unread counts.
+  const db = await getNotifDbWithoutLag('notification', userId);
+  const query = await db.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
     SELECT
       n.category,
       COUNT(*) AS count
@@ -164,6 +168,28 @@ export const markNotificationsRead = async ({
   all = false,
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
+  // Fire-and-forget: the UI optimistically marks as read, so we don't need to
+  // block the response on the cross-Atlantic write to DO managed Postgres.
+  // Errors are logged but not surfaced to the user.
+  const writePromise = _markNotificationsReadImpl({ id, userId, all, category });
+  writePromise.catch((err) => {
+    logToAxiom({
+      type: 'warning',
+      name: 'notification.markRead',
+      message: `Failed to mark notifications read: ${(err as Error).message}`,
+      userId,
+      all,
+      category,
+    }).catch(() => {});
+  });
+};
+
+async function _markNotificationsReadImpl({
+  id,
+  userId,
+  all,
+  category,
+}: MarkReadNotificationInput & { userId: number; all: boolean }) {
   if (all) {
     if (category) {
       // Join only needed when filtering by category
@@ -179,6 +205,7 @@ export const markNotificationsRead = async ({
           AND un.viewed IS FALSE
           AND n."category" = ${category}::"NotificationCategory"
       `);
+      await preventReplicationLag('notification', userId);
       notificationCache.clearCategory(userId, category).catch(() => {});
     } else {
       // No join needed - faster query
@@ -190,6 +217,7 @@ export const markNotificationsRead = async ({
           un."userId" = ${userId}
           AND un.viewed IS FALSE
       `);
+      await preventReplicationLag('notification', userId);
       notificationCache.bustUser(userId).catch(() => {});
     }
   } else {
@@ -201,10 +229,12 @@ export const markNotificationsRead = async ({
           id = ${id}
       AND viewed IS FALSE
     `);
+    if (resp.rowCount) await preventReplicationLag('notification', userId);
 
     // Update cache if the notification was marked read
     if (resp.rowCount) {
-      const catQuery = await notifDbRead.cancellableQuery<{
+      const db = await getNotifDbWithoutLag('notification', userId);
+      const catQuery = await db.cancellableQuery<{
         category: NotificationCategory;
       }>(Prisma.sql`
         SELECT
@@ -220,7 +250,7 @@ export const markNotificationsRead = async ({
         notificationCache.decrementUser(userId, catData[0].category).catch(() => {});
     }
   }
-};
+}
 
 export const createUserNotificationSetting = async ({
   type,

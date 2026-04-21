@@ -20,6 +20,7 @@ import {
   IconCoins,
   IconCopy,
   IconCurrencyBitcoin,
+  IconRefresh,
   IconWallet,
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
@@ -237,9 +238,12 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
 
           {/* Currency selector — always visible at top */}
           <Stack gap={4}>
-            <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
-              Select currency
-            </Text>
+            <Group gap={4} align="center">
+              <Text size="xs" c="dimmed" fw={600} tt="uppercase" style={{ letterSpacing: '0.06em' }}>
+                Select currency
+              </Text>
+              {currentUser?.isModerator && <FlushCurrencyCacheButton />}
+            </Group>
             <CurrencyBadges state={currencyState} />
           </Stack>
 
@@ -362,6 +366,30 @@ function QRChaser({ address }: { address: string }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function FlushCurrencyCacheButton() {
+  const utils = trpc.useUtils();
+  const flush = trpc.nowPayments.flushCurrencyCache.useMutation({
+    onSuccess: () => {
+      utils.nowPayments.getSupportedCurrencies.invalidate();
+    },
+  });
+
+  return (
+    <Tooltip label="Refresh currency list (flushes cache)" withArrow>
+      <ActionIcon
+        variant="subtle"
+        color="dimmed"
+        size="xs"
+        loading={flush.isPending}
+        onClick={() => flush.mutate()}
+        aria-label="Refresh currency list"
+      >
+        <IconRefresh size={12} />
+      </ActionIcon>
+    </Tooltip>
   );
 }
 

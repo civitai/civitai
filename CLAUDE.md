@@ -161,6 +161,14 @@ const currentUser = useCurrentUser();
 
 ## Important Notes
 
+- Read the full file before editing. Plan all changes, then make ONE complete edit. If you've edited a file 3+ times, stop and re-read the user's requirements.
+- When the user corrects you, stop and re-read their message. Quote back what they asked for and confirm before proceeding.
+- Every few turns, re-read the original request to make sure you haven't drifted from the goal.
+- Act sooner. Don't read more than 3-5 files before making a change. Get a basic understanding, make the change, then iterate.
+- When stuck, summarize what you've tried and ask the user for guidance instead of retrying the same approach.
+- Re-read the user's last message before responding. Follow through on every instruction completely.
+- After 2 consecutive tool failures, stop and change your approach entirely. Explain what failed and try a different strategy.
+
 ### Performance
 - Use dynamic imports for heavy components
 - Implement virtual scrolling for large lists

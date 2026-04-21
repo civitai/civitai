@@ -1,7 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, Card, Center, Group, Select, Stack, Text, Title } from '@mantine/core';
+import { Button, Card, Center, Divider, Group, Select, Stack, Text, Title } from '@mantine/core';
 import { IconChevronDown } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -103,118 +103,192 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     tier: 'free',
   }) as SubscriptionProductMetadata;
 
+  // Spotlight + border glow tracking
+  const cardRef = useRef<HTMLDivElement>(null);
+  const spotlightRef = useRef<HTMLDivElement>(null);
+  const borderGlowRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Inner spotlight on top section
+    const el = spotlightRef.current;
+    if (el) {
+      el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(190,75,219,0.12), transparent 70%)`;
+      el.style.opacity = '1';
+    }
+
+    // Border glow
+    const border = borderGlowRef.current;
+    if (border) {
+      border.style.background = `radial-gradient(400px circle at ${x}px ${y}px, rgba(190,75,219,0.15), transparent 70%)`;
+      border.style.opacity = '1';
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    const el = spotlightRef.current;
+    if (el) el.style.opacity = '0';
+    const border = borderGlowRef.current;
+    if (border) border.style.opacity = '0';
+  }, []);
+
   return (
-    <Card className="h-full rounded-md bg-gray-0 p-5 dark:bg-dark-8">
-      <Stack justify="space-between" style={{ height: '100%' }}>
-        <Stack>
-          <Stack gap="md" mb="md">
-            <Title className="text-center text-xl @sm:text-2xl" order={2} mb="sm">
-              {product.name}
-            </Title>
-            {image && (
-              <Center>
-                <div className="mb-[10px] w-24 @sm:mb-0 @sm:w-32">
-                  <EdgeMedia src={image} className="size-full object-cover" />
-                </div>
-              </Center>
-            )}
-            <Stack gap={0} align="center">
-              <Group justify="center" gap={4} align="flex-end">
-                <Text className="text-5xl font-bold" align="center" lh={1}>
-                  {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
-                </Text>
-                <Text align="center" c="dimmed">
-                  / {shortenPlanInterval(price.interval)}
-                </Text>
-              </Group>
-              <Select
-                data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
-                value={priceId}
-                onChange={setPriceId}
-                variant="unstyled"
-                w={50}
-                rightSection={<IconChevronDown size={14} />}
-                rightSectionWidth={20}
-                classNames={{
-                  root: 'mt-[2px] border-b-2 border-b-blue-9',
-                  input: 'h-[20px] min-h-[20px] text-start uppercase',
-                  option: 'px-[4px] text-center uppercase',
-                  section: 'mr-0',
+    <div
+      ref={cardRef}
+      className="relative h-full"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      {/* Border glow overlay */}
+      <div
+        ref={borderGlowRef}
+        className="pointer-events-none absolute -inset-px rounded-xl transition-opacity duration-500"
+        style={{ opacity: 0 }}
+      />
+
+      <Card className="relative z-[1] h-full overflow-hidden rounded-xl border border-dark-4 p-0 dark:bg-dark-7">
+        <Stack justify="space-between" className="h-full">
+          <Stack gap={0}>
+            {/* Top section — darker with gradient + spotlight */}
+            <div className="relative overflow-hidden bg-dark-8 p-5 pb-4">
+              {/* Subtle gradient tint */}
+              <div
+                className="pointer-events-none absolute inset-0"
+                style={{
+                  background:
+                    'linear-gradient(135deg, rgba(190,75,219,0.1) 0%, rgba(190,75,219,0.02) 100%)',
                 }}
               />
-            </Stack>
+              {/* Spotlight glow */}
+              <div
+                ref={spotlightRef}
+                className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+                style={{ opacity: 0 }}
+              />
 
-            {priceId && (
-              <>
-                {isActivePlan ? (
-                  <Button radius="xl" {...btnProps} component={Link} href="/user/membership">
-                    Manage your Membership
-                  </Button>
-                ) : redirectToPrepaidPage ? (
-                  <Button
-                    component={Link}
-                    href="/purchase/buzz"
-                    radius="xl"
-                    {...btnProps}
-                  >
-                    Purchase Buzz
-                  </Button>
-                ) : isDowngrade ? (
-                  <Button
-                    radius="xl"
-                    {...btnProps}
-                    disabled={ctaDisabled}
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: DowngradeFeedbackModal,
-                        props: {
-                          priceId,
-                          upcomingVaultSizeKb: meta.vaultSizeKb,
-                          fromTier: subscriptionMeta.tier,
-                          toTier: meta.tier,
-                        },
-                      });
-                    }}
-                  >
-                    Downgrade to {meta?.tier} {isActivePlanDiffInterval ? ' (Monthly)' : ''}
-                  </Button>
-                ) : isUpgrade ? (
-                  <Button
-                    radius="xl"
-                    {...btnProps}
-                    disabled={ctaDisabled}
-                    onClick={() => {
-                      dialogStore.trigger({
-                        component: MembershipUpgradeModal,
-                        props: {
-                          priceId,
-                          meta: planDetails,
-                          price,
-                        },
-                      });
-                    }}
-                  >
-                    Upgrade to {meta?.tier} {isActivePlanDiffInterval ? ' (Annual)' : ''}
-                  </Button>
-                ) : (
-                  <SubscribeButton
-                    priceId={priceId}
-                    disabled={ctaDisabled}
-                    forceProvider={meta.buzzType === 'green' ? PaymentProvider.Stripe : undefined}
-                  >
-                    <Button radius="xl" {...btnProps}>
-                      {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
-                    </Button>
-                  </SubscribeButton>
+              <Stack gap="md" className="relative">
+                <Title className="text-center text-xl @sm:text-2xl" order={2} mb="sm">
+                  {product.name}
+                </Title>
+                {image && (
+                  <Center>
+                    <div className="mb-[10px] w-24 @sm:mb-0 @sm:w-32">
+                      <EdgeMedia src={image} className="size-full object-cover" />
+                    </div>
+                  </Center>
                 )}
-              </>
+                <Stack gap={0} align="center">
+                  <Group justify="center" gap={4} align="flex-end">
+                    <Text className="text-5xl font-bold" align="center" lh={1}>
+                      {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
+                    </Text>
+                    <Text align="center" c="dimmed">
+                      / {shortenPlanInterval(price.interval)}
+                    </Text>
+                  </Group>
+                  <Select
+                    data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
+                    value={priceId}
+                    onChange={(val) => val && setPriceId(val)}
+                    allowDeselect={false}
+                    variant="unstyled"
+                    w={50}
+                    withCheckIcon={false}
+                    rightSection={<IconChevronDown size={14} />}
+                    rightSectionWidth={20}
+                    comboboxProps={{ width: 80, position: 'bottom' }}
+                    classNames={{
+                      root: 'mt-[2px] border-b-2 border-b-current',
+                      input: 'h-[20px] min-h-[20px] text-start uppercase',
+                      option: 'px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
+                      section: 'mr-0',
+                    }}
+                  />
+                </Stack>
+
+                {priceId && (
+                  <>
+                    {isActivePlan ? (
+                      <Button radius="xl" {...btnProps} component={Link} href="/user/membership">
+                        Manage your Membership
+                      </Button>
+                    ) : redirectToPrepaidPage ? (
+                      <Button
+                        component={Link}
+                        href="/purchase/buzz"
+                        radius="xl"
+                        {...btnProps}
+                      >
+                        Purchase Buzz
+                      </Button>
+                    ) : isDowngrade ? (
+                      <Button
+                        radius="xl"
+                        {...btnProps}
+                        disabled={ctaDisabled}
+                        onClick={() => {
+                          dialogStore.trigger({
+                            component: DowngradeFeedbackModal,
+                            props: {
+                              priceId,
+                              upcomingVaultSizeKb: meta.vaultSizeKb,
+                              fromTier: subscriptionMeta.tier,
+                              toTier: meta.tier,
+                            },
+                          });
+                        }}
+                      >
+                        Downgrade to {capitalize(meta?.tier)} {isActivePlanDiffInterval ? ' (Monthly)' : ''}
+                      </Button>
+                    ) : isUpgrade ? (
+                      <Button
+                        radius="xl"
+                        {...btnProps}
+                        disabled={ctaDisabled}
+                        onClick={() => {
+                          dialogStore.trigger({
+                            component: MembershipUpgradeModal,
+                            props: {
+                              priceId,
+                              meta: planDetails,
+                              price,
+                            },
+                          });
+                        }}
+                      >
+                        Upgrade to {capitalize(meta?.tier)} {isActivePlanDiffInterval ? ' (Annual)' : ''}
+                      </Button>
+                    ) : (
+                      <SubscribeButton
+                        priceId={priceId}
+                        disabled={ctaDisabled}
+                        forceProvider={meta.buzzType === 'green' ? PaymentProvider.Stripe : undefined}
+                      >
+                        <Button radius="xl" {...btnProps}>
+                          {isActivePlan ? `You are ${capitalize(meta?.tier)}` : `Subscribe to ${capitalize(meta?.tier)}`}
+                        </Button>
+                      </SubscribeButton>
+                    )}
+                  </>
+                )}
+              </Stack>
+            </div>
+
+            {/* Divider above features */}
+            <Divider className="border-dark-5" />
+
+            {/* Benefits section — slightly darker than default */}
+            {benefits && (
+              <div className="bg-dark-8/50 p-5 pt-4">
+                <PlanBenefitList benefits={benefits} tier={meta?.tier} buzzType={meta.buzzType} />
+              </div>
             )}
           </Stack>
-          {benefits && (
-            <PlanBenefitList benefits={benefits} tier={meta?.tier} buzzType={meta.buzzType} />
-          )}
         </Stack>
-      </Stack>
-    </Card>
+      </Card>
+    </div>
   );
 }

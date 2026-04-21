@@ -2490,6 +2490,15 @@ enum ArticleStatus {
   Published
   Unpublished
   UnpublishedViolation
+  Processing
+}
+
+enum ArticleIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+  Rescan
 }
 
 model Article {
@@ -2505,6 +2514,9 @@ model Article {
   coverId          Int?          @unique
   coverImage       Image?        @relation(fields: [coverId], references: [id], onDelete: SetNull)
   publishedAt      DateTime?
+  contentScannedAt DateTime?              // Set when both image + text scans complete successfully
+  ingestion        ArticleIngestionStatus @default(Pending)
+  scanRequestedAt  DateTime?
   userId           Int
   user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   availability     Availability  @default(Public)
@@ -2524,6 +2536,8 @@ model Article {
   engagements     ArticleEngagement[]
   associations    ModelAssociations[]
   collectionItems CollectionItem[]
+
+  @@index([status, ingestion, nsfwLevel])
 }
 
 model PressMention {
@@ -3672,8 +3686,9 @@ model Bid {
   transactionIds String[] @default([])
   isRefunded     Boolean  @default(false)
   fromRecurring  Boolean  @default(false)
+  accountType    String   @default("yellow")
 
-  @@unique([auctionId, userId, entityId])
+  @@unique([auctionId, userId, entityId, accountType])
 }
 
 model BidRecurring {
@@ -3688,8 +3703,9 @@ model BidRecurring {
   startAt       DateTime
   endAt         DateTime?
   isPaused      Boolean     @default(false)
+  accountType   String      @default("yellow")
 
-  @@unique([auctionBaseId, userId, entityId])
+  @@unique([auctionBaseId, userId, entityId, accountType])
 }
 
 model FeaturedModelVersion {

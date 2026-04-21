@@ -18,7 +18,6 @@ import { completeClubMembershipCharge } from '~/server/services/clubMembership.s
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
-
 // Stripe requires the raw body to construct the event.
 export const config = {
   api: {
@@ -63,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let event: Stripe.Event;
 
     // Track to ClickHouse (fire and forget, never throws)
-    trackWebhookEvent('stripe', rawPayload).catch(() => {});
+    trackWebhookEvent('stripe', rawPayload).catch(() => null);
 
     try {
       if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature

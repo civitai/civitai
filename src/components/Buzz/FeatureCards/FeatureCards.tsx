@@ -1,16 +1,13 @@
 import type { ButtonProps } from '@mantine/core';
-import { Button, List, Paper, SimpleGrid, Stack, Text, Title, Group, Tooltip } from '@mantine/core';
+import { Button, List, Paper, SimpleGrid, Stack, Text, ThemeIcon, Title, Group, Tooltip } from '@mantine/core';
 import {
   IconArrowRight,
   IconBarbell,
   IconBrush,
   IconCoin,
-  IconCoins,
-  IconHighlight,
   IconMessageCircle,
   IconMoneybag,
   IconShoppingBag,
-  IconShoppingCart,
   IconInfoCircle,
   IconTrophy,
 } from '@tabler/icons-react';
@@ -21,7 +18,6 @@ import dayjs from '~/shared/utils/dayjs';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { getAccountTypeLabel } from '~/utils/buzz';
@@ -34,13 +30,16 @@ import type { BuzzAccountType, BuzzSpendType } from '~/shared/constants/buzz.con
 const getEarnings = (
   accountType: BuzzAccountType,
   buzzConfig?: ReturnType<typeof useBuzzCurrencyConfig>
-): (FeatureCardProps & { key: string })[] =>
-  [
+): (FeatureCardProps & { key: string })[] => {
+  const isGreen = accountType === 'green';
+  return [
     {
       key: 'purchase',
       icon: <IconCoin size={32} />,
       title: 'Purchase',
-      description: 'Send crypto to your deposit address to purchase Buzz',
+      description: isGreen
+        ? 'Top up your Buzz balance any time.'
+        : 'Buy Buzz with your favorite crypto. Sent to your personalized deposit address.',
       btnProps: {
         onClick: async () => {
           const BuyBuzzModal = (await import('~/components/Modals/BuyBuzzModal')).default;
@@ -54,24 +53,29 @@ const getEarnings = (
       key: 'challenges',
       icon: <IconTrophy size={32} />,
       title: 'Challenges',
-      description: 'Compete in themed contests by generating images with featured models, judged by AI',
+      description: 'Enter themed contests. Generate using the featured model, AI picks the winners.',
       btnProps: {
         href: '/challenges',
         children: 'View challenges',
         color: buzzConfig?.color,
       },
     },
-    {
-      key: 'bounties',
-      icon: <IconMoneybag size={32} />,
-      title: 'Bounties',
-      description: 'Fund or fulfill creative requests from the community and get rewarded with Buzz',
-      btnProps: {
-        href: '/bounties',
-        children: 'View bounties',
-        color: buzzConfig?.color,
-      },
-    },
+    ...(!isGreen
+      ? [
+          {
+            key: 'bounties',
+            icon: <IconMoneybag size={32} />,
+            title: 'Bounties',
+            description:
+              'Earn Buzz by completing creative requests from other users, or post your own.',
+            btnProps: {
+              href: '/bounties',
+              children: 'View bounties',
+              color: buzzConfig?.color,
+            },
+          },
+        ]
+      : []),
     {
       key: 'beggars-board',
       icon: <IconMessageCircle size={32} />,
@@ -84,6 +88,7 @@ const getEarnings = (
       },
     },
   ].filter((item) => !(item as FeatureCardProps).disabled);
+};
 
 export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow', hideHeader, columns }: Props) => {
   const buzzConfig = useBuzzCurrencyConfig(accountType);
@@ -127,87 +132,70 @@ export const EarningBuzz = ({ asList, withCTA, accountType = 'yellow', hideHeade
   );
 };
 
-const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { key: string })[] => [
-  {
-    key: 'train',
-    icon: <IconBarbell size={32} />,
-    title: 'Train',
-    description: 'Train your own LoRAs to generate images',
-    btnProps: {
-      href: '/models/train',
-      children: 'Train now',
+const getSpendings = ({
+  accountType,
+}: {
+  accountType?: BuzzSpendType;
+}): (FeatureCardProps & { key: string })[] => {
+  const isGreen = accountType === 'green';
+  return [
+    {
+      key: 'generate',
+      icon: <IconBrush size={32} />,
+      title: 'Generate',
+      description: 'Generate images and videos using a wide variety of AI models',
+      btnProps: {
+        onClick: () => generationGraphPanel.open(),
+        children: 'Generate',
+      },
     },
-  },
-  {
-    key: 'generate',
-    icon: <IconBrush size={32} />,
-    title: 'Generate',
-    description: 'Generate Flux and Pony images',
-    btnProps: {
-      onClick: () => generationGraphPanel.open(),
-      children: 'Generate',
+    {
+      key: 'train',
+      icon: <IconBarbell size={32} />,
+      title: 'Customize AI',
+      description: 'Train AI to fine-tune its behavior and capture your style, subject, or concept',
+      btnProps: {
+        href: '/models/train',
+        children: 'Train now',
+      },
     },
-  },
-  {
-    key: 'bounty',
-    icon: <IconMoneybag size={32} />,
-    title: 'Post a bounty',
-    description: 'Get others to help solve your problem',
-    btnProps: {
-      href: '/bounties/create',
-      children: 'Post a bounty',
-      rightSection: <IconArrowRight size={14} />,
+    ...(!isGreen
+      ? [
+          {
+            key: 'bounty',
+            icon: <IconMoneybag size={32} />,
+            title: 'Post a bounty',
+            description: 'Pay community creators to make what you need.',
+            btnProps: {
+              href: '/bounties/create',
+              children: 'Post a bounty',
+              rightSection: <IconArrowRight size={14} />,
+            },
+          },
+        ]
+      : []),
+    {
+      key: 'badges',
+      icon: <IconShoppingBag size={32} />,
+      title: 'Shop badges and cosmetics',
+      description: 'Make your profile stand out!',
+      btnProps: {
+        href: '/shop',
+        children: 'Get some!',
+        rightSection: <IconArrowRight size={14} />,
+      },
     },
-  },
-  {
-    key: 'showcase',
-    icon: <IconHighlight size={32} />,
-    title: 'Get showcased',
-    description: 'Get your content featured on our homepage',
-    btnProps: {
-      target: '_blank',
-      rel: 'noreferrer nofollow',
-      href: `https://civitai.retool.com/form/cdf269fb-c9b1-4da4-8601-6367c2358a36?userId=${
-        userId as number
-      }`,
-      children: 'Apply Now',
-      rightSection: <IconArrowRight size={14} />,
-    },
-    withCTA: !!userId, // Only show if userId is available
-  },
-  {
-    key: 'badges',
-    icon: <IconShoppingBag size={32} />,
-    title: 'Shop badges and cosmetics',
-    description: 'Make your profile stand out!',
-    btnProps: {
-      href: '/shop',
-      children: 'Get some!',
-      rightSection: <IconArrowRight size={14} />,
-    },
-  },
-  {
-    key: 'merch',
-    icon: <IconShoppingCart size={32} />,
-    title: 'Shop merch',
-    description: 'Tons of fun stickers to choose from...',
-    btnProps: {
-      disabled: true,
-      children: 'COMING SOON',
-    },
-  },
-];
+  ];
+};
 
-export const SpendingBuzz = ({ asList, withCTA }: Props) => {
-  const currentUser = useCurrentUser();
-  // const open = useGenerationStore((state) => state.open);
-  const spendings = getSpendings({ userId: currentUser?.id });
+export const SpendingBuzz = ({ asList, withCTA, accountType }: Props) => {
+  const spendings = getSpendings({ accountType });
 
   return (
     <Stack gap="md">
       <Stack gap={4}>
-        <Title order={2}>Spend Buzz</Title>
-        <Text>Got some Buzz? Here&rsquo;s what you can do with it</Text>
+        <Title order={3}>What&rsquo;s Buzz for?</Title>
+        <Text>Here&rsquo;s what you can do with Buzz on Civitai</Text>
       </Stack>
       {asList ? (
         <FeatureList data={spendings} />
@@ -302,22 +290,32 @@ export const FeatureCard = ({ title, description, icon, btnProps, withCTA }: Fea
 
 export const FeatureList = ({ data }: { data: FeatureCardProps[] }) => {
   return (
-    <List
-      listStyleType="none"
-      spacing={8}
-      icon={<CurrencyIcon currency="BUZZ" size={20} style={{ verticalAlign: 'middle' }} />}
-    >
-      {data.map((item, index) => (
-        <List.Item key={index}>
-          <Stack gap={0}>
-            <Text fw={590} tt="capitalize">
-              {item.title}
-              {item.btnProps.disabled ? ' (Coming Soon)' : ''}
-            </Text>
-            <Text c="dimmed">{item.description}</Text>
-          </Stack>
-        </List.Item>
-      ))}
+    <List listStyleType="none" spacing={14}>
+      {data.map((item, index) => {
+        const iconElement = React.isValidElement<{ size?: number }>(item.icon)
+          ? React.cloneElement(item.icon, { size: 18 })
+          : item.icon;
+        return (
+          <List.Item
+            key={index}
+            icon={
+              <ThemeIcon size={32} radius="xl" variant="light" color="gray">
+                {iconElement}
+              </ThemeIcon>
+            }
+          >
+            <Stack gap={0}>
+              <Text fw={590} tt="capitalize" lh={1.2}>
+                {item.title}
+                {item.btnProps.disabled ? ' (Coming Soon)' : ''}
+              </Text>
+              <Text c="dimmed" size="sm" lh={1.3}>
+                {item.description}
+              </Text>
+            </Stack>
+          </List.Item>
+        );
+      })}
     </List>
   );
 };

@@ -877,7 +877,7 @@ export const upsertCollection = async ({
 
       // No need to set randomId when changing to Contest mode - hash-based ordering is computed on-the-fly
 
-      await userCollectionCountCache.bust(updated.userId);
+      await userCollectionCountCache.refresh(updated.userId);
 
       return updated;
     });
@@ -1006,7 +1006,7 @@ export const upsertCollection = async ({
     },
   });
 
-  await userCollectionCountCache.bust(userId);
+  await userCollectionCountCache.refresh(userId);
 
   return collection;
 };
@@ -1102,12 +1102,10 @@ export type CollectionItemsResult = {
 export const getCollectionItemsByCollectionId = async ({
   input,
   user,
-  dbTarget = 'read' as const,
 }: {
   input: UserPreferencesInput & GetAllCollectionItemsSchema;
   // Requires user here because models service uses it
   user?: SessionUser;
-  dbTarget?: 'read' | 'write' | 'datapacket';
 }): Promise<CollectionItemsResult> => {
   const {
     statuses = [CollectionItemStatus.ACCEPTED],
@@ -1137,8 +1135,13 @@ export const getCollectionItemsByCollectionId = async ({
     throw throwAuthorizationError('You do not have permission to view review items');
   }
 
+  // Review flows read from the primary to avoid replica lag after accept/deny
+  // mutations. Non-review callers stick with the read replica. The permission
+  // check above ensures only owners/managers/moderators reach the primary.
+  const itemDb = forReview ? dbWrite : dbRead;
+
   const collectionFindArgs = { where: { id: collectionId } } as const;
-  const collection = await dbRead.collection
+  const collection = await itemDb.collection
     .findUniqueOrThrow(collectionFindArgs)
     .catch(() => {
       dbReadFallbackCounter.inc({ entity: 'collection', caller: 'getAllCollectionItems' });
@@ -1194,7 +1197,7 @@ export const getCollectionItemsByCollectionId = async ({
           )`
         : Prisma.sql``;
 
-    const rawItems = await dbRead.$queryRaw<
+    const rawItems = await itemDb.$queryRaw<
       {
         id: number;
         modelId: number | null;
@@ -1269,7 +1272,7 @@ export const getCollectionItemsByCollectionId = async ({
       : Prisma.sql``;
 
     // Execute raw SQL query
-    const rawItems = await dbRead.$queryRaw<
+    const rawItems = await itemDb.$queryRaw<
       {
         id: number;
         modelId: number | null;
@@ -1306,7 +1309,7 @@ export const getCollectionItemsByCollectionId = async ({
     // Handle scores separately if needed (forReview)
     if (forReview && user?.id) {
       const itemIds = rawItems.map((item) => item.id);
-      const scores = await dbRead.collectionItemScore.findMany({
+      const scores = await itemDb.collectionItemScore.findMany({
         where: {
           collectionItemId: { in: itemIds },
           userId: user.id,
@@ -1410,7 +1413,7 @@ export const getCollectionItemsByCollectionId = async ({
           includeBaseModel: true,
           pending: forReview,
           withMeta: false,
-          dbTarget,
+          dbTarget: forReview ? 'write' : 'read',
         })
       : { items: [] };
 

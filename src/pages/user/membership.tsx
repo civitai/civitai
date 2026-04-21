@@ -44,7 +44,7 @@ import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimel
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
-import { env } from '~/env/client';
+import { useServerDomains } from '~/providers/AppProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
@@ -58,6 +58,7 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { syncAccount } from '~/utils/sync-account';
 import { booleanString } from '~/utils/zod-helpers';
 import styles from './membership.module.scss';
 
@@ -116,6 +117,7 @@ export default function UserMembership() {
   const currentUser = useCurrentUser();
   const paymentProvider = usePaymentProvider();
   const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
   const { classNames: buzzClassNames, colorRgb: buzzColorRgb } =
@@ -129,17 +131,9 @@ export default function UserMembership() {
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
 
   const handleRedirectToOtherEnvironment = () => {
-    const targetDomain =
-      otherBuzzType === 'green'
-        ? env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN
-        : env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE;
-    const syncParam = otherBuzzType === 'green' ? 'yellow' : 'green';
+    const targetDomain = otherBuzzType === 'green' ? serverDomains.green : serverDomains.red;
 
-    window.open(
-      `//${targetDomain}/user/membership?sync-account=${syncParam}`,
-      '_blank',
-      'noreferrer'
-    );
+    window.open(syncAccount(`//${targetDomain}/user/membership`), '_blank', 'noreferrer');
   };
 
   const handleRefreshSubscription = async () => {
@@ -425,14 +419,12 @@ export default function UserMembership() {
                             Upgrade
                           </Button>
                         )}
-                        {!subscription.cancelAt &&
-                          !isCivitaiProvider &&
-                          !subscription.isBadState && (
-                            <CancelMembershipAction
-                              variant="button"
-                              buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
-                            />
-                          )}
+                        {!subscription.cancelAt && !isCivitaiProvider && (
+                          <CancelMembershipAction
+                            variant="button"
+                            buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
+                          />
+                        )}
                         {subscription.isBadState && isStripe && (
                           <SubscribeButton
                             priceId={subscription.price.id}
@@ -473,26 +465,25 @@ export default function UserMembership() {
                 </Stack>
               </Paper>
 
-              {isCivitaiProvider && (
-                <PrepaidTimelineProgress subscription={subscription} />
-              )}
+              {isCivitaiProvider && <PrepaidTimelineProgress subscription={subscription} />}
 
-              {isCivitaiProvider && (() => {
-                const prepaidTokens = getPrepaidTokens({
-                  metadata: subscription.metadata as SubscriptionMetadata,
-                });
-                const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
-                // Always render for Civitai members — even with 0 tokens,
-                // the component fetches historical deliveries from the buzz service
-                return (
-                  <PrepaidTokenOverview
-                    tokens={prepaidTokens}
-                    nextUnlockDate={nextUnlockDate}
-                    defaultExpanded
-                    subscription={subscription}
-                  />
-                );
-              })()}
+              {isCivitaiProvider &&
+                (() => {
+                  const prepaidTokens = getPrepaidTokens({
+                    metadata: subscription.metadata as SubscriptionMetadata,
+                  });
+                  const nextUnlockDate = getNextTokenUnlockDate(subscription.currentPeriodStart);
+                  // Always render for Civitai members — even with 0 tokens,
+                  // the component fetches historical deliveries from the buzz service
+                  return (
+                    <PrepaidTokenOverview
+                      tokens={prepaidTokens}
+                      nextUnlockDate={nextUnlockDate}
+                      defaultExpanded
+                      subscription={subscription}
+                    />
+                  );
+                })()}
 
               {isCivitaiProvider && <PurchasedCodesCard defaultFilter="Membership" />}
 

@@ -39,6 +39,7 @@ node .claude/skills/dev-server/cli.mjs stop <session-id>
 | `tail [session-id]` | Tail logs continuously |
 | `stop <session-id>` | Stop a session |
 | `restart <session-id>` | Restart a session |
+| `rgb [subcmd]` | RGB proxy control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `shutdown` | Shutdown the daemon |
 
 ## Session Object
@@ -93,10 +94,45 @@ Run `node .claude/skills/dev-server/console.mjs` (or `npm run dev:daemon`) for a
 | `r` | Restart session |
 | `c` | Clear log buffer |
 | `x` | Stop session + exit |
+| `R` | Toggle RGB proxy (start/stop) |
 | `q` | Quit dashboard (server keeps running) |
 | `K` | Kill daemon + quit |
 
 Filters toggle on/off. Active filter is highlighted in the footer bar. Search highlights matching text in red.
+
+## RGB Proxy
+
+The daemon can optionally manage the `rgb-proxy` reverse proxy (serves `civitai-dev.{red,green,blue}` against the local dev server).
+
+### Configuration
+
+Edit `.claude/skills/dev-server/.env`:
+
+```env
+RGB_PROXY_ENABLED=true            # auto-start proxy when daemon boots
+RGB_PROXY_PATH=../rgb-proxy       # path relative to project root
+```
+
+Also ensure the main `.env` has `NEXTAUTH_URL=https://civitai-dev.blue` + `SERVER_DOMAIN_*` and hosts file maps the three domains to `127.0.0.1`. See `.claude/skills/rgb-proxy/SKILL.md` for first-time setup.
+
+### Control
+
+```bash
+# Start / stop / restart / status / logs via CLI
+node .claude/skills/dev-server/cli.mjs rgb start
+node .claude/skills/dev-server/cli.mjs rgb status
+
+# Or via pnpm scripts
+pnpm dev:rgb          # start proxy (daemon boots if not already running)
+pnpm dev:rgb:stop
+pnpm dev:rgb:status
+```
+
+In the dashboard TUI, press `R` to toggle the proxy.
+
+### Admin / sudo requirement
+
+Redbird binds ports 80 and 443. On Windows the daemon must be launched from an elevated terminal; on macOS/Linux start it with `sudo`. If it fails the daemon surfaces `lastError` via `/rgb` status and in RGB proxy logs.
 
 ## Notes
 

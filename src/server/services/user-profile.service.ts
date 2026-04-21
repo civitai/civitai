@@ -12,20 +12,27 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
-import { equipCosmetic, updateLeaderboardRank } from '~/server/services/user.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
-import { getUserContentOverview as getUserContentOverviewFromCache } from '~/server/redis/caches';
+import {
+  getUserContentOverview as getUserContentOverviewFromCache,
+  getUserContentOverviewPublic as getUserContentOverviewPublicFromCache,
+  getUserContentOverviewSfw as getUserContentOverviewSfwFromCache,
+} from '~/server/redis/caches';
 import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
+export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
+
 export const getUserContentOverview = async ({
   username,
   userId,
+  variant = 'all',
 }: {
   username?: string;
   userId?: number;
+  variant?: UserContentOverviewVariant;
 }) => {
   if (!username && !userId) {
     throw new Error('Either username or id must be provided');
@@ -44,7 +51,13 @@ export const getUserContentOverview = async ({
     userId = user.id;
   }
 
-  const data = await getUserContentOverviewFromCache([userId]);
+  const fetchFn =
+    variant === 'public'
+      ? getUserContentOverviewPublicFromCache
+      : variant === 'sfw'
+      ? getUserContentOverviewSfwFromCache
+      : getUserContentOverviewFromCache;
+  const data = await fetchFn([userId]);
   return data[userId];
 };
 

@@ -19,6 +19,7 @@ import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
 import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
+import { YellowBuzzMigrationNotice } from '~/components/Alerts/YellowBuzzMigrationNotice';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import dynamic from 'next/dynamic';
 
@@ -58,7 +59,6 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
   return (
     <header
       className={clsx('z-[199] border-b border-b-gray-2 dark:border-b-dark-5', {
-        ['border-green-8 border-b-[3px]']: features.isGreen,
         ['border-red-8 border-b-[3px]']: features.isRed,
       })}
       style={{ height: HEADER_HEIGHT, borderBottomStyle: 'solid' }}
@@ -120,7 +120,9 @@ export function AppHeader({ renderSearchComponent = defaultRenderSearchComponent
           ) : (
             <Divider orientation="vertical" />
           )}
-          <UserMenu />
+          <YellowBuzzMigrationNotice>
+            <UserMenu />
+          </YellowBuzzMigrationNotice>
         </Grid.Col>
         <Grid.Col span="auto" className="flex items-center justify-end @md:hidden">
           <div className="flex items-center gap-1">

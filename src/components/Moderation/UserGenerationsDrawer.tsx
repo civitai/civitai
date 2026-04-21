@@ -1,7 +1,7 @@
 import { Alert, Badge, Card, Center, Drawer, Loader, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { GenerationStatusBadge } from '~/components/ImageGeneration/GenerationStatusBadge';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -119,14 +119,14 @@ function UserGenerationItem({ request }: { request: WorkflowData }) {
   const step = request.steps[0];
   const { status } = request;
   const params = step.params;
-  const images = step.images;
+  const images = step.output;
 
   const { prompt, ...details } = params as Record<string, unknown>;
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === (params as any).workflow);
 
-  const displayImages = step.succeededImages;
+  const displayImages = step.succeededOutput;
   const blockedCount = step.blockedCount;
 
   return (
@@ -168,7 +168,7 @@ function UserGenerationItem({ request }: { request: WorkflowData }) {
         {displayImages.length > 0 && (
           <div className="grid grid-cols-3 gap-2">
             {displayImages.map((image, index) => (
-              <GeneratedImage key={index} image={image} />
+              <GeneratedOutput key={index} image={image} />
             ))}
           </div>
         )}

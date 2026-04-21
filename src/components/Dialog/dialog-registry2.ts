@@ -41,6 +41,9 @@ export const dialogs = dialogFactory({
       )
     ),
   },
+  'rewards-bonus-info': {
+    component: dynamic(() => import('~/components/Buzz/RewardsBonusInfoModal')),
+  },
   alert: {
     component: dynamic(() => import('~/components/Dialog/Common/AlertDialog')),
   },

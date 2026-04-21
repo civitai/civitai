@@ -14,6 +14,7 @@ import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { createJob } from './job';
 import { logToAxiom } from '~/server/logging/client';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 
 const jobQueueMap = {
   [EntityType.Image]: 'imageIds',
@@ -71,12 +72,10 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
     const jobQueueIds = reduceJobQueueToIds(jobQueue);
     const relatedEntities = await getNsfwLevelRelatedEntities(jobQueueIds);
 
-    await imagesSearchIndex.queueUpdate(
-      jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      jobQueueIds.imageIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    await queueImageSearchIndexUpdate({
+      ids: jobQueueIds.imageIds,
+      action: SearchIndexUpdateQueueAction.Update,
+    });
 
     const postIds = uniq([...jobQueueIds.postIds, ...relatedEntities.postIds]);
     const articleIds = uniq([...jobQueueIds.articleIds, ...relatedEntities.articleIds]);
@@ -87,18 +86,20 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       ...relatedEntities.modelVersionIds,
     ]);
     const modelIds = uniq([...jobQueueIds.modelIds, ...relatedEntities.modelIds]);
-    // const collectionIds = uniq([...jobQueueIds.collectionIds, ...relatedEntities.collectionIds]);
+    const collectionIds = uniq([
+      ...jobQueueIds.collectionIds,
+      ...relatedEntities.collectionIds,
+    ]);
 
-    // // Only enqueue collection jobs if there are related collections to update
-    // if (collectionIds.length > 0) {
-    //   await enqueueJobs(
-    //     collectionIds.map((entityId) => ({
-    //       entityId,
-    //       entityType: EntityType.Collection,
-    //       type: JobQueueType.UpdateNsfwLevel,
-    //     }))
-    //   );
-    // }
+    if (collectionIds.length > 0) {
+      await enqueueJobs(
+        collectionIds.map((entityId) => ({
+          entityId,
+          entityType: EntityType.Collection,
+          type: JobQueueType.UpdateNsfwLevel,
+        }))
+      );
+    }
 
     const comicProjectIds = relatedEntities.comicProjectIds;
 

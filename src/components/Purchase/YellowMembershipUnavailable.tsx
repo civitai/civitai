@@ -2,20 +2,20 @@ import { Button, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
-import { env } from '~/env/client';
+import { useServerDomains } from '~/providers/AppProvider';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 
 export function YellowMembershipUnavailable() {
-  const greenPricingUrl = `//${env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN as string}/pricing?${QS.stringify({ buzzType: 'green', 'sync-account': 'blue' })}`;
+  const serverDomains = useServerDomains();
+  const greenPricingUrl = syncAccount(
+    `//${serverDomains.green}/pricing?${QS.stringify({ buzzType: 'green' })}`
+  );
 
   return (
     <Stack gap="lg" style={{ maxWidth: 600, margin: '0 auto' }}>
       <Group gap="xs" wrap="nowrap" justify="center">
-        <IconInfoCircle
-          size={14}
-          className="text-yellow-500"
-          style={{ flexShrink: 0 }}
-        />
+        <IconInfoCircle size={14} className="text-yellow-500" style={{ flexShrink: 0 }} />
         <Text size="xs" c="dimmed">
           Yellow memberships are no longer available.
         </Text>

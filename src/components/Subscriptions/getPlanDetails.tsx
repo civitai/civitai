@@ -75,6 +75,7 @@ export const getPlanDetails: (
         : undefined,
       features.membershipsV2
         ? {
+            key: 'rewardsMultiplier',
             icon: <IconBolt size={benefitIconSize} />,
             iconColor: (metadata?.rewardsMultiplier ?? 1) === 1 ? 'gray' : `rgb(var(--buzz-color))`,
             iconVariant: 'light' as ThemeIconVariant,
@@ -107,7 +108,10 @@ export const getPlanDetails: (
                       ?.maxPrivateModels ??
                     0
                 )}{' '}
-                Private Models (PG and PG-13 Generation)
+                <Text td="underline" component="a" href="/train" target="_blank">
+                  Private Models
+                </Text>
+                {!features.isGreen && ' (PG and PG-13 Generation)'}
               </Text>
             ),
           }
@@ -142,12 +146,13 @@ export const getPlanDetails: (
         ? {
             content: (
               <Text>
-                {(metadata.vaultSizeKb ?? 0) === 0
-                  ? 'No '
-                  : formatKBytes(metadata.vaultSizeKb ?? 0)}{' '}
                 <Text td="underline" component="a" href="/product/vault" target="_blank">
-                  Civitai Vault storage
+                  Civitai Vault
                 </Text>
+                :{' '}
+                {(metadata.vaultSizeKb ?? 0) === 0
+                  ? 'not included'
+                  : `${formatKBytes(metadata.vaultSizeKb ?? 0)} of model storage`}
               </Text>
             ),
             icon: <IconCloud size={benefitIconSize} />,
@@ -173,16 +178,16 @@ export const getPlanDetails: (
         content:
           metadata.badgeType === 'animated' ? (
             <Text lh={1}>
-              Unique{' '}
+              Unique monthly{' '}
               <Text lh={1} fw={700} span>
-                Animated
+                animated
               </Text>{' '}
-              Supporter Badge each month
+              badge
             </Text>
           ) : metadata.badgeType === 'static' ? (
-            <Text lh={1}>Unique Supporter Badge each month</Text>
+            <Text lh={1}>Unique monthly badge</Text>
           ) : (
-            <Text lh={1}>No Unique Supporter Badge each month</Text>
+            <Text lh={1}>No monthly badge</Text>
           ),
         icon:
           metadata.badgeType === 'animated' ? (

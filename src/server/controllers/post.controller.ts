@@ -160,20 +160,12 @@ export const updatePostHandler = async ({
 
     const minimumScheduleTime = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
 
-    // Handle publishedAt validation and adjustment
-    if (input.publishedAt) {
-      const inputDate = dayjs(input.publishedAt);
-
-      // Throw error only if the date is clearly in the past (more than 1 minute ago to account for request delays)
-      const oneMinuteAgo = increaseDate(today, -1, 'minutes');
-      if (inputDate.isBefore(oneMinuteAgo)) {
-        throw throwBadRequestError('You cannot schedule a post in the past');
-      }
-
-      // If the date is before the minimum schedule time, publish immediately
-      if (inputDate.isBefore(minimumScheduleTime)) {
-        input.publishedAt = today;
-      }
+    // Handle publishedAt adjustment: if the client-sent date is in the past or
+    // before the minimum schedule time, publish immediately. This tolerates
+    // client clock drift and network latency on normal "Publish" clicks. The
+    // check above already blocks modifying an already-published post's date.
+    if (input.publishedAt && dayjs(input.publishedAt).isBefore(minimumScheduleTime)) {
+      input.publishedAt = today;
     }
 
     if (

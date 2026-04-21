@@ -2,16 +2,8 @@ import type { ButtonProps } from '@mantine/core';
 import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
-import {
-  BidModelButton,
-  getEntityDataForBidModelButton,
-} from '~/components/Auction/BidModelButton';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type { ImagesInfiniteModel } from '~/server/services/image.service';
-import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import type { ModelById } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function GenerateButton({
@@ -23,17 +15,11 @@ export function GenerateButton({
   onClick,
   epochNumber,
   versionId,
-  canGenerate,
-  model,
-  version,
-  image,
-  hideBidFallback,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();
-  const features = useFeatureFlags();
 
-  const vId = versionId ?? version?.id;
+  const vId = versionId;
 
   const opened = useGenerationPanelStore((state) => state.opened);
   const onClickHandler = () => {
@@ -85,34 +71,7 @@ export function GenerateButton({
     </Badge>
   );
 
-  const cannotPromote = model?.meta?.cannotPromote ?? false;
-  const isAvailable = model?.availability !== Availability.Private;
-  const isPublished =
-    model?.status === ModelStatus.Published && version?.status === ModelStatus.Published;
-  const isPoi = model?.poi ?? false;
-
-  const showBid =
-    features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote && !isPoi;
-
-  if (!showBid && !canGenerate) return null;
-  if (showBid && !canGenerate && hideBidFallback) return null;
-
-  const popButton = showBid ? (
-    <BidModelButton
-      entityData={getEntityDataForBidModelButton({
-        version,
-        model,
-        image,
-      })}
-      asButton
-      buttonProps={{
-        ...buttonProps,
-        className: 'pl-[8px] pr-[12px] w-full',
-        color: 'cyan',
-      }}
-      divProps={{ className: 'flex-[2]' }}
-    />
-  ) : (
+  const button = (
     <Button
       variant="filled"
       className="overflow-visible"
@@ -135,9 +94,9 @@ export function GenerateButton({
         <IconBrush size={24} />
       ) : (
         <Group gap={8} wrap="nowrap">
-          <IconBrush size={18} />
+          <IconBrush size={20} />
           <Text inherit inline fw={600} className="hide-mobile">
-            Generate
+            Create
           </Text>
         </Group>
       )}
@@ -146,13 +105,14 @@ export function GenerateButton({
 
   return iconOnly ? (
     <Tooltip label="Start Generating" withArrow>
-      {popButton}
+      {button}
     </Tooltip>
   ) : (
-    popButton
+    button
   );
 }
-type PropsBase = Omit<ButtonProps, 'onClick' | 'children'> & {
+
+type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   iconOnly?: boolean;
   mode?: 'toggle' | 'replace';
   children?: React.ReactElement;
@@ -160,20 +120,5 @@ type PropsBase = Omit<ButtonProps, 'onClick' | 'children'> & {
   onPurchase?: () => void;
   onClick?: () => void;
   epochNumber?: number;
-  image?: ImagesInfiniteModel;
   versionId?: number;
-  /** When true, suppress the Bid button fallback (use when bid is shown elsewhere) */
-  hideBidFallback?: boolean;
 };
-
-type Props =
-  | (PropsBase & {
-      canGenerate: true;
-      model?: ModelById;
-      version?: ModelById['modelVersions'][number];
-    })
-  | (PropsBase & {
-      canGenerate: false;
-      model: ModelById;
-      version: ModelById['modelVersions'][number];
-    });

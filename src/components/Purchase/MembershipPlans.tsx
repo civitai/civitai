@@ -270,12 +270,14 @@ export function MembershipPlans({
             </AlertWithIcon>
           )}
 
-          <Text className="text-center">
-            All memberships displayed below grant{' '}
-            <Text component="span" fw={700} style={{ color: buzzConfig.color }}>
-              {buzzTypeLabel}
-            </Text>{' '}
-          </Text>
+          {!features.isGreen && (
+            <Text className="text-center">
+              All memberships displayed below grant{' '}
+              <Text component="span" fw={700} style={{ color: buzzConfig.color }}>
+                {buzzTypeLabel}
+              </Text>{' '}
+            </Text>
+          )}
 
           {isLoading ? (
             <Center p="xl">
@@ -290,7 +292,10 @@ export function MembershipPlans({
           ) : (
             <ContainerGrid2 justify="center">
               {products.map((product) => (
-                <ContainerGrid2.Col key={product.id} span={{ base: 12, sm: 6, md: 3 }}>
+                <ContainerGrid2.Col
+                  key={product.id}
+                  span={{ base: 12, sm: 6, md: Math.max(3, 12 / products.length) }}
+                >
                   <PlanCard
                     key={`${interval}-${product.id}`}
                     product={product}

@@ -295,6 +295,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
       });
 
       await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
+      await queryUtils.modelVersion.getById.invalidate({ id: result.id });
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
       if (rawRecommendedResources?.length) {
         const queryKey = getQueryKey(trpc.model.getRecentlyRecommended);

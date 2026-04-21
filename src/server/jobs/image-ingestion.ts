@@ -17,6 +17,13 @@ type IngestImageRow = IngestImageInput & {
   scanRequestedAt: Date | null;
   ingestion: string;
   retryCount: number | null;
+  /**
+   * True when the image is connected to an already-Published Article (via
+   * ImageConnection) and therefore represents backfill work from the article
+   * content-image migration. These are routed through the low-priority
+   * orchestrator lane so they don't starve live user uploads.
+   */
+  isBackfill: boolean;
 };
 
 export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () => {
@@ -37,13 +44,26 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
   const imageIds = jobQueue.map((j) => j.entityId);
   console.log(`Found ${imageIds.length} images in queue`);
 
-  // Fetch full image data by IDs (fast primary key lookup)
+  // Fetch full image data by IDs (fast primary key lookup).
+  // `isBackfill` flags images connected to already-Published Articles via
+  // ImageConnection — these come from the legacy-article-content migration and
+  // should scan via the low-priority orchestrator lane. EXISTS uses the
+  // ImageConnection composite PK (imageId, entityType, entityId) for an
+  // index-only seek per image.
   const images =
     (await dbWrite.$queryRaw<IngestImageRow[]>`
-    SELECT id, url, type, width, height, meta->>'prompt' as prompt,
-           "scanRequestedAt", ingestion, ("scanJobs"->>'retryCount')::int as "retryCount"
-    FROM "Image"
-    WHERE id = ANY(${imageIds})
+    SELECT i.id, i.url, i.type, i.width, i.height, i.meta->>'prompt' as prompt,
+           i."scanRequestedAt", i.ingestion,
+           (i."scanJobs"->>'retryCount')::int as "retryCount",
+           EXISTS (
+             SELECT 1 FROM "ImageConnection" ic
+             JOIN "Article" a ON a.id = ic."entityId"
+             WHERE ic."imageId" = i.id
+               AND ic."entityType" = 'Article'
+               AND a.status = 'Published'::"ArticleStatus"
+           ) AS "isBackfill"
+    FROM "Image" i
+    WHERE i.id = ANY(${imageIds})
   `) ?? [];
 
   // Filter based on status and retry logic
@@ -54,6 +74,13 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     (img) =>
       img.ingestion === 'Pending' && (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
   );
+
+  // Split pending into backfill (article-connected, low-priority) and user
+  // uploads (default high-priority). Backfill work shouldn't starve live
+  // uploads. Published-article connection is determined by the isBackfill
+  // flag populated in the image SELECT above.
+  const pendingBackfill = pendingImages.filter((img) => img.isBackfill);
+  const pendingUserUploads = pendingImages.filter((img) => !img.isBackfill);
 
   const rescanImages = images.filter((img) => img.ingestion === 'Rescan');
 
@@ -112,6 +139,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   console.log({
     pendingImages: pendingImages.length,
+    pendingUserUploads: pendingUserUploads.length,
+    pendingBackfill: pendingBackfill.length,
     rescanImages: rescanImages.length,
     errorImages: errorImages.length,
     waitingForRetry: waitingForRetryIds.size,
@@ -120,7 +149,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
 
   if (!isProd) return;
 
-  const sentPendingIds = await sendImagesForScanBulk(pendingImages);
+  const sentUserPendingIds = await sendImagesForScanBulk(pendingUserUploads);
+  const sentBackfillIds = await sendImagesForScanBulk(pendingBackfill, { lowPriority: true });
   const sentRescanIds = await sendImagesForScanBulk(rescanImages, { lowPriority: true });
   const sentErrorIds = await sendImagesForScanBulk(errorImages, { lowPriority: true });
 
@@ -138,9 +168,14 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async () =
     `;
   }
 
-  const totalSent = sentPendingIds.length + sentRescanIds.length + sentErrorIds.length;
+  const totalSent =
+    sentUserPendingIds.length + sentBackfillIds.length + sentRescanIds.length + sentErrorIds.length;
   return {
     sent: totalSent,
+    sentUserPending: sentUserPendingIds.length,
+    sentBackfill: sentBackfillIds.length,
+    sentRescan: sentRescanIds.length,
+    sentError: sentErrorIds.length,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
   };

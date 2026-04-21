@@ -519,9 +519,20 @@ export const ArticleStatus = {
   Published: 'Published',
   Unpublished: 'Unpublished',
   UnpublishedViolation: 'UnpublishedViolation',
+  Processing: 'Processing',
 } as const;
 
 export type ArticleStatus = (typeof ArticleStatus)[keyof typeof ArticleStatus];
+
+export const ArticleIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+  Rescan: 'Rescan',
+} as const;
+
+export type ArticleIngestionStatus = (typeof ArticleIngestionStatus)[keyof typeof ArticleIngestionStatus];
 
 export const ArticleEngagementType = {
   Favorite: 'Favorite',

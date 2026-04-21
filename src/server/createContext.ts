@@ -8,7 +8,7 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { createCallerFactory } from '@trpc/server';
 import { appRouter } from '~/server/routers';
 import { Fingerprint } from '~/server/utils/fingerprint';
-import { getRequestDomainColor } from '~/shared/constants/domain.constants';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -20,11 +20,7 @@ type CacheSettings = {
 };
 
 const origins = [...env.TRPC_ORIGINS];
-const hosts = [
-  env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
-  env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
-  env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
-];
+const hosts = [env.SERVER_DOMAIN_GREEN, env.SERVER_DOMAIN_BLUE, env.SERVER_DOMAIN_RED];
 export const createContext = async ({
   req,
   res,
@@ -50,6 +46,29 @@ export const createContext = async ({
   const fingerprint = new Fingerprint((req.headers['x-fingerprint'] as string) ?? '');
   const domain = getRequestDomainColor(req) ?? 'blue';
 
+  // Abort downstream work (Meili, DB calls that plumb signal) when the client
+  // disconnects — e.g. when the image feed's slow-fetch timeout cancels a hung
+  // request. Saves pod CPU on requests whose response will never be read.
+  //
+  // Listening on the raw socket's 'end' event: Next.js pages router wraps
+  // req/res such that req/res 'close' events don't fire until the response
+  // finishes (useless for mid-handler cancellation). socket.end fires
+  // immediately when the client half-closes the connection, which is exactly
+  // what we need. Listener is removed as soon as the response finishes so we
+  // don't accumulate handlers on a keep-alive socket.
+  const abortController = new AbortController();
+  const onDisconnect = () => {
+    if (!res.writableEnded && !abortController.signal.aborted) abortController.abort();
+  };
+  req.socket?.on('end', onDisconnect);
+  req.socket?.on('close', onDisconnect);
+  const detach = () => {
+    req.socket?.off('end', onDisconnect);
+    req.socket?.off('close', onDisconnect);
+  };
+  res.once('finish', detach);
+  res.once('close', detach);
+
   return {
     user: session?.user,
     acceptableOrigin,
@@ -61,6 +80,7 @@ export const createContext = async ({
     res,
     req,
     domain,
+    signal: abortController.signal,
   };
 };
 
@@ -85,6 +105,9 @@ export const publicApiContext2 = async (req: NextApiRequest, res: NextApiRespons
     res,
     req,
     domain,
+    // Non-client-facing context — use an always-open signal so downstream
+    // callers that expect AbortSignal have a valid value.
+    signal: new AbortController().signal,
   });
 };
 

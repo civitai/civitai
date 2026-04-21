@@ -67,9 +67,13 @@ export function useGenerationContext<T>(selector: (state: GenerationState) => T)
 export function GenerationProvider({ children }: { children: React.ReactNode }) {
   const storeRef = useRef<GenerationStore>();
   const opened = useGenerationPanelStore((state) => state.opened);
+  // Bypass the user's marker / tag filter: the queue snackbar / canGenerate /
+  // hasGeneratedImages need to reflect ALL in-flight and completed workflows,
+  // not just those matching the currently-selected filter (e.g. "liked").
   const { data: requests, isLoading } = useGetTextToImageRequests(undefined, {
     enabled: opened,
     includeTags: false,
+    ignoreFilters: true,
   });
   const generationStatus = useGenerationStatus();
 
@@ -163,7 +167,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     const store = storeRef.current;
     if (!store) return;
-    const hasGeneratedImages = requests.some((r) => r.steps.some((s) => s.images.length > 0));
+    const hasGeneratedImages = requests.some((r) => r.steps.some((s) => s.output.length > 0));
     store.setState({ requestsLoading: isLoading, hasGeneratedImages });
   }, [requests, isLoading]);
   // #endregion

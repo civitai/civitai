@@ -45,7 +45,7 @@ import { useQueryBuzzPackages } from '~/components/Buzz/useQueryBuzzPackages';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BuzzCoinbaseButton } from '~/components/Buzz/BuzzPurchase/Buttons/BuzzCoinbaseButton';
-import { useAppContext } from '~/providers/AppProvider';
+import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { useBuzzPurchaseCalculation } from '~/components/Buzz/useBuzzPurchaseCalculation';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
@@ -73,8 +73,9 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypeSelector } from '~/components/Buzz/BuzzPurchase/BuzzTypeSelector';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GreenEnvironmentRedirect } from '~/components/Purchase/GreenEnvironmentRedirect';
-import { env } from '~/env/client';
+import { InlineMembershipUpsell } from '~/components/Stripe/InlineMembershipUpsell';
 import { QS } from '~/utils/qs';
+import { syncAccount } from '~/utils/sync-account';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
@@ -88,6 +89,7 @@ export type BuzzPurchaseImprovedProps = {
   minBuzzAmount?: number;
   onCancel?: () => void;
   initialBuzzType?: BuzzSpendType;
+  onSelectedUnitAmountChange?: (unitAmount: number | undefined) => void;
 };
 
 const BuzzPurchasePaymentButton = ({
@@ -266,10 +268,12 @@ export const BuzzPurchaseImproved = ({
   onCancel,
   purchaseSuccessMessage,
   initialBuzzType,
+  onSelectedUnitAmountChange,
 }: BuzzPurchaseImprovedProps) => {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { region } = useAppContext();
+  const serverDomains = useServerDomains();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
   const [customBuzzAmount, setCustomBuzzAmount] = useState<number | undefined>();
@@ -293,6 +297,10 @@ export const BuzzPurchaseImproved = ({
   const buzzAmount = customAmount
     ? customAmount * 10
     : selectedPrice?.buzzAmount ?? (selectedPrice?.unitAmount ?? 0) * 10;
+
+  useEffect(() => {
+    onSelectedUnitAmountChange?.(unitAmount || undefined);
+  }, [unitAmount, onSelectedUnitAmountChange]);
 
   // Calculate total buzz including bonuses
   const buzzCalculation = useBuzzPurchaseCalculation(buzzAmount);
@@ -353,20 +361,15 @@ export const BuzzPurchaseImproved = ({
   useEffect(() => {
     if (selectedBuzzType === 'green' && !features.isGreen) {
       // Redirect:
-      const query = {
-        minBuzzAmount: minBuzzAmount,
-        'sync-account': 'blue',
-      };
+      const query = { minBuzzAmount: minBuzzAmount };
 
       window.open(
-        `//${
-          env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN || 'green.civitai.com'
-        }/purchase/buzz?${QS.stringify(query)}`,
+        syncAccount(`//${serverDomains.green}/purchase/buzz?${QS.stringify(query)}`),
         '_blank',
         'noreferrer'
       );
     }
-  }, [selectedBuzzType, features.isGreen, minBuzzAmount]);
+  }, [selectedBuzzType, features.isGreen, minBuzzAmount, serverDomains.green]);
 
   const minBuzzAmountPrice = minBuzzAmount
     ? Math.max(minBuzzAmount / 10, effectiveMinCharge)
@@ -497,6 +500,12 @@ export const BuzzPurchaseImproved = ({
                           );
                         })}
                       </SimpleGrid>
+
+                      {/* Inline Membership Upsell */}
+                      <InlineMembershipUpsell
+                        selectedUnitAmount={unitAmount}
+                        className={classes.inlineUpsellCard}
+                      />
 
                       {/* Custom Amount Section */}
                       <Card className={classes.customAmountCard} padding="sm" radius="md">

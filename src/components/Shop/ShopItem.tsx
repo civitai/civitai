@@ -22,6 +22,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import type { CosmeticShopItemGetById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -43,6 +44,7 @@ export const ShopItem = ({
     (item.availableQuantity ?? null) === null || (item.availableQuantity ?? 0) > 0;
   const currentUser = useCurrentUser();
   const { lastViewed } = useShopLastViewed();
+  const domain = useDomainColor();
   const itemMeta = item.meta as CosmeticShopItemMeta;
 
   const remaining =
@@ -143,6 +145,7 @@ export const ShopItem = ({
           <Stack gap={4} align="flex-start">
             <CurrencyBadge
               currency={Currency.BUZZ}
+              type={domain === 'green' ? 'green' : 'yellow'}
               unitAmount={item.unitAmount}
               variant="transparent"
               className="!px-0"

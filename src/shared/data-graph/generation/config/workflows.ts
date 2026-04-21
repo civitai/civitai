@@ -90,6 +90,7 @@ const TXT2IMG_IDS = [
   ECO.ZImageBase,
   ECO.Grok,
   ECO.WanImage27,
+  ECO.Ernie,
 ];
 
 /** Video ecosystems that support video:create */
@@ -110,6 +111,7 @@ const TXT2VID_IDS = [
   // ECO.Haiper,
   // ECO.Lightricks,
   ECO.Grok,
+  ECO.Seedance,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -208,7 +210,7 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Increase image resolution',
     category: 'image',
     enhancement: true,
-    ecosystemIds: [],
+    ecosystemIds: [ECO.Upscaler],
   },
 
   'img2img:remove-background': {
@@ -582,6 +584,9 @@ export function getWorkflowLabelForEcosystem(
 type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolean);
 
 const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
+  // Upscale workflow — legacy form has no upscaler node
+  ['img2img:upscale', true],
+
   // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
   [
     'txt2vid',
@@ -589,7 +594,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27,
+      ecoId === ECO.WanVideo27 ||
+      ecoId === ECO.Seedance,
   ],
   [
     'img2vid',
@@ -597,7 +603,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Kling && modelId === klingVersionIds.v3) ||
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
-      ecoId === ECO.WanVideo27,
+      ecoId === ECO.WanVideo27 ||
+      ecoId === ECO.Seedance,
   ],
 
   // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
@@ -615,7 +622,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.Anima ||
       ecoId === ECO.Grok ||
       ecoId === ECO.Qwen2 ||
-      ecoId === ECO.WanImage27,
+      ecoId === ECO.WanImage27 ||
+      ecoId === ECO.Ernie,
   ],
   [
     'img2img:edit',

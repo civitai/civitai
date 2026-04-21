@@ -99,15 +99,29 @@ const siteVerifyResponseSchema = z.object({
   cdata: z.string().optional(),
 });
 
+type CaptchaMeta = {
+  source?: string;
+  userId?: number;
+  tokenAgeMs?: number;
+  submitAttempt?: number;
+  widgetStatus?: string;
+  tokenPrefix?: string;
+  pageSessionId?: string;
+};
+
 export async function verifyCaptchaToken({
   token,
   secret = env.CF_INVISIBLE_TURNSTILE_SECRET || env.CLOUDFLARE_TURNSTILE_SECRET,
   ip,
+  meta,
 }: {
   token: string;
   secret?: string;
   ip?: string;
+  meta?: CaptchaMeta;
 }) {
+  const tokenPrefix = token.slice(0, 8);
+  const startedAt = Date.now();
   const result = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -117,13 +131,54 @@ export async function verifyCaptchaToken({
       remoteip: ip,
     }),
   });
-  if (!result.ok) throw throwBadRequestError('No response from captcha service');
+  const verifyLatencyMs = Date.now() - startedAt;
+  const cfRay = result.headers.get('cf-ray') ?? undefined;
+  if (!result.ok) {
+    logToAxiom({
+      name: 'captcha-failure',
+      type: 'error',
+      error: {
+        reason: 'siteverify-not-ok',
+        status: result.status,
+        tokenPrefix,
+        verifyLatencyMs,
+        cfRay,
+        meta,
+      },
+    }, 'civitai-prod').catch(() => undefined);
+    throw throwBadRequestError('No response from captcha service');
+  }
 
   const outcome = (await result.json()) as SiteVerifyResponse;
   if (outcome.success) {
+    if (Math.random() < 0.01) {
+      logToAxiom({
+        name: 'captcha-success-sample',
+        type: 'info',
+        error: {
+          tokenPrefix,
+          verifyLatencyMs,
+          cfRay,
+          challenge_ts: outcome.challenge_ts,
+          hostname: outcome.hostname,
+          action: outcome.action,
+          meta,
+        },
+      }, 'civitai-prod').catch(() => undefined);
+    }
     return true;
-  } else {
-    logToAxiom({ name: 'captcha-failure', type: 'error', response: outcome });
-    throw throwBadRequestError('Unable to verify captcha token');
   }
+
+  logToAxiom({
+    name: 'captcha-failure',
+    type: 'error',
+    error: {
+      response: outcome,
+      tokenPrefix,
+      verifyLatencyMs,
+      cfRay,
+      meta,
+    },
+  }, 'civitai-prod').catch(() => undefined);
+  throw throwBadRequestError('Unable to verify captcha token');
 }

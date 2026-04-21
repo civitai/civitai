@@ -372,7 +372,7 @@ export function createBuzzEvent<T>({
 //  hypothesis is that this occurs due to a combination of
 //  async inserts + ch's merge strategy
 async function addBuzzEvent(event: BuzzEventLog) {
-  withRetries(
+  await withRetries(
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',
@@ -386,7 +386,7 @@ async function addBuzzEvent(event: BuzzEventLog) {
 
 async function updateBuzzEvents(events: BuzzEventLog[]) {
   for (const event of events) event.version = (event.version ?? 0) + 1;
-  withRetries(
+  await withRetries(
     async () =>
       await clickhouse?.insert({
         table: 'buzzEvents',

@@ -12,11 +12,15 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import type { ProfileImage } from '~/server/selectors/image.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
-import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  hasPublicBrowsingLevel,
+  hasSafeBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { getInitials } from '~/utils/string-helpers';
 import classes from './UserAvatarSimple.module.scss';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function UserAvatarSimple({
   id,
@@ -34,6 +38,7 @@ export function UserAvatarSimple({
   autoplayAnimations?: boolean;
 }) {
   const { canViewNsfw } = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
@@ -65,7 +70,9 @@ export function UserAvatarSimple({
           <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
             {profilePicture &&
             (!canViewNsfw
-              ? hasPublicBrowsingLevel(profilePicture.nsfwLevel)
+              ? currentUser
+                ? hasSafeBrowsingLevel(profilePicture.nsfwLevel)
+                : hasPublicBrowsingLevel(profilePicture.nsfwLevel)
               : Flags.hasFlag(browsingLevel, profilePicture.nsfwLevel)) ? (
               <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
             ) : (

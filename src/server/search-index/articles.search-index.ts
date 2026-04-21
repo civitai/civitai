@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
+import { ArticleIngestionStatus, ArticleStatus, Availability } from '~/shared/utils/prisma/enums';
 import { articleDetailSelect } from '~/server/selectors/article.selector';
 import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { isDefined } from '~/utils/type-guards';
@@ -103,11 +103,11 @@ const transformData = async ({
         tags: tags.map((articleTag) => articleTag.tag),
         coverImage: {
           ...coverImage,
-          // !important - when article `userNsfwLevel` equals article `nsfwLevel`, it's possible that the article `userNsfwLevel` is higher than the cover image `nsfwLevel`. In this case, we update the image to the higher `nsfwLevel` so that it will still pass through front end filters
-          nsfwLevel:
-            articleRecord.nsfwLevel === articleRecord.userNsfwLevel
-              ? articleRecord.nsfwLevel
-              : coverImage.nsfwLevel,
+          // Lift the cover image nsfwLevel to the article's aggregate so
+          // front-end filters (ImageGuard blur, browsingLevel mask) reflect
+          // the article's true rating whenever content images, userNsfwLevel,
+          // or the moderation floor raised it above the cover's own level.
+          nsfwLevel: Math.max(articleRecord.nsfwLevel ?? 0, coverImage.nsfwLevel ?? 0),
           meta: coverImage.meta as ImageMetaProps,
           tags: coverImage.tags.map((x) => x.tag),
         },
@@ -173,6 +173,7 @@ export const articlesSearchIndex = createSearchIndexUpdateProcessor({
       where: {
         publishedAt: { not: null },
         status: ArticleStatus.Published,
+        ingestion: ArticleIngestionStatus.Scanned,
         tosViolation: false,
         availability: { not: Availability.Unsearchable },
         id: batch.type === 'update' ? { in: batch.ids } : { gte: batch.startId, lte: batch.endId },
