@@ -688,7 +688,11 @@ export const getArticleById = async ({
             ]
           : undefined,
       },
-      select: articleDetailSelect,
+      // Include `moderatorNsfwLevel` here (not in the shared select) so the
+      // edit form can render the override banner / picker. The public article
+      // read payload is served by `getArticles`, not this function, so the
+      // field doesn't flow into external webhook / search-index payloads.
+      select: { ...articleDetailSelect, moderatorNsfwLevel: true },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${id}`);
@@ -993,19 +997,14 @@ export const upsertArticle = async ({
     }
 
     // moderatorNsfwLevel is the mod override layer that takes precedence over
-    // the GREATEST derivation (see updateArticleNsfwLevels). Determine whether
-    // anything in this save can move the derived nsfwLevel so we know to
-    // recompute post-commit — plain upsert doesn't normally trigger recompute,
-    // only the scan/text-mod/report webhooks do, so without this hook a mod's
-    // override or user preference change would sit dormant until something
-    // else kicked the pipeline.
+    // the GREATEST derivation (see updateArticleNsfwLevels). We still need to
+    // know when the override changed so the locked-properties set below can
+    // pin/unpin userNsfwLevel accordingly — the recompute itself happens
+    // unconditionally via updateArticleImageScanStatus post-commit.
     const moderatorOverrideChanged =
       !!isModerator &&
       data.moderatorNsfwLevel !== undefined &&
       data.moderatorNsfwLevel !== article.moderatorNsfwLevel;
-    const userNsfwLevelChanged =
-      data.userNsfwLevel !== undefined && data.userNsfwLevel !== article.userNsfwLevel;
-    const shouldRecomputeNsfwLevel = moderatorOverrideChanged || userNsfwLevelChanged;
 
     // When a mod sets an override, lock the user's picker so a subsequent
     // owner save can't quietly drift userNsfwLevel underneath it. When the
@@ -1114,14 +1113,6 @@ export const upsertArticle = async ({
 
     await preventReplicationLag('article', result.id);
     await preventReplicationLag('userArticles', result.userId);
-
-    // Recompute the derived nsfwLevel when the save touched any of its
-    // inputs. Scan / text-mod / report webhooks already call this on their
-    // own triggers; this hook covers the gap for direct edits so a mod
-    // override or userNsfwLevel change takes effect immediately.
-    if (shouldRecomputeNsfwLevel) {
-      await updateArticleNsfwLevels([result.id]);
-    }
 
     // remove old cover image
     if (article.coverId !== coverId && article.coverId) {
@@ -1529,7 +1520,9 @@ export async function getModeratorArticles({
     take: limit + 1,
     cursor: cursor ? { id: cursor } : undefined,
     where: { AND },
-    select: articleDetailSelect,
+    // Mod-only list — safe to surface the moderator override value alongside
+    // the regular detail fields. See note on `articleDetailSelect`.
+    select: { ...articleDetailSelect, moderatorNsfwLevel: true },
     orderBy: { createdAt: 'desc' },
   });
 
