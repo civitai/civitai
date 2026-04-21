@@ -410,6 +410,53 @@ No data migration. Legacy `UserReferral` rows stay intact (signup-only rewards a
 
 12. **@ai:** Checkout manual code entry: adding an input field to checkout (pre-filled from cookie if present, manually enterable if not). This requires auditing the existing Stripe/Paddle checkout flow — will scout `src/server/services/stripe.service.ts` and related checkout components in Phase 1 prep to find the correct injection point. @ai: Implemented via `ReferralCheckoutBanner` on `/pricing`. Stripe checkout session now carries `ref_code` via `subscription_data.metadata` → reconciled on `invoice.paid` webhook.
 
+## Debug Endpoint
+
+`POST /api/testing/referrals` — hidden debug endpoint (gated by `WEBHOOK_TOKEN` header). For experimenting with the program without paying real money.
+
+```bash
+export T="<your WEBHOOK_TOKEN>"
+curl -s -X POST "https://civitai.com/api/testing/referrals" \
+  -H "Authorization: Bearer $T" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"dump","userId":<YOUR_USER_ID>}' | jq
+```
+
+Actions:
+
+| action | required | what it does |
+|---|---|---|
+| `dump` | `userId` | Full referral state: code, UserReferral, rewards, milestones, redemptions, attribution, active sub, balance |
+| `bind-code` | `userId, code` | Attach a referral code to the user's `UserReferral` |
+| `grant-tokens` | `userId, tier, tokens` | Insert a MembershipToken reward. `settleImmediately=true` skips 7-day wait |
+| `grant-blue-buzz` | `userId, blueBuzz` | Insert a BuzzKickback reward |
+| `enqueue-chunk` | `userId, tier, durationDays` | Push a chunk onto the user's active referral-sub queue |
+| `simulate-membership-payment` | `refereeId, tier` | Runs `recordMembershipPaymentReward` as if Stripe fired `invoice.paid` |
+| `simulate-buzz-purchase` | `refereeId, blueBuzz` (yellow amount spent) | Runs `recordBuzzPurchaseKickback` |
+| `simulate-chargeback` | `sourceEventId` | Runs `revokeForChargeback` |
+| `settle-all` | `userId` (scopes) | Fast-forward Pending rewards and run settle cron |
+| `advance-subs` | `userId` (optional) | Expire the user's referral sub and run advance cron |
+| `expire-tokens` | `userId` | Expire all settled tokens for the user |
+| `reset` | `userId, confirm=true` | Wipe all referral data for a user back to clean slate |
+
+Typical experiment flow:
+
+```bash
+# 1. Give yourself 6 tokens, pre-settled
+curl ... -d '{"action":"grant-tokens","userId":123,"tier":"gold","tokens":6,"settleImmediately":true}'
+
+# 2. Visit /user/referrals — redeem for "1 month Gold perks"
+
+# 3. Enqueue a Bronze chunk to test queue promotion
+curl ... -d '{"action":"enqueue-chunk","userId":123,"tier":"bronze","durationDays":14}'
+
+# 4. Fast-forward Gold expiry → Bronze takes over
+curl ... -d '{"action":"advance-subs","userId":123}'
+
+# 5. Wipe and start over
+curl ... -d '{"action":"reset","userId":123,"confirm":true}'
+```
+
 ## Overlap Stacking Approach (v1)
 
 `CustomerSubscription` has `@@unique([userId, buzzType])`. Paid subs use `yellow` (.com), `green` (.green), `blue` (.red). Using any of those for referral grants collides with paid subs of the same flavor.
