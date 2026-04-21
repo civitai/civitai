@@ -53,6 +53,7 @@ const featureFlags = createFeatureFlags({
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
+  ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
   trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption' },
   trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag' },
