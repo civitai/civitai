@@ -1476,7 +1476,7 @@ export const earlyAccessPurchase = async ({
         )
         WHERE "id" = ${modelVersionId}; -- Your conditions here
       `;
-    });
+    },  { timeout: 10000 }); // Doubled timeout since this transaction involves multiple steps and external calls.
 
     if (earlyAccessDonationGoal) {
       await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
