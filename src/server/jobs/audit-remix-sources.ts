@@ -4,6 +4,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { extModeration } from '~/server/integrations/moderation';
 import { auditPromptEnriched } from '~/utils/metadata/audit';
 import { imageMetaOutput } from '~/server/schema/image.schema';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { createJob } from './job';
 
 const DEDUP_TTL = 60 * 60 * 24; // 24 hours — don't re-audit the same source image within a day
@@ -106,10 +107,13 @@ export const auditRemixSourcesJob = createJob(
 
         // 5. Flag for moderator review if problematic
         if (isProblematic) {
-          await dbWrite.image.update({
+          const updated = await dbWrite.image.update({
             where: { id: imageId },
             data: { needsReview: 'remixSource' },
+            select: { postId: true },
           });
+          // Flagged images need to disappear from the model-version showcase.
+          if (updated.postId) await bustCachesForPosts(updated.postId);
           flagged++;
         }
       } catch (error) {

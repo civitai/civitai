@@ -36,7 +36,7 @@ import { createImageTagsForReview } from '~/server/services/image-review.service
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
-import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { updateComicNsfwLevelsForImage } from '~/server/services/nsfwLevels.service';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
@@ -327,6 +327,9 @@ export async function processImageScanWorkflow({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Delete,
     });
+    // A previously-cached Blocked image can still satisfy the showcase query
+    // filters (needsReview IS NULL, nsfwLevel != 0) so drop it from the showcase.
+    if (image.postId) await bustCachesForPosts(image.postId);
   }
   // handle scanned image updates
   else if (toUpdate.ingestion === ImageIngestionStatus.Scanned) {
@@ -338,7 +341,11 @@ export async function processImageScanWorkflow({
       await deleteUserProfilePictureCache(image.userId);
     }
 
-    if (image.postId) await updatePostNsfwLevel(image.postId);
+    if (image.postId) {
+      await updatePostNsfwLevel(image.postId);
+      // Without this, the showcase cache stays empty until its 24h TTL for any model version whose images hadn't scanned yet on first read.
+      await bustCachesForPosts(image.postId);
+    }
     await updateComicNsfwLevelsForImage(image.id);
 
     await queueImageSearchIndexUpdate({
