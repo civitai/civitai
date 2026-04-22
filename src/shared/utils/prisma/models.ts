@@ -18,7 +18,7 @@ export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
 
-export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "Other";
+export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "TextEncoder" | "UNet" | "CLIPVision" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "Other";
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 

@@ -46,16 +46,12 @@ import {
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import {
-  BidModelButton,
-  getEntityDataForBidModelButton,
-} from '~/components/Auction/BidModelButton';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -74,6 +70,9 @@ const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection'),
   { ssr: false }
 );
+const MergeVersions = dynamic(() => import('~/components/Model/Actions/MergeVersions'), {
+  ssr: false,
+});
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -88,7 +87,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { ReorderVersionsModal } from '~/components/Modals/ReorderVersionsModal';
 import { ToggleLockModel } from '~/components/Model/Actions/ToggleLockModel';
 import { ToggleLockModelComments } from '~/components/Model/Actions/ToggleLockModelComments';
-import { ToggleModelNotification } from '~/components/Model/Actions/ToggleModelNotification';
 import { HowToButton } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
@@ -295,8 +293,6 @@ export default function ModelDetailsV2({
   const { activeTour, running, runTour } = useTourContext();
 
   const [opened, { toggle }] = useDisclosure();
-  const discussionSectionRef = useRef<HTMLDivElement | null>(null);
-  const gallerySectionRef = useRef<HTMLDivElement | null>(null);
 
   const { blockedUsers } = useHiddenPreferencesData();
 
@@ -857,24 +853,6 @@ export default function ModelDetailsV2({
                         onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
                       />
                     )}
-                    {features.auctions && selectedVersion && (
-                      <BidModelButton
-                        actionIconProps={{
-                          className: classes.headerButton,
-                        }}
-                        buttonProps={{ className: classes.headerButton }}
-                        entityData={getEntityDataForBidModelButton({
-                          version: selectedVersion,
-                          model,
-                          image,
-                        })}
-                      />
-                    )}
-                    <ToggleModelNotification
-                      className={classes.headerButton}
-                      modelId={model.id}
-                      userId={model.user.id}
-                    />
                     <Menu
                       position="bottom-end"
                       transitionProps={{ transition: 'pop-top-right' }}
@@ -1118,6 +1096,18 @@ export default function ModelDetailsV2({
                             >
                               Migrate to Collection
                             </Menu.Item>
+                            {isOwner && model.modelVersions.length > 1 && (
+                              <Menu.Item
+                                onClick={() =>
+                                  dialogStore.trigger({
+                                    component: MergeVersions,
+                                    props: { modelId: model.id },
+                                  })
+                                }
+                              >
+                                Merge Versions
+                              </Menu.Item>
+                            )}
                           </>
                         )}
                       </Menu.Dropdown>
@@ -1293,9 +1283,6 @@ export default function ModelDetailsV2({
                 version={selectedVersion}
                 image={image}
                 onFavoriteClick={handleToggleFavorite}
-                onBrowseClick={() => {
-                  gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
-                }}
               />
             )}
           </Stack>
@@ -1340,7 +1327,7 @@ export default function ModelDetailsV2({
               />
             </Container>
             {!model.locked && model.mode !== ModelModifier.TakenDown && (
-              <Box ref={gallerySectionRef} id="gallery" mt="md">
+              <Box id="gallery" mt="md">
                 <ModelGallery
                   model={model}
                   selectedVersionId={selectedVersion?.id}
@@ -1358,23 +1345,6 @@ export default function ModelDetailsV2({
       </SensitiveShield>
     </>
   );
-
-  // return (
-  //   <Box ref={gallerySectionRef} id="gallery" mt="md">
-  //     <ImagesAsPostsInfinite
-  //       model={model}
-  //       selectedVersionId={selectedVersion?.id}
-  //       modelVersions={model.modelVersions}
-  //       showModerationOptions={isOwner}
-  //       showPOIWarning={model.poi}
-  //       generationOptions={{
-  //         generationModelId: selectedVersion?.meta.picFinderModelId,
-  //         includeEditingActions: isOwner,
-  //       }}
-  //       canReview={!versionIsEarlyAccess || currentUser?.isMember || currentUser?.isModerator}
-  //     />
-  //   </Box>
-  // );
 }
 
 function AdUnitTopSection() {

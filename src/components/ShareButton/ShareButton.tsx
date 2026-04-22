@@ -114,7 +114,7 @@ export function ShareButton({
   }
 
   return (
-    <Popover withArrow shadow="md" position="top-end" width={320}>
+    <Popover withArrow shadow="md" position="top-end" width={320} withinPortal>
       <Popover.Target>{children}</Popover.Target>
       <Popover.Dropdown>
         <Stack>

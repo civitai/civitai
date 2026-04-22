@@ -571,6 +571,9 @@ enum ModelType {
   Upscaler
   MotionModule
   VAE
+  TextEncoder
+  UNet
+  CLIPVision
   Poses
   Wildcards
   Workflows

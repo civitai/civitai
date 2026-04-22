@@ -10,18 +10,21 @@ export const createModelFileDownloadUrl = ({
   type,
   meta,
   primary = false,
+  fileId,
 }: {
   versionId: number;
   type?: ModelFileType | string;
   primary?: boolean;
   meta?: BasicFileMetadata;
+  fileId?: number;
 }) => {
   const { format, size, fp } = meta || {};
   const queryString = QS.stringify({
-    type: !primary ? type : null,
-    format: !primary && type !== 'Training Data' ? format : null,
-    size: !primary ? size : null,
-    fp: !primary ? fp : null,
+    fileId: fileId ?? null,
+    type: !primary && !fileId ? type : null,
+    format: !primary && !fileId && type !== 'Training Data' ? format : null,
+    size: !primary && !fileId ? size : null,
+    fp: !primary && !fileId ? fp : null,
   });
 
   return `/api/download/models/${versionId}${queryString ? '?' + queryString : ''}`;

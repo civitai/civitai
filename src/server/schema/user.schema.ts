@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
+import { constants } from '~/server/common/constants';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
@@ -119,6 +120,7 @@ export const userUpdateSchema = z.object({
       size: z.string().optional(),
       fp: z.string().optional(),
       imageFormat: z.string().optional(),
+      quantType: z.enum(constants.modelFileQuantTypes).optional(),
     })
     .optional(),
   leaderboardShowcase: z.string().nullish(),

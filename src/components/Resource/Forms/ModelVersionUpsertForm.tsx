@@ -17,7 +17,7 @@ import { IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect } from 'react';
 import * as z from 'zod';
 
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -155,7 +155,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   ].includes(model?.type ?? '');
   const isTextualInversion = model?.type === 'TextualInversion';
   const hasBaseModelType = ['Checkpoint'].includes(model?.type ?? '');
-  const hasVAE = ['Checkpoint'].includes(model?.type ?? '');
   const showStrengthInput = ['LORA', 'Hypernetwork', 'LoCon', 'DoRA'].includes(model?.type ?? '');
   const isEarlyAccessOver =
     version?.status === 'Published' &&
@@ -163,25 +162,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 
   const MAX_EARLY_ACCCESS = 30;
 
-  // Get VAE options
-  const { data: vaes } = trpc.modelVersion.getModelVersionsByModelType.useQuery(
-    { type: 'VAE' },
-    {
-      cacheTime: 60 * 1000,
-      enabled: hasVAE,
-    }
-  );
-  const vaeOptions = useMemo(() => {
-    if (!vaes) return [];
-    return vaes.map((x) => ({ label: x.modelName, value: x.id }));
-  }, [vaes]);
-
   const defaultValues: Schema = {
     ...version,
     name: version?.name ?? 'v1.0',
     baseModel: version?.baseModel ?? 'SD 1.5',
     baseModelType: hasBaseModelType ? version?.baseModelType ?? 'Standard' : undefined,
-    vaeId: hasVAE ? version?.vaeId ?? null : null,
     trainedWords: version?.trainedWords ?? [],
     skipTrainedWords: acceptsTrainedWords
       ? version?.trainedWords
@@ -303,7 +288,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             : data.earlyAccessConfig,
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
-        vaeId: hasVAE ? data.vaeId : undefined,
         monetization: data.monetization,
         recommendedResources,
         templateId,
@@ -903,32 +887,19 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   />
                 </Group>
               )}
-              {hasVAE ? (
-                <>
-                  <InputSelect
-                    name="vaeId"
-                    label="VAE"
-                    placeholder="VAE"
-                    data={vaeOptions}
-                    clearable
-                    searchable
-                  />
-                </>
-              ) : (
-                <InputResourceSelectMultiple
-                  name="recommendedResources"
-                  label="Resources"
-                  description="Select which resources work best with your model"
-                  selectSource="modelVersion"
-                  buttonLabel="Add resource"
-                  w="100%"
-                  limit={10}
-                  options={{
-                    resources: [{ type: ModelType.Checkpoint, baseModels: [baseModel] }],
-                    excludeIds: recResources.map((r) => r.id),
-                  }}
-                />
-              )}
+              <InputResourceSelectMultiple
+                name="recommendedResources"
+                label="Resources"
+                description="Select which resources work best with your model"
+                selectSource="modelVersion"
+                buttonLabel="Add resource"
+                w="100%"
+                limit={10}
+                options={{
+                  resources: [{ type: ModelType.Checkpoint, baseModels: [baseModel] }],
+                  excludeIds: recResources.map((r) => r.id),
+                }}
+              />
             </Group>
           </Stack>
           {modelDownloadEnabled && (
