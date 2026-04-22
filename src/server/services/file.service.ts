@@ -1,11 +1,11 @@
 import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
-import type { ModelFileType } from '~/server/common/constants';
-import { constants } from '~/server/common/constants';
+import type { ComponentFileType, ModelFileType } from '~/server/common/constants';
+import { componentFileTypes, constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
-import { getVaeFiles } from '~/server/services/model.service';
+import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import {
   ModelFileVisibility,
@@ -127,20 +127,42 @@ export const getFileWithPermission = async ({
   }
 };
 
+/** Maps ModelFileType (with spaces) to ModelFileComponentType (camelCase) */
+const fileTypeToComponentTypeMap: Record<string, ModelFileComponentType> = {
+  VAE: 'VAE',
+  'Text Encoder': 'TextEncoder',
+  UNet: 'UNet',
+  'Diffusion Model': 'DiffusionModel',
+  CLIPVision: 'CLIPVision',
+  ControlNet: 'ControlNet',
+  Config: 'Config',
+};
+
+function isComponentFileType(type: string): type is ComponentFileType {
+  return (componentFileTypes as readonly string[]).includes(type);
+}
+
+function fileTypeToComponentType(type: string): ModelFileComponentType | undefined {
+  return fileTypeToComponentTypeMap[type];
+}
+
 export const getFileForModelVersion = async ({
   modelVersionId,
   type,
   format,
   size,
   fp,
+  quantType,
   user,
   noAuth,
+  fileId,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
   format?: ModelFileFormat;
   size?: ModelFileSize;
   fp?: ModelFileFp;
+  quantType?: ModelFileQuantType;
   user?: {
     isModerator?: boolean | null;
     id?: number;
@@ -148,6 +170,7 @@ export const getFileForModelVersion = async ({
     filePreferences?: UserFilePreferences;
   };
   noAuth?: boolean;
+  fileId?: number;
 }): Promise<ModelVersionFileResult> => {
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
@@ -173,7 +196,6 @@ export const getFileForModelVersion = async ({
       earlyAccessEndsAt: true,
       earlyAccessConfig: true,
       createdAt: true,
-      vaeId: true,
       requireAuth: true,
       usageControl: true,
     },
@@ -233,34 +255,60 @@ export const getFileForModelVersion = async ({
   }
 
   // Get the correct file
+  const fileSelect = {
+    id: true,
+    url: true,
+    name: true,
+    overrideName: true,
+    type: true,
+    metadata: true,
+    hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
+  };
+
   let file: FileResult | null = null;
-  if (type === 'VAE') {
-    if (!modelVersion.vaeId) return { status: 'not-found' };
-    const vae = await getVaeFiles({ vaeIds: [modelVersion.vaeId] });
-    if (!vae.length) return { status: 'not-found' };
-    file = vae[0];
+  if (fileId) {
+    // Direct file lookup by ID — bypasses type-based resolution
+    const fileWhere: Prisma.ModelFileWhereInput = { id: fileId, modelVersionId };
+    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
+    const found = await dbRead.modelFile.findFirst({ where: fileWhere, select: fileSelect });
+    file = found as FileResult | null;
   } else {
+    // Try local files on this model version first
     const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
     if (type) fileWhere.type = type;
     if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const files = await dbRead.modelFile.findMany({
-      where: fileWhere,
-      select: {
-        id: true,
-        url: true,
-        name: true,
-        overrideName: true,
-        type: true,
-        metadata: true,
-        hashes: { select: { hash: true }, where: { type: 'SHA256' } },
-      },
-    });
+    const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
     const metadata: FileMetadata = {
       ...user?.filePreferences,
-      ...removeEmpty({ format, size, fp }),
+      ...removeEmpty({ format, size, fp, quantType }),
     };
     const castedFiles = files as Array<Omit<FileResult, 'metadata'> & { metadata: FileMetadata }>;
     file = getPrimaryFile(castedFiles, { metadata });
+
+    // If no local file found and the requested type is a component type,
+    // fall back to linked components (external files on other model versions)
+    if (!file && type && isComponentFileType(type)) {
+      const componentType = fileTypeToComponentType(type);
+      const linked = await dbRead.recommendedResource.findFirst({
+        where: {
+          sourceId: modelVersionId,
+          settings: { path: ['isLinkedComponent'], equals: true },
+        },
+        select: { resourceId: true, settings: true },
+      });
+      const settings = linked?.settings as LinkedComponentSettings | null;
+      if (linked && settings?.componentType === componentType) {
+        // Fetch the primary 'Model' file from the linked version
+        const linkedFile = await dbRead.modelFile.findFirst({
+          where: { modelVersionId: linked.resourceId, type: 'Model' },
+          select: fileSelect,
+          orderBy: { id: 'asc' },
+        });
+        if (linkedFile) {
+          file = { ...linkedFile, type: type } as FileResult;
+        }
+      }
+    }
   }
   if (!file) return { status: 'not-found' };
 

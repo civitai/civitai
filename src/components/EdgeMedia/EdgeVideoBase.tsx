@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
@@ -17,35 +17,46 @@ export type EdgeVideoBaseProps = VideoProps & {
 };
 
 export const EdgeVideoBase = forwardRef<HTMLVideoElement, EdgeVideoBaseProps>(
-  ({ src, options, thumbnailUrl, threshold = 0.25, ...props }, forwardedRef) => {
+  ({ src, options, thumbnailUrl, threshold = 0.25, autoPlay, ...props }, forwardedRef) => {
     const ref = useRef<HTMLVideoElement>(null);
     const node = useScrollAreaRef();
-    const observerRef = useRef<IntersectionObserver>();
+    const [canPlay, setCanPlay] = useState(false);
 
     useImperativeHandle(forwardedRef, () => ref.current as HTMLVideoElement);
 
+    // Never pass the HTML autoPlay attribute to <video> — the browser would
+    // start playback before the observer settles, so off-screen mounts (e.g.
+    // rows in the virtualized overscan buffer) would briefly play. Instead,
+    // the observer drives a `canPlay` state and the effect below issues
+    // play()/pause() explicitly.
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem || threshold === null) return;
-      if (!observerRef.current) {
-        observerRef.current = new IntersectionObserver(
-          ([{ isIntersecting, intersectionRatio, target }]) => {
-            const elem = target as HTMLVideoElement;
-            if (isIntersecting && intersectionRatio >= threshold) {
-              elem.play();
-            } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
-              elem.pause();
-            }
-          },
-          { root: node?.current, threshold: [threshold, 1 - threshold] }
-        );
-      }
-      observerRef.current.observe(videoElem);
+      const observer = new IntersectionObserver(
+        ([{ intersectionRatio }]) => {
+          setCanPlay(intersectionRatio >= threshold);
+        },
+        { root: node?.current, threshold: [threshold, 1 - threshold] }
+      );
+      observer.observe(videoElem);
       return () => {
-        observerRef.current?.unobserve(videoElem);
-        observerRef.current?.disconnect();
+        observer.unobserve(videoElem);
+        observer.disconnect();
       };
     }, [threshold]);
+
+    useEffect(() => {
+      const videoElem = ref.current;
+      if (!videoElem) return;
+      const shouldPlay = !!autoPlay && (threshold === null || canPlay);
+      if (shouldPlay) {
+        videoElem.play().catch(() => {
+          // Autoplay blocked (e.g. user-interaction required); stay paused.
+        });
+      } else {
+        videoElem.pause();
+      }
+    }, [canPlay, autoPlay, threshold]);
 
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {

@@ -42,7 +42,7 @@ export function MasonryGridVirtual<TData>({
   itemId,
   empty = null,
   withAds,
-  overscan = 2,
+  overscan = 4,
   aspectRatio = 'portrait',
 }: Props<TData>) {
   const colorScheme = useComputedColorScheme('dark');

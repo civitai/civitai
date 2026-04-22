@@ -58,6 +58,12 @@ export const constants = {
     'VAE',
     'Config',
     'Archive',
+    'UNet',
+    'Diffusion Model',
+    'CLIPVision',
+    'ControlNet',
+    'Workflow',
+    'Upscaler',
   ],
   trainingMediaTypes: ['image', 'video'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
@@ -65,6 +71,46 @@ export const constants = {
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
+  modelFileQuantTypes: [
+    'Q8_0',
+    'Q6_K',
+    'Q5_K_M',
+    'Q5_K_S',
+    'Q5_1',
+    'Q5_0',
+    'Q4_K_M',
+    'Q4_K_S',
+    'Q4_1',
+    'Q4_0',
+    'Q3_K_L',
+    'Q3_K_M',
+    'Q3_K_S',
+    'Q2_K',
+    'Q2_K_S',
+    'IQ4_XS',
+    'IQ4_NL',
+    'IQ3_XS',
+    'IQ3_XXS',
+    'IQ2_XS',
+    'IQ2_XXS',
+    'IQ2_S',
+    'IQ2_M',
+    'IQ1_S',
+    'IQ1_M',
+  ],
+  modelFileComponentTypes: [
+    'Checkpoint',
+    'VAE',
+    'TextEncoder',
+    'UNet',
+    'DiffusionModel',
+    'CLIPVision',
+    'ControlNet',
+    'Upscaler',
+    'Workflow',
+    'Config',
+    'Other',
+  ],
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
@@ -81,6 +127,12 @@ export const constants = {
     VAE: 5,
     Negative: 6,
     Archive: 7,
+    UNet: 8,
+    'Diffusion Model': 9,
+    CLIPVision: 10,
+    ControlNet: 11,
+    Workflow: 12,
+    Upscaler: 13,
   },
   cardSizes: {
     model: 320,
@@ -367,6 +419,21 @@ export function isOrchestratorUrl(url: string) {
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
+
+export const modelFileQuantTypes = constants.modelFileQuantTypes;
+export const modelFileComponentTypes = constants.modelFileComponentTypes;
+
+/** ModelFileType values that represent component files (not main model weights) */
+export const componentFileTypes = [
+  'VAE',
+  'Text Encoder',
+  'UNet',
+  'Diffusion Model',
+  'CLIPVision',
+  'ControlNet',
+  'Upscaler',
+] as const;
+export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
