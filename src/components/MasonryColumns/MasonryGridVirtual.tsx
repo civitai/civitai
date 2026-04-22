@@ -77,7 +77,10 @@ export function MasonryGridVirtual<TData>({
     [columnCount, data, adsReallyAreEnabled]
   );
 
-  const rowCount = Math.ceil(items.length / columnCount);
+  // Guard against `columnCount === 0` (MasonryProvider hasn't measured width yet,
+  // common on back-nav when React Query cache is hot). Without this, `items.length / 0`
+  // is `Infinity` and `useVirtualizer({ count: Infinity })` locks the main thread.
+  const rowCount = columnCount > 0 ? Math.ceil(items.length / columnCount) : 0;
 
   const ref = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useScrollAreaRef();
@@ -136,13 +139,12 @@ export function MasonryGridVirtual<TData>({
         return (
           <div
             key={`${virtualRow.index}_${virtualRow.key}`}
-            data-index={virtualRow.index}
-            ref={rowVirtualizer.measureElement}
             style={{
               position: 'absolute',
               top: 0,
               left: 0,
               right: 0,
+              height: rowHeight,
               display: 'grid',
               justifyContent: 'center',
               gridTemplateColumns,
