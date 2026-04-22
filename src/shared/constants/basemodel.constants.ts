@@ -856,8 +856,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Seedream - checkpoint only
   { ecosystemId: ECO.Seedream, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Ernie - checkpoint only
-  { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointOnly },
+  // Ernie - checkpoint and LORA
+  { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: [ModelType.LORA] },
 
   // Sora2 - checkpoint only
   { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },

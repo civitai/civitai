@@ -103,11 +103,11 @@ export const BuzzDashboardOverview = ({
     }));
   }, [currentAccountType]);
 
-  const { report, isLoading, isRefetching } = useTransactionsReport(reportFilters, {
+  const { report, isLoading } = useTransactionsReport(reportFilters, {
     enabled: true,
   });
 
-  const isLoadingReport = isLoading || isRefetching;
+  const isLoadingReport = isLoading;
   const viewingHourly = reportFilters.window === 'hour';
 
   const options = React.useMemo(() => {
@@ -297,7 +297,7 @@ export const BuzzDashboardOverview = ({
               {isLoadingReport ? (
                 <Skeleton height={413} mt="sm" radius="sm" />
               ) : report.length > 0 ? (
-                <div style={{ position: 'relative', overflow: 'hidden', width: '100%' }}>
+                <div style={{ position: 'relative', overflow: 'hidden', width: '100%', minHeight: 300 }}>
                   <Text
                     c={buzzConfig.color}
                     size="xs"

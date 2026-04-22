@@ -27,6 +27,7 @@ import {
   trainingDetailsBaseModels15,
   // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsChroma,
+  trainingDetailsBaseModelsErnie,
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsFlux2,
   trainingDetailsBaseModelsFlux2Klein,
@@ -373,6 +374,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsLtx23 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelErnie =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsErnie as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
 
   return (
     <>
@@ -498,6 +504,17 @@ export const ModelSelect = ({
                       name="Flux.2 Klein"
                       value={baseModelFlux2Klein}
                       baseType="flux2klein"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
+                  {features.ernieTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="blue"
+                      name="Ernie"
+                      value={baseModelErnie}
+                      baseType="ernie"
                       makeDefaultParams={makeDefaultParams}
                       isNew
                     />
