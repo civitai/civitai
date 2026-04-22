@@ -246,36 +246,28 @@ Audit of `filter: drop-shadow` / `filter="drop-shadow(...)"` usage in other feed
 
 ### High priority — shared context-menu icon (affects 4 card types with one edit)
 
-- [ ] [ActionIconDotsVertical.tsx:15](../src/components/Cards/components/ActionIconDotsVertical.tsx#L15) — identical stacked double drop-shadow pattern on `<IconDotsVertical>`. Used by:
-  - [ModelCardContextMenu.tsx](../src/components/Cards/ModelCardContextMenu.tsx) (every ModelCard)
-  - [ComicCardContextMenu.tsx](../src/components/Cards/ComicCardContextMenu.tsx) (every ComicCard)
-  - [BountyContextMenu.tsx](../src/components/Bounty/BountyContextMenu.tsx) (every BountyCard)
-  - [Image/ContextMenu/ContextMenu.tsx](../src/components/Image/ContextMenu/ContextMenu.tsx) (every non-blocked ImagesCard)
+- [x] [ActionIconDotsVertical.tsx:12-17](../src/components/Cards/components/ActionIconDotsVertical.tsx#L12-L17) — collapsed the stacked double drop-shadow into a **single CSS drop-shadow applied via `style={{ filter: ... }}`** (not the SVG `filter` attribute). Preserves the "floating dots" visual the team wants over varying image backgrounds; halves the filter passes and fixes the incorrect-syntax issue.
 
-One edit here fixes the three-dots icon across every card feed in the app. Apply the same background-circle wrapper pattern we used in ImagesCard.
+  Why not the wrapper-circle pattern we used in ImagesCard: on the three-dots icon, a dark pill/circle visually reads as a button and changes the card chrome in a way the design didn't want. The info icon (round, single glyph) tolerates the wrapper; the dots icon does not.
+
+Affected call-sites (all benefit from the single edit):
+
+- [ModelCardContextMenu.tsx](../src/components/Cards/ModelCardContextMenu.tsx) (every ModelCard)
+- [ComicCardContextMenu.tsx](../src/components/Cards/ComicCardContextMenu.tsx) (every ComicCard)
+- [BountyContextMenu.tsx](../src/components/Bounty/BountyContextMenu.tsx) (every BountyCard)
+- [Image/ContextMenu/ContextMenu.tsx](../src/components/Image/ContextMenu/ContextMenu.tsx) (every non-blocked ImagesCard)
 
 ### Medium priority — same pattern, duplicated
 
-- [ ] [ImagesAsPostsCard.tsx:328](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L328) and [L417](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L417) — two separate instances of the exact same stacked drop-shadow on `<IconInfoCircle>` that we just fixed in ImagesCard. Apply the same fix.
+- [x] [ImagesAsPostsCard.tsx:322-336](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L322-L336) and [L411-L425](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L411-L425) — replaced two `<IconInfoCircle>` instances using the stacked drop-shadow with the same background-circle wrapper we used in ImagesCard. Dropped the now-redundant `<LegacyActionIcon component="div">` wrapper at the same time.
 
 ### Low priority — shared CSS class for card titles
 
-- [ ] [Cards.module.css:209-211](../src/components/Cards/Cards.module.css#L209-L211) — `.dropShadow` applies `filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))` to card title `<Text>` in ArticleCard, CollectionCard, ComicCard, ModelCard, PostCard.
-
-Single shadow, small 1px blur — much cheaper than the stacked-two-shadows case above. But for a text element, `text-shadow` is strictly cheaper than `filter: drop-shadow` (text-shadow is a text rendering effect, not a filter pipeline op, and doesn't promote the element to its own compositing layer). Swap:
-
-```css
-.dropShadow {
-  /* filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8)); */
-  text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.8);
-}
-```
-
-Visual difference is negligible for a 1px blur. Low risk, moderate scale (one edit touches 5 card types' titles).
+- [x] [Cards.module.css:207-210](../src/components/Cards/Cards.module.css#L207-L210) — `.dropShadow` rule now uses `text-shadow: 1px 1px 1px rgba(0, 0, 0, 0.8)` instead of `filter: drop-shadow(...)`. Applied class is used on card title `<Text>` in ArticleCard, CollectionCard, ComicCard, ModelCard, PostCard. `text-shadow` is a text rendering effect (not a filter pipeline op), so it doesn't promote the element to its own compositing layer. Visual diff is negligible for a 1px blur.
 
 ### Minor — Tailwind utility on one card
 
-- [ ] [ChallengeCard.tsx:159](../src/components/Cards/ChallengeCard.tsx#L159) — `className="drop-shadow-sm"` on a title `<Text>`. Same reasoning as the CSS class above; replace with a `text-shadow` utility or inline style if we want full consistency. Not urgent.
+- [x] [ChallengeCard.tsx:158-166](../src/components/Cards/ChallengeCard.tsx#L158-L166) — replaced `className="drop-shadow-sm"` on the theme label with `style={{ textShadow: '0 1px 1px rgb(0 0 0 / 0.05)' }}`. Preserves the same subtle shadow alpha.
 
 ### What to leave alone
 

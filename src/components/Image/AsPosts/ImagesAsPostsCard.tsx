@@ -322,15 +322,9 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
           {image.hasMeta && (
             <div className="absolute bottom-0.5 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                <LegacyActionIcon component="div" variant="transparent" size="lg">
-                  <IconInfoCircle
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </LegacyActionIcon>
+                <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
+                  <IconInfoCircle color="white" opacity={0.9} strokeWidth={2.5} size={20} />
+                </div>
               </ImageMetaPopover2>
             </div>
           )}
@@ -411,15 +405,14 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                     {image.hasMeta && (
                       <div className="absolute bottom-0.5 right-0.5 z-10">
                         <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                          <LegacyActionIcon component="div" variant="transparent" size="lg">
+                          <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
                             <IconInfoCircle
                               color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
+                              opacity={0.9}
                               strokeWidth={2.5}
-                              size={26}
+                              size={20}
                             />
-                          </LegacyActionIcon>
+                          </div>
                         </ImageMetaPopover2>
                       </div>
                     )}
