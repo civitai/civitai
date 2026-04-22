@@ -1,3 +1,4 @@
+import type { ThemeIconVariant } from '@mantine/core';
 import {
   ActionIcon,
   Alert,
@@ -10,6 +11,7 @@ import {
   Grid,
   Group,
   Paper,
+  Popover,
   Progress,
   Stack,
   Text,
@@ -18,6 +20,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import {
+  IconBolt,
   IconBoltFilled,
   IconBrandDiscord,
   IconBrandReddit,
@@ -38,6 +41,10 @@ import {
 import clsx from 'clsx';
 import { Fragment, useCallback, useMemo, useRef, useState } from 'react';
 import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelineProgress';
+import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
+import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import {
   computeRecruiterScore,
@@ -188,90 +195,18 @@ export function ReferralDashboard({
         </Card>
       )}
 
-      {/* Rank card */}
-      <Card withBorder p="lg" radius="md">
-        <Stack gap="lg">
-          <Group justify="space-between" align="center" wrap="nowrap">
-            <Group gap="md" wrap="nowrap">
-              <ThemeIcon size={64} radius="md" variant="filled" color={rankColor}>
-                <IconTrophy size={32} />
-              </ThemeIcon>
-              <Stack gap={2}>
-                <Text size="xs" tt="uppercase" c="dimmed">
-                  Your rank
-                </Text>
-                <Title order={1} className="leading-none" c={rankColor}>
-                  {rank.name}
-                </Title>
-                <Text size="sm" c="dimmed">
-                  Score {formatNum(score)} · 1 point per Blue Buzz earned, 1,000 per paid referral
-                  month
-                </Text>
-              </Stack>
-            </Group>
-          </Group>
-
-          {nextRank ? (
-            <Stack gap={8}>
-              <Group justify="space-between">
-                <Group gap={6}>
-                  <IconRocket size={14} />
-                  <Text size="xs" tt="uppercase" fw={600}>
-                    Next: {nextRank.name}
-                  </Text>
-                </Group>
-                <Text size="xs" c="dimmed">
-                  {formatNum(score)} / {formatNum(nextRank.min)}
-                </Text>
-              </Group>
-              <Progress
-                value={rankProgressPct}
-                size="lg"
-                radius="xl"
-                color={nextRank ? rankAccent[nextRank.key] : rankColor}
-              />
-              <Text size="sm" c="dimmed">
-                {score === 0
-                  ? 'Share your code to start climbing.'
-                  : `${formatNum(scoreToNextRank)} more ${
-                      scoreToNextRank === 1 ? 'point' : 'points'
-                    } to reach ${nextRank.name}.`}
-              </Text>
-            </Stack>
-          ) : (
-            <Text size="sm" fw={600}>
-              You&apos;ve hit the top rank. Keep referring — bonus milestones still pay out.
-            </Text>
-          )}
-
-          <Grid>
-            <Grid.Col span={{ base: 12, sm: 4 }}>
-              <StatBlock
-                label="Paid referrals"
-                value={formatNum(data.conversionCount)}
-                icon={<IconUsersGroup size={20} />}
-                accent={rankColor}
-              />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 4 }}>
-              <StatBlock
-                label="Lifetime Blue Buzz"
-                value={formatNum(lifetimeBuzz)}
-                icon={<IconBoltFilled size={20} />}
-                accent="blue"
-              />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 4 }}>
-              <StatBlock
-                label="Recruiter Score"
-                value={formatNum(score)}
-                icon={<IconSparkles size={20} />}
-                accent={rankColor}
-              />
-            </Grid.Col>
-          </Grid>
-        </Stack>
-      </Card>
+      {/* Rank card — premium styled */}
+      <RankCard
+        rank={rank}
+        rankColor={rankColor}
+        nextRank={nextRank}
+        nextRankColor={nextRank ? rankAccent[nextRank.key] : rankColor}
+        score={score}
+        scoreToNextRank={scoreToNextRank}
+        rankProgressPct={rankProgressPct}
+        conversionCount={data.conversionCount}
+        lifetimeBuzz={lifetimeBuzz}
+      />
 
       {/* Blue Buzz milestones */}
       <Card withBorder p="lg" radius="md">
@@ -423,7 +358,7 @@ export function ReferralDashboard({
                 icon={<IconCoin size={20} />}
                 label="Spendable"
                 value={formatNum(data.balance.settledTokens)}
-                accent="green"
+                accent="yellow"
                 tooltip="Tokens ready to redeem. Spendable tokens move from Pending after a 7-day hold once a referee's membership payment settles."
               />
             </Grid.Col>
@@ -439,67 +374,18 @@ export function ReferralDashboard({
           </Grid>
 
           <Grid>
-            {groupedShopItems.map((group) => {
-              const tierColor = tierColors[group.tier];
-              return (
-                <Grid.Col key={group.tier} span={{ base: 12, md: 4 }}>
-                  <Paper
-                    withBorder
-                    radius="md"
-                    p={0}
-                    h="100%"
-                    className="overflow-hidden"
-                    style={{ borderColor: tierColor }}
-                  >
-                    <div
-                      className="px-4 py-3"
-                      style={{
-                        borderBottom: `1px solid ${tierColor}`,
-                        background: `linear-gradient(90deg, ${tierColor}26, transparent)`,
-                      }}
-                    >
-                      <Text fw={800} size="lg" style={{ color: tierColor }}>
-                        {tierLabels[group.tier]}
-                      </Text>
-                    </div>
-                    <Stack gap={0}>
-                      {group.offers.map((offer, i) => {
-                        const canAfford = data.balance.settledTokens >= offer.cost;
-                        const pending = pendingOffer === offer.originalIndex && isRedeeming;
-                        return (
-                          <Fragment key={offer.originalIndex}>
-                            {i > 0 && <Divider />}
-                            <Group justify="space-between" wrap="nowrap" gap="sm" px="md" py="sm">
-                              <Stack gap={2}>
-                                <Text fw={700}>
-                                  {offer.durationDays} day{offer.durationDays === 1 ? '' : 's'}
-                                </Text>
-                                <Group gap={4} align="center">
-                                  <IconCoin size={12} />
-                                  <Text size="xs" c="dimmed">
-                                    {offer.cost} token{offer.cost === 1 ? '' : 's'}
-                                  </Text>
-                                </Group>
-                              </Stack>
-                              <Button
-                                size="sm"
-                                variant={canAfford ? 'filled' : 'default'}
-                                color="blue"
-                                disabled={!canAfford || isRedeeming}
-                                loading={pending}
-                                onClick={() => onRedeem(offer.originalIndex)}
-                              >
-                                Redeem
-                              </Button>
-                            </Group>
-                          </Fragment>
-                        );
-                      })}
-                    </Stack>
-                  </Paper>
-                </Grid.Col>
-              );
-            })}
+            {groupedShopItems.map((group) => (
+              <Grid.Col key={group.tier} span={{ base: 12, md: 4 }}>
+                <ShopTierCard
+                  tier={group.tier}
+                  offers={group.offers}
+                  settledTokens={data.balance.settledTokens}
+                  isRedeeming={isRedeeming}
+                  pendingOffer={pendingOffer}
+                  onRedeem={onRedeem}
+                />
+              </Grid.Col>
+            ))}
           </Grid>
         </Stack>
       </Card>
@@ -586,7 +472,7 @@ export function ReferralDashboard({
                         {isTokenReward ? (
                           <IconCoin
                             size={18}
-                            color="var(--mantine-color-orange-5)"
+                            color="var(--mantine-color-yellow-5)"
                             style={{ flexShrink: 0 }}
                           />
                         ) : (
@@ -638,7 +524,15 @@ export function ReferralDashboard({
                           {new Date(r.createdAt).toLocaleDateString()}
                         </Text>
                       </Stack>
-                      <Text fw={700}>−{r.tokensSpent} tok</Text>
+                      <Group gap={4} wrap="nowrap" align="center">
+                        <Text fw={800} size="lg" className="leading-none">
+                          −
+                        </Text>
+                        <IconCoin size={16} color="var(--mantine-color-yellow-5)" />
+                        <Text fw={800} size="lg" className="leading-none">
+                          {r.tokensSpent}
+                        </Text>
+                      </Group>
                     </Group>
                   </Paper>
                 );
@@ -893,5 +787,274 @@ function HowStep({
         </Stack>
       </Paper>
     </Grid.Col>
+  );
+}
+
+type ShopOffer = ReferralDashboardProps['data']['shopItems'][number] & {
+  originalIndex: number;
+};
+
+function ShopTierCard({
+  tier,
+  offers,
+  settledTokens,
+  isRedeeming,
+  pendingOffer,
+  onRedeem,
+}: {
+  tier: string;
+  offers: ShopOffer[];
+  settledTokens: number;
+  isRedeeming: boolean;
+  pendingOffer: number | null;
+  onRedeem: (offerIndex: number) => void;
+}) {
+  const tierColor = tierColors[tier];
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight();
+
+  return (
+    <Paper
+      withBorder
+      radius="md"
+      p={0}
+      h="100%"
+      className="relative overflow-hidden"
+      style={{ borderColor: tierColor }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div
+        ref={spotlightRef}
+        className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+        style={{ opacity: 0, zIndex: 2 }}
+      />
+      <div
+        className="relative px-4 py-3"
+        style={{
+          borderBottom: `1px solid ${tierColor}`,
+          background: `linear-gradient(90deg, ${tierColor}26, transparent)`,
+        }}
+      >
+        <Group justify="space-between" align="center" wrap="nowrap" gap="xs">
+          <Text fw={800} size="lg" style={{ color: tierColor }}>
+            {tierLabels[tier]}
+          </Text>
+          <TierPerksPopover tier={tier} />
+        </Group>
+      </div>
+      <Stack gap={0}>
+        {offers.map((offer, i) => {
+          const canAfford = settledTokens >= offer.cost;
+          const pending = pendingOffer === offer.originalIndex && isRedeeming;
+          return (
+            <Fragment key={offer.originalIndex}>
+              {i > 0 && <Divider />}
+              <Group justify="space-between" wrap="nowrap" gap="sm" px="md" py="sm">
+                <Stack gap={2}>
+                  <Text fw={700}>
+                    {offer.durationDays} day{offer.durationDays === 1 ? '' : 's'}
+                  </Text>
+                  <Group gap={4} align="center">
+                    <IconCoin size={12} color="var(--mantine-color-yellow-5)" />
+                    <Text size="xs" c="dimmed">
+                      {offer.cost} token{offer.cost === 1 ? '' : 's'}
+                    </Text>
+                  </Group>
+                </Stack>
+                <Button
+                  size="sm"
+                  variant={canAfford ? 'filled' : 'default'}
+                  color="blue"
+                  disabled={!canAfford || isRedeeming}
+                  loading={pending}
+                  onClick={() => onRedeem(offer.originalIndex)}
+                >
+                  Redeem
+                </Button>
+              </Group>
+            </Fragment>
+          );
+        })}
+      </Stack>
+    </Paper>
+  );
+}
+
+function TierPerksPopover({ tier }: { tier: string }) {
+  const features = useFeatureFlags();
+  const buzzType = features.isGreen ? 'green' : 'yellow';
+  const { data: tierBonuses } = trpc.referral.getTierBonuses.useQuery();
+  const monthlyBuzz = tierBonuses?.monthlyBuzzByTier?.[tier] ?? 0;
+
+  const benefits: BenefitItem[] = [
+    {
+      icon: <IconBolt size={benefitIconSize} />,
+      iconColor: 'yellow',
+      iconVariant: 'light' as ThemeIconVariant,
+      content: <Text>{numberWithCommas(monthlyBuzz)} Buzz per month</Text>,
+    },
+  ];
+
+  return (
+    <Popover width={300} position="bottom-end" shadow="lg" withArrow>
+      <Popover.Target>
+        <Tooltip label="See tier perks" withArrow>
+          <ActionIcon variant="subtle" size="sm" aria-label="View tier perks">
+            <IconInfoCircle size={16} />
+          </ActionIcon>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap="sm">
+          <Group gap={6}>
+            <Text fw={700} size="sm" style={{ color: tierColors[tier] }}>
+              {tierLabels[tier]} perks
+            </Text>
+          </Group>
+          <PlanBenefitList benefits={benefits} tier={tier} buzzType={buzzType} />
+          {features.isGreen && (
+            <Text
+              component="a"
+              href="/pricing"
+              target="_blank"
+              rel="noreferrer"
+              size="xs"
+              c="blue.4"
+              td="underline"
+            >
+              See full details on the pricing page →
+            </Text>
+          )}
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function RankCard({
+  rank,
+  rankColor,
+  nextRank,
+  nextRankColor,
+  score,
+  scoreToNextRank,
+  rankProgressPct,
+  conversionCount,
+  lifetimeBuzz,
+}: {
+  rank: { key: string; name: string; min: number };
+  rankColor: string;
+  nextRank: { key: string; name: string; min: number } | null;
+  nextRankColor: string;
+  score: number;
+  scoreToNextRank: number;
+  rankProgressPct: number;
+  conversionCount: number;
+  lifetimeBuzz: number;
+}) {
+  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight();
+
+  return (
+    <Paper
+      radius="md"
+      withBorder
+      className="relative overflow-hidden"
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+    >
+      <div
+        ref={spotlightRef}
+        className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+        style={{ opacity: 0 }}
+      />
+      <div
+        className="absolute inset-y-[15%] left-0 z-[1] w-[3px] rounded-sm"
+        style={{
+          background: `linear-gradient(to bottom, var(--mantine-color-${rankColor}-4), var(--mantine-color-${rankColor}-6), var(--mantine-color-${rankColor}-7))`,
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: `linear-gradient(135deg, var(--mantine-color-${rankColor}-light) 0%, transparent 60%)`,
+          opacity: 0.4,
+        }}
+      />
+
+      <Stack gap="lg" p="lg" pl="xl" className="relative z-[1]">
+        <Group gap="md" wrap="nowrap">
+          <ThemeIcon size={64} radius="md" variant="filled" color={rankColor}>
+            <IconTrophy size={32} />
+          </ThemeIcon>
+          <Stack gap={2}>
+            <Text size="xs" tt="uppercase" c="dimmed" fw={600} style={{ letterSpacing: '0.08em' }}>
+              Your rank
+            </Text>
+            <Title order={1} className="leading-none" c={rankColor}>
+              {rank.name}
+            </Title>
+            <Text size="sm" c="dimmed">
+              Score {score.toLocaleString()} · 1 point per Blue Buzz earned, 1,000 per paid referral
+              month
+            </Text>
+          </Stack>
+        </Group>
+
+        {nextRank ? (
+          <Stack gap={8}>
+            <Group justify="space-between">
+              <Group gap={6}>
+                <IconRocket size={14} />
+                <Text size="xs" tt="uppercase" fw={600}>
+                  Next: {nextRank.name}
+                </Text>
+              </Group>
+              <Text size="xs" c="dimmed">
+                {score.toLocaleString()} / {nextRank.min.toLocaleString()}
+              </Text>
+            </Group>
+            <Progress value={rankProgressPct} size="lg" radius="xl" color={nextRankColor} />
+            <Text size="sm" c="dimmed">
+              {score === 0
+                ? 'Share your code to start climbing.'
+                : `${scoreToNextRank.toLocaleString()} more ${
+                    scoreToNextRank === 1 ? 'point' : 'points'
+                  } to reach ${nextRank.name}.`}
+            </Text>
+          </Stack>
+        ) : (
+          <Text size="sm" fw={600}>
+            You&apos;ve hit the top rank. Keep referring — bonus milestones still pay out.
+          </Text>
+        )}
+
+        <Grid>
+          <Grid.Col span={{ base: 12, sm: 4 }}>
+            <StatBlock
+              label="Paid referrals"
+              value={conversionCount.toLocaleString()}
+              icon={<IconUsersGroup size={20} />}
+              accent={rankColor}
+            />
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, sm: 4 }}>
+            <StatBlock
+              label="Lifetime Blue Buzz"
+              value={lifetimeBuzz.toLocaleString()}
+              icon={<IconBoltFilled size={20} />}
+              accent="blue"
+            />
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, sm: 4 }}>
+            <StatBlock
+              label="Recruiter Score"
+              value={score.toLocaleString()}
+              icon={<IconSparkles size={20} />}
+              accent={rankColor}
+            />
+          </Grid.Col>
+        </Grid>
+      </Stack>
+    </Paper>
   );
 }

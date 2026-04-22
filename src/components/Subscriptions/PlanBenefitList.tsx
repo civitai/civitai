@@ -32,7 +32,7 @@ const defaultBenefits = [
     ),
   },
   {
-    content: 'Generate mature content with Blue Buzz',
+    content: 'Unrestricted generation with Blue Buzz',
     tiers: ['bronze', 'silver', 'gold'],
     subType: 'yellow',
   },
