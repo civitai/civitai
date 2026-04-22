@@ -32,6 +32,7 @@ export default function RewardsBonusInfoModal(_props: Props) {
       radius="lg"
       withCloseButton
       closeButtonProps={{
+        radius: 'xl',
         className:
           'bg-black/40 text-white hover:bg-black/60 border border-white/20 backdrop-blur-sm',
       }}
@@ -43,12 +44,12 @@ export default function RewardsBonusInfoModal(_props: Props) {
       <Stack align="center" gap="md" pb="sm">
         {/* Hero section (full-bleed to modal edges) */}
         <div className="relative -mx-4 flex items-center justify-center self-stretch overflow-hidden px-6 py-5 motion-reduce:animate-none">
-          <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-amber-700 via-amber-500 to-amber-700 bg-[length:200%_100%] motion-reduce:animate-none" />
+          <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-cyan-700 via-cyan-500 to-cyan-700 bg-[length:200%_100%] motion-reduce:animate-none" />
           <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent bg-[length:200%_100%] motion-reduce:animate-none" />
           <div className="relative flex flex-col items-center gap-2">
             <div className="flex items-center gap-2 text-white">
               <IconSparkles size={24} />
-              <ThemeIcon size={48} radius="xl" variant="white" color="yellow.6">
+              <ThemeIcon size={48} radius="xl" variant="white" color="cyan.6">
                 <IconBolt size={28} fill="currentColor" />
               </ThemeIcon>
               <IconSparkles size={24} />
@@ -68,7 +69,7 @@ export default function RewardsBonusInfoModal(_props: Props) {
         <Stack gap="xs" align="center" px="sm">
           <Text size="lg" fw={700} ta="center">
             All reward earnings are boosted by{' '}
-            <Text span c="yellow.5" fw={900} size="2rem">
+            <Text span c="cyan.5" fw={900} size="2rem">
               {bonusLabel}
             </Text>
           </Text>
@@ -98,7 +99,7 @@ export default function RewardsBonusInfoModal(_props: Props) {
           )}
           <div className="flex items-center justify-between rounded-md bg-gray-1 px-3 py-2 dark:bg-dark-5">
             <Text size="sm">Bonus event multiplier</Text>
-            <Text size="sm" fw={700} c="yellow.5">
+            <Text size="sm" fw={700} c="cyan.5">
               {formatMultiplier(globalBonus)}
             </Text>
           </div>
@@ -131,7 +132,7 @@ export default function RewardsBonusInfoModal(_props: Props) {
             onClick={() => dialog.onClose()}
             size="md"
             variant="gradient"
-            gradient={{ from: 'yellow.6', to: 'orange.5' }}
+            gradient={{ from: 'cyan.6', to: 'blue.5' }}
             rightSection={<IconArrowRight size={18} />}
           >
             How to Earn
