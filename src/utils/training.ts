@@ -19,6 +19,7 @@ export const trainingBaseModelTypesImage = [
   'chroma',
   'qwen',
   'zimage',
+  'ernie',
 ] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2', 'ltx23'] as const;
 export const trainingBaseModelType = [
@@ -237,6 +238,17 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'zimagebase' },
   },
   //
+  ernie: {
+    label: 'Ernie',
+    pretty: 'Ernie',
+    type: 'ernie',
+    description: "Baidu's ERNIE image generation model.",
+    air: 'urn:air:ernie:checkpoint:civitai:2548387@2863858',
+    baseModel: 'Ernie',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ernie' },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -379,6 +391,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   chroma: 'chroma',
   qwen: 'qwen',
   zimage: 'zimageturbo',
+  ernie: 'ernie',
   flux2klein: 'flux2klein',
   ltx2: 'ltx2',
   ltx23: 'ltx23',
@@ -470,6 +483,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'chroma',
     'qwen',
     'zimage',
+    'ernie',
     'flux2klein',
     'ltx2',
     'ltx23',
@@ -479,7 +493,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
 
 // Check if AI Toolkit is mandatory (cannot use other engines)
 export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean => {
-  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimage', 'flux2klein', 'ltx2', 'ltx23'];
+  const mandatoryTypes: TrainingBaseModelType[] = ['qwen', 'zimage', 'ernie', 'flux2klein', 'ltx2', 'ltx23'];
   return mandatoryTypes.includes(baseType);
 };
 
@@ -493,6 +507,7 @@ export const getDefaultEngine = (
 ): EngineTypes => {
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
+  if (baseType === 'ernie') return 'ai-toolkit'; // Ernie requires AI Toolkit
   if (baseType === 'flux2klein') return 'ai-toolkit'; // Flux2 Klein requires AI Toolkit
   if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
   if (baseType === 'ltx23') return 'ai-toolkit'; // LTX 2.3 requires AI Toolkit
