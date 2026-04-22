@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { removeEmpty } from '~/utils/object-helpers';
-import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useClubFilters, useQueryClubs } from '~/components/Club/club.utils';
 import { ClubCard } from '~/components/Club/ClubCard';
@@ -38,13 +38,7 @@ export function ClubsInfinite({ filters: filterOverrides, showEof = true }: Prop
       ) : !!clubs.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryGridVirtual
-            data={clubs}
-            render={ClubCard}
-            itemId={(x) => x.id}
-            empty={<NoContent />}
-            aspectRatio="square"
-          />
+          <MasonryGrid data={clubs} render={ClubCard} itemId={(x) => x.id} empty={<NoContent />} />
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}

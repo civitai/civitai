@@ -10,7 +10,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import type { GetAllCollectionsInfiniteSchema } from '~/server/schema/collection.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 
 export function CollectionsInfinite({
   filters: filterOverrides = {},
@@ -35,7 +35,7 @@ export function CollectionsInfinite({
       ) : !!collections.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={20} />
-          <MasonryGridVirtual
+          <MasonryGrid
             data={collections}
             render={CollectionCard}
             itemId={(x) => x.id}

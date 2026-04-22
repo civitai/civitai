@@ -5,7 +5,7 @@ import { useEffect } from 'react';
 import { ComicCard } from '~/components/Cards/ComicCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -58,7 +58,7 @@ export function ComicsInfinite({ filters: filterOverrides = {}, showEof = false 
       ) : !!items.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryGridVirtual
+          <MasonryGrid
             data={items}
             render={ComicCard}
             itemId={(x) => x.id}

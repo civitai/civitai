@@ -1,7 +1,7 @@
 import { Center, Loader, LoadingOverlay, Stack } from '@mantine/core';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ChallengeCard } from '~/components/Cards/ChallengeCard';
 import { useQueryChallenges } from '~/components/Challenge/challenge.utils';
@@ -29,12 +29,11 @@ export function ChallengesInfinite({ filters }: Props) {
         <NoContent message="No challenges found" />
       ) : (
         <>
-          <MasonryGridVirtual
+          <MasonryGrid
             data={challenges}
             render={ChallengeCard}
             itemId={(item) => item.id}
             empty={<NoContent message="No challenges found" />}
-            aspectRatio="square"
           />
 
           {hasNextPage && (

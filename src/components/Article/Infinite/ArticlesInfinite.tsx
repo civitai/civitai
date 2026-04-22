@@ -6,7 +6,7 @@ import { useArticleFilters, useQueryArticles } from '~/components/Article/articl
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
@@ -45,7 +45,7 @@ export function ArticlesInfinite({
       ) : !!articles.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryGridVirtual
+          <MasonryGrid
             data={articles}
             render={ArticleCard}
             itemId={(x) => x.id}
