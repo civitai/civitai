@@ -563,28 +563,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       onPurchase={() => onPurchase('generation')}
                       fullWidth
                     />
-                  ) : features.auctions &&
-                    couldGenerate &&
-                    model.availability !== Availability.Private &&
-                    model.status === ModelStatus.Published &&
-                    !model.meta?.cannotPromote &&
-                    !model.poi ? (
-                    <BidModelButton
-                      entityData={getEntityDataForBidModelButton({
-                        version,
-                        model,
-                        image,
-                      })}
-                      asButton
-                      buttonProps={{
-                        className: 'pl-[8px] pr-[12px] w-full',
-                        color: 'cyan',
-                      }}
-                      divProps={{ className: 'w-full' }}
-                    />
                   ) : null}
                   {/* Action icon buttons row */}
-                  <Group gap={8} wrap="nowrap" grow>
+                  <Group gap={8} wrap="nowrap" justify="center" grow>
                     <Tooltip label="Share" position="top" withArrow>
                       <div style={{ flex: 1 }}>
                         <ShareButton
