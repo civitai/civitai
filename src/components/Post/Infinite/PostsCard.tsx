@@ -1,4 +1,3 @@
-import { AspectRatio } from '@mantine/core';
 import { memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
@@ -56,9 +55,9 @@ export function PostsCard({
 
               <NextLink href={`/posts/${id}`}>
                 {!safe ? (
-                  <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
+                  <div style={{ aspectRatio: (image?.width ?? 1) / (image?.height ?? 1) }}>
                     <MediaHash {...image} />
-                  </AspectRatio>
+                  </div>
                 ) : (
                   <EdgeMedia2
                     metadata={image.metadata}

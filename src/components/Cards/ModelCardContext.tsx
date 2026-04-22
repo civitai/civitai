@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { createContext, useContext } from 'react';
+import { createContext, useContext, useMemo } from 'react';
 
 type Context = {
   useModelVersionRedirect?: boolean;
@@ -13,7 +13,8 @@ export const useModelCardContext = () => {
 };
 export const ModelCardContextProvider = ({
   children,
-  ...args
+  useModelVersionRedirect,
 }: Context & { children: ReactNode }) => {
-  return <ModelCardContext.Provider value={args}>{children}</ModelCardContext.Provider>;
+  const value = useMemo(() => ({ useModelVersionRedirect }), [useModelVersionRedirect]);
+  return <ModelCardContext.Provider value={value}>{children}</ModelCardContext.Provider>;
 };
