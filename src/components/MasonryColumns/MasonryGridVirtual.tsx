@@ -87,6 +87,7 @@ export function MasonryGridVirtual<TData>({
     if (ref.current && scrollAreaRef?.current) {
       setScrollMargin(getOffsetTopRelativeToAncestor(ref.current, scrollAreaRef.current));
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const getRowKey = useCallback(
@@ -116,7 +117,7 @@ export function MasonryGridVirtual<TData>({
 
   const gridTemplateColumns =
     columnCount === 1
-      ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
+      ? `minmax(${columnWidth}px, ${maxSingleColumnWidth ?? columnWidth}px)`
       : `repeat(${columnCount}, ${columnWidth}px)`;
 
   return (
