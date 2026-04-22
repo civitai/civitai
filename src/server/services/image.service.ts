@@ -498,9 +498,9 @@ export async function handleUnblockImages({
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
-      // Unblock re-admits the image into the showcase query; bust so it reappears without waiting on TTL.
-      postIds.length ? bustCachesForPosts(postIds) : Promise.resolve(),
     ]);
+    // Bust after the writes above land so a concurrent reader can't refill the cache from pre-update rows.
+    if (postIds.length) await bustCachesForPosts(postIds);
 
     if (moderatorId) {
       await trackModActivity(moderatorId, {
@@ -567,9 +567,9 @@ export async function handleBlockImages({
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
       invalidateExistence,
-      // Blocked images can still satisfy the showcase SQL filters; drop them now.
-      postIds.length ? bustCachesForPosts(postIds) : Promise.resolve(),
     ]);
+    // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
+    if (postIds.length) await bustCachesForPosts(postIds);
     if (include?.includes('phash-block')) {
       await bulkAddBlockedImages({
         data: images

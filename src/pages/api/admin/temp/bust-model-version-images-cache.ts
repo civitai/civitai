@@ -24,7 +24,10 @@ const schema = z.object({
             .map((s) => Number(s.trim()))
             .filter((n) => Number.isFinite(n) && n > 0)
         : undefined
-    ),
+    )
+    .refine((ids) => ids === undefined || ids.length > 0, {
+      message: 'ids must contain at least one valid positive numeric model version ID',
+    }),
 });
 
 export default WebhookEndpoint(async (req, res) => {
