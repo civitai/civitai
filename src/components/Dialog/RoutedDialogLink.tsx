@@ -35,6 +35,7 @@ export function triggerRoutedDialog<T extends DialogKey>({
 export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean = false>({
   name,
   state,
+  getState,
   children,
   className,
   passHref,
@@ -45,6 +46,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
+  getState?: () => ComponentProps<(typeof dialogs)[T]['component']>;
   passHref?: TPassHref;
   className?: string;
   children: TPassHref extends true ? React.ReactElement : React.ReactNode;
@@ -61,7 +63,7 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
     if (!e.ctrlKey) {
       e.preventDefault();
       // e.stopPropagation();
-      triggerRoutedDialog({ name, state });
+      triggerRoutedDialog({ name, state: getState ? getState() : state });
       onClick?.();
     }
   };
