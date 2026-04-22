@@ -76,6 +76,7 @@ import {
   ResourceAlerts,
   ExperimentalModelAlert,
   GrokEcosystemAlert,
+  SeedanceImg2VidAlert,
   ReadyAlert,
 } from './ResourceAlerts';
 
@@ -595,6 +596,15 @@ export function GenerationForm() {
                   <ExperimentalModelAlert ecosystem={value} />
                   <GrokEcosystemAlert ecosystem={value} />
                 </>
+              )}
+            />
+
+            {/* Seedance img2vid copyright-filter warning */}
+            <MultiController
+              graph={graph}
+              names={['ecosystem', 'workflow'] as const}
+              render={({ values }) => (
+                <SeedanceImg2VidAlert ecosystem={values.ecosystem} workflow={values.workflow} />
               )}
             />
 
