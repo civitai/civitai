@@ -83,7 +83,7 @@ export const PlanBenefitList = ({
       </List>
       {useDefaultBenefits && (
         <>
-          <Divider mx="-xl" />
+          <Divider />
           <List size="md" center>
             <Stack gap="xs">
               {defaultBenefits.map(({ content, tiers, subType }, index) => {

@@ -17,7 +17,6 @@ import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Button, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
-import { ReferralCheckoutBanner } from '~/components/Referrals/ReferralCheckoutBanner';
 
 export default function Pricing() {
   const router = useRouter();
@@ -171,10 +170,6 @@ export default function Pricing() {
           </div>
         </Stack>
       )}
-      <div className="mb-4">
-        <ReferralCheckoutBanner />
-      </div>
-      {/* ReferralCheckoutBanner self-fetches tier bonuses via trpc.referral.getTierBonuses */}
       <div
         style={{
           // @ts-ignore

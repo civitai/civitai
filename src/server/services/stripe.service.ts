@@ -222,6 +222,18 @@ export const createSubscribeSession = async ({
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
     allow_promotion_codes: true,
+    // Inline referral-code field so users can apply a code without leaving
+    // Stripe's checkout page. The cookie-driven `refCode` already lands on
+    // subscription metadata; the custom_fields entry takes precedence in the
+    // checkout.session.completed webhook handler.
+    custom_fields: [
+      {
+        key: 'ref_code',
+        label: { type: 'custom', custom: 'Referral code (optional)' },
+        type: 'text',
+        optional: true,
+      },
+    ],
     ...(refCode
       ? { subscription_data: { metadata: { ref_code: refCode } }, metadata: { ref_code: refCode } }
       : {}),

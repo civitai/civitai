@@ -120,7 +120,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case 'checkout.session.completed':
             const checkoutSession = event.data.object as Stripe.Checkout.Session;
             if (checkoutSession.mode === 'subscription') {
-              // do nothing
+              // Capture the referral code custom field if present and stash it
+              // on the new Subscription's metadata so the invoice.paid handler
+              // (manageInvoicePaid) picks it up via subscription_details.metadata.
+              const refCodeField = (checkoutSession.custom_fields ?? []).find(
+                (f) => f.key === 'ref_code'
+              );
+              const enteredCode = refCodeField?.text?.value?.trim().toUpperCase();
+              const subId =
+                typeof checkoutSession.subscription === 'string'
+                  ? checkoutSession.subscription
+                  : checkoutSession.subscription?.id;
+              if (enteredCode && subId) {
+                await stripe.subscriptions
+                  .update(subId, { metadata: { ref_code: enteredCode } })
+                  .catch((err: unknown) =>
+                    log({
+                      type: 'error',
+                      stage: 'checkout-session-completed-ref-code-update',
+                      message: 'failed to patch subscription metadata with ref_code',
+                      error: err instanceof Error ? err.message : String(err),
+                    })
+                  );
+              }
             } else if (checkoutSession.mode === 'payment') {
               // First, check if this payment is for Civitai AIR
 
