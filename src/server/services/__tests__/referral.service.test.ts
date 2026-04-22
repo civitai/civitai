@@ -226,6 +226,7 @@ describe('recordMembershipPaymentReward', () => {
         user: { createdAt: new Date('2025-01-01') },
       },
     });
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([{ paidMonthCount: 0, firstPaidAt: null }]);
     mockDbWrite.referralReward.create.mockImplementation(async ({ data }: any) => ({
       id: Math.random(),
       settledAt: data.settledAt,
@@ -242,6 +243,10 @@ describe('recordMembershipPaymentReward', () => {
     expect(kinds).toContain(ReferralRewardKind.RefereeBonus);
     const refereeBonus = calls.find((c: any) => c[0].data.kind === ReferralRewardKind.RefereeBonus);
     expect(refereeBonus[0].data.buzzAmount).toBe(2_500); // 25% of 10k
+    expect(refereeBonus[0].data.points).toBe(2_500);
+    const memToken = calls.find((c: any) => c[0].data.kind === ReferralRewardKind.MembershipToken);
+    // Bronze paid month should snapshot points = pointsPerTierMonth.bronze (1000)
+    expect(memToken[0].data.points).toBe(1_000);
   });
 
   it('does not create referee bonus on subsequent months', async () => {
@@ -257,6 +262,9 @@ describe('recordMembershipPaymentReward', () => {
         user: { createdAt: new Date('2024-01-01') },
       },
     });
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      { paidMonthCount: 1, firstPaidAt: new Date('2025-01-01') },
+    ]);
     mockDbWrite.referralReward.create.mockImplementation(async ({ data }: any) => ({
       id: 1,
       settledAt: data.settledAt,
@@ -268,6 +276,63 @@ describe('recordMembershipPaymentReward', () => {
     const calls = (mockDbWrite.referralReward.create as any).mock.calls;
     expect(calls).toHaveLength(1);
     expect(calls[0][0].data.kind).toBe(ReferralRewardKind.MembershipToken);
+  });
+
+  it('treats locked paidMonthCount > 0 as not first payment (race protection)', async () => {
+    // Pre-tx ctx says paidMonthCount=0 (read from replica before lock).
+    mockDbRead.userReferral.findUnique.mockResolvedValue({
+      id: 1,
+      userReferralCodeId: 99,
+      firstPaidAt: null,
+      paidMonthCount: 0,
+      userReferralCode: {
+        id: 99,
+        userId: 7,
+        deletedAt: null,
+        user: { createdAt: new Date('2024-01-01') },
+      },
+    });
+    // Inside the tx the FOR UPDATE row reflects a parallel webhook that
+    // already ran: paidMonthCount=1, firstPaidAt set. Should suppress the
+    // RefereeBonus, only create the MembershipToken for this invoice.
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      { paidMonthCount: 1, firstPaidAt: new Date() },
+    ]);
+    mockDbWrite.referralReward.create.mockImplementation(async ({ data }: any) => ({
+      id: Math.random(),
+      settledAt: data.settledAt,
+      ...data,
+    }));
+    mockDbWrite.userReferral.update.mockResolvedValue({});
+
+    await recordMembershipPaymentReward(basePayload);
+
+    const calls = (mockDbWrite.referralReward.create as any).mock.calls;
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].data.kind).toBe(ReferralRewardKind.MembershipToken);
+  });
+
+  it('returns null when locked paidMonthCount has hit the cap', async () => {
+    mockDbRead.userReferral.findUnique.mockResolvedValue({
+      id: 1,
+      userReferralCodeId: 99,
+      firstPaidAt: new Date('2025-01-01'),
+      paidMonthCount: 2, // pre-tx says ok
+      userReferralCode: {
+        id: 99,
+        userId: 7,
+        deletedAt: null,
+        user: { createdAt: new Date('2024-01-01') },
+      },
+    });
+    // After lock: parallel writer pushed us to 3 (the cap).
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      { paidMonthCount: 3, firstPaidAt: new Date() },
+    ]);
+
+    const result = await recordMembershipPaymentReward(basePayload);
+    expect(result).toBeNull();
+    expect(mockDbWrite.referralReward.create).not.toHaveBeenCalled();
   });
 
   it('swallows unique-violation on duplicate sourceEventId (idempotent)', async () => {
@@ -420,14 +485,14 @@ describe('revokeForChargeback', () => {
 // -----------------------------------------------------------------------------
 
 describe('awardMilestones', () => {
-  it('no-ops when user has no lifetime buzz', async () => {
-    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { buzzAmount: 0 } });
+  it('no-ops when user has no lifetime points', async () => {
+    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { points: 0 } });
     await awardMilestones(7);
     expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
   });
 
-  it('awards only milestones at or below lifetime earned', async () => {
-    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { buzzAmount: 12_000 } });
+  it('awards only milestones at or below lifetime points', async () => {
+    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { points: 12_000 } });
     mockDbRead.cosmetic.findFirst.mockResolvedValue(null);
     await awardMilestones(7);
 
@@ -435,8 +500,22 @@ describe('awardMilestones', () => {
     expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(2);
   });
 
+  it('uses snapshotted points so config changes do not retroactively unlock milestones', async () => {
+    // The aggregate is over the per-row `points` column. Even if
+    // constants.referrals.pointsPerTierMonth is bumped later, the historical
+    // rows keep their original snapshot, so this test is implicitly
+    // confirming that the dynamic recomputation is gone.
+    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { points: 999 } });
+    await awardMilestones(7);
+    // 999 < 1k threshold → nothing awarded.
+    expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+    // Also verify aggregate was called for points (not buzzAmount).
+    const aggCall = (mockDbRead.referralReward.aggregate as any).mock.calls[0];
+    expect(aggCall[0]._sum).toEqual({ points: true });
+  });
+
   it('is idempotent: unique-violation on existing milestone is swallowed', async () => {
-    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { buzzAmount: 12_000 } });
+    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { points: 12_000 } });
     mockDbRead.cosmetic.findFirst.mockResolvedValue(null);
     const err = new Prisma.PrismaClientKnownRequestError('unique', {
       code: 'P2002',
@@ -470,6 +549,13 @@ describe('advanceReferralSubscriptions', () => {
     mockDbWrite.customerSubscription.findMany.mockResolvedValue([
       { id: 'referral:7:1', userId: 7, metadata: { referralQueue: [] } },
     ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: { referralQueue: [] },
+        currentPeriodEnd: new Date(Date.now() - 1000),
+      },
+    ]);
     mockDbWrite.customerSubscription.update.mockResolvedValue({});
     const result = await advanceReferralSubscriptions();
     expect(result).toEqual({ advanced: 0, canceled: 1 });
@@ -481,16 +567,20 @@ describe('advanceReferralSubscriptions', () => {
   });
 
   it('promotes the highest-tier queue entry when queue has items', async () => {
+    const queueMeta = {
+      referralQueue: [
+        { tier: 'bronze', durationDays: 14 },
+        { tier: 'silver', durationDays: 7 },
+      ],
+    };
     mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: queueMeta },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
       {
         id: 'referral:7:1',
-        userId: 7,
-        metadata: {
-          referralQueue: [
-            { tier: 'bronze', durationDays: 14 },
-            { tier: 'silver', durationDays: 7 },
-          ],
-        },
+        metadata: queueMeta,
+        currentPeriodEnd: new Date(Date.now() - 1000),
       },
     ]);
     mockDbWrite.customerSubscription.update.mockResolvedValue({});
@@ -508,17 +598,19 @@ describe('advanceReferralSubscriptions', () => {
     const call = (mockDbWrite.customerSubscription.update as any).mock.calls[0][0];
     expect(call.data.productId).toBe('prod_silver');
     // After promoting silver, bronze should remain in the queue
-    expect(call.data.metadata.referralQueue).toEqual([
-      { tier: 'bronze', durationDays: 14 },
-    ]);
+    expect(call.data.metadata.referralQueue).toEqual([{ tier: 'bronze', durationDays: 14 }]);
   });
 
   it('skips promotion when no matching referralGrantable product exists', async () => {
+    const queueMeta = { referralQueue: [{ tier: 'gold', durationDays: 14 }] };
     mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: queueMeta },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
       {
         id: 'referral:7:1',
-        userId: 7,
-        metadata: { referralQueue: [{ tier: 'gold', durationDays: 14 }] },
+        metadata: queueMeta,
+        currentPeriodEnd: new Date(Date.now() - 1000),
       },
     ]);
     mockDbRead.product.findMany.mockResolvedValue([]); // no matching product
@@ -527,5 +619,222 @@ describe('advanceReferralSubscriptions', () => {
 
     expect(result).toEqual({ advanced: 0, canceled: 0 });
     expect(mockDbWrite.customerSubscription.update).not.toHaveBeenCalled();
+  });
+
+  it('skips when currentPeriodEnd has been bumped out by a parallel redeem', async () => {
+    const queueMeta = { referralQueue: [{ tier: 'gold', durationDays: 14 }] };
+    mockDbWrite.customerSubscription.findMany.mockResolvedValue([
+      { id: 'referral:7:1', userId: 7, metadata: queueMeta },
+    ]);
+    // Inside the lock, the period now extends into the future — a redemption
+    // raced ahead of us and extended the active chunk. Bail.
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([
+      {
+        id: 'referral:7:1',
+        metadata: queueMeta,
+        currentPeriodEnd: new Date(Date.now() + 60_000),
+      },
+    ]);
+
+    const result = await advanceReferralSubscriptions();
+
+    expect(result).toEqual({ advanced: 0, canceled: 0 });
+    expect(mockDbWrite.customerSubscription.update).not.toHaveBeenCalled();
+  });
+});
+
+// -----------------------------------------------------------------------------
+// recordMembershipPaymentReward — inline RefereeBonus settle
+// -----------------------------------------------------------------------------
+
+describe('recordMembershipPaymentReward inline RefereeBonus settle', () => {
+  const basePayload = {
+    refereeId: 42,
+    tier: 'bronze' as const,
+    monthlyBuzzAmount: 10_000,
+    sourceEventId: 'inv-inline-1',
+  };
+
+  const okCtx = () => {
+    mockDbRead.userReferral.findUnique.mockResolvedValue({
+      id: 1,
+      userReferralCodeId: 99,
+      firstPaidAt: null,
+      paidMonthCount: 0,
+      userReferralCode: {
+        id: 99,
+        userId: 7,
+        deletedAt: null,
+        user: { createdAt: new Date('2024-01-01') },
+      },
+    });
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([{ paidMonthCount: 0, firstPaidAt: null }]);
+    mockDbWrite.referralReward.create.mockImplementation(async ({ data }: any) => ({
+      id: 555,
+      buzzAmount: data.buzzAmount ?? 0,
+      tokenAmount: data.tokenAmount ?? 0,
+      kind: data.kind,
+      userId: data.userId,
+      refereeId: data.refereeId ?? null,
+      tierGranted: data.tierGranted ?? null,
+      ...data,
+    }));
+    mockDbWrite.userReferral.update.mockResolvedValue({});
+  };
+
+  it('flips RefereeBonus to Settled and grants Blue Buzz on the inline path', async () => {
+    okCtx();
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+
+    await recordMembershipPaymentReward(basePayload);
+
+    // settleRewardRow runs createBuzzTransaction with referral-reward:<id>
+    const buzzCalls = (createBuzzTransaction as any).mock.calls;
+    const refBonusGrant = buzzCalls.find((c: any) =>
+      String(c[0].externalTransactionId).startsWith('referral-reward:')
+    );
+    expect(refBonusGrant).toBeTruthy();
+    expect(refBonusGrant[0].toAccountId).toBe(42); // referee
+    expect(refBonusGrant[0].amount).toBe(2_500); // 25% of 10k
+  });
+
+  it('reverts the inline RefereeBonus settle to Pending if buzz grant throws', async () => {
+    okCtx();
+    mockDbWrite.referralReward.updateMany.mockResolvedValue({ count: 1 });
+    (createBuzzTransaction as any).mockImplementation(async (input: any) => {
+      if (String(input.externalTransactionId).startsWith('referral-reward:')) {
+        throw new Error('out of buzz');
+      }
+      return { transactionId: 't' };
+    });
+
+    await recordMembershipPaymentReward(basePayload);
+
+    // settleRewardRow caught the throw and called referralReward.update to
+    // restore Pending status with revokedReason populated. The cron will
+    // retry on the next tick.
+    const updateCalls = (mockDbWrite.referralReward.update as any).mock.calls;
+    const revertCall = updateCalls.find(
+      (c: any) => c[0]?.data?.status === ReferralRewardStatus.Pending && c[0]?.data?.revokedReason
+    );
+    expect(revertCall).toBeTruthy();
+    expect(revertCall[0].data.revokedReason).toContain('out of buzz');
+  });
+});
+
+// -----------------------------------------------------------------------------
+// revokeForChargeback — clears UserReferral state
+// -----------------------------------------------------------------------------
+
+describe('revokeForChargeback', () => {
+  it('decrements paidMonthCount and clears firstPaidAt when it drops to zero', async () => {
+    mockDbWrite.referralReward.findMany.mockResolvedValue([
+      {
+        id: 11,
+        userId: 7,
+        kind: ReferralRewardKind.MembershipToken,
+        refereeId: 42,
+        status: ReferralRewardStatus.Settled,
+        buzzAmount: 0,
+      },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([{ id: 1, paidMonthCount: 1 }]);
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.userReferral.update.mockResolvedValue({});
+
+    await revokeForChargeback({ sourceEventId: 'inv_x', reason: 'refunded' });
+
+    const userReferralUpdate = (mockDbWrite.userReferral.update as any).mock.calls[0];
+    expect(userReferralUpdate[0].data.paidMonthCount).toBe(0);
+    expect(userReferralUpdate[0].data.firstPaidAt).toBeNull();
+  });
+
+  it('decrements but does not null firstPaidAt when paid months remain', async () => {
+    mockDbWrite.referralReward.findMany.mockResolvedValue([
+      {
+        id: 12,
+        userId: 7,
+        kind: ReferralRewardKind.MembershipToken,
+        refereeId: 42,
+        status: ReferralRewardStatus.Settled,
+        buzzAmount: 0,
+      },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([{ id: 1, paidMonthCount: 3 }]);
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.userReferral.update.mockResolvedValue({});
+
+    await revokeForChargeback({ sourceEventId: 'inv_y', reason: 'refunded' });
+
+    const userReferralUpdate = (mockDbWrite.userReferral.update as any).mock.calls[0];
+    expect(userReferralUpdate[0].data.paidMonthCount).toBe(2);
+    expect(userReferralUpdate[0].data.firstPaidAt).toBeUndefined();
+  });
+
+  it('does not touch UserReferral when only RefereeBonus is revoked', async () => {
+    mockDbWrite.referralReward.findMany.mockResolvedValue([
+      {
+        id: 13,
+        userId: 42,
+        kind: ReferralRewardKind.RefereeBonus,
+        refereeId: null,
+        status: ReferralRewardStatus.Settled,
+        buzzAmount: 2_500,
+      },
+    ]);
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+
+    await revokeForChargeback({ sourceEventId: 'inv_z', reason: 'refunded' });
+
+    expect(mockDbWrite.userReferral.update).not.toHaveBeenCalled();
+  });
+
+  it('locks the UserReferral row before decrementing (no lost decrements under concurrent chargebacks)', async () => {
+    mockDbWrite.referralReward.findMany.mockResolvedValue([
+      {
+        id: 14,
+        userId: 7,
+        kind: ReferralRewardKind.MembershipToken,
+        refereeId: 42,
+        status: ReferralRewardStatus.Settled,
+        buzzAmount: 0,
+      },
+    ]);
+    (mockDbWrite.$queryRaw as any).mockResolvedValue([{ id: 1, paidMonthCount: 2 }]);
+    mockDbWrite.referralReward.update.mockResolvedValue({});
+    mockDbWrite.userReferral.update.mockResolvedValue({});
+
+    await revokeForChargeback({ sourceEventId: 'inv_w', reason: 'refunded' });
+
+    // The row was read via FOR UPDATE inside the per-referee tx; the
+    // UserReferral.findUnique path is no longer used.
+    expect(mockDbWrite.$queryRaw).toHaveBeenCalled();
+    expect(mockDbWrite.userReferral.findUnique).not.toHaveBeenCalled();
+    const update = (mockDbWrite.userReferral.update as any).mock.calls[0];
+    expect(update[0].data.paidMonthCount).toBe(1); // 2 - 1
+  });
+});
+
+// -----------------------------------------------------------------------------
+// computeLifetimeReferralPoints — Expired status retention
+// -----------------------------------------------------------------------------
+
+describe('computeLifetimeReferralPoints', () => {
+  it('includes Expired tokens in the status filter so lifetime points do not drop', async () => {
+    // We can't call the function directly here without exporting, but
+    // awardMilestones uses it under the hood. Verify via the aggregate call.
+    mockDbRead.referralReward.aggregate.mockResolvedValue({ _sum: { points: 12_000 } });
+    mockDbRead.cosmetic.findFirst.mockResolvedValue(null);
+
+    await awardMilestones(7);
+
+    const aggCall = (mockDbRead.referralReward.aggregate as any).mock.calls[0];
+    expect(aggCall[0].where.status.in).toEqual(
+      expect.arrayContaining([
+        ReferralRewardStatus.Settled,
+        ReferralRewardStatus.Redeemed,
+        ReferralRewardStatus.Expired,
+      ])
+    );
   });
 });

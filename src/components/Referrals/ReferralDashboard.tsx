@@ -285,8 +285,9 @@ export function ReferralDashboard({
             >
               <Group justify="space-between" wrap="nowrap" gap="xs">
                 <Text size="sm">
-                  Earn points every time a friend pays for Membership or buys Buzz with your code.
-                  Cross a milestone and get a lump-sum Blue Buzz bonus on top.
+                  When a friend joins via your code and pays for a Membership, you earn points for
+                  every paid month — plus 10% of any Buzz they buy after that as Blue Buzz. Cross a
+                  milestone for a lump-sum bonus on top.
                 </Text>
                 <CloseButton onClick={() => dismissAlert(ALERT_KICKBACK)} aria-label="Dismiss" />
               </Group>
@@ -397,9 +398,9 @@ export function ReferralDashboard({
             >
               <Group justify="space-between" wrap="nowrap" gap="xs">
                 <Text size="sm">
-                  Tokens come from friends paying for a Membership with your code. Earn 1 / 2 / 3
-                  Tokens per Bronze / Silver / Gold month, up to 3 months per friend. Spend them
-                  within 90 days or they expire.
+                  Tokens come from friends paying for a Membership with your code. Earn tokens per
+                  Bronze (1 token), Silver (2 tokens), or Gold (3 tokens) month, up to three months
+                  per friend. Spend them within 90 days or they expire.
                 </Text>
                 <CloseButton onClick={() => dismissAlert(ALERT_TOKEN_SHOP)} aria-label="Dismiss" />
               </Group>
@@ -422,7 +423,7 @@ export function ReferralDashboard({
                 label="Spendable"
                 value={formatNum(data.balance.settledTokens)}
                 accent="green"
-                tooltip="Tokens ready to redeem. Tokens expire 90 days after they become spendable, so spend them or stack them while they're fresh."
+                infoSlot={<TokenEarningsPopover compact />}
               />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6 }}>
@@ -1230,6 +1231,45 @@ function ScoringDetailsPopover({ compact }: { compact?: boolean }) {
             <ScoreRow source="Silver paid month" value="2,500 points" />
             <ScoreRow source="Gold paid month" value="5,000 points" />
           </Stack>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function TokenEarningsPopover({ compact }: { compact?: boolean }) {
+  return (
+    <Popover width={320} position="bottom-start" shadow="lg" withArrow withinPortal>
+      <Popover.Target>
+        {compact ? (
+          <UnstyledButton
+            type="button"
+            aria-label="Token earning details"
+            className="inline-flex cursor-pointer items-center"
+            style={{ color: 'var(--mantine-color-dimmed)' }}
+          >
+            <IconInfoCircle size={12} />
+          </UnstyledButton>
+        ) : (
+          <Text component="button" type="button" size="xs" c="blue.4" td="underline">
+            See token earning details
+          </Text>
+        )}
+      </Popover.Target>
+      <Popover.Dropdown className="overflow-hidden">
+        <Stack gap={6}>
+          <Text fw={700} size="sm">
+            How you earn Tokens
+          </Text>
+          <Stack gap={4}>
+            <ScoreRow source="Bronze paid month" value="1 token" />
+            <ScoreRow source="Silver paid month" value="2 tokens" />
+            <ScoreRow source="Gold paid month" value="3 tokens" />
+          </Stack>
+          <Text size="xs" c="dimmed">
+            Caps at the first 3 paid months per friend. Tokens expire 90 days after they become
+            spendable.
+          </Text>
         </Stack>
       </Popover.Dropdown>
     </Popover>

@@ -203,10 +203,32 @@ export async function recordMembershipPaymentReward(params: {
   if (tokenAmount <= 0) return null;
 
   const now = paidAt ?? new Date();
-  const isFirstPayment = ctx.paidMonthCount === 0;
+
+  // Snapshot the tier's point value at write time so re-tuning the constants
+  // later doesn't retroactively re-evaluate historical rewards.
+  const tierPoints = constants.referrals.pointsPerTierMonth[tier] ?? 0;
 
   try {
-    const result = await dbWrite.$transaction(async (tx) => {
+    const { reward: result, refereeBonusReward } = await dbWrite.$transaction(async (tx) => {
+      // Lock the UserReferral row inside the tx and re-read paidMonthCount /
+      // firstPaidAt before incrementing. Two concurrent invoice.paid webhooks
+      // (e.g. Stripe retries with different invoice IDs) would otherwise both
+      // see paidMonthCount=0, both create a RefereeBonus, and both increment.
+      const locked = await tx.$queryRaw<
+        { paidMonthCount: number; firstPaidAt: Date | null }[]
+      >(Prisma.sql`
+        SELECT "paidMonthCount", "firstPaidAt"
+        FROM "UserReferral"
+        WHERE id = ${ctx.referralId}
+        FOR UPDATE
+      `);
+      const lockedRow = locked[0];
+      if (!lockedRow) throw new Error('UserReferral row vanished mid-tx');
+      if (lockedRow.paidMonthCount >= constants.referrals.maxPaidMonthsPerReferee) {
+        throw Object.assign(new Error('over-cap-after-lock'), { __overCap: true });
+      }
+      const lockedIsFirstPayment = lockedRow.paidMonthCount === 0 && !lockedRow.firstPaidAt;
+
       const reward = await tx.referralReward.create({
         data: {
           userId: ctx.referrerId,
@@ -214,6 +236,7 @@ export async function recordMembershipPaymentReward(params: {
           kind: ReferralRewardKind.MembershipToken,
           status: ReferralRewardStatus.Pending,
           tokenAmount,
+          points: tierPoints,
           tierGranted: tier,
           sourceEventId,
           earnedAt: now,
@@ -226,29 +249,49 @@ export async function recordMembershipPaymentReward(params: {
         where: { id: ctx.referralId },
         data: {
           paidMonthCount: { increment: 1 },
-          firstPaidAt: isFirstPayment ? now : undefined,
+          firstPaidAt: lockedIsFirstPayment ? now : undefined,
         },
       });
 
-      if (isFirstPayment && monthlyBuzzAmount > 0) {
+      let refereeBonusReward = null;
+      if (lockedIsFirstPayment && monthlyBuzzAmount > 0) {
         const bonus = Math.floor(monthlyBuzzAmount * constants.referrals.refereeBonusBuzzPct);
         if (bonus > 0) {
-          await tx.referralReward.create({
+          // Created Pending with settledAt=now so settleRewardRow below picks
+          // it up immediately. The RefereeBonus is a one-way platform welcome
+          // gift — there's no chargeback path that could claw it back, so
+          // there's no reason to make the referee wait the 7-day window.
+          refereeBonusReward = await tx.referralReward.create({
             data: {
               userId: refereeId,
               kind: ReferralRewardKind.RefereeBonus,
               status: ReferralRewardStatus.Pending,
               buzzAmount: bonus,
+              points: bonus,
               tierGranted: tier,
               sourceEventId: `referee-bonus:${sourceEventId}`,
-              settledAt: settlementDate(now),
+              settledAt: now,
             },
           });
         }
       }
 
-      return reward;
+      return { reward, refereeBonusReward };
     });
+
+    if (refereeBonusReward) {
+      // Settle inline so the referee sees their welcome Blue Buzz immediately,
+      // not after the 15-min cron tick. settleRewardRow uses a CAS update so
+      // a parallel cron run can't double-grant.
+      await settleRewardRow(refereeBonusReward).catch((err) =>
+        logToAxiom({
+          name: 'referee-bonus-settle',
+          type: 'error',
+          rewardId: refereeBonusReward.id,
+          err: String(err),
+        }).catch(() => undefined)
+      );
+    }
 
     await recordAttribution({
       referralCodeId: ctx.referralCodeId,
@@ -272,6 +315,7 @@ export async function recordMembershipPaymentReward(params: {
     return result.id;
   } catch (err) {
     if (isUniqueViolation(err)) return null;
+    if ((err as { __overCap?: boolean })?.__overCap) return null;
     throw err;
   }
 }
@@ -313,6 +357,7 @@ export async function recordBuzzPurchaseKickback(params: {
         kind: ReferralRewardKind.BuzzKickback,
         status: ReferralRewardStatus.Pending,
         buzzAmount: kickback,
+        points: kickback,
         sourceEventId,
         earnedAt: now,
         settledAt: settlementDate(now),
@@ -453,9 +498,16 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
       OR: [{ sourceEventId }, { sourceEventId: `referee-bonus:${sourceEventId}` }],
       status: { in: [ReferralRewardStatus.Pending, ReferralRewardStatus.Settled] },
     },
-    select: { id: true, userId: true, status: true, buzzAmount: true },
+    select: { id: true, userId: true, kind: true, refereeId: true, status: true, buzzAmount: true },
   });
   if (!affected.length) return { revoked: 0 };
+
+  // Track referees whose paidMonthCount needs to drop. A refunded membership
+  // payment must clear its credit on the UserReferral row so the referee can't
+  // refund-and-keep-Buzz-kickbacks: BuzzKickback eligibility checks
+  // `firstPaidAt`, so leaving that set after a refunded first month would let
+  // the referrer keep collecting kickbacks on a free account.
+  const refereeDecrements = new Map<number, number>();
 
   for (const reward of affected) {
     if (reward.status === ReferralRewardStatus.Settled && reward.buzzAmount > 0) {
@@ -485,11 +537,41 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
         revokedReason: reason,
       },
     });
+    if (reward.kind === ReferralRewardKind.MembershipToken && reward.refereeId) {
+      refereeDecrements.set(reward.refereeId, (refereeDecrements.get(reward.refereeId) ?? 0) + 1);
+    }
     emitSignal(reward.userId, SignalMessages.ReferralClawback, {
       rewardId: reward.id,
       reason,
     });
   }
+
+  for (const [refereeId, decrement] of refereeDecrements) {
+    await dbWrite.$transaction(async (tx) => {
+      // Lock the row so two concurrent chargebacks for the same referee don't
+      // both read the same paidMonthCount and lose one of the decrements.
+      const locked = await tx.$queryRaw<{ id: number; paidMonthCount: number }[]>(Prisma.sql`
+        SELECT id, "paidMonthCount"
+        FROM "UserReferral"
+        WHERE "userId" = ${refereeId}
+        FOR UPDATE
+      `);
+      const ref = locked[0];
+      if (!ref) return;
+      const next = Math.max(0, ref.paidMonthCount - decrement);
+      await tx.userReferral.update({
+        where: { id: ref.id },
+        data: {
+          paidMonthCount: next,
+          // If they've now lost every paid month they ever had, clear the
+          // firstPaidAt anchor so future buzz purchases stop generating
+          // kickbacks for the referrer until they pay for membership again.
+          firstPaidAt: next === 0 ? null : undefined,
+        },
+      });
+    });
+  }
+
   return { revoked: affected.length };
 }
 
@@ -512,6 +594,7 @@ export async function awardMilestones(userId: number) {
             kind: ReferralRewardKind.MilestoneBonus,
             status: ReferralRewardStatus.Pending,
             buzzAmount: m.bonus,
+            points: m.bonus,
             sourceEventId: `milestone:${userId}:${m.threshold}`,
             settledAt: settlementDate(),
           },
@@ -609,36 +692,33 @@ export async function expireSettledTokens(now: Date = new Date()) {
 // Referral Points drive the milestone ladder and Recruiter Score.
 // 1 point per Blue Buzz earned (buzz kickbacks + milestone bonuses, once
 // they've cleared), plus a tier-weighted lump per paid referral month
-// from MembershipToken rows. See constants.referrals.pointsPerTierMonth.
+// from MembershipToken rows. Each row stores its own `points` snapshot at write
+// time so this is a straight sum — re-tuning constants.referrals.pointsPerTierMonth
+// later will only affect future rows, not historical ones. Expired tokens still
+// count toward lifetime points: expiry only blocks redemption, the user did
+// historically earn the points and shouldn't lose milestone progress for it.
 export async function computeLifetimeReferralPoints(userId: number) {
-  const [buzzAgg, tierRows] = await Promise.all([
-    dbRead.referralReward.aggregate({
-      where: {
-        userId,
-        kind: { in: [ReferralRewardKind.BuzzKickback, ReferralRewardKind.MilestoneBonus] },
-        status: { in: [ReferralRewardStatus.Settled, ReferralRewardStatus.Redeemed] },
+  const agg = await dbRead.referralReward.aggregate({
+    where: {
+      userId,
+      kind: {
+        in: [
+          ReferralRewardKind.BuzzKickback,
+          ReferralRewardKind.MilestoneBonus,
+          ReferralRewardKind.MembershipToken,
+        ],
       },
-      _sum: { buzzAmount: true },
-    }),
-    dbRead.referralReward.groupBy({
-      by: ['tierGranted'],
-      where: {
-        userId,
-        kind: ReferralRewardKind.MembershipToken,
-        status: { in: [ReferralRewardStatus.Settled, ReferralRewardStatus.Redeemed] },
+      status: {
+        in: [
+          ReferralRewardStatus.Settled,
+          ReferralRewardStatus.Redeemed,
+          ReferralRewardStatus.Expired,
+        ],
       },
-      _count: { _all: true },
-    }),
-  ]);
-
-  const buzzPoints = buzzAgg._sum.buzzAmount ?? 0;
-  let tierPoints = 0;
-  for (const row of tierRows) {
-    const tier = row.tierGranted ?? '';
-    const perMonth = constants.referrals.pointsPerTierMonth[tier] ?? 0;
-    tierPoints += perMonth * row._count._all;
-  }
-  return buzzPoints + tierPoints;
+    },
+    _sum: { points: true },
+  });
+  return agg._sum.points ?? 0;
 }
 
 export async function getReferrerBalance(userId: number) {
@@ -702,32 +782,39 @@ export async function getReferrerBalance(userId: number) {
     .reduce((sum, r) => sum + (r.tokenAmount ?? 0), 0);
 
   // Referral Points — the metric behind both milestone progress and
-  // Recruiter Score. settled/redeemed = lifetime, pending = not yet cleared.
-  const membershipByTier = await dbRead.referralReward.groupBy({
-    by: ['tierGranted', 'status'],
+  // Referral Score. Sum the per-row `points` snapshot so historical rewards
+  // stay frozen at the value they had when written.
+  const pointsByStatus = await dbRead.referralReward.groupBy({
+    by: ['status'],
     where: {
       userId,
-      kind: ReferralRewardKind.MembershipToken,
+      kind: {
+        in: [
+          ReferralRewardKind.BuzzKickback,
+          ReferralRewardKind.MilestoneBonus,
+          ReferralRewardKind.MembershipToken,
+        ],
+      },
+      // Include Expired so token expiry doesn't yank the user's lifetime
+      // points down — they still earned them.
       status: {
         in: [
           ReferralRewardStatus.Pending,
           ReferralRewardStatus.Settled,
           ReferralRewardStatus.Redeemed,
+          ReferralRewardStatus.Expired,
         ],
       },
     },
-    _count: { _all: true },
+    _sum: { points: true },
   });
-  let lifetimeTierPoints = 0;
-  let pendingTierPoints = 0;
-  for (const row of membershipByTier) {
-    const perMonth = constants.referrals.pointsPerTierMonth[row.tierGranted ?? ''] ?? 0;
-    const points = perMonth * row._count._all;
-    if (row.status === ReferralRewardStatus.Pending) pendingTierPoints += points;
-    else lifetimeTierPoints += points;
+  let lifetimePoints = 0;
+  let pendingPoints = 0;
+  for (const row of pointsByStatus) {
+    const pts = row._sum.points ?? 0;
+    if (row.status === ReferralRewardStatus.Pending) pendingPoints += pts;
+    else lifetimePoints += pts;
   }
-  const lifetimePoints = settledBlueBuzzLifetime + lifetimeTierPoints;
-  const pendingPoints = pendingBlueBuzz + pendingTierPoints;
 
   return {
     settledTokens,
@@ -797,6 +884,15 @@ async function grantReferralSubscription(
   // always active first; on expiry a cron (advanceReferralSubs) promotes the next
   // chunk. Blocks the "stack cheap Bronze + one Gold = all Gold" exploit Justin
   // flagged — each chunk only ever grants its own tier for its own duration.
+  //
+  // Lock the row so a concurrent advance-cron run can't read+rewrite the queue
+  // around our update and erase a chunk we're appending.
+  await tx.$queryRaw(Prisma.sql`
+    SELECT id
+    FROM "CustomerSubscription"
+    WHERE "userId" = ${userId} AND "buzzType" = ${REFERRAL_BUZZ_TYPE}
+    FOR UPDATE
+  `);
   const existing = await tx.customerSubscription.findUnique({
     where: { userId_buzzType: { userId, buzzType: REFERRAL_BUZZ_TYPE } },
     select: {
@@ -831,6 +927,17 @@ async function grantReferralSubscription(
   if (Array.isArray(existingMeta.referralQueue)) {
     pool.push(...existingMeta.referralQueue);
   }
+
+  // Reject the redemption (refund the cost upstream) if the user is already
+  // sitting on more than maxQueuedDays of perks. Without a cap a hot referrer
+  // could queue years of tier-time and eventually trip Stripe's 2038 date max.
+  const existingPoolDays = pool.reduce((sum, entry) => sum + entry.durationDays, 0);
+  if (existingPoolDays + durationDays > constants.referrals.maxQueuedDays) {
+    throw new Error(
+      `Referral perk queue is full. You already have ${existingPoolDays} days of perks queued; the cap is ${constants.referrals.maxQueuedDays} days. Spend some perks before redeeming more.`
+    );
+  }
+
   pool.push({ tier, durationDays });
 
   const ordered = collapseTierQueue(pool);
@@ -911,47 +1018,69 @@ export async function advanceReferralSubscriptions(now: Date = new Date()) {
   let canceled = 0;
 
   for (const sub of due) {
-    const meta = (sub.metadata as ReferralSubMetadata | null) ?? {};
-    const queue = Array.isArray(meta.referralQueue) ? meta.referralQueue : [];
-    const ordered = collapseTierQueue(queue);
+    // Lock the row inside a per-sub tx and re-read its metadata. A user
+    // calling redeemTokens (which calls grantReferralSubscription) right as
+    // the cron picks up the row would otherwise have their newly-appended
+    // queue entries silently overwritten by our update.
+    const result = await dbWrite.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<
+        { id: string; metadata: Prisma.JsonValue; currentPeriodEnd: Date }[]
+      >(Prisma.sql`
+        SELECT id, metadata, "currentPeriodEnd"
+        FROM "CustomerSubscription"
+        WHERE id = ${sub.id}
+        FOR UPDATE
+      `);
+      const lockedSub = locked[0];
+      if (!lockedSub) return 'noop' as const;
+      // Re-check that the period is still expired — another writer (e.g. a
+      // redemption that bumped the period out) may have made this no longer due.
+      if (lockedSub.currentPeriodEnd > now) return 'noop' as const;
 
-    if (ordered.length === 0) {
-      await dbWrite.customerSubscription.update({
+      const meta = (lockedSub.metadata as ReferralSubMetadata | null) ?? {};
+      const queue = Array.isArray(meta.referralQueue) ? meta.referralQueue : [];
+      const ordered = collapseTierQueue(queue);
+
+      if (ordered.length === 0) {
+        await tx.customerSubscription.update({
+          where: { id: sub.id },
+          data: { status: 'canceled', canceledAt: now, endedAt: now },
+        });
+        return 'canceled' as const;
+      }
+
+      const [next, ...rest] = ordered;
+      const product = await findReferralProductForTier(next.tier);
+      if (!product || !product.defaultPriceId) {
+        await logToAxiom({
+          name: 'referral-advance-missing-product',
+          type: 'error',
+          subId: sub.id,
+          tier: next.tier,
+        }).catch(() => undefined);
+        return 'noop' as const;
+      }
+
+      const newEnd = dayjs(now).add(next.durationDays, 'day').toDate();
+      await tx.customerSubscription.update({
         where: { id: sub.id },
-        data: { status: 'canceled', canceledAt: now, endedAt: now },
+        data: {
+          productId: product.id,
+          priceId: product.defaultPriceId,
+          currentPeriodStart: now,
+          currentPeriodEnd: newEnd,
+          metadata: {
+            ...meta,
+            source: 'referral-redemption',
+            referralQueue: rest,
+          } as Prisma.InputJsonValue,
+        },
       });
-      canceled++;
-      continue;
-    }
-
-    const [next, ...rest] = ordered;
-    const product = await findReferralProductForTier(next.tier);
-    if (!product || !product.defaultPriceId) {
-      await logToAxiom({
-        name: 'referral-advance-missing-product',
-        type: 'error',
-        subId: sub.id,
-        tier: next.tier,
-      }).catch(() => undefined);
-      continue;
-    }
-
-    const newEnd = dayjs(now).add(next.durationDays, 'day').toDate();
-    await dbWrite.customerSubscription.update({
-      where: { id: sub.id },
-      data: {
-        productId: product.id,
-        priceId: product.defaultPriceId,
-        currentPeriodStart: now,
-        currentPeriodEnd: newEnd,
-        metadata: {
-          ...meta,
-          source: 'referral-redemption',
-          referralQueue: rest,
-        } as Prisma.InputJsonValue,
-      },
+      return 'advanced' as const;
     });
-    advanced++;
+
+    if (result === 'advanced') advanced++;
+    else if (result === 'canceled') canceled++;
   }
 
   return { advanced, canceled };

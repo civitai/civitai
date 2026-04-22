@@ -125,6 +125,12 @@ model ReferralReward {
   status        ReferralRewardStatus @default(Pending)
   tokenAmount   Int                  @default(0)
   buzzAmount    Int                  @default(0)
+  // Referral Points snapshot at the time the reward was created. For
+  // BuzzKickback / MilestoneBonus this equals buzzAmount (1pt per blue buzz).
+  // For MembershipToken this equals constants.referrals.pointsPerTierMonth[tier]
+  // at the time of the paid month so re-tuning the constants doesn't retroactively
+  // re-evaluate historical rewards (no phantom milestones).
+  points        Int                  @default(0)
   tierGranted   String?
   sourceEventId String
   metadata      Json                 @default("{}")

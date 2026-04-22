@@ -282,6 +282,7 @@ export interface ReferralReward {
   status: ReferralRewardStatus;
   tokenAmount: number;
   buzzAmount: number;
+  points: number;
   tierGranted: string | null;
   sourceEventId: string;
   metadata: JsonValue;

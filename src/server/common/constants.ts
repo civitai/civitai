@@ -197,6 +197,9 @@ export const constants = {
     // 1 point per Blue Buzz earned, plus a tier-weighted lump per paid
     // referral month (≈10% of each tier's monthly Buzz value).
     pointsPerTierMonth: { bronze: 1_000, silver: 2_500, gold: 5_000 } as Record<string, number>,
+    // Cap how far into the future a referral subscription can be queued. Prevents
+    // a hot referrer from queuing decades of perks (Stripe's date max is 2038).
+    maxQueuedDays: 365,
     refereeBonusBuzzPct: 0.25,
     buzzKickbackPct: 0.1,
     shopItems: [

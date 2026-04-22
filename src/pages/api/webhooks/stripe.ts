@@ -197,6 +197,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                   ? undefined
                   : paymentIntent.payment_method?.card?.fingerprint ?? undefined;
 
+              // No swallowed catch — let a transient DB error propagate so
+              // Stripe retries the webhook. Both completeStripeBuzzTransaction
+              // and recordBuzzPurchaseKickback are idempotent on
+              // stripePaymentIntentId / sourceEventId, so a retry won't
+              // double-grant.
               await recordBuzzPurchaseKickback({
                 refereeId: metadata.userId,
                 buzzAmount: metadata.buzzAmount,
@@ -210,7 +215,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                       : paymentIntent.latest_charge?.id ?? undefined,
                   paymentMethodFingerprint: pmFingerprint,
                 },
-              }).catch(() => null);
+              });
             }
 
             if (metadata.type === 'clubMembershipPayment') {
