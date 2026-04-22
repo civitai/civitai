@@ -76,6 +76,7 @@ import {
   ResourceAlerts,
   ExperimentalModelAlert,
   GrokEcosystemAlert,
+  SeedanceImg2VidAlert,
   ReadyAlert,
 } from './ResourceAlerts';
 
@@ -119,6 +120,7 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
+import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
 
 // =============================================================================
 // Component
@@ -342,6 +344,8 @@ export function GenerationForm() {
 
   return (
     <GenerationLayout>
+      {/* Preset control */}
+      <PresetControl />
       {/* Workflow and ecosystem selectors — always visible */}
       <>
         <Group gap="xs" wrap="nowrap" className="w-full justify-between">
@@ -592,6 +596,15 @@ export function GenerationForm() {
                   <ExperimentalModelAlert ecosystem={value} />
                   <GrokEcosystemAlert ecosystem={value} />
                 </>
+              )}
+            />
+
+            {/* Seedance img2vid copyright-filter warning */}
+            <MultiController
+              graph={graph}
+              names={['ecosystem', 'workflow'] as const}
+              render={({ values }) => (
+                <SeedanceImg2VidAlert ecosystem={values.ecosystem} workflow={values.workflow} />
               )}
             />
 

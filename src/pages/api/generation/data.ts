@@ -2,13 +2,18 @@ import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 
 export default PublicEndpoint(
   async function handler(req, res) {
     try {
       const session = await getServerAuthSession({ req, res });
       const queryInput = getGenerationDataSchema.parse(req.query);
-      const queryResult = await getGenerationData({ query: queryInput, user: session?.user });
+      const queryResult = await getGenerationData({
+        query: queryInput,
+        user: session?.user,
+        sfwOnly: getRequestDomainColor(req) === 'green',
+      });
       return res.status(200).json(queryResult);
     } catch (e: any) {
       if (!res.headersSent) return res.status(400).json({ message: e.message });

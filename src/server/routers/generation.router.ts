@@ -51,7 +51,9 @@ export const generationRouter = router({
     .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .input(getGenerationDataSchema)
-    .query(({ input, ctx }) => getGenerationData({ query: input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      getGenerationData({ query: input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+    ),
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
@@ -70,8 +72,16 @@ export const generationRouter = router({
     ),
   getResourceDataByIds: publicProcedure
     .input(getResourceDataByIdsSchema)
-    .query(({ input, ctx }) => getResourceData(input.ids, ctx.user, false, true)),
+    .query(({ input, ctx }) =>
+      getResourceData(input.ids, {
+        user: ctx.user,
+        withPreview: true,
+        sfwOnly: ctx.features.isGreen,
+      })
+    ),
   resolveImageMeta: publicProcedure
     .input(resolveImageMetaSchema)
-    .query(({ input, ctx }) => resolveImageMeta({ input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      resolveImageMeta({ input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+    ),
 });

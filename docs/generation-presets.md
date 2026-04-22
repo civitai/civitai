@@ -2,17 +2,9 @@
 
 ## Overview
 
-Users can save named snapshots of their generation settings as **presets** and load them back into the GenerationForm. Presets are **private to the user** in v1 — there is no sharing, browsing, or copying between users. Users can also set a preferred default ecosystem for image and video output types.
+Users can save named snapshots of their generation settings as **presets** and load them back into the GenerationForm. Presets are **private to the user** in v1 — there is no sharing, browsing, or copying between users.
 
 ## Requirements
-
-### Default Ecosystem Preferences
-
-- Users can set a preferred default ecosystem for **image** output (e.g., SDXL, Flux) and **video** output (e.g., Kling, Wan)
-- Applied on form init when no other context overrides it (remix, replay, etc.)
-- Personal preference only — never shared
-
-### Generation Presets
 
 - A preset captures the **entire generation-graph output** at save time (all current node values). No field picker — save everything.
 - Every preset is scoped to a **single ecosystem** (auto-detected from the form's current ecosystem at save time)
@@ -29,27 +21,7 @@ Users can save named snapshots of their generation settings as **presets** and l
 
 ## Database Schema
 
-### Default Ecosystem Preferences
-
-Stored in the existing `User.settings` JSON column via `generationSettingsSchema`:
-
-```ts
-// src/server/schema/user.schema.ts
-const generationSettingsSchema = z.object({
-  advancedMode: z.boolean().optional(),
-  // NEW
-  defaultEcosystems: z.object({
-    image: z.string().optional(),
-    video: z.string().optional(),
-  }).optional(),
-});
-```
-
-No migration needed — additive change to an existing JSON field.
-
-### Generation Presets Table
-
-New table:
+New `GenerationPreset` table:
 
 ```prisma
 model GenerationPreset {
@@ -86,53 +58,59 @@ Requires a Prisma migration.
 
 ## Implementation Plan
 
+Default ecosystem preferences (preferred ecosystem per output type) are **not** part of this PR — they'll be a separate follow-up.
+
 ### Phase 1: Schema & API
 
-1. **Extend `generationSettingsSchema`** in `src/server/schema/user.schema.ts`
-   - Add `defaultEcosystems: { image?: string, video?: string }`
-   - Extend `setUserSettingsInput` to accept it
-
-2. **Create Prisma migration** for `GenerationPreset` table
+1. **Create Prisma migration** for `GenerationPreset` table
    - Add relation to `User` model in `schema.full.prisma`
 
-3. **Add tRPC router** for preset CRUD
+2. **Add tRPC router** for preset CRUD
    - `generationPreset.getForEcosystem({ ecosystem })` — list presets applicable to a given ecosystem (owner's presets only, expanded via cross-ecosystem rules)
    - `generationPreset.getOwn` — list current user's presets (all ecosystems)
    - `generationPreset.getById({ id })` — get a single preset (owner only)
-   - `generationPreset.create({ name, description?, values })` — save a new preset; `ecosystem` is derived server-side from the form context sent alongside
-   - `generationPreset.update({ id, name?, description?, values? })` — edit own preset
+   - `generationPreset.create({ name, description?, values })` — server reads `ecosystem` from `values` (guaranteed present in the graph snapshot) and writes it to the column; rejects if missing
+   - `generationPreset.update({ id, name?, description?, values? })` — edit own preset (same ecosystem-from-values rule when `values` is supplied)
    - `generationPreset.delete({ id })` — delete own preset
    - `generationPreset.reorder({ orderedIds: number[] })` — bulk-assign `sortOrder` by array index
 
-### Phase 2: Default Ecosystem Integration
+### Phase 2: Client State & UI
 
-4. **Read default ecosystem on form init** in `GenerationFormProvider`
-   - Fetch `settings.generation.defaultEcosystems` from user settings
-   - Apply as initial ecosystem when no remix/replay/stored preference overrides
-   - Falls back to current behavior (hardcoded defaults) if not set
+1. **Create `generation-preset.store` (Zustand)**
+   - Session-only; not persisted to localStorage
+   - State: `activePresetId: number | null`, `activePresetValues: Record<string, unknown> | null`, `isDirty: boolean`
+   - Actions: `loadPreset(preset)`, `closePreset()`, `markClean()` (called after a successful save/update)
+   - `isDirty` is derived by subscribing to the graph store snapshot and diffing against `activePresetValues` using the shared comparison set (see [Dirty State Detection](#dirty-state-detection))
+   - Rationale: preset orchestration spans the graph store (snapshot source) and the panel store (UI chrome), so it gets its own store rather than being squeezed into either
 
-5. **UI for setting default ecosystem**
-   - Small control in generation form header or settings area
-   - Calls `setUserSettings` with updated `generation.defaultEcosystems`
+2. **Panel header: preset control**
+   - A **preset button** sits next to the help/tour icon at the top of the generation panel
+   - Clicking it opens a **dropdown** showing:
+     - The user's existing presets for the current ecosystem (from `generationPreset.getForEcosystem`)
+     - A "Save current values as new preset" action at the bottom that opens the save modal via `dialogStore.trigger`
+   - Selecting an existing preset calls `loadPreset` (which runs `graph.set(preset.values)` and populates the store)
 
-### Phase 3: Preset Save/Load
+3. **Active-preset indicator**
+   - When `activePresetId` is set, show the preset name above the workflow selectors
+   - Next to the name: **Save** icon, **Save as** icon, **Close (X)** icon
+   - When `isDirty` is true, show a dirty indicator alongside the name; the Save icon becomes actionable
+   - **Save** (dirty): opens a `PopConfirm` → on confirm, calls `generationPreset.update({ id: activePresetId, values: currentSnapshot })` → `markClean()`
+   - **Save as** (any state): opens the save modal (same one as the panel-header dropdown's "Save as new") via `dialogStore.trigger`
+   - **Close (X)**: clears the store via `closePreset()` — does not touch the form values
 
-6. **Save preset flow**
-   - User clicks "Save as preset" in generation form — there is no in-form "Save" button; every save goes through the modal
-   - Modal fields: **name** (required) and **description** (optional)
-   - If the user types a name that matches one of their existing presets for the current ecosystem, the modal offers to **overwrite** that preset (calls `generationPreset.update`); otherwise it creates a new one (`generationPreset.create`)
-   - Grab the full graph output via `graph.getSnapshot()` (excluding images/video input nodes)
-   - Auto-detect current ecosystem for scoping (preset's `ecosystem` = current ecosystem)
+4. **Save modal**
+   - Triggered via `dialogStore.trigger`
+   - Fields: **name** (required) and **description** (optional)
+   - On submit: calls `generationPreset.create` with the current snapshot, then `loadPreset` on the returned row so the new preset is active
 
-7. **Load preset flow**
-   - Preset selector in the generation form, populated via `generationPreset.getForEcosystem({ ecosystem })`
-   - On select: `graph.set(preset.values)` applies the full saved state
+5. **Load preset behavior**
+   - `graph.set(preset.values)` applies the full saved state
    - If the preset includes a checkpoint from a different ecosystem, the graph's existing ecosystem-switch behavior handles the switch (checkpoints denote ecosystem)
    - If any resources are unavailable, surface the same warning pattern remix uses via `getGenerationData`
 
-8. **Manage presets UI**
+6. **Manage presets UI**
    - List view of user's presets with reorder, rename, edit description, delete
-   - Accessible from the generation form (e.g., "Manage presets" menu item)
+   - Accessible from the generation form (e.g., a "Manage presets" entry in the panel-header dropdown)
 
 ## Authorization
 
@@ -152,15 +130,16 @@ Every route is owner-scoped in v1 — there are no public presets.
 
 ### Saving — `graph.getSnapshot()`
 
-The DataGraph's `getSnapshot()` returns all current node values. At save time we take the whole snapshot (minus the excluded input keys) and send it to `generationPreset.create`:
+The DataGraph's `getSnapshot()` returns all current node values. At save time we take the whole snapshot (minus the excluded keys) and send it to `generationPreset.create`:
 
 ```ts
 const snapshot = graph.getSnapshot();
-const EXCLUDED = new Set(['images', 'video']); // input references, not saved
 const values = Object.fromEntries(
-  Object.entries(snapshot).filter(([k]) => !EXCLUDED.has(k))
+  Object.entries(snapshot).filter(([k]) => !PRESET_EXCLUDED_KEYS.has(k))
 );
 ```
+
+The excluded keys are shared between save and dirty-detection — see [Dirty State Detection](#dirty-state-detection).
 
 ### Applying — `graph.set(values)`
 
@@ -187,6 +166,23 @@ On apply, full resource metadata is re-resolved via `getGenerationData` — same
 ### Values validation at the API boundary
 
 The `values` column is `Json`. We rely on the generation graph's existing **per-node validation** to handle malformed or out-of-range data on apply — invalid nodes are dropped, valid ones are applied. The tRPC input validates the outer shape (`values` is an object with expected top-level keys), not the full per-node schema.
+
+### Dirty State Detection
+
+Dirty state drives the active-preset UI (whether the Save icon is actionable, whether a dirty indicator is shown). It's computed in `generation-preset.store` by subscribing to the graph store snapshot and diffing against `activePresetValues`.
+
+**Excluded keys** (ignored on both save and diff — a change to these never marks the preset dirty):
+
+- `images` — input references, not part of a preset
+- `video` — input references, not part of a preset
+- `priority` — ephemeral generation-panel preference
+- `outputFormat` — ephemeral generation-panel preference
+- `quantity` — ephemeral generation-panel preference
+- Any computed keys emitted by the generation graph (e.g., derived fields that aren't user-authored inputs)
+
+Both save and dirty-check use the same `PRESET_EXCLUDED_KEYS` constant to keep the two in sync — if a value is excluded on save, a change to it must not mark the preset dirty.
+
+**Diff strategy:** shallow-stable deep compare on the remaining keys. Arrays of resources are compared by `id` + `strength` (order-sensitive, since order can matter).
 
 ## Cross-Ecosystem Querying
 
@@ -234,3 +230,6 @@ All presets are private. No public toggle, no sharing, no copy. This defers the 
 ### Resource references store `{ id, strength? }`
 
 Storing just `id` (plus `strength` where applicable) keeps rows small and ensures that model metadata (availability, baseModel, permissions) is always re-resolved at apply time. This matches the remix flow.
+
+
+@dev - in the client, we will show a save button next to the help icon that starts the tour at the top of the generation panel. This will open the modal to save the preset. When a preset is selected, we will show the preset name above the generation form workflow selectors. When the form values have diverged from the preset values, we will show something that indicates that the preset is dirty. There will be a "save" button as well as a "save as" button when the preset is dirty. Save will simply update the preset, while "save as" will opent the preset modal so that the user can enter a different name for the preset.

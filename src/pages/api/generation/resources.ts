@@ -1,6 +1,7 @@
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
 import z from 'zod';
 
 const schema = z.object({
@@ -14,7 +15,12 @@ export default PublicEndpoint(
     try {
       const session = await getServerAuthSession({ req, res });
       const { ids } = schema.parse(req.query);
-      const queryResult = await getResourceData(ids, session?.user, false, true);
+      const sfwOnly = getRequestDomainColor(req) === 'green';
+      const queryResult = await getResourceData(ids, {
+        user: session?.user,
+        withPreview: true,
+        sfwOnly,
+      });
       return res.status(200).json(queryResult);
     } catch (e: any) {
       if (!res.headersSent) return res.status(400).json({ message: e.message });

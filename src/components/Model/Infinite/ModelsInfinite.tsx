@@ -8,7 +8,7 @@ import { ModelCard } from '~/components/Cards/ModelCard';
 import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import type { ModelQueryParams } from '~/components/Model/model.utils';
 import { useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -65,7 +65,7 @@ export function ModelsInfinite({
       ) : !!models.length ? (
         <div className="relative">
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryGrid
+          <MasonryGridVirtual
             data={models}
             render={ModelCard}
             itemId={(x) => x.id}

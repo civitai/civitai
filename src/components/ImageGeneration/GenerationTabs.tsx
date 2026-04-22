@@ -24,6 +24,7 @@ import { GenerationFormV2 } from '~/components/generation_v2';
 import { GenerationFormLegacy } from '~/components/ImageGeneration/GenerationForm/GenerationFormLegacy';
 import { GeneratorToggleBanner } from '~/components/ImageGeneration/GeneratorToggle';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
+import { PresetHeaderButton } from '~/components/generation_v2/preset/PresetHeaderButton';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -126,6 +127,7 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
           <div className="relative flex flex-1 flex-nowrap items-center gap-2">
             {currentUser?.isModerator && <WorkflowLookup />}
             {features.challengePlatform && <ChallengeIndicator />}
+            {features.generationPresets && <PresetHeaderButton />}
             {features.appTour && (
               <HelpButton
                 data-tour="gen:reset"

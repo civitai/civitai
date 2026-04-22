@@ -15,7 +15,7 @@ export function MatureContentMigrationAlert() {
   const { isGreen } = useFeatureFlags();
   const serverDomains = useServerDomains();
   const { data: session } = useSession();
-  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery();
+  const { data: settings } = trpc.user.getSettings.useQuery();
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
   // Check the raw session user preferences (before domain override).
@@ -57,7 +57,7 @@ export function MatureContentMigrationAlert() {
     if (el) el.style.opacity = '0';
   }, []);
 
-  if (!isGreen || !hasNsfwEnabled || settingsLoading || isDismissed) return null;
+  if (!isGreen || !hasNsfwEnabled || !settings || isDismissed) return null;
 
   const redDomain = serverDomains.red;
   const redUrl = syncAccount(`//${redDomain}`);

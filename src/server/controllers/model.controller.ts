@@ -232,7 +232,9 @@ export const getModelHandler = async ({
           .filter((x) => !isLinkedComponent(x.settings))
           .map((x) => x.resource.id)
       ) ?? [];
-    const generationResources = await getResourceData(regularResourceIds, ctx?.user);
+    const generationResources = await getResourceData(regularResourceIds, {
+      user: ctx?.user,
+    });
 
     // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
     const allLinkedFileIds = [

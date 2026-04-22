@@ -1483,14 +1483,36 @@ export const earlyAccessPurchase = async ({
         )
         WHERE "id" = ${modelVersionId}; -- Your conditions here
       `;
-    });
+    },  { timeout: 10000 }); // Doubled timeout since this transaction involves multiple steps and external calls.
 
+    // Post-transaction side effects: failures here must not trigger a refund,
+    // since the purchase itself already succeeded.
     if (earlyAccessDonationGoal) {
-      await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
+      try {
+        await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-donation-goal-check',
+          error,
+          modelVersionId,
+          donationGoalId: earlyAccessDonationGoal.id,
+        });
+      }
     }
 
-    // Ensures user gets access to the resource after purchasing.
-    await bustMvCache(modelVersionId, modelVersion.model.id, userId);
+    try {
+      // Ensures user gets access to the resource after purchasing.
+      await bustMvCache(modelVersionId, modelVersion.model.id, userId);
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'early-access-bust-mv-cache',
+        error,
+        modelVersionId,
+        userId,
+      });
+    }
 
     return true;
   } catch (error) {
@@ -1499,6 +1521,14 @@ export const earlyAccessPurchase = async ({
         externalTransactionIdPrefix: buzzTransactionId,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
+
+      logToAxiom({ 
+        type: 'error',
+        name: 'early-access-purchase-refund',
+        error,
+        modelVersionId,
+        buzzTransactionId,
+       });
     }
     throw throwDbError(error);
   }

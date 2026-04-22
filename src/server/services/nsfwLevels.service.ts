@@ -304,10 +304,15 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
           ) AS "nsfwLevel"
         FROM "Article" a
 
-        -- Cover image (left join - may not exist)
+        -- Cover image (left join - may not exist).
+        -- Include Blocked covers too: a blocked cover has a real nsfwLevel
+        -- (32 == NsfwLevel.Blocked) and MUST contribute to the derivation so
+        -- the article drops out of any browsingLevel that doesn't include
+        -- Blocked — otherwise a post-publish cover block silently leaves the
+        -- article at its author-declared PG/PG13 level.
         LEFT JOIN "Image" cover
           ON a."coverId" = cover.id
-          AND cover."ingestion" = 'Scanned'
+          AND cover."ingestion" IN ('Scanned', 'Blocked')
 
         -- Content images (left join - may not exist)
         LEFT JOIN "ImageConnection" ic
@@ -350,12 +355,25 @@ export async function updateArticleNsfwLevels(articleIds: number[], tx?: Prisma.
         FROM "Article" a
         WHERE a.id IN (${Prisma.join(articleIds)})
       )
+      -- moderatorNsfwLevel is the moderator override and takes precedence over
+      -- every other signal when set. It can force the rating either direction:
+      -- mods can pin a wholesome article that got mis-scanned back down to PG,
+      -- or raise a borderline article that the auto-derivation undersold.
+      -- When null we fall back to GREATEST(userNsfwLevel, scanned images,
+      -- moderation floor) as before. A mod clearing the override (setting it
+      -- back to NULL) immediately returns the article to auto-derivation.
       UPDATE "Article" a
-      SET "nsfwLevel" = GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
+      SET "nsfwLevel" = COALESCE(
+        a."moderatorNsfwLevel",
+        GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
+      )
       FROM level
       JOIN moderation_floor mf ON mf.id = level.id
       WHERE level.id = a.id
-        AND GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor") != a."nsfwLevel"
+        AND COALESCE(
+          a."moderatorNsfwLevel",
+          GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
+        ) != a."nsfwLevel"
       RETURNING a.id;
     `);
   await articlesSearchIndex.queueUpdate(
@@ -421,8 +439,8 @@ export async function updateBountyEntryNsfwLevels(bountyEntryIds: number[]) {
 // Precedence:
 //   1. metadata.forcedBrowsingLevel set → map forced bits to bucket
 //   2. otherwise → two-probe scan of ACCEPTED items
-// Collection.nsfw boolean is ignored — it's auto-flipped by user NSFW reports
-// (report.service.ts) so it's not a reliable signal of collection content.
+// Collection.nsfw boolean is ignored — it's a legacy flag and not a reliable
+// signal of collection content.
 const COLLECTION_NSFW_BUCKET = 28; // R|X|XXX
 export async function updateCollectionsNsfwLevels(collectionIds: number[]) {
   if (!collectionIds.length) return;

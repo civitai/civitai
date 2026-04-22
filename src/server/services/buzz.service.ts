@@ -45,6 +45,7 @@ import {
 import { BuzzTypes, buzzSpendTypes, TransactionType } from '~/shared/constants/buzz.constants';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
@@ -185,22 +186,20 @@ export function getMultipliersForUserCache(userIds: number[]) {
 const MAX_GLOBAL_BONUS = 5;
 
 /**
- * Returns the global rewards bonus multiplier from the Flipt variant flag.
- * Use this for time-limited bonus events (e.g. double rewards weekend).
- * The variant key should be a numeric string like "2" for 2x, "1.5" for 1.5x.
- * Returns 1 when no bonus is active, Flipt is unavailable, or the value is invalid.
+ * Returns the global rewards bonus multiplier from the active RewardsBonusEvent.
+ * The event's `multiplier` column stores value * 10 (e.g. 20 = 2x, 5 = 0.5x).
+ * Returns 1 when no event is active or the value is invalid.
  * Capped at MAX_GLOBAL_BONUS to prevent config mistakes from breaking the economy.
  */
 export async function getGlobalRewardsBonusMultiplier(): Promise<number> {
   try {
-    const { getFliptVariant, FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
-    const variant = await getFliptVariant(FLIPT_FEATURE_FLAGS.REWARDS_BONUS_MULTIPLIER);
-    if (!variant) return 1;
+    const { getActiveRewardsBonusEvent } = await import(
+      '~/server/services/rewards-bonus-event.service'
+    );
+    const event = await getActiveRewardsBonusEvent();
+    if (!event) return 1;
 
-    const trimmed = variant.trim();
-    if (!/^\d+(\.\d+)?$/.test(trimmed)) return 1;
-
-    const parsed = Number(trimmed);
+    const parsed = event.multiplier / 10;
     if (!Number.isFinite(parsed) || parsed < 1) return 1;
 
     return Math.min(parsed, MAX_GLOBAL_BONUS);
@@ -215,13 +214,34 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
   const multipliers = await getMultipliersForUserCache([userId]);
   const base = multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
 
-  const globalRewardsBonus = await getGlobalRewardsBonusMultiplier();
+  const { getActiveRewardsBonusEvent } = await import(
+    '~/server/services/rewards-bonus-event.service'
+  );
+  const event = await getActiveRewardsBonusEvent();
+
+  const rawMultiplier = event ? event.multiplier / 10 : 1;
+  const globalRewardsBonus = Number.isFinite(rawMultiplier)
+    ? Math.min(Math.max(rawMultiplier, 1), MAX_GLOBAL_BONUS)
+    : 1;
 
   return {
     ...base,
     rewardsMultiplier: base.rewardsMultiplier * globalRewardsBonus,
     baseRewardsMultiplier: base.rewardsMultiplier,
     globalRewardsBonus,
+    rewardsBonusEvent:
+      event && globalRewardsBonus > 1
+        ? {
+            id: event.id,
+            name: event.name,
+            description: event.description,
+            articleId: event.articleId,
+            bannerLabel: event.bannerLabel,
+            multiplier: event.multiplier,
+            startsAt: event.startsAt,
+            endsAt: event.endsAt,
+          }
+        : null,
   };
 }
 
@@ -482,12 +502,14 @@ export async function completeStripeBuzzTransaction({
 }: CompleteStripeBuzzPurchaseTransactionInput & { userId: number; retry?: number }): Promise<{
   transactionId: string;
 }> {
+  let stage = 'init';
   try {
     const stripe = await getServerStripe();
     if (!stripe) {
       throw throwBadRequestError('Stripe not available');
     }
 
+    stage = 'stripe.paymentIntents.retrieve';
     const paymentIntent = await stripe.paymentIntents.retrieve(stripePaymentIntentId, {
       expand: ['payment_method'],
     });
@@ -504,6 +526,7 @@ export async function completeStripeBuzzTransaction({
       return { transactionId: metadata.transactionId };
     }
 
+    stage = 'getMultipliersForUser';
     const { purchasesMultiplier } = await getMultipliersForUser(userId);
     const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
 
@@ -522,6 +545,7 @@ export async function completeStripeBuzzTransaction({
       externalTransactionId: paymentIntent.id,
     });
 
+    stage = 'buzzApi.transaction';
     const data: { transactionId: string } = await buzzApiFetch(`/transaction`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -530,6 +554,7 @@ export async function completeStripeBuzzTransaction({
 
     // Update the payment intent with the transaction id
     // A payment intent without a transaction ID can be tied to a DB failure delivering buzz.
+    stage = 'stripe.paymentIntents.update';
     await stripe.paymentIntents.update(stripePaymentIntentId, {
       metadata: {
         transactionId: data.transactionId,
@@ -546,7 +571,28 @@ export async function completeStripeBuzzTransaction({
 
     return data;
   } catch (error) {
-    if (retry < MAX_RETRIES) {
+    const err = error as Error;
+    const willRetry = retry < MAX_RETRIES;
+    logToAxiom(
+      {
+        name: 'stripe-webhook',
+        type: willRetry ? 'warning' : 'error',
+        stage: `completeStripeBuzzTransaction:${stage}`,
+        stripePaymentIntentId,
+        userId,
+        amount,
+        buzzType: (details as any)?.buzzType,
+        retry,
+        maxRetries: MAX_RETRIES,
+        willRetry,
+        message: `completeStripeBuzzTransaction failed at ${stage}: ${err?.message ?? String(err)}`,
+        error: err?.message ?? String(err),
+        stack: err?.stack,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    if (willRetry) {
       return completeStripeBuzzTransaction({
         amount,
         stripePaymentIntentId,
@@ -1056,23 +1102,15 @@ export const getDailyCompensationRewardByUser = async ({
   const minDate = dayjs.utc(date).startOf('day').startOf('month').toDate();
   const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
 
-  // TODO.resourceCompensations: we should use the new `resourceCompensations` table instead of this,
-  // but we need to migrate the data first, otherwise, this data makes no sense. After 1 month, we can just migrate.
+  const versionIds = modelVersions.map((v) => v.id);
   const generationData = await clickhouse.$query<Row>`
-    WITH user_resources AS (
-      SELECT
-        mv.id as id
-      FROM civitai_pg.Model m
-      JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
-      WHERE m.userId = ${userId}
-    )
     SELECT
       date,
       modelVersionId,
-	    SUM(FLOOR(amount))::int AS total
+      SUM(FLOOR(amount))::int AS total
     FROM orchestration.resourceCompensations
     WHERE date BETWEEN ${minDate} AND ${maxDate}
-      AND modelVersionId IN (SELECT id FROM user_resources)
+      AND modelVersionId IN (${versionIds})
       AND amount > 0
       -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
       AND ${

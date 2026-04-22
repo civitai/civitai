@@ -221,7 +221,9 @@ export const getModelVersionHandler = async ({
     });
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
-    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user).then(
+    const generationResources = await getResourceData(recommendedResourceIds, {
+      user: ctx?.user,
+    }).then(
       (data) =>
         data.map((item) => {
           const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??

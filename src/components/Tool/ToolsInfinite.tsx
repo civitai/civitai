@@ -9,7 +9,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import type { GetAllToolsSchema } from '~/server/schema/tool.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import Link from 'next/link';
 import { ToolCard } from '~/components/Cards/ToolCard';
 
@@ -42,7 +42,12 @@ export function ToolsInfinite({
       ) : !!tools.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={refetching ?? false} zIndex={9} />
-          <MasonryGrid data={tools} render={ToolCard} itemId={(x) => x.id} empty={<NoContent />} />
+          <MasonryGridVirtual
+            data={tools}
+            render={ToolCard}
+            itemId={(x) => x.id}
+            empty={<NoContent />}
+          />
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
