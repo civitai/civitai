@@ -18,6 +18,7 @@ import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton'
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile, groupFilesByVariant } from '~/server/utils/model-helpers';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import type { ModelById } from '~/types/router';
 import { getFileDescription, getFileLabel } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -27,6 +28,7 @@ type FileType = ModelById['modelVersions'][number]['files'][number];
 interface DownloadVariantDropdownProps {
   files: FileType[];
   versionId: number;
+  modelType?: ModelType | null;
   userPreferences?: UserFilePreferences;
   canDownload: boolean;
   downloadPrice?: number;
@@ -38,6 +40,7 @@ interface DownloadVariantDropdownProps {
 export function DownloadVariantDropdown({
   files,
   versionId,
+  modelType,
   userPreferences,
   canDownload,
   downloadPrice,
@@ -50,7 +53,7 @@ export function DownloadVariantDropdown({
   const [opened, { toggle }] = useDisclosure(false);
 
   // Group files by variant
-  const groupedFiles = useMemo(() => groupFilesByVariant(files), [files]);
+  const groupedFiles = useMemo(() => groupFilesByVariant(files, modelType), [files, modelType]);
 
   // Get all model files (SafeTensor + GGUF + other)
   const modelFiles = useMemo(() => {

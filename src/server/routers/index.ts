@@ -27,6 +27,7 @@ import { toolRouter } from '~/server/routers/tool.router';
 import { userRestrictionRouter } from '~/server/routers/user-restriction.router';
 import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
+import { referralRouter } from '~/server/routers/referral.router';
 import { vimeoRouter } from '~/server/routers/vimeo.router';
 import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
@@ -135,6 +136,7 @@ export const appRouter = router({
   system: systemRouter,
   hiddenPreferences: hiddenPreferencesRouter,
   userReferralCode: userReferralCodeRouter,
+  referral: referralRouter,
   userProfile: userProfileRouter,
   cosmetic: cosmeticRouter,
   event: eventRouter,

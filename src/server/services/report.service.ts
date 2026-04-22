@@ -30,6 +30,7 @@ import { queueImageSearchIndexUpdate, updateNsfwLevel } from '~/server/services/
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { addTagVotes } from '~/server/services/tag.service';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -574,7 +575,7 @@ export async function resolveEntityAppeal({
       case EntityType.Image:
         try {
           // Update entity with needsReview = null
-          await dbWrite.image.update({
+          const updated = await dbWrite.image.update({
             where: { id: appeal.entityId },
             data: approved
               ? {
@@ -583,6 +584,7 @@ export async function resolveEntityAppeal({
                   ingestion: ImageIngestionStatus.Scanned,
                 }
               : { needsReview: null },
+            select: { postId: true },
           });
 
           if (approved) await updateNsfwLevel(appeal.entityId);
@@ -593,6 +595,9 @@ export async function resolveEntityAppeal({
               ? SearchIndexUpdateQueueAction.Update
               : SearchIndexUpdateQueueAction.Delete,
           });
+
+          // Either direction (approve/deny) changes needsReview; bust so the showcase reflects it.
+          if (updated.postId) await bustCachesForPosts(updated.postId);
         } catch (e) {
           // Image may have been deleted — log but continue resolving the appeal
           console.error(`Failed to update image ${appeal.entityId} for appeal ${appeal.id}: ${e}`);

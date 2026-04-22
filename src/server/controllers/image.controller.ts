@@ -37,6 +37,7 @@ import {
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
+import { bustCachesForPosts } from '~/server/services/post.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -238,6 +239,7 @@ export const setTosViolationHandler = async ({
 
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
     await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
+    if (image.postId) await bustCachesForPosts(image.postId);
 
     // Look up report details for violation type resolution
     const reportDetails = await getReportViolationDetailsForImages([id]);

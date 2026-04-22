@@ -61,7 +61,10 @@ export const processPrepaidMembershipTransitions = createJob(
       }
     });
 
-    // Find all Civitai memberships expiring today
+    // Find all Civitai memberships expiring today. Referral-granted subs use
+    // buzzType='referral' and live on their own queue (see
+    // advanceReferralSubscriptions) — exclude them here to avoid the prepaid
+    // cron canceling them for having no prepaid tokens.
     const expiringMemberships = await dbWrite.customerSubscription.findMany({
       where: {
         status: 'active',
@@ -69,6 +72,7 @@ export const processPrepaidMembershipTransitions = createJob(
           gte: now.startOf('day').toDate(),
           lt: now.endOf('day').toDate(),
         },
+        buzzType: { not: 'referral' },
         product: {
           provider: 'Civitai',
         },
@@ -298,13 +302,15 @@ export const cancelExpiredPrepaidMemberships = createJob(
     const { getPrepaidTokens } = await import('~/server/utils/subscription.utils');
     const now = dayjs();
 
-    // Find all active Civitai memberships where currentPeriodEnd has passed
+    // Find all active Civitai memberships where currentPeriodEnd has passed.
+    // Exclude referral-granted subs — those are owned by advanceReferralSubscriptions.
     const expiredMemberships = await dbWrite.customerSubscription.findMany({
       where: {
         status: { in: ['active', 'expired_claimable'] },
         currentPeriodEnd: {
           lt: now.toDate(),
         },
+        buzzType: { not: 'referral' },
         product: {
           provider: 'Civitai',
         },
