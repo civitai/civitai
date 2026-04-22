@@ -6,7 +6,6 @@ import { BuzzFeatures } from '~/components/Buzz/BuzzFeatures';
 import { BuzzPurchaseLayout } from '~/components/Buzz/BuzzPurchaseLayout';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -14,24 +13,13 @@ import animationClasses from '~/libs/animations.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features, session, ctx }) => {
+  resolver: async ({ session, ctx }) => {
     // Avoids redirecting when a sync is about to happen.
     if (!session && !ctx.resolvedUrl.includes('sync-account='))
       return {
         redirect: {
           destination: getLoginLink({ returnUrl: ctx.resolvedUrl, reason: 'purchase-buzz' }),
           permanent: false,
-        },
-      };
-
-    if (!features?.canBuyBuzz)
-      return {
-        redirect: {
-          destination: `https://${
-            env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN || 'civitai'
-          }/purchase/buzz?sync-account=blue`,
-          statusCode: 302,
-          basePath: false,
         },
       };
   },

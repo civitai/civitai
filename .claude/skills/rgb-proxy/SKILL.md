@@ -67,15 +67,15 @@ In the model-share `.env` file, ensure these values are set (comment out the non
 ```env
 # Non-RGB defaults (comment these out)
 # NEXTAUTH_URL=http://localhost:3000
-# NEXT_PUBLIC_SERVER_DOMAIN_BLUE=localhost:3000
+# SERVER_DOMAIN_BLUE=localhost:3000
 
 # RGB Mode
 AUTH_TRUST_HOST=true
 NEXTAUTH_URL=https://civitai-dev.blue
 NEXTAUTH_URL_INTERNAL=http://localhost:3000
-NEXT_PUBLIC_SERVER_DOMAIN_GREEN=civitai-dev.green
-NEXT_PUBLIC_SERVER_DOMAIN_BLUE=civitai-dev.blue
-NEXT_PUBLIC_SERVER_DOMAIN_RED=civitai-dev.red
+SERVER_DOMAIN_GREEN=civitai-dev.green
+SERVER_DOMAIN_BLUE=civitai-dev.blue
+SERVER_DOMAIN_RED=civitai-dev.red
 ```
 
 ### 5. Start the proxy
@@ -108,7 +108,7 @@ To go back to normal single-domain development:
 2. In `.env`, swap back to non-RGB defaults:
 ```env
 NEXTAUTH_URL=http://localhost:3000
-NEXT_PUBLIC_SERVER_DOMAIN_BLUE=localhost:3000
+SERVER_DOMAIN_BLUE=localhost:3000
 # Comment out or remove the RGB-specific lines
 ```
 3. Restart the dev server

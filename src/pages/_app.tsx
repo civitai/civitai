@@ -53,7 +53,6 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { serverDomainMap } from '~/shared/utils/server-domain';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
@@ -73,7 +72,7 @@ import 'mantine-react-table/styles.css'; //import MRT styles
 import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
-import { type ColorDomain, getRequestDomainColor } from '~/shared/constants/domain.constants';
+import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 
 applyNodeOverrides();
 
@@ -90,6 +89,7 @@ type CustomAppProps = {
   hasAuthCookie: boolean;
   region: RegionInfo;
   domain: ColorDomain;
+  serverDomains: ServerDomains;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -106,6 +106,7 @@ function MyApp(props: CustomAppProps) {
       settings,
       region,
       domain,
+      serverDomains,
       ...pageProps
     },
   } = props;
@@ -151,6 +152,7 @@ function MyApp(props: CustomAppProps) {
       settings={settings}
       region={region}
       domain={domain}
+      serverDomains={serverDomains}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -280,6 +282,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   let hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  const { serverDomainMap, getRequestDomainColor } = await import(
+    '~/server/utils/server-domain'
+  );
+  const serverDomains: ServerDomains = { ...serverDomainMap };
   const canIndex = Object.values(serverDomainMap).includes(request.headers.host);
 
   const region = getRegion(request);
@@ -320,6 +326,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       hasAuthCookie,
       region,
       domain,
+      serverDomains,
       // @ts-ignore
       host: appContext.ctx.req?.headers.host,
     },

@@ -660,7 +660,7 @@ function GeneratorTab({ challenge }: { challenge?: ChallengeDetail }) {
     useGetTextToImageRequests({ tags: [WORKFLOW_TAGS.IMAGE] }, { enabled: !!currentUser, ignoreFilters: true });
 
   const generatedMedia = useMemo(
-    () => data.flatMap((wf) => wf.succeededImages.filter((x) => x.available)),
+    () => data.flatMap((wf) => wf.succeededOutput.filter((x) => x.available)),
     [data]
   );
 

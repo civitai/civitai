@@ -15,7 +15,11 @@ import {
   MODELS_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { type BaseModel, DEPRECATED_BASE_MODELS, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -1307,7 +1311,7 @@ export const updateModelById = async ({
     data,
   });
 
-  await userModelCountCache.bust(model.userId);
+  await userModelCountCache.refresh(model.userId);
 
   return model;
 };
@@ -1380,7 +1384,7 @@ export const deleteModelById = async ({
   });
 
   if (deletedModel) {
-    await userModelCountCache.bust(deletedModel.userId);
+    await userModelCountCache.refresh(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   await deleteBidsForModel({ modelId: id });
@@ -1401,7 +1405,7 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
     },
   });
 
-  await userModelCountCache.bust(model.userId);
+  await userModelCountCache.refresh(model.userId);
 
   return model;
 };
@@ -1630,8 +1634,13 @@ export const upsertModel = async (
       });
     }
 
-    await modelTagCache.bust(result.id);
+    await modelTagCache.refresh(result.id);
     await preventReplicationLag('model', result.id);
+    if (data.uploadType === ModelUploadType.Trained) {
+      // getTrainingModelsByUserId filters by userId — flag that path so the
+      // dashboard refresh right after create reads from primary.
+      await preventReplicationLag('userTrainingModels', userId);
+    }
     return { ...result, meta: modelMeta };
   } else {
     const beforeUpdate = await dbRead.model.findUnique({
@@ -1720,7 +1729,7 @@ export const upsertModel = async (
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
-      await modelTagCache.bust(result.id);
+      await modelTagCache.refresh(result.id);
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
@@ -1729,7 +1738,7 @@ export const upsertModel = async (
 
     if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
 
-    await userModelCountCache.bust(userId);
+    await userModelCountCache.refresh(userId);
 
     // Ingest model if it's published and any of the following fields have changed:
     if (
@@ -1936,7 +1945,7 @@ export const publishModelById = async ({
     { timeout: 10000 }
   );
 
-  await userModelCountCache.bust(model.userId);
+  await userModelCountCache.refresh(model.userId);
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
     const versionIds = model.modelVersions.map((x) => x.id);
@@ -2050,7 +2059,7 @@ export const unpublishModelById = async ({
         AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
 
-      await userModelCountCache.bust(updatedModel.userId);
+      await userModelCountCache.refresh(updatedModel.userId);
 
       return updatedModel;
     },
@@ -2211,14 +2220,20 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
       break;
   }
 
-  const items = await dbWrite.modelVersion.findMany({
-    select,
-    skip,
-    take,
-    where,
-    orderBy,
-  });
-  const count = await dbWrite.modelVersion.count({ where });
+  // Route to primary when the user just wrote to their training models so the
+  // list reflects the change. Flag is set by updateModelVersionTrainingStatus
+  // and by upsertModel on create-training.
+  const db = await getDbWithoutLag('userTrainingModels', userId);
+  const [items, count] = await Promise.all([
+    db.modelVersion.findMany({
+      select,
+      skip,
+      take,
+      where,
+      orderBy,
+    }),
+    db.modelVersion.count({ where }),
+  ]);
 
   return getPagingData({ items, count }, take, page);
 };
@@ -2298,7 +2313,7 @@ export const getRecentlyBid = async ({ take, userId }: LimitOnly & { userId: num
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   const model = await dbWrite.model.update({ where: { id }, data: { locked } });
-  await userModelCountCache.bust(model.userId);
+  await userModelCountCache.refresh(model.userId);
 };
 
 export async function toggleLockComments({ id, locked }: { id: number; locked: boolean }) {
@@ -2384,7 +2399,7 @@ export async function updateModelLastVersionAt({
       data: { lastVersionAt: modelVersion.publishedAt },
     });
 
-    await userModelCountCache.bust(model.userId);
+    await userModelCountCache.refresh(model.userId);
   } catch (error) {
     logToAxiom({ type: 'lastVersionAt-failure', modelId: id, message: (error as Error).message });
     throw error;
@@ -2473,7 +2488,7 @@ export const setModelsCategory = async ({
       ON CONFLICT ("modelId", "tagId") DO NOTHING;
     `;
 
-    await modelTagCache.bust(modelIds);
+    await modelTagCache.refresh(modelIds);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -2874,7 +2889,7 @@ export async function copyGallerySettingsToAllModelsByUser({
         "userId" = ${userId}
     `;
 
-    await userModelCountCache.bust(userId);
+    await userModelCountCache.refresh(userId);
   });
 
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
@@ -2909,7 +2924,7 @@ export async function setModelShowcaseCollection({
     },
   });
 
-  await dataForModelsCache.bust(updated.id);
+  await dataForModelsCache.refresh(updated.id);
 
   return updated;
 }
@@ -3024,7 +3039,7 @@ export async function migrateResourceToCollection({
 
   // Bust caches
   await Promise.all([
-    dataForModelsCache.bust(modelIds),
+    dataForModelsCache.refresh(modelIds),
     bustMvCache(
       filteredVersions.map((v) => v.id),
       modelIds
@@ -3078,7 +3093,7 @@ export async function ingestModel(data: IngestModelInput) {
   }
 
   // get version data
-  const db = await getDbWithoutLag('modelVersion');
+  const db = await getDbWithoutLag('model', data.id);
   const versions = await db.modelVersion.findMany({
     where: { modelId: data.id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
     select: { description: true, trainedWords: true },
@@ -3359,8 +3374,8 @@ export const privateModelFromTraining = async ({
     }
 
     await preventReplicationLag('model', id);
-    await userModelCountCache.bust(user.id);
-    await dataForModelsCache.bust(id);
+    await userModelCountCache.refresh(user.id);
+    await dataForModelsCache.refresh(id);
     await bustMvCache(
       result.modelVersions.map((x) => x.id),
       result.id
@@ -3375,7 +3390,14 @@ export const privateModelFromTraining = async ({
 
     await dbWrite.modelVersion.updateMany({
       where: { modelId: id },
-      data: { status: ModelStatus.Draft, publishedAt: null },
+      data: {
+        status: ModelStatus.Draft,
+        publishedAt: null,
+        // Revert availability too — the success path flips versions to Private
+        // before the post creation step, so a failure there would otherwise
+        // leave versions orphaned at Private with a Public parent model.
+        availability: Availability.Public,
+      },
     });
 
     throw throwDbError(error);

@@ -17,6 +17,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   needsReview: true,
   scannedAt: true,
   ingestion: true,
+  blockedFor: true,
   postId: true,
   type: true,
   metadata: true,

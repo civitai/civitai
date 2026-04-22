@@ -149,3 +149,37 @@ export const modelFileUpsertSchema = z.union([
 
 export type RecentTrainingDataInput = z.infer<typeof recentTrainingDataSchema>;
 export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectTrainingFilterSchema);
+
+/**
+ * Pick the most complete training file from a list.
+ * When duplicate 'Training Data' files exist for a model version, this selects
+ * the one with the richest trainingResults metadata rather than relying on
+ * arbitrary DB ordering.
+ */
+export function pickBestTrainingFile<T extends { metadata: unknown }>(files: T[]): T | undefined {
+  if (files.length <= 1) return files[0];
+
+  let best: T | undefined;
+  let bestScore = -1;
+
+  for (const file of files) {
+    const meta = file.metadata as ModelFileMetadata | null;
+    const tr = meta?.trainingResults;
+    let score = 0;
+    if (tr) {
+      score += 1; // has trainingResults at all
+      if ('workflowId' in tr && tr.workflowId) score += 2;
+      if ('history' in tr && tr.history && tr.history.length > 0) score += 1;
+      if ('epochs' in tr && tr.epochs && tr.epochs.length > 0) score += 2;
+      if ('submittedAt' in tr && tr.submittedAt) score += 1;
+      if ('startedAt' in tr && tr.startedAt) score += 1;
+      if ('completedAt' in tr && tr.completedAt) score += 1;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = file;
+    }
+  }
+
+  return best;
+}

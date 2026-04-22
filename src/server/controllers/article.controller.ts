@@ -62,7 +62,7 @@ export async function unpublishArticleHandler({
     // Fetch current metadata
     const article = await dbRead.article.findUnique({
       where: { id },
-      select: { metadata: true, nsfw: true },
+      select: { metadata: true },
     });
 
     if (!article) throw throwNotFoundError(`No article with id ${input.id}`);
@@ -76,15 +76,6 @@ export async function unpublishArticleHandler({
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
-
-    // Optional: Track analytics event (if article tracking exists)
-    // if (ctx.track.articleEvent) {
-    //   await ctx.track.articleEvent({
-    //     type: 'Unpublish',
-    //     articleId: id,
-    //     nsfw: article.nsfw,
-    //   });
-    // }
 
     return {
       ...updatedArticle,

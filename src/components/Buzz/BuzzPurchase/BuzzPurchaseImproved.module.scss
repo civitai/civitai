@@ -303,6 +303,15 @@
   box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
 }
 
+.inlineUpsellCard {
+  background: light-dark(
+    linear-gradient(135deg, var(--mantine-color-grape-0) 0%, var(--mantine-color-white) 100%),
+    linear-gradient(135deg, var(--mantine-color-dark-7) 0%, var(--mantine-color-dark-6) 100%)
+  );
+  border: 1px solid light-dark(var(--mantine-color-grape-2), var(--mantine-color-grape-6));
+  box-shadow: light-dark(0 1px 3px rgba(0, 0, 0, 0.12), 0 1px 3px rgba(0, 0, 0, 0.5));
+}
+
 /* Payment section */
 .paymentSection {
   background: light-dark(

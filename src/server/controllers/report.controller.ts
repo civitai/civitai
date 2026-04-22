@@ -168,7 +168,7 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             article: {
               select: {
                 id: true,
-                nsfw: true,
+                nsfwLevel: true,
                 title: true,
                 publishedAt: true,
                 tosViolation: true,

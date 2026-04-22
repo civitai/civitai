@@ -1,0 +1,21 @@
+{
+  "zone": "civitai.red",
+  "phase": "http_request_dynamic_redirect",
+  "rules": [
+    {
+      "description": "support-portal bounce (.red -> .com session-sync trampoline)",
+      "expression": "(http.request.uri.path eq \"/bugs\" or http.request.uri.path eq \"/canny/bugs\" or http.request.uri.path eq \"/support-portal\")",
+      "action": "redirect",
+      "action_parameters": {
+        "from_value": {
+          "status_code": 302,
+          "target_url": {
+            "expression": "concat(\"https://civitai.com/support?sync-account=red&sync-redirect=\", http.request.uri.path)"
+          },
+          "preserve_query_string": false
+        }
+      },
+      "enabled": true
+    }
+  ]
+}

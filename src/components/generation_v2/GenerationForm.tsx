@@ -119,6 +119,7 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
+import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
 
 // =============================================================================
 // Component
@@ -342,6 +343,8 @@ export function GenerationForm() {
 
   return (
     <GenerationLayout>
+      {/* Preset control */}
+      <PresetControl />
       {/* Workflow and ecosystem selectors — always visible */}
       <>
         <Group gap="xs" wrap="nowrap" className="w-full justify-between">
@@ -1241,6 +1244,11 @@ export function GenerationForm() {
                     max={meta.max}
                     step={meta.step}
                     presets={meta.presets}
+                    warning={
+                      value <= 1
+                        ? 'Low CLIP Skip values may not work well depending on the model'
+                        : undefined
+                    }
                   />
                 )}
               />

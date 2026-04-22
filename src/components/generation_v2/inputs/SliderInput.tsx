@@ -1,5 +1,6 @@
 import type { InputWrapperProps, NumberInputProps, SliderProps } from '@mantine/core';
-import { Group, Input, NumberInput, Slider } from '@mantine/core';
+import { Group, Input, NumberInput, Slider, Text } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import clsx from 'clsx';
@@ -25,6 +26,7 @@ export interface SliderInputProps extends Omit<InputWrapperProps, 'children' | '
   reverse?: boolean;
   presets?: PresetOption[];
   disabled?: boolean;
+  warning?: string;
 }
 
 // =============================================================================
@@ -85,6 +87,7 @@ export function SliderInput({
   presets,
   label,
   disabled,
+  warning,
   ...inputWrapperProps
 }: SliderInputProps) {
   const numberRef = useRef<HTMLInputElement>(null);
@@ -211,6 +214,12 @@ export function SliderInput({
           disabled={disabled}
         />
       </div>
+      {warning && (
+        <Text size="xs" color="yellow" className="mt-1 flex items-center gap-1">
+          <IconAlertTriangle size={14} />
+          {warning}
+        </Text>
+      )}
     </Input.Wrapper>
   );
 }

@@ -11,13 +11,17 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { env } from '~/env/server';
 import type Stripe from 'stripe';
 import type { Readable } from 'node:stream';
-import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 import { completeClubMembershipCharge } from '~/server/services/clubMembership.service';
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
+
+const log = (data: MixedObject) =>
+  logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks').catch(() => null);
 // Stripe requires the raw body to construct the event.
 export const config = {
   api: {
@@ -68,7 +72,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
       event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
     } catch (error: any) {
-      console.log(`❌ Error message: ${error.message}`);
+      log({
+        type: 'error',
+        stage: 'signature-verification',
+        message: `Signature verification failed: ${error.message}`,
+        error: error.message,
+      });
       return res.status(400).send(`Webhook Error: ${error.message}`);
     }
 
@@ -129,7 +138,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             break;
           case 'payment_intent.succeeded':
             const paymentIntent = event.data.object as Stripe.PaymentIntent;
-            const metadata = paymentIntent.metadata as PaymentIntentMetadataSchema;
+            // payment_intent.succeeded fires for every successful PaymentIntent — including
+            // subscription invoice payments and any other Stripe-managed flows that don't
+            // carry our `type` discriminator. Bail before schema validation so we don't 400
+            // Stripe into a retry loop for payments we were never going to process here.
+            const metadataType = paymentIntent.metadata?.type;
+            if (metadataType !== 'buzzPurchase' && metadataType !== 'clubMembershipPayment') {
+              break;
+            }
+            // Stripe serializes all PaymentIntent.metadata values as strings, so a raw cast
+            // would leak string userId/buzzAmount into downstream `$queryRaw` IN clauses and
+            // hit "integer = text". Parse through the schema (which uses z.coerce.number) to
+            // guarantee numeric types at runtime. Throwing on parse failure routes the event
+            // into the outer catch, which logs to Axiom and returns 400 so Stripe retries —
+            // we never want to 200 a payment we can't process.
+            const parsedMetadata = paymentIntentMetadataSchema.safeParse(paymentIntent.metadata);
+            if (!parsedMetadata.success) {
+              throw new Error(
+                `payment_intent.succeeded metadata failed schema validation: ${
+                  parsedMetadata.error.message
+                } | rawMetadata=${JSON.stringify(paymentIntent.metadata)}`
+              );
+            }
+            const metadata = parsedMetadata.data;
 
             // Wait the processing time on the FE to avoid racing conditions and granting double buzz.
 
@@ -162,6 +193,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             throw new Error('Unhandled relevant event!');
         }
       } catch (error: any) {
+        const object = (event.data?.object ?? {}) as { id?: string; metadata?: MixedObject };
+        log({
+          type: 'error',
+          stage: 'event-handler',
+          eventType: event.type,
+          eventId: event.id,
+          objectId: object.id,
+          metadata: object.metadata,
+          message: `Event handler threw: ${error.message}`,
+          error: error.message,
+          stack: error.stack,
+        });
         return res.status(400).send({
           error: error.message,
         });

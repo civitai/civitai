@@ -75,6 +75,7 @@ export const getPlanDetails: (
         : undefined,
       features.membershipsV2
         ? {
+            key: 'rewardsMultiplier',
             icon: <IconBolt size={benefitIconSize} />,
             iconColor: (metadata?.rewardsMultiplier ?? 1) === 1 ? 'gray' : `rgb(var(--buzz-color))`,
             iconVariant: 'light' as ThemeIconVariant,
@@ -107,7 +108,10 @@ export const getPlanDetails: (
                       ?.maxPrivateModels ??
                     0
                 )}{' '}
-                Private Models{!features.isGreen && ' (PG and PG-13 Generation)'}
+                <Text td="underline" component="a" href="/train" target="_blank">
+                  Private Models
+                </Text>
+                {!features.isGreen && ' (PG and PG-13 Generation)'}
               </Text>
             ),
           }

@@ -133,6 +133,11 @@ export class EntityMetricRedisClient {
     return metricsMap;
   }
 
+  // TTL for entity metric keys (1 hour). Metrics are repopulated from ClickHouse
+  // on cache miss, so short TTL is safe. Without TTL, keys are permanent and
+  // accumulate to ~7M keys/shard (~0.8 GiB), contributing to Redis OOM at scale.
+  private static readonly METRIC_TTL_SECONDS = 3600;
+
   async setMetric(
     entityType: EntityMetric_EntityType_Type,
     entityId: number,
@@ -141,6 +146,7 @@ export class EntityMetricRedisClient {
   ): Promise<void> {
     const key = this.getKey(entityType, entityId);
     await this.redis.hSet(key, metricType, value.toString());
+    await this.redis.expire(key, EntityMetricRedisClient.METRIC_TTL_SECONDS);
   }
 
   async setMultipleMetrics(
@@ -152,6 +158,7 @@ export class EntityMetricRedisClient {
 
     const key = this.getKey(entityType, entityId);
     await this.redis.hSet(key, metrics);
+    await this.redis.expire(key, EntityMetricRedisClient.METRIC_TTL_SECONDS);
   }
 
   async exists(entityType: EntityMetric_EntityType_Type, entityId: number): Promise<boolean> {

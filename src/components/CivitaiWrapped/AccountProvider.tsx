@@ -31,7 +31,7 @@ type AccountState = {
   setAccounts: (val: ((prevState: CivitaiAccounts) => CivitaiAccounts) | CivitaiAccounts) => void;
   logout: () => Promise<void>;
   logoutAll: () => Promise<void>;
-  swapAccount: (token: EncryptedDataSchema) => Promise<void>;
+  swapAccount: (token: EncryptedDataSchema, callbackUrl?: string) => Promise<void>;
   removeAccount: (id: number) => void;
   ogAccount: ogAccountType;
   setOgAccount: (val: ((prevState: ogAccountType) => ogAccountType) | ogAccountType) => void;
@@ -97,8 +97,8 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
     await signOut();
   };
 
-  const swapAccount = async (token: EncryptedDataSchema) => {
-    await signIn('account-switch', { callbackUrl: window.location.href, ...token });
+  const swapAccount = async (token: EncryptedDataSchema, callbackUrl?: string) => {
+    await signIn('account-switch', { callbackUrl: callbackUrl ?? window.location.href, ...token });
   };
 
   const removeAccount = (id: number) => {

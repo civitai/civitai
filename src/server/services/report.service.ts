@@ -19,12 +19,7 @@ import type {
   ResolveAppealInput,
 } from '~/server/schema/report.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import {
-  articlesSearchIndex,
-  collectionsSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   createBuzzTransaction,
   createMultiAccountBuzzTransaction,
@@ -32,6 +27,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { queueImageSearchIndexUpdate, updateNsfwLevel } from '~/server/services/image.service';
+import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { addTagVotes } from '~/server/services/tag.service';
@@ -168,7 +164,9 @@ export const createReport = async ({
       : null;
   if (validReport) return validReport;
 
-  return await dbWrite.$transaction(async (tx) => {
+  let recomputeArticleNsfwLevelId: number | null = null;
+
+  const createdReport = await dbWrite.$transaction(async (tx) => {
     // create the report
     const createdReport = await tx.report.create({
       data: {
@@ -235,17 +233,12 @@ export const createReport = async ({
           ]);
 
           break;
-        case ReportEntity.Collection:
-          await tx.collection.update({ where: { id }, data: { nsfw: true } });
-          await collectionsSearchIndex.queueUpdate([
-            { id, action: SearchIndexUpdateQueueAction.Update },
-          ]);
-          break;
         case ReportEntity.Article:
-          await tx.article.update({ where: { id }, data: { nsfw: true } });
-          await articlesSearchIndex.queueUpdate([
-            { id, action: SearchIndexUpdateQueueAction.Update },
-          ]);
+          // Defer the nsfwLevel recompute until after the tx commits so the
+          // moderation_floor subquery in updateArticleNsfwLevels can observe
+          // the Actioned NSFW report we just created. The recompute queues
+          // its own search-index update if the level actually changed.
+          recomputeArticleNsfwLevelId = id;
           break;
         case ReportEntity.Post:
           await tx.post.update({ where: { id }, data: { nsfw: true } });
@@ -291,6 +284,14 @@ export const createReport = async ({
 
     return createdReport;
   });
+
+  // Runs after the tx commits so the subquery in updateArticleNsfwLevels
+  // picks up the newly-Actioned NSFW report we just inserted.
+  if (recomputeArticleNsfwLevelId !== null) {
+    await updateArticleNsfwLevels([recomputeArticleNsfwLevelId]);
+  }
+
+  return createdReport;
 };
 
 // TODO - add reports for questions/answers
@@ -394,13 +395,13 @@ export async function bulkSetReportStatus({
       userIds: [report.userId, ...report.alsoReportedBy],
     }));
 
-    for (const report of prepReports) {
-      await Promise.all(
+    await Promise.allSettled(
+      prepReports.flatMap((report) =>
         report.userIds.map((userId) =>
           reportAcceptedReward.apply({ userId, reportId: report.id }, { ip })
         )
-      );
-    }
+      )
+    );
   }
 }
 

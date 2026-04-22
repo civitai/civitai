@@ -75,6 +75,7 @@ import {
   TrainingImagesTagViewer,
 } from '~/components/Training/Form/TrainingImagesTagViewer';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
@@ -308,6 +309,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const queryUtils = trpc.useUtils();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
+  const features = useFeatureFlags();
+  const autoLabelAvailable = features.trainingAutoCaption || features.trainingAutoTag;
 
   const existingDataFile = thisModelVersion.files[0];
   const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
@@ -1511,12 +1514,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     </Text>
                   </Button>
                   <Tooltip
-                    label="Not connected - will not receive updates. Please try refreshing the page."
-                    disabled={connected}
+                    label={
+                      !autoLabelAvailable
+                        ? 'Auto labeling is temporarily unavailable - we are actively looking into it.'
+                        : 'Not connected - will not receive updates. Please try refreshing the page.'
+                    }
+                    disabled={connected && autoLabelAvailable}
                   >
                     <Button
                       size="compact-sm"
-                      color="violet"
+                      color={!autoLabelAvailable ? 'gray' : 'violet'}
                       disabled={autoLabeling.isRunning || !connected}
                       style={!connected ? { pointerEvents: 'initial' } : undefined}
                       onClick={() =>
@@ -1528,7 +1535,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     >
                       <Group gap={4}>
                         <IconTags size={16} />
-                        <Text inherit>Auto Label</Text>
+                        <Text inherit>
+                          {!autoLabelAvailable ? 'Auto Label (unavailable)' : 'Auto Label'}
+                        </Text>
                         {Date.now() < new Date('2024-09-27').getTime() && (
                           <Badge color="green" variant="filled" size="sm" ml={4}>
                             NEW

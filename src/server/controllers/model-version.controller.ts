@@ -64,7 +64,7 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
-import { dbRead } from '../db/client';
+import { dbRead, dbWrite } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
@@ -168,7 +168,9 @@ export const getModelVersionHandler = async ({
     });
 
     const recommendedResourceIds = version?.recommendedResources.map((x) => x.resource.id) ?? [];
-    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user).then(
+    const generationResources = await getResourceData(recommendedResourceIds, {
+      user: ctx?.user,
+    }).then(
       (data) =>
         data.map((item) => {
           const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
@@ -357,7 +359,7 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return version;
   } catch (error) {
@@ -376,7 +378,7 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
       console.error(e);
     });
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return version;
   } catch (error) {
@@ -457,7 +459,7 @@ export const publishModelVersionHandler = async ({
       });
     }
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return updatedVersion;
   } catch (error) {
@@ -489,7 +491,7 @@ export const unpublishModelVersionHandler = async ({
       nsfw: updatedVersion.model.nsfw,
     });
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return updatedVersion;
   } catch (error) {
@@ -804,7 +806,7 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
     select: {
       model: { select: { id: true, user: { select: userWithCosmeticsSelect } } },
       files: {
-        select: { metadata: true },
+        select: { id: true, metadata: true },
         where: { type: 'Training Data' },
       },
     },
@@ -812,8 +814,15 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
   if (!version) throw throwNotFoundError();
 
   const trainingFile = version.files[0];
-  const trainingResults = (trainingFile?.metadata as FileMetadata)
-    ?.trainingResults as TrainingResultsV2;
+  // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
+  const fresh = trainingFile
+    ? await dbWrite.modelFile.findUnique({
+        where: { id: trainingFile.id },
+        select: { metadata: true },
+      })
+    : null;
+  const metadata = (fresh?.metadata ?? trainingFile?.metadata) as FileMetadata | undefined;
+  const trainingResults = (metadata?.trainingResults ?? {}) as TrainingResultsV2;
 
   return {
     modelId: version.model.id,
@@ -886,6 +895,7 @@ export async function publishPrivateModelVersionHandler({
       model: { select: { id: true, publishedAt: true, availability: true, userId: true } },
       files: {
         select: {
+          id: true,
           metadata: true,
         },
       },
@@ -908,7 +918,15 @@ export async function publishPrivateModelVersionHandler({
     throw throwBadRequestError('Model is not private');
   }
 
-  const selectedEpochUrl = version.files.some(
+  // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
+  const fileIds = version.files.map((f) => f.id);
+  const freshFiles = fileIds.length
+    ? await dbWrite.modelFile.findMany({
+        where: { id: { in: fileIds } },
+        select: { id: true, metadata: true },
+      })
+    : [];
+  const selectedEpochUrl = freshFiles.some(
     (f) => (f?.metadata as FileMetadata)?.selectedEpochUrl
   );
 
@@ -932,7 +950,7 @@ export async function publishPrivateModelVersionHandler({
     },
   });
 
-  await dataForModelsCache.bust(version.model.id);
+  await dataForModelsCache.refresh(version.model.id);
 
   return modelVersion;
 }

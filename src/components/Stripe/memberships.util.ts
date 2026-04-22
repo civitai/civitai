@@ -79,6 +79,44 @@ export const useCanUpgrade = () => {
   );
 };
 
+type PlanWithPrice = {
+  price: { unitAmount: number | null };
+  metadata: Record<string, unknown> | null;
+};
+
+/** Filter plans to tiers strictly above the user's current subscription tier. */
+export function getEligibleUpgradePlans<T extends PlanWithPrice>(
+  products: T[],
+  subscription: { product: { metadata: Record<string, unknown> | null } } | null | undefined
+): T[] {
+  const subMeta = subscription?.product?.metadata as SubscriptionProductMetadata | undefined;
+  return products.filter((p) => {
+    const m = (p?.metadata ?? { tier: 'free' }) as SubscriptionProductMetadata;
+    if (
+      subscription &&
+      subMeta &&
+      constants.memberships.tierOrder.indexOf(subMeta.tier) >=
+        constants.memberships.tierOrder.indexOf(m.tier)
+    ) {
+      return false;
+    }
+    return true;
+  });
+}
+
+/** Pick the plan whose price is closest to `unitAmount` (cents). */
+export function pickClosestPlanByPrice<T extends PlanWithPrice>(
+  plans: T[],
+  unitAmount: number
+): T | undefined {
+  if (!plans.length) return undefined;
+  return plans.reduce((closest, plan) => {
+    const a = plan.price.unitAmount ?? 0;
+    const b = closest.price.unitAmount ?? 0;
+    return Math.abs(a - unitAmount) < Math.abs(b - unitAmount) ? plan : closest;
+  });
+}
+
 export const useRefreshSession = (shouldReload = true) => {
   const currentUser = useCurrentUser();
   const [refreshing, setRefreshing] = useState(false);

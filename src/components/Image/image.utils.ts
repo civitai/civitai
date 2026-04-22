@@ -23,6 +23,25 @@ import { booleanString, numericString, numericStringArray } from '~/utils/zod-he
 const imageSections = ['images', 'reactions'] as const;
 export type ImageSections = (typeof imageSections)[number];
 
+// Dev helper: simulate a transient search failure on the client so the retry UI
+// can be tested without touching the backend. Enable via browser console:
+//   localStorage.debugSearchRetry = '3000'    // base delay in ms
+//   localStorage.debugSearchRetryAfter = '1'  // trigger after N successful pages
+// To disable: localStorage.removeItem('debugSearchRetry')
+//
+// When active, callers MUST block further fetches — otherwise real requests
+// keep succeeding, more images load, and the retry counter resets every cycle.
+function useDebugSearchRetry(pagesLoaded: number) {
+  if (typeof window === 'undefined') return { delayMs: 0, active: false };
+  const raw = window.localStorage.getItem('debugSearchRetry');
+  if (!raw) return { delayMs: 0, active: false };
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return { delayMs: 0, active: false };
+  const triggerAfter = Number(window.localStorage.getItem('debugSearchRetryAfter') ?? '1');
+  if (pagesLoaded < triggerAfter) return { delayMs: 0, active: false };
+  return { delayMs: parsed, active: true };
+}
+
 // output is input to getInfiniteImagesSchema
 export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
 export const imagesQueryParamSchema = z
@@ -120,7 +139,16 @@ export const useQueryImages = (
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      trpc: { context: { skipBatch: true } },
+      // abortOnUnmount: true forces tRPC to forward React Query's AbortSignal
+      // to the underlying fetch. Without it, queryClient.cancelQueries is a
+      // no-op on the actual HTTP request — needed here so the slow-fetch
+      // timeout can truly abort a hung request instead of waiting for it to
+      // resolve naturally.
+      trpc: { context: { skipBatch: true }, abortOnUnmount: true },
+      // Disable React Query's silent auto-retry so our retry banner drives
+      // every attempt. Otherwise the user sees nothing for the first failure,
+      // then the banner appears belatedly.
+      retry: 0,
       ...queryOptions,
     }
   );
@@ -149,6 +177,13 @@ export const useQueryImages = (
     isRefetching: rest.isRefetching,
   });
 
+  // Debug-mode override so the retry UI can be exercised without a real
+  // backend failure. The parent combines this with React Query's isError to
+  // decide when to show the banner.
+  const { delayMs: debugDelayMs, active: debugRetryActive } = useDebugSearchRetry(
+    data?.pages.length ?? 0
+  );
+
   return {
     data,
     flatData,
@@ -156,6 +191,8 @@ export const useQueryImages = (
     removedImages: hiddenCount,
     fetchedImages: flatData?.length,
     isLoading: isLoading || loadingPreferences,
+    debugRetryActive,
+    debugDelayMs,
     ...rest,
   };
 };

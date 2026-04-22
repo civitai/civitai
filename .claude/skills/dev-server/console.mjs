@@ -198,6 +198,7 @@ async function cmdDashboard(initialWorktree) {
   let logCursor = -1;
   let logLines = [];        // all log entries (raw from daemon)
   let lastSession = null;
+  let lastRgb = null;
   let running = true;
   let actionMsg = null;
   let actionTimer = null;
@@ -331,6 +332,24 @@ async function cmdDashboard(initialWorktree) {
         exitDash();
         break;
 
+      case 'R': {
+        const isRunning = lastRgb?.status === 'running';
+        flash(isRunning ? 'Stopping RGB proxy...' : 'Starting RGB proxy...');
+        try {
+          const result = await daemonRequest(
+            isRunning ? '/rgb/stop' : '/rgb/start',
+            { method: 'POST' }
+          );
+          if (result.ok) {
+            lastRgb = result.data;
+            flash(result.data.lastError || `RGB proxy: ${result.data.status}`);
+          } else {
+            flash(`RGB toggle failed: ${result.error || result.data?.error}`);
+          }
+        } catch (e) { flash(`RGB toggle failed: ${e.message}`); }
+        break;
+      }
+
       default: {
         // Check preset keys
         const preset = PRESETS.find(p => p.key === key);
@@ -461,7 +480,14 @@ async function cmdDashboard(initialWorktree) {
     if (s) {
       const url = s.url || `http://localhost:${s.port}`;
       const logCount = `${s.logCount ?? logLines.length} logs`;
-      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}\n`);
+      let rgbStr = '';
+      if (lastRgb) {
+        const st = lastRgb.status;
+        if (st === 'running') rgbStr = `  ${C.dim}RGB:${C.r} ${C.grn}on${C.r}`;
+        else if (st === 'error' || st === 'crashed') rgbStr = `  ${C.dim}RGB:${C.r} ${C.red}${st}${C.r}`;
+        else if (lastRgb.enabled) rgbStr = `  ${C.dim}RGB:${C.r} ${C.ylw}${st}${C.r}`;
+      }
+      buf.push(CLR_LINE + `  ${C.dim}URL:${C.r} ${url}  ${C.dim}Session:${C.r} ${s.id}  ${C.dim}${logCount}${C.r}${rgbStr}\n`);
     } else {
       buf.push(CLR_LINE + '\n');
     }
@@ -519,6 +545,7 @@ async function cmdDashboard(initialWorktree) {
         `${k('r', 'estart')}  ` +
         `${k('c', 'lear')}  ` +
         `${k('x', '-stop')}  ` +
+        `${C.b}R${C.r}${C.dim}GB${C.r}  ` +
         `${k('q', 'uit')}  ` +
         `${C.b}K${C.r}${C.dim}ill${C.r}`;
       buf.push(CLR_LINE + bar + CLR_BELOW);
@@ -528,6 +555,7 @@ async function cmdDashboard(initialWorktree) {
   }
 
   // ── Main poll loop ──────────────────────────────────────────────────────────
+  let rgbPollCounter = 0;
   while (running) {
     try {
       // Fetch session status
@@ -545,6 +573,12 @@ async function cmdDashboard(initialWorktree) {
         }
         // Cap memory
         if (logLines.length > 5000) logLines = logLines.slice(-3000);
+      }
+
+      // Fetch RGB status every ~2s
+      if (rgbPollCounter++ % 4 === 0) {
+        const rgbResult = await daemonRequest('/rgb');
+        if (rgbResult.ok) lastRgb = rgbResult.data;
       }
     } catch {
       lastSession = null;
@@ -626,7 +660,7 @@ Usage:
 
 ${C.b}Dashboard Keys:${C.r}
   ${C.b}1${C.r} errors   ${C.b}2${C.r} bitdex   ${C.b}3${C.r} trpc   ${C.b}4${C.r} api   ${C.b}5${C.r} prisma   ${C.b}6${C.r} stdout   ${C.b}7${C.r} stderr   ${C.b}8${C.r} info
-  ${C.b}/${C.r} search   ${C.b}a${C.r} all   ${C.b}r${C.r} restart   ${C.b}c${C.r} clear logs   ${C.b}x${C.r} stop   ${C.b}q${C.r} quit   ${C.b}K${C.r} kill daemon
+  ${C.b}/${C.r} search   ${C.b}a${C.r} all   ${C.b}r${C.r} restart   ${C.b}c${C.r} clear logs   ${C.b}x${C.r} stop   ${C.b}R${C.r} RGB toggle   ${C.b}q${C.r} quit   ${C.b}K${C.r} kill daemon
 `);
 } else {
   // Default: launch dashboard

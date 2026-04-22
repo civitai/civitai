@@ -174,7 +174,7 @@ export const upsertBountyEntry = async ({
       }
 
       if (entry.userId) {
-        await userBountyEntryCountCache.bust(entry.userId);
+        await userBountyEntryCountCache.refresh(entry.userId);
       }
 
       return entry;

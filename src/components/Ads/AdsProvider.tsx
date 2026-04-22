@@ -84,7 +84,9 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (!useDirectAds || !adsEnabled) return;
     const url = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
-    fetch(`${url}/api/v1/serve`, { method: 'HEAD', credentials: 'include' })
+    fetch(`${url}/api/v1/serve?placement=probe&name=footer&container=1531&browsingLevel=1`, {
+      credentials: 'include',
+    })
       .then(() => useAdProviderStore.setState({ adsBlocked: false }))
       .catch(() => useAdProviderStore.setState({ adsBlocked: true }));
   }, [useDirectAds, adsEnabled]);

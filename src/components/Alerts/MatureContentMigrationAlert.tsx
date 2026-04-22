@@ -3,17 +3,19 @@ import { Button, CloseButton, Text, ThemeIcon } from '@mantine/core';
 import { IconArrowRight, IconPepper } from '@tabler/icons-react';
 import { useSession } from 'next-auth/react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useServerDomains } from '~/providers/AppProvider';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
-import { colorDomains } from '~/shared/constants/domain.constants';
+import { syncAccount } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 
 const ALERT_ID = 'mature-content-migration';
 
 export function MatureContentMigrationAlert() {
   const { isGreen } = useFeatureFlags();
+  const serverDomains = useServerDomains();
   const { data: session } = useSession();
-  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery();
+  const { data: settings } = trpc.user.getSettings.useQuery();
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
   // Check the raw session user preferences (before domain override).
@@ -55,12 +57,10 @@ export function MatureContentMigrationAlert() {
     if (el) el.style.opacity = '0';
   }, []);
 
-  if (!isGreen || !hasNsfwEnabled || settingsLoading || isDismissed) return null;
+  if (!isGreen || !hasNsfwEnabled || !settings || isDismissed) return null;
 
-  const redDomain = colorDomains.red;
-  const redUrl = redDomain
-    ? `//${redDomain}?sync-account=green`
-    : 'https://civitai.red?sync-account=green';
+  const redDomain = serverDomains.red;
+  const redUrl = syncAccount(`//${redDomain}`);
 
   const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
 
@@ -96,8 +96,8 @@ export function MatureContentMigrationAlert() {
                 className="text-red-4 underline decoration-red-4/40 underline-offset-2 transition-colors hover:text-red-3 hover:decoration-red-3"
               >
                 civitai.red
-              </Text>
-              {' '}&mdash; same account, same Buzz, new home.
+              </Text>{' '}
+              &mdash; same account, same Buzz, new home.
             </Text>
 
             <Button

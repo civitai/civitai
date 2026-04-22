@@ -2,7 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { buildStepSource, resolveStepSource } from '../workflow-metadata';
 import { getStepParams, getStepResources, WorkflowData, StepData } from '../index';
 import type { WorkflowDataOptions } from '../index';
-import type { NormalizedStep, NormalizedWorkflow } from '../orchestration-new.service';
+import type {
+  NormalizedStep,
+  NormalizedWorkflow,
+  NormalizedWorkflowMetadata,
+} from '../orchestration-new.service';
 
 const defaultOptions: WorkflowDataOptions = {
   domain: { green: false, blue: false, red: false } as any,
@@ -274,7 +278,7 @@ function makeStep(metadata: Partial<NormalizedStep['metadata']>): NormalizedStep
   return {
     $type: 'textToImage',
     name: '$0',
-    images: [],
+    output: [],
     metadata: { ...metadata },
   } as NormalizedStep;
 }
@@ -291,6 +295,11 @@ function makeWorkflow(
     steps: [],
     metadata,
   } as NormalizedWorkflow;
+}
+
+/** Build a bare WorkflowData for tests that only need metadata fallback behavior. */
+function makeWorkflowData(metadata?: NormalizedWorkflowMetadata): WorkflowData {
+  return new WorkflowData({ steps: [], metadata } as any, defaultOptions);
 }
 
 describe('getStepParams', () => {
@@ -505,82 +514,82 @@ describe('WorkflowData', () => {
 describe('StepData', () => {
   it('returns step params when present', () => {
     const step = makeStep({ params: { prompt: 'step prompt' } });
-    const wfMeta = { params: { prompt: 'wf prompt' }, resources: [] };
-    const sd = new StepData(step, wfMeta);
+    const wf = makeWorkflowData({ params: { prompt: 'wf prompt' }, resources: [] });
+    const sd = new StepData(step, wf);
 
     expect(sd.params).toEqual({ prompt: 'step prompt' });
   });
 
   it('falls back to workflow metadata when step has no params', () => {
     const step = makeStep({});
-    const wfMeta = { params: { prompt: 'wf prompt', steps: 20 }, resources: [] };
-    const sd = new StepData(step, wfMeta);
+    const wf = makeWorkflowData({ params: { prompt: 'wf prompt', steps: 20 }, resources: [] });
+    const sd = new StepData(step, wf);
 
     expect(sd.params).toEqual({ prompt: 'wf prompt', steps: 20 });
   });
 
   it('returns step resources when present', () => {
     const step = makeStep({ resources: [{ id: 1 }] as any });
-    const wfMeta = { params: {}, resources: [{ id: 2 }] as any };
-    const sd = new StepData(step, wfMeta);
+    const wf = makeWorkflowData({ params: {}, resources: [{ id: 2 }] as any });
+    const sd = new StepData(step, wf);
 
     expect(sd.resources).toEqual([{ id: 1 }]);
   });
 
   it('falls back to workflow resources when step has none', () => {
     const step = makeStep({});
-    const wfMeta = { params: {}, resources: [{ id: 2 }] as any };
-    const sd = new StepData(step, wfMeta);
+    const wf = makeWorkflowData({ params: {}, resources: [{ id: 2 }] as any });
+    const sd = new StepData(step, wf);
 
     expect(sd.resources).toEqual([{ id: 2 }]);
   });
 
   it('resolves remixOfId with fallback', () => {
     const step = makeStep({});
-    const wfMeta = { params: {}, resources: [], remixOfId: 42 };
-    const sd = new StepData(step, wfMeta);
+    const wf = makeWorkflowData({ params: {}, resources: [], remixOfId: 42 });
+    const sd = new StepData(step, wf);
 
     expect(sd.remixOfId).toBe(42);
   });
 
   it('step remixOfId takes precedence over workflow', () => {
     const step = makeStep({ remixOfId: 10 });
-    const wfMeta = { params: {}, resources: [], remixOfId: 42 };
-    const sd = new StepData(step, wfMeta);
+    const wf = makeWorkflowData({ params: {}, resources: [], remixOfId: 42 });
+    const sd = new StepData(step, wf);
 
     expect(sd.remixOfId).toBe(10);
   });
 
   it('prompt convenience accessor returns prompt from params', () => {
     const step = makeStep({ params: { prompt: 'hello world' } });
-    const sd = new StepData(step);
+    const sd = new StepData(step, makeWorkflowData());
 
     expect(sd.prompt).toBe('hello world');
   });
 
   it('prompt returns undefined when no params', () => {
     const step = makeStep({});
-    const sd = new StepData(step);
+    const sd = new StepData(step, makeWorkflowData());
 
     expect(sd.prompt).toBeUndefined();
   });
 
-  it('returns defaults when constructed with undefined wfMetadata', () => {
+  it('returns defaults when workflow has no metadata', () => {
     const step = makeStep({});
-    const sd = new StepData(step, undefined);
+    const sd = new StepData(step, makeWorkflowData());
 
     expect(sd.params).toEqual({});
     expect(sd.resources).toEqual([]);
     expect(sd.remixOfId).toBeUndefined();
   });
 
-  it('works with Omit<NormalizedStep, "images"> (no generic needed)', () => {
-    const step: Omit<NormalizedStep, 'images'> = {
+  it('works with Omit<NormalizedStep, "output"> (no generic needed)', () => {
+    const step: Omit<NormalizedStep, 'output'> = {
       $type: 'textToImage',
       name: '$0',
       metadata: { params: { prompt: 'test' } },
     } as any;
-    const sd = new StepData(step);
+    const sd = new StepData(step, makeWorkflowData());
 
     expect(sd.params).toEqual({ prompt: 'test' });
   });

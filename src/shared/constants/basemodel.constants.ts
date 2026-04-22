@@ -179,6 +179,9 @@ export const ECO = {
   // Utility ecosystems
   Upscaler: 66,
 
+  // Baidu
+  Ernie: 67,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -586,6 +589,16 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 110,
   },
 
+  // Baidu Family (familyId: 17)
+  {
+    id: ECO.Ernie,
+    key: 'Ernie',
+    name: 'ernie',
+    displayName: 'Ernie',
+    familyId: 17,
+    sortOrder: 120,
+  },
+
   // Standalone ecosystems (no family)
   { id: ECO.Anima, key: 'Anima', name: 'anima', displayName: 'Anima', sortOrder: 199 },
   { id: ECO.AuraFlow, key: 'AuraFlow', name: 'auraflow', displayName: 'AuraFlow', sortOrder: 200 },
@@ -843,6 +856,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Seedream - checkpoint only
   { ecosystemId: ECO.Seedream, supportType: 'generation', modelTypes: checkpointOnly },
 
+  // Ernie - checkpoint only
+  { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Sora2 - checkpoint only
   { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
 
@@ -856,7 +872,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Kling, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Seedance - checkpoint only
-  // { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Anima - checkpoint only
   { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1230,7 +1246,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Seedance,
     defaults: {
-      model: { id: 2623856 },
+      model: { id: 2864671 },
       modelLocked: true,
       engine: 'seedance',
     },
@@ -1239,6 +1255,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Grok,
     defaults: {
       model: { id: 2738377 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Ernie,
+    defaults: {
+      model: { id: 2863858 },
       modelLocked: true,
     },
   },
@@ -1595,6 +1618,18 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     modelTypes: [ModelType.LORA],
     support: 'partial',
   },
+
+  // ==========================================================================
+  // AuraFlow ↔ PonyV7 (parent ↔ child)
+  // ==========================================================================
+  // AuraFlow LoRA works partially in PonyV7
+  {
+    sourceEcosystemId: ECO.AuraFlow,
+    targetEcosystemId: ECO.PonyV7,
+    supportType: 'generation',
+    modelTypes: [ModelType.LORA],
+    support: 'partial',
+  },
 ];
 
 // =============================================================================
@@ -1686,6 +1721,7 @@ export const BM = {
   WanImage27: 80,
   WanVideo27: 81,
   Upscaler: 82,
+  Ernie: 83,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -1943,6 +1979,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'Lightricks',
     description: "Lightricks' video generation models",
   },
+  {
+    id: 17,
+    name: 'Baidu',
+    description: "Baidu's image generation models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -1992,6 +2033,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.CogVideoX,
     licenseId: 17,
+  },
+
+  // Ernie
+  {
+    id: BM.Ernie,
+    name: 'Ernie',
+    description: "Baidu's image generation model",
+    type: 'image',
+    ecosystemId: ECO.Ernie,
+    licenseId: 13,
   },
 
   // Flux.1
@@ -2809,15 +2860,6 @@ export function getRootEcosystem(ecosystemIdOrBaseModel: number | string): Ecosy
 }
 
 /**
- * Check if two ecosystems are in the same family tree
- */
-export function areEcosystemsRelated(ecosystemId1: number, ecosystemId2: number): boolean {
-  const root1 = getRootEcosystem(ecosystemId1);
-  const root2 = getRootEcosystem(ecosystemId2);
-  return root1.id === root2.id;
-}
-
-/**
  * Get ecosystem support, with inheritance from parent
  */
 export function getEcosystemSupport(
@@ -3004,12 +3046,11 @@ export function getGenerationSupport(
   const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
   if (!support || support.disabled) return null;
 
-  // For related ecosystems, require the model type to be in the ecosystem's supported types
-  if (support.modelTypes.includes(addonModelType)) {
-    if (areEcosystemsRelated(checkpointEcosystemId, addonEcosystemId)) {
-      return 'partial';
-    }
-  }
+  // Cross-ecosystem compatibility is driven entirely by explicit rules below.
+  // The parent-chain relationship is NOT used to infer compatibility because it
+  // is also used for identity concerns (AIR URN ecosystem, classification) —
+  // e.g. Flux2Klein variants list Flux2 as parent so their AIRs emit `flux2`,
+  // but LoRAs trained for one Klein variant are NOT compatible with others.
 
   // Check cross-ecosystem rules — these define their own modelTypes so they bypass
   // the ecosystem's primary modelTypes list (e.g. SD1 TextualInversion → SDXL family)

@@ -15,6 +15,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { TrainingImagesLabelTypeSelect } from '~/components/Training/Form/TrainingImagesTagViewer';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { UploadType } from '~/server/common/enums';
@@ -143,6 +144,8 @@ const AutoTagSection = ({
   mediaType: TrainingDetailsObj['mediaType'];
   handleClose: () => void;
 }) => {
+  const features = useFeatureFlags();
+  const available = features.trainingAutoTag;
   const { autoTagging } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
@@ -159,6 +162,23 @@ const AutoTagSection = ({
 
   return (
     <Stack gap="md">
+      {!available && (
+        <AlertWithIcon
+          title="Auto-tagging unavailable"
+          icon={<IconExclamationMark />}
+          py={5}
+          my="xs"
+          iconSize="lg"
+          radius="md"
+          color="red"
+          iconColor="red"
+        >
+          <Text>
+            Auto-tagging is temporarily unavailable. We&apos;re actively looking into it - please
+            check back soon.
+          </Text>
+        </AlertWithIcon>
+      )}
       <Input.Wrapper
         label={
           <Group gap={4} wrap="nowrap">
@@ -275,7 +295,7 @@ const AutoTagSection = ({
         <Button variant="light" color="gray" onClick={handleClose}>
           Cancel
         </Button>
-        <Button loading={loading} onClick={handleSubmit}>
+        <Button loading={loading} onClick={handleSubmit} disabled={!available}>
           {loading ? 'Sending data...' : `Submit (${numImages})`}
         </Button>
       </Group>
@@ -292,6 +312,8 @@ const AutoCaptionSection = ({
   mediaType: TrainingDetailsObj['mediaType'];
   handleClose: () => void;
 }) => {
+  const features = useFeatureFlags();
+  const available = features.trainingAutoCaption;
   const { autoCaptioning } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
@@ -299,32 +321,19 @@ const AutoCaptionSection = ({
       }
   );
   const { setAutoCaptioning } = trainingStore;
-  const { loading, handleSubmit, numImages, disabled } = useSubmitImages({
+  const { loading, handleSubmit, numImages, disabled: limitReached } = useSubmitImages({
     modelId,
     mediaType,
     handleClose,
     type: 'caption',
   });
+  const disabled = limitReached || !available;
 
   return (
     <Stack gap="md">
-      {!disabled ? (
+      {!available && (
         <AlertWithIcon
-          title="Long run times"
-          icon={<IconInfoCircle />}
-          py={5}
-          my="xs"
-          iconSize="lg"
-          radius="md"
-        >
-          <Text>
-            Natural language captioning can take a long time to run. Please remain on this page
-            while it is in progress.
-          </Text>
-        </AlertWithIcon>
-      ) : (
-        <AlertWithIcon
-          title="Too many files"
+          title="Auto-captioning unavailable"
           icon={<IconExclamationMark />}
           py={5}
           my="xs"
@@ -334,10 +343,42 @@ const AutoCaptionSection = ({
           iconColor="red"
         >
           <Text>
-            {`A maximum of ${maxImagesCaption} files at a time may be sent for captioning (you have ${numImages}).`}
+            Auto-captioning is temporarily unavailable. We&apos;re actively looking into it -
+            please check back soon.
           </Text>
         </AlertWithIcon>
       )}
+      {available &&
+        (!limitReached ? (
+          <AlertWithIcon
+            title="Long run times"
+            icon={<IconInfoCircle />}
+            py={5}
+            my="xs"
+            iconSize="lg"
+            radius="md"
+          >
+            <Text>
+              Natural language captioning can take a long time to run. Please remain on this page
+              while it is in progress.
+            </Text>
+          </AlertWithIcon>
+        ) : (
+          <AlertWithIcon
+            title="Too many files"
+            icon={<IconExclamationMark />}
+            py={5}
+            my="xs"
+            iconSize="lg"
+            radius="md"
+            color="red"
+            iconColor="red"
+          >
+            <Text>
+              {`A maximum of ${maxImagesCaption} files at a time may be sent for captioning (you have ${numImages}).`}
+            </Text>
+          </AlertWithIcon>
+        ))}
       <Input.Wrapper
         label={
           <Group gap={4} wrap="nowrap">

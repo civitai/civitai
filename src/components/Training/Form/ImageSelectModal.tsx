@@ -171,7 +171,7 @@ export default function ImageSelectModal({
   });
 
   const generatedMedia = useMemo(
-    () => (generationData ?? []).flatMap((wf) => wf.succeededImages.filter((x) => x.available)),
+    () => (generationData ?? []).flatMap((wf) => wf.succeededOutput.filter((x) => x.available)),
     [generationData]
   );
 

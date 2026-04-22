@@ -22,6 +22,6 @@ export const refreshAuctionCache = createJob('refresh-auction-cache', '6 0 * * *
   await bustFeaturedModelsCache();
   await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
   await resourceDataCache.bust(versionIds);
-  await modelVersionResourceCache.bust(versionIds);
+  await modelVersionResourceCache.refresh(versionIds);
   await bustOrchestratorModelCache(versionIds);
 });

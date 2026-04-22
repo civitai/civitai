@@ -48,6 +48,7 @@ import { commentv2Router } from './commentv2.router';
 import { contentRouter } from './content.router';
 import { downloadRouter } from './download.router';
 import { generationRouter } from './generation.router';
+import { generationPresetRouter } from './generation-preset.router';
 import { hiddenPreferencesRouter } from './hidden-preferences.router';
 import { homeBlockRouter } from './home-block.router';
 import { imageRouter } from './image.router';
@@ -82,6 +83,7 @@ import { coinbaseRouter } from './coinbase.router';
 import { emerchantpayRouter } from './emerchantpay.router';
 import { comicsRouter } from './comics.router';
 import { strikeRouter } from '~/server/routers/strike.router';
+import { rewardsBonusEventRouter } from './rewards-bonus-event.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -128,6 +130,7 @@ export const appRouter = router({
   userLink: userLinkRouter,
   leaderboard: leaderboardRouter,
   generation: generationRouter,
+  generationPreset: generationPresetRouter,
   newsletter: newsletterRouter,
   system: systemRouter,
   hiddenPreferences: hiddenPreferencesRouter,
@@ -167,6 +170,7 @@ export const appRouter = router({
   emerchantpay: emerchantpayRouter,
   comics: comicsRouter,
   strike: strikeRouter,
+  rewardsBonusEvent: rewardsBonusEventRouter,
 });
 
 // export type definition of API

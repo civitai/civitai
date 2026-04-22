@@ -30,6 +30,7 @@ import { ecosystemGraph } from './ecosystem-graph';
 import {
   getInputTypeForWorkflow,
   getOutputTypeForWorkflow,
+  workflowConfigByKey,
   workflowOptions,
   type WorkflowOption,
 } from './config/workflows';
@@ -104,12 +105,15 @@ const NEW_TO_OLD: Record<string, string> = {
   'video:extend': 'vid2vid:extend',
 };
 
-/** Migrate stored workflow key to current format */
+/** Migrate stored workflow key to current format, falling back to txt2img if unknown */
 function migrateWorkflowKey(key: string | undefined): string | undefined {
   if (!key) return key;
   // Migrate old first-last-frame key to img2vid (now an alias on Vidu)
   if (key === 'img2vid:first-last-frame') return 'img2vid';
-  return NEW_TO_OLD[key] ?? key;
+  const resolved = NEW_TO_OLD[key] ?? key;
+  // If the resolved key doesn't match any known workflow, default to txt2img
+  if (!workflowConfigByKey.has(resolved)) return 'txt2img';
+  return resolved;
 }
 
 export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx>()

@@ -733,7 +733,7 @@ export const createPost = async ({
   });
 
   await preventReplicationLag('post', post.id);
-  await userPostCountCache.bust(userId);
+  await userPostCountCache.refresh(userId);
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -774,7 +774,7 @@ export const updatePost = async ({
     },
   });
   await preventReplicationLag('post', post.id);
-  await userPostCountCache.bust(post.userId);
+  await userPostCountCache.refresh(post.userId);
 
   return post;
 };
@@ -1012,6 +1012,28 @@ export const addPostImage = async ({
 
   const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
+  // Idempotency guard: if the same (postId, url) pair was just saved — e.g. by
+  // a retried mutation or a duplicated client submission — return the existing
+  // record instead of creating a second one. The client generates a unique S3
+  // key per upload, so a collision here means the same upload is being saved
+  // twice.
+  if (props.url) {
+    const existing = await dbRead.image.findFirst({
+      where: { postId: props.postId, url: props.url },
+      select: { id: true },
+    });
+    if (existing) {
+      const existingResult = await dbWrite.image.findUnique({
+        where: { id: existing.id },
+        select: editPostImageSelect,
+      });
+      if (existingResult) {
+        const [existingImage] = await combinePostEditImageData([existingResult], user);
+        return existingImage;
+      }
+    }
+  }
+
   const partialResult = await createImage({
     ...props,
     meta,
@@ -1031,24 +1053,29 @@ export const addPostImage = async ({
   const [image] = await combinePostEditImageData([result], user);
 
   const modelVersionIds = image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined);
-  // Cache Busting
-  await bustCacheTag(`images-user:${user.id}`);
-  if (!!modelVersionIds.length) {
-    for (const modelVersionId of modelVersionIds) {
-      await bustCacheTag(`images-modelVersion:${modelVersionId}`);
-    }
-
-    const modelVersions = await dbRead.modelVersion.findMany({
-      where: { id: { in: modelVersionIds } },
-      select: { modelId: true },
-    });
-    for (const modelVersion of modelVersions) {
-      await bustCacheTag(`images-model:${modelVersion.modelId}`);
-    }
+  // Cache Busting — parallelize independent operations
+  const cacheBustPromises: Promise<void>[] = [
+    bustCacheTag(`images-user:${user.id}`),
+    preventReplicationLag('postImages', props.postId),
+  ];
+  if (modelVersionIds.length) {
+    cacheBustPromises.push(
+      ...modelVersionIds.map((mvId) => bustCacheTag(`images-modelVersion:${mvId}`))
+    );
+    cacheBustPromises.push(
+      dbRead.modelVersion
+        .findMany({
+          where: { id: { in: modelVersionIds } },
+          select: { modelId: true },
+        })
+        .then((mvs) =>
+          Promise.all(mvs.map((mv) => bustCacheTag(`images-model:${mv.modelId}`)))
+        )
+        .then(() => undefined)
+    );
   }
-
-  await preventReplicationLag('postImages', props.postId);
-  await bustCachesForPosts(props.postId);
+  cacheBustPromises.push(bustCachesForPosts(props.postId));
+  await Promise.all(cacheBustPromises);
 
   return image;
 };
@@ -1100,8 +1127,8 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     },
     select: { id: true, url: true, userId: true },
   });
-  await imageMetadataCache.bust(image.id);
-  await imageMetaCache.bust(image.id);
+  await imageMetadataCache.refresh(image.id);
+  await imageMetaCache.refresh(image.id);
 
   if (shouldIngest) {
     // Ensures a proper rescan of this image.
@@ -1114,7 +1141,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   }
 
   purgeImageGenerationDataCache(image.id);
-  await userPostCountCache.bust(result.userId);
+  await userPostCountCache.refresh(result.userId);
 };
 
 export const addResourceToPostImage = async ({
@@ -1148,7 +1175,10 @@ export const addResourceToPostImage = async ({
 
   if (!modelVersion) throw throwNotFoundError('Model version not found.');
 
-  const images = await dbRead.image.findMany({
+  // Read from primary — users can attach a resource within seconds of posting
+  // the image, so the replica (5-10s lag) would return fewer rows and throw
+  // a spurious "Image not found".
+  const images = await dbWrite.image.findMany({
     where: { id: { in: imageIds } },
     select: { postId: true, meta: true, resourceHelper: true, type: true },
   });
@@ -1227,7 +1257,7 @@ export const addResourceToPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
-  await imageResourcesCache.bust(createdResources.map((x) => x.imageId));
+  await imageResourcesCache.refresh(createdResources.map((x) => x.imageId));
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
@@ -1272,7 +1302,7 @@ export const removeResourceFromPostImage = async ({
   // TODO are these necessary?
   // - Cache Busting
 
-  await imageResourcesCache.bust(imageId);
+  await imageResourcesCache.refresh(imageId);
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
 

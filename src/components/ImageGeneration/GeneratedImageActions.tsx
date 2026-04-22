@@ -42,7 +42,7 @@ export function GeneratedImageActions({
   const router = useRouter();
   const { data } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
-  const selectableImages = useMemo(() => data.flatMap((wf) => wf.succeededImages), [data]);
+  const selectableImages = useMemo(() => data.flatMap((wf) => wf.succeededOutput), [data]);
   const selected = orchestratorImageSelect.useSelection();
   const deselect = () => orchestratorImageSelect.setSelected([]);
   const [zipping, setZipping] = useState(false);

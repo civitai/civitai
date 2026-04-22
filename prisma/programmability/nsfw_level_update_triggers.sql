@@ -157,7 +157,26 @@ AFTER INSERT OR UPDATE OF "status" OR DELETE ON "CollectionItem"
 FOR EACH ROW
 EXECUTE FUNCTION update_collection_nsfw_level();
 
--- TODO ??? - create trigger for collection update nsfw? (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'ACCEPTED')
+-- COLLECTION TRIGGER — re-scan when visibility / read privacy / forcedBrowsingLevel changes.
+-- Collection.nsfw is ignored by the bucket logic, so changes to it don't need to re-scan.
+CREATE OR REPLACE FUNCTION update_collection_visibility_nsfw_level()
+RETURNS TRIGGER AS $collection_visibility_nsfw_level$
+BEGIN
+  IF (
+    (NEW."availability" IS DISTINCT FROM OLD."availability" AND NEW."availability" = 'Public')
+    OR (NEW."read" IS DISTINCT FROM OLD."read")
+    OR (NEW.metadata->>'forcedBrowsingLevel' IS DISTINCT FROM OLD.metadata->>'forcedBrowsingLevel')
+  ) THEN
+    PERFORM create_job_queue_record(NEW.id, 'Collection', 'UpdateNsfwLevel');
+  END IF;
+  RETURN NULL;
+END;
+$collection_visibility_nsfw_level$ LANGUAGE plpgsql;
+---
+CREATE OR REPLACE TRIGGER collection_visibility_nsfw_level_change
+AFTER UPDATE OF "availability", "read", "metadata" ON "Collection"
+FOR EACH ROW
+EXECUTE FUNCTION update_collection_visibility_nsfw_level();
 
 -- BOUNTY TRIGGER
 CREATE OR REPLACE FUNCTION update_bounty_nsfw_level()

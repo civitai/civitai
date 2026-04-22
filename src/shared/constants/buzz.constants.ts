@@ -173,6 +173,7 @@ export const buzzConstants = {
   minStripeChargeAmount: 500, // $5.00
   maxChargeAmount: 99999999, // $999,999.99
   cutoffDate: new Date('2023-10-17T00:00:00.000Z'),
+  onboardingBonusAmount: 100,
   referralBonusAmount: 500,
   maxTipAmount: 100000000,
   minTipAmount: 50,

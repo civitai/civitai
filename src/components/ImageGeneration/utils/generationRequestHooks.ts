@@ -12,6 +12,16 @@ import type {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
 } from '~/server/schema/orchestrator/textToImage.schema';
+
+/**
+ * Client-facing step metadata shape for jsonPatch path typing: same as
+ * `GeneratedImageStepMetadata` but with the per-output dictionary under the
+ * client name (`output`) instead of the legacy `images` key. Patches written
+ * against this type target `output/*` paths, which the orchestrator stores as-is.
+ */
+type ClientStepMetadata = Omit<GeneratedImageStepMetadata, 'images'> & {
+  output?: GeneratedImageStepMetadata['images'];
+};
 import type {
   PatchWorkflowParams,
   PatchWorkflowStepParams,
@@ -20,8 +30,10 @@ import type {
 } from '~/server/schema/orchestrator/workflows.schema';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
-import type { WorkflowStepFormatted } from '~/server/services/orchestrator/common';
-import type { queryGeneratedImageWorkflows2 } from '~/server/services/orchestrator/orchestration-new.service';
+import type {
+  NormalizedStep,
+  queryGeneratedImageWorkflows2,
+} from '~/server/services/orchestrator/orchestration-new.service';
 import type {
   IWorkflow,
   IWorkflowsInfinite,
@@ -41,7 +53,7 @@ export type InfiniteTextToImageRequests = InfiniteData<
 /** Check whether a BlobData image passes the active marker-tag filter. */
 export function matchesMarkerTags(image: BlobData, tags?: string[]): boolean {
   if (!tags?.length) return true;
-  const meta = image.imageMeta;
+  const meta = image.outputMeta;
   if (tags.includes(WORKFLOW_TAGS.FAVORITE) && !meta?.favorite) return false;
   if (tags.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && meta?.feedback !== 'liked') return false;
   if (tags.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && meta?.feedback !== 'disliked') return false;
@@ -146,31 +158,41 @@ function updateTextToImageRequests({
   cb,
   input,
 }: {
-  cb: (data: InfiniteTextToImageRequests) => void;
+  cb: (
+    data: InfiniteTextToImageRequests,
+    queryInput: z.input<typeof workflowQuerySchema> | undefined
+  ) => void;
   input?: z.input<typeof workflowQuerySchema>;
 }) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  queryClient.setQueriesData(
-    {
-      queryKey,
-      exact: false,
-      predicate: (data: any) => {
-        if (input) {
-          const queryInput = data.queryKey[1]?.input ?? {};
-          for (const key in input) {
-            if (queryInput[key] !== (input as any)[key]) return false;
-          }
+  // Iterate per-cache so the callback can see each cache's filter input
+  // (needed when a mutation should drop a workflow from a cache whose filter it
+  // no longer matches — e.g. unliking while filtered to liked).
+  const entries = queryClient.getQueriesData<InfiniteTextToImageRequests>({
+    queryKey,
+    exact: false,
+  });
+  for (const [qk, data] of entries) {
+    if (!data) continue;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const queryInput = (qk as any)?.[1]?.input as z.input<typeof workflowQuerySchema> | undefined;
+    if (input) {
+      let skip = false;
+      for (const key in input) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if ((queryInput as any)?.[key] !== (input as any)[key]) {
+          skip = true;
+          break;
         }
-        return true;
-      },
-    },
-    (state) => {
-      return produce(state, (old?: InfiniteTextToImageRequests) => {
-        if (!old) return;
-        cb(old);
-      });
+      }
+      if (skip) continue;
     }
-  );
+    const next = produce(data, (old?: InfiniteTextToImageRequests) => {
+      if (!old) return;
+      cb(old, queryInput);
+    });
+    queryClient.setQueryData(qk, next);
+  }
 }
 
 export function useUpdateWorkflow() {
@@ -293,57 +315,89 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
       const match = args.find((x) => x.workflowId === workflow.id);
       if (!match) continue;
       const { workflowId, stepName, images } = match;
-      for (const step of workflow.steps as WorkflowStepFormatted[]) {
+      for (const step of workflow.steps as unknown as NormalizedStep[]) {
         if (step.name !== stepName) continue;
-        const metadata = step.metadata ?? {};
-        const jsonPatch = new JsonPatchFactory<GeneratedImageStepMetadata>();
-        if (!metadata.images) jsonPatch.addOperation({ op: 'add', path: 'images', value: {} });
-        for (const imageId in images) {
-          if (!metadata.images?.[imageId])
-            jsonPatch.addOperation({ op: 'add', path: `images/${imageId}`, value: {} });
+        const metadata = (step.metadata ?? {}) as Record<string, unknown>;
+        // Raw orchestrator keys — used to decide init ops below. `output` is the
+        // current canonical key; `images` is the legacy key on pre-rename workflows.
+        // A legacy workflow has `images` populated but no `output` — our first patch
+        // must create `output` (ASP.NET jsonpatch rejects `add` on a missing parent).
+        const rawOutput = metadata.output as
+          | Record<string, TextToImageStepImageMetadata>
+          | undefined;
+        const legacyImages = metadata.images as
+          | Record<string, TextToImageStepImageMetadata>
+          | undefined;
+        // Merged view — used for per-field toggle decisions (e.g. was this image
+        // already liked?) so legacy feedback values are taken into account.
+        const mergedOutput: Record<string, TextToImageStepImageMetadata> = {
+          ...(legacyImages ?? {}),
+          ...(rawOutput ?? {}),
+        };
 
-          const current = metadata.images?.[imageId] ?? {};
+        const jsonPatch = new JsonPatchFactory<ClientStepMetadata>();
+        // Create `output` on the orchestrator when it doesn't exist yet (legacy or brand-new workflow).
+        if (!rawOutput) jsonPatch.addOperation({ op: 'add', path: 'output', value: {} });
+        for (const imageId in images) {
+          // Per-id container must also be created when the `output` dict lacks this id —
+          // checked against RAW output, not merged (merged may be masking a legacy-only entry).
+          if (!rawOutput?.[imageId])
+            jsonPatch.addOperation({ op: 'add', path: `output/${imageId}`, value: {} });
+
+          const current = mergedOutput[imageId] ?? {};
           const { hidden, feedback, comments, postId, favorite } = match.images[imageId];
           if (hidden)
-            jsonPatch.addOperation({ op: 'add', path: `images/${imageId}/hidden`, value: true });
+            jsonPatch.addOperation({ op: 'add', path: `output/${imageId}/hidden`, value: true });
           if (feedback) {
             jsonPatch.addOperation({
               op: feedback !== current.feedback ? 'add' : 'remove',
-              path: `images/${imageId}/feedback`,
+              path: `output/${imageId}/feedback`,
               value: feedback,
             });
           }
           if (comments)
             jsonPatch.addOperation({
               op: 'add',
-              path: `images/${imageId}/comments`,
+              path: `output/${imageId}/comments`,
               value: comments,
             });
           if (postId)
             jsonPatch.addOperation({
               op: 'add',
-              path: `images/${imageId}/postId`,
+              path: `output/${imageId}/postId`,
               value: postId,
             });
           if (favorite !== undefined) {
             jsonPatch.addOperation({
               op: favorite ? 'add' : 'remove',
-              path: `images/${imageId}/favorite`,
+              path: `output/${imageId}/favorite`,
               value: true,
             });
           }
         }
 
-        const clone = cloneDeep(metadata);
+        const clone = cloneDeep(metadata) as Record<string, unknown>;
         applyPatch(clone, jsonPatch.operations);
-        const patchedImages = clone.images ?? {};
+        const patchedOutput =
+          (clone.output as Record<string, TextToImageStepImageMetadata> | undefined) ?? {};
+        // Per-id merge of legacy and patched state. Used for tag-sync checks and the
+        // "all hidden?" deletion check so legacy feedback/favorite/hidden flags are
+        // counted alongside the new writes.
+        const patchedLegacy =
+          (clone.images as Record<string, TextToImageStepImageMetadata> | undefined) ?? {};
+        const mergedPatched: Record<string, TextToImageStepImageMetadata> = {
+          ...patchedLegacy,
+        };
+        for (const id in patchedOutput) {
+          mergedPatched[id] = { ...mergedPatched[id], ...patchedOutput[id] };
+        }
 
         // first check if the workflow should be deleted
-        const hiddenCount = Object.values(patchedImages).filter((x) => x.hidden).length;
-        if (step.images.length === hiddenCount) {
+        const hiddenCount = Object.values(mergedPatched).filter((x) => x.hidden).length;
+        if (step.output.length === hiddenCount) {
           toDelete.push(workflow.id);
         } else {
-          const images = removeEmpty(patchedImages);
+          const images = removeEmpty(patchedOutput);
           // return transformed data
           updated.push({ workflowId, stepName, images });
 
@@ -351,9 +405,11 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
           const hasTagLike = workflow.tags.includes(WORKFLOW_TAGS.FEEDBACK.LIKED);
           const hasTagDislike = workflow.tags.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED);
 
-          const hasFavoriteImages = Object.values(images).some((x) => x.favorite);
-          const hasLikedImages = Object.values(images).some((x) => x.feedback === 'liked');
-          const hasDislikedImages = Object.values(images).some((x) => x.feedback === 'disliked');
+          const hasFavoriteImages = Object.values(mergedPatched).some((x) => x.favorite);
+          const hasLikedImages = Object.values(mergedPatched).some((x) => x.feedback === 'liked');
+          const hasDislikedImages = Object.values(mergedPatched).some(
+            (x) => x.feedback === 'disliked'
+          );
 
           if (hasTagFavorite && !hasFavoriteImages) {
             tags.push({ workflowId, tag: WORKFLOW_TAGS.FAVORITE, op: 'remove' });
@@ -381,7 +437,8 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
     // Optimistically update the cache before mutation to ensure UI updates
     // even if the component unmounts (e.g., menu closing)
     updateTextToImageRequests({
-      cb: (old) => {
+      cb: (old, queryInput) => {
+        const filterTags = (queryInput?.tags ?? []) as string[];
         for (const page of old.pages) {
           page.items = page.items.filter((x) => !toDelete.includes(x.id));
           for (const workflow of page.items) {
@@ -399,9 +456,17 @@ export function useUpdateImageStepMetadata(options?: { onSuccess?: () => void })
             if (!toUpdate.length) continue;
 
             for (const step of workflow.steps) {
-              const images = toUpdate.find((x) => x.stepName === step.name)?.images;
-              if (images) step.metadata = { ...step.metadata, images };
+              const output = toUpdate.find((x) => x.stepName === step.name)?.images;
+              if (output) step.metadata = { ...step.metadata, output };
             }
+          }
+          // Drop workflows that no longer match this cache's filter tags
+          // (e.g. unliking an image causes the workflow to lose `feedback:liked`
+          // and we're viewing the "liked" filter — the workflow should disappear).
+          if (filterTags.length) {
+            page.items = page.items.filter((workflow) =>
+              filterTags.every((tag) => workflow.tags.includes(tag))
+            );
           }
         }
       },

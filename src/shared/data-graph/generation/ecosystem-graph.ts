@@ -54,6 +54,8 @@ import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
+import { ernieGraph } from './ernie-graph';
+import { seedanceGraph } from './seedance-graph';
 
 // =============================================================================
 // Helper Functions
@@ -234,6 +236,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
     { values: ['Anima'] as const, graph: animaGraph },
+    { values: ['Ernie'] as const, graph: ernieGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {
@@ -263,6 +266,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
+    { values: ['Seedance'] as const, graph: seedanceGraph },
   ])
   // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
   .node(

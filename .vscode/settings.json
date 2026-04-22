@@ -147,5 +147,12 @@
     "rangeBehavior": 1
   },
   "highlight.regexFlags": "gm",
-  "terminal.integrated.macOptionIsMeta": true
+  "terminal.integrated.macOptionIsMeta": true,
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.next/**": true,
+    "**/dist/**": true,
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true
+  }
 }

@@ -6,9 +6,11 @@ import type {
   TrainingStep,
   TrainingOutput,
 } from '@civitai/client';
-import { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus } from '@civitai/client';
 import { dbWrite } from '~/server/db/client';
+import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -180,18 +182,24 @@ async function moveAssetFromJob({
   }
 
   if (!response.ok) {
-    throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
+    throw throwBadRequestError(
+      "We couldn't reach the training service to transfer your file. Please wait a moment and try again."
+    );
   }
 
   const thisJob = response.data?.jobs?.[0];
 
   if (!thisJob || thisJob.lastEvent?.type !== 'Succeeded') {
-    throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
+    throw throwBadRequestError(
+      "Your training file couldn't be transferred to your model. Please try again or select another file."
+    );
   }
 
   const result = thisJob.result;
   if (!result || !result.found) {
-    throw throwBadRequestError('Failed to move asset. Please try selecting the file again.');
+    throw throwBadRequestError(
+      "We couldn't find the training file you selected. It may have expired — please try again or select another file."
+    );
   }
 
   const newUrl = destinationUri.split('?')[0];
@@ -597,6 +605,8 @@ export async function updateTrainingWorkflowRecords(
       },
     })
   );
+  await preventModelVersionLag(model.id, modelVersion.id);
+  await dataForModelsCache.refresh(model.id);
 
   return {
     trainingStatus,

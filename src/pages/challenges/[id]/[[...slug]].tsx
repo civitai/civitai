@@ -307,7 +307,10 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
         canonical={`/challenges/${challenge.id}/${slugit(challenge.title)}`}
         ogEndpoint={`/api/og?type=challenge&id=${challenge.id}`}
       />
-      <SensitiveShield contentNsfwLevel={challenge.nsfwLevel}>
+      <SensitiveShield
+        contentNsfwLevel={challenge.allowedNsfwLevel}
+        bypassRating={currentUser?.isModerator ?? false}
+      >
         <Container size="xl" mb={{ base: 'md', sm: 32 }}>
           <Stack gap="xs" mb="xl">
             {/* Row 1: Title + context menu */}

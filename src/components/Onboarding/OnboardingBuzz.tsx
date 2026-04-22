@@ -4,94 +4,61 @@ import {
   Text,
   Group,
   Container,
-  Loader,
-  ThemeIcon,
-  TextInput,
+  Paper,
+  Title,
   useMantineTheme,
 } from '@mantine/core';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
-import { trpc } from '~/utils/trpc';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { IconCheck, IconX, IconProgressBolt } from '@tabler/icons-react';
-import { useDebouncedValue } from '@mantine/hooks';
-import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { constants } from '~/server/common/constants';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { EarningBuzz, SpendingBuzz } from '../Buzz/FeatureCards/FeatureCards';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';
-import {
-  checkUserCreatedAfterBuzzLaunch,
-  getUserBuzzBonusAmount,
-} from '~/server/common/user-helpers';
+import { CurrencyIcon } from '../Currency/CurrencyIcon';
+import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
+import { useDomainColor } from '~/hooks/useDomainColor';
+import { getUserBuzzBonusAmount } from '~/server/common/user-helpers';
 import { OnboardingSteps } from '~/server/common/enums';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider';
-import * as z from 'zod';
-import type { CaptchaState } from '~/components/TurnstileWidget/TurnstileWidget';
+import type {
+  CaptchaState,
+  TurnstileWidgetRef,
+} from '~/components/TurnstileWidget/TurnstileWidget';
 import {
   TurnstilePrivacyNotice,
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';
 import { showErrorNotification } from '~/utils/notifications';
 import { env } from '~/env/client';
-import { buzzConstants } from '~/shared/constants/buzz.constants';
-
-const referralSchema = z.object({
-  code: z
-    .string()
-    .trim()
-    .refine((code) => !code || code.length > constants.referrals.referralCodeMinLength, {
-      error: `Referral codes must be at least ${
-        constants.referrals.referralCodeMinLength + 1
-      } characters long`,
-    })
-    .optional(),
-  source: z.string().optional(),
-});
 
 export function OnboardingBuzz() {
   const { next } = useOnboardingContext();
-  const { code, source } = useReferralsContext();
   const theme = useMantineTheme();
-  const features = useFeatureFlags();
-  const currentUser = useCurrentUser();
-  const [referralError, setReferralError] = useState('');
-  const [userReferral, setUserReferral] = useState(
-    !currentUser?.referral
-      ? { code, source, showInput: false }
-      : { code: '', source: '', showInput: false }
-  );
+  const domainColor = useDomainColor();
+  const isGreen = domainColor === 'green';
+  const paidAccountType = isGreen ? 'green' : 'yellow';
+  const blueConfig = useBuzzCurrencyConfig('blue');
+  const paidConfig = useBuzzCurrencyConfig(paidAccountType);
+  const paidLabel = isGreen ? 'Green' : 'Yellow';
   const [captchaState, setCaptchaState] = useState<CaptchaState>({
     status: null,
     token: null,
     error: null,
   });
-  const [debouncedUserReferralCode] = useDebouncedValue(userReferral.code, 300);
-  const isProjectOdyssey = source === 'project_odyssey';
 
-  const {
-    data: referrer,
-    isLoading: referrerLoading,
-    isRefetching: referrerRefetching,
-  } = trpc.user.userByReferralCode.useQuery(
-    { userReferralCode: debouncedUserReferralCode as string },
-    {
-      enabled:
-        features.buzz &&
-        !currentUser?.referral &&
-        !!debouncedUserReferralCode &&
-        debouncedUserReferralCode.length > constants.referrals.referralCodeMinLength,
-    }
+  const turnstileRef = useRef<TurnstileWidgetRef | null>(null);
+  const tokenReceivedAtRef = useRef<number | null>(null);
+  const submitAttemptRef = useRef(0);
+  const pageSessionIdRef = useRef<string>(
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : Math.random().toString(36).slice(2)
   );
 
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
   const handleStepComplete = () => {
-    if (referrerRefetching) return;
-
     if (captchaState.status !== 'success')
       return showErrorNotification({
         title: 'Cannot save',
@@ -104,79 +71,147 @@ export function OnboardingBuzz() {
         error: new Error('Captcha token is missing'),
       });
 
-    const result = referralSchema.safeParse(userReferral);
-    if (!result.success)
-      return setReferralError(result.error.format().code?._errors[0] ?? 'Invalid value');
+    submitAttemptRef.current += 1;
+    const token = captchaState.token;
+    const tokenAgeMs = tokenReceivedAtRef.current
+      ? Date.now() - tokenReceivedAtRef.current
+      : undefined;
+    const captchaDebug = {
+      tokenAgeMs,
+      submitAttempt: submitAttemptRef.current,
+      widgetStatus: captchaState.status ?? undefined,
+      tokenPrefix: token.slice(0, 8),
+      pageSessionId: pageSessionIdRef.current,
+    };
+
+    const refreshCaptcha = () => {
+      turnstileRef.current?.reset();
+      tokenReceivedAtRef.current = null;
+      setCaptchaState({ status: null, token: null, error: null });
+    };
 
     mutate(
       {
         step: OnboardingSteps.Buzz,
-        userReferralCode: showReferral ? userReferral.code : undefined,
-        source: showReferral ? userReferral.source : undefined,
-        recaptchaToken: captchaState.token,
+        recaptchaToken: token,
+        captchaDebug,
       },
-      { onSuccess: () => next() }
+      {
+        onSuccess: () => {
+          refreshCaptcha();
+          next();
+        },
+        onError: () => {
+          refreshCaptcha();
+        },
+      }
     );
   };
 
-  const showReferral =
-    !isProjectOdyssey &&
-    !!currentUser &&
-    !currentUser.referral &&
-    checkUserCreatedAfterBuzzLaunch(currentUser);
+  const blueRewardExamples = [
+    'React to content',
+    'First post of the day',
+    'Get reactions',
+    'Follow 3 new creators',
+    'and more',
+  ];
 
   return (
     <Container size="sm" px={0}>
       <Stack>
-        <StepperTitle
-          title="Buzz"
-          description={
-            <Text>
-              {`At Civitai, we have something special called ⚡Buzz! It's our way of rewarding you for engaging with the community and you can use it to show love to your favorite creators and more. Learn more about it below, or whenever you need a refresher from your `}
-              <IconProgressBolt size={20} style={{ verticalAlign: 'middle', display: 'inline' }} />
-              {` Buzz Dashboard.`}
-            </Text>
-          }
-        />
+        <Stack gap={4}>
+          <Title order={2} className="leading-[1.1]">
+            What&rsquo;s Buzz about?
+          </Title>
+          <Text>
+            Buzz is Civitai&rsquo;s creative currency. Use it to generate images and videos, train
+            models, tip creators, unlock badges, and more. Some Buzz is earned; some is purchased.
+            Here&rsquo;s how it breaks down.
+          </Text>
+        </Stack>
         <Stack gap="xl">
-          <Group align="start" className="*:grow">
-            <SpendingBuzz asList />
-            <EarningBuzz asList />
-          </Group>
+          <SpendingBuzz asList accountType={paidAccountType} />
+          <Stack gap="sm">
+            <Title order={3}>Types of Buzz</Title>
+            <Stack gap="xs">
+              <Paper withBorder p="md" radius="md">
+                <Group gap="xs" mb={4} align="center">
+                  <CurrencyIcon currency="BUZZ" type={paidAccountType} size={20} />
+                  <Text fw={600} style={{ color: paidConfig.color }}>
+                    {paidLabel} Buzz
+                  </Text>
+                </Group>
+                <Text size="sm">
+                  {isGreen
+                    ? 'Use Green Buzz to pay for early access to AI models from your favorite creators and tip those who make content you love.'
+                    : 'Use Yellow Buzz to generate mature content, pay for early access to AI models from your favorite creators, and tip those who make awesome content.'}
+                </Text>
+                <Text size="sm" fw={500} mt="sm">
+                  Ways to get {paidLabel} Buzz
+                </Text>
+                <EarningBuzz asList accountType={paidAccountType} hideHeader />
+              </Paper>
+              <Paper withBorder p="md" radius="md">
+                <Group gap="xs" mb={4} align="center">
+                  <CurrencyIcon currency="BUZZ" type="blue" size={20} />
+                  <Text fw={600} style={{ color: blueConfig.color }}>
+                    Blue Buzz
+                  </Text>
+                </Group>
+                <Text size="sm">
+                  <Text span fw={700}>
+                    Not looking to purchase right now?
+                  </Text>{' '}
+                  Get rewarded for engaging with the community.
+                </Text>
+                <Text size="sm" fw={500} mt="sm">
+                  Ways to earn Blue Buzz
+                </Text>
+                <Text size="sm" c="dimmed">
+                  {blueRewardExamples.join(' · ')}
+                </Text>
+                <Text size="xs" c="dimmed" mt={4}>
+                  Visit your Buzz Dashboard to learn more.
+                </Text>
+              </Paper>
+            </Stack>
+          </Stack>
           <StepperTitle
             title="Getting Started"
             description={
               <Text>
                 To get you started, we will grant you{' '}
                 <Text span>
-                  {currentUser && (
-                    <CurrencyBadge
-                      currency={Currency.BUZZ}
-                      unitAmount={getUserBuzzBonusAmount(currentUser)}
-                      textColor={theme.colors.blue[4]}
-                    />
-                  )}
+                  <CurrencyBadge
+                    currency={Currency.BUZZ}
+                    unitAmount={getUserBuzzBonusAmount()}
+                    textColor={theme.colors.blue[4]}
+                  />
                 </Text>
-                {currentUser?.isMember
-                  ? ' as a gift for being a supporter for use with on-site generation services.'
-                  : ' as a gift for use with on-site generation services.'}
+                {' as a gift for use with on-site generation services.'}
               </Text>
             }
           />
           <TurnstileWidget
+            ref={turnstileRef}
             options={{ size: 'normal' }}
-            onSuccess={(token) => setCaptchaState({ status: 'success', token, error: null })}
-            onError={(error) =>
+            onSuccess={(token) => {
+              tokenReceivedAtRef.current = Date.now();
+              setCaptchaState({ status: 'success', token, error: null });
+            }}
+            onError={(error) => {
+              tokenReceivedAtRef.current = null;
               setCaptchaState({
                 status: 'error',
                 token: null,
                 error: `There was an error generating the captcha: ${error}`,
-              })
-            }
+              });
+            }}
             siteKey={env.NEXT_PUBLIC_CF_MANAGED_TURNSTILE_SITEKEY}
-            onExpire={(token) =>
-              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' })
-            }
+            onExpire={(token) => {
+              tokenReceivedAtRef.current = null;
+              setCaptchaState({ status: 'expired', token, error: 'Captcha token expired' });
+            }}
           />
           {captchaState.status === 'error' && (
             <Text size="xs" c="red">
@@ -186,71 +221,10 @@ export function OnboardingBuzz() {
           <TurnstilePrivacyNotice />
           <Group justify="space-between">
             <OnboardingAbortButton size="lg">Sign Out</OnboardingAbortButton>
-            <Button
-              size="lg"
-              onClick={handleStepComplete}
-              loading={isLoading || referrerRefetching}
-            >
+            <Button size="lg" onClick={handleStepComplete} loading={isLoading}>
               Done
             </Button>
           </Group>
-          {showReferral && (
-            <Button
-              variant="subtle"
-              mt="-md"
-              onClick={() =>
-                setUserReferral((current) => ({
-                  ...current,
-                  showInput: !current.showInput,
-                  code,
-                }))
-              }
-            >
-              Have a referral code? Click here to claim a bonus
-            </Button>
-          )}
-
-          {showReferral && userReferral.showInput && (
-            <TextInput
-              size="lg"
-              label="Referral Code"
-              description={
-                <Text size="sm">
-                  Both you and the person who referred you will receive{' '}
-                  <Text span>
-                    <CurrencyBadge
-                      currency={Currency.BUZZ}
-                      unitAmount={buzzConstants.referralBonusAmount}
-                    />
-                  </Text>{' '}
-                  bonus with a valid referral code.
-                </Text>
-              }
-              error={referralError}
-              value={userReferral.code ?? ''}
-              onChange={(e) => setUserReferral((current) => ({ ...current, code: e.target.value }))}
-              rightSection={
-                userReferral.code &&
-                userReferral.code.length > constants.referrals.referralCodeMinLength &&
-                (referrerLoading || referrerRefetching) ? (
-                  <Loader size="sm" mr="xs" />
-                ) : (
-                  userReferral.code &&
-                  userReferral.code.length > constants.referrals.referralCodeMinLength && (
-                    <ThemeIcon
-                      variant="outline"
-                      color={referrer ? 'green' : 'red'}
-                      radius="xl"
-                      mr="xs"
-                    >
-                      {!!referrer ? <IconCheck size="1.25rem" /> : <IconX size="1.25rem" />}
-                    </ThemeIcon>
-                  )
-                )
-              }
-              autoFocus
-            />
-          )}
         </Stack>
       </Stack>
     </Container>

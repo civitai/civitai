@@ -11,7 +11,11 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  preventModelVersionLag,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -128,10 +132,12 @@ export const getDefaultModelVersion = async ({
   modelId,
   modelVersionId,
   userId,
+  isModerator,
 }: {
   modelId: number;
   modelVersionId?: number;
   userId?: number;
+  isModerator?: boolean;
 }) => {
   const db = await getDbWithoutLag('model', modelId);
   const result = await db.model.findUnique({
@@ -144,7 +150,8 @@ export const getDefaultModelVersion = async ({
         select: {
           id: true,
           status: true,
-          model: { select: { id: true, userId: true, availability: true } },
+          publishedAt: true,
+          model: { select: { id: true, userId: true, availability: true, status: true } },
           availability: true,
           trainingStatus: true,
         },
@@ -154,9 +161,21 @@ export const getDefaultModelVersion = async ({
 
   if (!result) throw throwNotFoundError();
 
+  const isOwner =
+    isModerator || (userId != null && result.modelVersions[0]?.model?.userId === userId);
+
+  // If the model itself is scheduled/draft and the user is not the owner, return nothing
+  const modelStatus = result.modelVersions[0]?.model?.status;
+  if (!isOwner && modelStatus && modelStatus !== ModelStatus.Published) {
+    return undefined;
+  }
+
   // Attempt to return the first published version. Otherwise, return whatever is available.
-  const published = result.modelVersions.find((v) => v.status === ModelStatus.Published);
-  return published ?? result.modelVersions[0];
+  const now = new Date();
+  const published = result.modelVersions.find(
+    (v) => v.status === ModelStatus.Published && (isOwner || !v.publishedAt || v.publishedAt <= now)
+  );
+  return published ?? (isOwner ? result.modelVersions[0] : undefined);
 };
 
 export const toggleModelVersionEngagement = async ({
@@ -344,9 +363,9 @@ export const upsertModelVersion = async ({
     ]);
 
     await Promise.all([
-      preventReplicationLag('modelVersion', version.id),
+      preventModelVersionLag(version.modelId, version.id),
       bustMvCache(version.id, version.modelId),
-      dataForModelsCache.bust(version.modelId),
+      dataForModelsCache.refresh(version.modelId),
     ]);
 
     return version;
@@ -530,9 +549,9 @@ export const upsertModelVersion = async ({
     });
 
     await Promise.all([
-      preventReplicationLag('modelVersion', version.id),
+      preventModelVersionLag(version.modelId, version.id),
       bustMvCache(version.id, version.modelId),
-      dataForModelsCache.bust(version.modelId),
+      dataForModelsCache.refresh(version.modelId),
     ]);
 
     // Run it in the background to avoid blocking the request.
@@ -566,12 +585,17 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
 
     const deleted = await tx.modelVersion.delete({ where: { id } });
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
-    await preventReplicationLag('modelVersion', deleted.modelId);
-    await bustMvCache(deleted.id, deleted.modelId);
     await deleteBidsForModelVersion({ modelVersionId: id });
 
     return deleted;
   });
+
+  // Post-commit: Redis-level flags and cache busts must run only after the
+  // Postgres transaction actually commits. Running them inside the txn would
+  // invalidate caches on rollback, and would publish a lag flag for a delete
+  // that never happened.
+  await preventModelVersionLag(version.modelId, version.id);
+  await bustMvCache(version.id, version.modelId);
 
   return version;
 };
@@ -600,8 +624,7 @@ export const updateModelVersionById = async ({
   }
 
   const result = await dbWrite.modelVersion.update({ where: { id }, data });
-  await preventReplicationLag('model', result.modelId);
-  await preventReplicationLag('modelVersion', id);
+  await preventModelVersionLag(result.modelId, id);
   await bustMvCache(id, result.modelId);
 };
 
@@ -783,12 +806,10 @@ export const publishModelVersionById = async ({
       },
     },
   } as const;
-  const currentVersion = await dbRead.modelVersion
-    .findUniqueOrThrow(versionFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
-      return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
-    });
+  const currentVersion = await dbRead.modelVersion.findUniqueOrThrow(versionFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'publishModelVersionById' });
+    return dbWrite.modelVersion.findUniqueOrThrow(versionFindArgs);
+  });
 
   // Validate NSFW + restricted base model combination
   if (
@@ -893,8 +914,7 @@ export const publishModelVersionById = async ({
     await updateModelLastVersionAt({ id: version.modelId });
   await bustMvCache(version.id, version.modelId);
 
-  await preventReplicationLag('model', version.modelId);
-  await preventReplicationLag('modelVersion', id);
+  await preventModelVersionLag(version.modelId, id);
 
   // Update search index for model and images
   await modelsSearchIndex.queueUpdate([
@@ -959,8 +979,7 @@ export const unpublishModelVersionById = async ({
         AND "modelVersionId" = ${updatedVersion.id}
       `;
 
-      await preventReplicationLag('model', updatedVersion.model.id);
-      await preventReplicationLag('modelVersion', updatedVersion.id);
+      await preventModelVersionLag(updatedVersion.model.id, updatedVersion.id);
 
       return updatedVersion;
     },
@@ -1457,14 +1476,36 @@ export const earlyAccessPurchase = async ({
         )
         WHERE "id" = ${modelVersionId}; -- Your conditions here
       `;
-    });
+    },  { timeout: 10000 }); // Doubled timeout since this transaction involves multiple steps and external calls.
 
+    // Post-transaction side effects: failures here must not trigger a refund,
+    // since the purchase itself already succeeded.
     if (earlyAccessDonationGoal) {
-      await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
+      try {
+        await checkDonationGoalComplete({ donationGoalId: earlyAccessDonationGoal.id });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'early-access-donation-goal-check',
+          error,
+          modelVersionId,
+          donationGoalId: earlyAccessDonationGoal.id,
+        });
+      }
     }
 
-    // Ensures user gets access to the resource after purchasing.
-    await bustMvCache(modelVersionId, modelVersion.model.id, userId);
+    try {
+      // Ensures user gets access to the resource after purchasing.
+      await bustMvCache(modelVersionId, modelVersion.model.id, userId);
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'early-access-bust-mv-cache',
+        error,
+        modelVersionId,
+        userId,
+      });
+    }
 
     return true;
   } catch (error) {
@@ -1473,6 +1514,14 @@ export const earlyAccessPurchase = async ({
         externalTransactionIdPrefix: buzzTransactionId,
         description: `Refund early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       });
+
+      logToAxiom({ 
+        type: 'error',
+        name: 'early-access-purchase-refund',
+        error,
+        modelVersionId,
+        buzzTransactionId,
+       });
     }
     throw throwDbError(error);
   }
@@ -1500,12 +1549,10 @@ export const modelVersionDonationGoals = async ({
       },
     },
   } as const;
-  const version = await dbRead.modelVersion
-    .findFirstOrThrow(donationFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
-      return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
-    });
+  const version = await dbRead.modelVersion.findFirstOrThrow(donationFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'modelVersion', caller: 'modelVersionDonationGoals' });
+    return dbWrite.modelVersion.findFirstOrThrow(donationFindArgs);
+  });
 
   const canSeeAllGoals = userId === version.model.userId || isModerator;
 
@@ -1561,7 +1608,8 @@ export async function queryModelVersions<TSelect extends Prisma.ModelVersionSele
 
   const where: Prisma.ModelVersionWhereInput = { AND };
 
-  const items = await dbRead.modelVersion.findMany({
+  // TODO(replica-toast): moderator-only training-review caller reads ModelFile.metadata; revert to dbRead once replication fixed.
+  const items = await dbWrite.modelVersion.findMany({
     where,
     cursor: cursor ? { id: cursor } : undefined,
     take: limit + 1,
@@ -1586,7 +1634,7 @@ export const bustMvCache = async (
   const versionIds = Array.isArray(ids) ? ids : [ids];
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
-  await modelVersionAccessCache.bust(versionIds);
+  await modelVersionAccessCache.refresh(versionIds);
   // TODO shouldnt this be the model IDs?
   if (modelIds) {
     const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
@@ -1597,7 +1645,8 @@ export const bustMvCache = async (
 };
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
-  const modelVersion = await dbRead.modelVersion.findFirst({
+  // TODO(replica-toast): revert to dbRead once the data-packet logical subscriber replicates ModelFile.metadata TOAST correctly
+  const modelVersion = await dbWrite.modelVersion.findFirst({
     where: { id },
     select: {
       id: true,
@@ -1626,7 +1675,8 @@ export const createModelVersionPostFromTraining = async ({
   user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
 }) => {
   const now = new Date();
-  const files = await dbRead.modelFile.findMany({
+  // TODO(replica-toast): revert to dbRead once the data-packet logical subscriber replicates ModelFile.metadata TOAST correctly
+  const files = await dbWrite.modelFile.findMany({
     where: { modelVersionId },
     select: { id: true, metadata: true },
   });
@@ -1713,7 +1763,8 @@ export async function updateModelVersionTrainingStatus({
   trainingStatus: TrainingStatus;
   modelFileId: number;
 }) {
-  const modelFile = await dbRead.modelFile.findUnique({
+  // TODO(replica-toast): read-then-write; reading from replica would wipe epochs (empty TOAST). Revert when replication fixed.
+  const modelFile = await dbWrite.modelFile.findUnique({
     where: { id: modelFileId },
     select: { id: true, modelVersionId: true, metadata: true },
   });
@@ -1736,12 +1787,20 @@ export async function updateModelVersionTrainingStatus({
     dbWrite.modelVersion.update({
       where: { id },
       data: { trainingStatus },
+      include: { model: { select: { userId: true } } },
     }),
     dbWrite.modelFile.update({
       where: { id: modelFile.id },
       data: { metadata: newFileMetadata },
     }),
   ]);
+
+  await preventReplicationLag('modelVersion', id);
+  // getTrainingModelsByUserId filters by userId, so flag by user too — the
+  // modelVersion id alone can't help that list query.
+  if (updatedVersion.model?.userId) {
+    await preventReplicationLag('userTrainingModels', updatedVersion.model.userId);
+  }
 
   return updatedVersion;
 }

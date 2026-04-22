@@ -68,6 +68,7 @@ import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
+import { searchIndexCleanupJob } from '~/server/jobs/search-index-cleanup';
 import { searchIndexJobs } from '~/server/jobs/search-index-sync';
 import { searchIndexUserCleanupJob } from '~/server/jobs/search-index-user-cleanup';
 import { sendCollectionNotifications } from '~/server/jobs/send-collection-notifications';
@@ -75,6 +76,7 @@ import { sendNotificationsJob } from '~/server/jobs/send-notifications';
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
+import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
@@ -115,6 +117,7 @@ export const jobs: Job[] = [
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,
+  searchIndexCleanupJob,
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
@@ -162,6 +165,7 @@ export const jobs: Job[] = [
   ...prepaidMembershipJobs,
   ...entityModerationJobs,
   retryFailedTextModeration,
+  articleIngestionReconcile,
   expireStrikesJob,
   processTimedUnmutesJob,
   custodySweepJob,

@@ -23,6 +23,7 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import { useAppContext } from '~/providers/AppProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Random } from '~/utils/random';
 import { isHolidaysTime } from '~/utils/date-helpers';
 import classes from './SupportButton.module.scss';
@@ -86,14 +87,19 @@ const holidayButton: SupportButtonOption = {
 
 export const SupportButton = () => {
   const { seed } = useAppContext();
+  const features = useFeatureFlags();
   const selectedOption = new Random(seed).fromArray(options);
+  // On non-green envs /pricing just shows a "memberships unavailable" page —
+  // funnel users to the buzz purchase flow where NoCryptoUpsell pitches the
+  // membership in context.
+  const href = features.isGreen ? selectedOption.href : '/purchase/buzz';
 
   return (
     <HoverCard withArrow openDelay={400} closeDelay={100}>
       <HoverCard.Target>
         <SupportButtonPolymorphic
           component={Link}
-          href={selectedOption.href}
+          href={href}
           className={`${classes.supportButtonMediaQuery}`}
           classVariant={selectedOption.variant}
           variant="filled"

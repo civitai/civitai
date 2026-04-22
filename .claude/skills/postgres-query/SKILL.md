@@ -21,6 +21,7 @@ node .claude/skills/postgres-query/query.mjs "SELECT * FROM \"User\" LIMIT 5"
 |------|-------------|
 | `--explain` | Run EXPLAIN ANALYZE on the query |
 | `--writable` | Use primary database instead of read replica (requires user permission) |
+| `--data-packet` | Use the DataPacket replica (`DATABASE_DATA_PACKET_URL`) — read-only |
 | `--timeout <s>`, `-t` | Query timeout in seconds (default: 30) |
 | `--file`, `-f` | Read query from a file |
 | `--json` | Output results as JSON |
@@ -44,6 +45,14 @@ node .claude/skills/postgres-query/query.mjs -f my-query.sql
 # JSON output for processing
 node .claude/skills/postgres-query/query.mjs --json "SELECT id, username FROM \"User\" LIMIT 3"
 ```
+
+## Connection Targets
+
+| Flag | Connection string | Use when |
+|------|-------------------|----------|
+| (default) | `DATABASE_REPLICA_URL` (falls back to `DATABASE_URL`) | Most queries — read-only main replica |
+| `--writable` | `DATABASE_URL` | Writes against primary; needs user permission |
+| `--data-packet` | `DATABASE_DATA_PACKET_URL` | Querying the DataPacket replica (read-only) |
 
 ## Safety Features
 

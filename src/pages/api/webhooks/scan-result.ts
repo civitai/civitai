@@ -172,7 +172,7 @@ export default WebhookEndpoint(async (req, res) => {
         action: SearchIndexUpdateQueueAction.Update,
       },
     ]);
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
   }
   await deleteFilesForModelVersionCache(file.modelVersionId);
 

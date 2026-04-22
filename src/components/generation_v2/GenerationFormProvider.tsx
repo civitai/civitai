@@ -43,6 +43,11 @@ import { WhatIfProvider } from './WhatIfProvider';
 import { needsHydration, type PartialResourceValue } from './inputs/resource-select.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { type VersionGroup, getAllVersionIds } from '~/shared/data-graph/generation/common';
+import {
+  decodeGenerationHandoff,
+  GENERATION_HANDOFF_PARAM,
+} from './utils/generation-url-handoff';
+import { setGenerationSnapshotCache } from './utils/generation-snapshot-cache';
 
 // =============================================================================
 // Constants
@@ -305,6 +310,31 @@ function InnerProvider({
       // localStorage read failed, skip
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cross-domain handoff: a `?gen=...` param means another domain (typically
+  // .com → .red via the yellow-buzz upsell) sent us its current form snapshot.
+  // Decode it, push into the graph store as a remix, and strip the param so
+  // refresh/back doesn't re-trigger. Runs before the applyStoreData effect
+  // below so the queued data is picked up by its initial mount run.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    const handoff = url.searchParams.get(GENERATION_HANDOFF_PARAM);
+    if (!handoff) return;
+
+    const decoded = decodeGenerationHandoff(handoff);
+
+    url.searchParams.delete(GENERATION_HANDOFF_PARAM);
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    if (!decoded) return;
+
+    generationGraphStore.setData({
+      params: decoded.params,
+      resources: decoded.resources,
+      runType: 'remix',
+    });
+  }, []);
 
   // Sync generation graph store data into the graph
   // - Remix/Replay: full override (reset + set)
@@ -628,6 +658,22 @@ function InnerProvider({
     };
   }, [unregisterResourceId]);
 
+  // Mirror the live graph snapshot into a module-level cache so cross-domain
+  // handoff links rendered outside the DataGraphProvider subtree (e.g. QueueItem
+  // CTAs on mobile where the form tab is unmounted) can still read the user's
+  // current form state. Intentionally does NOT clear on unmount — the cache
+  // should survive tab switches.
+  useEffect(() => {
+    function sync() {
+      setGenerationSnapshotCache({
+        snapshot: graph.getSnapshot() as Record<string, unknown>,
+        computedKeys: graph.getComputedKeys(),
+      });
+    }
+    sync();
+    return graph.subscribe(sync);
+  }, [graph]);
+
   // Track preferred ecosystem when baseModel changes
   // This keeps the workflow preferences store in sync with what the user is actually using
   useEffect(() => {
@@ -706,14 +752,16 @@ export function GenerationFormProvider({
   );
 }
 
-/** Convert GenerationResource to ResourceData (matching data-graph resourceSchema) */
+/** Convert GenerationResource to ResourceData (matching data-graph resourceSchema).
+ * Resources arriving from the cross-domain handoff or storage may be partially
+ * hydrated — `trainedWords` and `model.type` can be missing — so guard both. */
 function toResourceData(r: GenerationResource): ResourceData {
   if (r.epochDetails) return r; // Shouldn't need to get fresh data for resources with epochDetails since they have all necessary info for compatibility checks (type, baseModel, epochNumber) and aren't selectable in the UI
   return {
     id: r.id,
     baseModel: r.baseModel,
-    model: { type: r.model.type },
+    model: { type: r.model?.type as ResourceData['model']['type'] },
     strength: r.strength,
-    trainedWords: r.trainedWords.length > 0 ? r.trainedWords : undefined,
+    trainedWords: r.trainedWords && r.trainedWords.length > 0 ? r.trainedWords : undefined,
   };
 }

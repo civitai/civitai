@@ -135,16 +135,32 @@ function useTotalGenerationCost() {
 
 /**
  * Returns the available buzz types for generation and the currently selected type.
- * On .com: green + blue. On .red: yellow + blue.
+ * On .com: green + blue (+ yellow if the user has a yellow balance, so we can
+ * surface it in the selector and route them to .red via the upsell alert).
+ * On .red: yellow + blue.
  * Defaults to the site's primary type (green on .com, yellow on .red).
  */
 export function useSelectedBuzzType() {
-  const availableTypes = useAvailableBuzz(['blue']);
+  const features = useFeatureFlags();
+  const baseAvailableTypes = useAvailableBuzz(['blue']);
   const storedType = useGenerationFormStore((s) => s.buzzType);
   const setBuzzType = useGenerationFormStore((s) => s.setBuzzType);
 
-  // Default to the site's primary type (first non-blue type, or first available)
-  const primaryType = availableTypes.find((t) => t !== 'blue') ?? availableTypes[0];
+  const {
+    data: { accounts: yellowAccounts },
+  } = useQueryBuzz(['yellow']);
+  const yellowBalance = yellowAccounts.find((a) => a.type === 'yellow')?.balance ?? 0;
+  const showYellowOnGreen = features.isGreen && yellowBalance > 0;
+
+  const availableTypes: BuzzSpendType[] = showYellowOnGreen
+    ? [...baseAvailableTypes, 'yellow']
+    : baseAvailableTypes;
+
+  // Default to the site's primary spendable type (skip yellow on .com — it's
+  // shown only as a routing hint, not as a real default).
+  const primaryType =
+    availableTypes.find((t) => t !== 'blue' && !(features.isGreen && t === 'yellow')) ??
+    availableTypes[0];
   const selectedType = storedType && availableTypes.includes(storedType) ? storedType : primaryType;
 
   return { availableTypes, selectedType, setBuzzType };
@@ -280,6 +296,14 @@ interface PriorityAlertSpaceProps {
   onClearSubmitError: () => void;
   missingFieldMessage?: string | null;
   snackbarRight?: ReactNode;
+  /**
+   * When true, force the insufficient-buzz alert (with switch-buzz-type prompt)
+   * even if the client-side balance check currently passes. Set by the submit
+   * handler when the server rejects with `insufficientBuzz` — the client-side
+   * balance may be stale vs. the server's view, so we trust the server signal.
+   */
+  forceInsufficientBuzz?: boolean;
+  onClearInsufficientBuzz?: () => void;
 }
 
 /**
@@ -299,17 +323,22 @@ function PriorityAlertSpace({
   onClearSubmitError,
   missingFieldMessage,
   snackbarRight,
+  forceInsufficientBuzz,
+  onClearInsufficientBuzz,
 }: PriorityAlertSpaceProps) {
   const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
+    isLoading: isBuzzLoading,
   } = useQueryBuzz(availableTypes);
   const totalCost = useTotalGenerationCost();
 
   // Check if user has insufficient buzz of the selected type
+  // Don't show insufficient buzz until the buzz query has resolved
   const selectedBalance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
-  const insufficientBuzz = totalCost > 0 && selectedBalance < totalCost;
+  const clientInsufficientBuzz = !isBuzzLoading && totalCost > 0 && selectedBalance < totalCost;
+  const insufficientBuzz = clientInsufficientBuzz || !!forceInsufficientBuzz;
 
   // Find an alternative buzz type that has enough balance
   const alternativeType = insufficientBuzz
@@ -365,24 +394,37 @@ function PriorityAlertSpace({
         className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
         withCloseButton={false}
       >
-        <Text size="sm">
-          Not enough {typeName} Buzz ({abbreviateNumber(selectedBalance)}/
-          {abbreviateNumber(totalCost)}).{' '}
-          {alternativeType ? (
-            <Text
-              span
-              c="blue.4"
-              className="cursor-pointer"
-              onClick={() => setBuzzType(alternativeType)}
+        <div className="flex w-full items-center justify-between gap-2">
+          <Text size="sm">
+            Not enough {typeName} Buzz
+            {clientInsufficientBuzz
+              ? ` (${abbreviateNumber(selectedBalance)}/${abbreviateNumber(totalCost)})`
+              : ''}
+            .
+            {!alternativeType && (
+              <>
+                {' '}
+                <Text span c="blue.4" component="a" href="/purchase/buzz" target="_blank">
+                  Get more Buzz
+                </Text>
+              </>
+            )}
+          </Text>
+          {alternativeType && (
+            <Button
+              variant="light"
+              color="yellow"
+              radius="xl"
+              size="compact-sm"
+              onClick={() => {
+                setBuzzType(alternativeType);
+                onClearInsufficientBuzz?.();
+              }}
             >
               Switch to {alternativeType.charAt(0).toUpperCase() + alternativeType.slice(1)} Buzz
-            </Text>
-          ) : (
-            <Text span c="blue.4" component="a" href="/purchase/buzz" target="_blank">
-              Get more Buzz
-            </Text>
+            </Button>
           )}
-        </Text>
+        </div>
       </Notification>
     );
   }
@@ -416,9 +458,10 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
   // Check if user has enough of the selected buzz type
   const {
     data: { accounts },
+    isLoading: isBuzzLoading,
   } = useQueryBuzz([selectedType]);
   const balance = accounts.find((a) => a.type === selectedType)?.balance ?? 0;
-  const insufficientBuzz = totalCost > 0 && balance < totalCost;
+  const insufficientBuzz = !isBuzzLoading && totalCost > 0 && balance < totalCost;
 
   const handleClick = () => {
     if (running) helpers?.next();
@@ -432,7 +475,10 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={isWhatIfLoading || isError || !canEstimateCost || insufficientBuzz}
+      disabled={
+        !running &&
+        (isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz)
+      }
       onClick={handleClick}
     />
   );
@@ -483,12 +529,19 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const missingFieldMessage = !canEstimateCost ? getMissingFieldMessage(validationErrors) : null;
 
   const [submitError, setSubmitError] = useState<string | undefined>();
+  const [insufficientBuzzError, setInsufficientBuzzError] = useState(false);
   const [isMinLoading, setIsMinLoading] = useState(false);
   const minLoadingTimer = useRef<ReturnType<typeof setTimeout>>();
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
 
   // Get whatIf data for buzz transaction checking
   const { data: whatIfData } = useWhatIfContext();
+
+  // Resolved buzz type shown in the UI — defaults to the site's primary type
+  // (e.g. green on .com) when the user hasn't explicitly picked one. Sent with
+  // the mutation so the server charges the account the user sees selected,
+  // instead of falling through to the orchestrator's priority-ordered list.
+  const { selectedType: selectedBuzzType } = useSelectedBuzzType();
 
   // Setup buzz transaction handling
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -507,6 +560,10 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       if (isPOI) {
         setPromptWarning(error.message);
         currentUser?.refresh();
+      } else if (error.message === 'insufficientBuzz') {
+        // Route through the insufficient-buzz alert (with switch-buzz-type prompt)
+        // instead of the generic submit-error notification.
+        setInsufficientBuzzError(true);
       } else {
         setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
       }
@@ -524,6 +581,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     }
 
     setSubmitError(undefined);
+    setInsufficientBuzzError(false);
     setPromptWarning(null);
 
     // Ensure loading state shows for at least 1 second
@@ -582,9 +640,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Check if any resources have early access
     const hasEarlyAccess = resourceData.some((x) => x.earlyAccessConfig);
 
-    // Get the user-selected buzz type for this generation
-    const { buzzType: selectedBuzzType } = useGenerationFormStore.getState();
-
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
@@ -596,7 +651,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         creatorTip: hasCreatorTip ? creatorTip : 0,
         civitaiTip,
         tags: [WORKFLOW_TAGS.SOURCE.NEW],
-        ...(selectedBuzzType ? { buzzType: selectedBuzzType } : {}),
+        buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
       });
@@ -684,6 +739,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         onClearSubmitError={() => setSubmitError(undefined)}
         missingFieldMessage={missingFieldMessage}
         snackbarRight={<CostBreakdown />}
+        forceInsufficientBuzz={insufficientBuzzError}
+        onClearInsufficientBuzz={() => setInsufficientBuzzError(false)}
       />
 
       {!membershipUpsell.needsAcknowledgment && (

@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import type { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getNotifDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
 import { logToAxiom } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
@@ -141,7 +142,10 @@ export async function getUserNotificationCount({
   // this seems unused
   if (category) AND.push(Prisma.sql`n.category = ${category}::"NotificationCategory"`);
 
-  const query = await notifDbRead.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
+  // Route to primary when markRead just wrote for this user — replica lag
+  // would otherwise repopulate the cache with stale unread counts.
+  const db = await getNotifDbWithoutLag('notification', userId);
+  const query = await db.cancellableQuery<NotificationCategoryCount>(Prisma.sql`
     SELECT
       n.category,
       COUNT(*) AS count
@@ -201,6 +205,7 @@ async function _markNotificationsReadImpl({
           AND un.viewed IS FALSE
           AND n."category" = ${category}::"NotificationCategory"
       `);
+      await preventReplicationLag('notification', userId);
       notificationCache.clearCategory(userId, category).catch(() => {});
     } else {
       // No join needed - faster query
@@ -212,6 +217,7 @@ async function _markNotificationsReadImpl({
           un."userId" = ${userId}
           AND un.viewed IS FALSE
       `);
+      await preventReplicationLag('notification', userId);
       notificationCache.bustUser(userId).catch(() => {});
     }
   } else {
@@ -223,10 +229,12 @@ async function _markNotificationsReadImpl({
           id = ${id}
       AND viewed IS FALSE
     `);
+    if (resp.rowCount) await preventReplicationLag('notification', userId);
 
     // Update cache if the notification was marked read
     if (resp.rowCount) {
-      const catQuery = await notifDbRead.cancellableQuery<{
+      const db = await getNotifDbWithoutLag('notification', userId);
+      const catQuery = await db.cancellableQuery<{
         category: NotificationCategory;
       }>(Prisma.sql`
         SELECT

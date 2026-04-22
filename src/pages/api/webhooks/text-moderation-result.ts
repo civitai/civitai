@@ -1,3 +1,15 @@
+/**
+ * Text moderation result webhook.
+ *
+ * Non-atomicity note: `recordEntityModerationSuccess` and the entity handler
+ * (which calls `recomputeArticleIngestion`) run in separate transactions. If
+ * the process crashes between them, the orchestrator's webhook retry will
+ * redeliver the callback — `recordEntityModerationSuccess` is idempotent
+ * (updateMany on a matching workflowId) and `recomputeArticleIngestion`
+ * derives state from ground truth, so replay is safe. For the rare case
+ * where the orchestrator already received a 200 and won't retry, the
+ * `article-ingestion-reconcile` cron picks up the drift within 10 minutes.
+ */
 import type { WorkflowEvent, XGuardModerationOutput, XGuardModerationStep } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -29,13 +41,11 @@ const entityHandlers: Record<string, (result: TextModerationResult) => Promise<v
     // Blocked content is treated as NSFW regardless of triggered labels.
     const isNsfw = blocked || triggeredLabels.some((label) => label.toLowerCase() === 'nsfw');
 
-    // Elevate the nsfw flag only — never downgrade, since image content or the user
-    // may have already flagged the article as NSFW for reasons unrelated to text.
+    // recordEntityModerationSuccess has already persisted the moderation
+    // result above. updateArticleNsfwLevels's moderation_floor subquery reads
+    // that record directly, so the R floor is applied intrinsically — no
+    // parameter or prior write needed.
     if (isNsfw) {
-      await dbWrite.article.update({
-        where: { id: entityId },
-        data: { nsfw: true },
-      });
       await updateArticleNsfwLevels([entityId]);
     }
 
