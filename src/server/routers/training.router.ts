@@ -19,6 +19,7 @@ import {
   getJobEstStartsHandler,
   getTrainingServiceStatus,
   moveAsset,
+  setTrainingServiceStatus,
 } from '~/server/services/training.service';
 import {
   guardedProcedure,
@@ -70,6 +71,14 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getTrainingServiceStatus()),
+  setStatus: moderatorProcedure
+    .input(
+      z.object({
+        available: z.boolean(),
+        message: z.string().max(2000).nullish(),
+      })
+    )
+    .mutation(({ input }) => setTrainingServiceStatus(input)),
   /**
    * @deprecated for orchestrator v2
    */
