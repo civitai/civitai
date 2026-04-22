@@ -206,7 +206,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const hasVisibleFiles = filesVisibleCount > 0;
 
   // Group files by variant for the download dropdown
-  const groupedFiles = useMemo(() => groupFilesByVariant(filesVisible), [filesVisible]);
+  const groupedFiles = useMemo(
+    () => groupFilesByVariant(filesVisible, model.type),
+    [filesVisible, model.type]
+  );
 
   // Get model files (not component files) for the download dropdown
   const modelFilesVisible = useMemo(() => {
@@ -791,6 +794,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                     <DownloadVariantDropdown
                       files={filesVisible}
                       versionId={version.id}
+                      modelType={model.type}
                       userPreferences={user?.filePreferences}
                       canDownload={canDownload}
                       downloadPrice={

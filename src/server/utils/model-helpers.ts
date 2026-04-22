@@ -2,6 +2,7 @@ import { startCase } from 'lodash-es';
 import type { ModelFileType } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { getPrimaryFileTypes } from '~/utils/file-display-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type FileFormatType = {
@@ -173,8 +174,6 @@ const quantQualityRank: Record<ModelFileQuantType, number> = {
   Q8_0: 25,
 };
 
-// Model file types (as opposed to component types)
-const modelFileTypes = ['Model', 'Pruned Model'] as const;
 
 /**
  * Sorts files by quality (best quality first).
@@ -210,9 +209,15 @@ function sortByQuality<T extends FileFormatType>(files: T[]): T[] {
  * Groups files by variant for display in the model sidebar.
  *
  * @param files - Array of model files to group
+ * @param modelType - Parent ModelType; determines which file types count as "primary".
+ *   For non-weight model types (Workflows, Poses, Wildcards, Other), Archive/Config
+ *   files are the main download instead of being shoved into Optional Files.
  * @returns Grouped files by format and component type
  */
-export function groupFilesByVariant<T extends FileFormatType>(files: T[]): GroupedFileVariants<T> {
+export function groupFilesByVariant<T extends FileFormatType>(
+  files: T[],
+  modelType?: ModelType | null
+): GroupedFileVariants<T> {
   const result: GroupedFileVariants<T> = {
     safeTensorVariants: [],
     ggufVariants: [],
@@ -225,13 +230,15 @@ export function groupFilesByVariant<T extends FileFormatType>(files: T[]): Group
     return result;
   }
 
+  const primaryFileTypes = getPrimaryFileTypes(modelType);
+
   for (const file of files) {
     const fileType = file.type;
     const metadata = file.metadata ?? {};
     const format = metadata.format;
 
-    // Check if this is a model file type
-    const isModelFile = modelFileTypes.includes(fileType as (typeof modelFileTypes)[number]);
+    // Check if this is a primary model file type for this ModelType
+    const isModelFile = primaryFileTypes.includes(fileType as ModelFileType);
 
     if (isModelFile) {
       // Group model files by format

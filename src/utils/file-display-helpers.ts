@@ -4,6 +4,7 @@
  */
 
 import type { ModelFileType } from '~/server/common/constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { getFileExtension } from '~/utils/string-helpers';
 import {
   IconAdjustments,
@@ -209,4 +210,44 @@ export function getFileDescription(file: FileForDisplay): string {
   }
 
   return parts.join(' ') || 'Standard variant';
+}
+
+/**
+ * Source-of-truth mapping of which ModelFileTypes count as "primary" per ModelType.
+ * Consumed by:
+ *  - The file uploader dropzone (FilesProvider) to decide which types are offered in the primary section.
+ *  - The download-variant grouper (groupFilesByVariant) to decide which files surface in the
+ *    primary download card vs. the optional/components sections.
+ *
+ * For model types that don't ship a traditional weights file (Workflows, Poses, Wildcards, Other),
+ * archive and config files ARE the main download.
+ */
+export const primaryFileTypesByModelType: Record<ModelType, readonly ModelFileType[]> = {
+  Checkpoint: ['Model', 'Pruned Model', 'UNet', 'Diffusion Model'],
+  LORA: ['Model', 'Pruned Model'],
+  DoRA: ['Model', 'Pruned Model'],
+  LoCon: ['Model', 'Pruned Model'],
+  TextualInversion: ['Model', 'Negative'],
+  Hypernetwork: ['Model'],
+  AestheticGradient: ['Model'],
+  Controlnet: ['Model'],
+  MotionModule: ['Model'],
+  Detection: ['Model'],
+  Upscaler: ['Model'],
+  VAE: ['Model'],
+  TextEncoder: ['Model'],
+  UNet: ['Model'],
+  CLIPVision: ['Model'],
+  Poses: ['Archive', 'Config'],
+  Wildcards: ['Archive', 'Config'],
+  Workflows: ['Archive', 'Config'],
+  Other: ['Archive', 'Config', 'Model'],
+};
+
+const DEFAULT_PRIMARY_FILE_TYPES: readonly ModelFileType[] = ['Model', 'Pruned Model'];
+
+/** Returns the primary ModelFileType allow-list for a given ModelType. */
+export function getPrimaryFileTypes(modelType?: ModelType | null): readonly ModelFileType[] {
+  if (!modelType) return DEFAULT_PRIMARY_FILE_TYPES;
+  return primaryFileTypesByModelType[modelType] ?? DEFAULT_PRIMARY_FILE_TYPES;
 }
