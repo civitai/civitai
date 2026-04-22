@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { chunk, truncate, uniqBy } from 'lodash-es';
+import { chunk, truncate, uniq, uniqBy } from 'lodash-es';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
@@ -492,11 +492,14 @@ export async function handleUnblockImages({
       ),
     ]);
 
+    const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
       updateNsfwLevel(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
+      // Unblock re-admits the image into the showcase query; bust so it reappears without waiting on TTL.
+      postIds.length ? bustCachesForPosts(postIds) : Promise.resolve(),
     ]);
 
     if (moderatorId) {
@@ -547,6 +550,7 @@ export async function handleBlockImages({
   });
   await Limiter({ batchSize: 100, limit: 10 }).process(images, async (images) => {
     const ids = images.map((x) => x.id);
+    const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     const invalidateExistence = invalidateManyImageExistence(ids);
 
     await Promise.all([
@@ -563,6 +567,8 @@ export async function handleBlockImages({
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
       invalidateExistence,
+      // Blocked images can still satisfy the showcase SQL filters; drop them now.
+      postIds.length ? bustCachesForPosts(postIds) : Promise.resolve(),
     ]);
     if (include?.includes('phash-block')) {
       await bulkAddBlockedImages({
