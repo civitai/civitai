@@ -24,6 +24,26 @@ import type { SubscriptionPlan } from '~/server/services/subscriptions.service';
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 
+/**
+ * Boost copy: percent below 2x ("50% bonus..."), multiplier at or above 2x
+ * ("2.5x bonus..."). Percent reads strongest for small boosts; multiplier
+ * hits harder at scale.
+ */
+function formatBoostCopy(
+  multiplier: number | string | null | undefined,
+  kind: 'rewards' | 'purchases'
+): string {
+  const noun = kind === 'rewards' ? 'Buzz on daily rewards' : 'Buzz on purchases';
+  const num = Number(multiplier);
+  if (!Number.isFinite(num) || num <= 1) return `No bonus ${noun}`;
+  if (num < 2) {
+    const pct = Math.round((num - 1) * 100);
+    return `${pct}% bonus ${noun}`;
+  }
+  const rounded = Number(num.toFixed(2));
+  return `${rounded}x ${noun}`;
+}
+
 export const getPlanDetails: (
   product: Pick<SubscriptionPlan, 'metadata' | 'name'>,
   features: FeatureAccess,
@@ -52,7 +72,7 @@ export const getPlanDetails: (
         ),
       },
 
-      features.membershipsV2 && features.isGreen
+      features.membershipsV2
         ? {
             icon: <IconBolt size={benefitIconSize} />,
             iconColor:
@@ -65,10 +85,7 @@ export const getPlanDetails: (
                 </Text>
               ) : (
                 <Text>
-                  <Text span>
-                    {(((metadata?.purchasesMultiplier ?? 1) - 1) * 100).toFixed(0)}% Bonus Buzz on
-                    purchases
-                  </Text>
+                  <Text span>{formatBoostCopy(metadata.purchasesMultiplier!, 'purchases')}</Text>
                 </Text>
               ),
           }
@@ -86,10 +103,7 @@ export const getPlanDetails: (
                 </Text>
               ) : (
                 <Text>
-                  <Text span>
-                    Rewards give {(((metadata?.rewardsMultiplier ?? 1) - 1) * 100).toFixed(0)}% more
-                    Buzz!
-                  </Text>
+                  <Text span>{formatBoostCopy(metadata.rewardsMultiplier!, 'rewards')}</Text>
                 </Text>
               ),
           }

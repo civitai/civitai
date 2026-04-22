@@ -7,7 +7,10 @@ export type CreateCustomerInput = z.infer<typeof createCustomerSchema>;
 export const createCustomerSchema = z.object({ id: z.number(), email: z.string().email() });
 
 export type CreateSubscribeSessionInput = z.infer<typeof createSubscribeSessionSchema>;
-export const createSubscribeSessionSchema = z.object({ priceId: z.string() });
+export const createSubscribeSessionSchema = z.object({
+  priceId: z.string(),
+  refCode: z.string().optional(),
+});
 
 export type CreateDonateSessionInput = z.infer<typeof createDonateSessionSchema>;
 export const createDonateSessionSchema = z.object({ returnUrl: z.string() });

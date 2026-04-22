@@ -30,7 +30,7 @@ Referee flow:
   Visit link with ?ref_code=XYZ → cookie stored (5 days)
   Sign up (binds UserReferral row)
   Make first paid membership charge
-    → Referee receives: one-time discount OR bonus buzz
+    → Referee receives: 25% of tier's monthlyBuzz as Blue Buzz (one-time)
     → Referrer receives: 1-3 Referral Tokens (pending settlement)
   Each subsequent membership renewal (up to month 3)
     → Referrer receives: +1 token per paid month (tier-based: Bronze=1, Silver=2, Gold=3)
@@ -288,8 +288,14 @@ All logged to ClickHouse `referralAttribution` table. Mod dashboard lists top fl
 
 ### Checkout Flow
 
-- When `ref_code` cookie is set, surface small banner on checkout: "Using code: XYZ"
-- Emit `referral:checkout-viewed` signal to referrer (rate-limited).
+- **Code entry**: manual input field on checkout page. If `ref_code` cookie is set, pre-fill and lock (user can clear/replace). If no cookie, field is empty and optional.
+- **Banner when code valid**: show the referee bonus they'll earn.
+  - Copy: `"Using code XYZ. You'll receive 2,500 Blue Buzz on completion — enough for ~250 generations."`
+  - Bonus amount computed from `selectedTier.monthlyBuzz * 0.25`
+  - Generation count computed from an average cost-per-gen constant (pulled from existing config, same constant the gen page uses)
+  - **No mention of mature/NSFW content in copy.** Keep it generic.
+- Emit `referral:checkout-viewed` signal to referrer when banner renders (rate-limited).
+- **Stripe audit required**: verify existing Stripe/Paddle checkout flow supports passing `ref_code` through to completion webhook. Prior to implementation, scout `src/server/services/stripe.service.ts` and checkout modal to find the injection point. @ai:* Action item for Phase 1.
 
 ### User Nav
 
@@ -380,10 +386,124 @@ No data migration. Legacy `UserReferral` rows stay intact (signup-only rewards a
 
 ## Open Questions
 
-1. **@ai:*** Cap semantics: 3 paid months per referee cap, or 3 tokens max per referee? (Affects Gold payout: 9 tokens vs 3)
-2. **@ai:*** Cookie TTL bump from 5 → 30 days — any downstream assumption of 5-day window we'd break?
-3. **@ai:*** Creator Program multiplier interaction: does referral-granted tier affect buzz banking multipliers? If yes, must explicitly exclude.
-4. **@ai:*** Clawback aggression: if referrer has active redeemed tier and balance goes negative from chargeback, do we revoke the tier grant? Recommend no.
-5. **@ai:*** Legal review on program terms, especially multi-account / household policy.
-6. **@ai:*** Blue Buzz kickback rate: 5% (conservative) vs 10% (recommended). Milestone math above assumes 10%.
-7. **@ai:*** Should we allow users to generate multiple codes (current cap: 3) or collapse to a single code per user for simpler mental model?
+1. **@ai:** Cap semantics: 3 paid months per referee cap, or 3 tokens max per referee? (Affects Gold payout: 9 tokens vs 3) @justin: Okay, so regarding caps. I think it's three paid months per referee. If you're getting people to get gold, then yeah, it's higher than three tokens. @ai: Locked. 3 paid months per referee → Gold payout can be up to 9 tokens.
+2. **@ai:** Cookie TTL bump from 5 → 30 days — any downstream assumption of 5-day window we'd break? @justin: 30 days good. @ai: Locked. Will bump `ReferralsProvider.tsx:48`.
+3. **@ai:** Creator Program multiplier interaction: does referral-granted tier affect buzz banking multipliers? If yes, must explicitly exclude. @justin: Yeah, I think they can get all membership perks... except the monthly Buzz. @ai: Locked. Referral sub grants: Creator Program multiplier YES, NSFW blue buzz YES, private models YES, priority gen YES. Excludes: monthly buzz stipend (`monthlyBuzz=0`) and tier-specific badge.
+4. **@ai:** Clawback aggression: if referrer has active redeemed tier and balance goes negative from chargeback, do we revoke the tier grant? Recommend no. @justin: no. But we should have a settlement period, so if they refund or chargeback before settlement we take their token. Might be hard to track... Probably can wait for a future iteration. @ai: Locked. V1 policy = chargeback within 7-day settlement window → revoke pending token/buzz (clean, already handled by state machine). Post-settlement chargebacks = write off in v1. No debt-queue for v1.
+5. **@ai:** Legal review on program terms, especially multi-account / household policy. @justin: Do we really need this? @ai: Probably not for v1. Civitai's existing TOS covers most of this. I'll self-write boilerplate program terms (non-transferability, expiry, anti-abuse clause). Formal legal review can wait until we see real volume or expand to new jurisdictions. OK to proceed without lawyer pass? @justin: Yeah, let's go ahead and self write terms. @ai: Locked. Sub-agent drafting `docs/features/referral-program-terms.md` now.
+6. **@ai:** Blue Buzz kickback rate: 5% (conservative) vs 10% (recommended). Milestone math above assumes 10%. @justin: Let's do 10%. @ai: Locked at 10%.
+7. **@ai:** Should we allow users to generate multiple codes (current cap: 3) or collapse to a single code per user for simpler mental model? @justin: Single code per user. From time to time we might add a custom code to a user, but that'd be for special users with a social media following for example. @ai: Locked. Single auto-generated code per user + admin-created custom codes for special users. Will drop `referralCodeMaxCount` to 1 for self-gen. Custom codes = same `UserReferralCode` table, admin-only creation path (mod-actions skill or direct DB in v1 — no self-serve admin UI).
+
+## New Questions From Justin's Replies
+
+8. **@ai:** Referee bonus: my doc said "one-time discount OR bonus buzz" on first paid event but that's fuzzy. Concrete proposals:
+   - Option A: 10% off first membership month (Stripe coupon on first invoice)
+   - Option B: Nothing for referee — referrer earns, referee just helped a friend. Simplest to build.
+   - Option C: Small blue buzz bonus (e.g. 500 blue buzz) on first paid event
+   Which do you want? My vote: **B for launch** (simplest), add C later if conversion data is weak. @justin: I think C is appropriate. @ai: Locked at **C: 1,000 Blue Buzz to referee on first paid membership**. (Amount TBD if you want different — 500-2,500 range makes sense. Proposing 1,000.)
+
+9. **@ai:** Post-settlement chargeback tracking: you said "might be hard to track... future iteration." Confirming v1 = **write off, no debt-queue**. We'll log the loss to fraud-detection table so top abusers surface in mod review, but referrer doesn't owe anything back. OK? @justin: Right off. No one owed. @ai: Locked. Write-off, fraud table logs for review, no user-facing debt.
+
+10. **@ai:** Custom codes admin UX: for v1, manual DB insert (or mod-actions script) is fine? Or do you want a simple admin form in the moderation dashboard? Recommend v1 = DB/script, v2 = admin form. @justin: DB is fine for custom codes in v1. It'd still be a single code per user I think. @ai: Locked. One code slot per user. Admin DB update overwrites the auto-generated code string (e.g. "X3K7P9" → "JUSTINM"). `referralCodeMaxCount` drops to 1. No separate custom-code table.
+
+11. **@ai:** Referee bonus amount: 1,000 Blue Buzz feels right (matches 10% of a $10 membership at $1=1k). Sound OK, or want higher/lower? @justin: Let's make the bonus be 10% extra Buzz for the month granted as Blue Buzz (for example, 1k Blue Buzz if you got the Bronze Membership which grants 10k Buzz). @ai: Locked. Bonus = `Product.metadata.monthlyBuzz * 0.10` as Blue Buzz. Scales with tier — Bronze 10k buzz → 1k blue, Silver/Gold proportionally higher. Only on first paid membership (not renewals). @justin: What if it was like a bigger portion, like maybe 25% or even 20%? @ai: Final: **25%** of tier's monthlyBuzz as Blue Buzz, displayed at checkout (not post-pay). Tiers $10/$25/$50 → Bronze 2.5k, Silver 6.25k, Gold 12.5k blue buzz. Zero cash cost to us (compute). Surfacing at checkout makes this a conversion lever, not just a reward.
+
+12. **@ai:** Checkout manual code entry: adding an input field to checkout (pre-filled from cookie if present, manually enterable if not). This requires auditing the existing Stripe/Paddle checkout flow — will scout `src/server/services/stripe.service.ts` and related checkout components in Phase 1 prep to find the correct injection point. @ai: Implemented via `ReferralCheckoutBanner` on `/pricing`. Stripe checkout session now carries `ref_code` via `subscription_data.metadata` → reconciled on `invoice.paid` webhook.
+
+## Debug Endpoint
+
+`POST /api/testing/referrals` — hidden debug endpoint (gated by `WEBHOOK_TOKEN` header). For experimenting with the program without paying real money.
+
+```bash
+export T="<your WEBHOOK_TOKEN>"
+curl -s -X POST "https://civitai.com/api/testing/referrals" \
+  -H "Authorization: Bearer $T" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"dump","userId":<YOUR_USER_ID>}' | jq
+```
+
+Actions:
+
+| action | required | what it does |
+|---|---|---|
+| `dump` | `userId` | Full referral state: code, UserReferral, rewards, milestones, redemptions, attribution, active sub, balance |
+| `bind-code` | `userId, code` | Attach a referral code to the user's `UserReferral` |
+| `grant-tokens` | `userId, tier, tokens` | Insert a MembershipToken reward. `settleImmediately=true` skips 7-day wait |
+| `grant-blue-buzz` | `userId, blueBuzz` | Insert a BuzzKickback reward |
+| `enqueue-chunk` | `userId, tier, durationDays` | Push a chunk onto the user's active referral-sub queue |
+| `simulate-membership-payment` | `refereeId, tier` | Runs `recordMembershipPaymentReward` as if Stripe fired `invoice.paid` |
+| `simulate-buzz-purchase` | `refereeId, blueBuzz` (yellow amount spent) | Runs `recordBuzzPurchaseKickback` |
+| `simulate-chargeback` | `sourceEventId` | Runs `revokeForChargeback` |
+| `settle-all` | `userId` (scopes) | Fast-forward Pending rewards and run settle cron |
+| `advance-subs` | `userId` (optional) | Expire the user's referral sub and run advance cron |
+| `expire-tokens` | `userId` | Expire all settled tokens for the user |
+| `reset` | `userId, confirm=true` | Wipe all referral data for a user back to clean slate |
+
+Typical experiment flow:
+
+```bash
+# 1. Give yourself 6 tokens, pre-settled
+curl ... -d '{"action":"grant-tokens","userId":123,"tier":"gold","tokens":6,"settleImmediately":true}'
+
+# 2. Visit /user/referrals — redeem for "1 month Gold perks"
+
+# 3. Enqueue a Bronze chunk to test queue promotion
+curl ... -d '{"action":"enqueue-chunk","userId":123,"tier":"bronze","durationDays":14}'
+
+# 4. Fast-forward Gold expiry → Bronze takes over
+curl ... -d '{"action":"advance-subs","userId":123}'
+
+# 5. Wipe and start over
+curl ... -d '{"action":"reset","userId":123,"confirm":true}'
+```
+
+## Overlap Stacking Approach (v1)
+
+`CustomerSubscription` has `@@unique([userId, buzzType])`. Paid subs use `yellow` (.com), `green` (.green), `blue` (.red). Using any of those for referral grants collides with paid subs of the same flavor.
+
+**V1 solution**: Referral grants write `CustomerSubscription.buzzType = 'referral'`. The column is `String` (not enum), session-user iterates all sub rows and picks the highest tier across buzz types via `constants.memberships.tierOrder`. Result: a user can hold paid yellow + paid green + referral Gold simultaneously, and feature flags / perk checks see Gold.
+
+Behavior when a user redeems while they already have an active referral sub:
+- **Same or lower tier**: extends `currentPeriodEnd` by `durationDays` starting from the existing end date
+- **Higher tier**: swaps `productId` to the new tier, restarts `currentPeriodStart` at `now`, sets `currentPeriodEnd = now + durationDays`
+
+Behavior when an existing referral sub is expired or inactive: reactivate with new tier.
+
+**V1 does not** pause or offset the referral grant against a concurrent paid sub. If a paid Gold user redeems a Gold referral, they "double up" and the referral clock ticks during the paid period. User has agency to time the redemption.
+
+**V2 follow-ups** (not blocking launch):
+- Add `activatesAt` field or metadata flag so referral grants can queue to activate after a paid sub expires
+- Dashboard UI warning when the redemption tier is less-or-equal to the user's active paid tier
+- Support multiple queued referral grants (stack in metadata, advance on each expiry)
+
+## Attribution + Fraud Detection
+
+`ReferralAttribution` Postgres table logs every attribution-relevant event:
+- `membership_payment`, `membership_payment_over_cap`
+- `buzz_kickback`, `buzz_kickback_skipped_no_membership`
+- `referrer_too_young`
+
+Each row captures `referralCodeId` (FK to `UserReferralCode`), `refereeId`, event type, source event id (Stripe invoice or PI), payment provider, Stripe PI / invoice / charge IDs, card fingerprint (from Stripe `PaymentIntent.payment_method.card.fingerprint`), IP address (when available), and a JSON metadata blob.
+
+**Indexes**: `(referralCodeId, createdAt)`, `(refereeId)`, `(paymentMethodFingerprint)`, `(ipAddress)`, `(stripePaymentIntentId)` — optimized for the "show me everything tied to this code / card / IP" queries.
+
+Use postgres-query skill for ad-hoc mod review. Paddle events are not attributed (Paddle is deprecated; see paddle.ts header comment).
+
+## Notifications
+
+Referral reward events fire both **signals** (live UI updates) and **Notifications** (persistent in-app + email when subscribed):
+
+| Event | Signal | Notification |
+|---|---|---|
+| Pending purchase | `referral:purchase-pending` | — |
+| Reward settled (referrer) | `referral:settled` | `referral-reward-settled` |
+| Welcome bonus settled (referee) | — | `referral-welcome-bonus` |
+| Milestone hit | `referral:milestone` | `referral-milestone-hit` |
+| Tokens expiring in 7d | `referral:token-expiring-soon` | `referral-token-expiring` (daily cron, deduped per-user-per-expiry-date) |
+| Tier granted via redemption | `referral:tier-granted` | — |
+| Click / checkout-viewed | `referral:click`, `referral:checkout-viewed` | — |
+| Chargeback clawback | `referral:clawback` | — |
+
+Types live in `src/server/notifications/referral.notifications.ts` and are registered in `utils.notifications.ts`.
+
+
