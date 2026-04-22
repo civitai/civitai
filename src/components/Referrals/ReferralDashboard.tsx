@@ -26,10 +26,12 @@ import {
   IconBrandReddit,
   IconBrandX,
   IconCheck,
+  IconCircleCheck,
   IconClock,
   IconCoin,
   IconCopy,
   IconGift,
+  IconHistory,
   IconInfoCircle,
   IconLock,
   IconRocket,
@@ -77,6 +79,11 @@ const INITIAL_ACTIVITY_COUNT = 10;
 const ALERT_HOW_IT_WORKS = 'referral-how-it-works';
 const ALERT_KICKBACK = 'referral-kickback-info';
 const ALERT_TOKEN_BANK = 'referral-token-bank-info';
+
+const premiumCardStyle: React.CSSProperties = {
+  background: 'light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
+  boxShadow: 'light-dark(0 1px 3px rgba(0,0,0,0.08), 0 1px 3px rgba(0,0,0,0.4))',
+};
 
 function formatNum(n: number) {
   return n.toLocaleString();
@@ -218,8 +225,9 @@ export function ReferralDashboard({
               <StatBlock
                 label="Earned"
                 value={formatNum(lifetimeBuzz)}
-                icon={<IconBoltFilled size={20} />}
-                accent="blue"
+                icon={<IconCircleCheck size={20} />}
+                valueIcon={<IconBoltFilled size={18} color="var(--mantine-color-blue-5)" />}
+                accent="green"
                 tooltip="Total Blue Buzz you've earned from buzz kickbacks and milestone bonuses."
               />
             </Grid.Col>
@@ -228,6 +236,7 @@ export function ReferralDashboard({
                 label="Pending"
                 value={formatNum(data.balance.pendingBlueBuzz)}
                 icon={<IconClock size={20} />}
+                valueIcon={<IconBoltFilled size={18} color="var(--mantine-color-blue-5)" />}
                 accent="gray"
                 tooltip="Blue Buzz from recent kickbacks. Settles 7 days after the purchase in case of refund."
               />
@@ -355,16 +364,18 @@ export function ReferralDashboard({
           <Grid>
             <Grid.Col span={{ base: 12, sm: 6 }}>
               <StatBlock
-                icon={<IconCoin size={20} />}
+                icon={<IconCircleCheck size={20} />}
+                valueIcon={<IconCoin size={18} color="var(--mantine-color-yellow-5)" />}
                 label="Spendable"
                 value={formatNum(data.balance.settledTokens)}
-                accent="yellow"
+                accent="green"
                 tooltip="Tokens ready to redeem. Spendable tokens move from Pending after a 7-day hold once a referee's membership payment settles."
               />
             </Grid.Col>
             <Grid.Col span={{ base: 12, sm: 6 }}>
               <StatBlock
                 icon={<IconClock size={20} />}
+                valueIcon={<IconCoin size={18} color="var(--mantine-color-yellow-5)" />}
                 label="Pending"
                 value={formatNum(data.balance.pendingTokens)}
                 accent="gray"
@@ -466,7 +477,7 @@ export function ReferralDashboard({
                         </Stack>
                       </Group>
                       <Group gap={4} align="center" wrap="nowrap">
-                        <Text fw={800} size="xl" className="leading-none" c={rewardColor}>
+                        <Text fw={800} size="xl" className="leading-none">
                           +
                         </Text>
                         {isTokenReward ? (
@@ -577,6 +588,7 @@ function ReferralCodeBlock({ code, shareLink }: { code: string; shareLink: strin
       radius="md"
       withBorder
       className="relative overflow-hidden"
+      style={premiumCardStyle}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
@@ -698,12 +710,14 @@ function StatBlock({
   label,
   value,
   icon,
+  valueIcon,
   accent,
   tooltip,
 }: {
   label: string;
   value: string;
   icon: React.ReactNode;
+  valueIcon?: React.ReactNode;
   accent: string;
   tooltip?: string;
 }) {
@@ -727,9 +741,12 @@ function StatBlock({
               </Tooltip>
             )}
           </Group>
-          <Text size="xl" fw={800} className="leading-none">
-            {value}
-          </Text>
+          <Group gap={4} align="center" wrap="nowrap">
+            {valueIcon}
+            <Text size="xl" fw={800} className="leading-none">
+              {value}
+            </Text>
+          </Group>
         </Stack>
       </Group>
     </Paper>
@@ -896,7 +913,7 @@ function TierPerksPopover({ tier }: { tier: string }) {
   ];
 
   return (
-    <Popover width={300} position="bottom-end" shadow="lg" withArrow>
+    <Popover width={300} position="bottom-end" shadow="lg" withArrow withinPortal>
       <Popover.Target>
         <Tooltip label="See tier perks" withArrow>
           <ActionIcon variant="subtle" size="sm" aria-label="View tier perks">
@@ -959,6 +976,7 @@ function RankCard({
       radius="md"
       withBorder
       className="relative overflow-hidden"
+      style={premiumCardStyle}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
     >
@@ -1041,7 +1059,8 @@ function RankCard({
             <StatBlock
               label="Lifetime Blue Buzz"
               value={lifetimeBuzz.toLocaleString()}
-              icon={<IconBoltFilled size={20} />}
+              icon={<IconHistory size={20} />}
+              valueIcon={<IconBoltFilled size={18} color="var(--mantine-color-blue-5)" />}
               accent="blue"
             />
           </Grid.Col>
