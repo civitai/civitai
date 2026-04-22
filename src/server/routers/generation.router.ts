@@ -16,6 +16,7 @@ import {
   getResourceData,
   getUnavailableResources,
   resolveImageMeta,
+  setGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleUnavailableResource,
@@ -61,6 +62,14 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getGenerationStatus()),
+  setStatus: moderatorProcedure
+    .input(
+      z.object({
+        available: z.boolean(),
+        message: z.string().max(2000).nullish(),
+      })
+    )
+    .mutation(({ input }) => setGenerationStatus(input)),
   getGenerationConfig: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getGenerationConfig()),
@@ -70,15 +79,13 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
     ),
-  getResourceDataByIds: publicProcedure
-    .input(getResourceDataByIdsSchema)
-    .query(({ input, ctx }) =>
-      getResourceData(input.ids, {
-        user: ctx.user,
-        withPreview: true,
-        sfwOnly: ctx.features.isGreen,
-      })
-    ),
+  getResourceDataByIds: publicProcedure.input(getResourceDataByIdsSchema).query(({ input, ctx }) =>
+    getResourceData(input.ids, {
+      user: ctx.user,
+      withPreview: true,
+      sfwOnly: ctx.features.isGreen,
+    })
+  ),
   resolveImageMeta: publicProcedure
     .input(resolveImageMetaSchema)
     .query(({ input, ctx }) =>

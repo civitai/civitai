@@ -111,26 +111,40 @@ function generateSessionId() {
   return randomBytes(4).toString('hex');
 }
 
-// Update URL-related env vars to use the correct port
+// Update URL-related env vars to use the correct port.
+// Returns { envVars, overrides } where `overrides` lists the remapped vars for logging.
 function updateEnvUrlsForPort(envVars, port) {
   const defaultPort = 3000;
-  if (port === defaultPort) return envVars;
+  const overrides = [];
+  if (port === defaultPort) return { envVars, overrides };
 
-  // List of env vars that contain localhost URLs that need port updates
-  const urlVars = [
+  // localhost:3000 → localhost:<port> (keeps scheme/path intact)
+  const portUrlVars = [
     'NEXTAUTH_URL',
     'NEXTAUTH_URL_INTERNAL',
     'NEXT_PUBLIC_BASE_URL',
-    'SERVER_DOMAIN_BLUE', // This one uses domain:port format
+    'SERVER_DOMAIN_BLUE',
   ];
+  for (const varName of portUrlVars) {
+    if (envVars[varName] && envVars[varName].includes('localhost:3000')) {
+      const before = envVars[varName];
+      envVars[varName] = before.replace(/localhost:3000/g, `localhost:${port}`);
+      overrides.push(`${varName}: ${before} -> ${envVars[varName]}`);
+    }
+  }
 
-  for (const varName of urlVars) {
-    if (envVars[varName]) {
-      // Replace localhost:3000 with localhost:<port>
-      envVars[varName] = envVars[varName].replace(
-        /localhost:3000/g,
-        `localhost:${port}`
-      );
+  // If auth URLs point at a non-localhost host (e.g. civitai-dev.blue via an rgb-proxy
+  // that only backs the default port), OAuth cookies won't be scoped to this session's
+  // port. Force auth URLs to localhost:<port> so credentials-based logins (e.g. the
+  // /testing/testing-login page) work on secondary sessions without the user manually
+  // maintaining a per-worktree .env.
+  const localhostOverrideVars = ['NEXTAUTH_URL', 'NEXTAUTH_URL_INTERNAL', 'NEXT_PUBLIC_BASE_URL'];
+  const localhostUrl = `http://localhost:${port}`;
+  for (const varName of localhostOverrideVars) {
+    const current = envVars[varName];
+    if (current && !current.includes(`localhost:${port}`)) {
+      envVars[varName] = localhostUrl;
+      overrides.push(`${varName}: ${current} -> ${localhostUrl}`);
     }
   }
 
@@ -139,7 +153,7 @@ function updateEnvUrlsForPort(envVars, port) {
     envVars.NEXT_PUBLIC_BASE_URL = envVars.NEXTAUTH_URL;
   }
 
-  return envVars;
+  return { envVars, overrides };
 }
 
 // Load environment variables from .env file
@@ -265,7 +279,11 @@ class DevSession {
     let envVars = loadEnvFile(this.envPath);
 
     // Update URL-related env vars if using non-default port
-    envVars = updateEnvUrlsForPort(envVars, this.port);
+    const { envVars: remapped, overrides } = updateEnvUrlsForPort(envVars, this.port);
+    envVars = remapped;
+    for (const override of overrides) {
+      this.addLog('info', `Env remap: ${override}`);
+    }
 
     // Set PORT in environment
     envVars.PORT = String(this.port);

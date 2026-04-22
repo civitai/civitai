@@ -221,7 +221,7 @@ export default function UserBuzzDashboard() {
                         size="lg"
                         radius="xl"
                         variant="light"
-                        color="yellow"
+                        color="gray"
                         leftSection={<IconSparkles size={14} />}
                       >
                         Event {formatMultiplier(globalRewardsBonus)}

@@ -232,6 +232,21 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
+export async function setGenerationStatus(input: { available: boolean; message?: string | null }) {
+  const current = await getGenerationStatus();
+  const next: GenerationStatus = {
+    ...current,
+    available: input.available,
+    message: input.message ?? null,
+  };
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.GENERATION.STATUS,
+    JSON.stringify(next)
+  );
+  return next;
+}
+
 export type RemixOfProps = {
   id?: number;
   url?: string;
