@@ -21,6 +21,35 @@ export type StepMetadataFormat<T extends ResourceLike> = {
 };
 
 // =============================================================================
+// Resource Slot Keys
+// =============================================================================
+
+/**
+ * All generation-graph resource slot keys — single source of truth used by
+ * anything that needs slot-aware behavior (params-strip, id extraction,
+ * split/combine). Add new resource slots here + add the identity rule in
+ * `SINGLETON_SLOT_BY_MODEL_TYPE` below (if it's a singleton) and every
+ * downstream helper picks it up automatically.
+ *
+ * Order matters for `combineResources` — it determines the position of each
+ * slot in the resulting flat array.
+ */
+export const RESOURCE_NODE_KEYS = ['model', 'upscaler', 'resources', 'vae'] as const;
+export type ResourceNodeKey = (typeof RESOURCE_NODE_KEYS)[number];
+
+/**
+ * Maps a resource's `model.type` to the singleton slot key it occupies.
+ * Resources with a `model.type` not listed here fall into the `resources`
+ * catchall slot.
+ */
+const SINGLETON_SLOT_BY_MODEL_TYPE: Partial<Record<string, Exclude<ResourceNodeKey, 'resources'>>> =
+  {
+    Checkpoint: 'model',
+    Upscaler: 'upscaler',
+    VAE: 'vae',
+  };
+
+// =============================================================================
 // Split: flat resources[] → { model, resources, vae }
 // =============================================================================
 
@@ -45,14 +74,19 @@ export function splitResourcesByType<T extends ResourceLike>(
   // Filter out injectable resources (draft LoRAs etc.)
   const userResources = resources.filter((r) => !allInjectableResourceIds.includes(r.id));
 
-  const model = userResources.find((r) => r.model.type === 'Checkpoint');
-  const upscaler = userResources.find((r) => r.model.type === 'Upscaler');
-  const vae = userResources.find((r) => r.model.type === 'VAE');
-  const additional = userResources.filter(
-    (r) => r.model.type !== 'Checkpoint' && r.model.type !== 'Upscaler' && r.model.type !== 'VAE'
-  );
-
-  return { model, upscaler, resources: additional, vae };
+  const result: { model?: T; upscaler?: T; resources: T[]; vae?: T } = { resources: [] };
+  for (const r of userResources) {
+    const slot = SINGLETON_SLOT_BY_MODEL_TYPE[r.model.type];
+    if (slot) {
+      // First-wins for duplicate singletons — matches the old `.find` semantic.
+      // Subsequent resources with the same type are silently dropped (as the
+      // old `.filter` excluded them too).
+      if (result[slot] === undefined) result[slot] = r;
+    } else {
+      result.resources.push(r);
+    }
+  }
+  return result;
 }
 
 // =============================================================================
