@@ -2,6 +2,7 @@ import { EnhancementDetails } from './EnhancementDetails';
 import {
   Alert,
   Button,
+  Checkbox,
   Group,
   Loader,
   ScrollArea,
@@ -11,6 +12,7 @@ import {
   Text,
   Textarea,
 } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconSparkles } from '@tabler/icons-react';
 import { useState } from 'react';
 import * as z from 'zod';
@@ -28,6 +30,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
 
 const ENHANCE_COST = 1;
+const TEMPERATURE_STORAGE_KEY = 'prompt-enhance-temperature';
+const SEGMENT_PROMPT_STORAGE_KEY = 'prompt-enhance-segment-prompt';
+const DEFAULT_TEMPERATURE = 0.7;
 
 const enhanceFormSchema = z.object({
   prompt: z.string().min(1),
@@ -75,6 +80,16 @@ export function EnhanceTab({
   const [preserveTriggerWords, setPreserveTriggerWords] = useState<string[]>(() =>
     getUsedTriggerWords(triggerWords, prompt, negativePrompt)
   );
+  const [segmentPrompt, setSegmentPrompt] = useLocalStorage({
+    key: SEGMENT_PROMPT_STORAGE_KEY,
+    defaultValue: false,
+    getInitialValueInEffect: false,
+  });
+  const [storedTemperature, setStoredTemperature] = useLocalStorage({
+    key: TEMPERATURE_STORAGE_KEY,
+    defaultValue: DEFAULT_TEMPERATURE,
+    getInitialValueInEffect: false,
+  });
 
   const form = useForm({
     schema: enhanceFormSchema,
@@ -82,7 +97,7 @@ export function EnhanceTab({
       prompt,
       negativePrompt: negativePrompt ?? '',
       instruction: instruction ?? '',
-      temperature: 0.7,
+      temperature: storedTemperature,
     },
   });
 
@@ -111,6 +126,7 @@ export function EnhanceTab({
       instruction: values.instruction || null,
       temperature: values.temperature ?? 0.7,
       preserveTriggerWords: preserveTriggerWords.length ? preserveTriggerWords : null,
+      segmentPrompt,
     };
   };
 
@@ -328,6 +344,12 @@ export function EnhanceTab({
                 value={preserveTriggerWords}
                 onChange={setPreserveTriggerWords}
               />
+              <Checkbox
+                label="Break prompt into segments"
+                description="Split the enhanced prompt into logical segments separated by newlines"
+                checked={segmentPrompt}
+                onChange={(e) => setSegmentPrompt(e.currentTarget.checked)}
+              />
               <div className="px-2">
                 <Text size="sm" fw={500} mb={4}>
                   Creativity ({currentTemperature?.toFixed(1)})
@@ -335,7 +357,10 @@ export function EnhanceTab({
                 <Slider
                   {...form.register('temperature')}
                   value={currentTemperature}
-                  onChange={(val) => form.setValue('temperature', val)}
+                  onChange={(val) => {
+                    form.setValue('temperature', val);
+                    setStoredTemperature(val);
+                  }}
                   min={0}
                   max={1}
                   step={0.1}

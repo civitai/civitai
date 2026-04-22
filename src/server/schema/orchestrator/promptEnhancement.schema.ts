@@ -7,6 +7,7 @@ export const promptEnhancementSchema = z.object({
   temperature: z.number().min(0).max(1).nullish(),
   instruction: z.string().nullish(),
   preserveTriggerWords: z.string().array().nullish(),
+  segmentPrompt: z.boolean().nullish(),
 });
 
 export type PromptEnhancementSchema = z.infer<typeof promptEnhancementSchema>;
