@@ -90,6 +90,7 @@ export function ReferralTimelineProgress({ grant }: { grant: ReferralGrant | nul
               return (
                 <Tooltip
                   key={`${segment.tier}-${index}`}
+                  color="dark"
                   label={
                     <Stack gap={4}>
                       <Text size="sm" fw={500} tt="capitalize">
@@ -154,8 +155,7 @@ export function ReferralTimelineProgress({ grant }: { grant: ReferralGrant | nul
             style={{ color: 'var(--mantine-color-dimmed)', flexShrink: 0, marginTop: 2 }}
           />
           <Text size="xs" c="dimmed">
-            Chunks activate highest tier first. When the active chunk ends, the next queued tier
-            takes over automatically.
+            Your highest tier membership is used first. Lower-tier memberships automatically follow.
           </Text>
         </Group>
       </Stack>

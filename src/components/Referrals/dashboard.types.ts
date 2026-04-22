@@ -33,8 +33,14 @@ export const MILESTONE_NAMES: Record<number, string> = {
   1_000_000: 'Legend',
 };
 
-export function computeRecruiterScore(conversions: number, lifetimeBlueBuzz: number) {
-  return conversions * 1_000 + lifetimeBlueBuzz;
+/**
+ * Recruiter Score is the same metric as lifetime Referral Points —
+ * 1 point per Blue Buzz earned + tier-weighted points per paid referral
+ * month (1k/2.5k/5k for Bronze/Silver/Gold, ≈10% of each tier's monthly
+ * Buzz value). Keep this helper as a stable alias for UI code.
+ */
+export function computeRecruiterScore(lifetimePoints: number) {
+  return lifetimePoints;
 }
 
 export function getRankForScore(score: number): {

@@ -10,7 +10,10 @@ import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
+  resolver: async ({ features, session, ctx }) => {
+    if (!features?.referralProgramV2) {
+      return { notFound: true };
+    }
     if (!session || !session.user)
       return {
         redirect: {
@@ -47,7 +50,7 @@ export default function ReferralsPage() {
   if (isLoading || !data) {
     return (
       <>
-        <Meta title="Referrals" deIndex />
+        <Meta title="Civitai | Refer & earn" deIndex />
         <Container size="md" className="py-8">
           <ReferralDashboardSkeleton />
         </Container>
@@ -62,7 +65,7 @@ export default function ReferralsPage() {
 
   return (
     <>
-      <Meta title="Referrals" deIndex />
+      <Meta title="Civitai | Refer & earn" deIndex />
       <Container size="md" className="py-8">
         <Stack gap="lg">
           <ReferralDashboard

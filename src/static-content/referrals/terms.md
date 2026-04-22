@@ -1,46 +1,3 @@
-<!--
-PLACEMENT & INTEGRATION NOTES (for Justin, not part of the published terms)
-
-Recommended final location:
-  src/static-content/referrals/terms.md
-  → served at /content/referrals/terms via src/pages/content/[[...slug]].tsx
-
-This sits alongside the other program-specific terms already live on the site:
-  - /content/tos                   (main TOS)
-  - /content/buzz/terms            (Buzz Terms & Conditions)
-  - /content/creator-program-v2-tos
-  - /content/privacy
-
-Cross-linking recommendations:
-  1. Main TOS: add a single-line reference in the "Additional Terms" paragraph
-     (Section 19.4) or alongside the Buzz reference in Section 4:
-     "Your participation in the Civitai Referral Program is subject to the
-     Referral Program Terms, which are incorporated into these Terms by this
-     reference."
-
-  2. /user/referrals dashboard: link in footer or next to the "Your code" hero
-     section. YES - definitely link here. Small "Program Terms" text link is
-     enough; users who care will click.
-
-  3. Checkout flow: when a referral code cookie is present on the checkout page,
-     show a small disclosure line under the code banner:
-       "Using code XYZ. Referral Program Terms apply."
-     with "Referral Program Terms" as a link. This covers disclosure for the
-     referee side of the transaction without being in the way.
-
-  4. Onboarding: no new link needed. Existing TOS acceptance covers it via the
-     incorporation-by-reference line in main TOS.
-
-Tone notes from reading existing Civitai legal docs:
-  - Main TOS is conventional, numbered, capitalized-warnings legalese
-  - Buzz Terms are much lighter, bolded-inline-definitions style, less formal
-  - Creator Program v2 ToS is the closest match in spirit: short numbered
-    sections, plain-English, practical rules + consequences
-  - Draft below follows the Creator Program v2 / Buzz Terms tone (lighter,
-    practical) rather than the main TOS tone (heavy legalese), which is
-    consistent with how program-specific terms are written on this platform.
--->
-
 ---
 title: Civitai Referral Program Terms
 description: Terms of Service for the Civitai Referral Program
@@ -71,7 +28,7 @@ For the purposes of these Referral Terms:
 - **Referral Code** - the unique code automatically assigned to each eligible Civitai account. Civitai may also issue custom codes to select users (for example, social-media partners) at its sole discretion.
 - **Referral Cookie** - the browser cookie set when someone visits Civitai via a referral link. The Referral Cookie lasts 30 days from the click.
 - **Referral Token** - an on-platform credit earned by Referrers on qualifying Referee Membership payments. Redeemable in the Referral Shop for temporary Membership perks. Not redeemable for cash or Buzz.
-- **Blue Buzz** - a non-transferable form of Buzz on the Service. Used primarily for NSFW generation and other platform features. Not redeemable for cash. See the [Buzz Terms](/content/buzz/terms).
+- **Blue Buzz** - a non-transferable form of Buzz on the Service. Used primarily for generation and other platform features. Not redeemable for cash. See the [Buzz Terms](/content/buzz/terms).
 - **Settlement** - the 7-day holding window after a qualifying event. During Settlement, rewards are "pending" and may be reversed if the underlying payment is refunded or charged back. After Settlement, rewards move to "settled" and become spendable.
 - **Qualifying Event** - a paid Membership month or a Buzz purchase made by a Referee that triggers Referrer rewards under Section 4.
 
@@ -104,10 +61,10 @@ When someone visits Civitai through a referral link, we set a Referral Cookie th
 You earn Referral Tokens when your Referee pays for a Civitai Membership:
 
 | Referee Membership Tier | Tokens per Paid Month |
-|---|---|
-| Bronze | 1 |
-| Silver | 2 |
-| Gold | 3 |
+| ----------------------- | --------------------- |
+| Bronze                  | 1                     |
+| Silver                  | 2                     |
+| Gold                    | 3                     |
 
 Tokens accrue for up to **the first 3 paid Membership months** per Referee. After that cap, additional Membership payments from the same Referee do not generate further Tokens.
 
