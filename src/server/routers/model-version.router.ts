@@ -20,6 +20,7 @@ import {
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
+  mergeVersionsSchema,
   deleteExplorationPromptSchema,
   earlyAccessModelVersionsOnTimeframeSchema,
   getModelVersionByModelTypeSchema,
@@ -30,6 +31,8 @@ import {
   modelVersionsGeneratedImagesOnTimeframeSchema,
   modelVersionUpsertSchema2,
   publishVersionSchema,
+  addLinkedComponentSchema,
+  setLinkedComponentsSchema,
   upsertExplorationPromptSchema,
   getModelVersionsByIdsInput,
 } from '~/server/schema/model-version.schema';
@@ -43,8 +46,11 @@ import {
   getModelVersionsPopularity,
   getVersionById,
   getVersionsByIds,
+  addLinkedComponent,
+  setLinkedComponents,
   upsertExplorationPrompt,
   bustMvCache,
+  mergeVersions,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
@@ -101,6 +107,14 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('earlyAccessModel'))
     .mutation(toggleNotifyEarlyAccessHandler),
+  setLinkedComponents: guardedProcedure
+    .input(setLinkedComponentsSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input }) => setLinkedComponents(input)),
+  addLinkedComponent: guardedProcedure
+    .input(addLinkedComponentSchema)
+    .use(isOwnerOrModerator)
+    .mutation(async ({ input }) => addLinkedComponent(input)),
   upsert: guardedProcedure
     .input(modelVersionUpsertSchema2)
     .use(isOwnerOrModerator)
@@ -164,4 +178,7 @@ export const modelVersionRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(recheckModelVersionTrainingStatusHandler),
+  mergeVersions: guardedProcedure
+    .input(mergeVersionsSchema)
+    .mutation(({ input, ctx }) => mergeVersions({ ...input, userId: ctx.user.id })),
 });

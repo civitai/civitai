@@ -81,6 +81,9 @@ const nameOverrides: Record<string, string> = {
   arbitrum: 'Arbitrum',
   op: 'Optimism',
   optimism: 'Optimism',
+  UNet: 'UNet',
+  CLIPVision: 'CLIP Vision',
+  ControlNet: 'ControlNet',
 };
 
 export function getDisplayName(

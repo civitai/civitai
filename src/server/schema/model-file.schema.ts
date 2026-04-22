@@ -93,6 +93,8 @@ export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),
   fp: z.enum(constants.modelFileFp).nullish(),
+  quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+  isRequired: z.boolean().nullish(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
   shareDataset: z.boolean().nullish(),
@@ -146,6 +148,24 @@ export const modelFileUpsertSchema = z.union([
   modelFileCreateSchema.extend({ id: z.undefined() }),
   modelFileUpdateSchema,
 ]);
+
+// Type for linked components (used by FilesProvider and Files)
+export type LinkedComponent = {
+  recommendedResourceId?: number;
+  componentType: ModelFileComponentType;
+  modelId: number;
+  modelName: string;
+  versionId: number;
+  versionName: string;
+  fileId: number;
+  fileName: string;
+  sizeKB?: number;
+  /** The ModelFile.type of the linked file (e.g. 'Model', 'Negative') — used for download URLs */
+  fileType?: string;
+  /** The ModelFile.metadata of the linked file (format/size/fp) — used for download URLs */
+  fileMetadata?: { format?: string | null; size?: string | null; fp?: string | null };
+  isRequired?: boolean;
+};
 
 export type RecentTrainingDataInput = z.infer<typeof recentTrainingDataSchema>;
 export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectTrainingFilterSchema);

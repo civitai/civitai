@@ -10,6 +10,7 @@ import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
+  LinkedComponentSettings,
   ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
   ModelVersionMeta,
@@ -110,7 +111,6 @@ export const getModelVersionHandler = async ({
         clipSkip: true,
         status: true,
         createdAt: true,
-        vaeId: true,
         trainingDetails: true,
         trainingStatus: true,
         uploadType: true,
@@ -167,14 +167,67 @@ export const getModelVersionHandler = async ({
       },
     });
 
-    const recommendedResourceIds = version?.recommendedResources.map((x) => x.resource.id) ?? [];
+    // Separate linked components from regular recommended resources
+    const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
+      (settings as LinkedComponentSettings)?.isLinkedComponent === true;
+
+    const allResources = version?.recommendedResources ?? [];
+    const linkedComponentResources = allResources.filter((r) => isLinkedComponent(r.settings));
+    const regularResources = allResources.filter((r) => !isLinkedComponent(r.settings));
+
+    // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
+    const linkedFileIds = [
+      ...new Set(
+        linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)
+      ),
+    ].filter(Boolean);
+    const linkedFileDataMap = new Map<
+      number,
+      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
+    >();
+    if (linkedFileIds.length > 0) {
+      const fileData = await dbRead.modelFile.findMany({
+        where: { id: { in: linkedFileIds } },
+        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+      });
+      for (const f of fileData)
+        linkedFileDataMap.set(f.id, {
+          name: f.name,
+          sizeKB: f.sizeKB,
+          type: f.type,
+          metadata: f.metadata as Record<string, unknown> | null,
+        });
+    }
+
+    const linkedComponents = linkedComponentResources.map((r) => {
+      const s = r.settings as LinkedComponentSettings;
+      const fileData = linkedFileDataMap.get(s.fileId);
+      return {
+        recommendedResourceId: r.id,
+        componentType: s.componentType,
+        modelId: s.modelId,
+        modelName: s.modelName,
+        versionId: r.resource?.id ?? 0,
+        versionName: s.versionName,
+        fileId: s.fileId,
+        fileName: fileData?.name ?? s.fileName,
+        sizeKB: fileData?.sizeKB,
+        fileType: fileData?.type,
+        fileMetadata: fileData?.metadata as
+          | { format?: string | null; size?: string | null; fp?: string | null }
+          | undefined,
+        isRequired: s.isRequired,
+      };
+    });
+
+    const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, {
       user: ctx?.user,
     }).then(
       (data) =>
         data.map((item) => {
-          const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
-            ?.settings ?? {}) as RecommendedSettingsSchema;
+          const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
+            {}) as RecommendedSettingsSchema;
           return { ...item, ...removeNulls(settings) };
         })
     );
@@ -199,6 +252,7 @@ export const getModelVersionHandler = async ({
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
+      linkedComponents,
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;

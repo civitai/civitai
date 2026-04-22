@@ -5,6 +5,7 @@ import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL, constants, nsfwRestrictedBaseModels } from '~/server/common/constants';
+import type { ModelFileType } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -30,6 +31,7 @@ import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
+  MergeVersionsInput,
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
@@ -42,6 +44,9 @@ import type {
   PublishVersionInput,
   QueryModelVersionSchema,
   RecommendedSettingsSchema,
+  AddLinkedComponentInput,
+  LinkedComponentSettings,
+  SetLinkedComponentsInput,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import type { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -76,9 +81,11 @@ import type {
 import { Availability, CommercialUse, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
+import type { ImageMetadata } from '~/server/schema/media.schema';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1736,7 +1743,7 @@ export const createModelVersionPostFromTraining = async ({
         modelVersionId,
         width: image.metadata?.width,
         height: image.metadata?.height,
-        metadata: image.metadata as any,
+        metadata: image.metadata as ImageMetadata,
         meta: image.meta,
         url: image.url as string,
         user,
@@ -1752,6 +1759,142 @@ export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularit
 
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
   return await modelVersionResourceCache.fetch(ids);
+};
+
+/**
+ * Resolves VAE version IDs from linked components for a set of model version IDs.
+ * Returns a Map<sourceVersionId, vaeVersionId>.
+ */
+export async function getLinkedVaeIds(sourceVersionIds: number[]): Promise<Map<number, number>> {
+  if (sourceVersionIds.length === 0) return new Map();
+
+  const rows = await dbRead.recommendedResource.findMany({
+    where: {
+      sourceId: { in: sourceVersionIds },
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { sourceId: true, resourceId: true, settings: true },
+  });
+
+  const map = new Map<number, number>();
+  for (const row of rows) {
+    const s = row.settings as LinkedComponentSettings;
+    if (s.componentType === 'VAE' && row.sourceId) {
+      map.set(row.sourceId, row.resourceId);
+    }
+  }
+  return map;
+}
+
+export const setLinkedComponents = async ({ id, components }: SetLinkedComponentsInput) => {
+  const existing = await dbWrite.recommendedResource.findMany({
+    where: {
+      sourceId: id,
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { id: true },
+  });
+
+  const existingIds = existing.map((x) => x.id);
+  const inputIds = components.map((c) => c.id).filter(isDefined);
+  const toDelete = existingIds.filter((eid) => !inputIds.includes(eid));
+
+  await dbWrite.$transaction([
+    ...(toDelete.length > 0
+      ? [dbWrite.recommendedResource.deleteMany({ where: { id: { in: toDelete }, sourceId: id } })]
+      : []),
+    ...components.map((component) =>
+      dbWrite.recommendedResource.upsert({
+        where: { id: component.id ?? -1 },
+        create: {
+          resourceId: component.resourceId,
+          sourceId: id,
+          settings: component.settings,
+        },
+        update: {
+          settings: component.settings,
+        },
+      })
+    ),
+  ]);
+};
+
+export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
+  // Find all files and pick the primary one using modelFileOrder priority
+  const files = await dbRead.modelFile.findMany({
+    where: { modelVersionId: input.targetVersionId },
+    select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+  });
+
+  if (files.length === 0) {
+    throw new TRPCError({
+      code: 'NOT_FOUND',
+      message: 'No files found for the target model version',
+    });
+  }
+
+  const primaryFile = files.sort(
+    (a, b) =>
+      (constants.modelFileOrder[a.type as ModelFileType] ?? 99) -
+      (constants.modelFileOrder[b.type as ModelFileType] ?? 99)
+  )[0];
+
+  const settings = {
+    isLinkedComponent: true as const,
+    componentType: input.componentType,
+    fileId: primaryFile.id,
+    modelId: input.modelId,
+    modelName: input.modelName,
+    versionName: input.versionName,
+    fileName: primaryFile.name,
+    isRequired: input.isRequired ?? true,
+  };
+
+  // Check for existing linked component with same source + target
+  const existing = await dbWrite.recommendedResource.findFirst({
+    where: {
+      sourceId: input.id,
+      resourceId: input.targetVersionId,
+      settings: { path: ['isLinkedComponent'], equals: true },
+    },
+    select: { id: true },
+  });
+
+  const result = existing
+    ? await dbWrite.recommendedResource.update({
+        where: { id: existing.id },
+        data: { settings },
+      })
+    : await dbWrite.recommendedResource.create({
+        data: {
+          sourceId: input.id,
+          resourceId: input.targetVersionId,
+          settings,
+        },
+      });
+
+  const meta = primaryFile.metadata as Record<string, unknown> | null;
+
+  return {
+    recommendedResourceId: result.id,
+    componentType: input.componentType,
+    modelId: input.modelId,
+    modelName: input.modelName,
+    versionId: input.targetVersionId,
+    versionName: input.versionName,
+    fileId: primaryFile.id,
+    fileName: primaryFile.name,
+    sizeKB: primaryFile.sizeKB,
+    fileType: primaryFile.type,
+    fileMetadata: meta
+      ? {
+          format: meta.format as string | null,
+          size: meta.size as string | null,
+          fp: meta.fp as string | null,
+        }
+      : undefined,
+    isRequired: input.isRequired ?? true,
+  };
 };
 
 export async function updateModelVersionTrainingStatus({
@@ -1804,3 +1947,272 @@ export async function updateModelVersionTrainingStatus({
 
   return updatedVersion;
 }
+
+export const mergeVersions = async ({
+  modelId,
+  targetVersionId,
+  sourceVersionIds,
+  fileTypeMappings,
+  appendDescriptions,
+  userId,
+}: MergeVersionsInput & { userId: number }) => {
+  // Validate ownership
+  const model = await dbRead.model.findUniqueOrThrow({
+    where: { id: modelId },
+    select: {
+      userId: true,
+      modelVersions: {
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          status: true,
+          earlyAccessEndsAt: true,
+          monetization: { select: { id: true, type: true } },
+          meta: true,
+        },
+      },
+    },
+  });
+
+  if (model.userId !== userId) {
+    throw throwBadRequestError('You do not own this model.');
+  }
+
+  const allVersionIds = model.modelVersions.map((v) => v.id);
+  if (!allVersionIds.includes(targetVersionId)) {
+    throw throwBadRequestError('Target version does not belong to this model.');
+  }
+  if (sourceVersionIds.some((id) => !allVersionIds.includes(id))) {
+    throw throwBadRequestError('One or more source versions do not belong to this model.');
+  }
+  if (sourceVersionIds.includes(targetVersionId)) {
+    throw throwBadRequestError('Target version cannot be in the source versions list.');
+  }
+
+  // Block if any source version has active monetization or early access purchases
+  for (const sv of model.modelVersions.filter((v) => sourceVersionIds.includes(v.id))) {
+    if (sv.monetization) {
+      throw throwBadRequestError(
+        `Version "${sv.name}" has active monetization. Remove it before merging.`
+      );
+    }
+    if (sv.earlyAccessEndsAt && sv.earlyAccessEndsAt > new Date()) {
+      throw throwBadRequestError(
+        `Version "${sv.name}" has active early access. Wait for it to end or remove it before merging.`
+      );
+    }
+    const meta = sv.meta as ModelVersionMeta | null;
+    if (meta?.hadEarlyAccessPurchase) {
+      throw throwBadRequestError(
+        `Version "${sv.name}" has had early access purchases and cannot be merged.`
+      );
+    }
+  }
+
+  await dbWrite.$transaction(
+    async (tx) => {
+      // 1. Remap file types and metadata if provided
+      if (fileTypeMappings?.length) {
+        for (const mapping of fileTypeMappings) {
+          const updateData: Record<string, unknown> = {};
+          if (mapping.type) updateData.type = mapping.type;
+          if (mapping.metadata) {
+            const existing = await tx.modelFile.findUnique({
+              where: { id: mapping.fileId },
+              select: { metadata: true },
+            });
+            updateData.metadata = {
+              ...((existing?.metadata as Record<string, unknown>) ?? {}),
+              ...mapping.metadata,
+            };
+          }
+          if (Object.keys(updateData).length > 0) {
+            await tx.modelFile.update({
+              where: { id: mapping.fileId },
+              data: updateData,
+            });
+          }
+        }
+      }
+
+      // 2. Move all files from source versions to target
+      await tx.modelFile.updateMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        data: { modelVersionId: targetVersionId },
+      });
+
+      // 3. Aggregate ModelVersionMetric stats
+      const sourceMetrics = await tx.modelVersionMetric.findMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+      });
+      if (sourceMetrics.length > 0) {
+        const totals = sourceMetrics.reduce(
+          (acc, m) => ({
+            downloadCount: acc.downloadCount + m.downloadCount,
+            commentCount: acc.commentCount + m.commentCount,
+            collectedCount: acc.collectedCount + m.collectedCount,
+            imageCount: acc.imageCount + m.imageCount,
+            tippedCount: acc.tippedCount + m.tippedCount,
+            tippedAmountCount: acc.tippedAmountCount + m.tippedAmountCount,
+            generationCount: acc.generationCount + m.generationCount,
+            thumbsUpCount: acc.thumbsUpCount + m.thumbsUpCount,
+            thumbsDownCount: acc.thumbsDownCount + m.thumbsDownCount,
+            earnedAmount: acc.earnedAmount + m.earnedAmount,
+          }),
+          {
+            downloadCount: 0,
+            commentCount: 0,
+            collectedCount: 0,
+            imageCount: 0,
+            tippedCount: 0,
+            tippedAmountCount: 0,
+            generationCount: 0,
+            thumbsUpCount: 0,
+            thumbsDownCount: 0,
+            earnedAmount: 0,
+          }
+        );
+
+        await tx.$executeRaw`
+          INSERT INTO "ModelVersionMetric" ("modelVersionId", "downloadCount", "commentCount",
+            "collectedCount", "imageCount", "tippedCount", "tippedAmountCount",
+            "generationCount", "thumbsUpCount", "thumbsDownCount", "earnedAmount", "updatedAt")
+          VALUES (${targetVersionId}, ${totals.downloadCount}, ${totals.commentCount},
+            ${totals.collectedCount}, ${totals.imageCount}, ${totals.tippedCount},
+            ${totals.tippedAmountCount}, ${totals.generationCount}, ${totals.thumbsUpCount},
+            ${totals.thumbsDownCount}, ${totals.earnedAmount}, NOW())
+          ON CONFLICT ("modelVersionId") DO UPDATE SET
+            "downloadCount" = "ModelVersionMetric"."downloadCount" + EXCLUDED."downloadCount",
+            "commentCount" = "ModelVersionMetric"."commentCount" + EXCLUDED."commentCount",
+            "collectedCount" = "ModelVersionMetric"."collectedCount" + EXCLUDED."collectedCount",
+            "imageCount" = "ModelVersionMetric"."imageCount" + EXCLUDED."imageCount",
+            "tippedCount" = "ModelVersionMetric"."tippedCount" + EXCLUDED."tippedCount",
+            "tippedAmountCount" = "ModelVersionMetric"."tippedAmountCount" + EXCLUDED."tippedAmountCount",
+            "generationCount" = "ModelVersionMetric"."generationCount" + EXCLUDED."generationCount",
+            "thumbsUpCount" = "ModelVersionMetric"."thumbsUpCount" + EXCLUDED."thumbsUpCount",
+            "thumbsDownCount" = "ModelVersionMetric"."thumbsDownCount" + EXCLUDED."thumbsDownCount",
+            "earnedAmount" = "ModelVersionMetric"."earnedAmount" + EXCLUDED."earnedAmount",
+            "updatedAt" = NOW()
+        `;
+      }
+
+      // 4. Merge ModelMetricDaily — re-point source rows to target, summing on conflict
+      await tx.$executeRaw`
+        INSERT INTO "ModelMetricDaily" ("modelId", "modelVersionId", "type", "date", "count")
+        SELECT "modelId", ${targetVersionId}, "type", "date", "count"
+        FROM "ModelMetricDaily"
+        WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
+        ON CONFLICT ("modelId", "modelVersionId", "type", "date") DO UPDATE SET
+          "count" = "ModelMetricDaily"."count" + EXCLUDED."count"
+      `;
+      await tx.modelMetricDaily.deleteMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+      });
+
+      // 5. Re-point ModelVersionEngagement — delete conflicts first, then move
+      await tx.$executeRaw`
+        DELETE FROM "ModelVersionEngagement"
+        WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
+          AND "userId" IN (
+            SELECT "userId" FROM "ModelVersionEngagement"
+            WHERE "modelVersionId" = ${targetVersionId}
+          )
+      `;
+      await tx.modelVersionEngagement.updateMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        data: { modelVersionId: targetVersionId },
+      });
+
+      // 6. Re-point Posts
+      await tx.post.updateMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        data: { modelVersionId: targetVersionId },
+      });
+
+      // 7. Re-point ImageResource
+      await tx.imageResource.updateMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        data: { modelVersionId: targetVersionId },
+      });
+
+      // 8. Re-point ImageResourceNew — delete conflicts first
+      await tx.$executeRaw`
+        DELETE FROM "ImageResourceNew"
+        WHERE "modelVersionId" IN (${Prisma.join(sourceVersionIds)})
+          AND "imageId" IN (
+            SELECT "imageId" FROM "ImageResourceNew"
+            WHERE "modelVersionId" = ${targetVersionId}
+          )
+      `;
+      await tx.imageResourceNew.updateMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        data: { modelVersionId: targetVersionId },
+      });
+
+      // 9. Re-point ResourceReview
+      await tx.resourceReview.updateMany({
+        where: { modelVersionId: { in: sourceVersionIds } },
+        data: { modelVersionId: targetVersionId },
+      });
+
+      // 10. Re-point RecommendedResource (where source versions are the resource or source)
+      // Delete any that would create self-references
+      await tx.recommendedResource.deleteMany({
+        where: {
+          OR: [
+            { sourceId: { in: sourceVersionIds }, resourceId: targetVersionId },
+            { sourceId: targetVersionId, resourceId: { in: sourceVersionIds } },
+          ],
+        },
+      });
+      await tx.recommendedResource.updateMany({
+        where: { resourceId: { in: sourceVersionIds } },
+        data: { resourceId: targetVersionId },
+      });
+      await tx.recommendedResource.updateMany({
+        where: { sourceId: { in: sourceVersionIds } },
+        data: { sourceId: targetVersionId },
+      });
+
+      // 11. Optionally append source version descriptions
+      if (appendDescriptions) {
+        const targetVersion = model.modelVersions.find((v) => v.id === targetVersionId);
+        const sourceVersions = model.modelVersions.filter((v) => sourceVersionIds.includes(v.id));
+        const descriptionParts = sourceVersions
+          .filter((v) => v.description)
+          .map((v) => `<p><strong>${v.name}:</strong></p>${v.description}`);
+
+        if (descriptionParts.length > 0) {
+          const combined = [targetVersion?.description, ...descriptionParts]
+            .filter(Boolean)
+            .join('');
+          await tx.modelVersion.update({
+            where: { id: targetVersionId },
+            data: { description: combined },
+          });
+        }
+      }
+
+      // 12. Delete source versions (cascade handles remaining child records)
+      await tx.modelVersion.deleteMany({
+        where: { id: { in: sourceVersionIds } },
+      });
+
+      // 13. Update the model's lastVersionAt
+      await updateModelLastVersionAt({ id: modelId, tx });
+    },
+    { timeout: 60000 }
+  );
+
+  // Post-transaction cache busting
+  const allVersionIds2 = [targetVersionId, ...sourceVersionIds];
+  await Promise.all([
+    bustMvCache(allVersionIds2, modelId, userId),
+    dataForModelsCache.bust(modelId),
+    filesForModelVersionCache.bust(targetVersionId),
+    ...sourceVersionIds.map((id) => filesForModelVersionCache.bust(id)),
+    preventReplicationLag('model', modelId),
+    preventReplicationLag('modelVersion', targetVersionId),
+  ]);
+};

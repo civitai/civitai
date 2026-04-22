@@ -47,7 +47,9 @@ export default MixedAuthEndpoint(async function handler(
   const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
 
   try {
-    const modelVersion = await dbRead.$queryRaw<ModelVersionApiReturn[]>`
+    const modelVersion = await dbRead.$queryRaw<
+      (ModelVersionApiReturn & { vaeId?: number | null })[]
+    >`
       SELECT
         mv.id,
         mv."modelId",
@@ -65,7 +67,11 @@ export default MixedAuthEndpoint(async function handler(
         mv."earlyAccessEndsAt",
         mv."earlyAccessConfig",
         mv.description,
-        mv."vaeId",
+        (SELECT rr."resourceId" FROM "RecommendedResource" rr
+         WHERE rr."sourceId" = mv.id
+           AND rr.settings->>'isLinkedComponent' = 'true'
+           AND rr.settings->>'componentType' = 'VAE'
+         LIMIT 1) AS "vaeId",
         mv."uploadType",
         mv."usageControl",
         COALESCE(
@@ -155,7 +161,7 @@ export default MixedAuthEndpoint(async function handler(
 });
 
 export async function prepareModelVersionResponse(
-  modelVersion: ModelVersionApiReturn,
+  modelVersion: ModelVersionApiReturn & { vaeId?: number | null },
   baseUrl: URL,
   images?: AsyncReturnType<typeof getImagesForModelVersion>
 ) {
