@@ -32,6 +32,7 @@ export default function RewardsBonusInfoModal(_props: Props) {
       radius="lg"
       withCloseButton
       closeButtonProps={{
+        radius: 'xl',
         className:
           'bg-black/40 text-white hover:bg-black/60 border border-white/20 backdrop-blur-sm',
       }}
