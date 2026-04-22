@@ -12,6 +12,7 @@ import { Alert, List, Text } from '@mantine/core';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ecosystemByKey, isEcosystemExperimental } from '~/shared/constants/basemodel.constants';
+import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
 import { useWhatIfContext } from './WhatIfProvider';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 
@@ -199,6 +200,35 @@ export function GrokEcosystemAlert({ ecosystem }: GrokEcosystemAlertProps) {
       <Text size="xs">
         When the request is deemed to be in violation of xAI terms the generation of the request
         will still be charged.
+      </Text>
+    </Alert>
+  );
+}
+
+// =============================================================================
+// Seedance Img2Vid Alert
+// =============================================================================
+
+interface SeedanceImg2VidAlertProps {
+  ecosystem?: string;
+  workflow?: string;
+}
+
+/**
+ * Warns users that Seedance's img2vid workflows are frequently rejected by the
+ * provider's copyright detection (false positives).
+ */
+export function SeedanceImg2VidAlert({ ecosystem, workflow }: SeedanceImg2VidAlertProps) {
+  if (ecosystem !== 'Seedance' || !workflow || !isWorkflowOrVariant(workflow, 'img2vid')) {
+    return null;
+  }
+
+  return (
+    <Alert color="yellow" title="Heads up: Seedance often rejects image-to-video" radius="md">
+      <Text size="xs">
+        Seedance applies strict copyright filtering to image-to-video requests and frequently flags
+        ordinary images as copyrighted content, causing generations to fail. If your request is
+        rejected, you will be refunded.
       </Text>
     </Alert>
   );
