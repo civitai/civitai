@@ -127,8 +127,13 @@ export function RequiredComponentsSection({
         total += selectedFile.sizeKB;
       }
     }
+    for (const lc of linkedComponents) {
+      if (lc.sizeKB) {
+        total += lc.sizeKB;
+      }
+    }
     return total;
-  }, [requiredComponents, selectedFiles]);
+  }, [requiredComponents, selectedFiles, linkedComponents]);
 
   const needsPurchase = !canDownload && !!downloadPrice;
 
@@ -144,22 +149,30 @@ export function RequiredComponentsSection({
 
     setDownloading(true);
 
-    for (let i = 0; i < requiredComponents.length; i++) {
-      const component = requiredComponents[i];
+    const downloadUrls: string[] = [];
+    for (const component of requiredComponents) {
       const selectedFile = selectedFiles[component.type] || component.files[0];
       if (selectedFile) {
-        const url = createModelFileDownloadUrl({ versionId, fileId: selectedFile.id });
-        const iframe = document.createElement('iframe');
-        iframe.style.display = 'none';
-        iframe.src = url;
-        document.body.appendChild(iframe);
-        // Clean up iframe after download has started
-        setTimeout(() => iframe.remove(), 60_000);
+        downloadUrls.push(createModelFileDownloadUrl({ versionId, fileId: selectedFile.id }));
+      }
+    }
+    for (const lc of linkedComponents) {
+      downloadUrls.push(
+        createModelFileDownloadUrl({ versionId: lc.versionId, fileId: lc.fileId })
+      );
+    }
 
-        // Small delay between downloads to avoid browser throttling
-        if (i < requiredComponents.length - 1) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
+    for (let i = 0; i < downloadUrls.length; i++) {
+      const iframe = document.createElement('iframe');
+      iframe.style.display = 'none';
+      iframe.src = downloadUrls[i];
+      document.body.appendChild(iframe);
+      // Clean up iframe after download has started
+      setTimeout(() => iframe.remove(), 60_000);
+
+      // Small delay between downloads to avoid browser throttling
+      if (i < downloadUrls.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
       }
     }
 
