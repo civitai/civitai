@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
+  awardMilestones,
   getReferrerBalance,
   getShopOffers,
   redeemTokens,
@@ -41,53 +42,72 @@ function generateCode() {
 export const referralRouter = router({
   getDashboard: protectedProcedure.query(async ({ ctx }) => {
     const userId = ctx.user.id;
-    const [code, balance, recentRewards, milestones, redemptions, conversionStats, referralSub] =
-      await Promise.all([
-        getOrCreateCode(userId),
-        getReferrerBalance(userId),
-        dbRead.referralReward.findMany({
-          where: {
-            userId,
-            kind: { in: [ReferralRewardKind.MembershipToken, ReferralRewardKind.BuzzKickback] },
-            status: { in: [ReferralRewardStatus.Pending, ReferralRewardStatus.Settled] },
-          },
-          orderBy: { earnedAt: 'desc' },
-          take: 25,
-          select: {
-            id: true,
-            kind: true,
-            status: true,
-            tokenAmount: true,
-            buzzAmount: true,
-            tierGranted: true,
-            earnedAt: true,
-            settledAt: true,
-            expiresAt: true,
-          },
-        }),
-        dbRead.referralMilestone.findMany({ where: { userId }, orderBy: { threshold: 'asc' } }),
-        dbRead.referralRedemption.findMany({
-          where: { userId },
-          orderBy: { createdAt: 'desc' },
-          take: 10,
-        }),
-        dbRead.userReferral.count({
-          where: {
-            userReferralCode: { userId },
-            firstPaidAt: { not: null },
-          },
-        }),
-        dbRead.customerSubscription.findFirst({
-          where: { userId, buzzType: 'referral' },
-          select: {
-            status: true,
-            currentPeriodStart: true,
-            currentPeriodEnd: true,
-            metadata: true,
-            product: { select: { metadata: true } },
-          },
-        }),
-      ]);
+    // Fire-and-forget: backfill any milestones the user has earned but that
+    // weren't written yet (e.g. after the points-rebalance). awardMilestones
+    // is idempotent via a unique (userId, threshold) constraint.
+    awardMilestones(userId).catch(() => undefined);
+    const [
+      code,
+      balance,
+      recentRewards,
+      milestones,
+      redemptions,
+      conversionStats,
+      referralSub,
+      paidMembership,
+    ] = await Promise.all([
+      getOrCreateCode(userId),
+      getReferrerBalance(userId),
+      dbRead.referralReward.findMany({
+        where: {
+          userId,
+          kind: { in: [ReferralRewardKind.MembershipToken, ReferralRewardKind.BuzzKickback] },
+          status: { in: [ReferralRewardStatus.Pending, ReferralRewardStatus.Settled] },
+        },
+        orderBy: { earnedAt: 'desc' },
+        take: 25,
+        select: {
+          id: true,
+          kind: true,
+          status: true,
+          tokenAmount: true,
+          buzzAmount: true,
+          tierGranted: true,
+          earnedAt: true,
+          settledAt: true,
+          expiresAt: true,
+        },
+      }),
+      dbRead.referralMilestone.findMany({ where: { userId }, orderBy: { threshold: 'asc' } }),
+      dbRead.referralRedemption.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 10,
+      }),
+      dbRead.userReferral.count({
+        where: {
+          userReferralCode: { userId },
+          firstPaidAt: { not: null },
+        },
+      }),
+      dbRead.customerSubscription.findFirst({
+        where: { userId, buzzType: 'referral' },
+        select: {
+          status: true,
+          currentPeriodStart: true,
+          currentPeriodEnd: true,
+          metadata: true,
+          product: { select: { metadata: true } },
+        },
+      }),
+      dbRead.customerSubscription.findFirst({
+        where: { userId, status: 'active', buzzType: { not: 'referral' } },
+        select: {
+          currentPeriodEnd: true,
+          product: { select: { metadata: true } },
+        },
+      }),
+    ]);
 
     const activeTier = (
       (referralSub?.product?.metadata ?? null) as {
@@ -97,6 +117,10 @@ export const referralRouter = router({
     const referralQueue =
       (referralSub?.metadata as { referralQueue?: { tier: string; durationDays: number }[] } | null)
         ?.referralQueue ?? [];
+
+    const paidMembershipTier = (
+      (paidMembership?.product?.metadata ?? null) as { tier?: string } | null
+    )?.tier;
 
     return {
       code: code.code,
@@ -116,6 +140,13 @@ export const referralRouter = router({
               queue: referralQueue,
             }
           : null,
+      activeMembership:
+        paidMembershipTier && paidMembership
+          ? {
+              tier: paidMembershipTier,
+              currentPeriodEnd: paidMembership.currentPeriodEnd,
+            }
+          : null,
     };
   }),
 
@@ -133,14 +164,41 @@ export const referralRouter = router({
 
   getTierBonuses: publicProcedure.query(async () => {
     const products = await dbRead.product.findMany({ select: { metadata: true } });
-    const byTier: Record<string, number> = {};
+    const monthlyBuzzByTier: Record<string, number> = {};
+    const rewardsMultiplierByTier: Record<string, number> = {};
+    const purchasesMultiplierByTier: Record<string, number> = {};
     for (const p of products) {
       const meta = (p.metadata ?? {}) as SubscriptionProductMetadata;
-      if (!meta.tier || !meta.monthlyBuzz) continue;
-      const existing = byTier[meta.tier];
-      if (!existing || meta.monthlyBuzz > existing) byTier[meta.tier] = meta.monthlyBuzz;
+      if (!meta.tier) continue;
+      // Skip referral-grantable placeholder products (monthlyBuzz=0) so we reflect
+      // real tier perks users would get if they bought the membership.
+      if (meta.referralGrantable) continue;
+      if (meta.monthlyBuzz) {
+        const existing = monthlyBuzzByTier[meta.tier];
+        if (!existing || meta.monthlyBuzz > existing)
+          monthlyBuzzByTier[meta.tier] = meta.monthlyBuzz;
+      }
+      // Coerce — product metadata is loose JSON; multipliers occasionally
+      // come back as strings depending on how they were written.
+      const rewardsMultiplier = Number(meta.rewardsMultiplier);
+      const purchasesMultiplier = Number(meta.purchasesMultiplier);
+      if (Number.isFinite(rewardsMultiplier) && rewardsMultiplier > 1) {
+        const existing = rewardsMultiplierByTier[meta.tier];
+        if (!existing || rewardsMultiplier > existing)
+          rewardsMultiplierByTier[meta.tier] = rewardsMultiplier;
+      }
+      if (Number.isFinite(purchasesMultiplier) && purchasesMultiplier > 1) {
+        const existing = purchasesMultiplierByTier[meta.tier];
+        if (!existing || purchasesMultiplier > existing)
+          purchasesMultiplierByTier[meta.tier] = purchasesMultiplier;
+      }
     }
-    return { monthlyBuzzByTier: byTier, refereeBonusPct: constants.referrals.refereeBonusBuzzPct };
+    return {
+      monthlyBuzzByTier,
+      rewardsMultiplierByTier,
+      purchasesMultiplierByTier,
+      refereeBonusPct: constants.referrals.refereeBonusBuzzPct,
+    };
   }),
 
   trackCheckoutView: publicProcedure

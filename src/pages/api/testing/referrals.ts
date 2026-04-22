@@ -47,7 +47,8 @@ import {
   settleDueRewards,
 } from '~/server/services/referral.service';
 import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/enums';
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 // Hidden debug endpoint for experimenting with the referral program.
@@ -103,17 +104,26 @@ const schema = z
     if (data.action === 'bind-code' && !data.code) {
       ctx.addIssue({ code: 'custom', message: 'bind-code requires code', path: ['code'] });
     }
-    if (data.action === 'grant-tokens' && (!data.tier || !data.tokens)) {
-      ctx.addIssue({ code: 'custom', message: 'grant-tokens requires tier + tokens' });
+    if (data.action === 'grant-tokens' && !data.tier) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'grant-tokens requires tier (tokens defaults to tier amount)',
+      });
     }
     if (data.action === 'grant-blue-buzz' && !data.blueBuzz) {
       ctx.addIssue({ code: 'custom', message: 'grant-blue-buzz requires blueBuzz' });
     }
     if (data.action === 'simulate-membership-payment' && (!data.tier || !data.refereeId)) {
-      ctx.addIssue({ code: 'custom', message: 'simulate-membership-payment requires tier + refereeId' });
+      ctx.addIssue({
+        code: 'custom',
+        message: 'simulate-membership-payment requires tier + refereeId',
+      });
     }
     if (data.action === 'simulate-buzz-purchase' && (!data.refereeId || !data.blueBuzz)) {
-      ctx.addIssue({ code: 'custom', message: 'simulate-buzz-purchase requires refereeId + blueBuzz (the yellow amount spent)' });
+      ctx.addIssue({
+        code: 'custom',
+        message: 'simulate-buzz-purchase requires refereeId + blueBuzz (the yellow amount spent)',
+      });
     }
     if (data.action === 'simulate-chargeback' && !data.sourceEventId) {
       ctx.addIssue({ code: 'custom', message: 'simulate-chargeback requires sourceEventId' });
@@ -186,6 +196,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
     case 'grant-tokens': {
       const sourceEventId = input.sourceEventId ?? `debug-grant:${Date.now()}`;
+      const tierTokens = constants.referrals.tokensPerTier[input.tier!] ?? 0;
+      const tokenAmount = input.tokens ?? tierTokens;
       const reward = await dbWrite.referralReward.create({
         data: {
           userId: input.userId!,
@@ -193,7 +205,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           status: input.settleImmediately
             ? ReferralRewardStatus.Settled
             : ReferralRewardStatus.Pending,
-          tokenAmount: input.tokens!,
+          tokenAmount,
           tierGranted: input.tier,
           sourceEventId,
           earnedAt: now,
@@ -235,9 +247,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
           .status(404)
           .json({ error: 'No referral subscription for user. Redeem tokens first.' });
       }
-      const meta = (sub.metadata as {
-        referralQueue?: { tier: string; durationDays: number }[];
-      } | null) ?? {};
+      const meta =
+        (sub.metadata as {
+          referralQueue?: { tier: string; durationDays: number }[];
+        } | null) ?? {};
       const queue = [...(meta.referralQueue ?? [])];
       queue.push({ tier: input.tier!, durationDays: input.durationDays! });
       await dbWrite.customerSubscription.update({
@@ -250,7 +263,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     }
 
     case 'simulate-membership-payment': {
-      const monthlyBuzz = input.monthlyBuzz ?? { bronze: 10_000, silver: 25_000, gold: 50_000 }[input.tier!];
+      const monthlyBuzz =
+        input.monthlyBuzz ?? { bronze: 10_000, silver: 25_000, gold: 50_000 }[input.tier!];
       const sourceEventId = input.sourceEventId ?? `debug-invoice:${Date.now()}`;
       const result = await recordMembershipPaymentReward({
         refereeId: input.refereeId!,

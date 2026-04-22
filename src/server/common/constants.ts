@@ -193,6 +193,10 @@ export const constants = {
     minReferrerAccountAgeDays: 7,
     maxPaidMonthsPerReferee: 3,
     tokensPerTier: { bronze: 1, silver: 2, gold: 3 } as Record<string, number>,
+    // Referral Points drive both milestone progress and Recruiter Score.
+    // 1 point per Blue Buzz earned, plus a tier-weighted lump per paid
+    // referral month (≈10% of each tier's monthly Buzz value).
+    pointsPerTierMonth: { bronze: 1_000, silver: 2_500, gold: 5_000 } as Record<string, number>,
     refereeBonusBuzzPct: 0.25,
     buzzKickbackPct: 0.1,
     shopItems: [

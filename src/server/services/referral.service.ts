@@ -494,15 +494,7 @@ export async function revokeForChargeback(params: { sourceEventId: string; reaso
 }
 
 export async function awardMilestones(userId: number) {
-  const agg = await dbRead.referralReward.aggregate({
-    where: {
-      userId,
-      kind: ReferralRewardKind.BuzzKickback,
-      status: { in: [ReferralRewardStatus.Settled, ReferralRewardStatus.Redeemed] },
-    },
-    _sum: { buzzAmount: true },
-  });
-  const lifetime = agg._sum.buzzAmount ?? 0;
+  const lifetime = await computeLifetimeReferralPoints(userId);
   if (lifetime <= 0) return;
 
   const topAffiliateCosmeticId = await getTopAffiliateCosmeticId();
@@ -614,6 +606,41 @@ export async function expireSettledTokens(now: Date = new Date()) {
   return { expired: count };
 }
 
+// Referral Points drive the milestone ladder and Recruiter Score.
+// 1 point per Blue Buzz earned (buzz kickbacks + milestone bonuses, once
+// they've cleared), plus a tier-weighted lump per paid referral month
+// from MembershipToken rows. See constants.referrals.pointsPerTierMonth.
+export async function computeLifetimeReferralPoints(userId: number) {
+  const [buzzAgg, tierRows] = await Promise.all([
+    dbRead.referralReward.aggregate({
+      where: {
+        userId,
+        kind: { in: [ReferralRewardKind.BuzzKickback, ReferralRewardKind.MilestoneBonus] },
+        status: { in: [ReferralRewardStatus.Settled, ReferralRewardStatus.Redeemed] },
+      },
+      _sum: { buzzAmount: true },
+    }),
+    dbRead.referralReward.groupBy({
+      by: ['tierGranted'],
+      where: {
+        userId,
+        kind: ReferralRewardKind.MembershipToken,
+        status: { in: [ReferralRewardStatus.Settled, ReferralRewardStatus.Redeemed] },
+      },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const buzzPoints = buzzAgg._sum.buzzAmount ?? 0;
+  let tierPoints = 0;
+  for (const row of tierRows) {
+    const tier = row.tierGranted ?? '';
+    const perMonth = constants.referrals.pointsPerTierMonth[tier] ?? 0;
+    tierPoints += perMonth * row._count._all;
+  }
+  return buzzPoints + tierPoints;
+}
+
 export async function getReferrerBalance(userId: number) {
   const groups = await dbRead.referralReward.groupBy({
     by: ['kind', 'status'],
@@ -653,7 +680,65 @@ export async function getReferrerBalance(userId: number) {
     }
   }
 
-  return { settledTokens, pendingTokens, settledBlueBuzzLifetime, pendingBlueBuzz };
+  // Earliest expiry of any settled, unredeemed token — that's when the user
+  // starts losing unspent tokens if they sit on them. Also sum tokens that
+  // expire within the next 30 days so the UI can flag "use them or lose them".
+  const now = new Date();
+  const expiringSoonCutoff = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const expiringRows = await dbRead.referralReward.findMany({
+    where: {
+      userId,
+      kind: ReferralRewardKind.MembershipToken,
+      status: ReferralRewardStatus.Settled,
+      expiresAt: { not: null, gt: now },
+    },
+    orderBy: { expiresAt: 'asc' },
+    select: { tokenAmount: true, expiresAt: true },
+  });
+
+  const nextTokenExpiresAt = expiringRows[0]?.expiresAt ?? null;
+  const expiringSoonTokens = expiringRows
+    .filter((r) => r.expiresAt && r.expiresAt < expiringSoonCutoff)
+    .reduce((sum, r) => sum + (r.tokenAmount ?? 0), 0);
+
+  // Referral Points — the metric behind both milestone progress and
+  // Recruiter Score. settled/redeemed = lifetime, pending = not yet cleared.
+  const membershipByTier = await dbRead.referralReward.groupBy({
+    by: ['tierGranted', 'status'],
+    where: {
+      userId,
+      kind: ReferralRewardKind.MembershipToken,
+      status: {
+        in: [
+          ReferralRewardStatus.Pending,
+          ReferralRewardStatus.Settled,
+          ReferralRewardStatus.Redeemed,
+        ],
+      },
+    },
+    _count: { _all: true },
+  });
+  let lifetimeTierPoints = 0;
+  let pendingTierPoints = 0;
+  for (const row of membershipByTier) {
+    const perMonth = constants.referrals.pointsPerTierMonth[row.tierGranted ?? ''] ?? 0;
+    const points = perMonth * row._count._all;
+    if (row.status === ReferralRewardStatus.Pending) pendingTierPoints += points;
+    else lifetimeTierPoints += points;
+  }
+  const lifetimePoints = settledBlueBuzzLifetime + lifetimeTierPoints;
+  const pendingPoints = pendingBlueBuzz + pendingTierPoints;
+
+  return {
+    settledTokens,
+    pendingTokens,
+    settledBlueBuzzLifetime,
+    pendingBlueBuzz,
+    lifetimePoints,
+    pendingPoints,
+    nextTokenExpiresAt,
+    expiringSoonTokens,
+  };
 }
 
 export async function getShopOffers() {
