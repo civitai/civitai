@@ -112,6 +112,11 @@ export function MasonryGridVirtual<TData>({
     gap: rowGap,
     scrollMargin,
     initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
+    // Opt into the native `scrollend` event so virtual-core skips its
+    // internal 150ms setTimeout-based scroll-end debounce. That debounce was
+    // installing ~38 timers/sec during feed scroll (perf audit 2026-04).
+    // Falls back to the debounce automatically on browsers without scrollend.
+    useScrollendEvent: true,
   });
 
   if (!items.length) {

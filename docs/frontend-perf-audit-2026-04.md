@@ -202,9 +202,17 @@ query cache. Needs source-map lookup to confirm.
    present). **Status: not in our code — no fix available from our side.**
    If we add our own perf instrumentation later, be sure to disconnect
    observers on page unload.
-4. **Track down the 150 ms scroll debouncer.** Prime suspects: `MasonryProvider`
-   scroll handler, `useBrowsingLevelDebounced`, any Mantine `useDebouncedValue`
-   in a scroll-affected tree.
+4. **~~Track down the 150 ms scroll debouncer.~~** Found it:
+   `@tanstack/virtual-core`'s scroll listener ends scrolling via an
+   internal `debounce(..., isScrollingResetDelay)` (default **150 ms**).
+   The scroll `handler` calls `fallback()` on every scroll event, which
+   resets the timer — reinstalling one `setTimeout(150)` per scroll tick.
+   The three `useVirtualizer` callsites (`MasonryGridVirtual`,
+   `MasonryColumnsVirtual`, `pages/user/downloads.tsx`) are the source of
+   the 3,920 timer installs. **Status: fixed in this branch — all three
+   now pass `useScrollendEvent: true`**, opting into the native `scrollend`
+   event (Chrome 114+, Firefox 109+, Safari 18.2+). virtual-core falls back
+   to the 150 ms debounce automatically on older browsers.
 
 ### P1
 
