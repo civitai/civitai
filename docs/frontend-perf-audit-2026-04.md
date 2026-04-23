@@ -10,6 +10,13 @@ if you want to re-run).
 > metrics, no chat, no notifications. Every number below is a floor, not a
 > ceiling. A logged-in capture will amplify the store/observer/animation paths.
 
+> **Branch offset.** `main` (what civitai.com runs) does NOT yet include
+> `343778e1a ModelCard optimizations` or the other unreleased work on this
+> branch. Some fixes described below are already landed in this branch
+> ahead of main — see "Status" markers. Relatedly, there is a separate
+> [feed-card-dom-audit.md](./feed-card-dom-audit.md) by Briant covering DOM
+> reduction + render cost at feed scale; the two audits are complementary.
+
 ---
 
 ## TL;DR
@@ -178,10 +185,13 @@ query cache. Needs source-map lookup to confirm.
 
 1. **Gate `AnimatedCount` to visible cards.** Render a plain formatted number
    when offscreen; only instantiate `NumberFlow` when the card is intersecting.
-   Halves DOM size and kills the always-on rAF loop.
+   Halves DOM size and kills the always-on rAF loop. **Status: done in this
+   branch (`perf(metrics): gate NumberFlow animation to visible cards`).**
 2. **Switch `MetricSubscriptionProvider` to the shared
    `IntersectionObserverProvider`.** One observer for the feed instead of one
    per card. Fixes `computeIntersections` churn and a detached-node vector.
+   **Status: already done in this branch via `343778e1a ModelCard optimizations`
+   (not yet in prod).**
 3. **Find and disconnect the stuck `PerformanceObserver`.** `grep "new PerformanceObserver"`;
    one of them has `buffered: true` with no `disconnect()`.
 4. **Track down the 150 ms scroll debouncer.** Prime suspects: `MasonryProvider`
