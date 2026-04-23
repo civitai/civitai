@@ -40,10 +40,6 @@ export const getHomeBlocksHandler = async ({
 }): Promise<HomeBlockWithData[]> => {
   const { ownedOnly, excludedSystemHomeBlockIds = [], systemHomeBlockIds } = input;
 
-  if (ctx.domain === 'green') {
-    excludedSystemHomeBlockIds.push(109027); // buzz beggars board
-  }
-
   try {
     const _homeBlocks = await getHomeBlocks({
       userId: ctx.user?.id,
