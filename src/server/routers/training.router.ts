@@ -81,6 +81,7 @@ export const trainingRouter = router({
   // and not the user, so each endpoint needs a per-user rate cap to prevent abuse.
   getAutoLabelUploadUrl: guardedProcedure
     .use(isFlagProtected('imageTraining'))
+    .use(isFlagProtected('trainingAutoLabelOrchestrator'))
     // Per-image: ~1000 images/min is the soft ceiling we want to allow for legitimate
     // use, so the cap matches that 1:1 (each image needs one presign).
     .use(rateLimit({ limit: 1000, period: 60 }))
@@ -88,6 +89,7 @@ export const trainingRouter = router({
   submitAutoLabelWorkflow: guardedProcedure
     .input(submitAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
+    .use(isFlagProtected('trainingAutoLabelOrchestrator'))
     // Per-batch (≤16 images): 100/min covers ~1600 images/min in flight, leaving a
     // little headroom above the 1000/min upload ceiling.
     .use(rateLimit({ limit: 100, period: 60 }))
@@ -95,8 +97,9 @@ export const trainingRouter = router({
   getAutoLabelWorkflow: guardedProcedure
     .input(getAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
-    // Polling — at 1.5s cadence each workflow eats ~40 polls/min. A 1000-image run
-    // chunked at 16 = ~63 workflows; if half are in flight at peak that's ~1260
+    .use(isFlagProtected('trainingAutoLabelOrchestrator'))
+    // Polling — at 5s cadence each workflow eats ~12 polls/min. A 1000-image run
+    // chunked at 16 = ~63 workflows; if a third are in flight at peak that's ~250
     // polls/min. 1500/min keeps polling from being the bottleneck.
     .use(rateLimit({ limit: 1500, period: 60 }))
     .query(({ input, ctx }) => getAutoLabelWorkflow({ ...input, userId: ctx.user.id })),

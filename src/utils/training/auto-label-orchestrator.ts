@@ -8,7 +8,7 @@ import { AUTO_LABEL_BATCH_SIZE } from '~/server/schema/training.schema';
 import { trpcVanilla } from '~/utils/trpc';
 
 // Polling cadence — the orchestrator updates step status as work completes,
-// so 1.5s gives near-realtime feedback without hammering the read endpoint.
+// so 5s gives reasonably fresh feedback without hammering the read endpoint.
 const POLL_INTERVAL_MS = 5000;
 // Hard ceiling so a stuck workflow can't poll forever.
 const POLL_TIMEOUT_MS = 20 * 60 * 1000;
@@ -136,9 +136,10 @@ export async function uploadAndSubmitAutoLabel(
   const fails: string[] = [];
   const submittedBatches: SubmittedBatch[] = [];
 
-  // ---- Phase A: upload + submit each batch sequentially. We submit per-batch
-  // (rather than waiting for everything to upload first) so polling can start
-  // for early batches while later ones are still uploading.
+  // ---- Phase A: upload + submit each batch sequentially. Submitting per-batch
+  // (instead of one giant workflow) keeps each workflow at ≤AUTO_LABEL_BATCH_SIZE
+  // steps so the orchestrator can schedule them concurrently, and isolates
+  // failures to a single batch instead of an entire run.
   for (const batch of batches) {
     if (!isStillActive()) throw new DOMException('Aborted', 'AbortError');
 
@@ -201,15 +202,17 @@ export async function uploadAndSubmitAutoLabel(
     }
   };
 
+  const batchesByWorkflowId = new Map(submittedBatches.map((b) => [b.workflowId, b] as const));
+
   const poll = async () => {
     const pending = new Set(submittedBatches.map((b) => b.workflowId));
 
     while (pending.size > 0) {
       if (!isStillActive()) return;
       if (Date.now() - startedAt > POLL_TIMEOUT_MS) {
-        for (const batch of submittedBatches) {
-          if (!pending.has(batch.workflowId)) continue;
-          markBatchUnreportedAsFailed(batch, 'Polling timed out');
+        for (const workflowId of pending) {
+          const batch = batchesByWorkflowId.get(workflowId);
+          if (batch) markBatchUnreportedAsFailed(batch, 'Polling timed out');
         }
         break;
       }
@@ -227,7 +230,7 @@ export async function uploadAndSubmitAutoLabel(
         const polledId = tickIds[idx];
         if (result.status === 'rejected') return; // transient — try again next tick
         const wf = result.value;
-        const batch = submittedBatches.find((b) => b.workflowId === polledId);
+        const batch = batchesByWorkflowId.get(polledId);
         if (!batch) return;
 
         for (const step of wf.steps) {

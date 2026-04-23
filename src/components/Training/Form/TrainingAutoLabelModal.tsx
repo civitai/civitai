@@ -79,11 +79,17 @@ const useSubmitImages = ({
 
   const submitViaOrchestrator = async () => {
     // Materialize blobs from the same source URLs the legacy zip path used.
+    // Without the .ok check, a 403/404 HTML body would be uploaded as the "image".
     const images = await Promise.all(
-      filteredImages.map(async (imgData) => ({
-        filename: getShortNameFromUrl(imgData),
-        blob: await fetch(imgData.url).then((res) => res.blob()),
-      }))
+      filteredImages.map(async (imgData) => {
+        const res = await fetch(imgData.url);
+        if (!res.ok) {
+          throw new Error(
+            `Failed to fetch ${getShortNameFromUrl(imgData)} (${res.status} ${res.statusText})`
+          );
+        }
+        return { filename: getShortNameFromUrl(imgData), blob: await res.blob() };
+      })
     );
 
     setAutoLabeling(modelId, mediaType, {
@@ -121,12 +127,27 @@ const useSubmitImages = ({
       }
     };
     const onDone = ({ successes, fails }: { successes: number; fails: string[] }) => {
-      showSuccessNotification({
-        title: 'Images auto-labeled successfully!',
-        message: `Tagged ${successes} image${successes === 1 ? '' : 's'}. Failures: ${
-          fails.length
-        }`,
-      });
+      const labelNoun = type === 'caption' ? 'caption' : 'tag';
+      const labelVerb = type === 'caption' ? 'Captioned' : 'Tagged';
+      const message = `${labelVerb} ${successes} image${successes === 1 ? '' : 's'}.${
+        fails.length > 0 ? ` Failures: ${fails.length}` : ''
+      }`;
+      if (successes === 0) {
+        showErrorNotification({
+          title: `Auto-${labelNoun} failed`,
+          error: new Error(message),
+        });
+      } else if (fails.length > 0) {
+        showErrorNotification({
+          title: `Auto-${labelNoun} finished with errors`,
+          error: new Error(message),
+        });
+      } else {
+        showSuccessNotification({
+          title: 'Images auto-labeled successfully!',
+          message,
+        });
+      }
       const defaultState =
         mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
       setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });

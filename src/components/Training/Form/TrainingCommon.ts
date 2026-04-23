@@ -91,7 +91,7 @@ export const applyTagPostProcess = (
   const entries = Object.entries(rawTags ?? {});
   if (entries.length === 0) return [];
 
-  const blacklist = getTextTagsAsList(opts.blacklist ?? '');
+  const blacklist = new Set(getTextTagsAsList(opts.blacklist ?? ''));
   const prependList = getTextTagsAsList(opts.prependTags ?? '');
   const appendList = getTextTagsAsList(opts.appendTags ?? '');
 
@@ -99,7 +99,7 @@ export const applyTagPostProcess = (
     .sort(([, a], [, b]) => b - a)
     .filter(
       ([t, score]) =>
-        score >= (opts.threshold ?? autoLabelLimits.tag.threshold.min) && !blacklist.includes(t)
+        score >= (opts.threshold ?? autoLabelLimits.tag.threshold.min) && !blacklist.has(t)
     )
     .slice(0, opts.maxTags ?? autoLabelLimits.tag.tags.max)
     .map(([t]) => t);
