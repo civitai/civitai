@@ -1,11 +1,12 @@
+import fs from 'fs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { redis, sysRedis } from '~/server/redis/client';
 
-let warmedUp = false;
+const WARMUP_FLAG = '/tmp/warmup-complete';
 
 export function isWarmedUp() {
-  return warmedUp;
+  return fs.existsSync(WARMUP_FLAG);
 }
 
 export async function runWarmup() {
@@ -25,18 +26,12 @@ export async function runWarmup() {
     (redis as any).ping(),
     (sysRedis as any).ping(),
 
-    // Self-fetch a tRPC endpoint to JIT-compile the hot middleware chain
-    fetch(
-      'http://localhost:3000/api/trpc/homeBlock.getAll?input=' +
-        encodeURIComponent(JSON.stringify({ json: {} }))
-    ).catch(() => {}),
-
     // Pre-warm entity metrics cache
     import('~/server/redis/entity-metric-populate').then((m) =>
       m.preWarmEntityMetrics('Image', 1000)
     ),
   ]);
 
-  warmedUp = true;
+  fs.writeFileSync(WARMUP_FLAG, String(Date.now()));
   console.log(`[warmup] Complete in ${Date.now() - start}ms`);
 }
