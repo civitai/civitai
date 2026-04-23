@@ -23,7 +23,6 @@ import {
 } from '@mantine/core';
 import {
   IconAlertTriangle,
-  IconArrowRight,
   IconAward,
   IconBolt,
   IconBoltFilled,
@@ -41,6 +40,7 @@ import {
   IconHistory,
   IconInfoCircle,
   IconLock,
+  IconLockOpen,
   IconRocket,
   IconShare3,
   IconStarFilled,
@@ -56,7 +56,9 @@ import { ReferralTimelineProgress } from '~/components/Referrals/ReferralTimelin
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import type { BenefitItem } from '~/components/Subscriptions/PlanBenefitList';
 import { benefitIconSize, PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { useServerDomains } from '~/providers/AppProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
 import {
   computeRecruiterScore,
@@ -199,12 +201,12 @@ export function ReferralDashboardLite({
   const conversionCount = data.conversionCount;
   const settledTokens = data.balance.settledTokens;
   const pendingTokens = data.balance.pendingTokens;
+  const lifetimeTokens = data.balance.lifetimeTokens;
+  const showClaimSection = settledTokens > 0 || pendingTokens > 0;
+  const showEarningsHero =
+    lifetimeBuzz > 0 || conversionCount > 0 || lifetimeTokens > 0 || pendingTokens > 0;
+  const showRecentActivity = data.recentRewards.length > 0;
   const scrollAreaRef = useScrollAreaRef();
-
-  const scrollToTickets = () => {
-    const el = document.getElementById(TICKETS_SECTION_ID);
-    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  };
 
   return (
     <Stack gap="lg">
@@ -216,7 +218,7 @@ export function ReferralDashboardLite({
         <Stack gap={0}>
           <Title order={1}>Refer &amp; earn</Title>
           <Text c="dimmed" size="sm">
-            Share your code. Earn Blue Buzz when friends pay.
+            Share your code. Earn free membership perks and Blue Buzz when it gets used.
           </Text>
         </Stack>
       </Group>
@@ -229,106 +231,103 @@ export function ReferralDashboardLite({
       {/* Code + share */}
       <ReferralCodeBlock code={data.code} shareLink={shareLink} />
 
-      {/* Lite earnings hero — single big stat + claim CTA */}
-      <EarningsHero
-        lifetimeBuzz={lifetimeBuzz}
-        conversionCount={conversionCount}
-        settledTokens={settledTokens}
-        onClaim={scrollToTickets}
-      />
+      {/* Lite earnings hero — only when user has any signal */}
+      {showEarningsHero && (
+        <EarningsHero
+          lifetimeBuzz={lifetimeBuzz}
+          conversionCount={conversionCount}
+          lifetimeTokens={lifetimeTokens}
+          pendingTokens={pendingTokens}
+        />
+      )}
 
-      {/* Membership tickets (renamed from Token Shop) */}
-      <Card
-        id={TICKETS_SECTION_ID}
-        withBorder
-        p="lg"
-        radius="md"
-        style={{ scrollMarginTop: 80 }}
-      >
-        <Stack gap="lg">
-          <Stack gap={2}>
-            <Title order={4}>Claim a Membership</Title>
-            <Text size="sm" c="dimmed">
-              Use your referral tickets to unlock Membership perks for a limited time. 1 friend&apos;s
-              paid month = 1 ticket (Bronze), 2 (Silver), or 3 (Gold).
-            </Text>
-          </Stack>
+      {/* Membership tickets — only when user has tickets settled or pending */}
+      {showClaimSection && (
+        <Card id={TICKETS_SECTION_ID} withBorder p="lg" radius="md" style={{ scrollMarginTop: 80 }}>
+          <Stack gap="lg">
+            <Stack gap={2}>
+              <Title order={4}>Claim a Membership</Title>
+              <Text size="sm" c="dimmed">
+                Spend your <MembershipTicketsAbbr /> on Membership perks. 1 friend&apos;s paid month
+                = 1 ticket (Bronze), 2 (Silver), or 3 (Gold).
+              </Text>
+            </Stack>
 
-          {!kickbackAlertDismissed && (
-            <Alert
-              variant="light"
-              color="blue"
-              icon={<IconInfoCircle size={18} />}
-              withCloseButton={false}
-            >
-              <Group justify="space-between" wrap="nowrap" gap="xs">
-                <Text size="sm">
-                  Tokens come from friends paying for a Membership with your code, capped at the
-                  first 3 paid months per friend. Spend them within 90 days or they expire.
-                </Text>
-                <CloseButton onClick={() => dismissAlert(ALERT_KICKBACK)} aria-label="Dismiss" />
-              </Group>
-            </Alert>
-          )}
+            {!kickbackAlertDismissed && (
+              <Alert
+                variant="light"
+                color="blue"
+                icon={<IconInfoCircle size={18} />}
+                withCloseButton={false}
+              >
+                <Group justify="space-between" wrap="nowrap" gap="xs">
+                  <Text size="sm">
+                    Tickets come from friends paying for a Membership with your code, capped at the
+                    first 3 paid months per friend. Spend them within 90 days or they expire.
+                  </Text>
+                  <CloseButton onClick={() => dismissAlert(ALERT_KICKBACK)} aria-label="Dismiss" />
+                </Group>
+              </Alert>
+            )}
 
-          <Grid>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <StatBlock
-                icon={<IconTicket size={20} />}
-                valueIcon={<IconTicket size={18} color="var(--mantine-color-yellow-5)" />}
-                valueSuffix={
-                  data.balance.expiringSoonTokens > 0 ? (
-                    <ExpiringTokensIndicator
-                      count={data.balance.expiringSoonTokens}
-                      nextExpiresAt={data.balance.nextTokenExpiresAt}
-                    />
-                  ) : null
-                }
-                label="Tickets available"
-                value={formatNum(settledTokens)}
-                accent="green"
-                infoSlot={<TokenEarningsPopover compact />}
-              />
-            </Grid.Col>
-            <Grid.Col span={{ base: 12, sm: 6 }}>
-              <StatBlock
-                icon={<IconClock size={20} />}
-                valueIcon={<IconTicket size={18} color="var(--mantine-color-yellow-5)" />}
-                label="Pending"
-                value={formatNum(pendingTokens)}
-                accent="gray"
-                tooltip="Tickets from recent referee payments that haven't cleared yet."
-              />
-            </Grid.Col>
-          </Grid>
-
-          <Grid>
-            {groupedShopItems.map((group) => (
-              <Grid.Col key={group.tier} span={{ base: 12, md: 4 }}>
-                <ShopTierCard
-                  tier={group.tier}
-                  offers={group.offers}
-                  settledTokens={settledTokens}
-                  isRedeeming={isRedeeming}
-                  pendingOffer={pendingOffer}
-                  onRedeem={onRedeem}
-                  activeMembership={data.activeMembership}
+            <Grid>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <StatBlock
+                  icon={<IconTicket size={20} />}
+                  valueIcon={<IconTicket size={18} color="var(--mantine-color-yellow-5)" />}
+                  valueSuffix={
+                    data.balance.expiringSoonTokens > 0 ? (
+                      <ExpiringTokensIndicator
+                        count={data.balance.expiringSoonTokens}
+                        nextExpiresAt={data.balance.nextTokenExpiresAt}
+                      />
+                    ) : null
+                  }
+                  label="Tickets available"
+                  value={formatNum(settledTokens)}
+                  accent="green"
+                  infoSlot={<TokenEarningsPopover compact />}
                 />
               </Grid.Col>
-            ))}
-          </Grid>
-        </Stack>
-      </Card>
+              <Grid.Col span={{ base: 12, sm: 6 }}>
+                <StatBlock
+                  icon={<IconClock size={20} />}
+                  valueIcon={<IconTicket size={18} color="var(--mantine-color-yellow-5)" />}
+                  label="Pending"
+                  value={formatNum(pendingTokens)}
+                  accent="gray"
+                  tooltip="Tickets from recent referee payments that haven't cleared yet."
+                />
+              </Grid.Col>
+            </Grid>
 
-      {/* Recent referrals — kept visible, lightweight */}
-      <Card withBorder p="lg" radius="md">
-        <Stack gap="md">
-          <Title order={4}>Recent activity</Title>
-          {visibleActivity.length === 0 ? (
-            <Text c="dimmed" size="sm">
-              Nothing yet. Share your code above to get started.
-            </Text>
-          ) : (
+            <Grid>
+              {groupedShopItems.map((group) => (
+                <Grid.Col key={group.tier} span={{ base: 12, md: 4 }}>
+                  <ShopTierCard
+                    tier={group.tier}
+                    offers={group.offers}
+                    settledTokens={settledTokens}
+                    isRedeeming={isRedeeming}
+                    pendingOffer={pendingOffer}
+                    onRedeem={onRedeem}
+                    activeMembership={data.activeMembership}
+                  />
+                </Grid.Col>
+              ))}
+            </Grid>
+          </Stack>
+        </Card>
+      )}
+
+      {/* Active referral grant timeline — shows just under Claim once redeemed */}
+      {data.referralGrant && <ReferralTimelineProgress grant={data.referralGrant} />}
+
+      {/* Recent referrals — only when something to show */}
+      {showRecentActivity && (
+        <Card withBorder p="lg" radius="md">
+          <Stack gap="md">
+            <Title order={4}>Recent activity</Title>
             <Stack gap="xs">
               {visibleActivity.map((r) => {
                 const isRecruit = r.kind === 'MembershipToken';
@@ -435,9 +434,9 @@ export function ReferralDashboardLite({
                 </Button>
               )}
             </Stack>
-          )}
-        </Stack>
-      </Card>
+          </Stack>
+        </Card>
+      )}
 
       {/* Stats & history disclosure — collapsed by default */}
       <Card withBorder p={0} radius="md">
@@ -487,9 +486,7 @@ export function ReferralDashboardLite({
                       label="Points"
                       value={formatNum(lifetimePoints)}
                       icon={<IconCircleCheck size={20} />}
-                      valueIcon={
-                        <IconStarFilled size={16} color="var(--mantine-color-violet-5)" />
-                      }
+                      valueIcon={<IconStarFilled size={16} color="var(--mantine-color-violet-5)" />}
                       accent="green"
                       infoSlot={<ScoringDetailsPopover compact />}
                     />
@@ -499,9 +496,7 @@ export function ReferralDashboardLite({
                       label="Pending points"
                       value={formatNum(pendingPoints)}
                       icon={<IconClock size={20} />}
-                      valueIcon={
-                        <IconStarFilled size={16} color="var(--mantine-color-violet-5)" />
-                      }
+                      valueIcon={<IconStarFilled size={16} color="var(--mantine-color-violet-5)" />}
                       accent="gray"
                       tooltip="Points from recent referee activity that haven't cleared yet."
                     />
@@ -548,10 +543,7 @@ export function ReferralDashboardLite({
                             <Stack gap={2}>
                               <Text fw={700}>{milestoneName}</Text>
                               <Group gap={4} align="center" wrap="nowrap">
-                                <IconStarFilled
-                                  size={12}
-                                  color="var(--mantine-color-violet-5)"
-                                />
+                                <IconStarFilled size={12} color="var(--mantine-color-violet-5)" />
                                 <Text size="sm" c="dimmed">
                                   {formatNum(m.threshold)} points
                                 </Text>
@@ -593,9 +585,6 @@ export function ReferralDashboardLite({
                 </Stack>
               </Stack>
             </Card>
-
-            {/* Active referral grant timeline */}
-            {data.referralGrant && <ReferralTimelineProgress grant={data.referralGrant} />}
 
             {/* Redemption history */}
             {data.redemptions.length > 0 && (
@@ -703,15 +692,19 @@ function OnboardingStepper({ onDismiss }: { onDismiss: () => void }) {
             number="2"
             icon={<IconUsersGroup size={24} />}
             color="teal"
-            title="Friend pays"
-            body="When they join with your code and pay for a Membership, you start earning."
+            title="Friend buys"
+            body="When someone buys a membership with your code, you start earning."
           />
           <OnboardingStep
             number="3"
             icon={<IconBoltFilled size={24} />}
             color="violet"
             title="You earn"
-            body="Get Blue Buzz each month plus tickets to claim free Memberships for yourself."
+            body={
+              <>
+                Earn <MembershipPerksAbbr /> each month and Blue Buzz on every Buzz purchase.
+              </>
+            }
           />
         </Grid>
       </Stack>
@@ -730,7 +723,7 @@ function OnboardingStep({
   icon: React.ReactNode;
   color: string;
   title: string;
-  body: string;
+  body: React.ReactNode;
 }) {
   return (
     <Grid.Col span={{ base: 12, sm: 4 }}>
@@ -741,7 +734,13 @@ function OnboardingStep({
               {icon}
             </ThemeIcon>
             <Stack gap={0}>
-              <Text size="xs" tt="uppercase" c="dimmed" fw={600} style={{ letterSpacing: '0.06em' }}>
+              <Text
+                size="xs"
+                tt="uppercase"
+                c="dimmed"
+                fw={600}
+                style={{ letterSpacing: '0.06em' }}
+              >
                 Step {number}
               </Text>
               <Text fw={700}>{title}</Text>
@@ -759,82 +758,157 @@ function OnboardingStep({
 function EarningsHero({
   lifetimeBuzz,
   conversionCount,
-  settledTokens,
-  onClaim,
+  lifetimeTokens,
+  pendingTokens,
 }: {
   lifetimeBuzz: number;
   conversionCount: number;
-  settledTokens: number;
-  onClaim: () => void;
+  lifetimeTokens: number;
+  pendingTokens: number;
 }) {
-  const empty = lifetimeBuzz === 0 && conversionCount === 0;
   return (
-    <Paper radius="md" withBorder className="overflow-hidden" style={premiumCardStyle}>
-      <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto]">
-        <Stack gap={6} p="lg" justify="center">
-          <Text size="xs" c="dimmed" tt="uppercase" fw={600} style={{ letterSpacing: '0.08em' }}>
-            Earnings so far
-          </Text>
-          {empty ? (
-            <Stack gap={4}>
-              <Text fw={700} size="lg">
-                No earnings yet
-              </Text>
-              <Text size="sm" c="dimmed">
-                Once a friend joins with your code and pays, you&apos;ll see Blue Buzz pile up here.
-              </Text>
-            </Stack>
-          ) : (
-            <Group gap="lg" align="center" wrap="wrap">
-              <Group gap={8} align="center" wrap="nowrap">
-                <IconBoltFilled size={28} color="var(--mantine-color-blue-5)" />
-                <Stack gap={0}>
-                  <Title order={2} className="leading-none">
-                    {formatNum(lifetimeBuzz)}
-                  </Title>
-                  <Text size="xs" c="dimmed">
-                    Blue Buzz lifetime
+    <Card withBorder p="lg" radius="md">
+      <Stack gap="md">
+        <Title order={4}>Earnings so far</Title>
+        <Grid>
+          <Grid.Col span={{ base: 12, sm: 4 }}>
+            <StatBlock
+              label="Blue Buzz lifetime"
+              value={formatNum(lifetimeBuzz)}
+              icon={<IconHistory size={20} />}
+              valueIcon={<IconBoltFilled size={18} color="var(--mantine-color-blue-5)" />}
+              accent="blue"
+            />
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, sm: 4 }}>
+            <StatBlock
+              label="Tickets lifetime"
+              value={formatNum(lifetimeTokens)}
+              icon={<IconTicket size={20} />}
+              valueIcon={<IconTicket size={18} color="var(--mantine-color-yellow-5)" />}
+              accent="green"
+              valueSuffix={
+                pendingTokens > 0 ? (
+                  <Text span size="xs" c="dimmed">
+                    · {formatNum(pendingTokens)} pending
                   </Text>
-                </Stack>
-              </Group>
-              <Divider orientation="vertical" />
-              <Stack gap={0}>
-                <Text fw={800} size="lg" className="leading-none">
-                  {formatNum(conversionCount)}
-                </Text>
-                <Text size="xs" c="dimmed">
-                  Friends joined
-                </Text>
-              </Stack>
-            </Group>
-          )}
-        </Stack>
+                ) : null
+              }
+            />
+          </Grid.Col>
+          <Grid.Col span={{ base: 12, sm: 4 }}>
+            <StatBlock
+              label="Friends joined"
+              value={formatNum(conversionCount)}
+              icon={<IconUsersGroup size={20} />}
+              accent="violet"
+            />
+          </Grid.Col>
+        </Grid>
+      </Stack>
+    </Card>
+  );
+}
 
-        {/* Tickets + claim CTA */}
-        <div className="hidden w-px bg-gray-200 dark:bg-dark-4 sm:block" />
-        <Stack gap="sm" p="lg" justify="center" align="flex-start" className="sm:items-end">
-          <Group gap={6} wrap="nowrap" align="center">
-            <IconTicket size={18} color="var(--mantine-color-yellow-5)" />
-            <Text size="sm">
-              <Text span fw={800}>
-                {formatNum(settledTokens)}
-              </Text>{' '}
-              <Text span c="dimmed">
-                ticket{settledTokens === 1 ? '' : 's'} ready
-              </Text>
+function MembershipPerksAbbr() {
+  const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
+  const pricingUrl = features.isGreen
+    ? '/pricing'
+    : syncAccount(`//${serverDomains.green}/pricing`);
+  const perks: { icon: React.ReactNode; label: string }[] = [
+    {
+      icon: <IconBolt size={14} />,
+      label: 'Bonus Buzz on daily rewards',
+    },
+    {
+      icon: <IconRocket size={14} />,
+      label: 'Free High priority generation',
+    },
+  ];
+  if (!features.isGreen) {
+    perks.push({
+      icon: <IconLockOpen size={14} />,
+      label: 'Unrestricted generation with Blue Buzz',
+    });
+  }
+  perks.push({
+    icon: <IconCoin size={14} />,
+    label: 'Bonus Buzz on every purchase',
+  });
+
+  return (
+    <Popover width={300} position="top" shadow="lg" withArrow withinPortal>
+      <Popover.Target>
+        <Text
+          component="span"
+          td="underline"
+          style={{
+            textDecorationStyle: 'dotted',
+            textUnderlineOffset: 3,
+            cursor: 'help',
+          }}
+        >
+          Membership perks
+        </Text>
+      </Popover.Target>
+      <Popover.Dropdown className="overflow-hidden">
+        <Stack gap={8}>
+          <Text fw={700} size="sm">
+            Membership perks
+          </Text>
+          <Stack gap={6}>
+            {perks.map((p, i) => (
+              <Group key={i} gap={8} wrap="nowrap" align="center">
+                <ThemeIcon variant="light" color="violet" size={22} radius="xl">
+                  {p.icon}
+                </ThemeIcon>
+                <Text size="xs">{p.label}</Text>
+              </Group>
+            ))}
+          </Stack>
+          <Text size="xs" c="dimmed" lh={1.4}>
+            Full list on the{' '}
+            <Text component="a" href={pricingUrl} target="_blank" td="underline" c="blue.4">
+              pricing page
             </Text>
-          </Group>
-          <Button
-            color="violet"
-            rightSection={<IconArrowRight size={16} />}
-            onClick={onClaim}
-            disabled={settledTokens === 0}
-          >
-            Claim a Membership
-          </Button>
+            .
+          </Text>
         </Stack>
-      </div>
-    </Paper>
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function MembershipTicketsAbbr() {
+  return (
+    <Popover width={300} position="top" shadow="lg" withArrow withinPortal>
+      <Popover.Target>
+        <Text
+          component="span"
+          td="underline"
+          style={{
+            textDecorationStyle: 'dotted',
+            textUnderlineOffset: 3,
+            cursor: 'help',
+          }}
+        >
+          Membership tickets
+        </Text>
+      </Popover.Target>
+      <Popover.Dropdown className="overflow-hidden">
+        <Stack gap={6}>
+          <Text fw={700} size="sm">
+            Membership tickets
+          </Text>
+          <Text size="xs" c="dimmed" lh={1.5}>
+            Earn tickets when a friend pays for a Membership with your code: 1 ticket per Bronze
+            month, 2 for Silver, 3 for Gold (capped at the first 3 paid months per friend). Spend
+            them to unlock free Membership perks for yourself.
+          </Text>
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 
@@ -1157,6 +1231,10 @@ function ShopTierCard({
 
 function TierPerksPopover({ tier }: { tier: string }) {
   const features = useFeatureFlags();
+  const serverDomains = useServerDomains();
+  const pricingUrl = features.isGreen
+    ? '/pricing'
+    : syncAccount(`//${serverDomains.green}/pricing`);
   const buzzType = features.isGreen ? 'green' : 'yellow';
   const { data: tierBonuses } = trpc.referral.getTierBonuses.useQuery();
   const rewardsMultiplier = tierBonuses?.rewardsMultiplierByTier?.[tier] ?? 1;
@@ -1197,19 +1275,17 @@ function TierPerksPopover({ tier }: { tier: string }) {
             </Text>
           </Group>
           <PlanBenefitList benefits={benefits} tier={tier} buzzType={buzzType} />
-          {features.isGreen && (
-            <Text
-              component="a"
-              href="/pricing"
-              target="_blank"
-              rel="noreferrer"
-              size="xs"
-              c="blue.4"
-              td="underline"
-            >
-              See full details on the pricing page →
-            </Text>
-          )}
+          <Text
+            component="a"
+            href={pricingUrl}
+            target="_blank"
+            rel="noreferrer"
+            size="xs"
+            c="blue.4"
+            td="underline"
+          >
+            See full details on the pricing page →
+          </Text>
         </Stack>
       </Popover.Dropdown>
     </Popover>
