@@ -192,8 +192,16 @@ query cache. Needs source-map lookup to confirm.
    per card. Fixes `computeIntersections` churn and a detached-node vector.
    **Status: already done in this branch via `343778e1a ModelCard optimizations`
    (not yet in prod).**
-3. **Find and disconnect the stuck `PerformanceObserver`.** `grep "new PerformanceObserver"`;
-   one of them has `buffered: true` with no `disconnect()`.
+3. **~~Find and disconnect the stuck `PerformanceObserver`.~~** Investigated
+   — no `PerformanceObserver` registration in our source (`rg "new PerformanceObserver"` empty; no `web-vitals` / `@sentry` / `@vercel/analytics` /
+   `posthog` deps). The `+1,381 PerformanceEventTiming` retention is coming
+   from a third-party script, most likely Snigel's ad engine
+   (`adengine.snigelweb.com/.../adngin.js` was the #2 TimerInstall source and
+   regularly probes INP for bid quality) or a browser extension that was
+   loaded during the capture (React DevTools + Metamask content scripts were
+   present). **Status: not in our code — no fix available from our side.**
+   If we add our own perf instrumentation later, be sure to disconnect
+   observers on page unload.
 4. **Track down the 150 ms scroll debouncer.** Prime suspects: `MasonryProvider`
    scroll handler, `useBrowsingLevelDebounced`, any Mantine `useDebouncedValue`
    in a scroll-affected tree.
