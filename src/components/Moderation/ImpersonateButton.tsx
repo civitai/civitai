@@ -39,6 +39,11 @@ export function ImpersonateButton() {
 
     removeAccount(currentUser.id);
     removeOgAccount();
+    try {
+      await fetch('/api/auth/impersonate/clear', { method: 'POST' });
+    } catch {
+      // best-effort; cookie will expire on its own
+    }
     await swapAccount(toAccount[1].token);
   };
 
