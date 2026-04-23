@@ -381,6 +381,10 @@ export const getInfiniteImagesSchema = baseQuerySchema
     // Mod only:
     poiOnly: z.boolean().optional(),
     minorOnly: z.boolean().optional(),
+    // Client-only on green: opt-in PG-13 on public feeds. Passes through the
+    // schema so the type lines up with client filter state; the server does
+    // not read it (browsing level is the authoritative cap).
+    includePG13: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

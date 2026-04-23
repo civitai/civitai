@@ -94,6 +94,9 @@ const imageFilterSchema = z.object({
   minorOnly: z.boolean().optional(),
   disablePoi: z.boolean().optional(),
   disableMinor: z.boolean().optional(),
+  // Green-domain only: opt-in to PG-13 content on image/video feeds.
+  // Default off — feeds show PG only until user toggles this on.
+  includePG13: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;

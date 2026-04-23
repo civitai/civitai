@@ -21,6 +21,7 @@ import { FilterChip } from '~/components/Filters/FilterChip';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import useIsClient from '~/hooks/useIsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -39,6 +40,7 @@ export function MediaFiltersDropdown({
   query,
   onChange,
   isFeed,
+  isSameUser,
   filterType = 'images',
   hideBaseModels = false,
   hideMediaTypes = false,
@@ -51,6 +53,12 @@ export function MediaFiltersDropdown({
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator;
+  const domainColor = useDomainColor();
+  const isGreen = domainColor === 'green';
+  // Anonymous users on green are hard-capped to PG by the domain rule, so the
+  // toggle would be a no-op for them. Only logged-in users actually have
+  // PG-13 access to opt in/out of.
+  const showPG13Toggle = isGreen && filterType !== 'modelImages' && !!currentUser;
 
   const [opened, setOpened] = useState(false);
 
@@ -86,7 +94,8 @@ export function MediaFiltersDropdown({
     (mergedFilters.poiOnly ? 1 : 0) +
     (mergedFilters.minorOnly ? 1 : 0) +
     (isModerator && mergedFilters.disablePoi ? 1 : 0) +
-    (isModerator && mergedFilters.disableMinor ? 1 : 0);
+    (isModerator && mergedFilters.disableMinor ? 1 : 0) +
+    (showPG13Toggle && mergedFilters.includePG13 ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -109,6 +118,7 @@ export function MediaFiltersDropdown({
       disableMinor: false,
       poiOnly: false,
       minorOnly: false,
+      includePG13: false,
     };
 
     if (onChange) onChange(reset);
@@ -154,21 +164,6 @@ export function MediaFiltersDropdown({
           <PeriodFilter type={filterType} variant="chips" />
         )}
       </Stack>
-      {!hideBaseModels && (
-        <Stack gap="md">
-          <Divider label="Base model" className="text-sm font-bold" mb={4} />
-          <MultiSelect
-            data={baseModelSelectData}
-            value={mergedFilters.baseModels ?? []}
-            onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
-            placeholder="All Base Models"
-            searchable={!isMobileDevice()}
-            clearable
-            comboboxProps={{ withinPortal: false }}
-          />
-        </Stack>
-      )}
-
       <Stack gap="md">
         {!hideMediaTypes && (
           <>
@@ -190,46 +185,26 @@ export function MediaFiltersDropdown({
         )}
         <Divider label="Modifiers" className="text-sm font-bold" mb={4} />
         <div className="flex flex-wrap gap-2">
+          {showPG13Toggle && (
+            <FilterChip
+              checked={!!mergedFilters.includePG13}
+              onChange={(checked) => handleChange({ includePG13: checked })}
+            >
+              <span>Include PG-13</span>
+            </FilterChip>
+          )}
           <FilterChip
             checked={mergedFilters.withMeta}
             onChange={(checked) => handleChange({ withMeta: checked })}
           >
             <span>Metadata only</span>
           </FilterChip>
-          {currentUser && isModerator && (
-            <>
-              <FilterChip
-                checked={mergedFilters.poiOnly}
-                onChange={(checked) => handleChange({ poiOnly: checked })}
-              >
-                <span>POI</span>
-              </FilterChip>
-              <FilterChip
-                checked={mergedFilters.minorOnly}
-                onChange={(checked) => handleChange({ minorOnly: checked })}
-              >
-                <span>Minor</span>
-              </FilterChip>
-              <FilterChip
-                checked={mergedFilters.poiOnly}
-                onChange={(checked) => handleChange({ disablePoi: checked })}
-              >
-                <span>Disable POI</span>
-              </FilterChip>
-              <FilterChip
-                checked={mergedFilters.minorOnly}
-                onChange={(checked) => handleChange({ disableMinor: checked })}
-              >
-                <span>Disable Minor</span>
-              </FilterChip>
-            </>
-          )}
-          {currentUser && (
+          {(isSameUser || isModerator) && (
             <FilterChip
               checked={mergedFilters.requiringMeta}
               onChange={(checked) => handleChange({ requiringMeta: checked })}
             >
-              <Tooltip label="Only shows your images that are missing metadata">
+              <Tooltip label="Only shows images blocked for missing verified metadata">
                 <span>Requiring Metadata</span>
               </Tooltip>
             </FilterChip>
@@ -291,7 +266,31 @@ export function MediaFiltersDropdown({
         {isModerator && (
           <>
             <Divider label="Moderator" className="text-sm font-bold" mb={4} />
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ poiOnly: checked })}
+              >
+                <span>POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ minorOnly: checked })}
+              >
+                <span>Minor</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.poiOnly}
+                onChange={(checked) => handleChange({ disablePoi: checked })}
+              >
+                <span>Disable POI</span>
+              </FilterChip>
+              <FilterChip
+                checked={mergedFilters.minorOnly}
+                onChange={(checked) => handleChange({ disableMinor: checked })}
+              >
+                <span>Disable Minor</span>
+              </FilterChip>
               <FilterChip
                 checked={mergedFilters.notPublished}
                 onChange={(checked) =>
@@ -307,6 +306,21 @@ export function MediaFiltersDropdown({
                 <span>Scheduled</span>
               </FilterChip>
             </div>
+          </>
+        )}
+
+        {!hideBaseModels && (
+          <>
+            <Divider label="Base model" className="text-sm font-bold" mb={4} />
+            <MultiSelect
+              data={baseModelSelectData}
+              value={mergedFilters.baseModels ?? []}
+              onChange={(baseModels) => handleChange({ baseModels: baseModels as BaseModel[] })}
+              placeholder="All Base Models"
+              searchable={!isMobileDevice()}
+              clearable
+              comboboxProps={{ withinPortal: false }}
+            />
           </>
         )}
 
@@ -394,6 +408,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   query?: Partial<GetInfiniteImagesOutput>;
   onChange?: (params: Partial<GetInfiniteImagesOutput>) => void;
   isFeed?: boolean;
+  isSameUser?: boolean;
   filterType?: 'images' | 'videos' | 'modelImages';
   hideBaseModels?: boolean;
   hideMediaTypes?: boolean;
