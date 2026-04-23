@@ -50,7 +50,8 @@ const querySchema = z.object({
 
 type Stats = {
   scanned: number;
-  registered: number;
+  candidates: number; // rows that would be registered (dry run accounting)
+  registered: number; // rows actually registered with the resolver
   skippedNonB2: number;
   skippedNoKey: number;
   failed: number;
@@ -65,6 +66,7 @@ export default WebhookEndpoint(async (req, res) => {
   const startTime = Date.now();
   const stats: Stats = {
     scanned: 0,
+    candidates: 0,
     registered: 0,
     skippedNonB2: 0,
     skippedNoKey: 0,
@@ -123,7 +125,7 @@ export default WebhookEndpoint(async (req, res) => {
         }
 
         if (params.dryRun) {
-          stats.registered++;
+          stats.candidates++;
           return;
         }
 
@@ -151,8 +153,8 @@ export default WebhookEndpoint(async (req, res) => {
       log(
         `[batch ${firstId}-${lastId}] ${files.length} scanned | ` +
           `totals: ${stats.scanned} seen, ${stats.registered} registered, ` +
-          `${stats.skippedNonB2 + stats.skippedNoKey} skipped, ${stats.failed} failed | ` +
-          `${rate.toFixed(1)}/s | elapsed: ${elapsedSec.toFixed(1)}s`
+          `${stats.candidates} candidates, ${stats.skippedNonB2 + stats.skippedNoKey} skipped, ` +
+          `${stats.failed} failed | ${rate.toFixed(1)}/s | elapsed: ${elapsedSec.toFixed(1)}s`
       );
 
       cursor = lastId + 1;

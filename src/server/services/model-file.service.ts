@@ -131,9 +131,13 @@ export async function updateFile({
   });
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
+  // Merge committed updates back into the snapshot so the returned record
+  // reflects post-update state (e.g. `sizeKB` on a re-upload). `updateMany`
+  // doesn't return the updated row, and we don't want a second round-trip.
   return {
     ...modelFile,
     metadata,
+    ...(inputData.sizeKB !== undefined ? { sizeKB: inputData.sizeKB } : {}),
   };
 }
 
