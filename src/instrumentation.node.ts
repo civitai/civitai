@@ -95,6 +95,3 @@ if (!OTEL_ENABLED) {
     console.error('[instrumentation.node] Failed to initialize OTEL:', error);
   }
 }
-
-// Trigger startup warmup (non-blocking)
-import('./server/utils/warmup').then((m) => m.runWarmup()).catch(console.error);

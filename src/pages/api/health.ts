@@ -10,7 +10,6 @@ import { metricsSearchClient } from '~/server/meilisearch/client';
 import { registerCounter } from '~/server/prom/client';
 import { redis, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { isWarmedUp } from '~/server/utils/warmup';
 import { getRandomInt } from '~/utils/number-helpers';
 
 function logError({ error, name, details }: { error: Error; name: string; details: unknown }) {
@@ -164,11 +163,6 @@ const counters = (() =>
   }, {} as Record<CheckKey | 'overall', client.Counter>))();
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const isStartupCheck = req.query.startup === 'true';
-  if (!isStartupCheck && !isWarmedUp()) {
-    return res.status(503).json({ healthy: false, reason: 'warming up' });
-  }
-
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
   // Create AbortController for all health checks
