@@ -853,16 +853,30 @@ async function processScanResult({
       if (!hash) throw new Error('missing hash from ImageHash scan');
       const blocked = await isBlocked(hash);
       const pHash = BigInt(hash);
-      if (!blocked) return await updateImageScanJobs({ id, source, pHash });
-      else
-        return await updateImageScanJobs({
-          id,
-          source,
-          pHash,
-          ingestion: ImageIngestionStatus.Blocked,
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: 'Similar to blocked content',
-        });
+      if (blocked) {
+        logToAxiom(
+          {
+            name: 'image-phash-match',
+            type: 'info',
+            message: 'Image pHash matched a blocked image',
+            imageId: id,
+            pHash: hash,
+            source: 'webhook-legacy',
+          },
+          'webhooks'
+        ).catch(() => null);
+
+        // return await updateImageScanJobs({
+        //   id,
+        //   source,
+        //   pHash,
+        //   ingestion: ImageIngestionStatus.Blocked,
+        //   nsfwLevel: NsfwLevel.Blocked,
+        //   blockedFor: 'Similar to blocked content',
+        // });
+      }
+
+      return await updateImageScanJobs({ id, source, pHash });
     }
     case TagSource.WD14:
     case TagSource.Clavata:
