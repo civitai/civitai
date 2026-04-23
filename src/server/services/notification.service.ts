@@ -164,25 +164,97 @@ export async function getUserNotificationCount({
   return result;
 }
 
+// Per-user serialization queue. Rapid-click streams previously fanned out to
+// N concurrent pool.connect() acquisitions against the notif pool, which
+// starved it under load (46k "Connection terminated due to connection timeout"
+// warnings / week). Serializing per user caps in-flight writes to 1 per
+// active user without blocking the handler.
+const userWriteQueues = new Map<number, Promise<void>>();
+
+// Transient pg pool-acquire errors. These routinely succeed on retry once the
+// pool has a free slot; other errors are not retried.
+const TRANSIENT_WRITE_ERRORS = [
+  'Connection terminated due to connection timeout',
+  'timeout exceeded when trying to connect',
+  'Disconnects client',
+];
+
+// Retry tuning. Each pg pool.connect() itself waits up to ~5s, so combined
+// with these backoffs the full retry window spans ~15-20s — enough to
+// outlast a typical pool-saturation burst without hammering a stuck pool.
+// Backoff schedule: ~200-500ms, ~600-900ms, ~1800-2100ms between attempts.
+const MARK_READ_MAX_ATTEMPTS = 4;
+const MARK_READ_BACKOFF_BASE_MS = 200;
+const MARK_READ_BACKOFF_GROWTH = 3;
+const MARK_READ_BACKOFF_JITTER_MS = 300;
+
+function isTransientWriteError(err: unknown): boolean {
+  return err instanceof Error && TRANSIENT_WRITE_ERRORS.some((msg) => err.message.includes(msg));
+}
+
+// Runs the write with bounded retries on transient pool-acquire errors.
+// Always resolves: success and failure both emit a single `notification.markRead`
+// Axiom event with an `outcome` field. UI is already optimistic, so we never
+// surface errors upward.
+async function runMarkReadWithRetry(
+  input: MarkReadNotificationInput & { userId: number; all: boolean }
+): Promise<void> {
+  const { userId, all, category } = input;
+  for (let attempt = 1; attempt <= MARK_READ_MAX_ATTEMPTS; attempt++) {
+    try {
+      await _markNotificationsReadImpl(input);
+      if (attempt > 1) {
+        logToAxiom({
+          type: 'info',
+          name: 'notification.markRead',
+          message: `Marked notifications read after ${attempt} attempts`,
+          outcome: 'retrySuccess',
+          userId,
+          all,
+          category,
+          attempt,
+        }).catch(() => null);
+      }
+      return;
+    } catch (err) {
+      const transient = isTransientWriteError(err);
+      if (!transient || attempt === MARK_READ_MAX_ATTEMPTS) {
+        logToAxiom({
+          type: 'warning',
+          name: 'notification.markRead',
+          message: `Failed to mark notifications read: ${(err as Error).message}`,
+          outcome: transient ? 'retriesExhausted' : 'nonTransientError',
+          userId,
+          all,
+          category,
+          attempt,
+        }).catch(() => null);
+        return;
+      }
+      const backoff =
+        MARK_READ_BACKOFF_BASE_MS * MARK_READ_BACKOFF_GROWTH ** (attempt - 1) +
+        Math.random() * MARK_READ_BACKOFF_JITTER_MS;
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+    }
+  }
+}
+
 export const markNotificationsRead = async ({
   id,
   userId,
   all = false,
   category,
 }: MarkReadNotificationInput & { userId: number }) => {
-  // Fire-and-forget: the UI optimistically marks as read, so we don't need to
-  // block the response on the cross-Atlantic write to DO managed Postgres.
-  // Errors are logged but not surfaced to the user.
-  const writePromise = _markNotificationsReadImpl({ id, userId, all, category });
-  writePromise.catch((err) => {
-    logToAxiom({
-      type: 'warning',
-      name: 'notification.markRead',
-      message: `Failed to mark notifications read: ${(err as Error).message}`,
-      userId,
-      all,
-      category,
-    }).catch(() => null);
+  // Fire-and-forget: the UI optimistically marks as read, so we don't block
+  // on the cross-Atlantic write. Chained onto any in-flight write for this
+  // user so we never run >1 concurrent pool.connect() per user per pod.
+  const prev = userWriteQueues.get(userId) ?? Promise.resolve();
+  const next = prev.then(() => runMarkReadWithRetry({ id, userId, all, category }));
+  userWriteQueues.set(userId, next);
+  next.finally(() => {
+    // Only drop from the map if we're still the tail — a newer call may have
+    // taken our slot, in which case it owns the cleanup.
+    if (userWriteQueues.get(userId) === next) userWriteQueues.delete(userId);
   });
 };
 
