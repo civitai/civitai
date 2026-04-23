@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, purgeOnSuccess } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   autoCaptionInput,
@@ -69,7 +69,7 @@ export const trainingRouter = router({
     .mutation(({ input, ctx }) => autoCaptionHandler({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure
     .use(isFlagProtected('imageTraining'))
-    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
     .query(() => getTrainingServiceStatus()),
   setStatus: moderatorProcedure
     .input(
@@ -78,6 +78,7 @@ export const trainingRouter = router({
         message: z.string().max(2000).nullish(),
       })
     )
+    .use(purgeOnSuccess(['training-status']))
     .mutation(({ input }) => setTrainingServiceStatus(input)),
   /**
    * @deprecated for orchestrator v2
