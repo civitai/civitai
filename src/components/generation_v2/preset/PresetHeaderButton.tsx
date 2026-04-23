@@ -1,6 +1,8 @@
+import type { CSSProperties } from 'react';
 import { useState } from 'react';
 import { Menu, Text, Tooltip } from '@mantine/core';
 import { IconBookmark, IconDeviceFloppy, IconEye, IconList } from '@tabler/icons-react';
+import clsx from 'clsx';
 
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -9,17 +11,31 @@ import { PresetPickerModal } from '~/components/generation_v2/preset/PresetPicke
 import { SavePresetModal } from '~/components/generation_v2/preset/SavePresetModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useGenerationPresetStore } from '~/store/generation-preset.store';
+import { trpc } from '~/utils/trpc';
+
+/** Yellow nudge color — reads as "new feature, check this out". */
+const GLOW_COLOR_RGB = '250, 204, 21';
 
 /**
  * Icon-only trigger in the generation tabs header. Opens a dropdown menu with:
  * - View presets → opens the picker modal
  * - Save current values → opens the save modal
  * - Manage presets → opens the manage modal
+ *
+ * Glows to draw attention while the user has zero presets. No persistence —
+ * the glow naturally disappears the first time they save a preset.
  */
 export function PresetHeaderButton() {
   const currentUser = useCurrentUser();
   const canSave = useGenerationPresetStore((s) => !!s.bridge.getFilteredSnapshot);
   const [menuOpened, setMenuOpened] = useState(false);
+
+  // Query the user's presets; skip for signed-out visitors.
+  const presetsQuery = trpc.generationPreset.getOwn.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+  // Glow only once we actually know the user has no presets (not while loading).
+  const showGlow = presetsQuery.isSuccess && presetsQuery.data.length === 0;
 
   if (!currentUser) return null;
 
@@ -42,7 +58,20 @@ export function PresetHeaderButton() {
         <Tooltip label="Presets" disabled={menuOpened}>
           <LegacyActionIcon>
             <Text c="dimmed" inline>
-              <IconBookmark />
+              <IconBookmark
+                className={clsx(showGlow && 'animate-icon-glow')}
+                // Setting `color` colors the stroke itself (tabler icons use
+                // `currentColor`), so the bookmark lines ARE the glow color —
+                // the animated filter just pulses the intensity around them.
+                style={
+                  showGlow
+                    ? ({
+                        '--icon-glow-color': GLOW_COLOR_RGB,
+                        color: `rgb(${GLOW_COLOR_RGB})`,
+                      } as CSSProperties)
+                    : undefined
+                }
+              />
             </Text>
           </LegacyActionIcon>
         </Tooltip>
