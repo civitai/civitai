@@ -20,9 +20,21 @@ describe('getPrepaidTokens', () => {
   describe('new token format', () => {
     it('returns tokens directly when tokens array exists', () => {
       const tokens: PrepaidToken[] = [
-        { id: 'tok_1', tier: 'gold', status: 'unlocked', buzzAmount: 50000, unlockedAt: '2024-01-15T00:00:00Z' },
+        {
+          id: 'tok_1',
+          tier: 'gold',
+          status: 'unlocked',
+          buzzAmount: 50000,
+          unlockedAt: '2024-01-15T00:00:00Z',
+        },
         { id: 'tok_2', tier: 'gold', status: 'locked', buzzAmount: 50000 },
-        { id: 'tok_3', tier: 'silver', status: 'claimed', buzzAmount: 25000, claimedAt: '2024-01-10T00:00:00Z' },
+        {
+          id: 'tok_3',
+          tier: 'silver',
+          status: 'claimed',
+          buzzAmount: 25000,
+          claimedAt: '2024-01-10T00:00:00Z',
+        },
       ];
       const metadata: SubscriptionMetadata = { tokens };
 
@@ -196,81 +208,89 @@ describe('getNextTokenUnlockDate', () => {
     vi.useRealTimers();
   });
 
-  it('returns next month when this months delivery day has passed', () => {
-    // Today is Jan 20, period started on the 15th — delivery day 15 has passed
-    vi.setSystemTime(new Date(2024, 0, 20)); // Jan 20, 2024
+  it('returns next month when this month drop has passed', () => {
+    // Today is Jan 20 UTC, period started Jan 15 — Jan 15 01:00 UTC is past
+    vi.setSystemTime(new Date(Date.UTC(2024, 0, 20)));
 
-    const result = getNextTokenUnlockDate(new Date(2024, 0, 15));
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 0, 15)));
 
-    expect(result.getMonth()).toBe(1); // February
-    expect(result.getDate()).toBe(15);
+    expect(result.toISOString()).toBe('2024-02-15T01:15:00.000Z');
   });
 
-  it('returns this month when delivery day has not passed yet', () => {
-    // Today is Jan 10, period started on the 15th — delivery day 15 has not passed
-    vi.setSystemTime(new Date(2024, 0, 10)); // Jan 10, 2024
+  it('returns this month when drop instant has not passed yet', () => {
+    // Today is Jan 10 UTC, period started Jan 15 — Jan 15 01:00 UTC is upcoming
+    vi.setSystemTime(new Date(Date.UTC(2024, 0, 10)));
 
-    const result = getNextTokenUnlockDate(new Date(2024, 0, 15));
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 0, 15)));
 
-    expect(result.getMonth()).toBe(0); // January
-    expect(result.getDate()).toBe(15);
+    expect(result.toISOString()).toBe('2024-01-15T01:15:00.000Z');
   });
 
-  it('handles month-end: Jan 31 start → Feb 28/29', () => {
-    // Period started Jan 31. Today is Feb 1 — next delivery should be Feb 28 (2024 is leap year = 29)
-    vi.setSystemTime(new Date(2024, 1, 1)); // Feb 1, 2024
+  it('handles month-end: Jan 31 start → Feb 29 (leap year)', () => {
+    vi.setSystemTime(new Date(Date.UTC(2024, 1, 1)));
 
-    const result = getNextTokenUnlockDate(new Date(2024, 0, 31));
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 0, 31)));
 
-    expect(result.getMonth()).toBe(1); // February
-    expect(result.getDate()).toBe(29); // 2024 is a leap year
+    expect(result.toISOString()).toBe('2024-02-29T01:15:00.000Z');
   });
 
   it('handles month-end: Jan 31 start → Feb 28 in non-leap year', () => {
-    vi.setSystemTime(new Date(2025, 1, 1)); // Feb 1, 2025
+    vi.setSystemTime(new Date(Date.UTC(2025, 1, 1)));
 
-    const result = getNextTokenUnlockDate(new Date(2025, 0, 31));
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2025, 0, 31)));
 
-    expect(result.getMonth()).toBe(1); // February
-    expect(result.getDate()).toBe(28); // 2025 is not a leap year
+    expect(result.toISOString()).toBe('2025-02-28T01:15:00.000Z');
   });
 
   it('handles month-end: Jan 31 start → Mar 31 (after Feb)', () => {
-    // Today is Mar 1, period started Jan 31 — next delivery should be Mar 31
-    vi.setSystemTime(new Date(2024, 2, 1)); // Mar 1, 2024
+    vi.setSystemTime(new Date(Date.UTC(2024, 2, 1)));
 
-    const result = getNextTokenUnlockDate(new Date(2024, 0, 31));
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 0, 31)));
 
-    expect(result.getMonth()).toBe(2); // March
-    expect(result.getDate()).toBe(31);
+    expect(result.toISOString()).toBe('2024-03-31T01:15:00.000Z');
   });
 
-  it('handles month-end: Jan 31 start → Apr 30 (month with 30 days)', () => {
-    // Today is Apr 1, period started Jan 31 — next delivery should be Apr 30
-    vi.setSystemTime(new Date(2024, 3, 1)); // Apr 1, 2024
+  it('handles month-end: Jan 31 start → Apr 30 (30-day month)', () => {
+    vi.setSystemTime(new Date(Date.UTC(2024, 3, 1)));
 
-    const result = getNextTokenUnlockDate(new Date(2024, 0, 31));
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 0, 31)));
 
-    expect(result.getMonth()).toBe(3); // April
-    expect(result.getDate()).toBe(30); // April only has 30 days
+    expect(result.toISOString()).toBe('2024-04-30T01:15:00.000Z');
   });
 
-  it('returns next month when today IS the delivery day', () => {
-    // Today is Jan 15, period started Jan 15 — delivery day IS today, should return Feb 15
-    vi.setSystemTime(new Date(2024, 0, 15, 12, 0, 0)); // Jan 15, noon
+  it('returns next month when today IS the drop day but 01:00 UTC has passed', () => {
+    // Today is Jan 15 at 02:00 UTC — drop at 01:00 UTC already fired
+    vi.setSystemTime(new Date(Date.UTC(2024, 0, 15, 2, 0, 0)));
 
-    const result = getNextTokenUnlockDate(new Date(2024, 0, 15));
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 0, 15)));
 
-    expect(result.getMonth()).toBe(1); // February
-    expect(result.getDate()).toBe(15);
+    expect(result.toISOString()).toBe('2024-02-15T01:15:00.000Z');
   });
 
-  it('accepts string dates', () => {
-    vi.setSystemTime(new Date(2024, 0, 10));
+  it('returns today when today IS the drop day and 01:00 UTC has not passed', () => {
+    // Today is Jan 15 at 00:30 UTC — drop at 01:00 UTC is upcoming
+    vi.setSystemTime(new Date(Date.UTC(2024, 0, 15, 0, 30, 0)));
 
-    // Use a local date string to avoid timezone offset issues with getDate()
-    const result = getNextTokenUnlockDate(new Date(2024, 0, 15).toISOString());
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 0, 15)));
 
-    expect(result.getDate()).toBe(15);
+    expect(result.toISOString()).toBe('2024-01-15T01:15:00.000Z');
+  });
+
+  it('year rollover: Dec 15 start → Jan 15 next year', () => {
+    vi.setSystemTime(new Date(Date.UTC(2024, 11, 20)));
+
+    const result = getNextTokenUnlockDate(new Date(Date.UTC(2024, 11, 15)));
+
+    expect(result.toISOString()).toBe('2025-01-15T01:15:00.000Z');
+  });
+
+  it('uses UTC day from ISO string regardless of viewer local TZ', () => {
+    // periodStart stored as 2026-02-23 23:12 UTC — UTC day is 23
+    vi.setSystemTime(new Date(Date.UTC(2026, 3, 22, 12, 0, 0))); // Apr 22 noon UTC
+
+    const result = getNextTokenUnlockDate('2026-02-23T23:12:31.195Z');
+
+    // Next drop is Apr 23 01:00 UTC (PT renders as Apr 22 evening)
+    expect(result.toISOString()).toBe('2026-04-23T01:15:00.000Z');
   });
 });

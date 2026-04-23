@@ -120,6 +120,7 @@ export default function UserBuzzDashboard() {
   const baseRewardsMultiplier = multipliers.baseRewardsMultiplier;
   const { subscription, subscriptionPaymentProvider } = useActiveSubscription({
     buzzType: selectedAccountType,
+    includeCanceled: true,
   });
   const isCivitaiPrepaid = subscriptionPaymentProvider === PaymentProvider.Civitai;
 

@@ -101,7 +101,12 @@ export const getUserSubscription = async ({
   userId,
   buzzType,
   includeBadState,
-}: GetUserSubscriptionInput & { buzzType?: string; includeBadState?: boolean }) => {
+  includeCanceled,
+}: GetUserSubscriptionInput & {
+  buzzType?: string;
+  includeBadState?: boolean;
+  includeCanceled?: boolean;
+}) => {
   // If buzzType is provided, use the composite unique key
   // Otherwise, get the first subscription (backward compatibility - defaults to yellow)
   const subscription = await dbWrite.customerSubscription.findFirst({
@@ -148,8 +153,8 @@ export const getUserSubscription = async ({
 
   if (!subscription) return null;
 
-  // Always exclude terminal statuses
-  if (terminalStatuses.includes(subscription.status)) return null;
+  // Exclude terminal statuses unless includeCanceled is true
+  if (!includeCanceled && terminalStatuses.includes(subscription.status)) return null;
 
   // Exclude recoverable bad statuses unless includeBadState is true
   if (!includeBadState && recoverableBadStatuses.includes(subscription.status)) return null;
@@ -429,7 +434,8 @@ export const claimPrepaidToken = async ({
       throw new Error('No active prepaid membership found');
     }
 
-    const meta = (subscription.metadata ?? {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+    const meta = (subscription.metadata ??
+      {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
     const tokens = getPrepaidTokens({ metadata: meta });
     const tokenIndex = tokens.findIndex((t) => t.id === tokenId);
 
@@ -445,7 +451,8 @@ export const claimPrepaidToken = async ({
       );
     }
 
-    const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+    const productMeta = subscription.product
+      .metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
     const now = new Date().toISOString();
     const dateKey = now.split('T')[0];
@@ -468,10 +475,7 @@ export const claimPrepaidToken = async ({
         ...meta.prepaids,
         [tierKey]: Math.max(0, (meta.prepaids[tierKey] ?? 0) - 1),
       };
-      updatedMeta.buzzTransactionIds = [
-        ...(meta.buzzTransactionIds ?? []),
-        externalTransactionId,
-      ];
+      updatedMeta.buzzTransactionIds = [...(meta.buzzTransactionIds ?? []), externalTransactionId];
     }
 
     await tx.customerSubscription.update({
@@ -538,7 +542,8 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       throw new Error('No active prepaid membership found');
     }
 
-    const meta = (subscription.metadata ?? {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+    const meta = (subscription.metadata ??
+      {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
     const tokens = getPrepaidTokens({ metadata: meta });
     const unlockedTokens = tokens.filter((t) => t.status === 'unlocked');
 
@@ -546,7 +551,8 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       throw new Error('No unlocked tokens to claim');
     }
 
-    const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+    const productMeta = subscription.product
+      .metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
     const now = new Date().toISOString();
     const dateKey = now.split('T')[0];
@@ -665,8 +671,10 @@ export const unlockTokensForUser = async ({
     throw new Error('No active prepaid membership found');
   }
 
-  const meta = (subscription.metadata ?? {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
-  const productMeta = subscription.product.metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+  const meta = (subscription.metadata ??
+    {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+  const productMeta = subscription.product
+    .metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
   const currentTier = productMeta.tier;
 
   if (!currentTier || currentTier === 'free') {
@@ -697,9 +705,7 @@ export const unlockTokensForUser = async ({
     });
   } else {
     // Unlock ONE locked token matching the current tier
-    const targetIndex = tokens.findIndex(
-      (t) => t.status === 'locked' && t.tier === currentTier
-    );
+    const targetIndex = tokens.findIndex((t) => t.status === 'locked' && t.tier === currentTier);
 
     if (targetIndex === -1) {
       return { unlocked: 0, totalBuzz: 0, message: `No locked ${currentTier} tokens to unlock` };
@@ -820,9 +826,7 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
     if (alreadyUnlockedOnDate) continue;
 
     // Only unlock a token matching the user's CURRENT subscription tier
-    const tokenIndex = tokens.findIndex(
-      (t) => t.status === 'locked' && t.tier === currentTier
-    );
+    const tokenIndex = tokens.findIndex((t) => t.status === 'locked' && t.tier === currentTier);
     if (tokenIndex === -1) continue;
 
     const updatedTokens = tokens.map((t, i) => {
@@ -878,9 +882,10 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
   return {
     matched: memberships.length,
     unlocked: totalUnlocked,
-    message: updates.length > 0
-      ? `Unlocked ${totalUnlocked} tokens for ${updates.length} users`
-      : 'No tokens to unlock for the given date',
+    message:
+      updates.length > 0
+        ? `Unlocked ${totalUnlocked} tokens for ${updates.length} users`
+        : 'No tokens to unlock for the given date',
   };
 };
 
@@ -904,7 +909,8 @@ export const getHistoricalPrepaidDeliveries = async ({
   // scanning ~170K granules across 24 months. The byToAccount projection exists but can't
   // be used with SharedReplacingMergeTree. Cache aggressively since membership payments
   // change at most once per month.
-  const cacheKey = `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}` as RedisKeyTemplateCache;
+  const cacheKey =
+    `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}` as RedisKeyTemplateCache;
   try {
     const cached = await redis.get(cacheKey);
     if (cached) return JSON.parse(cached) as PrepaidToken[];
@@ -944,7 +950,9 @@ export const getHistoricalPrepaidDeliveries = async ({
       tier: tier as PrepaidToken['tier'],
       status: 'claimed' as const,
       buzzAmount: tx.amount,
-      claimedAt: new Date(tx.date).toISOString(),
+      // ClickHouse DateTime strings have no TZ suffix; treat them as UTC
+      // so parsing doesn't skew by the server's local timezone.
+      claimedAt: new Date(`${tx.date.replace(' ', 'T')}Z`).toISOString(),
       buzzTransactionId: tx.externalTransactionId,
     };
   });
