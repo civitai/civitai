@@ -212,7 +212,12 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
   if (refresh) await deleteMultipliersForUserCache(userId);
 
   const multipliers = await getMultipliersForUserCache([userId]);
-  const base = multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
+  const base = multipliers[userId] ?? {
+    purchasesMultiplier: 1,
+    rewardsMultiplier: 1,
+    rewardsIneligible: false,
+    userId,
+  };
 
   const { getActiveRewardsBonusEvent } = await import(
     '~/server/services/rewards-bonus-event.service'

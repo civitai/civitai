@@ -230,6 +230,7 @@ type CachedUserMultiplier = {
   userId: number;
   rewardsMultiplier: number;
   purchasesMultiplier: number;
+  rewardsIneligible: boolean;
 };
 export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
   key: REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER,
@@ -281,7 +282,8 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
         CASE
           WHEN rs.status IS NULL OR rs.status NOT IN ('active', 'trialing') THEN 1
           ELSE COALESCE((rs.metadata->>'purchasesMultiplier')::float, 1)
-        END as "purchasesMultiplier"
+        END as "purchasesMultiplier",
+        (u."rewardsEligibility" = 'Ineligible'::"RewardsEligibility") as "rewardsIneligible"
       FROM "User" u
       LEFT JOIN ranked_subscriptions rs ON u.id = rs."userId" AND rs.rn = 1
       WHERE u.id IN (${Prisma.join(goodIds)});
