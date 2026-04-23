@@ -17,7 +17,7 @@ import { ARTICLES_SEARCH_INDEX } from '~/server/common/constants';
 import { ArticlesSearchIndexSortBy } from '~/components/Search/parsers/article.parser';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -140,7 +140,12 @@ export function ArticlesHitList() {
       {hiddenCount > 0 && (
         <Text c="dimmed">{hiddenCount} articles have been hidden due to your settings.</Text>
       )}{' '}
-      <MasonryGrid data={items} render={ArticleCard} itemId={(x) => x.id} empty={<NoContent />} />
+      <MasonryGridVirtual
+        data={items}
+        render={ArticleCard}
+        itemId={(x) => x.id}
+        empty={<NoContent />}
+      />
       {hits.length > 0 && !isLastPage && (
         <InViewLoader
           loadFn={showMore}

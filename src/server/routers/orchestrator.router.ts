@@ -117,6 +117,10 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
     isMember: user.tier != null && user.tier !== 'free',
   });
 
+  // `enhancedCompatibilitySdcpp` forces experimental on — it requires the
+  // experimental path in the orchestrator regardless of the Redis config.
+  if (ctx.features?.enhancedCompatibilitySdcpp) flags.experimental = true;
+
   return next({ ctx: { ...ctx, user, ...flags } });
 });
 
@@ -396,6 +400,7 @@ export const orchestratorRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
         token: ctx.token,
+        experimental: ctx.experimental,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (e) {

@@ -43,6 +43,7 @@ import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
+import { logToAxiom } from '~/server/logging/client';
 
 export async function isExemptFromAiVerification(
   imageId: number,
@@ -183,8 +184,7 @@ export async function processImageScanWorkflow({
     throw new Error(`invalid media rating for workflow: ${workflowId}`);
 
   const { tags: wdTags } = wdTagging!;
-  const { nsfwLevel } = mediaRating!;
-  let { isBlocked, blockedReason } = mediaRating!;
+  const { isBlocked, nsfwLevel, blockedReason } = mediaRating!;
   const { hashes } = mediaHash ?? {};
 
   let pHash: bigint | undefined;
@@ -194,8 +194,21 @@ export async function processImageScanWorkflow({
   }
 
   if (!isBlocked && pHash) {
-    isBlocked = await getIsImageBlocked(pHash);
-    if (isBlocked) blockedReason = 'Similar to blocked content';
+    const pHashBlocked = await getIsImageBlocked(pHash);
+    if (pHashBlocked) {
+      // blockedReason = 'Similar to blocked content';
+      logToAxiom(
+        {
+          name: 'image-phash-match',
+          type: 'info',
+          message: 'Image pHash matched a blocked image',
+          imageId,
+          pHash: pHash.toString(),
+          source: 'image-scan-result.service',
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
   }
   if (isBlocked) {
     await dbWrite.image.updateMany({

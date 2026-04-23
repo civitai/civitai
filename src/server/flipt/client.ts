@@ -37,6 +37,7 @@ export enum FLIPT_FEATURE_FLAGS {
   GENERATION_PRESETS = 'generation-presets',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
   WAN22_MULTI_STEP = 'wan22-multi-step',
+  ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
   BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read

@@ -1,4 +1,5 @@
 import { Badge, Text } from '@mantine/core';
+import { memo } from 'react';
 import { IconBook } from '@tabler/icons-react';
 import clsx from 'clsx';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -12,7 +13,7 @@ import { slugit } from '~/utils/string-helpers';
 
 type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
 
-export function ComicCard({ data }: { data: ComicItem }) {
+export const ComicCard = memo(function ComicCard({ data }: { data: ComicItem }) {
   const coverImage = data.coverImage
     ? {
         ...data.coverImage,
@@ -66,4 +67,4 @@ export function ComicCard({ data }: { data: ComicItem }) {
       footerGradient
     />
   );
-}
+});

@@ -719,7 +719,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 // const clavataScan = env.CLAVATA_SCAN;
 export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
-  // ImageScanType.Hash,
+  ImageScanType.Hash,
   // ImageScanType.Clavata,
   // ImageScanType.Hive,
   ImageScanType.SpineRating,

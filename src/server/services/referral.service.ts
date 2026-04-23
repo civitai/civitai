@@ -726,11 +726,14 @@ export async function getReferrerBalance(userId: number) {
     by: ['kind', 'status'],
     where: {
       userId,
+      // Include Expired so lifetimeTokens accumulates rewards the user
+      // earned but never spent — they still "earned" them.
       status: {
         in: [
           ReferralRewardStatus.Pending,
           ReferralRewardStatus.Settled,
           ReferralRewardStatus.Redeemed,
+          ReferralRewardStatus.Expired,
         ],
       },
     },
@@ -739,6 +742,7 @@ export async function getReferrerBalance(userId: number) {
 
   let settledTokens = 0;
   let pendingTokens = 0;
+  let lifetimeTokens = 0;
   let settledBlueBuzzLifetime = 0;
   let pendingBlueBuzz = 0;
 
@@ -748,6 +752,15 @@ export async function getReferrerBalance(userId: number) {
     if (g.kind === ReferralRewardKind.MembershipToken) {
       if (g.status === ReferralRewardStatus.Settled) settledTokens += tokens;
       if (g.status === ReferralRewardStatus.Pending) pendingTokens += tokens;
+      // Lifetime = anything that ever became real (Settled + Redeemed + Expired).
+      // Excludes Pending (not yet earned) and Revoked (chargebacks/abuse).
+      if (
+        g.status === ReferralRewardStatus.Settled ||
+        g.status === ReferralRewardStatus.Redeemed ||
+        g.status === ReferralRewardStatus.Expired
+      ) {
+        lifetimeTokens += tokens;
+      }
     }
     if (
       g.kind === ReferralRewardKind.BuzzKickback ||
@@ -819,6 +832,7 @@ export async function getReferrerBalance(userId: number) {
   return {
     settledTokens,
     pendingTokens,
+    lifetimeTokens,
     settledBlueBuzzLifetime,
     pendingBlueBuzz,
     lifetimePoints,
