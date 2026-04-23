@@ -9,7 +9,7 @@ import {
   IconSwords,
   IconViewfinder,
 } from '@tabler/icons-react';
-import React from 'react';
+import React, { memo } from 'react';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -32,7 +32,7 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   fw: 'bold',
 };
 
-export function BountyCard({ data }: Props) {
+export const BountyCard = memo(function BountyCard({ data }: Props) {
   const { id, name, images, type, expiresAt, stats, complete } = data;
   const image = images?.[0];
   const expired = expiresAt < new Date();
@@ -226,6 +226,6 @@ export function BountyCard({ data }: Props) {
       }
     />
   );
-}
+});
 
 type Props = { data: BountyGetAll[number] };
