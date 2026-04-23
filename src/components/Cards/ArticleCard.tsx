@@ -1,5 +1,5 @@
 import { Badge, Text } from '@mantine/core';
-import React from 'react';
+import React, { memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
@@ -23,13 +23,13 @@ const articleStatusBadge: Partial<Record<ArticleStatus, { label: string; color: 
   [ArticleStatus.UnpublishedViolation]: { label: 'Violation', color: 'red' },
 };
 
-export function ArticleCard({ data, aspectRatio }: Props) {
+export const ArticleCard = memo(function ArticleCard({ data, aspectRatio }: Props) {
   return (
     <MetricSubscriptionProvider entityType="Article" entityId={data.id}>
       <ArticleCardContent data={data} aspectRatio={aspectRatio} />
     </MetricSubscriptionProvider>
   );
-}
+});
 
 function ArticleCardContent({ data, aspectRatio }: Props) {
   const { id, title, coverImage, publishedAt, user, tags, stats, status } = data;

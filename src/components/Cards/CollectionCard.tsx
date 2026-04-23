@@ -1,4 +1,5 @@
 import { ActionIcon, Badge, Text } from '@mantine/core';
+import { memo } from 'react';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { truncate } from 'lodash-es';
@@ -33,7 +34,7 @@ type ImageProps = {
   meta?: ImageMetaProps | null;
 };
 
-export function CollectionCard({ data }: Props) {
+export const CollectionCard = memo(function CollectionCard({ data }: Props) {
   const getCoverImages = () => {
     if (data.image) return [data.image];
 
@@ -122,7 +123,7 @@ export function CollectionCard({ data }: Props) {
       </div>
     </FeedCard>
   );
-}
+});
 
 type HeaderData = Pick<Props['data'], 'id' | 'userId' | 'type' | 'mode'>;
 

@@ -1,4 +1,5 @@
 import { uniqBy } from 'lodash-es';
+import { memo } from 'react';
 import type { CardProps } from '@mantine/core';
 import {
   Box,
@@ -33,11 +34,12 @@ import classes from './CreatorCard.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
 
-export const CreatorCardSimple = (props: CreatorCardSimpleProps) => (
+export const CreatorCardSimple = memo((props: CreatorCardSimpleProps) => (
   <MetricSubscriptionProvider entityType="User" entityId={props.user.id}>
     <CreatorCardSimpleContent {...props} />
   </MetricSubscriptionProvider>
-);
+));
+CreatorCardSimple.displayName = 'CreatorCardSimple';
 
 const CreatorCardSimpleContent = ({
   user,
