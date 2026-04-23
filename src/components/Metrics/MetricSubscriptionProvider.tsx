@@ -1,4 +1,5 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createContext, useContext, useMemo, type ReactNode } from 'react';
+import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { SignalTopic } from '~/server/common/enums';
 import type { MetricEntityType } from '~/components/Signals/metric-signals.types';
@@ -28,20 +29,18 @@ interface MetricSubscriptionProviderProps {
   entityType: MetricEntityType;
   entityId: number;
   children: ReactNode;
-  /** Distance from viewport to start subscribing. Default: 200px */
-  rootMargin?: string;
 }
 
 /**
  * Wraps a component to subscribe to metric updates only when visible.
- * Uses IntersectionObserver to detect visibility.
+ * Reuses the app-level `IntersectionObserverProvider` for visibility detection
+ * (single shared observer across all cards on a page).
  * Controlled by the live-metrics Flipt flag.
  */
 export function MetricSubscriptionProvider({
   entityType,
   entityId,
   children,
-  rootMargin = '200px',
 }: MetricSubscriptionProviderProps) {
   const liveMetricsEnabled = useLiveMetricsEnabled();
 
@@ -51,11 +50,7 @@ export function MetricSubscriptionProvider({
   }
 
   return (
-    <MetricSubscriptionProviderInner
-      entityType={entityType}
-      entityId={entityId}
-      rootMargin={rootMargin}
-    >
+    <MetricSubscriptionProviderInner entityType={entityType} entityId={entityId}>
       {children}
     </MetricSubscriptionProviderInner>
   );
@@ -69,25 +64,8 @@ function MetricSubscriptionProviderInner({
   entityType,
   entityId,
   children,
-  rootMargin = '200px',
 }: MetricSubscriptionProviderProps) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState(false);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        setIsVisible(entry.isIntersecting);
-      },
-      { rootMargin }
-    );
-
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [rootMargin]);
+  const [ref, isVisible] = useInView<HTMLDivElement>();
 
   // Only subscribe when visible
   const topic = isVisible
@@ -96,9 +74,11 @@ function MetricSubscriptionProviderInner({
 
   useSignalTopic(topic);
 
+  const contextValue = useMemo(() => ({ isSubscribed: isVisible }), [isVisible]);
+
   return (
     <div ref={ref}>
-      <MetricSubscriptionContext.Provider value={{ isSubscribed: isVisible }}>
+      <MetricSubscriptionContext.Provider value={contextValue}>
         {children}
       </MetricSubscriptionContext.Provider>
     </div>

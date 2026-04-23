@@ -1,11 +1,11 @@
 import {
   Badge,
   getPrimaryShade,
-  Group,
   Text,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
+import { memo, useMemo } from 'react';
 import {
   IconArchiveFilled,
   IconBolt,
@@ -32,37 +32,41 @@ import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useReviewedModelIds } from '~/hooks/useReviewedModelIds';
 import { constants } from '~/server/common/constants';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { aDayAgo } from '~/utils/date-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 
-export function ModelCard({ data }: Props) {
+function ModFlagBadge({ labels }: { labels: string[] }) {
+  return (
+    <Badge
+      className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
+      variant="light"
+      radius="xl"
+    >
+      {labels.join(' | ')}
+    </Badge>
+  );
+}
+
+export const ModelCard = memo(function ModelCard({ data }: Props) {
   return (
     <MetricSubscriptionProvider entityType="Model" entityId={data.id}>
       <ModelCardContent data={data} />
     </MetricSubscriptionProvider>
   );
-}
+});
 
 function ModelCardContent({ data }: Props) {
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const image = data.images[0];
-  const aspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
   const currentUser = useCurrentUser();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
-  const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
-    trpc.user.getEngagedModels.useQuery(undefined, {
-      enabled: !!currentUser,
-      cacheTime: Infinity,
-      staleTime: Infinity,
-    });
-  const hasReview = reviewedModels.includes(data.id);
+  const reviewedModelIds = useReviewedModelIds();
+  const hasReview = reviewedModelIds.has(data.id);
 
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
@@ -79,15 +83,38 @@ function ModelCardContent({ data }: Props) {
   const isNSFW = data.nsfw;
   const isPrivate = data.availability === Availability.Private;
 
-  // Live metrics for model stats
-  const liveMetrics = useLiveMetrics('Model', data.id, {
-    downloadCount: data.rank?.downloadCount ?? 0,
-    collectedCount: data.rank?.collectedCount ?? 0,
-    commentCount: data.rank?.commentCount ?? 0,
-    tippedAmountCount: data.rank?.tippedAmountCount ?? 0,
-    thumbsUpCount: data.rank?.thumbsUpCount ?? 0,
-    thumbsDownCount: data.rank?.thumbsDownCount ?? 0,
-  });
+  const modFlagLabels: string[] = [];
+  if (currentUser?.isModerator) {
+    if (isPOI) modFlagLabels.push('POI');
+    if (isMinor) modFlagLabels.push('Minor');
+    if (isNSFW) modFlagLabels.push('NSFW');
+  }
+
+  const statusBadgeStyle = useMemo(
+    () => ({
+      backgroundColor: isEarlyAccess
+        ? theme.colors.success[5]
+        : isUpdated
+        ? theme.colors.teal[5]
+        : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
+    }),
+    [isEarlyAccess, isUpdated, theme, colorScheme]
+  );
+
+  // Live metrics for model stats — memoize base so useLiveMetrics' internal
+  // useMemo can actually hit its cache across non-rank-changing re-renders.
+  const baseMetrics = useMemo(
+    () => ({
+      downloadCount: data.rank?.downloadCount ?? 0,
+      collectedCount: data.rank?.collectedCount ?? 0,
+      commentCount: data.rank?.commentCount ?? 0,
+      tippedAmountCount: data.rank?.tippedAmountCount ?? 0,
+      thumbsUpCount: data.rank?.thumbsUpCount ?? 0,
+      thumbsDownCount: data.rank?.thumbsDownCount ?? 0,
+    }),
+    [data.rank]
+  );
+  const liveMetrics = useLiveMetrics('Model', data.id, baseMetrics);
 
   const thumbsUpCount = liveMetrics.thumbsUpCount;
   const thumbsDownCount = liveMetrics.thumbsDownCount;
@@ -95,8 +122,10 @@ function ModelCardContent({ data }: Props) {
   const positiveRating = totalCount > 0 ? thumbsUpCount / totalCount : 0;
 
   const { useModelVersionRedirect } = useModelCardContext();
-  let href = `/models/${data.id}/${slugit(data.name)}`;
-  if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
+  const href = useMemo(() => {
+    const base = `/models/${data.id}/${slugit(data.name)}`;
+    return useModelVersionRedirect ? `${base}?modelVersionId=${data.version.id}` : base;
+  }, [data.id, data.name, data.version.id, useModelVersionRedirect]);
 
   return (
     <AspectRatioImageCard
@@ -110,39 +139,7 @@ function ModelCardContent({ data }: Props) {
       header={
         <div className="flex w-full items-start justify-between">
           <div className="flex flex-wrap gap-1">
-            {currentUser?.isModerator && isPOI && (
-              <Badge
-                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
-                variant="light"
-                radius="xl"
-              >
-                <Text c="white" size="xs" fw="bold">
-                  POI
-                </Text>
-              </Badge>
-            )}
-            {currentUser?.isModerator && isMinor && (
-              <Badge
-                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
-                variant="light"
-                radius="xl"
-              >
-                <Text c="white" size="xs" fw="bold">
-                  Minor
-                </Text>
-              </Badge>
-            )}
-            {currentUser?.isModerator && isNSFW && (
-              <Badge
-                className={clsx(cardClasses.infoChip, cardClasses.chip, cardClasses.forMod)}
-                variant="light"
-                radius="xl"
-              >
-                <Text c="white" size="xs" fw="bold">
-                  NSFW
-                </Text>
-              </Badge>
-            )}
+            {modFlagLabels.length > 0 && <ModFlagBadge labels={modFlagLabels} />}
             {isPrivate && (
               <Badge
                 className={clsx(cardClasses.infoChip, cardClasses.chip)}
@@ -163,13 +160,7 @@ function ModelCardContent({ data }: Props) {
                 className={cardClasses.chip}
                 variant="filled"
                 radius="xl"
-                style={{
-                  backgroundColor: isEarlyAccess
-                    ? theme.colors.success[5]
-                    : isUpdated
-                    ? theme.colors.teal[5]
-                    : theme.colors.blue[getPrimaryShade(theme, colorScheme)],
-                }}
+                style={statusBadgeStyle}
               >
                 <Text c="white" size="xs" tt="capitalize">
                   {isEarlyAccess ? 'Early Access' : isUpdated ? 'Updated' : 'New'}
@@ -231,36 +222,36 @@ function ModelCardContent({ data }: Props) {
                   variant="light"
                   radius="xl"
                 >
-                  <Group gap={2}>
+                  <div className="flex items-center gap-0.5">
                     <IconDownload size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
                       <AnimatedCount value={liveMetrics.downloadCount} />
                     </Text>
-                  </Group>
-                  <Group gap={2}>
+                  </div>
+                  <div className="flex items-center gap-0.5">
                     <IconBookmark size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
                       <AnimatedCount value={liveMetrics.collectedCount} />
                     </Text>
-                  </Group>
-                  <Group gap={2}>
+                  </div>
+                  <div className="flex items-center gap-0.5">
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
                     <Text size="xs" lh={1} fw="bold">
                       <AnimatedCount value={liveMetrics.commentCount} />
                     </Text>
-                  </Group>
+                  </div>
                   {!isPOI && (
                     <InteractiveTipBuzzButton
                       toUserId={data.user.id}
                       entityType={'Model'}
                       entityId={data.id}
                     >
-                      <Group gap={2}>
+                      <div className="flex items-center gap-0.5">
                         <IconBolt size={14} strokeWidth={2.5} />
                         <Text size="xs" lh={1} fw="bold">
                           <AnimatedCount value={liveMetrics.tippedAmountCount + tippedAmount} />
                         </Text>
-                      </Group>
+                      </div>
                     </InteractiveTipBuzzButton>
                   )}
                 </Badge>

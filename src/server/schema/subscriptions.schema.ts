@@ -14,6 +14,7 @@ export const getUserSubscriptionSchema = z.object({
   userId: z.number(),
   buzzType: z.string().optional(),
   includeBadState: z.boolean().optional(),
+  includeCanceled: z.boolean().optional(),
 });
 
 export type ProductTier = z.infer<typeof productTierSchema>;
