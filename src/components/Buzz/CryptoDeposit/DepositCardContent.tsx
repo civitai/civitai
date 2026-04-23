@@ -344,6 +344,36 @@ export function DepositCardContent({ depositAddress, error, loading, onRetry, ch
                     </Text>
                   </Group>
                 )}
+                {chain === 'ltc' && (
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
+                    <Text size="xs" c="dimmed">
+                      Send LTC on the <Text span fw={600} c="yellow">Litecoin network</Text> only.
+                      Coinbase users: select &quot;Litecoin&quot; as the network, not Base or
+                      other networks. cbLTC (wrapped Litecoin) is not supported.
+                    </Text>
+                  </Group>
+                )}
+                {chain === 'doge' && (
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
+                    <Text size="xs" c="dimmed">
+                      Send DOGE on the <Text span fw={600} c="yellow">Dogecoin network</Text> only.
+                      Coinbase users: select &quot;Dogecoin&quot; as the network, not Base or
+                      other networks. cbDOGE (wrapped Dogecoin) is not supported.
+                    </Text>
+                  </Group>
+                )}
+                {chain === 'sol' && (
+                  <Group gap="xs" wrap="nowrap" align="flex-start">
+                    <IconAlertTriangle size={14} className="text-yellow-500" style={{ flexShrink: 0, marginTop: 2 }} />
+                    <Text size="xs" c="dimmed">
+                      Send SOL on the <Text span fw={600} c="yellow">Solana network</Text> only.
+                      Coinbase users: select &quot;Solana&quot; as the network, not Base. SOL
+                      sent via Base is not supported.
+                    </Text>
+                  </Group>
+                )}
               </Stack>
             </>
           )}
