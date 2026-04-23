@@ -72,6 +72,8 @@ import {
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
@@ -333,6 +335,8 @@ function PriorityAlertSpace({
     isLoading: isBuzzLoading,
   } = useQueryBuzz(availableTypes);
   const totalCost = useTotalGenerationCost();
+  const featureFlags = useFeatureFlags();
+  const graph = useGraph<GenerationGraphTypes>();
 
   // Check if user has insufficient buzz of the selected type
   // Don't show insufficient buzz until the buzz query has resolved
@@ -426,6 +430,28 @@ function PriorityAlertSpace({
           )}
         </div>
       </Notification>
+    );
+  } else if (featureFlags.enhancedCompatibilitySdcpp) {
+    // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
+    // Controller returns null when the ecosystem node is inactive.
+    priorityAlert = (
+      <Controller
+        graph={graph}
+        name="ecosystem"
+        render={({ value }) => {
+          if (!value || !EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(value)) return null;
+          return (
+            <DismissibleAlert
+              id={`bogo-sdcpp-${value}`}
+              color="blue"
+              size="sm"
+              title="2-for-1 Bonus Active"
+            >
+              This model is doubling your generations for a limited time.
+            </DismissibleAlert>
+          );
+        }}
+      />
     );
   }
 

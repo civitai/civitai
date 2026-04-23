@@ -58,6 +58,10 @@ const featureFlags = createFeatureFlags({
   trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption' },
   trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
+  enhancedCompatibilitySdcpp: {
+    availability: ['public'],
+    fliptKey: 'enhanced-compatibility-sdcpp',
+  },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {

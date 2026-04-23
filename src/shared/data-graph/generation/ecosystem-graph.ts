@@ -62,6 +62,14 @@ import { seedanceGraph } from './seedance-graph';
 // =============================================================================
 
 /**
+ * Whether the given ecosystem/model pair surfaces the `enhancedCompatibility` toggle.
+ * Shared by the enhancedCompatibility node's `when` and the quantity node's step logic.
+ */
+function supportsEnhancedCompatibility(ecosystem: string, modelId?: number): boolean {
+  return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && modelId !== fluxUltraAirId;
+}
+
+/**
  * Get valid ecosystem key for the given workflow.
  * If the current value supports the workflow, keep it; otherwise return the default ecosystem.
  */
@@ -188,19 +196,6 @@ export const ecosystemGraph = new DataGraph<
     },
     ['ecosystem']
   )
-  // Quantity node - image output only, workflow-dependent (draft uses step=4)
-  .node(
-    'quantity',
-    (ctx, ext) => {
-      const isDraft = ctx.workflow === 'txt2img:draft';
-      return {
-        ...quantityNode({ min: isDraft ? 4 : 1, step: isDraft ? 4 : 1 })(ctx, ext),
-        when: ctx.output === 'image',
-      };
-    },
-    ['workflow', 'output']
-  )
-
   // Use groupedDiscriminator to reduce TypeScript type complexity:
   // - Multiple ecosystem values that share the same graph are grouped into ONE type branch
   // - This reduces union type bloat from O(ecosystems) to O(families)
@@ -275,11 +270,30 @@ export const ecosystemGraph = new DataGraph<
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       return {
         ...enhancedCompatibilityNode(),
-        when:
-          EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ctx.ecosystem) && modelId !== fluxUltraAirId,
+        when: supportsEnhancedCompatibility(ctx.ecosystem, modelId),
       };
     },
     ['ecosystem', 'model']
+  )
+  // Quantity node - image output only.
+  // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
+  // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag.
+  .node(
+    'quantity',
+    (ctx, ext) => {
+      const isDraft = ctx.workflow === 'txt2img:draft';
+      const modelId = 'model' in ctx ? ctx.model?.id : undefined;
+      const bogoActive =
+        !!ext.flags?.enhancedCompatibilitySdcpp &&
+        supportsEnhancedCompatibility(ctx.ecosystem, modelId) &&
+        ctx.enhancedCompatibility !== true;
+      const step = isDraft ? 4 : bogoActive ? 2 : 1;
+      return {
+        ...quantityNode({ step })(ctx, ext),
+        when: ctx.output === 'image',
+      };
+    },
+    ['workflow', 'output', 'ecosystem', 'model', 'enhancedCompatibility']
   )
   .node(
     'prompt',

@@ -112,6 +112,7 @@ export type WhatIfOptions = {
   externalCtx: GenerationCtx;
   userId?: number;
   isModerator?: boolean;
+  experimental?: boolean;
   token: string;
   currencies?: BuzzSpendType[];
 };
@@ -954,6 +955,7 @@ export async function whatIfFromGraph({
   externalCtx,
   userId,
   isModerator,
+  experimental,
   token,
   currencies,
 }: WhatIfOptions) {
@@ -973,6 +975,7 @@ export async function whatIfFromGraph({
     token,
     body: {
       steps,
+      experimental,
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
     },
