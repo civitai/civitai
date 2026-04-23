@@ -3,6 +3,7 @@ import { Readable } from 'stream';
 import * as z from 'zod';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
+import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
 // Disable body parser size limit and response size limit for large epoch files
@@ -52,7 +53,7 @@ export default AuthedEndpoint(async function downloadTrainingEpoch(
     return res.status(403).json({ error: 'You do not have permission to download this epoch' });
   }
 
-  const trainingFile = modelVersion.files[0];
+  const trainingFile = pickBestTrainingFile(modelVersion.files);
   if (!trainingFile) {
     return res.status(404).json({ error: 'Training data not found' });
   }

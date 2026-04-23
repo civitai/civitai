@@ -6,7 +6,7 @@ import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
@@ -810,7 +810,7 @@ export async function queryModelVersionsForModeratorHandler({
 
   const workflowIds: string[] = [];
   const mappedItems = items.map(({ files, meta, ...version }) => {
-    const trainingFile = files[0];
+  const trainingFile = pickBestTrainingFile(files);
     const trainingResults = (trainingFile?.metadata as FileMetadata)
       ?.trainingResults as TrainingResultsV2;
 
@@ -867,7 +867,7 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
   });
   if (!version) throw throwNotFoundError();
 
-  const trainingFile = version.files[0];
+  const trainingFile = pickBestTrainingFile(version.files);
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
   const fresh = trainingFile
     ? await dbWrite.modelFile.findUnique({
