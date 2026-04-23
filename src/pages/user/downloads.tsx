@@ -68,6 +68,9 @@ export default function Downloads() {
       const download = filteredDownloads[index];
       return `${download.modelVersion.id}-${download.file?.id ?? 'no-file'}`;
     },
+    // See MasonryGridVirtual for rationale — opts out of virtual-core's
+    // 150ms setTimeout debounce on every scroll tick.
+    useScrollendEvent: true,
   });
 
   const hideDownloadMutation = trpc.download.hide.useMutation({

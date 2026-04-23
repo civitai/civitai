@@ -25,54 +25,166 @@ Target: ~15–20% reduction on a 200-card Models page (~3,000 nodes).
 
 ## Phase 1 — High impact, zero risk
 
-### ModelCard
+### ModelCard — done
 
-- [x] Replace 4 `<Group gap={2}>` wrappers inside the stat Badge with `<div className="flex items-center gap-0.5">` and drop the now-unused `Group` import
-- [ ] **Deferred for visual review.** Replace outer `<Badge classNames={{ label: 'flex flex-nowrap gap-2' }}>` stat chip with a styled `<div>` carrying `cardClasses.statChip cardClasses.chip` + explicit flex + padding. Saves 1 DOM node per chip but Mantine Badge's default padding / line-height / text-transform behavior needs a side-by-side visual check before landing.
-- [ ] **Deferred for visual review.** Same treatment for the thumbs-up review badge.
+- [x] Flatten 4 `<Group gap={2}>` wrappers inside the stat Badge; drop unused `Group` import
+- [x] Extract `ModFlagBadge` helper; consolidate POI/Minor/NSFW into a single pipe-separated badge
+- [x] `useMemo` the `statusBadgeStyle` object
+- [x] Remove dead code (`image`, `aspectRatio`, `abbreviateNumber`)
+- [x] Wrap in `React.memo`
+- [x] Replace per-card `trpc.user.getEngagedModels` + `.includes()` with shared `useReviewedModelIds` hook (WeakMap-cached Set)
+- [x] Memoize `baseMetrics` and `href`
+- [x] Memoize `ModelCardContextProvider` value (makes the `memo` effective)
 
-### ImagesCard
+### ImagesCard — done
 
 - [x] Flatten `Box > Stack > Group` pending branch into a single flex-col `<div>`
 - [x] Replace `<Group gap={4}>` inside Alert titles with `<div className="flex items-center gap-1">`
 - [x] Remove unnecessary `<div className="flex flex-col items-end">` wrappers around Alert body Text
-- [ ] **Deferred for visual review.** Evaluate whether the two `<Alert>` blocks (blocked/TOS) can be plain `<div>` with yellow/red styling (Alert renders ~4 wrapper divs; rare states but visually distinctive — replacement needs design check).
+- [x] Defer dialog state via `getState` on `RoutedDialogLink`
+- [x] Replace stacked SVG drop-shadows on meta icon with `bg-black/50 rounded-full` wrapper
 
-### ArticleCard
+### ArticleCard — done
 
-- [x] Already using `<div className="flex items-center gap-0.5">` pattern inside stat badges — no `Group` wrappers to flatten. Outer Badge → div swap deferred to same visual-review batch as ModelCard.
+- [x] Already using `<div className="flex items-center gap-0.5">` pattern inside stat badges; no `Group` wrappers to flatten
 
-### CollectionCard
+### CollectionCard — done
 
 - [x] Replace 2 `<Group gap={2}>` wrappers inside the stat Badge with `<div className="flex items-center gap-0.5">`
-- [x] Flatten the `CollectionCardHeader` layout Groups (`<Group gap={4} justify="space-between" wrap="nowrap">` + inner `<Group gap="xs">`) into plain flex `<div>`s; drop the now-unused `Group` import
+- [x] Flatten the `CollectionCardHeader` layout Groups into plain flex `<div>`s; drop unused `Group` import
 
-### BountyCard
+### BountyCard — done
 
-- [ ] **Deferred for visual review.** [BountyCard.tsx:159-223](../src/components/Cards/BountyCard.tsx#L159-L223) — The outer Badge wraps a flex row of four `<IconBadge>` stat counters. The nested IconBadge components each render their own outer wrapper, which is the real restructure target, but it's not a shallow swap — each IconBadge has icon color, icon-spacing, and font-weight behaviors that need to be reproduced precisely.
-- [ ] **Keeping as HoverCard.** [BountyCard.tsx:127-144](../src/components/Cards/BountyCard.tsx#L127-L144) — Re-examined: the "pending scan" popup is not a simple label; it's a title + description with different weights. Tooltip is the wrong tool here. Leaving HoverCard in place.
+- [x] Added `useBountyEngagementSets()` in `bounty.utils.ts` — returns `{ favoriteIds, trackedIds }` as WeakMap-cached Sets. Swapped `engagements?.Favorite?.find()` / `engagements?.Track?.find()` for `favoriteIds.has(id)` / `trackedIds.has(id)`. Same pattern as `useReviewedModelIds`.
+- [x] **Keeping as HoverCard.** [BountyCard.tsx:127-144](../src/components/Cards/BountyCard.tsx#L127-L144) — the "pending scan" popup is a title + description with different weights. Tooltip is the wrong tool.
 
-### ImagesAsPostsCard
+### ImagesAsPostsCard — Phase 1 done (Steps 6–7 open)
 
-Rendered on every model's gallery page ("Images as posts" view). Two branches for single-image vs multi-image (carousel), with heavily duplicated structure.
+Phase 1 items are tracked in detail in the execution plan below. Summary of state:
 
-Safe flattens (zero visual risk):
-
-- [ ] [L263](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L263) and [L346](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L346) — Replace `<Stack gap="xs" className="absolute right-2 top-2 z-10">` (hover-action column, duplicated in both branches) with `<div className="absolute right-2 top-2 z-10 flex flex-col gap-2">`
-- [ ] [L164](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L164) — Flatten `<Group gap="xs" wrap="nowrap">` wrapping the timestamp + resource-attribution icons in `UserAvatar` subText
-- [ ] [L171](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L171) — Flatten inner `<Group ml={6} gap={4}>` around the auto/manual resource Tooltips
-- [ ] [L227](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L227) — Flatten `<Group gap={4} wrap="nowrap">` inside the review Badge (thumbs icon + optional message icon)
-
-Structural (needs review):
-
-- [ ] **Duplicated render block** — the ~75-line block at [L256-333](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L256-L333) (single-image) and [L338-423](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L338-L423) (carousel slide) is almost verbatim copy-paste: `ImageGuard2` render prop → `OnsiteIndicator` + `BlurToggle` + hover-action column + `RoutedDialogLink` + `EdgeMedia2` + `Reactions` + `ImageMetaPopover2`. Extracting a shared `<ImagesAsPostsCardImage>` component wouldn't reduce DOM per card but would halve the maintenance surface and ensure future optimizations apply to both branches.
-- [ ] [L153-160](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L153-L160) — `<Paper p="xs" radius={0}>` header container. Paper adds wrapper divs + theme-reactive background. Replaceable with a plain `<div>` + Tailwind `bg-white dark:bg-dark-7` (or matching token). Low per-card DOM impact but this renders on every card of the gallery page. Needs a theme-color visual check.
+- [x] Context-value instability fix at `ImagesAsPostsInfiniteProvider` + caller
+- [x] Stack × 2 and Group × 3 flattened
+- [x] `handleRemixClick` dead `useCallback` removed
+- [x] Carousel dialog state deferred via `getState`
+- [x] `cosmetic` lookup hoisted + memoized; `cosmeticData` memoized
+- [x] Combined the two `.some()` passes
+- [x] `wrapperProps` style hoisted to module scope
+- [ ] **Step 6 — structural** (user-direction: "circle back later")
+- [ ] **Step 7 — validation** (manual: screenshot diff + React Profiler scroll test)
 
 ### What to skip on ImagesAsPostsCard
 
 - `<HoverCard>` on `PinnedIndicator` ([L113-136](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L113-L136)) — popup content has a title + description with different weights. Tooltip is the wrong tool.
 - `<Badge size="xs" color="violet">OP</Badge>` ([L195](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L195)) — single-text badge passed through `UserAvatar`. Negligible.
 - `<LegacyActionIcon>` wrappers — already minimal.
+
+---
+
+## ImagesAsPostsCard — Execution Plan
+
+Ordered sequence of work. Follows the same progression that worked for ModelCard: fix render effectiveness first, then safe flattens, then browser-cost wins, then memoization, then structural changes.
+
+The card is already wrapped in `memo(ImagesAsPostsCardNoMemo)` at [L111](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L111), so most wins come from making the memo *actually effective* and reducing per-render work inside.
+
+### Step 1 — Fix context-value instability (highest payoff)
+
+- [x] [ImagesAsPostsInfinite.tsx](../src/components/Image/AsPosts/ImagesAsPostsInfinite.tsx) — memoized the `filters` object (was rebuilt via `removeEmpty({...})` every render) and wrapped the provider value in `useMemo` at the call site. Context consumers now only re-render when one of `{filters, modelVersions, showModerationOptions, model}` actually changes.
+
+  **Fix:** `useMemo` the value at the Provider (or at the caller). Same pattern we applied to `ModelCardContextProvider`.
+
+  ```tsx
+  // ImagesAsPostsInfiniteProvider.tsx
+  export function ImagesAsPostsInfiniteProvider({
+    children,
+    filters,
+    modelVersions,
+    showModerationOptions,
+    model,
+  }: { children: React.ReactNode } & ImagesAsPostsInfiniteState) {
+    const value = useMemo(
+      () => ({ filters, modelVersions, showModerationOptions, model }),
+      [filters, modelVersions, showModerationOptions, model]
+    );
+    return (
+      <ImagesAsPostsInfiniteContext.Provider value={value}>
+        {children}
+      </ImagesAsPostsInfiniteContext.Provider>
+    );
+  }
+  ```
+
+  Caller at [ImagesAsPostsInfinite.tsx:158](../src/components/Image/AsPosts/ImagesAsPostsInfinite.tsx#L158) switches to spread props rather than pass a `value` object.
+
+  Nested refs inside `value` (`filters`, `modelVersions`, `model`) must themselves be stable. If any are rebuilt per render upstream, they need their own memoization first — verify before landing.
+
+### Step 2 — Safe DOM flattens (zero visual risk)
+
+- [x] Both `<Stack gap="xs">` hover-action columns → `<div className="... flex flex-col gap-2">`
+- [x] `<Group gap="xs" wrap="nowrap">` UserAvatar subText row → `<div className="flex flex-nowrap items-center gap-2.5">`
+- [x] `<Group ml={6} gap={4}>` resource-attribution row → `<div className="ml-1.5 flex items-center gap-1">`
+- [x] `<Group gap={4} wrap="nowrap">` review-badge inner → `<div className="flex flex-nowrap items-center gap-1">`
+- [x] Dropped unused `Group` / `Stack` imports
+
+### Step 3 — Browser-cost wins
+
+- [x] **Dead `useCallback` removed** — the curry's inner closure was recreated per invocation anyway, so the `useCallback` provided no stability. Swapped to a plain arrow and dropped the import. Preserved signature since it's called per-image inline.
+
+- [x] **Carousel dialog state deferred** via `getState={() => ({ imageId, images: data.images })}`. Href still resolves from the cheap `state={{ imageId }}`; the full images-array reference only materializes on click.
+
+  ```tsx
+  <RoutedDialogLink
+    name="imageDetail"
+    state={{ imageId: image.id }}
+    getState={() => ({ imageId: image.id, images: data.images })}
+    className={classes.link}
+  >
+  ```
+
+  For a post with 20 images × however many posts on screen, this avoids rebuilding a 20-image reference per render.
+
+  Single-image branch at [L279-282](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L279-L282) is already cheap (`images: [image]`); leave it.
+
+### Step 4 — Memoize per-render allocations
+
+- [x] `cosmeticData` wrapped in `useMemo` with deps `[cosmetic?.data, pinned, theme, colorScheme]`.
+- [x] Hoisted the cosmetic lookup to `useMemo` in `ImagesAsPostsCardNoMemo` and pass `cosmetic` as a prop to `ImagesAsPostsCardHeader` — removes the duplicate `find` pass.
+- [x] Combined the two `.some()` passes into a single `for...of` loop with early-break once both flags are set.
+
+### Step 5 — Inline-object hoisting
+
+- [x] `wrapperProps` on `EdgeMedia2` — hoisted to module-scoped `edgeMediaWrapperProps` constant. Both usages (single-image + carousel-slide) now share the reference.
+
+### Step 6 — Structural consolidation (needs review)
+
+- [ ] Extract `<ImagesAsPostsCardImage>` component from the ~75-line block duplicated between [L256-333](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L256-L333) (single-image) and [L338-423](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L338-L423) (carousel slide). Halves the surface area and ensures future optimizations apply to both branches automatically.
+
+  Propose signature:
+
+  ```tsx
+  function ImagesAsPostsCardImage({
+    image,
+    images,      // slice for dialog navigation (varies by branch)
+    connectType, // undefined for single, 'post' for carousel
+    connectId,
+    onRemixClick,
+  }: { ... }) { ... }
+  ```
+
+- [ ] [L153-160](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L153-L160) — `<Paper p="xs" radius={0}>` header container → plain `<div>` with Tailwind `bg-white dark:bg-dark-7` (or matching token). Needs theme-color visual check before landing.
+
+### Step 7 — Validation
+
+- [ ] Typecheck + lint + prettier clean
+- [ ] Screenshot diff the "Images as posts" gallery page in light + dark mode
+- [ ] React Profiler scroll test: confirm cards skip re-render on unrelated parent updates after Step 1 lands
+- [ ] Functional check: click single-image → dialog opens; click carousel slide → dialog opens with prev/next nav intact; remix button still opens generator
+
+### Expected impact
+
+- Step 1 is the single biggest win — makes the existing `memo` effective
+- Steps 2 + 5 are ~zero-risk cleanup
+- Steps 3 + 4 eliminate per-render allocations that compound at feed scale
+- Step 6 is a maintainability win that sets up future DOM-reduction sweeps to apply to both render branches at once
 
 ---
 

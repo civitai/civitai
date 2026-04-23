@@ -78,14 +78,18 @@ export function ImagesAsPostsInfinite({
   const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
-  const filters = removeEmpty({
-    ...imageFilters,
-    modelVersionId: selectedVersionId,
-    modelId: model.id,
-    username,
-    hidden: showHidden, // override global hidden filter
-    // types: [MediaType.image, MediaType.video], // override global types image filter
-  });
+  const filters = useMemo(
+    () =>
+      removeEmpty({
+        ...imageFilters,
+        modelVersionId: selectedVersionId,
+        modelId: model.id,
+        username,
+        hidden: showHidden, // override global hidden filter
+        // types: [MediaType.image, MediaType.video], // override global types image filter
+      }),
+    [imageFilters, selectedVersionId, model.id, username, showHidden]
+  );
 
   const browsingLevel = useBrowsingLevelDebounced();
   const { gallerySettings } = useGallerySettings({ modelId: model.id });
@@ -154,8 +158,13 @@ export function ImagesAsPostsInfinite({
     !!gallerySettings?.hiddenUsers.length ||
     !!gallerySettings?.hiddenTags.length;
 
+  const providerValue = useMemo(
+    () => ({ filters, modelVersions, showModerationOptions, model }),
+    [filters, modelVersions, showModerationOptions, model]
+  );
+
   return (
-    <ImagesAsPostsInfiniteProvider value={{ filters, modelVersions, showModerationOptions, model }}>
+    <ImagesAsPostsInfiniteProvider value={providerValue}>
       <MasonryProvider
         columnWidth={320}
         maxColumnCount={6}

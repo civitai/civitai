@@ -113,6 +113,9 @@ function VirtualColumn<TData>({
     gap: 16,
     scrollMargin,
     initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
+    // See MasonryGridVirtual for rationale — opts out of virtual-core's
+    // 150ms setTimeout debounce on every scroll tick.
+    useScrollendEvent: true,
   });
 
   return (
