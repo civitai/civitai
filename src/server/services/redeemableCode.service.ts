@@ -357,7 +357,7 @@ export async function consumeRedeemableCode({
       } else if (consumedCode.type === RedeemableCodeType.Membership && consumedCode.price) {
         // Do membership stuff:
         // First, fetch user membership and see their status:
-        const userMembership = await tx.customerSubscription.findFirst({
+        let userMembership = await tx.customerSubscription.findFirst({
           where: {
             userId,
             buzzType: 'yellow',
@@ -380,55 +380,107 @@ export async function consumeRedeemableCode({
           },
         });
 
-        let activeUserMembership = userMembership;
-
         const consumedProductMetadata = consumedCode.price.product
           .metadata as SubscriptionProductMetadata;
         const consumedProductTier = consumedProductMetadata.tier ?? 'free';
 
-        if (userMembership) {
-          // Check states:
-          if (userMembership.status !== 'active') {
-            // We can safely delete this inactive membership:
-            await tx.customerSubscription.delete({
-              where: { id: userMembership.id },
-            });
-            activeUserMembership = null;
-          } else if (userMembership.currentPeriodEnd <= new Date()) {
-            // Handle expired but still "active" memberships
-            await tx.customerSubscription.delete({
-              where: { id: userMembership.id },
-            });
-            activeUserMembership = null;
-          }
+        // Membership codes must target a real paid tier. Applies to both new
+        // and existing users so a malformed code can never seed a free-tier row.
+        if (consumedProductTier === 'free' || !consumedProductMetadata.tier) {
+          throw new Error('Cannot redeem a code for a free or undefined tier');
+        }
 
-          if (!activeUserMembership) {
-            // Log:
-            await logToAxiom({
-              message: `Redeemed code for user ${userId} but found no active membership, deleting old membership`,
-              level: 'info',
-              userId,
-              code: consumedCode.code,
-            });
-          }
+        // Cross-provider handling: prepaid tokens only live on Civitai-provider
+        // rows. Stripe/Paddle subs have no `metadata.tokens` to preserve, so
+        // it's safe to delete an inactive non-matching row and fall through to
+        // the new-user path. Active non-matching rows still block redemption.
+        if (
+          userMembership &&
+          userMembership.product.provider !== consumedCode.price.product.provider
+        ) {
+          const isActiveAndUnexpired =
+            userMembership.status === 'active' &&
+            userMembership.currentPeriodEnd > new Date();
 
-          // Check provider compatibility for any remaining active membership
-          if (
-            activeUserMembership &&
-            activeUserMembership.product.provider !== consumedCode.price.product.provider
-          ) {
+          if (isActiveAndUnexpired) {
             throw new Error(
               'Cannot redeem a code for a different provider than your current membership. '
             );
           }
 
-          if (activeUserMembership) {
-            const membershipProductMetadata = activeUserMembership.product
-              .metadata as SubscriptionProductMetadata;
+          await tx.customerSubscription.delete({ where: { id: userMembership.id } });
+          // Fire-and-forget: don't let an Axiom outage roll back a paid redemption.
+          void logToAxiom({
+            message: `Deleted inactive ${userMembership.product.provider} membership for user ${userId} so a Civitai membership code could be redeemed`,
+            level: 'info',
+            userId,
+            code: consumedCode.code,
+          }).catch(() => undefined);
+          userMembership = null;
+        }
 
-            if (consumedProductMetadata.tier === 'free' || !consumedProductMetadata.tier) {
-              throw new Error('Cannot redeem a code for a free or undefined tier');
-            }
+        if (userMembership) {
+          const subscriptionMeta = (userMembership.metadata ?? {}) as SubscriptionMetadata;
+          // Migrate legacy prepaids → tokens on read so every write path appends
+          // to the same source of truth and legacy counters are retired.
+          const existingTokens = getPrepaidTokens({ metadata: subscriptionMeta });
+          const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
+
+          const isActiveAndUnexpired =
+            userMembership.status === 'active' &&
+            userMembership.currentPeriodEnd > new Date();
+
+          if (!isActiveAndUnexpired) {
+            // Sub is inactive (canceled / expired_claimable / past_due) or active
+            // but past its period end. Reactivate in place so prior tokens
+            // (locked / unlocked / claimed) are preserved. Treat as a fresh
+            // activation at the redeemed tier — first new token unlocked so the
+            // user has immediate access.
+            const now = dayjs();
+            const newTokens = createPrepaidTokens({
+              count: consumedCode.unitValue,
+              tier: consumedProductTier as ProductTier,
+              buzzAmount,
+              codeId: consumedCode.code,
+              firstUnlocked: true,
+            });
+
+            await tx.customerSubscription.update({
+              where: { id: userMembership.id },
+              data: {
+                productId: consumedCode.price.product.id,
+                priceId: consumedCode.price.id,
+                status: 'active',
+                currentPeriodStart: now.toDate(),
+                currentPeriodEnd: now
+                  .add(
+                    consumedCode.unitValue,
+                    consumedCode.price.interval as 'day' | 'month' | 'year'
+                  )
+                  .toDate(),
+                canceledAt: null,
+                endedAt: null,
+                cancelAt: null,
+                cancelAtPeriodEnd: true,
+                metadata: {
+                  ...subscriptionMeta,
+                  tokens: [...existingTokens, ...newTokens],
+                  prepaids: {}, // Retire legacy counter — tokens array is the source of truth
+                },
+              },
+            });
+
+            // Fire-and-forget: don't let an Axiom outage roll back a paid redemption.
+            void logToAxiom({
+              message: `Reactivated inactive/expired membership for user ${userId} via code redemption (previous status: ${userMembership.status}, preserved ${existingTokens.length} prior token(s))`,
+              level: 'info',
+              userId,
+              code: consumedCode.code,
+            }).catch(() => undefined);
+          } else {
+            // Active + unexpired sub: extend / upgrade / downgrade in place.
+            const membershipProductMetadata = userMembership.product
+              .metadata as SubscriptionProductMetadata;
 
             const membershipTierOrder = constants.memberships.tierOrder.indexOf(
               membershipProductMetadata.tier
@@ -437,15 +489,8 @@ export async function consumeRedeemableCode({
               consumedProductMetadata.tier
             );
 
-            const subscriptionMeta = (activeUserMembership.metadata ??
-              {}) as SubscriptionMetadata;
-            // Use getPrepaidTokens to migrate legacy prepaids → tokens on redemption
-            const existingTokens = getPrepaidTokens({ metadata: subscriptionMeta });
-            const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
-
-            // At this point, we can safely extend or improve the membership:
             if (consumedTierOrder === membershipTierOrder) {
-              // Same tier extension: all tokens locked, appended to existing tokens
+              // Same tier extension: new tokens locked, appended to existing.
               const newTokens = createPrepaidTokens({
                 count: consumedCode.unitValue,
                 tier: consumedProductTier as ProductTier,
@@ -455,15 +500,15 @@ export async function consumeRedeemableCode({
               });
 
               await tx.customerSubscription.update({
-                where: { id: activeUserMembership.id },
+                where: { id: userMembership.id },
                 data: {
                   metadata: {
                     ...subscriptionMeta,
                     tokens: [...existingTokens, ...newTokens],
-                    prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
+                    prepaids: {},
                   },
                   status: 'active',
-                  currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
+                  currentPeriodEnd: dayjs(userMembership.currentPeriodEnd)
                     .add(
                       consumedCode.unitValue,
                       consumedCode.price.interval as 'day' | 'month' | 'year'
@@ -472,24 +517,25 @@ export async function consumeRedeemableCode({
                 },
               });
             } else if (consumedTierOrder > membershipTierOrder) {
-              // Upgrade to higher tier: first token unlocked, rest locked
+              // Upgrade: first new token unlocked, rest locked.
               const now = dayjs();
               const proratedDays =
-                dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
-                (existingTokens.filter(
+                dayjs(userMembership.currentPeriodEnd).diff(now, 'days') -
+                existingTokens.filter(
                   (t) => t.tier === membershipProductMetadata.tier && t.status !== 'claimed'
-                ).length) * 30;
+                ).length *
+                  30;
 
               const newTokens = createPrepaidTokens({
                 count: consumedCode.unitValue,
                 tier: consumedProductTier as ProductTier,
                 buzzAmount,
                 codeId: consumedCode.code,
-                firstUnlocked: true, // First token unlocked for upgrades
+                firstUnlocked: true,
               });
 
               await tx.customerSubscription.update({
-                where: { id: activeUserMembership.id },
+                where: { id: userMembership.id },
                 data: {
                   productId: consumedCode.price.product.id,
                   priceId: consumedCode.price.id,
@@ -504,7 +550,7 @@ export async function consumeRedeemableCode({
                   metadata: {
                     ...subscriptionMeta,
                     tokens: [...existingTokens, ...newTokens],
-                    prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
+                    prepaids: {},
                     proratedDays: {
                       ...subscriptionMeta.proratedDays,
                       [membershipProductMetadata.tier ?? 'free']:
@@ -516,7 +562,8 @@ export async function consumeRedeemableCode({
                 },
               });
             } else {
-              // Downgrade: all tokens locked
+              // Downgrade: new tokens locked, appended only (period unchanged —
+              // current higher-tier period runs out first).
               const newTokens = createPrepaidTokens({
                 count: consumedCode.unitValue,
                 tier: consumedProductTier as ProductTier,
@@ -526,12 +573,12 @@ export async function consumeRedeemableCode({
               });
 
               await tx.customerSubscription.update({
-                where: { id: activeUserMembership.id },
+                where: { id: userMembership.id },
                 data: {
                   metadata: {
                     ...subscriptionMeta,
                     tokens: [...existingTokens, ...newTokens],
-                    prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
+                    prepaids: {},
                   },
                 },
               });
@@ -539,7 +586,7 @@ export async function consumeRedeemableCode({
           }
         }
 
-        if (!activeUserMembership) {
+        if (!userMembership) {
           // New user: first token unlocked (user must claim manually), rest locked
           const now = dayjs();
           const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
