@@ -2,11 +2,7 @@ import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
-<<<<<<< feature/tag-caption-v2
-import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
-=======
-import { edgeCacheIt, purgeOnSuccess } from '~/server/middleware.trpc';
->>>>>>> main
+import { edgeCacheIt, purgeOnSuccess, rateLimit  } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   autoCaptionInput,
@@ -27,11 +23,8 @@ import {
   getJobEstStartsHandler,
   getTrainingServiceStatus,
   moveAsset,
-<<<<<<< feature/tag-caption-v2
   submitAutoLabelWorkflow,
-=======
   setTrainingServiceStatus,
->>>>>>> main
 } from '~/server/services/training.service';
 import {
   guardedProcedure,
