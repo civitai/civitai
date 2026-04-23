@@ -98,7 +98,8 @@ export async function getUserNotifications({
   if (cursor) AND.push(Prisma.sql`un."createdAt" < ${cursor}`);
   // else AND.push(Prisma.sql`un."createdAt" > NOW() - interval '1 month'`);
 
-  const query = await notifDbRead.cancellableQuery<NotificationsRaw>(Prisma.sql`
+  const db = await getNotifDbWithoutLag('notification', userId);
+  const query = await db.cancellableQuery<NotificationsRaw>(Prisma.sql`
     SELECT
       un.id,
       n.type,
@@ -181,7 +182,7 @@ export const markNotificationsRead = async ({
       userId,
       all,
       category,
-    }).catch(() => {});
+    }).catch(() => null);
   });
 };
 
@@ -207,7 +208,7 @@ async function _markNotificationsReadImpl({
           AND n."category" = ${category}::"NotificationCategory"
       `);
       await preventReplicationLag('notification', userId);
-      notificationCache.clearCategory(userId, category).catch(() => {});
+      notificationCache.clearCategory(userId, category).catch(() => null);
     } else {
       // No join needed - faster query
       await notifDbWrite.query(Prisma.sql`
@@ -219,7 +220,7 @@ async function _markNotificationsReadImpl({
           AND un.viewed IS FALSE
       `);
       await preventReplicationLag('notification', userId);
-      notificationCache.bustUser(userId).catch(() => {});
+      notificationCache.bustUser(userId).catch(() => null);
     }
   } else {
     const resp = await notifDbWrite.query(Prisma.sql`
@@ -248,7 +249,7 @@ async function _markNotificationsReadImpl({
       `);
       const catData = await catQuery.result();
       if (catData && catData.length)
-        notificationCache.decrementUser(userId, catData[0].category).catch(() => {});
+        notificationCache.decrementUser(userId, catData[0].category).catch(() => null);
     }
   }
 }
