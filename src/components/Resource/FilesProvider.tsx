@@ -325,25 +325,29 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       return false;
     }
 
-    // Check component-only model constraint (needs access to linkedComponents)
-    const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
-    if (modelFiles.length === 0) {
-      const uploadedRequiredComponents = files.filter(
-        (f) =>
-          f.type &&
-          (componentFileTypes as readonly string[]).includes(f.type) &&
-          f.isRequired !== false
-      );
-      const requiredLinkedComponents = linkedComponents.filter((c) => c.isRequired !== false);
-      const totalComponents = uploadedRequiredComponents.length + requiredLinkedComponents.length;
-      if (totalComponents < 2) {
-        showErrorNotification({
-          title: 'Insufficient components',
-          error: new Error(
-            'Component-only models (without a main model file) require at least 2 required components'
-          ),
-        });
-        return false;
+    // Check component-only model constraint (needs access to linkedComponents).
+    // Skip for archive-primary model types (Workflows/Poses/Wildcards/Other) — their main file
+    // is an archive/config, so they don't fit the "component-only" concept.
+    if (!model?.type || !archivePrimaryModelTypes.includes(model.type)) {
+      const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
+      if (modelFiles.length === 0) {
+        const uploadedRequiredComponents = files.filter(
+          (f) =>
+            f.type &&
+            (componentFileTypes as readonly string[]).includes(f.type) &&
+            f.isRequired !== false
+        );
+        const requiredLinkedComponents = linkedComponents.filter((c) => c.isRequired !== false);
+        const totalComponents = uploadedRequiredComponents.length + requiredLinkedComponents.length;
+        if (totalComponents < 2) {
+          showErrorNotification({
+            title: 'Insufficient components',
+            error: new Error(
+              'Component-only models (without a main model file) require at least 2 required components'
+            ),
+          });
+          return false;
+        }
       }
     }
 
