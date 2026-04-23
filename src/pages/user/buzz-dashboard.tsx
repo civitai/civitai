@@ -103,8 +103,7 @@ export default function UserBuzzDashboard() {
   );
 
   const paymentProvider = usePaymentProvider();
-  const showBlueBuzzUpsell =
-    !isMember && features.membershipsV2 && selectedAccountType === 'blue';
+  const showBlueBuzzUpsell = !isMember && features.membershipsV2 && selectedAccountType === 'blue';
   const { data: plans = [] } = trpc.subscriptions.getPlans.useQuery(
     { paymentProvider },
     { enabled: showBlueBuzzUpsell }
@@ -118,6 +117,7 @@ export default function UserBuzzDashboard() {
   const rewardsMultiplier = multipliers.rewardsMultiplier;
   const globalRewardsBonus = multipliers.globalRewardsBonus;
   const baseRewardsMultiplier = multipliers.baseRewardsMultiplier;
+  const rewardsIneligible = multipliers.rewardsIneligible;
   const { subscription, subscriptionPaymentProvider } = useActiveSubscription({
     buzzType: selectedAccountType,
     includeCanceled: true,
@@ -209,7 +209,7 @@ export default function UserBuzzDashboard() {
                   <h3 className="text-xl font-bold" id="rewards">
                     Ways to earn {getAccountTypeLabel(selectedAccountType)} Buzz
                   </h3>
-                  {globalRewardsBonus > 1 ? (
+                  {rewardsIneligible ? null : globalRewardsBonus > 1 ? (
                     <div className="flex flex-wrap items-center gap-1.5">
                       {baseRewardsMultiplier > 1 && (
                         <>
@@ -248,9 +248,7 @@ export default function UserBuzzDashboard() {
                       size="sm"
                       radius="xl"
                       className={classes.upsellCta}
-                      leftSection={
-                        <IconSparkles size={16} className={classes.upsellCtaIcon} />
-                      }
+                      leftSection={<IconSparkles size={16} className={classes.upsellCtaIcon} />}
                       rightSection={<IconArrowRight size={16} />}
                     >
                       Earn {formatRewardsBoost(maxRewardsMultiplier)} Blue Buzz with a membership
@@ -276,6 +274,10 @@ export default function UserBuzzDashboard() {
                   <Center py="xl">
                     <Loader />
                   </Center>
+                ) : rewardsIneligible ? (
+                  <Alert color="yellow" variant="light">
+                    Your account is not currently eligible to earn Buzz rewards.
+                  </Alert>
                 ) : (
                   <RewardsList
                     rewards={filteredRewards}
