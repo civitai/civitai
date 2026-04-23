@@ -4,7 +4,7 @@ import type { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getNotifDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
 import type { NotificationCategoryCount } from '~/server/notifications/notification-cache';
 import { notificationCache } from '~/server/notifications/notification-cache';
@@ -193,9 +193,11 @@ function isTransientWriteError(err: unknown): boolean {
 }
 
 // Runs the write with bounded retries on transient pool-acquire errors.
-// Always resolves: success and failure both emit a single `notification.markRead`
-// Axiom event with an `outcome` field. UI is already optimistic, so we never
-// surface errors upward.
+// Always resolves without surfacing errors upward because the UI is already
+// optimistic. Emits a `notification.markRead` Axiom event only for retry
+// success (`outcome: retrySuccess`) or terminal failure
+// (`outcome: retriesExhausted` / `nonTransientError`); first-attempt success
+// does not log an event.
 async function runMarkReadWithRetry(
   input: MarkReadNotificationInput & { userId: number; all: boolean }
 ): Promise<void> {
@@ -219,11 +221,13 @@ async function runMarkReadWithRetry(
     } catch (err) {
       const transient = isTransientWriteError(err);
       if (!transient || attempt === MARK_READ_MAX_ATTEMPTS) {
+        const errMessage = err instanceof Error ? err.message : String(err);
         logToAxiom({
           type: 'warning',
           name: 'notification.markRead',
-          message: `Failed to mark notifications read: ${(err as Error).message}`,
+          message: `Failed to mark notifications read: ${errMessage}`,
           outcome: transient ? 'retriesExhausted' : 'nonTransientError',
+          error: safeError(err),
           userId,
           all,
           category,
