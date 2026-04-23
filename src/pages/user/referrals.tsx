@@ -1,7 +1,9 @@
 import { Container, Stack } from '@mantine/core';
+import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { ReferralDashboard } from '~/components/Referrals/ReferralDashboard';
+import { ReferralDashboardLite } from '~/components/Referrals/ReferralDashboardLite';
 import { ReferralDashboardSkeleton } from '~/components/Referrals/ReferralDashboardSkeleton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -25,6 +27,9 @@ export const getServerSideProps = createServerSideProps({
 });
 
 export default function ReferralsPage() {
+  const router = useRouter();
+  const useLite = router.query.lite === '1';
+  const Dashboard = useLite ? ReferralDashboardLite : ReferralDashboard;
   const { data, isLoading, refetch } = trpc.referral.getDashboard.useQuery();
   const [pendingOffer, setPendingOffer] = useState<number | null>(null);
 
@@ -68,7 +73,7 @@ export default function ReferralsPage() {
       <Meta title="Civitai | Refer & earn" deIndex />
       <Container size="md" className="py-8">
         <Stack gap="lg">
-          <ReferralDashboard
+          <Dashboard
             data={data}
             shareLink={shareLink}
             onRedeem={onRedeem}
