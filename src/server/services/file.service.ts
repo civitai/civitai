@@ -13,6 +13,7 @@ import {
   ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
@@ -330,7 +331,21 @@ export const getFileForModelVersion = async ({
       metadata: file.metadata as FileMetadata,
       isDownloadable,
     };
-  } catch (error) {
+  } catch (err) {
+    // Both storage-resolver and delivery-worker fallback rejected this file —
+    // usually an un-registered `file_locations` row on a bucket the
+    // delivery-worker doesn't know. Log so the leak is visible in production.
+    logToAxiom({
+      type: 'error',
+      name: 'resolve-download-url-failed',
+      ...safeError(err),
+      fileId: file.id,
+      modelId: modelVersion.model.id,
+      modelVersionId,
+      fileUrl: file.url,
+      fileType: file.type,
+      userId: user?.id,
+    }).catch(() => undefined);
     return { status: 'error' };
   }
 };
