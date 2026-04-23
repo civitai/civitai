@@ -217,11 +217,22 @@ query cache. Needs source-map lookup to confirm.
 ### P1
 
 5. **`React.memo` feed card components with stable prop references.** Avoids
-   re-rendering every card on unrelated store updates.
+   re-rendering every card on unrelated store updates. **Status: done in this
+   branch for ArticleCard, BountyCard, CollectionCard, ChallengeCard,
+   ComicCard, CreatorCardSimple. ModelCard/ImagesCard/PostsCard were already
+   memoized.**
 6. **Memoize inline Tabler icons** (or move to a sprite sheet). 1000 SVG trees
-   per 50-card feed is cheap to kill.
+   per 50-card feed is cheap to kill. **Status: deferred.** With P1.5 in place
+   icons only re-create on card mount (virtualizer scroll-in). True win
+   requires a sprite sheet — not a shallow edit. Track separately if feed
+   mount cost is still hot after these P0+P1 changes.
 7. **Audit `uW` observer (queryKey stability).** Either a source-map lookup or
    dev-build sanity check; look for `{ ... }` object literals in `queryKey`.
+   **Status: needs source-map — the minified `uW` name could be a Query,
+   QueryObserver, or MutationObserver from tRPC/React Query. Worth running
+   `pnpm build --profile` and inspecting the chunk, or spot-check hot hooks
+   (`useLiveMetric`, `useBuzzTippingStore`, `useReviewedModelIds`) for
+   `queryKey` stability.
 
 ### P2
 
