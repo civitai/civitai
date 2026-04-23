@@ -105,11 +105,19 @@ export async function updateFile({
   metadata,
   userId,
   isModerator,
+  backend: _backend,
+  s3Path: _s3Path,
   ...inputData
 }: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
   const modelFile = await dbWrite.modelFile.findUnique({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
-    select: { id: true, metadata: true, modelVersionId: true },
+    select: {
+      id: true,
+      metadata: true,
+      modelVersionId: true,
+      sizeKB: true,
+      modelVersion: { select: { modelId: true } },
+    },
   });
   if (!modelFile) throw throwNotFoundError();
 
