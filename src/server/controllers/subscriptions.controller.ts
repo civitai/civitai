@@ -42,6 +42,7 @@ export const getUserSubscriptionHandler = async ({
     userId: ctx.user.id,
     buzzType: input?.buzzType,
     includeBadState: input?.includeBadState,
+    includeCanceled: input?.includeCanceled,
   });
 };
 

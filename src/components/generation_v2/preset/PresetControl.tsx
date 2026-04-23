@@ -153,6 +153,8 @@ export function PresetControl() {
           <PopConfirm
             message="Update preset with current values?"
             onConfirm={handleSaveDirty}
+            withinPortal
+            position="bottom-end"
           >
             <Tooltip label="Save" withArrow>
               <ActionIcon
@@ -174,6 +176,8 @@ export function PresetControl() {
           <PopConfirm
             message="Discard changes and reset to preset?"
             onConfirm={handleReset}
+            withinPortal
+            position="bottom-end"
           >
             <Tooltip label="Reset to preset" withArrow>
               <ActionIcon variant="subtle" size="sm" color="gray">

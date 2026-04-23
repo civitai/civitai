@@ -39,6 +39,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PrepaidTokenOverview } from '~/components/Subscriptions/PrepaidTokenOverview';
+import { ReferralCallout } from '~/components/Referrals/ReferralCallout';
 import { PurchasedCodesCard } from '~/components/Account/PurchasedCodesCard';
 import { PrepaidTimelineProgress } from '~/components/Subscriptions/PrepaidTimelineProgress';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
@@ -254,6 +255,7 @@ export default function UserMembership() {
           <Grid.Col span={12}>
             <Stack gap="xl">
               <Title>My Membership Plan</Title>
+              <ReferralCallout variant="compact" />
               {otherSubscription && subscription && (
                 <BuzzEnvironmentAlert
                   buzzType={otherBuzzType}

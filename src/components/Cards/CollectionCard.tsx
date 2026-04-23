@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Group, Text } from '@mantine/core';
+import { ActionIcon, Badge, Text } from '@mantine/core';
+import { memo } from 'react';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { truncate } from 'lodash-es';
@@ -33,7 +34,7 @@ type ImageProps = {
   meta?: ImageMetaProps | null;
 };
 
-export function CollectionCard({ data }: Props) {
+export const CollectionCard = memo(function CollectionCard({ data }: Props) {
   const getCoverImages = () => {
     if (data.image) return [data.image];
 
@@ -104,25 +105,25 @@ export function CollectionCard({ data }: Props) {
               variant="light"
               radius="xl"
             >
-              <Group gap={2}>
+              <div className="flex items-center gap-0.5">
                 <IconLayoutGrid size={14} stroke={2.5} />
                 <Text fw="bold" size="xs">
                   {abbreviateNumber(itemCount)}
                 </Text>
-              </Group>
-              <Group gap={2}>
+              </div>
+              <div className="flex items-center gap-0.5">
                 <IconUser size={14} stroke={2.5} />
                 <Text fw="bold" size="xs">
                   {abbreviateNumber(contributorCount)}
                 </Text>
-              </Group>
+              </div>
             </Badge>
           </div>
         </div>
       </div>
     </FeedCard>
   );
-}
+});
 
 type HeaderData = Pick<Props['data'], 'id' | 'userId' | 'type' | 'mode'>;
 
@@ -134,20 +135,21 @@ function CollectionCardHeader({
   withinImageGuard?: boolean;
 }) {
   return (
-    <Group
-      gap={4}
-      justify="space-between"
-      className={clsx(cardClasses.contentOverlay, cardClasses.top)}
-      wrap="nowrap"
+    <div
+      className={clsx(
+        cardClasses.contentOverlay,
+        cardClasses.top,
+        'flex flex-nowrap items-center justify-between gap-1'
+      )}
     >
-      <Group gap="xs">
+      <div className="flex flex-nowrap items-center gap-2.5">
         {withinImageGuard && <ImageGuard2.BlurToggle className={cardClasses.chip} radius="xl" />}
         <Badge className={clsx(cardClasses.infoChip, cardClasses.chip)} variant="light" radius="xl">
           <Text c="white" size="xs" tt="capitalize">
             {data.type ? data.type + 's' : 'Mixed'}
           </Text>
         </Badge>
-      </Group>
+      </div>
       <CollectionContextMenu
         collectionId={data.id}
         ownerId={data.userId}
@@ -165,7 +167,7 @@ function CollectionCardHeader({
           <IconDotsVertical />
         </LegacyActionIcon>
       </CollectionContextMenu>
-    </Group>
+    </div>
   );
 }
 

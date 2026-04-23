@@ -266,6 +266,24 @@ export async function getTrainingServiceStatus() {
   return result.data as TrainingServiceStatus;
 }
 
+export async function setTrainingServiceStatus(input: {
+  available: boolean;
+  message?: string | null;
+}) {
+  const current = await getTrainingServiceStatus();
+  const next: TrainingServiceStatus = {
+    ...current,
+    available: input.available,
+    message: input.message ?? null,
+  };
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
+    REDIS_SYS_KEYS.TRAINING.STATUS,
+    JSON.stringify(next)
+  );
+  return next;
+}
+
 /**
  * @deprecated for orchestrator v2
  */

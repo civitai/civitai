@@ -12,7 +12,7 @@ export const ActionIconDotsVertical = forwardRef<
       <IconDotsVertical
         size={26}
         color="#fff"
-        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+        style={{ filter: 'drop-shadow(0 1px 2px rgb(0 0 0 / 0.7))' }}
       />
     </LegacyActionIcon>
   );

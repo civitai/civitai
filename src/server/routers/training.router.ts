@@ -2,7 +2,11 @@ import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
+<<<<<<< feature/tag-caption-v2
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
+=======
+import { edgeCacheIt, purgeOnSuccess } from '~/server/middleware.trpc';
+>>>>>>> main
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   autoCaptionInput,
@@ -23,7 +27,11 @@ import {
   getJobEstStartsHandler,
   getTrainingServiceStatus,
   moveAsset,
+<<<<<<< feature/tag-caption-v2
   submitAutoLabelWorkflow,
+=======
+  setTrainingServiceStatus,
+>>>>>>> main
 } from '~/server/services/training.service';
 import {
   guardedProcedure,
@@ -105,8 +113,17 @@ export const trainingRouter = router({
     .query(({ input, ctx }) => getAutoLabelWorkflow({ ...input, userId: ctx.user.id })),
   getStatus: publicProcedure
     .use(isFlagProtected('imageTraining'))
-    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
     .query(() => getTrainingServiceStatus()),
+  setStatus: moderatorProcedure
+    .input(
+      z.object({
+        available: z.boolean(),
+        message: z.string().max(2000).nullish(),
+      })
+    )
+    .use(purgeOnSuccess(['training-status']))
+    .mutation(({ input }) => setTrainingServiceStatus(input)),
   /**
    * @deprecated for orchestrator v2
    */

@@ -13,6 +13,7 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
+import { primaryFileTypesByModelType } from '~/utils/file-display-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
@@ -324,25 +325,29 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       return false;
     }
 
-    // Check component-only model constraint (needs access to linkedComponents)
-    const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
-    if (modelFiles.length === 0) {
-      const uploadedRequiredComponents = files.filter(
-        (f) =>
-          f.type &&
-          (componentFileTypes as readonly string[]).includes(f.type) &&
-          f.isRequired !== false
-      );
-      const requiredLinkedComponents = linkedComponents.filter((c) => c.isRequired !== false);
-      const totalComponents = uploadedRequiredComponents.length + requiredLinkedComponents.length;
-      if (totalComponents < 2) {
-        showErrorNotification({
-          title: 'Insufficient components',
-          error: new Error(
-            'Component-only models (without a main model file) require at least 2 required components'
-          ),
-        });
-        return false;
+    // Check component-only model constraint (needs access to linkedComponents).
+    // Skip for archive-primary model types (Workflows/Poses/Wildcards/Other) — their main file
+    // is an archive/config, so they don't fit the "component-only" concept.
+    if (!model?.type || !archivePrimaryModelTypes.includes(model.type)) {
+      const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
+      if (modelFiles.length === 0) {
+        const uploadedRequiredComponents = files.filter(
+          (f) =>
+            f.type &&
+            (componentFileTypes as readonly string[]).includes(f.type) &&
+            f.isRequired !== false
+        );
+        const requiredLinkedComponents = linkedComponents.filter((c) => c.isRequired !== false);
+        const totalComponents = uploadedRequiredComponents.length + requiredLinkedComponents.length;
+        if (totalComponents < 2) {
+          showErrorNotification({
+            title: 'Insufficient components',
+            error: new Error(
+              'Component-only models (without a main model file) require at least 2 required components'
+            ),
+          });
+          return false;
+        }
       }
     }
 
@@ -682,7 +687,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Checkpoint: {
     primary: {
       extensions: [...ggufExts, '.onnx'],
-      fileTypes: ['Model', 'Pruned Model', 'UNet', 'Diffusion Model'],
+      fileTypes: [...primaryFileTypesByModelType.Checkpoint],
       maxFiles: 8,
     },
     additional: {
@@ -701,7 +706,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   LORA: {
-    primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.LORA],
+      maxFiles: 3,
+    },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
       fileTypes: [
@@ -716,7 +725,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   DoRA: {
-    primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.DoRA],
+      maxFiles: 3,
+    },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
       fileTypes: [
@@ -731,7 +744,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   LoCon: {
-    primary: { extensions: ggufExts, fileTypes: ['Model', 'Pruned Model'], maxFiles: 3 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.LoCon],
+      maxFiles: 3,
+    },
     additional: {
       extensions: [...modelExts, ...configExts, ...archiveExts],
       fileTypes: [
@@ -746,7 +763,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   TextualInversion: {
-    primary: { extensions: modelExts, fileTypes: ['Model', 'Negative'], maxFiles: 2 },
+    primary: {
+      extensions: modelExts,
+      fileTypes: [...primaryFileTypesByModelType.TextualInversion],
+      maxFiles: 2,
+    },
     additional: {
       extensions: [...archiveExts, ...configExts],
       fileTypes: ['Training Data', 'Config'],
@@ -754,7 +775,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   Hypernetwork: {
-    primary: { extensions: modelExts, fileTypes: ['Model'], maxFiles: 1 },
+    primary: {
+      extensions: modelExts,
+      fileTypes: [...primaryFileTypesByModelType.Hypernetwork],
+      maxFiles: 1,
+    },
     additional: {
       extensions: [...archiveExts, ...configExts, ...modelExts],
       fileTypes: ['Training Data', 'Config'],
@@ -762,7 +787,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   AestheticGradient: {
-    primary: { extensions: modelExts, fileTypes: ['Model'], maxFiles: 1 },
+    primary: {
+      extensions: modelExts,
+      fileTypes: [...primaryFileTypesByModelType.AestheticGradient],
+      maxFiles: 1,
+    },
     additional: {
       extensions: [...archiveExts, ...configExts, ...modelExts],
       fileTypes: ['Training Data', 'Config'],
@@ -770,7 +799,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   Controlnet: {
-    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 2 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.Controlnet],
+      maxFiles: 2,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Archive', 'Config'],
@@ -778,7 +811,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   MotionModule: {
-    primary: { extensions: [...modelExts, '.onnx'], fileTypes: ['Model'], maxFiles: 2 },
+    primary: {
+      extensions: [...modelExts, '.onnx'],
+      fileTypes: [...primaryFileTypesByModelType.MotionModule],
+      maxFiles: 2,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Archive', 'Config'],
@@ -786,7 +823,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   Detection: {
-    primary: { extensions: ['.pt', '.safetensors'], fileTypes: ['Model'], maxFiles: 4 },
+    primary: {
+      extensions: ['.pt', '.safetensors'],
+      fileTypes: [...primaryFileTypesByModelType.Detection],
+      maxFiles: 4,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Config', 'Archive'],
@@ -794,7 +835,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   Upscaler: {
-    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.Upscaler],
+      maxFiles: 1,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Config', 'Archive'],
@@ -802,7 +847,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   VAE: {
-    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.VAE],
+      maxFiles: 1,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Config', 'Archive'],
@@ -810,7 +859,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   TextEncoder: {
-    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.TextEncoder],
+      maxFiles: 1,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Config', 'Archive'],
@@ -818,7 +871,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   UNet: {
-    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.UNet],
+      maxFiles: 1,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Config', 'Archive'],
@@ -826,7 +883,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
     },
   },
   CLIPVision: {
-    primary: { extensions: ggufExts, fileTypes: ['Model'], maxFiles: 1 },
+    primary: {
+      extensions: ggufExts,
+      fileTypes: [...primaryFileTypesByModelType.CLIPVision],
+      maxFiles: 1,
+    },
     additional: {
       extensions: [...configExts, ...archiveExts],
       fileTypes: ['Config', 'Archive'],
@@ -836,7 +897,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Poses: {
     primary: {
       extensions: [...archiveExts, ...configExts],
-      fileTypes: ['Archive', 'Config'],
+      fileTypes: [...primaryFileTypesByModelType.Poses],
       maxFiles: 1,
     },
     additional: {
@@ -848,7 +909,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Wildcards: {
     primary: {
       extensions: [...archiveExts, ...wildcardExts],
-      fileTypes: ['Archive', 'Config'],
+      fileTypes: [...primaryFileTypesByModelType.Wildcards],
       maxFiles: 1,
     },
     additional: {
@@ -860,7 +921,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Workflows: {
     primary: {
       extensions: [...archiveExts, ...configExts],
-      fileTypes: ['Archive', 'Config'],
+      fileTypes: [...primaryFileTypesByModelType.Workflows],
       maxFiles: 1,
     },
     additional: {
@@ -872,7 +933,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   Other: {
     primary: {
       extensions: [...archiveExts, ...configExts, ...ggufExts],
-      fileTypes: ['Archive', 'Config', 'Model'],
+      fileTypes: [...primaryFileTypesByModelType.Other],
       maxFiles: 1,
     },
     additional: {

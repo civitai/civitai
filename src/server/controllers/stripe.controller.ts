@@ -56,7 +56,7 @@ export const createDonateSessionHandler = async ({
 };
 
 export const createSubscriptionSessionHandler = async ({
-  input: { priceId },
+  input: { priceId, refCode },
   ctx,
 }: {
   input: Schema.CreateSubscribeSessionInput;
@@ -66,6 +66,7 @@ export const createSubscriptionSessionHandler = async ({
   if (!email) throw throwAuthorizationError('email required');
   const result = await createSubscribeSession({
     priceId,
+    refCode,
     customerId,
     user: { id, email },
   });

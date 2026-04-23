@@ -347,7 +347,7 @@ export function enumNode<T extends string | number>({
 // =============================================================================
 
 export interface QuantityNodeConfig {
-  /** Minimum quantity (default: 1) */
+  /** Minimum quantity (default: value of `step`) */
   min?: number;
   /** Step increment (default: 1) */
   step?: number;
@@ -368,8 +368,8 @@ export interface QuantityNodeConfig {
  */
 export function quantityNode(config?: QuantityNodeConfig) {
   return (_ctx: Record<string, unknown>, ext: GenerationCtx) => {
-    const min = config?.min ?? 1;
     const step = config?.step ?? 1;
+    const min = config?.min ?? step;
     const max = ext.limits.maxQuantity;
 
     return {

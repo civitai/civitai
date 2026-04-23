@@ -56,7 +56,9 @@ function useCodeRowData(item: PurchasedCode) {
   const description =
     item.type === 'Buzz'
       ? `${item.unitValue.toLocaleString()} Buzz`
-      : `${item.unitValue}-mo ${tier ? tier.charAt(0).toUpperCase() + tier.slice(1) + ' ' : ''}Membership`;
+      : `${item.unitValue}-mo ${
+          tier ? tier.charAt(0).toUpperCase() + tier.slice(1) + ' ' : ''
+        }Membership`;
 
   return { isRedeemed, tier, description };
 }
@@ -139,7 +141,7 @@ function CodeRow({ item, onInvalidate }: CodeRowProps) {
             </Button>
           )}
           <Text size="xs" c="dimmed">
-            {formatDate(item.createdAt)}
+            {formatDate(item.redeemedAt ?? item.createdAt)}
           </Text>
         </Stack>
       </Group>
@@ -282,9 +284,7 @@ export function PurchasedCodesCard({
               {filter === 'all' ? 'No codes yet' : `No ${filter.toLowerCase()} codes`}
             </Text>
             <Text size="xs" c="dimmed">
-              {filter === 'all'
-                ? 'Redeem a code above to see it here'
-                : 'Try a different filter'}
+              {filter === 'all' ? 'Redeem a code above to see it here' : 'Try a different filter'}
             </Text>
           </Stack>
         ) : (

@@ -47,7 +47,10 @@ export function MasonryGridVirtual<TData>({
 }: Props<TData>) {
   const colorScheme = useComputedColorScheme('dark');
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
-  const rowHeight = Math.round(columnWidth / cardAspectRatioMap[aspectRatio]);
+  // Initial estimate only — the real row height is measured from the DOM via
+  // `measureElement` below, so it stays correct during resize even before
+  // MasonryProvider's debounced `columnCount` catches up.
+  const estimatedRowHeight = Math.round(columnWidth / cardAspectRatioMap[aspectRatio]);
 
   const { adsEnabled, useDirectAds } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -77,7 +80,10 @@ export function MasonryGridVirtual<TData>({
     [columnCount, data, adsReallyAreEnabled]
   );
 
-  const rowCount = Math.ceil(items.length / columnCount);
+  // Guard against `columnCount === 0` (MasonryProvider hasn't measured width yet,
+  // common on back-nav when React Query cache is hot). Without this, `items.length / 0`
+  // is `Infinity` and `useVirtualizer({ count: Infinity })` locks the main thread.
+  const rowCount = columnCount > 0 ? Math.ceil(items.length / columnCount) : 0;
 
   const ref = useRef<HTMLDivElement | null>(null);
   const scrollAreaRef = useScrollAreaRef();
@@ -103,12 +109,18 @@ export function MasonryGridVirtual<TData>({
   const rowVirtualizer = useVirtualizer({
     count: rowCount,
     getScrollElement: () => scrollAreaRef?.current ?? null,
-    estimateSize: () => rowHeight,
+    estimateSize: () => estimatedRowHeight,
     overscan,
     getItemKey: getRowKey,
     gap: rowGap,
     scrollMargin,
     initialOffset: () => scrollAreaRef?.current?.scrollTop ?? 0,
+    measureElement: (el) => el.getBoundingClientRect().height,
+    // Opt into the native `scrollend` event so virtual-core skips its
+    // internal 150ms setTimeout-based scroll-end debounce. That debounce was
+    // installing ~38 timers/sec during feed scroll (perf audit 2026-04).
+    // Falls back to the debounce automatically on browsers without scrollend.
+    useScrollendEvent: true,
   });
 
   if (!items.length) {
@@ -136,8 +148,8 @@ export function MasonryGridVirtual<TData>({
         return (
           <div
             key={`${virtualRow.index}_${virtualRow.key}`}
-            data-index={virtualRow.index}
             ref={rowVirtualizer.measureElement}
+            data-index={virtualRow.index}
             style={{
               position: 'absolute',
               top: 0,

@@ -37,24 +37,17 @@ async function buffer(readable: Readable) {
   return Buffer.concat(chunks);
 }
 
-// const relevantEvents = new Set<IEventName>([
-//   'transaction.completed',
-//   'product.created',
-//   'product.updated',
-//   'price.created',
-//   'price.updated',
-//   'subscription.activated',
-//   'subscription.updated',
-//   'subscription.canceled',
-// ]);
-
+// Paddle is a legacy/deprecated payment provider as of 2026-04. We keep this
+// webhook live to continue servicing existing annual subscriptions, but no new
+// signups flow through Paddle and the Referral Program (v2) does not attribute
+// rewards to Paddle events. If you are wiring new functionality, use Stripe
+// instead. See src/pages/api/webhooks/stripe.ts for the primary flow.
 const relevantEvents = new Set([
   EventName.TransactionCompleted,
   EventName.ProductCreated,
   EventName.ProductUpdated,
   EventName.PriceCreated,
   EventName.PriceUpdated,
-  // Let's try these main ones:
   EventName.SubscriptionActivated,
   EventName.SubscriptionUpdated,
   EventName.SubscriptionCanceled,

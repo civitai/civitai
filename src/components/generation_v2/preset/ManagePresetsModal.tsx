@@ -245,6 +245,8 @@ export function ManagePresetsModal() {
                           message={`Delete "${preset.name}"?`}
                           onConfirm={() => deletePreset.mutate({ id: preset.id })}
                           confirmButtonColor="red"
+                          withinPortal
+                          position="bottom-end"
                         >
                           <Tooltip label="Delete" withArrow>
                             <ActionIcon variant="subtle" size="sm" color="red">

@@ -62,6 +62,10 @@ const featureFlags = createFeatureFlags({
   trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption2' },
   trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag2' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
+  enhancedCompatibilitySdcpp: {
+    availability: ['public'],
+    fliptKey: 'enhanced-compatibility-sdcpp',
+  },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
@@ -83,6 +87,7 @@ const featureFlags = createFeatureFlags({
   profileCollections: ['public'],
   imageSearch: ['public'],
   buzz: ['public'],
+  referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,

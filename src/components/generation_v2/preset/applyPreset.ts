@@ -1,18 +1,24 @@
 import { fetchGenerationData, generationGraphStore } from '~/store/generation-graph.store';
 import type { PresetValues } from '~/store/generation-preset.store';
 import { useGenerationPresetStore } from '~/store/generation-preset.store';
+import { RESOURCE_NODE_KEYS } from '~/shared/utils/resource.utils';
 
 type ResourceRef = { id: number; strength?: number };
 
+/**
+ * Flatten every resource slot (model/upscaler/resources/vae/…future) into a
+ * list of ids. Iterates `RESOURCE_NODE_KEYS` so new slots added to the shared
+ * constant in `resource.utils.ts` automatically flow through here.
+ */
 function extractResourceIds(values: PresetValues): number[] {
   const ids = new Set<number>();
-  const model = values.model as { id?: number } | undefined;
-  if (model?.id) ids.add(model.id);
-  const vae = values.vae as { id?: number } | undefined;
-  if (vae?.id) ids.add(vae.id);
-  const resources = values.resources as ResourceRef[] | undefined;
-  if (Array.isArray(resources)) {
-    for (const r of resources) if (r?.id) ids.add(r.id);
+  for (const key of RESOURCE_NODE_KEYS) {
+    const val = values[key];
+    if (Array.isArray(val)) {
+      for (const r of val as Array<{ id?: number }>) if (r?.id) ids.add(r.id);
+    } else if (val && typeof (val as { id?: unknown }).id === 'number') {
+      ids.add((val as { id: number }).id);
+    }
   }
   return Array.from(ids);
 }
@@ -44,14 +50,10 @@ export async function applyPreset(preset: { id: number; name: string; values: Pr
     return strength !== undefined ? { ...r, strength } : r;
   });
 
-  // Exclude the resource ref objects from params — GenerationFormProvider will
-  // rebuild `model`, `resources`, and `vae` from the hydrated resources array.
-  const {
-    model: _model,
-    resources: _resources,
-    vae: _vae,
-    ...paramsWithoutResources
-  } = preset.values;
+  // Exclude every resource slot from params — GenerationFormProvider will
+  // rebuild them from the hydrated resources array.
+  const paramsWithoutResources: Record<string, unknown> = { ...preset.values };
+  for (const key of RESOURCE_NODE_KEYS) delete paramsWithoutResources[key];
 
   generationGraphStore.setData({
     params: paramsWithoutResources,

@@ -1,5 +1,6 @@
 import type { BadgeProps } from '@mantine/core';
 import { Badge, Group, Text } from '@mantine/core';
+import { memo } from 'react';
 import {
   IconClockHour4,
   IconMessageCircle2,
@@ -76,7 +77,7 @@ function StatusBadge({ status, startsAt, endsAt }: StatusBadgeProps) {
   }
 }
 
-export function ChallengeCard({ data }: Props) {
+export const ChallengeCard = memo(function ChallengeCard({ data }: Props) {
   const {
     id,
     title,
@@ -156,7 +157,12 @@ export function ChallengeCard({ data }: Props) {
           />
           <div className="flex flex-col gap-1">
             {theme && (
-              <Text size="sm" c="white" lineClamp={1} className="drop-shadow-sm">
+              <Text
+                size="sm"
+                c="white"
+                lineClamp={1}
+                style={{ textShadow: '0 1px 1px rgb(0 0 0 / 0.05)' }}
+              >
                 Theme: {theme}
               </Text>
             )}
@@ -213,7 +219,7 @@ export function ChallengeCard({ data }: Props) {
       }
     />
   );
-}
+});
 
 type StatusBadgeProps = Pick<ChallengeListItem, 'status' | 'startsAt' | 'endsAt'>;
 type Props = { data: ChallengeListItem };

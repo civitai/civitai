@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { setCookie } from '~/utils/cookies-helpers';
 import dayjs from '~/shared/utils/dayjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '~/server/common/constants';
 
 type ReferralsState = {
   code?: string;
@@ -45,7 +46,9 @@ export const ReferralsProvider = ({
       const { ref_id, ref_source, ref_code } = result.data;
 
       const { code, source, landingPage } = referrals;
-      const expirationDate = dayjs().add(5, 'day').toDate();
+      const expirationDate = dayjs()
+        .add(constants.referrals.cookieDurationDays, 'day')
+        .toDate();
 
       if (ref_id && ref_id !== code) {
         setCookie('ref_code', ref_id, expirationDate);

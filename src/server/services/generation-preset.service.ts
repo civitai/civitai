@@ -16,19 +16,24 @@ import {
   ecosystemByKey,
   getRootEcosystem,
 } from '~/shared/constants/basemodel.constants';
+import { RESOURCE_NODE_KEYS } from '~/shared/utils/resource.utils';
 
 type PresetValues = Record<string, unknown>;
-type ResourceRef = { id: number; strength?: number };
 
+/**
+ * Flatten every resource slot (model/upscaler/resources/vae/…future) into a
+ * list of ids. Iterates `RESOURCE_NODE_KEYS` so new slots added to the shared
+ * constant in `resource.utils.ts` automatically flow through here.
+ */
 function extractResourceIds(values: PresetValues): number[] {
   const ids: number[] = [];
-  const model = values.model as { id?: number } | undefined;
-  if (model?.id) ids.push(model.id);
-  const vae = values.vae as { id?: number } | undefined;
-  if (vae?.id) ids.push(vae.id);
-  const resources = values.resources as ResourceRef[] | undefined;
-  if (Array.isArray(resources)) {
-    for (const r of resources) if (r?.id) ids.push(r.id);
+  for (const key of RESOURCE_NODE_KEYS) {
+    const val = values[key];
+    if (Array.isArray(val)) {
+      for (const r of val as Array<{ id?: number }>) if (r?.id) ids.push(r.id);
+    } else if (val && typeof (val as { id?: unknown }).id === 'number') {
+      ids.push((val as { id: number }).id);
+    }
   }
   return ids;
 }

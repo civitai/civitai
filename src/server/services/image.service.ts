@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
-import { chunk, truncate, uniqBy } from 'lodash-es';
+import { chunk, truncate, uniq, uniqBy } from 'lodash-es';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
@@ -492,12 +492,15 @@ export async function handleUnblockImages({
       ),
     ]);
 
+    const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     await Promise.all([
       updateNsfwLevel(ids),
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update }),
       deleteImagTagsForReviewByImageIds(ids),
       bulkRemoveBlockedImages(images.map(({ pHash }) => pHash).filter(isDefined)),
     ]);
+    // Bust after the writes above land so a concurrent reader can't refill the cache from pre-update rows.
+    if (postIds.length) await bustCachesForPosts(postIds);
 
     if (moderatorId) {
       await trackModActivity(moderatorId, {
@@ -547,6 +550,7 @@ export async function handleBlockImages({
   });
   await Limiter({ batchSize: 100, limit: 10 }).process(images, async (images) => {
     const ids = images.map((x) => x.id);
+    const postIds = uniq(images.map(({ postId }) => postId).filter(isDefined));
     const invalidateExistence = invalidateManyImageExistence(ids);
 
     await Promise.all([
@@ -564,6 +568,8 @@ export async function handleBlockImages({
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
       invalidateExistence,
     ]);
+    // Bust after the block write commits so a concurrent reader can't refill with the pre-block state.
+    if (postIds.length) await bustCachesForPosts(postIds);
     if (include?.includes('phash-block')) {
       await bulkAddBlockedImages({
         data: images
@@ -713,7 +719,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 // const clavataScan = env.CLAVATA_SCAN;
 export const imageScanTypes: ImageScanType[] = [
   ImageScanType.WD14,
-  // ImageScanType.Hash,
+  ImageScanType.Hash,
   // ImageScanType.Clavata,
   // ImageScanType.Hive,
   ImageScanType.SpineRating,
