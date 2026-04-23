@@ -2,12 +2,21 @@ import { Upload } from '@aws-sdk/lib-storage';
 import type {
   ImageResourceTrainingStep,
   ImageResourceTrainingOutput,
+  MediaCaptioningStepTemplate,
+  WdTaggingStepTemplate,
   Workflow,
+  WorkflowStepTemplate,
   TrainingStep,
   TrainingOutput,
 } from '@civitai/client';
 import type { WorkflowStatus } from '@civitai/client';
-import { dbWrite } from '~/server/db/client';
+import {
+  getConsumerBlobUploadUrl,
+  getWorkflow as clientGetWorkflow,
+  handleError,
+  submitWorkflow as clientSubmitWorkflow,
+} from '@civitai/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -17,12 +26,17 @@ import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type {
   AutoCaptionInput,
   AutoTagInput,
+  GetAutoLabelWorkflowInput,
   MoveAssetInput,
+  SubmitAutoLabelWorkflowInput,
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
 import { trainingServiceStatusSchema } from '~/server/schema/training.schema';
+import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import {
+  throwAuthorizationError,
   throwBadRequestError,
+  throwNotFoundError,
   throwRateLimitError,
   withRetries,
 } from '~/server/utils/errorHandling';
@@ -621,5 +635,177 @@ export async function updateTrainingWorkflowRecords(
     userEmail: model.user.email,
     username: model.user.username,
     fileMetadata: newMetadata,
+  };
+}
+
+// =============================================================================
+// Auto-label v2 (orchestrator workflows)
+//
+// These three functions replace the legacy zip → S3 → legacy job API pipeline.
+// Everything runs through the v2 consumer endpoints with the system token — the
+// work is billed to the system account so users pay nothing for tag/caption
+// runs, and the workflow isn't visible under the user's own token.
+// =============================================================================
+
+type AutoLabelWorkflowMetadata = {
+  kind: 'auto-label';
+  userId: number;
+  modelId: number;
+  mediaType: 'image' | 'video';
+  type: 'tag' | 'caption';
+};
+
+type AutoLabelStepMetadata = {
+  filename: string;
+};
+
+async function assertModelOwnership(modelId: number, userId: number) {
+  const model = await dbRead.model.findUnique({
+    where: { id: modelId },
+    select: { id: true, userId: true, deletedAt: true, uploadType: true },
+  });
+  if (!model || model.deletedAt) throw throwNotFoundError('Model not found');
+  if (model.userId !== userId) throw throwAuthorizationError('You do not own this model');
+  // Auto-label is a training-only feature. Reject ownership of non-training models so a
+  // logged-in user can't burn the system's orchestrator budget against any random model
+  // they happen to own (an old checkpoint, etc.).
+  if (model.uploadType !== 'Trained') {
+    throw throwBadRequestError('Auto-labeling is only available for trained models');
+  }
+}
+
+function toOrchestratorError(error: unknown): never {
+  const status =
+    typeof error === 'object' && error !== null && 'status' in error
+      ? (error as { status?: number }).status
+      : undefined;
+  const messages = handleError(error as Parameters<typeof handleError>[0]);
+  switch (status) {
+    case 400:
+      throw throwBadRequestError(messages);
+    case 401:
+    case 403:
+      throw throwAuthorizationError(messages);
+    case 429:
+      throw throwRateLimitError(messages);
+    default:
+      throw new Error(messages || 'Orchestrator request failed');
+  }
+}
+
+export async function getAutoLabelUploadUrl() {
+  const { data, error } = await getConsumerBlobUploadUrl({
+    client: internalOrchestratorClient,
+  });
+  if (!data) toOrchestratorError(error);
+  return { uploadUrl: data.uploadUrl, expiresAt: data.expiresAt };
+}
+
+export async function submitAutoLabelWorkflow({
+  userId,
+  modelId,
+  mediaType,
+  images,
+  params,
+}: SubmitAutoLabelWorkflowInput & { userId: number }) {
+  await assertModelOwnership(modelId, userId);
+
+  const steps: WorkflowStepTemplate[] = images.map((img, index) => {
+    const stepMetadata: AutoLabelStepMetadata = { filename: img.filename };
+
+    if (params.type === 'caption') {
+      const step: MediaCaptioningStepTemplate = {
+        $type: 'mediaCaptioning',
+        name: `${index}`,
+        input: {
+          mediaUrl: img.mediaUrl,
+          temperature: params.temperature,
+          maxNewTokens: params.maxNewTokens,
+        },
+        metadata: stepMetadata,
+      };
+      return step;
+    }
+
+    const step: WdTaggingStepTemplate = {
+      $type: 'wdTagging',
+      name: `${index}`,
+      input: {
+        mediaUrl: img.mediaUrl,
+        threshold: params.threshold,
+      },
+      metadata: stepMetadata,
+    };
+    return step;
+  });
+
+  const workflowMetadata: AutoLabelWorkflowMetadata = {
+    kind: 'auto-label',
+    userId,
+    modelId,
+    mediaType,
+    type: params.type,
+  };
+
+  const { data, error } = await clientSubmitWorkflow({
+    client: internalOrchestratorClient,
+    body: {
+      tags: ['civitai', 'training', 'auto-label'],
+      metadata: workflowMetadata,
+      steps,
+      // System-paid: no user buzz currency required.
+      currencies: [],
+    },
+    query: { wait: 0 },
+  });
+
+  if (!data) toOrchestratorError(error);
+  if (!data.id) throw throwBadRequestError('Workflow submission returned no ID');
+
+  return { workflowId: data.id, stepCount: steps.length };
+}
+
+export async function getAutoLabelWorkflow({
+  userId,
+  workflowId,
+}: GetAutoLabelWorkflowInput & { userId: number }) {
+  const { data, error } = await clientGetWorkflow({
+    client: internalOrchestratorClient,
+    path: { workflowId },
+  });
+  if (!data) toOrchestratorError(error);
+
+  const metadata = data.metadata as Partial<AutoLabelWorkflowMetadata> | undefined;
+  if (!metadata || metadata.kind !== 'auto-label') {
+    throw throwNotFoundError('Workflow not found');
+  }
+  if (metadata.userId !== userId) {
+    // Don't leak existence — reuse the same error surface as missing.
+    throw throwNotFoundError('Workflow not found');
+  }
+
+  return {
+    workflowId: data.id ?? workflowId,
+    status: data.status,
+    startedAt: data.startedAt,
+    completedAt: data.completedAt,
+    cost: data.cost,
+    type: metadata.type,
+    mediaType: metadata.mediaType,
+    modelId: metadata.modelId,
+    steps: (data.steps ?? []).map((step) => {
+      const stepMeta = (step.metadata ?? {}) as Partial<AutoLabelStepMetadata>;
+      // The base WorkflowStep type doesn't expose `output`, but the discriminated
+      // step types (mediaCaptioning, wdTagging) do. We only ever submit those two.
+      const stepWithOutput = step as typeof step & {
+        output?: { caption?: string; tags?: { [tag: string]: number } };
+      };
+      return {
+        name: step.name,
+        status: step.status,
+        filename: stepMeta.filename ?? null,
+        output: stepWithOutput.output ?? null,
+      };
+    }),
   };
 }

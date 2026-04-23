@@ -36,8 +36,9 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import { getJSZip } from '~/utils/lazy';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
+import { uploadAndSubmitAutoLabel } from '~/utils/training/auto-label-orchestrator';
 
 const overwrites: { [key in (typeof overwriteList)[number]]: string } = {
   ignore: 'Skip files with existing labels',
@@ -58,6 +59,7 @@ const useSubmitImages = ({
   handleClose: () => void;
   type: LabelTypes;
 }) => {
+  const features = useFeatureFlags();
   const { upload } = useS3UploadStore();
   const [loading, setLoading] = useState(false);
   const { autoTagging, autoCaptioning, imageList } = useTrainingImageStore(
@@ -66,7 +68,7 @@ const useSubmitImages = ({
         ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
       }
   );
-  const { setAutoLabeling } = trainingStore;
+  const { setAutoLabeling, updateImage } = trainingStore;
 
   const filteredImages = imageList.filter((i) =>
     (type === 'caption' ? autoCaptioning : autoTagging).overwrite === 'ignore'
@@ -75,9 +77,148 @@ const useSubmitImages = ({
   );
   const disabled = type === 'caption' && filteredImages.length > maxImagesCaption;
 
+  const submitViaOrchestrator = async () => {
+    // Materialize blobs from the same source URLs the legacy zip path used.
+    const images = await Promise.all(
+      filteredImages.map(async (imgData) => ({
+        filename: getShortNameFromUrl(imgData),
+        blob: await fetch(imgData.url).then((res) => res.blob()),
+      }))
+    );
+
+    setAutoLabeling(modelId, mediaType, {
+      url: null,
+      isRunning: true,
+      total: images.length,
+      successes: 0,
+      fails: [],
+    });
+
+    const overwriteMode = (type === 'caption' ? autoCaptioning : autoTagging).overwrite;
+
+    const onResult = (filename: string, label: string) => {
+      updateImage(modelId, mediaType, {
+        matcher: filename,
+        label,
+        appendLabel: overwriteMode === 'append',
+      });
+      const current = useTrainingImageStore.getState()[modelId]?.autoLabeling;
+      if (current) {
+        setAutoLabeling(modelId, mediaType, {
+          ...current,
+          successes: current.successes + 1,
+        });
+      }
+    };
+    const onFailure = (filename: string) => {
+      if (!filename) return;
+      const current = useTrainingImageStore.getState()[modelId]?.autoLabeling;
+      if (current) {
+        setAutoLabeling(modelId, mediaType, {
+          ...current,
+          fails: [...current.fails, filename],
+        });
+      }
+    };
+    const onDone = ({ successes, fails }: { successes: number; fails: string[] }) => {
+      showSuccessNotification({
+        title: 'Images auto-labeled successfully!',
+        message: `Tagged ${successes} image${successes === 1 ? '' : 's'}. Failures: ${
+          fails.length
+        }`,
+      });
+      const defaultState =
+        mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+    };
+
+    const postProcess = {
+      blacklist: type === 'tag' ? autoTagging.blacklist : '',
+      prependTags: type === 'tag' ? autoTagging.prependTags : '',
+      appendTags: type === 'tag' ? autoTagging.appendTags : '',
+      maxTags: type === 'tag' ? autoTagging.maxTags : undefined,
+      threshold: type === 'tag' ? autoTagging.threshold : undefined,
+      overwrite: overwriteMode,
+    };
+
+    // Polling continues after the modal closes — bail out cleanly if the user
+    // resets the run from elsewhere (re-opens the modal, navigates away, etc.).
+    const isActive = () =>
+      useTrainingImageStore.getState()[modelId]?.autoLabeling.isRunning ?? false;
+
+    try {
+      if (type === 'tag') {
+        await uploadAndSubmitAutoLabel({
+          modelId,
+          mediaType: mediaType ?? 'image',
+          type: 'tag',
+          images,
+          params: { threshold: autoTagging.threshold },
+          postProcess,
+          isActive,
+          onResult,
+          onFailure,
+          onDone,
+        });
+      } else {
+        await uploadAndSubmitAutoLabel({
+          modelId,
+          mediaType: mediaType ?? 'image',
+          type: 'caption',
+          images,
+          params: {
+            temperature: autoCaptioning.temperature,
+            maxNewTokens: autoCaptioning.maxNewTokens,
+          },
+          postProcess,
+          isActive,
+          onResult,
+          onFailure,
+          onDone,
+        });
+      }
+    } catch (e) {
+      const defaultState =
+        mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+      throw e;
+    }
+  };
+
+  const submitViaLegacyZip = async () => {
+    const zip = await getJSZip();
+    await Promise.all(
+      filteredImages.map(async (imgData) => {
+        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
+        zip.file(getShortNameFromUrl(imgData), imgBlob);
+      })
+    );
+
+    const content = await zip.generateAsync({ type: 'blob' });
+    const blobFile = new File([content], `${modelId}_temp_tagging_data.zip`, {
+      type: 'application/zip',
+    });
+
+    await upload(
+      {
+        file: blobFile,
+        type: UploadType.TrainingImagesTemp,
+        meta: {},
+      },
+      async ({ url }) => {
+        setAutoLabeling(modelId, mediaType, {
+          url,
+          isRunning: false,
+          total: filteredImages.length,
+          successes: 0,
+          fails: [],
+        });
+      }
+    );
+  };
+
   const handleSubmit = async () => {
     if (disabled) return;
-
     setLoading(true);
 
     if (!filteredImages.length) {
@@ -89,47 +230,24 @@ const useSubmitImages = ({
       return;
     }
 
-    const zip = await getJSZip();
-    await Promise.all(
-      filteredImages.map(async (imgData) => {
-        const imgBlob = await fetch(imgData.url).then((res) => res.blob());
-        zip.file(getShortNameFromUrl(imgData), imgBlob);
-      })
-    );
-
-    zip.generateAsync({ type: 'blob' }).then(async (content) => {
-      const blobFile = new File([content], `${modelId}_temp_tagging_data.zip`, {
-        type: 'application/zip',
-      });
-
-      try {
-        await upload(
-          {
-            file: blobFile,
-            type: UploadType.TrainingImagesTemp,
-            meta: {},
-          },
-          async ({ url }) => {
-            setAutoLabeling(modelId, mediaType, {
-              url,
-              isRunning: false,
-              total: filteredImages.length,
-              successes: 0,
-              fails: [],
-            });
-            handleClose();
-            setLoading(false);
-          }
-        );
-      } catch (e) {
-        showErrorNotification({
-          error: e instanceof Error ? e : new Error('Please try again'),
-          title: 'Failed to send data',
-          autoClose: false,
-        });
-        setLoading(false);
+    try {
+      // The orchestrator flag overrides — when on, we always use the new flow,
+      // regardless of what trainingAutoTag / trainingAutoCaption say.
+      if (features.trainingAutoLabelOrchestrator) {
+        await submitViaOrchestrator();
+      } else {
+        await submitViaLegacyZip();
       }
-    });
+      handleClose();
+    } catch (e) {
+      showErrorNotification({
+        error: e instanceof Error ? e : new Error('Please try again'),
+        title: 'Failed to send data',
+        autoClose: false,
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return { loading, handleSubmit, disabled, numImages: filteredImages.length };
@@ -145,7 +263,9 @@ const AutoTagSection = ({
   handleClose: () => void;
 }) => {
   const features = useFeatureFlags();
-  const available = features.trainingAutoTag;
+  // Orchestrator path doesn't need the legacy service-availability flag, so the new
+  // flag overrides it. Otherwise fall back to the existing trainingAutoTag check.
+  const available = features.trainingAutoLabelOrchestrator || features.trainingAutoTag;
   const { autoTagging } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
@@ -313,7 +433,9 @@ const AutoCaptionSection = ({
   handleClose: () => void;
 }) => {
   const features = useFeatureFlags();
-  const available = features.trainingAutoCaption;
+  // Orchestrator path doesn't need the legacy service-availability flag, so the new
+  // flag overrides it. Otherwise fall back to the existing trainingAutoCaption check.
+  const available = features.trainingAutoLabelOrchestrator || features.trainingAutoCaption;
   const { autoCaptioning } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
