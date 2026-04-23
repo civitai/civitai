@@ -10,7 +10,7 @@ import {
   IconViewfinder,
 } from '@tabler/icons-react';
 import React, { memo } from 'react';
-import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
+import { useBountyEngagementSets } from '~/components/Bounty/bounty.utils';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -38,10 +38,10 @@ export const BountyCard = memo(function BountyCard({ data }: Props) {
   const expired = expiresAt < new Date();
   const theme = useMantineTheme();
 
-  const { engagements } = useBountyEngagement();
+  const { favoriteIds, trackedIds } = useBountyEngagementSets();
 
-  const isFavorite = !!engagements?.Favorite?.find((value) => value === id);
-  const isTracked = !!engagements?.Track?.find((value) => value === id);
+  const isFavorite = favoriteIds.has(id);
+  const isTracked = trackedIds.has(id);
 
   const countdownBadge = (
     <IconBadge

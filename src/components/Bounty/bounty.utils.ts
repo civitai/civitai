@@ -145,6 +145,42 @@ export const useQueryBountyEngagements = () => {
   return { engagements, loading };
 };
 
+const EMPTY_BOUNTY_ID_SET: ReadonlySet<number> = new Set();
+const bountyFavoriteSetCache = new WeakMap<readonly number[], ReadonlySet<number>>();
+const bountyTrackSetCache = new WeakMap<readonly number[], ReadonlySet<number>>();
+
+function cachedSet(
+  cache: WeakMap<readonly number[], ReadonlySet<number>>,
+  arr: readonly number[] | undefined
+): ReadonlySet<number> {
+  if (!arr || !arr.length) return EMPTY_BOUNTY_ID_SET;
+  const cached = cache.get(arr);
+  if (cached) return cached;
+  const set = new Set(arr);
+  cache.set(arr, set);
+  return set;
+}
+
+/**
+ * Returns the current user's bounty engagement ids as Sets for O(1) `.has()`
+ * lookup. A single Set instance per engagement type is shared across all
+ * consumers that see the same underlying array reference from the React Query
+ * cache. At feed scale (many BountyCards on screen) this avoids both the
+ * per-card Set allocation and the linear `.find()` scan.
+ */
+export const useBountyEngagementSets = () => {
+  const { engagements } = useQueryBountyEngagements();
+  const favoriteIds = useMemo(
+    () => cachedSet(bountyFavoriteSetCache, engagements?.Favorite),
+    [engagements?.Favorite]
+  );
+  const trackedIds = useMemo(
+    () => cachedSet(bountyTrackSetCache, engagements?.Track),
+    [engagements?.Track]
+  );
+  return { favoriteIds, trackedIds };
+};
+
 export const useBountyEngagement = () => {
   const queryUtils = trpc.useUtils();
   const { engagements } = useQueryBountyEngagements();

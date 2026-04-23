@@ -53,26 +53,24 @@ Target: ~15–20% reduction on a 200-card Models page (~3,000 nodes).
 - [x] Replace 2 `<Group gap={2}>` wrappers inside the stat Badge with `<div className="flex items-center gap-0.5">`
 - [x] Flatten the `CollectionCardHeader` layout Groups into plain flex `<div>`s; drop unused `Group` import
 
-### BountyCard — partial
+### BountyCard — done
 
-- [ ] Convert `engagements?.Favorite?.find()` + `engagements?.Track?.find()` to Set lookups (same pattern as `useReviewedModelIds` — lives in `src/components/Bounty/bounty.utils.ts` since it's specific to BountyCard). O(N) → O(1) per card.
-- [x] **Keeping as HoverCard.** [BountyCard.tsx:127-144](../src/components/Cards/BountyCard.tsx#L127-L144) — Re-examined: the "pending scan" popup is a title + description with different weights. Tooltip is the wrong tool.
+- [x] Added `useBountyEngagementSets()` in `bounty.utils.ts` — returns `{ favoriteIds, trackedIds }` as WeakMap-cached Sets. Swapped `engagements?.Favorite?.find()` / `engagements?.Track?.find()` for `favoriteIds.has(id)` / `trackedIds.has(id)`. Same pattern as `useReviewedModelIds`.
+- [x] **Keeping as HoverCard.** [BountyCard.tsx:127-144](../src/components/Cards/BountyCard.tsx#L127-L144) — the "pending scan" popup is a title + description with different weights. Tooltip is the wrong tool.
 
-### ImagesAsPostsCard
+### ImagesAsPostsCard — Phase 1 done (Steps 6–7 open)
 
-Rendered on every model's gallery page ("Images as posts" view). Two branches for single-image vs multi-image (carousel), with heavily duplicated structure.
+Phase 1 items are tracked in detail in the execution plan below. Summary of state:
 
-Safe flattens (zero visual risk):
-
-- [ ] [L263](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L263) and [L346](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L346) — Replace `<Stack gap="xs" className="absolute right-2 top-2 z-10">` (hover-action column, duplicated in both branches) with `<div className="absolute right-2 top-2 z-10 flex flex-col gap-2">`
-- [ ] [L164](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L164) — Flatten `<Group gap="xs" wrap="nowrap">` wrapping the timestamp + resource-attribution icons in `UserAvatar` subText
-- [ ] [L171](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L171) — Flatten inner `<Group ml={6} gap={4}>` around the auto/manual resource Tooltips
-- [ ] [L227](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L227) — Flatten `<Group gap={4} wrap="nowrap">` inside the review Badge (thumbs icon + optional message icon)
-
-Structural (needs review):
-
-- [ ] **Duplicated render block** — the ~75-line block at [L256-333](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L256-L333) (single-image) and [L338-423](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L338-L423) (carousel slide) is almost verbatim copy-paste: `ImageGuard2` render prop → `OnsiteIndicator` + `BlurToggle` + hover-action column + `RoutedDialogLink` + `EdgeMedia2` + `Reactions` + `ImageMetaPopover2`. Extracting a shared `<ImagesAsPostsCardImage>` component wouldn't reduce DOM per card but would halve the maintenance surface and ensure future optimizations apply to both branches.
-- [ ] [L153-160](../src/components/Image/AsPosts/ImagesAsPostsCard.tsx#L153-L160) — `<Paper p="xs" radius={0}>` header container. Paper adds wrapper divs + theme-reactive background. Replaceable with a plain `<div>` + Tailwind `bg-white dark:bg-dark-7` (or matching token). Low per-card DOM impact but this renders on every card of the gallery page. Needs a theme-color visual check.
+- [x] Context-value instability fix at `ImagesAsPostsInfiniteProvider` + caller
+- [x] Stack × 2 and Group × 3 flattened
+- [x] `handleRemixClick` dead `useCallback` removed
+- [x] Carousel dialog state deferred via `getState`
+- [x] `cosmetic` lookup hoisted + memoized; `cosmeticData` memoized
+- [x] Combined the two `.some()` passes
+- [x] `wrapperProps` style hoisted to module scope
+- [ ] **Step 6 — structural** (user-direction: "circle back later")
+- [ ] **Step 7 — validation** (manual: screenshot diff + React Profiler scroll test)
 
 ### What to skip on ImagesAsPostsCard
 

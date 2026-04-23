@@ -1,7 +1,6 @@
 import { Text, type TextProps } from '@mantine/core';
 import { useLiveMetric } from './useLiveMetrics';
 import { AnimatedCount } from './AnimatedCount';
-import { useMetricSubscriptionContext } from './MetricSubscriptionProvider';
 import type { MetricEntityType, MetricType } from '~/components/Signals/metric-signals.types';
 
 interface LiveMetricProps extends Omit<TextProps, 'children'> {
@@ -38,14 +37,10 @@ export function LiveMetric({
   ...textProps
 }: LiveMetricProps) {
   const liveValue = useLiveMetric(entityType, entityId, metricType, baseValue);
-  // Only animate while the surrounding MetricSubscriptionProvider reports the
-  // card is visible. Offscreen cards render a plain formatted number — avoids
-  // hundreds of NumberFlow shadow roots + the 60Hz rAF loop they drive.
-  const { isSubscribed } = useMetricSubscriptionContext();
 
   return (
     <Text {...textProps}>
-      <AnimatedCount value={liveValue} abbreviate={abbreviate} animate={isSubscribed} />
+      <AnimatedCount value={liveValue} abbreviate={abbreviate} />
     </Text>
   );
 }
