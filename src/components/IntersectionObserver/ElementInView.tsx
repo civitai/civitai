@@ -53,8 +53,6 @@ function ElementInViewImpl<C extends ElementType = 'div'>(
   const { ref: internalRef, inView } = useInView({ initialInView });
   const mergedRef = useMergedRef(internalRef as Ref<HTMLElement>, forwardedRef as Ref<HTMLElement>);
 
-  useEffect(() => console.log({ inView }), [inView]);
-
   return (
     <Component ref={mergedRef} {...rest}>
       <ElementInViewContext.Provider value={inView}>{children}</ElementInViewContext.Provider>
