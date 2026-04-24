@@ -15,6 +15,8 @@ export type FeaturedCollectionEntry = {
   lastAcceptedAt: string | null;
   currentName: string | null;
   nameChanged: boolean;
+  currentWrite: string | null;
+  writeChanged: boolean;
   eligible: boolean;
 };
 
@@ -61,7 +63,8 @@ export async function computeFeaturedCollectionsState(): Promise<FeaturedCollect
 
   const metadata = (block.metadata || {}) as HomeBlockMetaSchema;
   const pool = metadata.featuredCollections?.collectionIds ?? [];
-  const snapshots = metadata.featuredCollections?.nameSnapshots ?? {};
+  const nameSnapshots = metadata.featuredCollections?.nameSnapshots ?? {};
+  const writeSnapshots = metadata.featuredCollections?.writeSnapshots ?? {};
   const staleDays = metadata.featuredCollections?.maxStaleDays ?? DEFAULT_STALE_DAYS;
   const minRecent = metadata.featuredCollections?.minRecentItems ?? DEFAULT_MIN_RECENT_ITEMS;
 
@@ -91,26 +94,32 @@ export async function computeFeaturedCollectionsState(): Promise<FeaturedCollect
     `,
     dbRead.collection.findMany({
       where: { id: { in: pool } },
-      select: { id: true, name: true },
+      select: { id: true, name: true, write: true },
     }),
   ]);
 
   const activityById = new Map(activityRows.map((r) => [r.collectionId, r]));
-  const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
+  const collectionById = new Map(nameRows.map((r) => [r.id, r]));
 
   const perCollection: Record<number, FeaturedCollectionEntry> = {};
   for (const id of pool) {
     const row = activityById.get(id);
     const count = row ? Number(row.recentCount) : 0;
-    const currentName = nameById.get(id) ?? null;
-    const approvedName = snapshots[id];
+    const col = collectionById.get(id);
+    const currentName = col?.name ?? null;
+    const currentWrite = (col?.write as string | undefined) ?? null;
+    const approvedName = nameSnapshots[id];
+    const approvedWrite = writeSnapshots[id];
     const nameChanged = !!approvedName && currentName !== null && currentName !== approvedName;
+    const writeChanged = !!approvedWrite && currentWrite !== null && currentWrite !== approvedWrite;
     perCollection[id] = {
       recentCount: count,
       lastAcceptedAt: row?.lastAcceptedAt ? row.lastAcceptedAt.toISOString() : null,
       currentName,
       nameChanged,
-      eligible: count >= minRecent && !nameChanged,
+      currentWrite,
+      writeChanged,
+      eligible: count >= minRecent && !nameChanged && !writeChanged,
     };
   }
 
