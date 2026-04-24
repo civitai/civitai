@@ -4,9 +4,10 @@ Post-implementation notes on the refcount + retry change in [SignalsProvider.tsx
 
 ## Summary of the change
 
-- `SignalProvider` owns a `Map<topic, refCount>` + a `Map<topic, notify>` + a `Map<topic, retryState>`.
+- `SignalProvider` owns a `Map<topic, refCount>` + a `Map<topic, notify>` + a `Map<topic, retryState>` + a `Map<topic, lastConfirmedAt>`.
 - `registerTopic` / `releaseTopic` replace direct `worker.topicRegister` / `worker.topicUnsubscribe` calls from `useSignalTopic`.
-- **Re-registration is event-driven, not time-driven**: the provider watches connection state and re-registers every active topic on each `'connected'` transition (initial connect, reconnect, or worker identity change). No periodic keep-alive timer.
+- **Reconnect-driven re-registration**: the provider watches connection state and re-registers every active topic on each `'connected'` transition (initial connect, reconnect, or worker identity change).
+- **50s keep-alive interval**: the hub drops each registration 60s after the last `subscribe` call, so a single provider-level `setInterval` refreshes every active topic at 50s. One timer for all topics; skips while disconnected.
 - **Retry on hub-side failures**: the worker now emits a `topic:status` message after every `topicInvoke`. The provider listens; on `ok: false` (except `no-connection`), it schedules an exponential-backoff retry (up to 4 attempts, capped at 30s). Successful registers clear the retry; `no-connection` failures are left to the reconnect effect.
 - Fixes the silent stale-data window when one of several duplicate subscribers unmounts.
 
@@ -76,25 +77,15 @@ Note: the reconnect effect ALSO fires on worker change, re-registering every top
 
 ---
 
-### [ ] 7a. Unknown: does the hub silently evict idle subscriptions?
+### [x] 7a. Hub evicts idle registrations after 60s — RESOLVED
 
-**Severity**: unknown — depends on backend behavior we haven't verified.
+**Confirmed**: the SignalR hub drops each topic registration 60 seconds after the last `subscribe` call. Reconnect-driven re-registration alone is insufficient on long-lived sessions where the connection stays up but registrations age out.
 
-**Description**: Removing the 60-second keep-alive means reconnect-driven re-registration is the only mechanism keeping subscriptions alive after the initial `subscribe`. That's correct if the hub maintains group memberships for as long as the SignalR connection is up. If the hub has a per-subscription TTL or eviction policy that doesn't fire a client-visible close, individual topics could go silent while the overall connection appears healthy.
+**Mitigation**: a single provider-level `setInterval` runs at `KEEP_ALIVE_INTERVAL_MS = 50_000` (10s margin under the 60s TTL) and iterates `topicRefs.current`, calling `worker.topicRegister(topic, notify)` for each active topic. The interval skips when `status !== 'connected'` — the reconnect effect picks up the slack on the next `'connected'` transition.
 
-**Evidence we have**:
+**Trade-off vs. the old design**: the old code had one `useInterval(60_000)` per subscribed card (`MetricSubscriptionProviderInner` + each direct `useSignalTopic`). On a 200-card feed that was 200 timers and 200 register calls per minute. Now: 1 timer total and one register call per *active topic* per minute (post-refcount, identical topics share a single registration). Wire traffic is bounded by topic count, not subscriber count.
 
-- No documented eviction policy in the worker, client, or `docs/`.
-- [stalenessCheck](../src/utils/signals/worker.ts#L90) detects *total* event silence (3-minute threshold → force reconnect → reconnect effect re-registers). It does **not** detect per-topic silence while other topics produce traffic.
-- The old 60s timer may have been defending against this, or may have been paranoid. Author intent is unrecoverable.
-
-**Concrete impact (if it occurs)**: a long-lived session silently stops receiving updates for a specific topic. Other topics still work, so `stalenessCheck` doesn't trigger, and the user sees stale data without any error surface.
-
-**Observability (now in place)**: `window.__signals.getLastConfirmed()` returns the age of the last `topic:status` acknowledgment per topic. If a topic's confirmation is hours old and the user reports stale data, silent eviction is the likely cause.
-
-**Fix (if confirmed)**: add a single provider-level `setInterval` that iterates `topicRefs.current` every N minutes (starting point: 5 minutes) and re-registers. Preserves the reconnect-driven fast path; adds a low-frequency safety net. Wire-traffic cost is ~12× less than the old 60s timer.
-
-**Decision today**: skipping the safety-net timer; relying on reconnect-driven + the observability hook. Revisit if anyone reports stale data on a long-lived session or if `getLastConfirmed()` age values trend high in dev.
+**Observability**: `window.__signals.getLastConfirmed()` returns the age of the last `topic:status` acknowledgment per topic. In steady state, ages should stay <60s. An age >60s on an active topic means the keep-alive isn't reaching the hub (worker stuck, connection issue, or eviction policy changed).
 
 ---
 
@@ -130,7 +121,7 @@ The hub is expected to tolerate duplicate registers. Each `topic:status` event n
 
 - **Refcounting in the worker**: moves the logic into the web-worker side. Rejected — harder to test, and the current `SignalProvider` already owns the related `registeredTopics` state.
 - **Callback-based `useSignalTopic(topic, cb)`**: unify with `useSignalConnection`'s pattern. Cleaner architecturally but a big refactor (provider needs to route topic-scoped messages, every existing caller migrates). Not done today. Tracked in conversation, not as a concrete concern.
-- **Periodic keep-alive timer**: the pre-existing approach. Replaced by the reconnect-driven effect, which responds immediately to state transitions instead of polling every 60s.
+- **Per-card keep-alive timers**: the pre-existing approach (one `useInterval(60_000)` per `useSignalTopic` consumer). Replaced by a single provider-level 50s interval that iterates all active topics. Reconnect-driven re-registration handles connection-state transitions on top of that.
 
 ---
 

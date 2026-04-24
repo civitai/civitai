@@ -40,9 +40,9 @@ declare global {
       /**
        * Last time each topic was acknowledged as subscribed by the hub (a
        * `topic:status` with `ok: true` for `subscribe` / `subscribeNotify`).
-       * Useful for detecting silent eviction: if a topic's confirmation is
-       * hours old and the user reports no updates, the hub may have dropped
-       * the subscription without telling us.
+       * In steady state, ages should stay <60s thanks to the 50s keep-alive
+       * interval. An age >60s on an active topic indicates the keep-alive
+       * isn't reaching the hub (e.g., worker stuck, connection issue).
        */
       getLastConfirmed: () => Record<string, { ageMs: number; at: string }>;
       /** Deltas currently accumulated in the metric-signals store. */
@@ -86,6 +86,12 @@ const signalStatusDictionary: Record<SignalStatus, MantineColor> = {
 const RETRY_MAX_ATTEMPTS = 4;
 const RETRY_BASE_DELAY_MS = 1000;
 const RETRY_MAX_DELAY_MS = 30_000;
+
+// Hub drops topic subscriptions 60s after the last `subscribe` call, so we
+// refresh every active topic on a single provider-level interval. 50s gives
+// a 10s margin before TTL expiry. One interval for all topics — cheaper than
+// per-topic timers, and complementary to the reconnect effect.
+const KEEP_ALIVE_INTERVAL_MS = 50_000;
 
 const SignalContext = createContext<SignalState | null>(null);
 export const useSignalContext = () => {
@@ -265,6 +271,23 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       worker.topicRegister(topic, topicNotify.current!.get(topic));
     }
   }, [status, worker, cancelRetry]);
+
+  // Keep-alive: hub drops each registration 60s after the last `subscribe`
+  // call, so refresh every active topic on a single provider-level interval.
+  // Skip when not connected — the reconnect effect re-registers on the next
+  // 'connected' transition.
+  useEffect(() => {
+    if (!worker) return;
+    const interval = setInterval(() => {
+      if (status !== 'connected') return;
+      const refs = topicRefs.current!;
+      const notifyMap = topicNotify.current!;
+      for (const topic of refs.keys()) {
+        worker.topicRegister(topic, notifyMap.get(topic));
+      }
+    }, KEEP_ALIVE_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [worker, status]);
 
   // Clean up retry timers on provider unmount.
   useEffect(() => {
