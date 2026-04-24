@@ -249,10 +249,16 @@ const useSubmitImages = ({
       const labelNoun = type === 'caption' ? 'caption' : 'tag';
       const labelVerb = type === 'caption' ? 'Captioned' : 'Tagged';
 
+      // Union the helper's failedKeys with any source-fetch failures recorded
+      // before submit — those never reach the helper, so they aren't in
+      // failedKeys but are very much real failures the user should see.
+      const allFailedKeys = new Set<string>(failedKeys);
+      for (const key of failureReasons.keys()) allFailedKeys.add(key);
+
       // Group failure reasons so the user sees "5× content blocked" instead of
       // a flat count or 50 toasts.
       const reasonCounts = new Map<string, number>();
-      for (const key of failedKeys) {
+      for (const key of allFailedKeys) {
         const reason = failureReasons.get(key) ?? 'Unknown error';
         reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
       }
@@ -262,10 +268,11 @@ const useSubmitImages = ({
         .map(([reason, count]) => `${count}× ${reason}`)
         .join('; ');
 
+      const totalFails = allFailedKeys.size;
       const headline = `${labelVerb} ${successes} image${successes === 1 ? '' : 's'}.`;
       const failureText =
-        failedKeys.length > 0
-          ? ` ${failedKeys.length} failure${failedKeys.length === 1 ? '' : 's'}${
+        totalFails > 0
+          ? ` ${totalFails} failure${totalFails === 1 ? '' : 's'}${
               reasonSummary ? `: ${reasonSummary}` : ''
             }`
           : '';
@@ -276,7 +283,7 @@ const useSubmitImages = ({
           title: `Auto-${labelNoun} failed`,
           error: new Error(message),
         });
-      } else if (failedKeys.length > 0) {
+      } else if (totalFails > 0) {
         showErrorNotification({
           title: `Auto-${labelNoun} finished with errors`,
           error: new Error(message),

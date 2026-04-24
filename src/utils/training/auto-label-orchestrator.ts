@@ -67,8 +67,12 @@ export type AutoLabelHandle = {
 
 type SubmittedBatch = {
   workflowId: string;
-  // step.name (the unique batch index "0".."15") → caller's image key.
-  stepNameToKey: Map<string, string>;
+  // The caller's keys for every image in this batch. Used both to recognize
+  // which step.filename values belong to us and to mark the still-unreported
+  // ones as failed if the workflow times out.
+  keys: Set<string>;
+  // Keys we've already emitted onResult/onFailure for, so a retried poll tick
+  // doesn't double-report.
   reported: Set<string>;
 };
 
@@ -236,7 +240,7 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
  *  network/5xx through TRPCClientError; we treat anything that isn't a 4xx as
  *  retryable since the orchestrator endpoints are idempotent at this layer
  *  (presign mints a fresh URL, submit creates a fresh workflow id). */
-async function withRetry<T>(label: string, fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
   try {
     return await raceAbort(fn(), signal);
   } catch (err) {
@@ -244,15 +248,11 @@ async function withRetry<T>(label: string, fn: () => Promise<T>, signal: AbortSi
     const status = (err as { data?: { httpStatus?: number } })?.data?.httpStatus;
     if (status && status >= 400 && status < 500) throw err; // 4xx — caller error, no retry
     await sleep(RETRY_DELAY_MS, signal);
-    // Re-throw the original error on retry-fail so the caller's describeError
-    // can still introspect `data.zodError`. The label is just a tag we attach.
-    return raceAbort(fn(), signal).catch((retryErr) => {
-      if (isAbort(retryErr)) throw retryErr;
-      if (retryErr instanceof Error) {
-        retryErr.message = `${label}: ${retryErr.message}`;
-      }
-      throw retryErr;
-    });
+    // Re-throw the second attempt's error untouched so the caller's
+    // describeError() can still introspect `data.zodError` etc. We intentionally
+    // do NOT mutate the message — that would clobber the JSON shape parsers
+    // downstream rely on for friendly extraction.
+    return raceAbort(fn(), signal);
   }
 }
 
@@ -328,7 +328,6 @@ export async function uploadAndSubmitAutoLabel(
     if (!isStillActive()) return { ok: false, aborted: true, index, key: img.key };
     try {
       const { uploadUrl } = await withRetry(
-        'Presign request',
         () => trpcVanilla.training.getAutoLabelUploadUrl.mutate({ modelId: opts.modelId }),
         signal
       );
@@ -383,7 +382,6 @@ export async function uploadAndSubmitAutoLabel(
     let submission: { workflowId: string };
     try {
       submission = await withRetry(
-        'Workflow submit',
         () =>
           trpcVanilla.training.submitAutoLabelWorkflow.mutate({
             modelId: opts.modelId,
@@ -412,17 +410,12 @@ export async function uploadAndSubmitAutoLabel(
       continue;
     }
 
-    // Server names each step by its zero-based index in the resolved list. We
-    // mirror that here so the poll loop can map step.name → key. NOTE: this is
-    // a contract with the server — see submitAutoLabelWorkflow in
-    // training.service.ts. If the server stops naming steps by index, this
-    // breaks silently.
-    const stepNameToKey = new Map<string, string>();
-    resolved.forEach((r, idx) => stepNameToKey.set(`${idx}`, r.key));
-
+    // We send the caller's key as the step's `filename` (see service-side
+    // metadata). Track expected keys per workflow so the poll loop can match
+    // back via `step.filename` directly — no fragile index-as-name mapping.
     submittedBatches.push({
       workflowId: submission.workflowId,
-      stepNameToKey,
+      keys: new Set(resolved.map((r) => r.key)),
       reported: new Set(),
     });
   }
@@ -434,9 +427,9 @@ export async function uploadAndSubmitAutoLabel(
   const startedAt = Date.now();
 
   const markBatchUnreportedAsFailed = (batch: SubmittedBatch, reason: string) => {
-    for (const [stepName, key] of batch.stepNameToKey) {
-      if (batch.reported.has(stepName)) continue;
-      batch.reported.add(stepName);
+    for (const key of batch.keys) {
+      if (batch.reported.has(key)) continue;
+      batch.reported.add(key);
       recordFailure(key, reason);
     }
   };
@@ -459,8 +452,12 @@ export async function uploadAndSubmitAutoLabel(
       // Snapshot pending IDs for this tick so deletes during the forEach below
       // don't shift the index lookup we'd otherwise need to do later.
       const tickIds = Array.from(pending);
+      // raceAbort each query so a single hung tRPC call can't keep
+      // Promise.allSettled blocked past POLL_TIMEOUT_MS / cancellation.
       const results = await Promise.allSettled(
-        tickIds.map((workflowId) => trpcVanilla.training.getAutoLabelWorkflow.query({ workflowId }))
+        tickIds.map((workflowId) =>
+          raceAbort(trpcVanilla.training.getAutoLabelWorkflow.query({ workflowId }), signal)
+        )
       );
 
       // The await above released the event loop; cancellation may have fired
@@ -475,14 +472,15 @@ export async function uploadAndSubmitAutoLabel(
         if (!batch) return;
 
         for (const step of wf.steps) {
-          if (!step.name) continue;
-          if (batch.reported.has(step.name)) continue;
+          // Server echoes the key we sent in `step.filename`. If it's missing
+          // or doesn't belong to this batch, skip — could be a step we don't
+          // recognize (server changed schema) or a duplicate in the response.
+          const key = step.filename;
+          if (!key || !batch.keys.has(key)) continue;
+          if (batch.reported.has(key)) continue;
           if (!TERMINAL_STEP_STATUSES.has(step.status)) continue;
 
-          const key = batch.stepNameToKey.get(step.name);
-          if (!key) continue;
-
-          batch.reported.add(step.name);
+          batch.reported.add(key);
 
           if (step.status !== 'succeeded') {
             recordFailure(key, describeStepFailure(step));
@@ -510,7 +508,7 @@ export async function uploadAndSubmitAutoLabel(
         // Done if either the workflow itself reports terminal OR every step is
         // already reported. The OR-by-step path covers cases where the
         // orchestrator omits `status` on the workflow envelope.
-        const allStepsReported = batch.stepNameToKey.size === batch.reported.size;
+        const allStepsReported = batch.keys.size === batch.reported.size;
         if (TERMINAL_WORKFLOW_STATUSES.has(wf.status ?? '') || allStepsReported) {
           pending.delete(polledId);
         }
