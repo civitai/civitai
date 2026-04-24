@@ -11,7 +11,7 @@ import { devtools } from 'zustand/middleware';
 import type { NsfwLevel } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserContentSettings } from '~/server/schema/user.schema';
 
 const Context = createContext<ContentSettingsStore | null>(null);
 
@@ -22,19 +22,29 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const queryUtils = trpc.useUtils();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
-      const changedSettings: Partial<UserSettingsSchema> = {};
+      // Patch every confirmed field into the getSettings React Query cache so
+      // `CivitaiSessionProvider` sees the user's intent immediately, instead
+      // of the stale `session.user.*` values that live behind the JWT cookie
+      // until the next SignalR/session refresh. Without this the smart-merge
+      // below would read store==snapshot (both true) as "not dirty" and
+      // apply the stale server value, reverting the user's toggle.
+      const changedSettings: Partial<UserContentSettings> = {};
       if (variables.allowAds !== undefined) changedSettings.allowAds = variables.allowAds;
       if (variables.disableHidden !== undefined)
         changedSettings.disableHidden = variables.disableHidden;
+      if (variables.showNsfw !== undefined) changedSettings.showNsfw = variables.showNsfw;
+      if (variables.blurNsfw !== undefined) changedSettings.blurNsfw = variables.blurNsfw;
+      if (variables.autoplayGifs !== undefined)
+        changedSettings.autoplayGifs = variables.autoplayGifs;
 
       if (Object.keys(changedSettings).length === 0) return;
 
       // Cancel any in-flight getSettings refetch so a stale response
       // (e.g. triggered by window focus) can't overwrite this update.
       queryUtils.user.getSettings.cancel();
-      queryUtils.user.getSettings.setData(undefined, (old) => {
+      queryUtils.user.getSettings.setData(undefined, (old: UserContentSettings | undefined) => {
         if (!old) return old;
-        return { ...old, ...changedSettings } satisfies UserSettingsSchema;
+        return { ...old, ...changedSettings } satisfies UserContentSettings;
       });
     },
     onError: (error) => {
