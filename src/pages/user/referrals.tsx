@@ -3,7 +3,7 @@ import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { ReferralDashboard } from '~/components/Referrals/ReferralDashboard';
-import { ReferralDashboardLite } from '~/components/Referrals/ReferralDashboardLite';
+import { ReferralDashboardFull } from '~/components/Referrals/ReferralDashboardFull';
 import { ReferralDashboardSkeleton } from '~/components/Referrals/ReferralDashboardSkeleton';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -28,8 +28,8 @@ export const getServerSideProps = createServerSideProps({
 
 export default function ReferralsPage() {
   const router = useRouter();
-  const useLite = router.query.lite === '1';
-  const Dashboard = useLite ? ReferralDashboardLite : ReferralDashboard;
+  const useFull = router.query.full === '1';
+  const Dashboard = useFull ? ReferralDashboardFull : ReferralDashboard;
   const { data, isLoading, refetch } = trpc.referral.getDashboard.useQuery();
   const [pendingOffer, setPendingOffer] = useState<number | null>(null);
 

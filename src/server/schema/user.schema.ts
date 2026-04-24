@@ -235,6 +235,18 @@ export type UserAssistantPersonality = z.infer<typeof userAssistantPersonality>;
 
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
+
+/**
+ * JSON user settings plus the handful of content-preference columns on the
+ * User table that we also expose through `user.getSettings`. These columns
+ * ride the same React Query cache so mutations can patch them in-place and
+ * avoid the stale-session race the JWT/session path is prone to.
+ */
+export type UserContentSettings = UserSettingsSchema & {
+  showNsfw?: boolean;
+  blurNsfw?: boolean;
+  autoplayGifs?: boolean | null;
+};
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
   features: z.record(z.string(), z.boolean()).optional(),

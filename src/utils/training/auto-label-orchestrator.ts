@@ -12,13 +12,21 @@ import { trpcVanilla } from '~/utils/trpc';
 const POLL_INTERVAL_MS = 5000;
 // Hard ceiling so a stuck workflow can't poll forever.
 const POLL_TIMEOUT_MS = 20 * 60 * 1000;
+// Browsers cap at ~6 concurrent requests/origin; staying at 4 leaves headroom
+// for tRPC + image source fetches happening in parallel.
+const UPLOAD_CONCURRENCY = 4;
+// One bounded retry on transient network/5xx for presign + submit. Polling
+// already tolerates per-tick failures via Promise.allSettled.
+const RETRY_DELAY_MS = 1500;
 
 const TERMINAL_WORKFLOW_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 const TERMINAL_STEP_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 export type AutoLabelImageInput = {
-  /** Filename used to match the result back to the source image in the store. */
-  filename: string;
+  /** Stable per-image identifier — must be unique across the input list. The
+   *  caller picks this; passing the source URL is a good default since URLs
+   *  don't collide the way short filenames do. */
+  key: string;
   blob: Blob;
 };
 
@@ -33,10 +41,13 @@ type CommonOptions = {
    *  background work cleanly — used to cancel a poll loop when the user resets the
    *  store-level autoLabeling state (e.g. opens a fresh run, navigates away). */
   isActive?: () => boolean;
+  onUploadStart?: () => void;
   onUploadProgress?: (uploaded: number, total: number) => void;
-  onResult?: (filename: string, label: string) => void;
-  onFailure?: (filename: string, reason: string) => void;
-  onDone?: (summary: { successes: number; fails: string[] }) => void;
+  onUploadComplete?: () => void;
+  onResult?: (key: string, label: string) => void;
+  onFailure?: (key: string, reason: string) => void;
+  onFatal?: (reason: string) => void;
+  onDone?: (summary: { successes: number; failedKeys: string[] }) => void;
 };
 
 export type SubmitAutoLabelOptions =
@@ -56,10 +67,12 @@ export type AutoLabelHandle = {
 
 type SubmittedBatch = {
   workflowId: string;
-  // Map step.name (the unique batch index "0".."15") → filename. We dedup on step.name
-  // because two source images can collide on filename (e.g. duplicate uploads), and
-  // step.name is what we actually set when building the workflow.
-  stepNameToFilename: Map<string, string>;
+  // The caller's keys for every image in this batch. Used both to recognize
+  // which step.filename values belong to us and to mark the still-unreported
+  // ones as failed if the workflow times out.
+  keys: Set<string>;
+  // Keys we've already emitted onResult/onFailure for, so a retried poll tick
+  // doesn't double-report.
   reported: Set<string>;
 };
 
@@ -68,24 +81,6 @@ const chunk = <T>(items: T[], size: number): T[][] => {
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out;
 };
-
-async function uploadBlobToPresignedUrl(
-  uploadUrl: string,
-  blob: Blob,
-  signal?: AbortSignal
-): Promise<OrchestratorBlob> {
-  const response = await fetch(uploadUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': blob.type || 'application/octet-stream' },
-    body: blob,
-    signal,
-  });
-  if (!response.ok) {
-    const text = await response.text().catch(() => response.statusText);
-    throw new Error(`Blob upload failed (${response.status}): ${text}`);
-  }
-  return (await response.json()) as OrchestratorBlob;
-}
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -100,6 +95,183 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     };
     signal?.addEventListener('abort', onAbort, { once: true });
   });
+
+/** Run `task` over `items` with at most `concurrency` in flight. Preserves
+ *  callsite ordering of returned results regardless of completion order. */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  task: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      results[idx] = await task(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
+/** RFC 7807 problem-details parser. The orchestrator returns
+ *  { type, title, status, detail, traceId } for things like content-policy hits;
+ *  surface `title` + `detail` rather than dumping JSON at the user. */
+function parseOrchestratorProblem(text: string, status: number): string {
+  try {
+    const body = JSON.parse(text) as {
+      title?: string;
+      detail?: string;
+      message?: string;
+    };
+    const parts = [body.title, body.detail].filter(
+      (p): p is string => typeof p === 'string' && p.length > 0
+    );
+    if (parts.length > 0) return parts.join(' — ');
+    if (typeof body.message === 'string' && body.message.length > 0) return body.message;
+  } catch {
+    // not JSON, fall through
+  }
+  // Truncate raw bodies (XML envelopes, HTML, etc.) so the toast stays usable.
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return `HTTP ${status}`;
+  return trimmed.length > 200 ? `${trimmed.slice(0, 200)}…` : trimmed;
+}
+
+class UploadError extends Error {
+  constructor(public readonly status: number, public readonly reason: string) {
+    super(reason);
+    this.name = 'UploadError';
+  }
+  /** True for cases that re-uploading won't help with — content policy etc. */
+  get isPermanent() {
+    return this.status === 422 || this.status === 415 || this.status === 413;
+  }
+}
+
+async function uploadBlobToPresignedUrl(
+  uploadUrl: string,
+  blob: Blob,
+  signal?: AbortSignal
+): Promise<OrchestratorBlob> {
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+    body: blob,
+    signal,
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => response.statusText);
+    throw new UploadError(response.status, parseOrchestratorProblem(text, response.status));
+  }
+  return (await response.json()) as OrchestratorBlob;
+}
+
+const isAbort = (err: unknown) => (err as DOMException | undefined)?.name === 'AbortError';
+
+/** Translate tRPC / orchestrator errors into a single short, user-readable line.
+ *  tRPC stuffs the serialized zod issue array into `err.message`, so without
+ *  this users see things like
+ *    `[ { "code": "custom", "path": [...], "message": "..." }, ... ]`
+ *  in their toast. We prefer the structured `data.zodError` if present, then
+ *  fall back to the message — but if the message looks like JSON, we try to
+ *  pull a sensible summary out instead of dumping it. */
+function describeError(err: unknown): string {
+  if (typeof err === 'string') return err;
+  if (!(err instanceof Error)) return 'Unknown error';
+
+  const data = (err as { data?: { code?: string; zodError?: unknown } }).data;
+  const zodError = data?.zodError as
+    | {
+        formErrors?: string[];
+        fieldErrors?: Record<string, string[] | undefined>;
+      }
+    | undefined;
+  if (zodError) {
+    const fieldMessages = Object.values(zodError.fieldErrors ?? {})
+      .flat()
+      .filter((m): m is string => typeof m === 'string' && m.length > 0);
+    const firstMessage = fieldMessages[0] ?? zodError.formErrors?.[0];
+    if (firstMessage) return firstMessage;
+  }
+
+  const msg = err.message ?? '';
+  // tRPC sometimes puts the raw zod issue array straight into `message`.
+  // Try to pull the first issue's `message` field instead of dumping JSON.
+  if (msg.startsWith('[')) {
+    try {
+      const issues = JSON.parse(msg) as Array<{ message?: string }>;
+      const firstMessage = issues.find(
+        (i) => typeof i.message === 'string' && i.message.length > 0
+      )?.message;
+      if (firstMessage) return firstMessage;
+    } catch {
+      // not JSON — fall through
+    }
+    return 'Server rejected the request';
+  }
+  return msg.length > 200 ? `${msg.slice(0, 200)}…` : msg;
+}
+
+/** Race a promise against a signal so we don't await forever if `fn()` is hung
+ *  (server stall, dropped connection, etc.). The underlying call keeps running
+ *  in the background but we stop blocking the worker pool. */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException('Aborted', 'AbortError'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (v) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(e);
+      }
+    );
+  });
+}
+
+/** Wrap a tRPC call with one bounded retry on transient errors. tRPC surfaces
+ *  network/5xx through TRPCClientError; we treat anything that isn't a 4xx as
+ *  retryable since the orchestrator endpoints are idempotent at this layer
+ *  (presign mints a fresh URL, submit creates a fresh workflow id). */
+async function withRetry<T>(fn: () => Promise<T>, signal: AbortSignal): Promise<T> {
+  try {
+    return await raceAbort(fn(), signal);
+  } catch (err) {
+    if (isAbort(err)) throw err;
+    const status = (err as { data?: { httpStatus?: number } })?.data?.httpStatus;
+    if (status && status >= 400 && status < 500) throw err; // 4xx — caller error, no retry
+    await sleep(RETRY_DELAY_MS, signal);
+    // Re-throw the second attempt's error untouched so the caller's
+    // describeError() can still introspect `data.zodError` etc. We intentionally
+    // do NOT mutate the message — that would clobber the JSON shape parsers
+    // downstream rely on for friendly extraction.
+    return raceAbort(fn(), signal);
+  }
+}
+
+/** Best-effort extraction of a friendly per-step failure reason from the
+ *  workflow payload. The shape varies by orchestrator version, so probe a few
+ *  spots; fall back to the status word. */
+function describeStepFailure(step: { status: string; error?: unknown; output?: unknown }): string {
+  const error = step.error as { message?: string; detail?: string; title?: string } | undefined;
+  if (error) {
+    const parts = [error.title, error.detail ?? error.message].filter(
+      (p): p is string => typeof p === 'string' && p.length > 0
+    );
+    if (parts.length > 0) return parts.join(' — ');
+  }
+  const output = step.output as { error?: string; message?: string } | null | undefined;
+  if (output?.error) return output.error;
+  if (output?.message) return output.message;
+  return step.status === 'failed' ? 'Step failed' : `Step ${step.status}`;
+}
 
 /**
  * Upload N images to the orchestrator, submit one workflow per batch (up to
@@ -128,77 +300,137 @@ export async function uploadAndSubmitAutoLabel(
 
   const isStillActive = () => !signal.aborted && (opts.isActive?.() ?? true);
 
-  const batches = chunk(opts.images, AUTO_LABEL_BATCH_SIZE);
   const totalImages = opts.images.length;
-
   let uploaded = 0;
   let successes = 0;
-  const fails: string[] = [];
+  // Set so a key never gets counted twice if e.g. submit fails AND a later
+  // poll-timeout sweep tries to mark the same key.
+  const failedKeys = new Set<string>();
+  const recordFailure = (key: string, reason: string) => {
+    if (!key || failedKeys.has(key)) return;
+    failedKeys.add(key);
+    opts.onFailure?.(key, reason);
+  };
   const submittedBatches: SubmittedBatch[] = [];
 
-  // ---- Phase A: upload + submit each batch sequentially. Submitting per-batch
-  // (instead of one giant workflow) keeps each workflow at ≤AUTO_LABEL_BATCH_SIZE
-  // steps so the orchestrator can schedule them concurrently, and isolates
-  // failures to a single batch instead of an entire run.
-  for (const batch of batches) {
-    if (!isStillActive()) throw new DOMException('Aborted', 'AbortError');
+  // ---- Phase A: upload everything concurrently. We presign + upload per image
+  // (idempotent on the orchestrator side) and only chunk into workflows after
+  // all uploads finish, so a slow upload doesn't block the UI from showing
+  // overall progress.
+  opts.onUploadStart?.();
 
-    const resolved: { mediaUrl: string; filename: string }[] = [];
-    for (const img of batch) {
-      if (!isStillActive()) throw new DOMException('Aborted', 'AbortError');
-      const { uploadUrl } = await trpcVanilla.training.getAutoLabelUploadUrl.mutate();
+  type UploadResult =
+    | { ok: true; index: number; mediaUrl: string; key: string }
+    | { ok: false; index: number; key: string }
+    | { ok: false; aborted: true; index: number; key: string };
+
+  const uploadOne = async (img: AutoLabelImageInput, index: number): Promise<UploadResult> => {
+    if (!isStillActive()) return { ok: false, aborted: true, index, key: img.key };
+    try {
+      const { uploadUrl } = await withRetry(
+        () => trpcVanilla.training.getAutoLabelUploadUrl.mutate({ modelId: opts.modelId }),
+        signal
+      );
       const result = await uploadBlobToPresignedUrl(uploadUrl, img.blob, signal);
       if (!result.url) {
-        // Treat missing URL as a per-image failure rather than aborting the batch.
-        fails.push(img.filename);
-        opts.onFailure?.(img.filename, 'Upload returned no URL');
-        continue;
+        recordFailure(img.key, 'Upload returned no URL');
+        return { ok: false, index, key: img.key };
       }
-      resolved.push({ mediaUrl: result.url, filename: img.filename });
       uploaded += 1;
       opts.onUploadProgress?.(uploaded, totalImages);
+      return { ok: true, index, mediaUrl: result.url, key: img.key };
+    } catch (err) {
+      // Abort is expected on cancel — report as aborted, don't toast.
+      if (isAbort(err)) return { ok: false, aborted: true, index, key: img.key };
+      const reason = describeError(err);
+      recordFailure(img.key, reason);
+      return { ok: false, index, key: img.key };
+    }
+  };
+
+  const uploadResults = await mapWithConcurrency(opts.images, UPLOAD_CONCURRENCY, uploadOne);
+
+  // If we were aborted mid-upload, bail without firing onDone — the caller is
+  // tearing this run down (cancel button, fresh run, etc.) and shouldn't see
+  // a "labeled 0 images" toast.
+  if (signal.aborted) {
+    return {
+      workflowIds: [],
+      cancel: () => internal.abort(),
+    };
+  }
+
+  const succeededUploads = uploadResults.filter(
+    (r): r is Extract<UploadResult, { ok: true }> => r.ok
+  );
+
+  opts.onUploadComplete?.();
+
+  // ---- Phase B: submit batches. Per-batch (instead of one giant workflow)
+  // keeps each workflow at ≤AUTO_LABEL_BATCH_SIZE steps so the orchestrator
+  // can schedule them concurrently, and isolates failures to a single batch.
+  const batches = chunk(succeededUploads, AUTO_LABEL_BATCH_SIZE);
+
+  for (const batch of batches) {
+    if (!isStillActive()) {
+      return { workflowIds: [], cancel: () => internal.abort() };
+    }
+    if (batch.length === 0) continue;
+
+    const resolved = batch.map((b) => ({ mediaUrl: b.mediaUrl, filename: b.key, key: b.key }));
+
+    let submission: { workflowId: string };
+    try {
+      submission = await withRetry(
+        () =>
+          trpcVanilla.training.submitAutoLabelWorkflow.mutate({
+            modelId: opts.modelId,
+            mediaType: opts.mediaType,
+            // Server takes filename for orchestrator metadata; we use the key
+            // value because it's already stable+unique. Display filenames are
+            // resolved client-side from the key.
+            images: resolved.map((r) => ({ mediaUrl: r.mediaUrl, filename: r.filename })),
+            params:
+              opts.type === 'tag'
+                ? { type: 'tag', threshold: opts.params.threshold }
+                : {
+                    type: 'caption',
+                    temperature: opts.params.temperature,
+                    maxNewTokens: opts.params.maxNewTokens,
+                  },
+          }),
+        signal
+      );
+    } catch (err) {
+      if (isAbort(err)) {
+        return { workflowIds: [], cancel: () => internal.abort() };
+      }
+      const reason = describeError(err);
+      for (const r of resolved) recordFailure(r.key, reason);
+      continue;
     }
 
-    if (resolved.length === 0) continue;
-
-    const submission = await trpcVanilla.training.submitAutoLabelWorkflow.mutate({
-      modelId: opts.modelId,
-      mediaType: opts.mediaType,
-      images: resolved,
-      params:
-        opts.type === 'tag'
-          ? { type: 'tag', threshold: opts.params.threshold }
-          : {
-              type: 'caption',
-              temperature: opts.params.temperature,
-              maxNewTokens: opts.params.maxNewTokens,
-            },
-    });
-
-    // Server names each step by its zero-based index in the resolved list. We
-    // mirror that here so the poll loop can map step.name → filename.
-    const stepNameToFilename = new Map<string, string>();
-    resolved.forEach((r, idx) => stepNameToFilename.set(`${idx}`, r.filename));
-
+    // We send the caller's key as the step's `filename` (see service-side
+    // metadata). Track expected keys per workflow so the poll loop can match
+    // back via `step.filename` directly — no fragile index-as-name mapping.
     submittedBatches.push({
       workflowId: submission.workflowId,
-      stepNameToFilename,
+      keys: new Set(resolved.map((r) => r.key)),
       reported: new Set(),
     });
   }
 
-  // ---- Phase B: poll every workflow until all steps are terminal, applying
+  // ---- Phase C: poll every workflow until all steps are terminal, applying
   // post-processing as results land. Polling runs as a side effect; the caller
   // observes progress through the callbacks. The promise we return resolves as
   // soon as the submit phase is done so the UI can drop the spinner.
   const startedAt = Date.now();
 
   const markBatchUnreportedAsFailed = (batch: SubmittedBatch, reason: string) => {
-    for (const [stepName, filename] of batch.stepNameToFilename) {
-      if (batch.reported.has(stepName)) continue;
-      batch.reported.add(stepName);
-      fails.push(filename);
-      opts.onFailure?.(filename, reason);
+    for (const key of batch.keys) {
+      if (batch.reported.has(key)) continue;
+      batch.reported.add(key);
+      recordFailure(key, reason);
     }
   };
 
@@ -220,11 +452,17 @@ export async function uploadAndSubmitAutoLabel(
       // Snapshot pending IDs for this tick so deletes during the forEach below
       // don't shift the index lookup we'd otherwise need to do later.
       const tickIds = Array.from(pending);
+      // raceAbort each query so a single hung tRPC call can't keep
+      // Promise.allSettled blocked past POLL_TIMEOUT_MS / cancellation.
       const results = await Promise.allSettled(
         tickIds.map((workflowId) =>
-          trpcVanilla.training.getAutoLabelWorkflow.query({ workflowId })
+          raceAbort(trpcVanilla.training.getAutoLabelWorkflow.query({ workflowId }), signal)
         )
       );
+
+      // The await above released the event loop; cancellation may have fired
+      // while we were waiting for tRPC. Bail before processing/emitting.
+      if (!isStillActive()) return;
 
       results.forEach((result, idx) => {
         const polledId = tickIds[idx];
@@ -234,18 +472,18 @@ export async function uploadAndSubmitAutoLabel(
         if (!batch) return;
 
         for (const step of wf.steps) {
-          if (!step.name) continue;
-          if (batch.reported.has(step.name)) continue;
+          // Server echoes the key we sent in `step.filename`. If it's missing
+          // or doesn't belong to this batch, skip — could be a step we don't
+          // recognize (server changed schema) or a duplicate in the response.
+          const key = step.filename;
+          if (!key || !batch.keys.has(key)) continue;
+          if (batch.reported.has(key)) continue;
           if (!TERMINAL_STEP_STATUSES.has(step.status)) continue;
 
-          const filename = batch.stepNameToFilename.get(step.name);
-          if (!filename) continue;
-
-          batch.reported.add(step.name);
+          batch.reported.add(key);
 
           if (step.status !== 'succeeded') {
-            fails.push(filename);
-            opts.onFailure?.(filename, `Step ${step.status}`);
+            recordFailure(key, describeStepFailure(step));
             continue;
           }
 
@@ -259,16 +497,19 @@ export async function uploadAndSubmitAutoLabel(
             label = applyCaptionPostProcess(rawCaption);
           }
 
-          if (label && isStillActive()) {
+          if (label) {
             successes += 1;
-            opts.onResult?.(filename, label);
-          } else if (!label) {
-            fails.push(filename);
-            opts.onFailure?.(filename, 'Empty result');
+            opts.onResult?.(key, label);
+          } else {
+            recordFailure(key, 'Empty result');
           }
         }
 
-        if (TERMINAL_WORKFLOW_STATUSES.has(wf.status ?? '')) {
+        // Done if either the workflow itself reports terminal OR every step is
+        // already reported. The OR-by-step path covers cases where the
+        // orchestrator omits `status` on the workflow envelope.
+        const allStepsReported = batch.keys.size === batch.reported.size;
+        if (TERMINAL_WORKFLOW_STATUSES.has(wf.status ?? '') || allStepsReported) {
           pending.delete(polledId);
         }
       });
@@ -276,15 +517,24 @@ export async function uploadAndSubmitAutoLabel(
       if (pending.size > 0) await sleep(POLL_INTERVAL_MS, signal);
     }
 
-    if (isStillActive()) opts.onDone?.({ successes, fails });
+    if (isStillActive()) opts.onDone?.({ successes, failedKeys: Array.from(failedKeys) });
   };
 
-  poll().catch((err) => {
-    if ((err as DOMException)?.name === 'AbortError') return;
-    // Surface unexpected errors as a global failure marker.
-    opts.onFailure?.('', err instanceof Error ? err.message : String(err));
-    opts.onDone?.({ successes, fails });
-  });
+  // If every upload failed there's nothing to poll — emit done synchronously
+  // so the caller's spinner doesn't hang forever.
+  if (submittedBatches.length === 0) {
+    if (isStillActive()) opts.onDone?.({ successes, failedKeys: Array.from(failedKeys) });
+  } else {
+    poll().catch((err) => {
+      if (isAbort(err)) return;
+      // Catastrophic poll failure (not per-image): surface separately so the
+      // UI can show a real error toast instead of pretending it was a
+      // per-image failure.
+      const reason = describeError(err);
+      opts.onFatal?.(reason);
+      if (isStillActive()) opts.onDone?.({ successes, failedKeys: Array.from(failedKeys) });
+    });
+  }
 
   return {
     workflowIds: submittedBatches.map((b) => b.workflowId),
