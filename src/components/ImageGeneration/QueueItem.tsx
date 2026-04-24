@@ -387,6 +387,8 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
   const { unstableResources } = useGenerationConfig();
   const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
+  const truncatedModelName =
+    model.name.length > 30 ? `${model.name.slice(0, 30).trimEnd()}…` : model.name;
 
   return (
     <Button.Group className="max-w-full">
@@ -407,7 +409,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
         className="min-w-0 flex-1"
         classNames={{ label: 'truncate' }}
       >
-        {model.name} - {name}
+        {truncatedModelName} - {name}
         {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
       </Button>
       <ButtonTooltip {...tooltipProps} label="Generate with this resource">

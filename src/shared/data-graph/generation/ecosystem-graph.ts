@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { ecosystemById, ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  SDCPP_SUPPORTED_ECOSYSTEMS,
   fluxUltraAirId,
 } from '~/shared/constants/generation.constants';
 import {
@@ -63,10 +64,18 @@ import { seedanceGraph } from './seedance-graph';
 
 /**
  * Whether the given ecosystem/model pair surfaces the `enhancedCompatibility` toggle.
- * Shared by the enhancedCompatibility node's `when` and the quantity node's step logic.
  */
 function supportsEnhancedCompatibility(ecosystem: string, modelId?: number): boolean {
   return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && modelId !== fluxUltraAirId;
+}
+
+/**
+ * Whether the given ecosystem/model pair runs through sdcpp and qualifies for
+ * the 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility` —
+ * includes ecosystems without the `enhancedCompatibility` toggle.
+ */
+function supportsSdcpp(ecosystem: string, modelId?: number): boolean {
+  return SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem) && modelId !== fluxUltraAirId;
 }
 
 /**
@@ -278,6 +287,8 @@ export const ecosystemGraph = new DataGraph<
   // Quantity node - image output only.
   // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
   // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag.
+  // Ecosystems without an `enhancedCompatibility` node get BOGO unconditionally
+  // (ctx.enhancedCompatibility is undefined, which satisfies `!== true`).
   .node(
     'quantity',
     (ctx, ext) => {
@@ -285,7 +296,7 @@ export const ecosystemGraph = new DataGraph<
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       const bogoActive =
         !!ext.flags?.enhancedCompatibilitySdcpp &&
-        supportsEnhancedCompatibility(ctx.ecosystem, modelId) &&
+        supportsSdcpp(ctx.ecosystem, modelId) &&
         ctx.enhancedCompatibility !== true;
       const step = isDraft ? 4 : bogoActive ? 2 : 1;
       return {
