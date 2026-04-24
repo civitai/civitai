@@ -25,10 +25,14 @@ import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia } from '../EdgeMedia/EdgeMedia';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  hasPublicBrowsingLevel,
+  hasSafeBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -97,6 +101,7 @@ export function UserAvatar({
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const { canViewNsfw } = useFeatureFlags();
+  const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
 
   const { data: fallbackUser, isInitialLoading } = trpc.user.getById.useQuery(
@@ -127,9 +132,13 @@ export function UserAvatar({
   const imageSize = getRawAvatarSize((avatarProps?.size ?? avatarSize ?? size) as MantineSpacing);
   const imageRadius = getRawAvatarRadius((avatarProps?.radius ?? radius) as MantineSpacing, theme);
   const nsfwLevel = avatarUser.profilePicture?.nsfwLevel ?? 0;
+  // On the SFW site, logged-in users see PG + PG13; logged-out users see PG only.
+  const passesSfwGate = currentUser
+    ? hasSafeBrowsingLevel(nsfwLevel)
+    : hasPublicBrowsingLevel(nsfwLevel);
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
-    (!canViewNsfw ? !hasPublicBrowsingLevel(nsfwLevel) : nsfwLevel > browsingLevel);
+    (!canViewNsfw ? !passesSfwGate : nsfwLevel > browsingLevel);
   const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;
@@ -214,7 +223,11 @@ export function UserAvatar({
               </Paper>
             ) : (
               <Avatar
-                src={avatarUser.image && !userDeleted ? imageUrl : undefined}
+                src={
+                  avatarUser.image && !avatarUser.profilePicture?.id && !userDeleted
+                    ? imageUrl
+                    : undefined
+                }
                 alt={
                   avatarUser.username && !userDeleted
                     ? `${avatarUser.username}'s Avatar`

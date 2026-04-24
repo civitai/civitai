@@ -205,7 +205,7 @@ export function useResourceSelectMeiliFilters({
           meiliFilters.push(`id IN [${uniq(customModels).join(',')}]`);
         }
       } else if (selectSource === 'modelVersion') {
-        if (!!recommendedModels) {
+        if (recommendedModels && recommendedModels.length > 0) {
           meiliFilters.push(`id IN [${recommendedModels.join(',')}]`);
         }
       } else if (selectSource === 'auction') {

@@ -6,6 +6,7 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
+import { FeaturedCollectionsHomeBlock } from '~/components/HomeBlocks/FeaturedCollectionsHomeBlock';
 import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
 import { FeaturedModelVersionHomeBlock } from '~/components/HomeBlocks/FeaturedModelVersionHomeBlock';
@@ -67,6 +68,12 @@ export function Home() {
                 <React.Fragment key={homeBlock.id}>
                   {homeBlock.type === HomeBlockType.Collection && (
                     <CollectionHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
+                  )}
+                  {homeBlock.type === HomeBlockType.FeaturedCollections && (
+                    <FeaturedCollectionsHomeBlock
+                      homeBlockId={homeBlock.id}
+                      metadata={homeBlock.metadata}
+                    />
                   )}
                   {/* {homeBlock.type === HomeBlockType.Announcement && (
                     <AnnouncementHomeBlock homeBlockId={homeBlock.id} />

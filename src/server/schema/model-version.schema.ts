@@ -71,6 +71,7 @@ export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as 
 export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein_9b'] as const;
 export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
+export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -82,6 +83,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsChroma,
   ...trainingDetailsBaseModelsQwen,
   ...trainingDetailsBaseModelsZImage,
+  ...trainingDetailsBaseModelsErnie,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -223,6 +225,46 @@ export const recommendedSettingsSchema = z.object({
   strength: z.coerce.number().nullish(),
 });
 
+export const linkedComponentSettingsSchema = z.object({
+  isLinkedComponent: z.literal(true),
+  componentType: z.enum(constants.modelFileComponentTypes),
+  fileId: z.number(),
+  modelId: z.number(),
+  modelName: z.string(),
+  versionName: z.string(),
+  fileName: z.string(),
+  isRequired: z.boolean().optional(),
+});
+
+export type LinkedComponentSettings = z.infer<typeof linkedComponentSettingsSchema>;
+
+/** Union type for casting the RecommendedResource.settings JSON field from DB reads */
+export type RecommendedResourceSettings = RecommendedSettingsSchema | LinkedComponentSettings;
+
+export const setLinkedComponentsSchema = z.object({
+  id: z.number(), // modelVersionId
+  components: z.array(
+    z.object({
+      id: z.number().optional(), // RecommendedResource.id for existing entries
+      resourceId: z.number(), // target ModelVersion ID
+      settings: linkedComponentSettingsSchema,
+    })
+  ),
+});
+
+export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>;
+
+export const addLinkedComponentSchema = z.object({
+  id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
+  targetVersionId: z.number(), // linked resource's version ID
+  componentType: z.enum(constants.modelFileComponentTypes),
+  modelId: z.number(), // target model ID
+  modelName: z.string(), // target model name
+  versionName: z.string(), // target version name
+  isRequired: z.boolean().optional().default(true),
+});
+export type AddLinkedComponentInput = z.infer<typeof addLinkedComponentSchema>;
+
 export type RecommendedResourceSchema = z.infer<typeof recommendedResourceSchema>;
 const recommendedResourceSchema = z.object({
   id: z.number().optional(),
@@ -265,7 +307,6 @@ export const modelVersionUpsertSchema2 = z.object({
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),
   clipSkip: z.number().min(1).max(12).nullish(),
-  vaeId: z.number().nullish(),
   trainedWords: z.array(z.string()).optional(),
   trainingStatus: z.enum(TrainingStatus).nullish(),
   trainingDetails: trainingDetailsObj.nullish(),
@@ -356,7 +397,6 @@ export const imageModelVersionDetailSchema = z.object({
   baseModel: z.string(),
   //modelversion recommendations
   clipSkip: z.number().optional(),
-  vaeId: z.number().optional(),
 });
 export const characterModelVersionDetailSchema = z.object({});
 export const textModelVersionDetailSchema = z.object({});
@@ -395,4 +435,29 @@ export const getModelVersionsPopularityInput = z.object({
 export type GetModelVersionsByIdsInput = z.infer<typeof getModelVersionsByIdsInput>;
 export const getModelVersionsByIdsInput = z.object({
   ids: z.array(z.number()).max(50),
+});
+
+export type MergeVersionsInput = z.infer<typeof mergeVersionsSchema>;
+export const mergeVersionsSchema = z.object({
+  modelId: z.number(),
+  targetVersionId: z.number(),
+  sourceVersionIds: z.array(z.number()).min(1),
+  fileTypeMappings: z
+    .array(
+      z.object({
+        fileId: z.number(),
+        type: z.enum(constants.modelFileTypes).optional(),
+        metadata: z
+          .object({
+            fp: z.enum(constants.modelFileFp).nullish(),
+            size: z.enum(constants.modelFileSizes).nullish(),
+            format: z.enum(constants.modelFileFormats).nullish(),
+            quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+            isRequired: z.boolean().nullish(),
+          })
+          .optional(),
+      })
+    )
+    .optional(),
+  appendDescriptions: z.boolean().default(false),
 });

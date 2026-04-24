@@ -1,11 +1,13 @@
 import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 
@@ -39,6 +41,7 @@ export function BrowsingLevelProvider({
   forcedBrowsingLevel?: number;
 }) {
   const ctx = useBrowsingLevelContext();
+  const currentUser = useCurrentUser();
   const { canViewNsfw } = useFeatureFlags();
   const userBrowsingLevel = useBrowsingSettings((state) =>
     state.showNsfw ? state.browsingLevel : publicBrowsingLevelsFlag
@@ -47,12 +50,20 @@ export function BrowsingLevelProvider({
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
   const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
 
+  // Cap rules mirror the server middleware (src/server/trpc.ts applyDomainFeature):
+  //   anonymous (any domain)     → publicBrowsingLevelsFlag (PG)
+  //   logged-in on green domain  → sfwBrowsingLevelsFlag    (PG + PG-13)
+  //   logged-in on blue/red      → no forced cap, use saved preference
+  const domainForcedLevel = !canViewNsfw
+    ? currentUser
+      ? sfwBrowsingLevelsFlag
+      : publicBrowsingLevelsFlag
+    : undefined;
+
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
-        forcedBrowsingLevel: !canViewNsfw
-          ? publicBrowsingLevelsFlag
-          : forcedBrowsingLevel ?? ctx.forcedBrowsingLevel,
+        forcedBrowsingLevel: forcedBrowsingLevel ?? domainForcedLevel ?? ctx.forcedBrowsingLevel,
         userBrowsingLevel: userBrowsingLevel,
         browsingLevelOverride:
           childBrowsingLevelOverride ?? parentBrowsingLevelOverride ?? ctx.browsingLevelOverride,

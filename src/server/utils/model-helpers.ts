@@ -2,6 +2,7 @@ import { startCase } from 'lodash-es';
 import type { ModelFileType } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { getPrimaryFileTypes } from '~/utils/file-display-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type FileFormatType = {
@@ -11,14 +12,15 @@ type FileFormatType = {
 };
 
 export const defaultFilePreferences: Omit<FileFormatType, 'type'> = {
-  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16' },
+  metadata: { format: 'SafeTensor', size: 'pruned', fp: 'fp16', quantType: 'Q4_K_M' },
 };
 
 type FileMetaKey = keyof BasicFileMetadata;
-const preferenceWeight: Record<FileMetaKey, number> = {
+const preferenceWeight: Partial<Record<FileMetaKey, number>> = {
   format: 100,
   size: 10,
   fp: 1,
+  quantType: 0.5,
 };
 
 export function getPrimaryFile<T extends FileFormatType>(
@@ -104,7 +106,9 @@ export const getTrainingFileEpochNumberDetails = (
   if (!epoch) return null;
 
   const downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
-  const { jobId, fileName } = getEpochJobAndFileName(downloadUrl)!;
+  const epochDetails = getEpochJobAndFileName(downloadUrl);
+  if (!epochDetails) return null;
+  const { jobId, fileName } = epochDetails;
   const completeDate =
     file.metadata.trainingResults?.version === 2
       ? file.metadata.trainingResults.completedAt
@@ -117,3 +121,185 @@ export const getTrainingFileEpochNumberDetails = (
     isExpired: !canGenerateWithEpoch(completeDate),
   };
 };
+
+/**
+ * Groups model files by variant for sidebar display.
+ * - Model files are grouped by format (SafeTensor, GGUF, etc.)
+ * - Component files are grouped by component type (VAE, TextEncoder, etc.)
+ * - Within each group, files are sorted by quality (best first)
+ */
+export type GroupedFileVariants<T> = {
+  safeTensorVariants: T[];
+  ggufVariants: T[];
+  otherFormatVariants: T[];
+  requiredComponents: Partial<Record<ModelFileComponentType, T[]>>;
+  optionalFiles: T[];
+};
+
+// Quality ranking for fp (higher index = better quality)
+const fpQualityRank: Record<ModelFileFp, number> = {
+  nf4: 1,
+  fp8: 2,
+  bf16: 3,
+  fp16: 4,
+  fp32: 5,
+};
+
+// Quality ranking for quant types (higher index = better quality)
+const quantQualityRank: Record<ModelFileQuantType, number> = {
+  IQ1_M: 1,
+  IQ1_S: 2,
+  IQ2_XXS: 3,
+  IQ2_XS: 4,
+  IQ2_S: 5,
+  IQ2_M: 6,
+  Q2_K_S: 7,
+  Q2_K: 8,
+  IQ3_XXS: 9,
+  IQ3_XS: 10,
+  Q3_K_S: 11,
+  Q3_K_M: 12,
+  Q3_K_L: 13,
+  IQ4_XS: 14,
+  IQ4_NL: 15,
+  Q4_0: 16,
+  Q4_1: 17,
+  Q4_K_S: 18,
+  Q4_K_M: 19,
+  Q5_0: 20,
+  Q5_1: 21,
+  Q5_K_S: 22,
+  Q5_K_M: 23,
+  Q6_K: 24,
+  Q8_0: 25,
+};
+
+
+/**
+ * Sorts files by quality (best quality first).
+ * For SafeTensor files: fp32 > fp16 > bf16 > fp8 > nf4
+ * For GGUF files: Q8_0 > Q6_K > Q5_K_M > ... > Q2_K > IQ2_M > ... > IQ1_M
+ * Full size > pruned size
+ */
+function sortByQuality<T extends FileFormatType>(files: T[]): T[] {
+  return [...files].sort((a, b) => {
+    const metaA = a.metadata ?? {};
+    const metaB = b.metadata ?? {};
+
+    // For GGUF files, sort by quant type
+    if (metaA.format === 'GGUF' && metaB.format === 'GGUF') {
+      const quantA = metaA.quantType ? quantQualityRank[metaA.quantType] ?? 0 : 0;
+      const quantB = metaB.quantType ? quantQualityRank[metaB.quantType] ?? 0 : 0;
+      if (quantA !== quantB) return quantB - quantA;
+    }
+
+    // Sort by fp precision
+    const fpA = metaA.fp ? fpQualityRank[metaA.fp] ?? 0 : 0;
+    const fpB = metaB.fp ? fpQualityRank[metaB.fp] ?? 0 : 0;
+    if (fpA !== fpB) return fpB - fpA;
+
+    // Sort by size (full > pruned)
+    const sizeA = metaA.size === 'full' ? 1 : 0;
+    const sizeB = metaB.size === 'full' ? 1 : 0;
+    return sizeB - sizeA;
+  });
+}
+
+/**
+ * Groups files by variant for display in the model sidebar.
+ *
+ * @param files - Array of model files to group
+ * @param modelType - Parent ModelType; determines which file types count as "primary".
+ *   For non-weight model types (Workflows, Poses, Wildcards, Other), Archive/Config
+ *   files are the main download instead of being shoved into Optional Files.
+ * @returns Grouped files by format and component type
+ */
+export function groupFilesByVariant<T extends FileFormatType>(
+  files: T[],
+  modelType?: ModelType | null
+): GroupedFileVariants<T> {
+  const result: GroupedFileVariants<T> = {
+    safeTensorVariants: [],
+    ggufVariants: [],
+    otherFormatVariants: [],
+    requiredComponents: {},
+    optionalFiles: [],
+  };
+
+  if (!files || files.length === 0) {
+    return result;
+  }
+
+  const primaryFileTypes = getPrimaryFileTypes(modelType);
+
+  for (const file of files) {
+    const fileType = file.type;
+    const metadata = file.metadata ?? {};
+    const format = metadata.format;
+
+    // Check if this is a primary model file type for this ModelType
+    const isModelFile = primaryFileTypes.includes(fileType as ModelFileType);
+
+    if (isModelFile) {
+      // Group model files by format
+      if (format === 'SafeTensor') {
+        result.safeTensorVariants.push(file);
+      } else if (format === 'GGUF') {
+        result.ggufVariants.push(file);
+      } else {
+        // Other formats (PickleTensor, Diffusers, Core ML, ONNX, Other)
+        result.otherFormatVariants.push(file);
+      }
+    } else {
+      // Group component files by component type, using isRequired to distinguish
+      const componentType = inferComponentType(fileType);
+      if (componentType && metadata.isRequired !== false) {
+        if (!result.requiredComponents[componentType]) {
+          result.requiredComponents[componentType] = [];
+        }
+        result.requiredComponents[componentType]!.push(file);
+      } else {
+        result.optionalFiles.push(file);
+      }
+    }
+  }
+
+  // Sort each group by quality
+  result.safeTensorVariants = sortByQuality(result.safeTensorVariants);
+  result.ggufVariants = sortByQuality(result.ggufVariants);
+  result.otherFormatVariants = sortByQuality(result.otherFormatVariants);
+
+  // Sort component groups by quality
+  for (const key of Object.keys(result.requiredComponents) as ModelFileComponentType[]) {
+    result.requiredComponents[key] = sortByQuality(result.requiredComponents[key]!);
+  }
+
+  return result;
+}
+
+/**
+ * Infers component type from file type if not explicitly set in metadata.
+ */
+function inferComponentType(fileType: string): ModelFileComponentType | null {
+  switch (fileType) {
+    case 'Model':
+    case 'Pruned Model':
+      return 'Checkpoint';
+    case 'VAE':
+      return 'VAE';
+    case 'Text Encoder':
+      return 'TextEncoder';
+    case 'Config':
+      return 'Config';
+    case 'UNet':
+      return 'UNet';
+    case 'Diffusion Model':
+      return 'DiffusionModel';
+    case 'CLIPVision':
+      return 'CLIPVision';
+    case 'ControlNet':
+      return 'ControlNet';
+    default:
+      return null;
+  }
+}

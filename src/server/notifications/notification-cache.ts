@@ -29,7 +29,7 @@ async function getUser(userId: number) {
 
 async function setUser(userId: number, counts: NotificationCategoryCount[]) {
   const key = getUserKey(userId);
-  for (const { category, count } of counts) await redis.hSetNX(key, category, count.toString());
+  for (const { category, count } of counts) await redis.hSet(key, category, count.toString());
   await slideExpiration(userId);
 }
 

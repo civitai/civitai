@@ -9,8 +9,6 @@ import { SignalMessages } from '~/server/common/enums';
 import type { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import type {
-  AutoCaptionResponse,
-  AutoTagResponse,
   CaptionDataResponse,
   TagDataResponse,
 } from '~/server/services/training.service';
@@ -67,6 +65,57 @@ export const getTextTagsAsList = (txt: string) => {
     .split(',')
     .map((c) => c.trim().toLowerCase())
     .filter((c) => c.length > 0);
+};
+
+// =============================================================================
+// Auto-label post-processing
+//
+// Pure helpers that turn raw orchestrator output into the final label string.
+// Shared by the legacy signal-driven path and the orchestrator workflow path.
+// =============================================================================
+
+export type TagPostProcessOptions = {
+  blacklist?: string;
+  prependTags?: string;
+  appendTags?: string;
+  maxTags?: number;
+  threshold?: number;
+};
+
+/** Filter, prepend/append, and safety-audit raw wd-tagger output. Returns an empty
+ *  array when the input was empty so callers can record a per-image failure. */
+export const applyTagPostProcess = (
+  rawTags: { [tag: string]: number } | undefined | null,
+  opts: TagPostProcessOptions
+): string[] => {
+  const entries = Object.entries(rawTags ?? {});
+  if (entries.length === 0) return [];
+
+  const blacklist = new Set(getTextTagsAsList(opts.blacklist ?? ''));
+  const prependList = getTextTagsAsList(opts.prependTags ?? '');
+  const appendList = getTextTagsAsList(opts.appendTags ?? '');
+
+  let tags = entries
+    .sort(([, a], [, b]) => b - a)
+    .filter(
+      ([t, score]) =>
+        score >= (opts.threshold ?? autoLabelLimits.tag.threshold.min) && !blacklist.has(t)
+    )
+    .slice(0, opts.maxTags ?? autoLabelLimits.tag.tags.max)
+    .map(([t]) => t);
+
+  tags = [...prependList, ...tags, ...appendList];
+  // Drop any individual tag that trips our prompt safety filter — no PII / banned terms.
+  tags = tags.filter((tag) => auditPrompt(tag).success);
+
+  return tags;
+};
+
+/** Trim caption output. Returns null when the orchestrator returned an empty
+ *  string so callers can record a per-image failure. */
+export const applyCaptionPostProcess = (rawCaption: string | undefined | null): string | null => {
+  const trimmed = (rawCaption ?? '').trim();
+  return trimmed.length > 0 ? trimmed : null;
 };
 
 // these could use the current route to determine?
@@ -176,79 +225,47 @@ export const useOrchestratorUpdateSignal = () => {
     if (!isDefined(context)) return;
     const { isDone } = context;
 
-    let data: TagDataResponse | CaptionDataResponse;
     if (jobType === 'MediaTagging') {
-      data = context.data as TagDataResponse;
-
-      const tagList = Object.entries(data).map(([f, t]) => ({
-        [f]: t.wdTagger.tags,
-      }));
-      const returnData: AutoTagResponse = Object.assign({}, ...tagList);
-
-      Object.entries(returnData).forEach(([k, v]) => {
-        const returnDataList = Object.entries(v);
-
-        const blacklist = getTextTagsAsList(autoTagging.blacklist ?? '');
-        const prependList = getTextTagsAsList(autoTagging.prependTags ?? '');
-        const appendList = getTextTagsAsList(autoTagging.appendTags ?? '');
-
-        if (returnDataList.length === 0) {
+      const data = context.data as TagDataResponse;
+      Object.entries(data).forEach(([filename, payload]) => {
+        const tags = applyTagPostProcess(payload.wdTagger.tags, autoTagging);
+        if (tags.length === 0) {
           setAutoLabeling(modelId, mediaType, {
             ...autoLabeling,
-            fails: [...autoLabeling.fails, k],
+            fails: [...autoLabeling.fails, filename],
           });
-        } else {
-          let tags = returnDataList
-            .sort(([, a], [, b]) => b - a)
-            .filter(
-              (t) =>
-                t[1] >= (autoTagging.threshold ?? autoLabelLimits.tag.threshold.min) &&
-                !blacklist.includes(t[0])
-            )
-            .slice(0, autoTagging.maxTags ?? autoLabelLimits.tag.tags.max)
-            .map((t) => t[0]);
-
-          tags = [...prependList, ...tags, ...appendList];
-
-          // Filter out tags that individually trigger the safety filter
-          tags = tags.filter((tag) => auditPrompt(tag).success);
-
-          updateImage(modelId, mediaType, {
-            matcher: k,
-            label: tags.join(', '),
-            appendLabel: autoTagging.overwrite === 'append',
-          });
-          setAutoLabeling(modelId, mediaType, {
-            ...autoLabeling,
-            successes: autoLabeling.successes + 1,
-          });
+          return;
         }
+        updateImage(modelId, mediaType, {
+          matcher: filename,
+          label: tags.join(', '),
+          appendLabel: autoTagging.overwrite === 'append',
+        });
+        setAutoLabeling(modelId, mediaType, {
+          ...autoLabeling,
+          successes: autoLabeling.successes + 1,
+        });
       });
     } else {
-      data = context.data as CaptionDataResponse;
-
-      const tagList = Object.entries(data ?? {}).map(([f, t]) => ({
-        [f]: t.joyCaption?.caption ?? '',
-      }));
-      const returnData: AutoCaptionResponse = Object.assign({}, ...tagList);
-
-      Object.entries(returnData).forEach(([k, v]) => {
-        if (v.length === 0) {
+      const data = context.data as CaptionDataResponse;
+      Object.entries(data ?? {}).forEach(([filename, payload]) => {
+        const caption = applyCaptionPostProcess(payload.joyCaption?.caption);
+        if (!caption) {
           setAutoLabeling(modelId, mediaType, {
             ...autoLabeling,
-            fails: [...autoLabeling.fails, k],
+            fails: [...autoLabeling.fails, filename],
           });
-        } else {
-          updateImage(modelId, mediaType, {
-            matcher: k,
-            label: v,
-            appendLabel: autoCaptioning.overwrite === 'append',
-          });
-          setAutoLabeling(modelId, mediaType, {
-            ...autoLabeling,
-            successes: autoLabeling.successes + 1,
-          });
+          return;
         }
+        updateImage(modelId, mediaType, {
+          matcher: filename,
+          label: caption,
+          appendLabel: autoCaptioning.overwrite === 'append',
+        });
+        setAutoLabeling(modelId, mediaType, {
+          ...autoLabeling,
+          successes: autoLabeling.successes + 1,
+        });
       });
     }
 

@@ -34,7 +34,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   userUpdateCounter?.inc({ location: 'api:mod/set-rewards-eligibility' });
 
-  await userMultipliersCache.bust(userId);
+  await userMultipliersCache.refresh(userId);
   await createNotification({
     userId,
     category: NotificationCategory.System,

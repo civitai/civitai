@@ -128,11 +128,11 @@ const getStyle = ({
   },
   title: {
     color: colorScheme === 'dark' ? theme.colors[color][0] : theme.colors[color][7],
-    lineHeight: 1.1,
+    lineHeight: 1.25,
   },
   text: {
     color: colorScheme === 'dark' ? theme.colors[color][2] : theme.colors[color][9],
-    lineHeight: 1.2,
+    lineHeight: 1.4,
     '& > div > a': {
       color: colorScheme === 'dark' ? theme.colors[color][1] : theme.colors[color][8],
     },

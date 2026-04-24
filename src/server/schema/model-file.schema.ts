@@ -93,6 +93,8 @@ export const modelFileMetadataSchema = z.object({
   format: z.enum(constants.modelFileFormats).nullish(),
   size: z.enum(constants.modelFileSizes).nullish(),
   fp: z.enum(constants.modelFileFp).nullish(),
+  quantType: z.enum(constants.modelFileQuantTypes).nullish(),
+  isRequired: z.boolean().nullish(),
   labelType: z.enum(constants.autoLabel.labelTypes).nullish(),
   ownRights: z.boolean().nullish(),
   shareDataset: z.boolean().nullish(),
@@ -139,6 +141,8 @@ export const modelFileUpdateSchema = z.object({
   modelVersionId: z.number().optional(), // nb: this should probably not be an option here
   visibility: z.enum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
+  backend: z.string().optional(),
+  s3Path: z.string().optional(),
 });
 
 export type ModelFileUpsertInput = z.infer<typeof modelFileUpsertSchema>;
@@ -147,5 +151,57 @@ export const modelFileUpsertSchema = z.union([
   modelFileUpdateSchema,
 ]);
 
+// Type for linked components (used by FilesProvider and Files)
+export type LinkedComponent = {
+  recommendedResourceId?: number;
+  componentType: ModelFileComponentType;
+  modelId: number;
+  modelName: string;
+  versionId: number;
+  versionName: string;
+  fileId: number;
+  fileName: string;
+  sizeKB?: number;
+  /** The ModelFile.type of the linked file (e.g. 'Model', 'Negative') — used for download URLs */
+  fileType?: string;
+  /** The ModelFile.metadata of the linked file (format/size/fp) — used for download URLs */
+  fileMetadata?: { format?: string | null; size?: string | null; fp?: string | null };
+  isRequired?: boolean;
+};
+
 export type RecentTrainingDataInput = z.infer<typeof recentTrainingDataSchema>;
 export const recentTrainingDataSchema = infiniteQuerySchema.merge(imageSelectTrainingFilterSchema);
+
+/**
+ * Pick the most complete training file from a list.
+ * When duplicate 'Training Data' files exist for a model version, this selects
+ * the one with the richest trainingResults metadata rather than relying on
+ * arbitrary DB ordering.
+ */
+export function pickBestTrainingFile<T extends { metadata: unknown }>(files: T[]): T | undefined {
+  if (files.length <= 1) return files[0];
+
+  let best: T | undefined;
+  let bestScore = -1;
+
+  for (const file of files) {
+    const meta = file.metadata as ModelFileMetadata | null;
+    const tr = meta?.trainingResults;
+    let score = 0;
+    if (tr) {
+      score += 1; // has trainingResults at all
+      if ('workflowId' in tr && tr.workflowId) score += 2;
+      if ('history' in tr && tr.history && tr.history.length > 0) score += 1;
+      if ('epochs' in tr && tr.epochs && tr.epochs.length > 0) score += 2;
+      if ('submittedAt' in tr && tr.submittedAt) score += 1;
+      if ('startedAt' in tr && tr.startedAt) score += 1;
+      if ('completedAt' in tr && tr.completedAt) score += 1;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      best = file;
+    }
+  }
+
+  return best;
+}

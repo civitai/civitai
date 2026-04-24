@@ -128,6 +128,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   size="compact-sm"
                   className="w-full justify-center"
                   hideMediaTypes
+                  isSameUser={isSameUser}
                 />
               </Group>
             </Group>

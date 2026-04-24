@@ -21,7 +21,6 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   earlyAccessEndsAt: true,
   earlyAccessConfig: true,
   description: true,
-  vaeId: true,
   uploadType: true,
   usageControl: true,
   metrics: {

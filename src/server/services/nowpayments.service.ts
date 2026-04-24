@@ -848,19 +848,16 @@ export const reconcileUserDeposits = async (userId: number) => {
     if (!wallet.smartAccount) continue;
     const parentId = Number(wallet.smartAccount);
 
-    // Fetch parent to get invoiceId, then fetch all payments for that invoice
     const parentPayment = await nowpaymentsCaller.getPaymentStatus(parentId);
     if (!parentPayment) continue;
 
-    const invoiceId = parentPayment.invoice_id
-      ? Number(parentPayment.invoice_id)
-      : null;
-
-    // Use invoiceId filter if available (fast, server-side filtered)
-    // Fall back to just the parent payment if no invoiceId
-    const payments = invoiceId
-      ? await nowpaymentsCaller.getPaymentsByInvoiceId(invoiceId)
-      : [parentPayment];
+    // Parents are wallet-style (no invoice) — each user payment is a child listed in
+    // `payment_extra_ids`. Walk those to find every deposit made against this wallet.
+    const childIds = parentPayment.payment_extra_ids ?? [];
+    const childPayments = (
+      await Promise.all(childIds.map((id) => nowpaymentsCaller.getPaymentStatus(id)))
+    ).filter((p): p is NOWPayments.CreatePaymentResponse => p != null);
+    const payments = [parentPayment, ...childPayments];
 
     for (const payment of payments) {
       if (!isDepositComplete(payment.payment_status)) continue;

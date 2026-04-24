@@ -32,7 +32,6 @@ import {
 } from '~/components/TurnstileWidget/TurnstileWidget';
 import { showErrorNotification } from '~/utils/notifications';
 import { env } from '~/env/client';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function OnboardingBuzz() {
   const { next } = useOnboardingContext();
@@ -43,7 +42,6 @@ export function OnboardingBuzz() {
   const blueConfig = useBuzzCurrencyConfig('blue');
   const paidConfig = useBuzzCurrencyConfig(paidAccountType);
   const paidLabel = isGreen ? 'Green' : 'Yellow';
-  const features = useFeatureFlags();
   const [captchaState, setCaptchaState] = useState<CaptchaState>({
     status: null,
     token: null,
@@ -87,7 +85,6 @@ export function OnboardingBuzz() {
     };
 
     const refreshCaptcha = () => {
-      if (!features.onboardingCaptchaReset) return;
       turnstileRef.current?.reset();
       tokenReceivedAtRef.current = null;
       setCaptchaState({ status: null, token: null, error: null });

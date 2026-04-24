@@ -1,5 +1,6 @@
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import type {
   AddAPIKeyInput,
   DeleteAPIKeyInput,
@@ -25,7 +26,8 @@ export async function getUserApiKeys({
   skip,
   userId,
 }: GetUserAPIKeysInput & { userId: number }) {
-  const keys = await dbRead.apiKey.findMany({
+  const db = await getDbWithoutLag('userApiKeys', userId);
+  const keys = await db.apiKey.findMany({
     take,
     skip,
     where: { userId, type: 'User' },

@@ -117,6 +117,10 @@ const checkFns: Record<string, CancellableCheckFn> = {
   async sysRedis(signal: AbortSignal) {
     if (signal.aborted) return false;
     try {
+      const baseClient = sysRedis as any;
+      if (baseClient.isReady === false) {
+        return false;
+      }
       const res = await (sysRedis as any).ping();
       return res === 'PONG';
     } catch (e) {
@@ -173,7 +177,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   };
   res.on('close', onClose);
 
-  const disabledChecks = await getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS);
+  const disabledChecks = !isProd
+    ? ([] as CheckKey[])
+    : await getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS);
 
   // Check if already cancelled before starting the expensive health checks
   if (signal.aborted) {
@@ -202,9 +208,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     return;
   }
 
-  const nonCriticalChecks = await getHealthcheckConfig(
-    REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS
-  );
+  const nonCriticalChecks = !isProd
+    ? ([] as CheckKey[])
+    : await getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS);
 
   const healthy = resultsArray.every((result) => {
     const [key, value] = Object.entries(result)[0];
@@ -248,11 +254,19 @@ async function runCheckWithTimeout(
   signal.addEventListener('abort', abortCombined, { once: true });
   timeoutController.signal.addEventListener('abort', abortCombined, { once: true });
 
+  // Race the check against a hard timeout. Some underlying clients
+  // (redis, clickhouse, meili) ignore AbortSignal on simple commands,
+  // so signal-only cancellation can hang forever. Promise.race enforces
+  // the ceiling regardless of signal support.
+  const timeoutPromise = new Promise<boolean>((resolve) => {
+    timeoutController.signal.addEventListener('abort', () => resolve(false), { once: true });
+  });
+
   try {
-    const result = await fn(combinedController.signal);
-    return result;
-  } catch {
-    return false;
+    return await Promise.race([
+      fn(combinedController.signal).catch(() => false),
+      timeoutPromise,
+    ]);
   } finally {
     clearTimeout(timeoutId);
     signal.removeEventListener('abort', abortCombined);

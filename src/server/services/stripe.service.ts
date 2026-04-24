@@ -58,6 +58,7 @@ export const createCustomer = async ({ id, email }: Schema.CreateCustomerInput) 
 
 export const createSubscribeSession = async ({
   priceId,
+  refCode,
   customerId,
   user,
 }: Schema.CreateSubscribeSessionInput & {
@@ -221,6 +222,21 @@ export const createSubscribeSession = async ({
     success_url: `${baseUrl}/payment/success?cid=${customerId.slice(-8)}`,
     cancel_url: `${baseUrl}/pricing?canceled=true`,
     allow_promotion_codes: true,
+    // Inline referral-code field so users can apply a code without leaving
+    // Stripe's checkout page. The cookie-driven `refCode` already lands on
+    // subscription metadata; the custom_fields entry takes precedence in the
+    // checkout.session.completed webhook handler.
+    custom_fields: [
+      {
+        key: 'ref_code',
+        label: { type: 'custom', custom: 'Referral code (optional)' },
+        type: 'text',
+        optional: true,
+      },
+    ],
+    ...(refCode
+      ? { subscription_data: { metadata: { ref_code: refCode } }, metadata: { ref_code: refCode } }
+      : {}),
   });
 
   return { sessionId: session.id, url: session.url };
@@ -754,6 +770,61 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
         details: { invoiceId: invoice.id },
       })
     ).catch(handleLogError);
+
+    const { bindReferralCodeForUser, recordMembershipPaymentReward } = await import(
+      '~/server/services/referral.service'
+    );
+
+    const subscriptionMetadata =
+      (invoice as any).subscription_details?.metadata ?? (invoice as any).metadata ?? {};
+    let refCode: string | undefined =
+      typeof subscriptionMetadata.ref_code === 'string' ? subscriptionMetadata.ref_code : undefined;
+    // Stripe doesn't guarantee webhook ordering. invoice.paid for a brand-new
+    // subscription can land before checkout.session.completed has had a chance
+    // to copy the ref_code custom_field onto the Subscription metadata. Fall
+    // back to fetching the parent Checkout Session and reading the field
+    // directly so we never lose a manually-entered code on the first invoice.
+    if (!refCode && invoice.subscription) {
+      const subId =
+        typeof invoice.subscription === 'string' ? invoice.subscription : invoice.subscription.id;
+      try {
+        const stripeClient = await getServerStripe();
+        if (stripeClient) {
+          const sessions = await stripeClient.checkout.sessions.list({
+            subscription: subId,
+            limit: 1,
+          });
+          const customField = sessions.data[0]?.custom_fields?.find((f) => f.key === 'ref_code');
+          const fromField = customField?.text?.value?.trim().toUpperCase();
+          if (fromField) refCode = fromField;
+        }
+      } catch (err) {
+        handleLogError(err as Error);
+      }
+    }
+    if (refCode) {
+      await bindReferralCodeForUser(user.id, refCode).catch(handleLogError);
+    }
+
+    const stripePaymentIntentId =
+      typeof invoice.payment_intent === 'string'
+        ? invoice.payment_intent
+        : invoice.payment_intent?.id ?? undefined;
+    const stripeChargeId =
+      typeof invoice.charge === 'string' ? invoice.charge : invoice.charge?.id ?? undefined;
+
+    await recordMembershipPaymentReward({
+      refereeId: user.id,
+      tier: billedProductMeta.tier,
+      monthlyBuzzAmount: billedProductMeta.monthlyBuzz ?? 0,
+      sourceEventId: invoice.id,
+      payment: {
+        paymentProvider: 'Stripe',
+        stripeInvoiceId: invoice.id,
+        stripePaymentIntentId,
+        stripeChargeId,
+      },
+    }).catch(handleLogError);
   }
 };
 

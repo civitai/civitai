@@ -47,6 +47,7 @@ import {
   decodeGenerationHandoff,
   GENERATION_HANDOFF_PARAM,
 } from './utils/generation-url-handoff';
+import { setGenerationSnapshotCache } from './utils/generation-snapshot-cache';
 
 // =============================================================================
 // Constants
@@ -656,6 +657,22 @@ function InnerProvider({
       registeredIdsRef.current.clear();
     };
   }, [unregisterResourceId]);
+
+  // Mirror the live graph snapshot into a module-level cache so cross-domain
+  // handoff links rendered outside the DataGraphProvider subtree (e.g. QueueItem
+  // CTAs on mobile where the form tab is unmounted) can still read the user's
+  // current form state. Intentionally does NOT clear on unmount — the cache
+  // should survive tab switches.
+  useEffect(() => {
+    function sync() {
+      setGenerationSnapshotCache({
+        snapshot: graph.getSnapshot() as Record<string, unknown>,
+        computedKeys: graph.getComputedKeys(),
+      });
+    }
+    sync();
+    return graph.subscribe(sync);
+  }, [graph]);
 
   // Track preferred ecosystem when baseModel changes
   // This keeps the workflow preferences store in sync with what the user is actually using

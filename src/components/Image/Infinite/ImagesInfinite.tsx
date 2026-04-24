@@ -1,10 +1,14 @@
 import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { getQueryKey } from '@trpc/react-query';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useDomainColor } from '~/hooks/useDomainColor';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
@@ -19,10 +23,16 @@ import { MasonryColumnsVirtual } from '~/components/MasonryColumns/MasonryColumn
 import { NoContent } from '~/components/NoContent/NoContent';
 import type { ImageGetInfinite } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
+import { queryClient, trpc } from '~/utils/trpc';
 
 const SEARCH_RETRY_MAX_ATTEMPTS = 10;
 const SEARCH_RETRY_MAX_DELAY_MS = 60_000;
 const SEARCH_RETRY_BASE_DELAY_MS = 2000;
+// Slow-fetch thresholds. Bad pods in production can leave a request hanging
+// for tens of seconds before failing, so we show a "taking a while" banner
+// after SLOW_THRESHOLD_MS and abort at ABORT_THRESHOLD_MS to force a retry.
+const SEARCH_SLOW_THRESHOLD_MS = 3_000;
+const SEARCH_ABORT_THRESHOLD_MS = 8_000;
 
 type ImagesInfiniteProps = {
   withTags?: boolean;
@@ -65,7 +75,15 @@ export function ImagesInfiniteContent({
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const browsingLevel = useBrowsingLevelDebounced();
+  const rawBrowsingLevel = useBrowsingLevelDebounced();
+  const domainColor = useDomainColor();
+  // On the green (SFW) domain we default to PG only on image/video feeds.
+  // Users opt in to PG-13 via the feed filter; otherwise narrow the forced
+  // domain cap (sfwBrowsingLevelsFlag = PG | PG-13) down to PG.
+  const capToPublic = domainColor === 'green' && !imageFilters.includePG13;
+  const browsingLevel = capToPublic
+    ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
+    : rawBrowsingLevel;
   const {
     images,
     fetchNextPage,
@@ -106,31 +124,63 @@ export function ImagesInfiniteContent({
   useEffect(() => {
     setRetryAttempt(0);
   }, [debouncedFilters, browsingLevel]);
+  //#endregion
 
-  const handleRetry = useCallback(() => {
+  //#region [slow fetch] — bad pods hang; show banner at 5s, abort at 15s
+  const [isSlow, setIsSlow] = useState(false);
+  const infiniteQueryKey = useMemo(() => getQueryKey(trpc.image.getInfinite), []);
+
+  // Depend on retryAttempt so every retry restarts the slow timer even when
+  // isFetching doesn't visibly transition through false (cancel + refetch in
+  // quick succession can collapse into a single `true` state from React's
+  // perspective, leaving the effect stale).
+  useEffect(() => {
+    if (!isFetching) {
+      setIsSlow(false);
+      return;
+    }
+    setIsSlow(false);
+    const t = setTimeout(() => setIsSlow(true), SEARCH_SLOW_THRESHOLD_MS);
+    return () => clearTimeout(t);
+  }, [isFetching, retryAttempt]);
+  //#endregion
+
+  const handleRetry = useCallback(async () => {
+    const wasSlow = isSlow;
+    if (wasSlow) setIsSlow(false);
     // After exhaustion, manual retry resets the attempt counter for a fresh cycle.
     setRetryAttempt((prev) => (prev >= SEARCH_RETRY_MAX_ATTEMPTS ? 0 : prev + 1));
     // In debug mode we deliberately skip the real fetch so the retry UI can
     // cycle faithfully — otherwise real fetches succeed, more images load,
     // and the retry counter resets every cycle.
     if (debugRetryActive) return;
+    // Slow-fetch path: await cancel BEFORE firing the replacement fetch.
+    // Without await, React Query can queue the new fetch behind the in-flight
+    // one instead of aborting it, so both end up running to completion.
+    // cancelQueries also does NOT surface as an error, so we have to kick the
+    // replacement fetch off ourselves.
+    if (wasSlow) {
+      await queryClient.cancelQueries({ queryKey: infiniteQueryKey });
+    }
     // Use refetch when there are no pages yet (initial-load failure);
     // fetchNextPage retries the next page when prior pages already succeeded.
     if (imagesCount === 0) refetch();
     else fetchNextPage();
-  }, [fetchNextPage, refetch, debugRetryActive, imagesCount]);
+  }, [fetchNextPage, refetch, debugRetryActive, imagesCount, isSlow, infiniteQueryKey]);
 
-  const isRetrying = isError || debugRetryActive;
+  const isRetrying = isError || debugRetryActive || isSlow;
   const baseDelay = debugRetryActive ? debugDelayMs : SEARCH_RETRY_BASE_DELAY_MS;
-  const retryDelay = isRetrying
+  const retryDelay = isSlow
+    ? SEARCH_ABORT_THRESHOLD_MS - SEARCH_SLOW_THRESHOLD_MS
+    : isError || debugRetryActive
     ? Math.min(baseDelay * Math.pow(2, retryAttempt), SEARCH_RETRY_MAX_DELAY_MS)
     : 0;
-  //#endregion
 
   // In debug mode we block real fetches so isFetching never toggles — treat it
   // as countdown-active always. For real errors, the countdown pauses while a
   // retry request is in flight so we don't queue up concurrent duplicates.
-  const countdownActive = debugRetryActive || !isFetching;
+  // When slow, we force the countdown on so the abort timer displays.
+  const countdownActive = debugRetryActive || !isFetching || isSlow;
 
   const retryBanner = (
     <SearchRetryBanner
@@ -142,12 +192,13 @@ export function ImagesInfiniteContent({
       browsingLevel={browsingLevel}
       countdownActive={countdownActive}
       isInitialLoad={imagesCount === 0}
+      slow={isSlow}
     />
   );
 
   return (
     <>
-      {!images.length && isFetching ? (
+      {!images.length && isFetching && !isRetrying ? (
         <Center p="xl">
           <Loader />
         </Center>

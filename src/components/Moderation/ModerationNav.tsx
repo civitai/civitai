@@ -29,6 +29,7 @@ export function ModerationNav() {
         { label: 'Articles', href: '/moderator/articles' },
         // { label: 'Tags', href: '/moderator/tags' },
         { label: 'Generation', href: '/moderator/generation' },
+        { label: 'Service Status', href: '/moderator/service-status' },
         // { label: 'Withdrawal Requests', href: '/moderator/buzz-withdrawal-requests' },
         {
           label: 'Cash Management',
@@ -54,6 +55,14 @@ export function ModerationNav() {
           hidden: !features.announcements,
         },
         {
+          label: 'Featured Collections',
+          href: '/moderator/home-blocks/featured-collections',
+        },
+        {
+          label: 'Rewards Bonus Events',
+          href: '/moderator/rewards-bonus-events',
+        },
+        {
           label: 'Code Gifts',
           href: '/moderator/code-gifts',
         },
@@ -70,11 +79,6 @@ export function ModerationNav() {
           label: 'Auctions',
           href: '/moderator/auctions',
           hidden: !features.auctionsMod,
-        },
-        {
-          label: 'Generator Flagged',
-          href: '/moderator/orchestrator/flagged',
-          hidden: !features.csamReports,
         },
         {
           label: 'Generator Restrictions',

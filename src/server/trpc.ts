@@ -7,7 +7,10 @@ import { withSpan } from '~/server/utils/otel-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { Context } from './createContext';
 
@@ -74,8 +77,24 @@ const applyDomainFeature = t.middleware((options) => {
   const { next, ctx } = options;
   const input = (options.rawInput ?? {}) as { browsingLevel?: number };
 
-  if (input.browsingLevel)
-    input.browsingLevel = ctx.features.canViewNsfw ? input.browsingLevel : publicBrowsingLevelsFlag;
+  // Cap rules:
+  //   anonymous (any domain)      → publicBrowsingLevelsFlag (PG only)
+  //   logged-in on green domain   → sfwBrowsingLevelsFlag    (PG, PG-13)
+  //   logged-in on blue/red       → no cap, respect caller
+  const maxAllowed = !ctx.user
+    ? publicBrowsingLevelsFlag
+    : !ctx.features.canViewNsfw
+    ? sfwBrowsingLevelsFlag
+    : undefined;
+
+  if (maxAllowed !== undefined) {
+    if (!input.browsingLevel) {
+      input.browsingLevel = maxAllowed;
+    } else {
+      const intersection = input.browsingLevel & maxAllowed;
+      input.browsingLevel = intersection || maxAllowed;
+    }
+  }
 
   return next();
 });

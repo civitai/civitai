@@ -259,7 +259,7 @@ export const createTrainingWorkflow = async ({
            JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
     WHERE mv.id = ${modelVersionId}
       AND m."deletedAt" is null
-    ORDER BY mf.id DESC
+    ORDER BY mf."sizeKB" DESC, mf.id DESC
     LIMIT 1
   `;
 

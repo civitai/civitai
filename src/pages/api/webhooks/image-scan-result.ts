@@ -61,7 +61,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 import { processImageScanResult } from '~/server/services/image-scan-result.service';
-import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
+import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import type { NextApiRequest } from 'next';
 
@@ -175,6 +175,22 @@ export default WebhookEndpoint(async (req, res) => {
         throw new Error('unhandled data type');
       }
     }
+
+    const featureFlags = getFeatureFlagsLazy({ req });
+    if (featureFlags.articleImageScanning) {
+      await fanOutArticleImageUpdates(data.id).catch(async (error) => {
+        await logToAxiom({
+          name: 'image-scan-result',
+          type: 'error',
+          message: `fanOutArticleImageUpdates failed: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+          imageId: data.id,
+          stack: error instanceof Error ? error.stack : undefined,
+        }).catch(() => null);
+      });
+    }
+
     return res.status(200).json({ ok: true });
   } catch (e: any) {
     if (e.message === 'Image not found') return res.status(404).send({ error: e.message });
@@ -837,16 +853,30 @@ async function processScanResult({
       if (!hash) throw new Error('missing hash from ImageHash scan');
       const blocked = await isBlocked(hash);
       const pHash = BigInt(hash);
-      if (!blocked) return await updateImageScanJobs({ id, source, pHash });
-      else
-        return await updateImageScanJobs({
-          id,
-          source,
-          pHash,
-          ingestion: ImageIngestionStatus.Blocked,
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: 'Similar to blocked content',
-        });
+      if (blocked) {
+        logToAxiom(
+          {
+            name: 'image-phash-match',
+            type: 'info',
+            message: 'Image pHash matched a blocked image',
+            imageId: id,
+            pHash: hash,
+            source: 'webhook-legacy',
+          },
+          'webhooks'
+        ).catch(() => null);
+
+        // return await updateImageScanJobs({
+        //   id,
+        //   source,
+        //   pHash,
+        //   ingestion: ImageIngestionStatus.Blocked,
+        //   nsfwLevel: NsfwLevel.Blocked,
+        //   blockedFor: 'Similar to blocked content',
+        // });
+      }
+
+      return await updateImageScanJobs({ id, source, pHash });
     }
     case TagSource.WD14:
     case TagSource.Clavata:

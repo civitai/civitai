@@ -112,6 +112,7 @@ export type WhatIfOptions = {
   externalCtx: GenerationCtx;
   userId?: number;
   isModerator?: boolean;
+  experimental?: boolean;
   token: string;
   currencies?: BuzzSpendType[];
 };
@@ -299,7 +300,7 @@ async function validateAndEnrichResources(
     };
   }
 
-  const resources = await getResourceData(resourceRefs, user);
+  const resources = await getResourceData(resourceRefs, { user });
 
   // Check for private/epoch resources requiring subscription
   const hasPrivateOrEpoch = resources.some(
@@ -954,6 +955,7 @@ export async function whatIfFromGraph({
   externalCtx,
   userId,
   isModerator,
+  experimental,
   token,
   currencies,
 }: WhatIfOptions) {
@@ -973,6 +975,7 @@ export async function whatIfFromGraph({
     token,
     body: {
       steps,
+      experimental,
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
     },
@@ -1276,7 +1279,10 @@ function getResourcesFromStep(
 // =============================================================================
 
 type StepWithOutput = WorkflowStep & {
-  input?: { seed?: number };
+  input?: {
+    seed?: number;
+    aspectRatio?: string | { value?: string; width?: number; height?: number };
+  };
   output?: {
     images?: ImageBlob[];
     video?: VideoBlob;
@@ -1423,7 +1429,9 @@ export function formatStepOutputs(
       }
 
       if (!width || !height) {
-        const aspectRatio = params.aspectRatio;
+        // Check params.aspectRatio first, then step.input.aspectRatio (e.g. videoGen
+        // steps where the output aspect ratio lives on the step input, not metadata params)
+        const aspectRatio = params.aspectRatio ?? step.input?.aspectRatio;
         if (aspectRatio) {
           // Handle both object format { value, width, height } and legacy string format "w:h"
           if (typeof aspectRatio === 'object' && aspectRatio !== null) {
@@ -1655,7 +1663,8 @@ export async function formatGenerationResponse2(
   const uniqueRefs = Array.from(
     new Map(allResourceRefs.map((r) => [`${r.id}_${r.epoch ?? ''}`, r])).values()
   );
-  const enrichedResources = uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, user) : [];
+  const enrichedResources =
+    uniqueRefs.length > 0 ? await getResourceData(uniqueRefs, { user }) : [];
 
   // Format each workflow
   return workflows.map((workflow) => {

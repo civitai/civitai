@@ -31,7 +31,7 @@ export const processingEngingEarlyAccess = createJob(
       const updatedIds = updated.map((v) => v.id);
       const modelIds = uniq(updated.map((v) => v.modelId));
       await bustMvCache(updatedIds, modelIds);
-      await dataForModelsCache.bust(modelIds);
+      await dataForModelsCache.refresh(modelIds);
     }
     // Ensures user gets access to the resource after purchasing.
 

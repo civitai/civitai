@@ -11,9 +11,11 @@ import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 
 export const useActiveSubscription = ({
   checkWhenInBadState,
+  includeCanceled,
   buzzType,
 }: {
   checkWhenInBadState?: boolean;
+  includeCanceled?: boolean;
   buzzType?: BuzzSpendType;
 } = {}) => {
   const currentUser = useCurrentUser();
@@ -25,9 +27,13 @@ export const useActiveSubscription = ({
     isLoading,
     isFetching,
   } = trpc.subscriptions.getUserSubscription.useQuery(
-    { buzzType: buzzType || mainBuzzType, includeBadState: checkWhenInBadState },
     {
-      enabled: !!currentUser && !!(isMember || checkWhenInBadState),
+      buzzType: buzzType || mainBuzzType,
+      includeBadState: checkWhenInBadState,
+      includeCanceled,
+    },
+    {
+      enabled: !!currentUser && !!(isMember || checkWhenInBadState || includeCanceled),
     }
   );
 

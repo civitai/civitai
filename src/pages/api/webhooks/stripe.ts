@@ -11,13 +11,23 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { env } from '~/env/server';
 import type Stripe from 'stripe';
 import type { Readable } from 'node:stream';
-import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { completeStripeBuzzTransaction } from '~/server/services/buzz.service';
 import { STRIPE_PROCESSING_AWAIT_TIME } from '~/server/common/constants';
 import { completeClubMembershipCharge } from '~/server/services/clubMembership.service';
 import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  recordBuzzPurchaseKickback,
+  recordMembershipPaymentReward,
+  revokeForChargeback,
+} from '~/server/services/referral.service';
+
+const log = (data: MixedObject) =>
+  logToAxiom({ name: 'stripe-webhook', ...data }, 'webhooks').catch(() => null);
+
 // Stripe requires the raw body to construct the event.
 export const config = {
   api: {
@@ -46,6 +56,8 @@ const relevantEvents = new Set([
   'product.updated',
   'invoice.paid',
   'payment_intent.succeeded',
+  'charge.refunded',
+  'charge.dispute.created',
 ]);
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -68,7 +80,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (!sig || !webhookSecret) return; // only way this is false is if we forgot to include our secret or stripe decides to suddenly not include their signature
       event = stripe.webhooks.constructEvent(buf, sig, webhookSecret);
     } catch (error: any) {
-      console.log(`❌ Error message: ${error.message}`);
+      log({
+        type: 'error',
+        stage: 'signature-verification',
+        message: `Signature verification failed: ${error.message}`,
+        error: error.message,
+      });
       return res.status(400).send(`Webhook Error: ${error.message}`);
     }
 
@@ -103,7 +120,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case 'checkout.session.completed':
             const checkoutSession = event.data.object as Stripe.Checkout.Session;
             if (checkoutSession.mode === 'subscription') {
-              // do nothing
+              // Capture the referral code custom field if present and stash it
+              // on the new Subscription's metadata so the invoice.paid handler
+              // (manageInvoicePaid) picks it up via subscription_details.metadata.
+              const refCodeField = (checkoutSession.custom_fields ?? []).find(
+                (f) => f.key === 'ref_code'
+              );
+              const enteredCode = refCodeField?.text?.value?.trim().toUpperCase();
+              const subId =
+                typeof checkoutSession.subscription === 'string'
+                  ? checkoutSession.subscription
+                  : checkoutSession.subscription?.id;
+              if (enteredCode && subId) {
+                await stripe.subscriptions
+                  .update(subId, { metadata: { ref_code: enteredCode } })
+                  .catch((err: unknown) =>
+                    log({
+                      type: 'error',
+                      stage: 'checkout-session-completed-ref-code-update',
+                      message: 'failed to patch subscription metadata with ref_code',
+                      error: err instanceof Error ? err.message : String(err),
+                    })
+                  );
+              }
             } else if (checkoutSession.mode === 'payment') {
               // First, check if this payment is for Civitai AIR
 
@@ -129,7 +168,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             break;
           case 'payment_intent.succeeded':
             const paymentIntent = event.data.object as Stripe.PaymentIntent;
-            const metadata = paymentIntent.metadata as PaymentIntentMetadataSchema;
+            // payment_intent.succeeded fires for every successful PaymentIntent — including
+            // subscription invoice payments and any other Stripe-managed flows that don't
+            // carry our `type` discriminator. Bail before schema validation so we don't 400
+            // Stripe into a retry loop for payments we were never going to process here.
+            const metadataType = paymentIntent.metadata?.type;
+            if (metadataType !== 'buzzPurchase' && metadataType !== 'clubMembershipPayment') {
+              break;
+            }
+            // Stripe serializes all PaymentIntent.metadata values as strings, so a raw cast
+            // would leak string userId/buzzAmount into downstream `$queryRaw` IN clauses and
+            // hit "integer = text". Parse through the schema (which uses z.coerce.number) to
+            // guarantee numeric types at runtime. Throwing on parse failure routes the event
+            // into the outer catch, which logs to Axiom and returns 400 so Stripe retries —
+            // we never want to 200 a payment we can't process.
+            const parsedMetadata = paymentIntentMetadataSchema.safeParse(paymentIntent.metadata);
+            if (!parsedMetadata.success) {
+              throw new Error(
+                `payment_intent.succeeded metadata failed schema validation: ${
+                  parsedMetadata.error.message
+                } | rawMetadata=${JSON.stringify(paymentIntent.metadata)}`
+              );
+            }
+            const metadata = parsedMetadata.data;
 
             // Wait the processing time on the FE to avoid racing conditions and granting double buzz.
 
@@ -139,6 +200,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 stripePaymentIntentId: paymentIntent.id,
                 details: metadata,
                 userId: metadata.userId,
+              });
+
+              const pmFingerprint =
+                typeof paymentIntent.payment_method === 'string'
+                  ? undefined
+                  : paymentIntent.payment_method?.card?.fingerprint ?? undefined;
+
+              // No swallowed catch — let a transient DB error propagate so
+              // Stripe retries the webhook. Both completeStripeBuzzTransaction
+              // and recordBuzzPurchaseKickback are idempotent on
+              // stripePaymentIntentId / sourceEventId, so a retry won't
+              // double-grant.
+              await recordBuzzPurchaseKickback({
+                refereeId: metadata.userId,
+                buzzAmount: metadata.buzzAmount,
+                sourceEventId: paymentIntent.id,
+                payment: {
+                  paymentProvider: 'Stripe',
+                  stripePaymentIntentId: paymentIntent.id,
+                  stripeChargeId:
+                    typeof paymentIntent.latest_charge === 'string'
+                      ? paymentIntent.latest_charge
+                      : paymentIntent.latest_charge?.id ?? undefined,
+                  paymentMethodFingerprint: pmFingerprint,
+                },
               });
             }
 
@@ -158,10 +244,48 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             }
 
             break;
+          case 'charge.refunded':
+          case 'charge.dispute.created': {
+            const charge = event.data.object as Stripe.Charge | Stripe.Dispute;
+            const paymentIntentId =
+              typeof charge.payment_intent === 'string'
+                ? charge.payment_intent
+                : charge.payment_intent?.id;
+            let invoiceId: string | undefined;
+            try {
+              if (paymentIntentId) {
+                const pi = await stripe.paymentIntents.retrieve(paymentIntentId);
+                if (pi.invoice) {
+                  invoiceId = typeof pi.invoice === 'string' ? pi.invoice : pi.invoice.id;
+                }
+              }
+            } catch {
+              // lookup failed — still try with PI id so buzz-purchase path revokes
+            }
+            for (const sourceEventId of [paymentIntentId, invoiceId].filter(Boolean) as string[]) {
+              await revokeForChargeback({
+                sourceEventId,
+                reason: event.type,
+              }).catch(() => null);
+            }
+            break;
+          }
           default:
             throw new Error('Unhandled relevant event!');
         }
       } catch (error: any) {
+        const object = (event.data?.object ?? {}) as { id?: string; metadata?: MixedObject };
+        log({
+          type: 'error',
+          stage: 'event-handler',
+          eventType: event.type,
+          eventId: event.id,
+          objectId: object.id,
+          metadata: object.metadata,
+          message: `Event handler threw: ${error.message}`,
+          error: error.message,
+          stack: error.stack,
+        });
         return res.status(400).send({
           error: error.message,
         });

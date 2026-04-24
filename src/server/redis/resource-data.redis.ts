@@ -23,7 +23,11 @@ export const resourceDataCache = createCachedArray({
         mv."settings",
         mv."availability",
         mv."clipSkip",
-        mv."vaeId",
+        (SELECT rr."resourceId" FROM "RecommendedResource" rr
+         WHERE rr."sourceId" = mv.id
+           AND rr.settings->>'isLinkedComponent' = 'true'
+           AND rr.settings->>'componentType' = 'VAE'
+         LIMIT 1) AS "vaeId",
         mv."status",
         mv."usageControl",
         (CASE WHEN mv."availability" = 'EarlyAccess' AND mv."earlyAccessEndsAt" >= NOW() THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",

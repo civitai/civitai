@@ -281,7 +281,7 @@ export const createBounty = async ({
   );
 
   if (bounty.userId) {
-    await userBountyCountCache.bust(bounty.userId);
+    await userBountyCountCache.refresh(bounty.userId);
   }
 
   return { ...bounty, details: bounty.details as BountyDetailsSchema | null };
@@ -392,7 +392,7 @@ export const updateBountyById = async ({
   );
 
   if (bounty?.userId) {
-    await userBountyCountCache.bust(bounty?.userId);
+    await userBountyCountCache.refresh(bounty?.userId);
   }
 
   return bounty;
@@ -831,7 +831,7 @@ export const refundBounty = async ({
   });
 
   if (updated.userId) {
-    await userBountyCountCache.bust(updated.userId);
+    await userBountyCountCache.refresh(updated.userId);
   }
 
   return updated;

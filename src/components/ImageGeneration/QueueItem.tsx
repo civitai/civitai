@@ -66,6 +66,11 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
+import {
+  encodeGenerationHandoff,
+  GENERATION_HANDOFF_PARAM,
+} from '~/components/generation_v2/utils/generation-url-handoff';
+import { getGenerationSnapshotCache } from '~/components/generation_v2/utils/generation-snapshot-cache';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
@@ -382,6 +387,8 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
   const { unstableResources } = useGenerationConfig();
   const { model, id, name, epochDetails } = resource;
   const unstable = unstableResources?.includes(id);
+  const truncatedModelName =
+    model.name.length > 30 ? `${model.name.slice(0, 30).trimEnd()}…` : model.name;
 
   return (
     <Button.Group className="max-w-full">
@@ -402,7 +409,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
         className="min-w-0 flex-1"
         classNames={{ label: 'truncate' }}
       >
-        {model.name} - {name}
+        {truncatedModelName} - {name}
         {epochDetails?.epochNumber && ` #${epochDetails.epochNumber}`}
       </Button>
       <ButtonTooltip {...tooltipProps} label="Generate with this resource">
@@ -631,6 +638,16 @@ function countOccurrences(arr: string[]): Record<string, number> {
 function SiteRestrictedBlock({ image }: { image: BlobData }) {
   const redDomain = useServerDomains().red;
 
+  const buildRedUrl = () => {
+    const base = `//${redDomain}/generate`;
+    const cached = getGenerationSnapshotCache();
+    if (!cached) return syncAccount(base);
+    const handoff = encodeGenerationHandoff(cached.snapshot, {
+      computedKeys: cached.computedKeys,
+    });
+    return syncAccount(handoff ? `${base}?${GENERATION_HANDOFF_PARAM}=${handoff}` : base);
+  };
+
   return (
     <TwCard className="flex aspect-square size-full flex-col items-center justify-center gap-2 border p-3">
       <Text c="yellow" fw="bold" align="center" size="sm">
@@ -642,7 +659,7 @@ function SiteRestrictedBlock({ image }: { image: BlobData }) {
       {redDomain && (
         <Button
           component="a"
-          href={syncAccount(`//${redDomain}/generate`)}
+          href={buildRedUrl()}
           target="_blank"
           rel="noreferrer nofollow"
           color="red"

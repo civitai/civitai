@@ -96,7 +96,7 @@ export function DailyCreatorCompReward({
     () => {
       return {
         responsive: true,
-        maintainAspectRatio: false,
+        aspectRatio: mobile ? 1 : 1.4,
         scales: {
           y: {
             stacked: true,
@@ -235,7 +235,7 @@ export function DailyCreatorCompReward({
             </Stack>
             {/* Content */}
             {!isLoading && resources.length > 0 ? (
-              <div style={{ position: 'relative', height: '100%', width: '100%', padding: 'var(--mantine-spacing-md)' }}>
+              <div style={{ position: 'relative', width: '100%', minHeight: 300, padding: 'var(--mantine-spacing-md)' }}>
                 <Bar
                   key={filteredVersionIds.join('-')}
                   options={options}

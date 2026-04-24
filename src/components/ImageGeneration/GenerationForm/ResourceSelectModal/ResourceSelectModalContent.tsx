@@ -1,6 +1,6 @@
 import { Box, Center, CloseButton, Loader, SegmentedControl, Text } from '@mantine/core';
 import { IconSettings } from '@tabler/icons-react';
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import { Configure, useClearRefinements } from 'react-instantsearch';
 import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import {
@@ -28,17 +28,25 @@ const defaultTab: Tabs = 'all';
 const hitsPerPage = 20;
 
 export function ResourceSelectModalContent() {
-  const { title, onClose } = useResourceSelectContext();
+  const { title, onClose, selectSource } = useResourceSelectContext();
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const [selectedTab, setSelectedTab] = useStorage<Tabs>({
+
+  // For modelVersion linking, always start on 'all' tab since 'recent' depends on
+  // recommended models which are often empty for new uploads
+  const useLocalStorage = selectSource !== 'modelVersion';
+  const [storedTab, setStoredTab] = useStorage<Tabs>({
     type: 'localStorage',
     key: 'resource-select-tab',
     defaultValue: defaultTab,
     getInitialValueInEffect: false,
   });
+  const [localTab, setLocalTab] = useState<Tabs>(defaultTab);
+  const selectedTab = useLocalStorage ? storedTab : localTab;
+  const setSelectedTab = useLocalStorage ? setStoredTab : setLocalTab;
+
   const { refine } = useClearRefinements();
 
   const {

@@ -176,6 +176,13 @@ export function useSignalsWorker(options?: {
         logConnectionState = true;
       };
 
+      window.signalsSubscribers = () => {
+        const cbs = emitterRef.current.callbacks as Record<string, unknown[]>;
+        console.table(
+          Object.entries(cbs).map(([target, list]) => ({ target, count: list?.length ?? 0 }))
+        );
+      };
+
       window.signalsDump = () => {
         if (!worker) {
           console.log('[signals] No worker available');

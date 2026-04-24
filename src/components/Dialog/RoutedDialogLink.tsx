@@ -35,6 +35,7 @@ export function triggerRoutedDialog<T extends DialogKey>({
 export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean = false>({
   name,
   state,
+  getState,
   children,
   className,
   passHref,
@@ -45,11 +46,12 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
 }: {
   name: T;
   state: ComponentProps<(typeof dialogs)[T]['component']>;
+  getState?: () => ComponentProps<(typeof dialogs)[T]['component']>;
   passHref?: TPassHref;
   className?: string;
   children: TPassHref extends true ? React.ReactElement : React.ReactNode;
   style?: React.CSSProperties;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => void;
   variant?: AnchorProps['variant'];
   rel?: string;
 }) {
@@ -57,12 +59,12 @@ export function RoutedDialogLink<T extends DialogKey, TPassHref extends boolean 
   const { query = QS.parse(QS.stringify(router.query)) } = getBrowserRouter();
   const { asPath } = resolveDialog(name, query, state, router);
 
-  const handleClick = (e: any) => {
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => {
     if (!e.ctrlKey) {
       e.preventDefault();
       // e.stopPropagation();
-      triggerRoutedDialog({ name, state });
-      onClick?.();
+      triggerRoutedDialog({ name, state: getState ? getState() : state });
+      onClick?.(e);
     }
   };
 

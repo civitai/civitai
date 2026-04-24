@@ -139,7 +139,7 @@ export function GeneratedOutputWrapper({
           Generation failed
         </Text>
         <Text c="dimmed" align="center" size="xs">
-          The worker finished without producing this output.
+          {`We couldn't complete your request at the moment, try again later`}
         </Text>
       </TwCard>
     );

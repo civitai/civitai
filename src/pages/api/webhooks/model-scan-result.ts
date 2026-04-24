@@ -163,7 +163,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       details: data.llm_interrogation,
     });
 
-    await dataForModelsCache.bust(model.id);
+    await dataForModelsCache.refresh(model.id);
     await modelsSearchIndex.queueUpdate([
       {
         id: model.id,

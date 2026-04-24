@@ -9,8 +9,8 @@ import {
   IconSwords,
   IconViewfinder,
 } from '@tabler/icons-react';
-import React from 'react';
-import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
+import React, { memo } from 'react';
+import { useBountyEngagementSets } from '~/components/Bounty/bounty.utils';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -32,16 +32,16 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   fw: 'bold',
 };
 
-export function BountyCard({ data }: Props) {
+export const BountyCard = memo(function BountyCard({ data }: Props) {
   const { id, name, images, type, expiresAt, stats, complete } = data;
   const image = images?.[0];
   const expired = expiresAt < new Date();
   const theme = useMantineTheme();
 
-  const { engagements } = useBountyEngagement();
+  const { favoriteIds, trackedIds } = useBountyEngagementSets();
 
-  const isFavorite = !!engagements?.Favorite?.find((value) => value === id);
-  const isTracked = !!engagements?.Track?.find((value) => value === id);
+  const isFavorite = favoriteIds.has(id);
+  const isTracked = trackedIds.has(id);
 
   const countdownBadge = (
     <IconBadge
@@ -226,6 +226,6 @@ export function BountyCard({ data }: Props) {
       }
     />
   );
-}
+});
 
 type Props = { data: BountyGetAll[number] };

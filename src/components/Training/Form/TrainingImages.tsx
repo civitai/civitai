@@ -310,7 +310,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
   const features = useFeatureFlags();
-  const autoLabelAvailable = features.trainingAutoCaption || features.trainingAutoTag;
+  // Orchestrator path doesn't depend on signals or the legacy service flags,
+  // so trainingAutoLabelOrchestrator overrides both gates when on.
+  const useOrchestratorPath = features.trainingAutoLabelOrchestrator;
+  const autoLabelAvailable =
+    useOrchestratorPath || features.trainingAutoCaption || features.trainingAutoTag;
+  const autoLabelConnected = useOrchestratorPath || connected;
 
   const existingDataFile = thisModelVersion.files[0];
   const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
@@ -1165,6 +1170,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     ? ModelFileVisibility.Sensitive
                     : ModelFileVisibility.Private,
                 metadata,
+                ...(result.backend === 'b2' ? { s3Path: result.key } : {}),
               });
             } catch (e: unknown) {
               setZipping(false);
@@ -1261,7 +1267,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         if (i.label.length > 0) {
           // Validate each tag individually to avoid cross-tag false positives
           // (e.g. "school_uniform, 1girl" matching composed "school...girl" pattern)
-          const tags = i.label.split(',').map((t) => t.trim()).filter(Boolean);
+          const tags = i.label
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean);
           let hasInvalid = false;
           for (const tag of tags) {
             const { blockedFor, success } = auditPrompt(tag, undefined, isGreen);
@@ -1519,13 +1528,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         ? 'Auto labeling is temporarily unavailable - we are actively looking into it.'
                         : 'Not connected - will not receive updates. Please try refreshing the page.'
                     }
-                    disabled={connected && autoLabelAvailable}
+                    disabled={autoLabelConnected && autoLabelAvailable}
                   >
                     <Button
                       size="compact-sm"
                       color={!autoLabelAvailable ? 'gray' : 'violet'}
-                      disabled={autoLabeling.isRunning || !connected}
-                      style={!connected ? { pointerEvents: 'initial' } : undefined}
+                      disabled={autoLabeling.isRunning || !autoLabelConnected}
+                      style={!autoLabelConnected ? { pointerEvents: 'initial' } : undefined}
                       onClick={() =>
                         dialogStore.trigger({
                           component: AutoLabelModal,
@@ -1538,11 +1547,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         <Text inherit>
                           {!autoLabelAvailable ? 'Auto Label (unavailable)' : 'Auto Label'}
                         </Text>
-                        {Date.now() < new Date('2024-09-27').getTime() && (
-                          <Badge color="green" variant="filled" size="sm" ml={4}>
-                            NEW
-                          </Badge>
-                        )}
                       </Group>
                     </Button>
                   </Tooltip>

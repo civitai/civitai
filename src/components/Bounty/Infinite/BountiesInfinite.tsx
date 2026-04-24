@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { removeEmpty } from '~/utils/object-helpers';
-import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { BountyCard } from '~/components/Cards/BountyCard';
 import { useBountyFilters, useQueryBounties } from '../bounty.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -17,8 +17,10 @@ export function BountiesInfinite({ filters: filterOverrides, showEof = true }: P
   const filters = removeEmpty({ ...bountiesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { bounties, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryBounties(debouncedFilters, { keepPreviousData: true });
+  const { bounties, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryBounties(
+    debouncedFilters,
+    { keepPreviousData: true }
+  );
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -35,11 +37,12 @@ export function BountiesInfinite({ filters: filterOverrides, showEof = true }: P
       ) : !!bounties.length ? (
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryGrid
+          <MasonryGridVirtual
             data={bounties}
             render={BountyCard}
             itemId={(x) => x.id}
             empty={<NoContent />}
+            aspectRatio="square"
           />
           {hasNextPage && (
             <InViewLoader

@@ -7,12 +7,13 @@
 import { Alert, Button, Text, Group, Stack, Badge, Loader, Paper } from '@mantine/core';
 import { IconAlertCircle, IconCheck, IconRadar2, IconShield } from '@tabler/icons-react';
 import { useArticleScanStatus } from '~/hooks/useArticleScanStatus';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import clsx from 'clsx';
-import { ArticleProblematicImages } from './ArticleProblematicImages';
+import { ArticleProblematicImages, type TextModerationIssue } from './ArticleProblematicImages';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useRescanArticle } from '~/hooks/useRescanArticle';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 interface ArticleScanStatusProps {
   articleId: number;
@@ -33,6 +34,49 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
       onComplete();
     }
   }, [isComplete]);
+
+  // Derive a terminal text-moderation issue (if any) from the scan status.
+  // Blocked takes precedence over failed/expired/canceled because it's a
+  // policy violation rather than a transient error. This hook must be called
+  // unconditionally so the early-return branches below don't violate the
+  // Rules of Hooks; it no-ops when status isn't loaded yet.
+  const textIssue: TextModerationIssue | null = useMemo(() => {
+    const tm = status?.textModeration;
+    if (!tm || !tm.required || !tm.status) return null;
+    if (tm.status === EntityModerationStatus.Succeeded && tm.blocked) {
+      return {
+        kind: 'blocked',
+        status: tm.status,
+        retryCount: tm.retryCount,
+        updatedAt: tm.updatedAt,
+      };
+    }
+    if (tm.status === EntityModerationStatus.Failed) {
+      return {
+        kind: 'failed',
+        status: tm.status,
+        retryCount: tm.retryCount,
+        updatedAt: tm.updatedAt,
+      };
+    }
+    if (tm.status === EntityModerationStatus.Expired) {
+      return {
+        kind: 'expired',
+        status: tm.status,
+        retryCount: tm.retryCount,
+        updatedAt: tm.updatedAt,
+      };
+    }
+    if (tm.status === EntityModerationStatus.Canceled) {
+      return {
+        kind: 'canceled',
+        status: tm.status,
+        retryCount: tm.retryCount,
+        updatedAt: tm.updatedAt,
+      };
+    }
+    return null;
+  }, [status?.textModeration]);
 
   if (!features.articleImageScanning) return null;
 
@@ -57,8 +101,8 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
     );
   }
 
-  // No images to scan
-  if (!hasImages) {
+  // Nothing to render at all: no images AND no text issue.
+  if (!hasImages && !textIssue) {
     return null;
   }
 
@@ -66,15 +110,16 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
   if (isComplete) {
     const hasBlockedImages = status.blocked > 0;
     const hasErrorImages = status.error > 0;
-    const hasIssues = hasBlockedImages || hasErrorImages;
+    const hasIssues = hasBlockedImages || hasErrorImages || !!textIssue;
 
-    // Action required state - blocked or error images
+    // Action required state - blocked/error images or text moderation failure
     if (hasIssues) {
       return (
         <Stack gap="md">
           <ArticleProblematicImages
             blockedImages={status.images?.blocked || []}
             errorImages={status.images?.error || []}
+            textIssue={textIssue}
           />
           {currentUser && (
             <Button
@@ -92,7 +137,7 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
       );
     }
 
-    // Success state - all images scanned successfully
+    // Success state - all content scanned successfully
     return (
       <Alert
         icon={<IconCheck size={16} />}
@@ -100,7 +145,11 @@ export function ArticleScanStatus({ articleId, onComplete }: ArticleScanStatusPr
         color="green"
         className="border-l-4 border-green-6 transition-all duration-300"
       >
-        <Text size="sm">All {status.total} images have been scanned successfully.</Text>
+        <Text size="sm">
+          {hasImages
+            ? `All ${status.total} images have been scanned successfully.`
+            : 'Content scan completed successfully.'}
+        </Text>
       </Alert>
     );
   }

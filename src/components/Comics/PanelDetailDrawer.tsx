@@ -20,7 +20,7 @@ import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { NsfwLevel } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
@@ -69,7 +69,7 @@ export function PanelDetailDrawer({
   const isNsfwBlocked =
     isGreen &&
     detailPanel?.status === 'Ready' &&
-    (detailPanel?.image ? !hasPublicBrowsingLevel(detailPanel.image.nsfwLevel) : !!detailPanel?.imageUrl);
+    (detailPanel?.image ? !hasSafeBrowsingLevel(detailPanel.image.nsfwLevel) : !!detailPanel?.imageUrl);
 
   // Lock body scroll when drawer is open
   useEffect(() => {

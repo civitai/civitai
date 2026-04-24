@@ -19,8 +19,10 @@ import {
   IconLock,
 } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
-import dayjs from 'dayjs';
-import type { PrepaidToken, SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import type {
+  PrepaidToken,
+  SubscriptionProductMetadata,
+} from '~/server/schema/subscriptions.schema';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
@@ -28,6 +30,29 @@ const TIER_COLORS: Record<string, string> = {
   bronze: 'orange',
   silver: 'gray',
   gold: 'yellow',
+};
+
+const formatLocalDateTime = (value: Date | string | undefined | null): string => {
+  if (!value) return '';
+  return new Date(value).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
+};
+
+const formatLocalDateTimeShort = (value: Date | string | undefined | null): string => {
+  if (!value) return '';
+  return new Date(value).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  });
 };
 
 /**
@@ -111,7 +136,7 @@ function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () =
                 </Badge>
                 {token.unlockedAt && (
                   <Text size="xs" c="dimmed">
-                    {dayjs(token.unlockedAt).format('MMM D, YYYY')}
+                    {formatLocalDateTime(token.unlockedAt)}
                   </Text>
                 )}
               </Group>
@@ -173,7 +198,7 @@ function TokenCard({ token, onClaimed }: { token: PrepaidToken; onClaimed?: () =
             </Group>
             {(token.claimedAt || token.unlockedAt) && (
               <Text size="xs" c="dimmed">
-                {dayjs(token.claimedAt ?? token.unlockedAt).format('MMM D, YYYY')}
+                {formatLocalDateTime(token.claimedAt ?? token.unlockedAt)}
               </Text>
             )}
           </Stack>
@@ -237,7 +262,9 @@ export function PrepaidTokenOverview({
     onSuccess: (data) => {
       showSuccessNotification({
         title: 'All Tokens Claimed!',
-        message: `${data.totalBuzz.toLocaleString()} Buzz from ${data.claimed} tokens has been added to your account.`,
+        message: `${data.totalBuzz.toLocaleString()} Buzz from ${
+          data.claimed
+        } tokens has been added to your account.`,
       });
       utils.subscriptions.getUserSubscription.invalidate();
       onTokensClaimed?.();
@@ -256,13 +283,11 @@ export function PrepaidTokenOverview({
   };
 
   // Fetch historical prepaid deliveries from ClickHouse (single query, deduplicated)
-  const {
-    history: historicalDeliveries,
-    isLoading: historyLoading,
-  } = useHistoricalPrepaidDeliveries({
-    subscription,
-    existingTokens: tokens,
-  });
+  const { history: historicalDeliveries, isLoading: historyLoading } =
+    useHistoricalPrepaidDeliveries({
+      subscription,
+      existingTokens: tokens,
+    });
 
   const unlocked = tokens.filter((t) => t.status === 'unlocked');
   const locked = tokens.filter((t) => t.status === 'locked');
@@ -274,7 +299,8 @@ export function PrepaidTokenOverview({
   const claimedBuzz = claimed.reduce((sum, t) => sum + t.buzzAmount, 0);
 
   // Don't render empty shell
-  const hasAnything = unlocked.length > 0 || locked.length > 0 || claimed.length > 0 || historyLoading;
+  const hasAnything =
+    unlocked.length > 0 || locked.length > 0 || claimed.length > 0 || historyLoading;
   if (!hasAnything) return null;
 
   return (
@@ -285,7 +311,8 @@ export function PrepaidTokenOverview({
           p="md"
           radius="md"
           style={{
-            background: 'linear-gradient(135deg, rgba(252, 156, 45, 0.12) 0%, rgba(252, 156, 45, 0.04) 100%)',
+            background:
+              'linear-gradient(135deg, rgba(252, 156, 45, 0.12) 0%, rgba(252, 156, 45, 0.04) 100%)',
             borderColor: 'rgba(252, 156, 45, 0.3)',
             borderWidth: 1,
             borderStyle: 'solid',
@@ -301,7 +328,8 @@ export function PrepaidTokenOverview({
                   Ready to claim
                 </Text>
                 <Text size="lg" fw={700}>
-                  {unlocked.length} token{unlocked.length !== 1 ? 's' : ''} · {unlockedBuzz.toLocaleString()} Buzz
+                  {unlocked.length} token{unlocked.length !== 1 ? 's' : ''} ·{' '}
+                  {unlockedBuzz.toLocaleString()} Buzz
                 </Text>
               </Stack>
             </Group>
@@ -310,7 +338,8 @@ export function PrepaidTokenOverview({
                 <Group gap={6} visibleFrom="sm">
                   <IconLock size={13} color="var(--mantine-color-dimmed)" />
                   <Text size="xs" c="dimmed">
-                    {locked.length} locked{nextUnlockDate ? ` · next ${dayjs(nextUnlockDate).format('MMM D')}` : ''}
+                    {locked.length} locked
+                    {nextUnlockDate ? ` · next ${formatLocalDateTimeShort(nextUnlockDate)}` : ''}
                   </Text>
                 </Group>
               )}
@@ -357,7 +386,7 @@ export function PrepaidTokenOverview({
                   </Text>
                 </Group>
                 <Text size="xs" c="dimmed">
-                  Next unlock: {nextUnlockDate ? dayjs(nextUnlockDate).format('MMM D, YYYY') : ''}
+                  Next unlock: {formatLocalDateTime(nextUnlockDate)}
                 </Text>
               </Group>
             </Card>
@@ -391,8 +420,8 @@ export function PrepaidTokenOverview({
                     {historyLoading
                       ? 'Loading history...'
                       : claimed.length > 0
-                        ? `${claimed.length} Claimed`
-                        : 'Claim History'}
+                      ? `${claimed.length} Claimed`
+                      : 'Claim History'}
                   </Text>
                   {historyLoading && <Loader size={14} color="yellow" />}
                 </Group>
@@ -419,7 +448,6 @@ export function PrepaidTokenOverview({
           </Collapse>
         </Stack>
       )}
-
     </Stack>
   );
 }

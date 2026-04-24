@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { ecosystemById, ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import {
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  SDCPP_SUPPORTED_ECOSYSTEMS,
   fluxUltraAirId,
 } from '~/shared/constants/generation.constants';
 import {
@@ -54,10 +55,28 @@ import { soraGraph } from './sora-graph';
 import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
+import { ernieGraph } from './ernie-graph';
+import { seedanceGraph } from './seedance-graph';
 
 // =============================================================================
 // Helper Functions
 // =============================================================================
+
+/**
+ * Whether the given ecosystem/model pair surfaces the `enhancedCompatibility` toggle.
+ */
+function supportsEnhancedCompatibility(ecosystem: string, modelId?: number): boolean {
+  return EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ecosystem) && modelId !== fluxUltraAirId;
+}
+
+/**
+ * Whether the given ecosystem/model pair runs through sdcpp and qualifies for
+ * the 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility` —
+ * includes ecosystems without the `enhancedCompatibility` toggle.
+ */
+function supportsSdcpp(ecosystem: string, modelId?: number): boolean {
+  return SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem) && modelId !== fluxUltraAirId;
+}
 
 /**
  * Get valid ecosystem key for the given workflow.
@@ -186,19 +205,6 @@ export const ecosystemGraph = new DataGraph<
     },
     ['ecosystem']
   )
-  // Quantity node - image output only, workflow-dependent (draft uses step=4)
-  .node(
-    'quantity',
-    (ctx, ext) => {
-      const isDraft = ctx.workflow === 'txt2img:draft';
-      return {
-        ...quantityNode({ min: isDraft ? 4 : 1, step: isDraft ? 4 : 1 })(ctx, ext),
-        when: ctx.output === 'image',
-      };
-    },
-    ['workflow', 'output']
-  )
-
   // Use groupedDiscriminator to reduce TypeScript type complexity:
   // - Multiple ecosystem values that share the same graph are grouped into ONE type branch
   // - This reduces union type bloat from O(ecosystems) to O(families)
@@ -234,6 +240,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['HiDream'] as const, graph: hiDreamGraph },
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
     { values: ['Anima'] as const, graph: animaGraph },
+    { values: ['Ernie'] as const, graph: ernieGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {
@@ -263,6 +270,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Sora2'] as const, graph: soraGraph },
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
+    { values: ['Seedance'] as const, graph: seedanceGraph },
   ])
   // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
   .node(
@@ -271,11 +279,32 @@ export const ecosystemGraph = new DataGraph<
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       return {
         ...enhancedCompatibilityNode(),
-        when:
-          EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(ctx.ecosystem) && modelId !== fluxUltraAirId,
+        when: supportsEnhancedCompatibility(ctx.ecosystem, modelId),
       };
     },
     ['ecosystem', 'model']
+  )
+  // Quantity node - image output only.
+  // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
+  // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag.
+  // Ecosystems without an `enhancedCompatibility` node get BOGO unconditionally
+  // (ctx.enhancedCompatibility is undefined, which satisfies `!== true`).
+  .node(
+    'quantity',
+    (ctx, ext) => {
+      const isDraft = ctx.workflow === 'txt2img:draft';
+      const modelId = 'model' in ctx ? ctx.model?.id : undefined;
+      const bogoActive =
+        !!ext.flags?.enhancedCompatibilitySdcpp &&
+        supportsSdcpp(ctx.ecosystem, modelId) &&
+        ctx.enhancedCompatibility !== true;
+      const step = isDraft ? 4 : bogoActive ? 2 : 1;
+      return {
+        ...quantityNode({ step })(ctx, ext),
+        when: ctx.output === 'image',
+      };
+    },
+    ['workflow', 'output', 'ecosystem', 'model', 'enhancedCompatibility']
   )
   .node(
     'prompt',

@@ -1,5 +1,16 @@
 import type { ButtonProps, StackProps, TooltipProps } from '@mantine/core';
-import { Anchor, Button, Group, Input, Paper, Stack, Text, Title, Tooltip } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Button,
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -45,11 +56,17 @@ import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const schema = upsertArticleInput
-  .omit({ coverImage: true, userNsfwLevel: true, lockedProperties: true })
+  .omit({
+    coverImage: true,
+    userNsfwLevel: true,
+    moderatorNsfwLevel: true,
+    lockedProperties: true,
+  })
   .extend({
     categoryId: z.number().min(0, 'Please select a valid category'),
     coverImage: imageSchema.refine((data) => !!data.url, { error: 'Please upload a cover image' }),
     userNsfwLevel: z.string().optional(),
+    moderatorNsfwLevel: z.string().optional(),
     lockedProperties: z.string().array().optional(),
   });
 const querySchema = z.object({
@@ -65,12 +82,19 @@ const tooltipProps: Partial<TooltipProps> = {
   withinPortal: true,
 };
 
-const lockableProperties = ['nsfw', 'userNsfwLevel'];
+const lockableProperties = ['userNsfwLevel'];
 
 export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
   label: browsingLevelLabels[level],
   value: String(level),
 }));
+
+// Moderator override picker prepends an Auto option (empty string = clear
+// override = fall back to GREATEST derivation on the server).
+const moderatorNsfwLevelSelectOptions = [
+  { label: 'Auto (derived from content)', value: '' },
+  ...browsingLevelSelectOptions,
+];
 
 export function ArticleUpsertForm({ article }: Props) {
   const currentUser = useCurrentUser();
@@ -94,6 +118,7 @@ export function ArticleUpsertForm({ article }: Props) {
       title: article?.title ?? '',
       content: article?.content ?? '',
       userNsfwLevel: article?.userNsfwLevel ? String(article.userNsfwLevel) : undefined,
+      moderatorNsfwLevel: article?.moderatorNsfwLevel ? String(article.moderatorNsfwLevel) : '',
       categoryId: article?.tags.find((tag) => tag.isCategory)?.id ?? defaultCategory,
       tags: article?.tags.filter((tag) => !tag.isCategory) ?? [],
       coverImage: article?.coverImage ?? null,
@@ -145,6 +170,7 @@ export function ArticleUpsertForm({ article }: Props) {
     tags: selectedTags,
     coverImage,
     userNsfwLevel,
+    moderatorNsfwLevel,
     lockedProperties,
     content,
     ...rest
@@ -167,6 +193,14 @@ export function ArticleUpsertForm({ article }: Props) {
             ? userNsfwLevel
               ? Number(userNsfwLevel)
               : 0
+            : undefined,
+          // moderatorNsfwLevel is gated server-side too, but only send it from
+          // the mod-only picker so non-mod payloads never carry the key.
+          // Empty string means "clear override" -> null.
+          moderatorNsfwLevel: currentUser?.isModerator
+            ? moderatorNsfwLevel
+              ? Number(moderatorNsfwLevel)
+              : null
             : undefined,
           tags,
           // publishedAt will be set server-side based on status
@@ -335,7 +369,76 @@ export function ArticleUpsertForm({ article }: Props) {
                   <ContentPolicyLink size="xs" variant="text" c="dimmed" td="underline" />
                 </Group>
               }
+              description="Your preferred rating. The final rating is the max of your choice, cover and content images, text moderation, and any actioned NSFW reports. Updates automatically when those signals change."
             />
+            {currentUser?.isModerator && (
+              <InputSelect
+                name="moderatorNsfwLevel"
+                data={moderatorNsfwLevelSelectOptions}
+                label={
+                  <Group gap={4} wrap="nowrap">
+                    <Text span fw={600}>
+                      Moderator Override
+                    </Text>
+                    <Text span c="dimmed" size="xs">
+                      (mod-only)
+                    </Text>
+                  </Group>
+                }
+                description="Pin the article to a specific rating regardless of scans, user preference, or reports. Select Auto to clear the override and return to content-derived rating."
+              />
+            )}
+            {article?.moderatorNsfwLevel != null &&
+              browsingLevelLabels[
+                article.moderatorNsfwLevel as keyof typeof browsingLevelLabels
+              ] && (
+                <Alert color="blue" py="xs">
+                  <Text size="xs">
+                    A moderator has set this article&apos;s rating to{' '}
+                    <Text span fw={600}>
+                      {
+                        browsingLevelLabels[
+                          article.moderatorNsfwLevel as keyof typeof browsingLevelLabels
+                        ]
+                      }
+                    </Text>
+                    . Your preferred rating is saved and will apply again if the override is
+                    cleared.
+                  </Text>
+                </Alert>
+              )}
+            {article?.moderatorNsfwLevel == null &&
+              article?.nsfwLevel != null &&
+              article.nsfwLevel > (article.userNsfwLevel ?? 0) &&
+              browsingLevelLabels[article.nsfwLevel as keyof typeof browsingLevelLabels] && (
+                <Alert color="yellow" py="xs">
+                  <Text size="xs">
+                    This article is currently rated{' '}
+                    <Text span fw={600}>
+                      {browsingLevelLabels[article.nsfwLevel as keyof typeof browsingLevelLabels]}
+                    </Text>{' '}
+                    because an image, text-moderation scan, or an actioned NSFW report raised it
+                    above your preference
+                    {article.userNsfwLevel &&
+                    browsingLevelLabels[
+                      article.userNsfwLevel as keyof typeof browsingLevelLabels
+                    ] ? (
+                      <>
+                        {' '}
+                        of{' '}
+                        <Text span fw={600}>
+                          {
+                            browsingLevelLabels[
+                              article.userNsfwLevel as keyof typeof browsingLevelLabels
+                            ]
+                          }
+                        </Text>
+                      </>
+                    ) : null}
+                    . Your selection is saved and will apply again if those signals clear.
+                  </Text>
+                </Alert>
+              )}
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"

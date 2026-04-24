@@ -86,18 +86,20 @@ const updateNsfwLevelJob = createJob('update-nsfw-levels', '*/1 * * * *', async 
       ...relatedEntities.modelVersionIds,
     ]);
     const modelIds = uniq([...jobQueueIds.modelIds, ...relatedEntities.modelIds]);
-    // const collectionIds = uniq([...jobQueueIds.collectionIds, ...relatedEntities.collectionIds]);
+    const collectionIds = uniq([
+      ...jobQueueIds.collectionIds,
+      ...relatedEntities.collectionIds,
+    ]);
 
-    // // Only enqueue collection jobs if there are related collections to update
-    // if (collectionIds.length > 0) {
-    //   await enqueueJobs(
-    //     collectionIds.map((entityId) => ({
-    //       entityId,
-    //       entityType: EntityType.Collection,
-    //       type: JobQueueType.UpdateNsfwLevel,
-    //     }))
-    //   );
-    // }
+    if (collectionIds.length > 0) {
+      await enqueueJobs(
+        collectionIds.map((entityId) => ({
+          entityId,
+          entityType: EntityType.Collection,
+          type: JobQueueType.UpdateNsfwLevel,
+        }))
+      );
+    }
 
     const comicProjectIds = relatedEntities.comicProjectIds;
 

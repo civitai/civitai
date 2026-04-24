@@ -15,7 +15,14 @@ export function MatureContentMigrationAlert() {
   const { isGreen } = useFeatureFlags();
   const serverDomains = useServerDomains();
   const { data: session } = useSession();
-  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery();
+  // `AppProvider` seeds `user.getSettings` with SSR `initialData` and the
+  // global `staleTime: Infinity` prevents refetching — so `data` is truthy
+  // immediately with potentially stale `dismissedAlerts`. Gate on `isFetched`
+  // (only true after a real network fetch resolves) so we never render based
+  // on the SSR snapshot, and force a refetch on mount via `staleTime: 0`.
+  const { data: settings, isFetched } = trpc.user.getSettings.useQuery(undefined, {
+    staleTime: 0,
+  });
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
   // Check the raw session user preferences (before domain override).
@@ -57,7 +64,7 @@ export function MatureContentMigrationAlert() {
     if (el) el.style.opacity = '0';
   }, []);
 
-  if (!isGreen || !hasNsfwEnabled || settingsLoading || isDismissed) return null;
+  if (!isGreen || !hasNsfwEnabled || !isFetched || isDismissed) return null;
 
   const redDomain = serverDomains.red;
   const redUrl = syncAccount(`//${redDomain}`);

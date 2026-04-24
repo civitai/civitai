@@ -33,6 +33,11 @@ type RunContext = { on: (event: 'close', listener: () => void) => void };
 const querySchema = z.object({
   dryRun: booleanString().default(true),
   rollback: booleanString().default(false),
+  // Reconcile mode: run `recomputeArticleIngestion` on every Published article
+  // stuck in `Pending`/`Rescan` state. Fixes articles where scan webhooks
+  // completed but the pipeline never flipped ingestion to a terminal state
+  // (e.g. debounce race in `webhook-debounce.ts`).
+  reconcile: booleanString().default(false),
   // Each batch extracts media from up to `batchSize` articles and commits in
   // one transaction (~10 media items/article on average). `concurrency`
   // parallel batches run at once — don't exceed the DB connection pool. The
@@ -168,6 +173,68 @@ async function runRollback(params: MigrationParams): Promise<{
     imagesDeleted,
     articlesReset: articleIds.length,
   };
+}
+
+// --- Reconcile Mode ---
+//
+// Recomputes `Article.ingestion` for articles stuck mid-scan. Covers:
+// - Published articles with ingestion Pending/Rescan (webhook fanout drift)
+// - Processing articles regardless of ingestion — `recomputeArticleIngestion`
+//   now also flips status: Processing → Published when scans complete, so the
+//   Processing + Scanned cohort (status flip never fired) is reconcilable here.
+// `recomputeArticleIngestion` is idempotent: articles that are genuinely still
+// scanning stay Pending; finished articles get promoted to Scanned / Blocked /
+// Error and their status is flipped where appropriate.
+
+async function runReconcile(params: MigrationParams): Promise<{
+  articlesFound: number;
+  recomputed: number;
+  errors: number;
+}> {
+  const { dryRun, concurrency } = params;
+
+  log(`Running reconcile${dryRun ? ' (DRY RUN)' : ''}...`);
+
+  const articles = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT a.id
+    FROM "Article" a
+    WHERE
+      (
+        a.status = ${ArticleStatus.Published}::"ArticleStatus"
+        AND a.ingestion IN ('Pending', 'Rescan')
+      )
+      OR a.status = ${ArticleStatus.Processing}::"ArticleStatus"
+    ORDER BY a.id ASC
+  `;
+
+  log(
+    `Found ${articles.length} articles to reconcile (Published+Pending/Rescan or any Processing)`
+  );
+
+  if (dryRun) {
+    return { articlesFound: articles.length, recomputed: 0, errors: 0 };
+  }
+
+  let recomputed = 0;
+  let errors = 0;
+  const startTime = Date.now();
+
+  const tasks = articles.map(({ id }) => async () => {
+    try {
+      await recomputeArticleIngestion(id);
+      recomputed++;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      log(`  ⚠️  recomputeArticleIngestion failed for article ${id}: ${msg}`);
+      errors++;
+    }
+  });
+  await limitConcurrency(tasks, concurrency);
+
+  const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
+  log(`Reconciled ${recomputed}/${articles.length} articles in ${elapsedSec}s (${errors} errors)`);
+
+  return { articlesFound: articles.length, recomputed, errors };
 }
 
 // --- Migration ---
@@ -407,6 +474,19 @@ export default WebhookEndpoint(async (req, res) => {
       return res.status(200).json({
         ok: true,
         mode: 'rollback',
+        dryRun: params.dryRun,
+        duration: `${duration}s`,
+        result,
+      });
+    }
+
+    if (params.reconcile) {
+      const result = await runReconcile(params);
+      const duration = ((Date.now() - startTime) / 1000).toFixed(2);
+      log(`Reconcile completed in ${duration}s`);
+      return res.status(200).json({
+        ok: true,
+        mode: 'reconcile',
         dryRun: params.dryRun,
         duration: `${duration}s`,
         result,

@@ -16,12 +16,13 @@ import {
   getResourceData,
   getUnavailableResources,
   resolveImageMeta,
+  setGenerationStatus,
   // textToImage,
   // textToImageTestRun,
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, purgeOnSuccess } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
   getWorkflowDefinitions,
@@ -51,14 +52,25 @@ export const generationRouter = router({
     .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .input(getGenerationDataSchema)
-    .query(({ input, ctx }) => getGenerationData({ query: input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      getGenerationData({ query: input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+    ),
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ input }) => checkResourcesCoverage(input)),
   getStatus: publicProcedure
-    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
     .query(() => getGenerationStatus()),
+  setStatus: moderatorProcedure
+    .input(
+      z.object({
+        available: z.boolean(),
+        message: z.string().max(2000).nullish(),
+      })
+    )
+    .use(purgeOnSuccess(['generation-status']))
+    .mutation(({ input }) => setGenerationStatus(input)),
   getGenerationConfig: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))
     .query(() => getGenerationConfig()),
@@ -68,10 +80,16 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleUnavailableResource({ ...input, isModerator: ctx.user.isModerator })
     ),
-  getResourceDataByIds: publicProcedure
-    .input(getResourceDataByIdsSchema)
-    .query(({ input, ctx }) => getResourceData(input.ids, ctx.user, false, true)),
+  getResourceDataByIds: publicProcedure.input(getResourceDataByIdsSchema).query(({ input, ctx }) =>
+    getResourceData(input.ids, {
+      user: ctx.user,
+      withPreview: true,
+      sfwOnly: ctx.features.isGreen,
+    })
+  ),
   resolveImageMeta: publicProcedure
     .input(resolveImageMetaSchema)
-    .query(({ input, ctx }) => resolveImageMeta({ input, user: ctx.user })),
+    .query(({ input, ctx }) =>
+      resolveImageMeta({ input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+    ),
 });

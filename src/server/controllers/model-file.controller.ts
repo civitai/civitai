@@ -13,8 +13,72 @@ import {
   updateFile,
 } from '~/server/services/model-file.service';
 import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { parseB2Url } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
+
+// Wraps registerFileLocation so a resolver outage or misconfig becomes a
+// logged warning instead of a silent download-breaker. A missing row in
+// `file_locations` means /resolve returns 404 and the delivery-worker fallback
+// only knows the primary bucket, so the file becomes un-downloadable.
+async function safeRegisterFileLocation(params: {
+  op: 'create' | 'update';
+  userId: number;
+  fileId: number;
+  modelVersionId: number;
+  modelId: number;
+  s3Path: string;
+  sizeKb: number;
+}) {
+  const { op, userId, fileId, modelVersionId, modelId, s3Path, sizeKb } = params;
+  const backend = 'backblaze';
+  try {
+    await registerFileLocation({
+      fileId,
+      modelVersionId,
+      modelId,
+      backend,
+      path: s3Path,
+      sizeKb,
+    });
+  } catch (err) {
+    // `...safeError(err)` spreads a `name: 'Error'` (JS Error.name), so it
+    // must come BEFORE our `name` literal or the event is hidden under a
+    // generic name in Axiom.
+    logToAxiom({
+      type: 'error',
+      ...safeError(err),
+      name: 'register-file-location-failed',
+      op,
+      fileId,
+      modelVersionId,
+      modelId,
+      userId,
+      backend,
+      path: s3Path,
+      sizeKb,
+    }).catch(handleLogError);
+  }
+}
+
+/**
+ * Derive the s3 path for a B2 registration. Prefers the explicit `s3Path`
+ * from the client payload, falls back to parsing the committed URL. The
+ * fallback covers users running stale client bundles that don't yet send
+ * `s3Path` on the tRPC upsert — training pages live for hours during a run,
+ * so a frontend deploy can take a long time to reach every open tab.
+ */
+function resolveB2Path(args: {
+  backend: string | undefined;
+  s3Path: string | undefined;
+  url: string | undefined | null;
+}): string | null {
+  if (args.backend !== 'b2') return null;
+  if (args.s3Path) return args.s3Path;
+  if (!args.url) return null;
+  return parseB2Url(args.url)?.key ?? null;
+}
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
@@ -58,19 +122,17 @@ export const createFileHandler = async ({
 
     // Register with storage-resolver for B2 uploads so downloads work.
     // Awaited so the location is registered before scan-files can trigger.
-    if (backend === 'b2' && s3Path) {
-      try {
-        await registerFileLocation({
-          fileId: file.id,
-          modelVersionId: file.modelVersion.id,
-          modelId: file.modelVersion.modelId,
-          backend: 'backblaze',
-          path: s3Path,
-          sizeKb: input.sizeKB,
-        });
-      } catch (err) {
-        console.error('Failed to register file location with storage-resolver:', err);
-      }
+    const resolvedPath = resolveB2Path({ backend, s3Path, url: createInput.url });
+    if (resolvedPath) {
+      await safeRegisterFileLocation({
+        op: 'create',
+        userId: ctx.user.id,
+        fileId: file.id,
+        modelVersionId: file.modelVersion.id,
+        modelId: file.modelVersion.modelId,
+        s3Path: resolvedPath,
+        sizeKb: input.sizeKB,
+      });
     }
 
     ctx.track
@@ -103,11 +165,29 @@ export const updateFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
+    const { backend, s3Path, ...updateInput } = input;
+
     const result = await updateFile({
-      ...input,
+      ...updateInput,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
+
+    // Re-register with storage-resolver when the file was re-uploaded to B2
+    // (e.g. training data re-uploads), so downloads resolve to the new path.
+    const resolvedPath = resolveB2Path({ backend, s3Path, url: updateInput.url });
+    if (resolvedPath) {
+      await safeRegisterFileLocation({
+        op: 'update',
+        userId: ctx.user.id,
+        fileId: result.id,
+        modelVersionId: result.modelVersionId,
+        modelId: result.modelVersion.modelId,
+        s3Path: resolvedPath,
+        sizeKb: updateInput.sizeKB ?? result.sizeKB ?? 0,
+      });
+    }
+
     ctx.track
       .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
       .catch(handleLogError);
