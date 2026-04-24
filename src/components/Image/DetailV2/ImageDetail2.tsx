@@ -65,7 +65,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -375,12 +375,7 @@ export function ImageDetail2() {
                                 }),
                               }}
                             >
-                              <MetricSubscriptionProvider
-                                entityType="Image"
-                                entityId={image.id}
-                              >
-                                <ImageDetailReactions image={image} />
-                              </MetricSubscriptionProvider>
+                              <ImageDetailReactions image={image} />
                             </ReactionSettingsProvider>
                           </div>
                           <CarouselIndicators {...carouselNavigation} />
@@ -562,24 +557,34 @@ export function ImageDetail2() {
   );
 }
 
-function ImageDetailReactions({ image }: { image: ReturnType<typeof useImageDetailContext>['images'][number] }) {
-  const reactionMetrics = useLiveMetrics('Image', image.id, {
-    likeCount: image.stats?.likeCountAllTime ?? 0,
-    dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-    heartCount: image.stats?.heartCountAllTime ?? 0,
-    laughCount: image.stats?.laughCountAllTime ?? 0,
-    cryCount: image.stats?.cryCountAllTime ?? 0,
-    tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-  });
-
+function ImageDetailReactions({
+  image,
+}: {
+  image: ReturnType<typeof useImageDetailContext>['images'][number];
+}) {
   return (
-    <Reactions
+    <Metrics
+      entityType="Image"
       entityId={image.id}
-      entityType="image"
-      reactions={image.reactions}
-      metrics={reactionMetrics}
-      targetUserId={image.user.id}
-      disableBuzzTip={image.poi}
-    />
+      initial={{
+        likeCount: image.stats?.likeCountAllTime ?? 0,
+        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+        heartCount: image.stats?.heartCountAllTime ?? 0,
+        laughCount: image.stats?.laughCountAllTime ?? 0,
+        cryCount: image.stats?.cryCountAllTime ?? 0,
+        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
+      }}
+    >
+      {(metrics) => (
+        <Reactions
+          entityId={image.id}
+          entityType="image"
+          reactions={image.reactions}
+          metrics={metrics}
+          targetUserId={image.user.id}
+          disableBuzzTip={image.poi}
+        />
+      )}
+    </Metrics>
   );
 }

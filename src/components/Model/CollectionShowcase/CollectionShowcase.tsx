@@ -23,10 +23,11 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
-import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { AnimatedCount, Metrics } from '~/components/Metrics';
 import { slugit } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -51,9 +52,7 @@ export function CollectionShowcase({ modelId, loading }: Props) {
         ) : items.length > 0 ? (
           <>
             {items.map((model) => (
-              <MetricSubscriptionProvider key={model.id} entityType="Model" entityId={model.id}>
-                <ShowcaseItem {...model} />
-              </MetricSubscriptionProvider>
+              <ShowcaseItem key={model.id} {...model} />
             ))}
             {hasNextPage && (
               <InViewLoader
@@ -84,17 +83,11 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
   const [image] = images;
   const theme = useMantineTheme();
 
-  // Live metrics for showcase model stats
-  const liveMetrics = useLiveMetrics('Model', id, {
-    downloadCount: rank?.downloadCount ?? 0,
-    collectedCount: rank?.collectedCount ?? 0,
-    commentCount: rank?.commentCount ?? 0,
-  });
-
   const activeItem = router.query.id === id.toString();
 
   return (
-    <Link
+    <ElementInView
+      component={Link}
       className={clsx(
         'flex items-center gap-4 px-3 py-2 no-underline',
         'hover:bg-gray-1 dark:hover:bg-dark-5',
@@ -166,36 +159,62 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
               type={type}
               baseModel={version.baseModel}
             />
-            <Badge
-              variant="light"
-              color="gray"
-              radius="xl"
-              classNames={{ label: 'flex gap-2 flex-nowrap' }}
-            >
-              <Group gap={2}>
-                <IconDownload size={14} strokeWidth={2.5} />
-                <Text size="xs">
-                  <AnimatedCount value={liveMetrics.downloadCount} />
-                </Text>
-              </Group>
-              <Group gap={2}>
-                <IconBookmark size={14} strokeWidth={2.5} />
-                <Text size="xs">
-                  <AnimatedCount value={liveMetrics.collectedCount} />
-                </Text>
-              </Group>
-              <Group gap={2}>
-                <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                <Text size="xs">
-                  <AnimatedCount value={liveMetrics.commentCount} />
-                </Text>
-              </Group>
-            </Badge>
+            <ShowcaseItemStats id={id} rank={rank} />
           </Group>
         )}
       </div>
-    </Link>
+    </ElementInView>
   );
 }
 
 type ShowcaseItemProps = UseQueryModelReturn[number];
+
+function ShowcaseItemStats({
+  id,
+  rank,
+}: {
+  id: number;
+  rank: NonNullable<ShowcaseItemProps['rank']>;
+}) {
+  const inView = useElementInView();
+  return (
+    <Metrics
+      entityType="Model"
+      entityId={id}
+      initial={{
+        downloadCount: rank.downloadCount ?? 0,
+        collectedCount: rank.collectedCount ?? 0,
+        commentCount: rank.commentCount ?? 0,
+      }}
+      useLive={inView === true}
+    >
+      {(m) => (
+        <Badge
+          variant="light"
+          color="gray"
+          radius="xl"
+          classNames={{ label: 'flex gap-2 flex-nowrap' }}
+        >
+          <Group gap={2}>
+            <IconDownload size={14} strokeWidth={2.5} />
+            <Text size="xs">
+              <AnimatedCount value={m.downloadCount} />
+            </Text>
+          </Group>
+          <Group gap={2}>
+            <IconBookmark size={14} strokeWidth={2.5} />
+            <Text size="xs">
+              <AnimatedCount value={m.collectedCount} />
+            </Text>
+          </Group>
+          <Group gap={2}>
+            <IconMessageCircle2 size={14} strokeWidth={2.5} />
+            <Text size="xs">
+              <AnimatedCount value={m.commentCount} />
+            </Text>
+          </Group>
+        </Badge>
+      )}
+    </Metrics>
+  );
+}

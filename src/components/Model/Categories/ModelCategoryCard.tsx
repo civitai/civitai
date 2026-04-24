@@ -55,7 +55,8 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
+import { AnimatedCount, Metrics } from '~/components/Metrics';
 import classes from './ModelCategoryCard.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -68,11 +69,7 @@ export function ModelCategoryCard(
     height: number;
   }
 ) {
-  return (
-    <MetricSubscriptionProvider entityType="Model" entityId={props.data.id}>
-      <ModelCategoryCardContent {...props} />
-    </MetricSubscriptionProvider>
-  );
+  return <ModelCategoryCardContent {...props} />;
 }
 
 function ModelCategoryCardContent({
@@ -89,15 +86,8 @@ function ModelCategoryCardContent({
 
   const [loading, setLoading] = useState(false);
 
-  const { id, images, name, rank, user, earlyAccessDeadline } = data;
+  const { id, images, name, user, earlyAccessDeadline } = data;
   const image = images[0];
-
-  // Live metrics for model stats
-  const liveMetrics = useLiveMetrics('Model', id, {
-    downloadCount: rank.downloadCount,
-    thumbsUpCount: rank.thumbsUpCount,
-    commentCount: rank.commentCount,
-  });
 
   const inEarlyAccess = earlyAccessDeadline && isFutureDate(earlyAccessDeadline);
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
@@ -146,37 +136,6 @@ function ModelCategoryCardContent({
     </>
   );
 
-  const modelDownloads = (
-    <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
-      <Text fz={12}>
-        <AnimatedCount value={liveMetrics.downloadCount} />
-      </Text>
-    </IconBadge>
-  );
-
-  const modelLikes = !!liveMetrics.thumbsUpCount && (
-    <IconBadge
-      className={classes.statBadge}
-      icon={
-        <Text c={hasReview ? 'success.5' : undefined} inline>
-          <ThumbsUpIcon size={14} filled={hasReview} />
-        </Text>
-      }
-      color={hasReview ? 'success.5' : 'gray'}
-    >
-      <Text size="xs">
-        <AnimatedCount value={liveMetrics.thumbsUpCount} />
-      </Text>
-    </IconBadge>
-  );
-
-  const modelComments = !!liveMetrics.commentCount && (
-    <IconBadge className={classes.statBadge} icon={<IconMessageCircle2 size={14} />}>
-      <Text size="xs">
-        <AnimatedCount value={liveMetrics.commentCount} />
-      </Text>
-    </IconBadge>
-  );
 
   const reportOption = {
     key: 'report-model',
@@ -298,7 +257,7 @@ function ModelCategoryCardContent({
   }, [modelId, data.id]);
 
   return (
-    <MasonryCard shadow="sm" {...props} className={classes.card}>
+    <ElementInView component={MasonryCard} shadow="sm" {...props} className={classes.card}>
       <Indicator
         disabled={!isNew && !isUpdated}
         size={24}
@@ -471,16 +430,72 @@ function ModelCategoryCardContent({
                 {modelText}
               </Group>
               <Group justify="space-between" gap={4}>
-                <Group gap={4} align="center">
-                  {modelLikes}
-                  {modelComments}
-                  {modelDownloads}
-                </Group>
+                <ModelCategoryCardStats data={data} hasReview={hasReview} />
               </Group>
             </Stack>
           </Stack>
         </Link>
       </Indicator>
-    </MasonryCard>
+    </ElementInView>
+  );
+}
+
+/**
+ * Gated live-metrics render for ModelCategoryCard stat badges. Lives inside
+ * the ElementInView subtree so it can read visibility context and pass
+ * `useLive` into Metrics. Only subscribes + renders live values when the card
+ * is visible.
+ */
+function ModelCategoryCardStats({
+  data,
+  hasReview,
+}: {
+  data: AssociatedResourceModelCardData;
+  hasReview: boolean;
+}) {
+  const inView = useElementInView();
+  return (
+    <Metrics
+      entityType="Model"
+      entityId={data.id}
+      initial={{
+        downloadCount: data.rank.downloadCount,
+        thumbsUpCount: data.rank.thumbsUpCount,
+        commentCount: data.rank.commentCount,
+      }}
+      useLive={inView !== false}
+    >
+      {(m) => (
+        <Group gap={4} align="center">
+          {!!m.thumbsUpCount && (
+            <IconBadge
+              className={classes.statBadge}
+              icon={
+                <Text c={hasReview ? 'success.5' : undefined} inline>
+                  <ThumbsUpIcon size={14} filled={hasReview} />
+                </Text>
+              }
+              color={hasReview ? 'success.5' : 'gray'}
+            >
+              <Text size="xs">
+                <AnimatedCount value={m.thumbsUpCount} />
+              </Text>
+            </IconBadge>
+          )}
+          {!!m.commentCount && (
+            <IconBadge className={classes.statBadge} icon={<IconMessageCircle2 size={14} />}>
+              <Text size="xs">
+                <AnimatedCount value={m.commentCount} />
+              </Text>
+            </IconBadge>
+          )}
+          <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
+            <Text fz={12}>
+              <AnimatedCount value={m.downloadCount} />
+            </Text>
+          </IconBadge>
+        </Group>
+      )}
+    </Metrics>
   );
 }

@@ -6,9 +6,14 @@ import { trpc } from '~/utils/trpc';
 import type {
   SignalConnectionState,
   SignalStatus,
+  SignalTopicStatus,
   SignalWorkerStatus,
   WorkerOutgoingMessage,
 } from './types';
+
+export type TopicStatusEvent = Omit<SignalTopicStatus, 'type'>;
+export type TopicStatusHandler = (event: TopicStatusEvent) => void;
+const TOPIC_STATUS_EVENT = '__topicStatus';
 import { Deferred, EventEmitter } from './utils';
 
 export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
@@ -72,7 +77,10 @@ export function useSignalsWorker(options?: {
       if (data.type === 'worker:ready') setReady(true);
       else if (data.type === 'event:received') emitterRef.current.emit(data.target, data.payload);
       else if (data.type === 'pong') deferredRef.current.resolve();
-      else if (data.type === 'debug:dump') {
+      else if (data.type === 'topic:status') {
+        const { type: _t, ...event } = data;
+        emitterRef.current.emit(TOPIC_STATUS_EVENT, event);
+      } else if (data.type === 'debug:dump') {
         if (pendingDumpResolve) {
           pendingDumpResolve(data.data);
           pendingDumpResolve = null;
@@ -145,12 +153,22 @@ export function useSignalsWorker(options?: {
       worker?.port.postMessage({ type: 'topic:unsubscribe', topic });
     }
 
+    function onTopicStatus(cb: TopicStatusHandler) {
+      emitterRef.current.on(TOPIC_STATUS_EVENT, cb as (data: unknown) => void);
+    }
+
+    function offTopicStatus(cb: TopicStatusHandler) {
+      emitterRef.current.off(TOPIC_STATUS_EVENT, cb as (data: unknown) => void);
+    }
+
     return {
       on,
       off,
       send,
       topicRegister,
       topicUnsubscribe,
+      onTopicStatus,
+      offTopicStatus,
     };
   }, [worker]);
 

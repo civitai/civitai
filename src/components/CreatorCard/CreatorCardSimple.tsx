@@ -19,6 +19,7 @@ import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { formatDate } from '~/utils/date-helpers';
 import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
+import type { UserStats } from '../UserStatBadges/UserStatBadges';
 import { UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
 import type {
   BadgeCosmetic,
@@ -29,15 +30,14 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
 import type { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
+import { Metrics } from '~/components/Metrics';
 import classes from './CreatorCard.module.css';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import type { UserCreator } from '~/server/services/user.service';
 
 export const CreatorCardSimple = memo((props: CreatorCardSimpleProps) => (
-  <MetricSubscriptionProvider entityType="User" entityId={props.user.id}>
-    <CreatorCardSimpleContent {...props} />
-  </MetricSubscriptionProvider>
+  <CreatorCardSimpleContent {...props} />
 ));
 CreatorCardSimple.displayName = 'CreatorCardSimple';
 
@@ -104,16 +104,6 @@ const CreatorCardSimpleContent = ({
   const badge = cosmetics.find(({ cosmetic }) => cosmetic?.type === CosmeticType.Badge)?.cosmetic;
   const stats = creator?.stats;
 
-  // Live metrics for user stats
-  const liveStats = useLiveMetrics('User', user.id, {
-    uploadCount: stats?.uploadCountAllTime ?? 0,
-    followerCount: stats?.followerCountAllTime ?? 0,
-    thumbsUpCount: stats?.thumbsUpCountAllTime ?? 0,
-    downloadCount: stats?.downloadCountAllTime ?? 0,
-    reactionCount: stats?.reactionCountAllTime ?? 0,
-    generationCount: stats?.generationCountAllTime ?? 0,
-  });
-
   const displayStats = data
     ? statDisplayOverwrite ??
       ((data.publicSettings ?? {}) as UserPublicSettingsSchema)?.creatorCardStatsPreferences ??
@@ -121,7 +111,7 @@ const CreatorCardSimpleContent = ({
     : // Avoid displaying stats until we load the data
       [];
   return (
-    <Card p="md" withBorder {...cardProps}>
+    <ElementInView component={Card} p="md" withBorder {...cardProps}>
       <Card.Section style={{ position: 'relative' }}>
         {backgroundImage && backgroundImage.data.url ? (
           <EdgeMedia2
@@ -173,17 +163,7 @@ const CreatorCardSimpleContent = ({
               <Group gap={4}>
                 <RankBadge size="md" rank={creator.rank} />
                 {stats && displayStats.length > 0 && (
-                  <UserStatBadgesV2
-                    uploads={displayStats.includes('uploads') ? liveStats.uploadCount : null}
-                    followers={displayStats.includes('followers') ? liveStats.followerCount : null}
-                    favorites={displayStats.includes('likes') ? liveStats.thumbsUpCount : null}
-                    downloads={displayStats.includes('downloads') ? liveStats.downloadCount : null}
-                    reactions={displayStats.includes('reactions') ? liveStats.reactionCount : null}
-                    generations={
-                      displayStats.includes('generations') ? liveStats.generationCount : null
-                    }
-                    colorOverrides={backgroundImage?.data}
-                  />
+                  <CreatorStatBadges userId={user.id} stats={stats} displayStats={displayStats} />
                 )}
               </Group>
             </Group>
@@ -264,7 +244,7 @@ const CreatorCardSimpleContent = ({
           </Group>
         </Card.Section>
       ) : null}
-    </Card>
+    </ElementInView>
   );
 };
 
@@ -276,3 +256,50 @@ export type CreatorCardSimpleProps = {
   statDisplayOverwrite?: string[];
   actions?: (creator: UserCreator) => React.ReactElement;
 } & Omit<CardProps, 'children'>;
+
+type CreatorStats = NonNullable<UserCreator['stats']>;
+
+/**
+ * Subscribes to live user metrics when the enclosing `ElementInView` reports
+ * visible; renders the passed-in stats unchanged when explicitly off-screen.
+ */
+function CreatorStatBadges({
+  userId,
+  stats,
+  displayStats,
+}: {
+  userId: number;
+  stats: CreatorStats;
+  displayStats: string[];
+}) {
+  const inView = useElementInView();
+  return (
+    <Metrics
+      entityType="User"
+      entityId={userId}
+      initial={{
+        uploadCount: stats.uploadCountAllTime ?? 0,
+        followerCount: stats.followerCountAllTime ?? 0,
+        thumbsUpCount: stats.thumbsUpCountAllTime ?? 0,
+        downloadCount: stats.downloadCountAllTime ?? 0,
+        reactionCount: stats.reactionCountAllTime ?? 0,
+        generationCount: stats.generationCountAllTime ?? 0,
+      }}
+      useLive={inView !== false}
+    >
+      {(m) => (
+        <UserStatBadgesV2
+          stats={{
+            uploads: m.uploadCount,
+            followers: m.followerCount,
+            likes: m.thumbsUpCount,
+            downloads: m.downloadCount,
+            reactions: m.reactionCount,
+            generations: m.generationCount,
+          }}
+          displayStats={displayStats}
+        />
+      )}
+    </Metrics>
+  );
+}

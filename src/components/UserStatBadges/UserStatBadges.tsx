@@ -195,58 +195,53 @@ const BadgedIcon = ({
   </Group>
 );
 
+export type UserStatKey =
+  | 'uploads'
+  | 'followers'
+  | 'likes'
+  | 'downloads'
+  | 'reactions'
+  | 'generations'
+  | 'answers';
+
+export type UserStats = Partial<Record<UserStatKey, number | null | undefined>>;
+
+type UserStatBadgeConfig = {
+  key: UserStatKey;
+  label: string;
+  icon: React.ReactElement;
+  /** Only render when the value is at least this. Defaults to 0 (all non-null values render). */
+  minValue?: number;
+};
+
+// Render order matches this array.
+const userStatBadges: ReadonlyArray<UserStatBadgeConfig> = [
+  { key: 'uploads', label: 'Uploads', icon: <IconUpload size={18} color="white" /> },
+  { key: 'reactions', label: 'Reactions', icon: <IconMoodSmile size={18} color="white" /> },
+  { key: 'followers', label: 'Followers', icon: <IconUsers size={18} color="white" /> },
+  { key: 'likes', label: 'Likes', icon: <ThumbsUpIcon size={18} color="white" /> },
+  { key: 'downloads', label: 'Downloads', icon: <IconDownload size={18} color="white" /> },
+  { key: 'generations', label: 'Generations', icon: <IconBrush size={18} color="white" /> },
+  { key: 'answers', label: 'Answers', icon: <IconChecks size={18} color="white" />, minValue: 1 },
+];
+
 export function UserStatBadgesV2({
-  followers,
-  favorites,
-  uploads,
-  downloads,
-  generations,
-  answers,
-  reactions,
-}: Props) {
+  stats,
+  displayStats,
+}: {
+  stats?: UserStats;
+  /** Restricts which stats are rendered. When omitted, all non-null entries in `stats` render. */
+  displayStats?: readonly string[];
+}) {
+  const displayFilter = displayStats ? new Set(displayStats) : null;
   return (
     <Group gap={4} wrap="nowrap">
-      {uploads != null ? (
-        <BadgedIcon icon={<IconUpload size={18} color="white" />} label="Uploads" value={uploads} />
-      ) : null}
-      {reactions != null ? (
-        <BadgedIcon
-          icon={<IconMoodSmile size={18} color="white" />}
-          label="Reactions"
-          value={reactions}
-        />
-      ) : null}
-      {followers != null ? (
-        <BadgedIcon
-          icon={<IconUsers size={18} color="white" />}
-          label="Followers"
-          value={followers}
-        />
-      ) : null}
-      {favorites != null ? (
-        <BadgedIcon
-          icon={<ThumbsUpIcon size={18} color="white" />}
-          label="Likes"
-          value={favorites}
-        />
-      ) : null}
-      {downloads != null ? (
-        <BadgedIcon
-          icon={<IconDownload size={18} color="white" />}
-          label="Downloads"
-          value={downloads}
-        />
-      ) : null}
-      {generations != null ? (
-        <BadgedIcon
-          icon={<IconBrush size={18} color="white" />}
-          label="Generations"
-          value={generations}
-        />
-      ) : null}
-      {answers != null && answers > 0 ? (
-        <BadgedIcon icon={<IconChecks size={18} color="white" />} label="Answers" value={answers} />
-      ) : null}
+      {userStatBadges.map(({ key, label, icon, minValue = 0 }) => {
+        if (displayFilter && !displayFilter.has(key)) return null;
+        const value = stats?.[key];
+        if (value == null || value < minValue) return null;
+        return <BadgedIcon key={key} icon={icon} label={label} value={value} />;
+      })}
     </Group>
   );
 }

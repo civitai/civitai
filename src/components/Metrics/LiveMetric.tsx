@@ -14,18 +14,22 @@ interface LiveMetricProps extends Omit<TextProps, 'children'> {
 
 /**
  * A component that displays a metric value with live updates applied.
- * Use within a MetricSubscriptionProvider for automatic topic subscription.
+ * Pair with `useMetricSubscription` in the enclosing card body so the value
+ * actually receives live updates.
  *
  * @example
  * ```tsx
- * <MetricSubscriptionProvider entityType="Model" entityId={data.id}>
- *   <LiveMetric
- *     entityType="Model"
- *     entityId={data.id}
- *     metricType="downloadCount"
- *     baseValue={data.rank?.downloadCount ?? 0}
- *   />
- * </MetricSubscriptionProvider>
+ * function ModelCardContent({ data }) {
+ *   useMetricSubscription('Model', data.id);
+ *   return (
+ *     <LiveMetric
+ *       entityType="Model"
+ *       entityId={data.id}
+ *       metricType="downloadCount"
+ *       baseValue={data.rank?.downloadCount ?? 0}
+ *     />
+ *   );
+ * }
  * ```
  */
 export function LiveMetric({
