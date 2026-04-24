@@ -137,8 +137,7 @@ model WildcardSetCategory {
   wildcardSetId   Int
   wildcardSet     WildcardSet          @relation(fields: [wildcardSetId], references: [id], onDelete: Cascade)
 
-  name            String               // e.g. "character" (normalized lowercase, matching filename)
-  displayName     String               // e.g. "Character" (original casing if different)
+  name            String               @db.Citext // e.g. "character" — case-insensitive via citext; matches `#category` token regardless of case
   valueCount      Int                  // denormalized count of WildcardSetValue rows in this category
   displayOrder    Int                  @default(0)
   createdAt       DateTime             @default(now())
@@ -152,7 +151,7 @@ model WildcardSetCategory {
 
 **Field notes:**
 
-- `name` is normalized lowercase and matches the `#category` token in prompts. Unique within a set.
+- `name` uses the PostgreSQL `citext` type — case-insensitive comparisons and unique constraint automatically. Stores the source filename's casing; the picker can display it as-is, and prompts match it regardless of how the user typed `#Character` vs `#character`. Removes the need for a separate `displayName` column.
 - `valueCount` is denormalized for autocomplete displays ("24 values"). Maintained by application code at import and when per-value audit updates.
 - Cascades from `WildcardSet` — deleting a set deletes its categories.
 
@@ -235,8 +234,8 @@ model PromptSnippet {
   userId              Int
   user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  category            String              // e.g. "character" — arbitrary, user-defined
-  name                String              // e.g. "Zelda"
+  category            String              @db.Citext // e.g. "character" — arbitrary, user-defined; citext gives case-insensitive matching and uniqueness
+  name                String              @db.Citext // e.g. "Zelda"
   value               String              @db.Text
   description         String?
 
@@ -263,8 +262,9 @@ enum SnippetAuditStatus {
 
 **Field notes:**
 
+- `category` and `name` both use `citext` — users typing "Character" or "character" get the same category, and "Zelda" vs "zelda" are treated as the same snippet within a category. Original casing is preserved for display.
 - `category` is a free-form string the user chooses at save time. Not a FK — there's no "Categories" table. Users coin their own taxonomy.
-- `(userId, category, name)` unique — a user can't have two snippets named "Zelda" in the category "character".
+- `(userId, category, name)` unique — a user can't have two snippets named "Zelda" in the category "character" (case-insensitive).
 - `NeedsRecheck` is set by the re-audit background job (§6.4) and treated as `Pending` for resolution purposes.
 
 ### 4.6 Metadata conventions (no schema change)
@@ -330,7 +330,7 @@ BEGIN
   ELSE:
     INSERT WildcardSet (modelVersionId, modelName, versionName, sourceFileCount, totalValueCount, auditStatus='Pending')
     FOR each .txt file:
-      INSERT WildcardSetCategory (wildcardSetId, name, displayName, valueCount, displayOrder)
+      INSERT WildcardSetCategory (wildcardSetId, name, valueCount, displayOrder)
       FOR each non-empty line:
         INSERT WildcardSetValue (categoryId, value, sourceLineIndex, auditStatus='Pending')
     INSERT UserWildcardSet (userId, wildcardSetId, isActive=true)
@@ -435,9 +435,11 @@ Educated guesses based on current Civitai scale; DB reviewer should sanity-check
 
 ## 8. Migration plan
 
-Single additive migration — no existing data needs to move.
+Single additive migration — no existing data needs to move. Requires the standard PostgreSQL `citext` extension for case-insensitive category/name columns.
 
 ```
+CREATE EXTENSION IF NOT EXISTS citext;
+
 CREATE TYPE "WildcardSetAuditStatus" AS ENUM ('Pending', 'Clean', 'Mixed', 'Dirty');
 CREATE TYPE "ValueAuditStatus" AS ENUM ('Pending', 'Clean', 'Dirty');
 CREATE TYPE "SnippetAuditStatus" AS ENUM ('Pending', 'Clean', 'Dirty', 'NeedsRecheck');
@@ -452,9 +454,9 @@ CREATE UNIQUE INDEX ... ;  -- per index table in §5
 CREATE INDEX ... ;
 ```
 
-No data backfill. No existing columns modified.
+No data backfill. No existing columns modified. `CREATE EXTENSION IF NOT EXISTS` is idempotent — if `citext` is already enabled on the cluster (common; it's a contrib extension), the statement is a no-op.
 
-**Rollback story:** drop the 5 tables + 3 enums. Existing generation, preset, and model flows are untouched by this migration (the metadata JSON conventions in §4.6 are additive and ignored by pre-feature code).
+**Rollback story:** drop the 5 tables + 3 enums. Leave the `citext` extension in place — other features may adopt it, and dropping it requires no dependencies to exist against it. Existing generation, preset, and model flows are untouched by this migration (the metadata JSON conventions in §4.6 are additive and ignored by pre-feature code).
 
 ---
 
