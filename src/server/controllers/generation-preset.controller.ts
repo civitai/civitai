@@ -9,6 +9,7 @@ import type {
 import {
   createGenerationPreset,
   deleteGenerationPreset,
+  getAvailablePresets,
   getPresetById,
   getPresetsForEcosystem,
   getUserPresets,
@@ -16,7 +17,7 @@ import {
   updateGenerationPreset,
 } from '~/server/services/generation-preset.service';
 
-type AuthedCtx = Context & { user: { id: number } };
+type AuthedCtx = Context & { user: { id: number; isModerator?: boolean | null } };
 
 export function getForEcosystemHandler({
   input,
@@ -30,6 +31,10 @@ export function getForEcosystemHandler({
 
 export function getOwnHandler({ ctx }: { ctx: AuthedCtx }) {
   return getUserPresets({ userId: ctx.user.id });
+}
+
+export function getAvailableHandler({ ctx }: { ctx: AuthedCtx }) {
+  return getAvailablePresets({ userId: ctx.user.id });
 }
 
 export function getByIdHandler({ input, ctx }: { input: GetByIdInput; ctx: AuthedCtx }) {
@@ -53,11 +58,19 @@ export function updateHandler({
   input: UpdateGenerationPresetInput;
   ctx: AuthedCtx;
 }) {
-  return updateGenerationPreset({ userId: ctx.user.id, input });
+  return updateGenerationPreset({
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+    input,
+  });
 }
 
 export function deleteHandler({ input, ctx }: { input: GetByIdInput; ctx: AuthedCtx }) {
-  return deleteGenerationPreset({ userId: ctx.user.id, id: input.id });
+  return deleteGenerationPreset({
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+    id: input.id,
+  });
 }
 
 export function reorderHandler({

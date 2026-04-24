@@ -1,4 +1,5 @@
 import { Prisma, type GenerationPreset } from '@prisma/client';
+import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type {
   CreateGenerationPresetInput,
@@ -17,6 +18,8 @@ import {
   getRootEcosystem,
 } from '~/shared/constants/basemodel.constants';
 import { RESOURCE_NODE_KEYS } from '~/shared/utils/resource.utils';
+
+const SYSTEM_USER_ID = constants.system.user.id;
 
 type PresetValues = Record<string, unknown>;
 
@@ -56,7 +59,8 @@ async function fetchResourceMeta(ids: number[]) {
 }
 
 /**
- * Return every preset owned by the user that can be applied in the current ecosystem.
+ * Return every preset visible to the user that can be applied in the current
+ * ecosystem. "Visible" = the user's own + curated system presets (userId = -1).
  *
  * Direct matches: preset.ecosystem === ecosystem.
  * Cross-compatible: preset.ecosystem !== ecosystem but either
@@ -72,8 +76,9 @@ export async function getPresetsForEcosystem({
   if (!ecosystemRecord) return [];
 
   const presets = await dbRead.generationPreset.findMany({
-    where: { userId },
-    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    where: { userId: { in: [userId, SYSTEM_USER_ID] } },
+    // userId = -1 sorts before any positive id, so system presets pin to top.
+    orderBy: [{ userId: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
   });
 
   const direct = presets.filter((p) => p.ecosystem === ecosystem);
@@ -111,6 +116,7 @@ export async function getPresetsForEcosystem({
   return [...direct, ...crossCompatible];
 }
 
+/** User's own presets only — used by the manage modal and the glow check. */
 export async function getUserPresets({ userId }: { userId: number }): Promise<GenerationPreset[]> {
   return dbRead.generationPreset.findMany({
     where: { userId },
@@ -118,10 +124,30 @@ export async function getUserPresets({ userId }: { userId: number }): Promise<Ge
   });
 }
 
+/**
+ * User's own presets + curated system presets. Used by the picker so users
+ * see both their personal saves and team-curated starting points.
+ *
+ * System presets sort first because `userId = -1` is less than any positive id.
+ */
+export async function getAvailablePresets({
+  userId,
+}: {
+  userId: number;
+}): Promise<GenerationPreset[]> {
+  return dbRead.generationPreset.findMany({
+    where: { userId: { in: [userId, SYSTEM_USER_ID] } },
+    orderBy: [{ userId: 'asc' }, { sortOrder: 'asc' }, { createdAt: 'asc' }],
+  });
+}
+
 export async function getPresetById({ id, userId }: { id: number; userId: number }) {
   const preset = await dbRead.generationPreset.findUnique({ where: { id } });
   if (!preset) throw throwNotFoundError('Preset not found');
-  if (preset.userId !== userId) throw throwAuthorizationError();
+  // Allow read if it's a curated system preset, or the caller owns it.
+  if (preset.userId !== SYSTEM_USER_ID && preset.userId !== userId) {
+    throw throwAuthorizationError();
+  }
   return preset;
 }
 
@@ -170,14 +196,20 @@ export async function createGenerationPreset({
 
 export async function updateGenerationPreset({
   userId,
+  isModerator,
   input,
 }: {
   userId: number;
+  isModerator: boolean;
   input: UpdateGenerationPresetInput;
 }) {
   const existing = await dbRead.generationPreset.findUnique({ where: { id: input.id } });
   if (!existing) throw throwNotFoundError('Preset not found');
-  if (existing.userId !== userId) throw throwAuthorizationError();
+  if (existing.userId === SYSTEM_USER_ID) {
+    if (!isModerator) throw throwAuthorizationError();
+  } else if (existing.userId !== userId) {
+    throw throwAuthorizationError();
+  }
 
   const data: Prisma.GenerationPresetUpdateInput = {};
   if (input.name !== undefined) data.name = input.name;
@@ -197,10 +229,22 @@ export async function updateGenerationPreset({
   }
 }
 
-export async function deleteGenerationPreset({ userId, id }: { userId: number; id: number }) {
+export async function deleteGenerationPreset({
+  userId,
+  isModerator,
+  id,
+}: {
+  userId: number;
+  isModerator: boolean;
+  id: number;
+}) {
   const existing = await dbRead.generationPreset.findUnique({ where: { id } });
   if (!existing) throw throwNotFoundError('Preset not found');
-  if (existing.userId !== userId) throw throwAuthorizationError();
+  if (existing.userId === SYSTEM_USER_ID) {
+    if (!isModerator) throw throwAuthorizationError();
+  } else if (existing.userId !== userId) {
+    throw throwAuthorizationError();
+  }
 
   await dbWrite.generationPreset.delete({ where: { id } });
   return { id };
