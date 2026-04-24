@@ -32,6 +32,13 @@ export function CivitaiSessionProvider({
   const { data: settings } = trpc.user.getSettings.useQuery();
   const settingsAllowAds = settings?.allowAds;
   const settingsDisableHidden = settings?.disableHidden;
+  // User-column toggles now ride the same React Query cache so
+  // `BrowserSettingsProvider`'s onSuccess can patch them in-place and avoid
+  // the stale-session race (where NextAuth session refresh lags behind the
+  // mutation and smart-merge flips the toggle back).
+  const settingsShowNsfw = settings?.showNsfw;
+  const settingsBlurNsfw = settings?.blurNsfw;
+  const settingsAutoplayGifs = settings?.autoplayGifs;
 
   const sessionUser = useMemo(() => {
     if (!user)
@@ -52,12 +59,14 @@ export function CivitaiSessionProvider({
       refresh: update,
       tier: user.tier ?? 'free',
       settings: {
-        showNsfw: user.showNsfw,
+        // Prefer the getSettings cache (patched instantly on mutation) over
+        // session.user (lagging behind until the JWT cookie is refreshed).
+        showNsfw: settingsShowNsfw ?? user.showNsfw,
         browsingLevel: isRestricted ? sfwBrowsingLevelsFlag : user.browsingLevel,
         disableHidden: settingsDisableHidden ?? disableHidden ?? true,
         allowAds: settingsAllowAds ?? !isMember ? true : false,
-        autoplayGifs: user.autoplayGifs ?? true,
-        blurNsfw: user.blurNsfw,
+        autoplayGifs: settingsAutoplayGifs ?? user.autoplayGifs ?? true,
+        blurNsfw: settingsBlurNsfw ?? user.blurNsfw,
       },
     };
     if (!allowMatureContent)
@@ -72,6 +81,9 @@ export function CivitaiSessionProvider({
     isRestricted,
     settingsAllowAds,
     settingsDisableHidden,
+    settingsShowNsfw,
+    settingsBlurNsfw,
+    settingsAutoplayGifs,
   ]);
 
   useEffect(() => {
