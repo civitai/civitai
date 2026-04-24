@@ -41,11 +41,10 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     (type === UploadType.TrainingImages || type === UploadType.TrainingImagesTemp) &&
     env.S3_UPLOAD_B2_ENDPOINT
   ) {
-    const useB2 =
-      isPreview || (await isFlipt(FLIPT_FEATURE_FLAGS.B2_TRAINING_UPLOAD, String(userId)));
-    if (useB2) {
-      backend = 'b2';
-    }
+    // Always route training data to B2. The b2-training-upload Flipt flag was used
+    // for gradual rollout and is now globally enabled. Removing the flag dependency
+    // prevents silent R2 fallback when Flipt initialization fails.
+    backend = 'b2';
   }
 
   const key = `${type ?? UploadType.Default}/${userId}/${filename}.${generateToken(4)}${ext}`;
