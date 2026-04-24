@@ -272,23 +272,22 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Grok'] as const, graph: grokGraph },
     { values: ['Seedance'] as const, graph: seedanceGraph },
   ])
-  // Enhanced compatibility mode - only for supported ecosystems, hidden for Flux Ultra
+  // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(
     'enhancedCompatibility',
     (ctx) => {
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       return {
         ...enhancedCompatibilityNode(),
-        when: supportsEnhancedCompatibility(ctx.ecosystem, modelId),
+        when: ctx.workflow === 'txt2img' && supportsEnhancedCompatibility(ctx.ecosystem, modelId),
       };
     },
-    ['ecosystem', 'model']
+    ['workflow', 'ecosystem', 'model']
   )
   // Quantity node - image output only.
   // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
-  // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag.
-  // Ecosystems without an `enhancedCompatibility` node get BOGO unconditionally
-  // (ctx.enhancedCompatibility is undefined, which satisfies `!== true`).
+  // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag and
+  // limited to txt2img (matches the `enhancedCompatibility` toggle's visibility).
   .node(
     'quantity',
     (ctx, ext) => {
@@ -296,6 +295,7 @@ export const ecosystemGraph = new DataGraph<
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       const bogoActive =
         !!ext.flags?.enhancedCompatibilitySdcpp &&
+        ctx.workflow === 'txt2img' &&
         supportsSdcpp(ctx.ecosystem, modelId) &&
         ctx.enhancedCompatibility !== true;
       const step = isDraft ? 4 : bogoActive ? 2 : 1;
