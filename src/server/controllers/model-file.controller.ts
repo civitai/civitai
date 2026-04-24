@@ -14,6 +14,7 @@ import {
 } from '~/server/services/model-file.service';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { parseB2Url } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 
 // Wraps registerFileLocation so a resolver outage or misconfig becomes a
@@ -41,10 +42,13 @@ async function safeRegisterFileLocation(params: {
       sizeKb,
     });
   } catch (err) {
+    // `...safeError(err)` spreads a `name: 'Error'` (JS Error.name), so it
+    // must come BEFORE our `name` literal or the event is hidden under a
+    // generic name in Axiom.
     logToAxiom({
       type: 'error',
-      name: 'register-file-location-failed',
       ...safeError(err),
+      name: 'register-file-location-failed',
       op,
       fileId,
       modelVersionId,
@@ -55,6 +59,24 @@ async function safeRegisterFileLocation(params: {
       sizeKb,
     }).catch(handleLogError);
   }
+}
+
+/**
+ * Derive the s3 path for a B2 registration. Prefers the explicit `s3Path`
+ * from the client payload, falls back to parsing the committed URL. The
+ * fallback covers users running stale client bundles that don't yet send
+ * `s3Path` on the tRPC upsert — training pages live for hours during a run,
+ * so a frontend deploy can take a long time to reach every open tab.
+ */
+function resolveB2Path(args: {
+  backend: string | undefined;
+  s3Path: string | undefined;
+  url: string | undefined | null;
+}): string | null {
+  if (args.backend !== 'b2') return null;
+  if (args.s3Path) return args.s3Path;
+  if (!args.url) return null;
+  return parseB2Url(args.url)?.key ?? null;
 }
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
@@ -97,14 +119,15 @@ export const createFileHandler = async ({
 
     // Register with storage-resolver for B2 uploads so downloads work.
     // Awaited so the location is registered before scan-files can trigger.
-    if (backend === 'b2' && s3Path) {
+    const resolvedPath = resolveB2Path({ backend, s3Path, url: createInput.url });
+    if (resolvedPath) {
       await safeRegisterFileLocation({
         op: 'create',
         userId: ctx.user.id,
         fileId: file.id,
         modelVersionId: file.modelVersion.id,
         modelId: file.modelVersion.modelId,
-        s3Path,
+        s3Path: resolvedPath,
         sizeKb: input.sizeKB,
       });
     }
@@ -138,14 +161,15 @@ export const updateFileHandler = async ({
 
     // Re-register with storage-resolver when the file was re-uploaded to B2
     // (e.g. training data re-uploads), so downloads resolve to the new path.
-    if (backend === 'b2' && s3Path) {
+    const resolvedPath = resolveB2Path({ backend, s3Path, url: updateInput.url });
+    if (resolvedPath) {
       await safeRegisterFileLocation({
         op: 'update',
         userId: ctx.user.id,
         fileId: result.id,
         modelVersionId: result.modelVersionId,
         modelId: result.modelVersion.modelId,
-        s3Path,
+        s3Path: resolvedPath,
         sizeKb: updateInput.sizeKB ?? result.sizeKB ?? 0,
       });
     }

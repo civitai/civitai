@@ -335,10 +335,12 @@ export const getFileForModelVersion = async ({
     // Both storage-resolver and delivery-worker fallback rejected this file —
     // usually an un-registered `file_locations` row on a bucket the
     // delivery-worker doesn't know. Log so the leak is visible in production.
+    // safeError includes `name: 'Error'` which must be spread BEFORE our
+    // literal `name` or the event name gets overwritten.
     logToAxiom({
       type: 'error',
-      name: 'resolve-download-url-failed',
       ...safeError(err),
+      name: 'resolve-download-url-failed',
       fileId: file.id,
       modelId: modelVersion.model.id,
       modelVersionId,

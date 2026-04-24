@@ -34,38 +34,10 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
+import { parseB2Url } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 
 const log = createLogger('backfill-b2-file-locations', 'cyan');
-
-// Parse a B2 URL structurally — avoids depending on `env.S3_UPLOAD_B2_ENDPOINT`
-// being set in whichever pod runs this admin endpoint (the helpers in s3-utils
-// silently return false/empty if that env is missing or shaped differently).
-// Handles both B2 URL styles:
-//   Path-style:         https://s3.<region>.backblazeb2.com/<bucket>/<key>
-//   Virtual-host style: https://<bucket>.s3.<region>.backblazeb2.com/<key>
-function parseB2Url(rawUrl: string): { bucket: string; key: string } | null {
-  let url: URL;
-  try {
-    url = new URL(rawUrl);
-  } catch {
-    return null;
-  }
-  if (!url.hostname.endsWith('.backblazeb2.com')) return null;
-
-  if (url.hostname.startsWith('s3.')) {
-    const parts = url.pathname.split('/').filter(Boolean);
-    if (parts.length < 2) return null;
-    return { bucket: parts[0], key: parts.slice(1).join('/') };
-  }
-
-  const dotIdx = url.hostname.indexOf('.');
-  if (dotIdx <= 0) return null;
-  const bucket = url.hostname.slice(0, dotIdx);
-  const key = url.pathname.replace(/^\/+/, '');
-  if (!key) return null;
-  return { bucket, key };
-}
 
 const querySchema = z.object({
   dryRun: booleanString().default(true),
