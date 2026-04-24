@@ -41,7 +41,7 @@ export function filterPresetValues(
   return out;
 }
 
-type ActivePreset = { id: number; name: string; values: PresetValues };
+type ActivePreset = { id: number; name: string; userId: number; values: PresetValues };
 
 /**
  * Bridge that exposes graph state from inside `GenerationFormProvider` to
@@ -56,6 +56,7 @@ type GraphBridge = {
 type State = {
   activePresetId: number | null;
   activePresetName: string | null;
+  activePresetUserId: number | null;
   activePresetValues: PresetValues | null;
   bridge: GraphBridge;
   loadPreset: (preset: ActivePreset) => void;
@@ -71,16 +72,23 @@ const EMPTY_BRIDGE: GraphBridge = { ecosystem: null, getFilteredSnapshot: null }
 export const useGenerationPresetStore = create<State>((set) => ({
   activePresetId: null,
   activePresetName: null,
+  activePresetUserId: null,
   activePresetValues: null,
   bridge: EMPTY_BRIDGE,
   loadPreset: (preset) =>
     set({
       activePresetId: preset.id,
       activePresetName: preset.name,
+      activePresetUserId: preset.userId,
       activePresetValues: preset.values,
     }),
   closePreset: () =>
-    set({ activePresetId: null, activePresetName: null, activePresetValues: null }),
+    set({
+      activePresetId: null,
+      activePresetName: null,
+      activePresetUserId: null,
+      activePresetValues: null,
+    }),
   markClean: (values, nextName) =>
     set((state) => ({
       activePresetValues: values,

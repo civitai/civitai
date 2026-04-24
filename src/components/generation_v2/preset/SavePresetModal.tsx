@@ -25,6 +25,7 @@ export function SavePresetModal() {
       useGenerationPresetStore.getState().loadPreset({
         id: preset.id,
         name: preset.name,
+        userId: preset.userId,
         values: preset.values as PresetValues,
       });
       dialog.onClose();

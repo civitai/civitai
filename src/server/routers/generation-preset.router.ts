@@ -1,6 +1,7 @@
 import {
   createHandler,
   deleteHandler,
+  getAvailableHandler,
   getByIdHandler,
   getForEcosystemHandler,
   getOwnHandler,
@@ -21,6 +22,7 @@ export const generationPresetRouter = router({
     .input(getPresetsForEcosystemInputSchema)
     .query(getForEcosystemHandler),
   getOwn: protectedProcedure.query(getOwnHandler),
+  getAvailable: protectedProcedure.query(getAvailableHandler),
   getById: protectedProcedure.input(getByIdSchema).query(getByIdHandler),
   create: protectedProcedure.input(createGenerationPresetInputSchema).mutation(createHandler),
   update: protectedProcedure.input(updateGenerationPresetInputSchema).mutation(updateHandler),
