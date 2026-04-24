@@ -916,6 +916,8 @@ export const REDIS_KEYS = {
   },
   HOMEBLOCKS: {
     BASE: 'packed:home-blocks',
+    FEATURED_COLLECTIONS_STATE: 'home-blocks:featured-collections:state',
+    FEATURED_COLLECTIONS_LAST_PICKED: 'home-blocks:featured-collections:last-picked',
   },
   CACHE_LOCKS: 'cache-lock',
   BUZZ: {

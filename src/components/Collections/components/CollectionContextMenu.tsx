@@ -1,7 +1,14 @@
 import type { MenuProps } from '@mantine/core';
 import { Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { IconEdit, IconHome, IconPencil, IconTrash } from '@tabler/icons-react';
+import {
+  IconEdit,
+  IconHome,
+  IconPencil,
+  IconStar,
+  IconStarOff,
+  IconTrash,
+} from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
@@ -115,6 +122,45 @@ export function CollectionContextMenu({
     }
   };
 
+  const { data: featuredPool } = trpc.homeBlock.getFeaturedCollectionsPool.useQuery(undefined, {
+    enabled: isMod,
+    trpc: { context: { skipBatch: true } },
+  });
+  const isFeatured = featuredPool?.collections.some((c) => c.id === collectionId) ?? false;
+
+  const addToFeatured = trpc.homeBlock.addCollectionToFeaturedPool.useMutation({
+    async onSuccess() {
+      showSuccessNotification({
+        title: 'Featured on homepage',
+        message: 'Collection added to homepage featured pool',
+      });
+      await queryUtils.homeBlock.getFeaturedCollectionsPool.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Failed to feature', error: new Error(error.message) });
+    },
+  });
+  const removeFromFeatured = trpc.homeBlock.removeCollectionFromFeaturedPool.useMutation({
+    async onSuccess() {
+      showSuccessNotification({
+        title: 'Removed from homepage',
+        message: 'Collection removed from homepage featured pool',
+      });
+      await queryUtils.homeBlock.getFeaturedCollectionsPool.invalidate();
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to remove',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const onToggleHomepageFeature = () => {
+    if (isFeatured) removeFromFeatured.mutate({ collectionId });
+    else addToFeatured.mutate({ collectionId });
+  };
+
   const isBookmarkCollection = mode === CollectionMode.Bookmark;
 
   return (
@@ -177,6 +223,24 @@ export function CollectionContextMenu({
             }}
           >
             {collectionHomeBlock ? 'Remove from my home' : 'Add to my home'}
+          </Menu.Item>
+        )}
+        {isMod && !isBookmarkCollection && (
+          <Menu.Item
+            leftSection={
+              isFeatured ? (
+                <IconStarOff size={14} stroke={1.5} />
+              ) : (
+                <IconStar size={14} stroke={1.5} />
+              )
+            }
+            onClick={(e: React.MouseEvent) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggleHomepageFeature();
+            }}
+          >
+            {isFeatured ? 'Remove from homepage featured' : 'Feature on homepage'}
           </Menu.Item>
         )}
         {!isBookmarkCollection && permissions?.manage && (
