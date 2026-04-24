@@ -135,7 +135,12 @@ export function LoginContent(args: {
               size="md"
               provider={provider.id as BuiltInProviderType}
               onClick={() => {
-                handleSignIn(provider.id, returnUrl);
+                handleSignIn(provider.id, returnUrl, {
+                  // When adding a second account, ask the provider to show its
+                  // account chooser so users can pick a different identity on
+                  // the same provider (e.g. a second Google account).
+                  forceAccountSelection: reason === 'switch-accounts',
+                });
               }}
             />
           ))}
