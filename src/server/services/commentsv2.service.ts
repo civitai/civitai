@@ -10,7 +10,7 @@ import type {
   GetCommentsInfiniteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { constants } from '~/server/common/constants';
+import type { NsfwLevel } from '~/server/common/enums';
 import { ThreadSort } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -285,7 +285,7 @@ async function fetchCommentsPaginated({
         id: number;
         name: string;
         url: string;
-        nsfw: boolean;
+        nsfwLevel: NsfwLevel;
         width: number;
         height: number;
         hash: string;
@@ -329,7 +329,7 @@ async function fetchCommentsPaginated({
             'id', pp.id,
             'name', pp.name,
             'url', pp.url,
-            'nsfw', pp.nsfw,
+            'nsfwLevel', pp."nsfwLevel",
             'width', pp.width,
             'height', pp.height,
             'hash', pp.hash,
