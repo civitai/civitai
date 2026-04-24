@@ -9,7 +9,6 @@ import type { TagType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus, NewOrderRankType, TagSource } from '~/shared/utils/prisma/enums';
 import {
   BlockedReason,
-  ImageConnectionType,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
@@ -37,13 +36,14 @@ import { createImageTagsForReview } from '~/server/services/image-review.service
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
-import { updatePostNsfwLevel } from '~/server/services/post.service';
+import { bustCachesForPosts, updatePostNsfwLevel } from '~/server/services/post.service';
 import { updateComicNsfwLevelsForImage } from '~/server/services/nsfwLevels.service';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
-import { debounceArticleUpdate } from '~/server/utils/webhook-debounce';
+import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
+import { logToAxiom } from '~/server/logging/client';
 
 export async function isExemptFromAiVerification(
   imageId: number,
@@ -161,6 +161,7 @@ export async function processImageScanWorkflow({
         )
       WHERE id = ${imageId}
     `;
+    if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
 
@@ -183,8 +184,7 @@ export async function processImageScanWorkflow({
     throw new Error(`invalid media rating for workflow: ${workflowId}`);
 
   const { tags: wdTags } = wdTagging!;
-  const { nsfwLevel } = mediaRating!;
-  let { isBlocked, blockedReason } = mediaRating!;
+  const { isBlocked, nsfwLevel, blockedReason } = mediaRating!;
   const { hashes } = mediaHash ?? {};
 
   let pHash: bigint | undefined;
@@ -194,8 +194,21 @@ export async function processImageScanWorkflow({
   }
 
   if (!isBlocked && pHash) {
-    isBlocked = await getIsImageBlocked(pHash);
-    if (isBlocked) blockedReason = 'Similar to blocked content';
+    const pHashBlocked = await getIsImageBlocked(pHash);
+    if (pHashBlocked) {
+      // blockedReason = 'Similar to blocked content';
+      logToAxiom(
+        {
+          name: 'image-phash-match',
+          type: 'info',
+          message: 'Image pHash matched a blocked image',
+          imageId,
+          pHash: pHash.toString(),
+          source: 'image-scan-result.service',
+        },
+        'webhooks'
+      ).catch(() => null);
+    }
   }
   if (isBlocked) {
     await dbWrite.image.updateMany({
@@ -316,12 +329,20 @@ export async function processImageScanWorkflow({
     WHERE id = ${image.id}
   `;
 
+  // Fan out to articles for every terminal state (Scanned and Blocked).
+  // Article ingestion must advance on Blocked too, otherwise articles whose last
+  // image blocks stay stuck in Pending/Rescan.
+  if (articleImageScanning) await fanOutArticleImageUpdates(image.id);
+
   // handle blocked image updates
   if (toUpdate.ingestion === ImageIngestionStatus.Blocked) {
     await queueImageSearchIndexUpdate({
       ids: [image.id],
       action: SearchIndexUpdateQueueAction.Delete,
     });
+    // A previously-cached Blocked image can still satisfy the showcase query
+    // filters (needsReview IS NULL, nsfwLevel != 0) so drop it from the showcase.
+    if (image.postId) await bustCachesForPosts(image.postId);
   }
   // handle scanned image updates
   else if (toUpdate.ingestion === ImageIngestionStatus.Scanned) {
@@ -333,21 +354,12 @@ export async function processImageScanWorkflow({
       await deleteUserProfilePictureCache(image.userId);
     }
 
-    if (image.postId) await updatePostNsfwLevel(image.postId);
-    await updateComicNsfwLevelsForImage(image.id);
-
-    if (articleImageScanning) {
-      const articleConnections = await dbWrite.imageConnection.findMany({
-        where: { imageId: image.id, entityType: ImageConnectionType.Article },
-        select: { entityId: true },
-      });
-
-      if (articleConnections.length > 0) {
-        for (const { entityId } of articleConnections) {
-          await debounceArticleUpdate(entityId);
-        }
-      }
+    if (image.postId) {
+      await updatePostNsfwLevel(image.postId);
+      // Without this, the showcase cache stays empty until its 24h TTL for any model version whose images hadn't scanned yet on first read.
+      await bustCachesForPosts(image.postId);
     }
+    await updateComicNsfwLevelsForImage(image.id);
 
     await queueImageSearchIndexUpdate({
       ids: [image.id],

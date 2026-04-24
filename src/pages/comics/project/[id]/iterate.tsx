@@ -22,7 +22,7 @@ import type {
 } from '~/components/IterativeEditor/iterative-editor.types';
 import { Page } from '~/components/AppLayout/Page';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -240,7 +240,7 @@ function ComicIteratePage() {
   const isNsfwBlocked =
     isGreen &&
     sourcePanel?.image &&
-    !hasPublicBrowsingLevel(sourcePanel.image.nsfwLevel);
+    !hasSafeBrowsingLevel(sourcePanel.image.nsfwLevel);
 
   if (!project) {
     return (

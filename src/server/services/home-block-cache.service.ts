@@ -13,6 +13,7 @@ const CACHE_EXPIRY = {
   [HomeBlockType.Event]: 60 * 3, // 3 min - doesn't actually do anything since this is from metadata
   [HomeBlockType.CosmeticShop]: 60 * 3, // 3 min
   [HomeBlockType.FeaturedModelVersion]: 60 * 60, // 1 hour
+  [HomeBlockType.FeaturedCollections]: 60 * 3, // 3 min — random pick rotates on refresh
 };
 
 type HomeBlockForCache = {
@@ -34,6 +35,8 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
       return homeBlock.metadata.cosmeticShopSection?.id;
     case HomeBlockType.FeaturedModelVersion:
       return 'default';
+    case HomeBlockType.FeaturedCollections:
+      return homeBlock.id;
   }
 }
 

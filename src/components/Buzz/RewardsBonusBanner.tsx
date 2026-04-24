@@ -10,13 +10,15 @@ export function RewardsBonusBanner() {
   const { multipliers, multipliersLoading } = useUserMultipliers();
 
   const bonus = multipliers.globalRewardsBonus;
+  const event = multipliers.rewardsBonusEvent;
 
   if (!currentUser || multipliersLoading || bonus <= 1) return null;
 
   // For 2x+, show as "2x" (people like the multiplier framing).
   // For fractional like 1.5x, show as "50% more" (reads bigger).
-  const bonusLabel =
-    bonus >= 2 ? `${formatMultiplier(bonus)}` : `${((bonus - 1) * 100).toFixed(0)}% MORE`;
+  const multiplierLabel =
+    bonus >= 2 ? `${formatMultiplier(bonus)} BUZZ` : `${((bonus - 1) * 100).toFixed(0)}% MORE BUZZ`;
+  const headline = event?.bannerLabel?.trim() || 'BONUS REWARDS ACTIVE';
 
   const handleClick = () => {
     dialogStore.trigger({
@@ -33,7 +35,7 @@ export function RewardsBonusBanner() {
       className="relative flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden border-0 px-4 py-1.5 text-sm font-semibold transition-opacity hover:opacity-90 motion-reduce:animate-none"
     >
       {/* Animated gradient background */}
-      <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-amber-700 via-amber-500 to-amber-700 bg-[length:200%_100%] motion-reduce:animate-none" />
+      <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-cyan-700 via-cyan-500 to-cyan-700 bg-[length:200%_100%] motion-reduce:animate-none" />
 
       {/* Shimmer overlay */}
       <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent bg-[length:200%_100%] motion-reduce:animate-none" />
@@ -42,9 +44,9 @@ export function RewardsBonusBanner() {
       <div className="relative flex items-center gap-2 text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.4)]">
         <IconSparkles size={16} />
         <IconBolt size={16} fill="currentColor" />
-        <span className="tracking-wide">BONUS REWARDS ACTIVE</span>
+        <span className="tracking-wide">{headline}</span>
         <span className="rounded-full bg-black/25 px-2.5 py-0.5 text-xs font-bold">
-          {bonusLabel} BUZZ
+          {multiplierLabel}
         </span>
         <IconBolt size={16} fill="currentColor" />
         <IconSparkles size={16} />

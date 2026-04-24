@@ -65,10 +65,12 @@ export function PostUpsertForm2({
   const is404 = !data && !isInitialLoading && !isCreatePage;
   const loading = isInitialLoading && !isCreatePage;
   const isUploading = uploading > 0;
-  const canPublish = !isUploading && !!modelVersion?.files?.length;
-  const confirmPublish = !canPublish;
-  const confirmMessage = confirmPublish
-    ? 'Files for this version are missing or still uploading. Your version will be saved as draft until all files are uploaded. We will notify you when it is ready to be published.'
+  const hasFiles = !!modelVersion?.files?.length;
+  const confirmPublish = isUploading || !hasFiles;
+  const confirmMessage = isUploading
+    ? 'Files are still uploading. Publishing now will make your model visible, but downloads will not work until uploads finish. Continue?'
+    : !hasFiles
+    ? "This model version doesn't have any files attached. Publishing now will make it visible on your profile, but users won't be able to download it until you upload files. Continue?"
     : undefined;
   const confirmTitle = (
     <div className="flex items-center gap-1">
@@ -91,17 +93,18 @@ export function PostUpsertForm2({
           modelVersion ? `${modelVersion.model.name} - ${modelVersion.name} Showcase` : undefined
         }
         afterPublish={({ publishedAt }) => {
-          // allow scheduled publishing even if files are not uploaded
-          if (canPublish || publishedAt > new Date()) {
-            if (modelVersion && modelVersion.model.status !== ModelStatus.Published) {
-              publishModelMutation.mutate({
-                id: modelId,
-                versionIds: [modelVersionId],
-                publishedAt,
-              });
-            } else {
-              publishVersionMutation.mutate({ id: modelVersionId, publishedAt });
-            }
+          // Always publish the model alongside the post — otherwise the post
+          // goes live while the model silently stays in Draft (orphaned state).
+          // If the user confirmed through the no-files warning, honor that choice.
+          if (!modelVersion) return;
+          if (modelVersion.model.status !== ModelStatus.Published) {
+            publishModelMutation.mutate({
+              id: modelId,
+              versionIds: [modelVersionId],
+              publishedAt,
+            });
+          } else {
+            publishVersionMutation.mutate({ id: modelVersionId, publishedAt });
           }
         }}
       >

@@ -1,4 +1,4 @@
-import type { EnqueuedTask } from 'meilisearch';
+import type { EnqueuedTask, DocumentsQuery, ResourceResults } from 'meilisearch';
 import { MeiliSearch } from 'meilisearch';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
@@ -23,6 +23,34 @@ export const metricsSearchClient = shouldConnectToMetricsSearch
       apiKey: env.METRICS_SEARCH_API_KEY,
     })
   : null;
+
+/**
+ * Fetch documents via a raw HTTP call that honors an AbortSignal. The
+ * meilisearch-js client we're on (<=0.34) doesn't expose signal on
+ * getDocuments, so we hit the /documents/fetch endpoint directly when a
+ * cancellable request is needed (e.g. the image feed's slow-fetch path).
+ */
+export async function fetchDocumentsAbortable<T>(
+  indexName: string,
+  params: DocumentsQuery<T>,
+  options: { host: string; apiKey?: string; signal?: AbortSignal }
+): Promise<ResourceResults<T[]>> {
+  const { host, apiKey, signal } = options;
+  const res = await fetch(`${host}/indexes/${indexName}/documents/fetch`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+    },
+    body: JSON.stringify(params),
+    signal,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`Meilisearch fetch failed (${res.status}): ${text}`);
+  }
+  return (await res.json()) as ResourceResults<T[]>;
+}
 
 const RETRY_LIMIT = 5;
 export async function updateDocs({

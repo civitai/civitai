@@ -6,10 +6,11 @@ import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { pickBestTrainingFile, type TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
+  LinkedComponentSettings,
   ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
   ModelVersionMeta,
@@ -64,7 +65,7 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
-import { dbRead } from '../db/client';
+import { dbRead, dbWrite } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
@@ -110,7 +111,6 @@ export const getModelVersionHandler = async ({
         clipSkip: true,
         status: true,
         createdAt: true,
-        vaeId: true,
         trainingDetails: true,
         trainingStatus: true,
         uploadType: true,
@@ -167,12 +167,67 @@ export const getModelVersionHandler = async ({
       },
     });
 
-    const recommendedResourceIds = version?.recommendedResources.map((x) => x.resource.id) ?? [];
-    const generationResources = await getResourceData(recommendedResourceIds, ctx?.user).then(
+    // Separate linked components from regular recommended resources
+    const isLinkedComponent = (settings: unknown): settings is LinkedComponentSettings =>
+      (settings as LinkedComponentSettings)?.isLinkedComponent === true;
+
+    const allResources = version?.recommendedResources ?? [];
+    const linkedComponentResources = allResources.filter((r) => isLinkedComponent(r.settings));
+    const regularResources = allResources.filter((r) => !isLinkedComponent(r.settings));
+
+    // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
+    const linkedFileIds = [
+      ...new Set(
+        linkedComponentResources.map((r) => (r.settings as LinkedComponentSettings).fileId)
+      ),
+    ].filter(Boolean);
+    const linkedFileDataMap = new Map<
+      number,
+      { name: string; sizeKB: number; type: string; metadata: Record<string, unknown> | null }
+    >();
+    if (linkedFileIds.length > 0) {
+      const fileData = await dbRead.modelFile.findMany({
+        where: { id: { in: linkedFileIds } },
+        select: { id: true, name: true, sizeKB: true, type: true, metadata: true },
+      });
+      for (const f of fileData)
+        linkedFileDataMap.set(f.id, {
+          name: f.name,
+          sizeKB: f.sizeKB,
+          type: f.type,
+          metadata: f.metadata as Record<string, unknown> | null,
+        });
+    }
+
+    const linkedComponents = linkedComponentResources.map((r) => {
+      const s = r.settings as LinkedComponentSettings;
+      const fileData = linkedFileDataMap.get(s.fileId);
+      return {
+        recommendedResourceId: r.id,
+        componentType: s.componentType,
+        modelId: s.modelId,
+        modelName: s.modelName,
+        versionId: r.resource?.id ?? 0,
+        versionName: s.versionName,
+        fileId: s.fileId,
+        fileName: fileData?.name ?? s.fileName,
+        sizeKB: fileData?.sizeKB,
+        fileType: fileData?.type,
+        fileMetadata: fileData?.metadata as
+          | { format?: string | null; size?: string | null; fp?: string | null }
+          | undefined,
+        isRequired: s.isRequired,
+      };
+    });
+
+    const recommendedResourceIds = regularResources.map((x) => x.resource.id);
+    const generationResources = await getResourceData(recommendedResourceIds, {
+      user: ctx?.user,
+    }).then(
       (data) =>
         data.map((item) => {
-          const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
-            ?.settings ?? {}) as RecommendedSettingsSchema;
+          const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
+            {}) as RecommendedSettingsSchema;
           return { ...item, ...removeNulls(settings) };
         })
     );
@@ -197,6 +252,7 @@ export const getModelVersionHandler = async ({
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
       recommendedResources: generationResources,
+      linkedComponents,
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;
@@ -357,7 +413,7 @@ export const upsertModelVersionHandler = async ({
       }
     }
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return version;
   } catch (error) {
@@ -376,7 +432,7 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
       console.error(e);
     });
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return version;
   } catch (error) {
@@ -457,7 +513,7 @@ export const publishModelVersionHandler = async ({
       });
     }
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return updatedVersion;
   } catch (error) {
@@ -489,7 +545,7 @@ export const unpublishModelVersionHandler = async ({
       nsfw: updatedVersion.model.nsfw,
     });
 
-    await dataForModelsCache.bust(version.modelId);
+    await dataForModelsCache.refresh(version.modelId);
 
     return updatedVersion;
   } catch (error) {
@@ -754,7 +810,7 @@ export async function queryModelVersionsForModeratorHandler({
 
   const workflowIds: string[] = [];
   const mappedItems = items.map(({ files, meta, ...version }) => {
-    const trainingFile = files[0];
+  const trainingFile = pickBestTrainingFile(files);
     const trainingResults = (trainingFile?.metadata as FileMetadata)
       ?.trainingResults as TrainingResultsV2;
 
@@ -804,16 +860,23 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
     select: {
       model: { select: { id: true, user: { select: userWithCosmeticsSelect } } },
       files: {
-        select: { metadata: true },
+        select: { id: true, metadata: true },
         where: { type: 'Training Data' },
       },
     },
   });
   if (!version) throw throwNotFoundError();
 
-  const trainingFile = version.files[0];
-  const trainingResults = (trainingFile?.metadata as FileMetadata)
-    ?.trainingResults as TrainingResultsV2;
+  const trainingFile = pickBestTrainingFile(version.files);
+  // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
+  const fresh = trainingFile
+    ? await dbWrite.modelFile.findUnique({
+        where: { id: trainingFile.id },
+        select: { metadata: true },
+      })
+    : null;
+  const metadata = (fresh?.metadata ?? trainingFile?.metadata) as FileMetadata | undefined;
+  const trainingResults = (metadata?.trainingResults ?? {}) as TrainingResultsV2;
 
   return {
     modelId: version.model.id,
@@ -886,6 +949,7 @@ export async function publishPrivateModelVersionHandler({
       model: { select: { id: true, publishedAt: true, availability: true, userId: true } },
       files: {
         select: {
+          id: true,
           metadata: true,
         },
       },
@@ -908,7 +972,15 @@ export async function publishPrivateModelVersionHandler({
     throw throwBadRequestError('Model is not private');
   }
 
-  const selectedEpochUrl = version.files.some(
+  // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
+  const fileIds = version.files.map((f) => f.id);
+  const freshFiles = fileIds.length
+    ? await dbWrite.modelFile.findMany({
+        where: { id: { in: fileIds } },
+        select: { id: true, metadata: true },
+      })
+    : [];
+  const selectedEpochUrl = freshFiles.some(
     (f) => (f?.metadata as FileMetadata)?.selectedEpochUrl
   );
 
@@ -932,7 +1004,7 @@ export async function publishPrivateModelVersionHandler({
     },
   });
 
-  await dataForModelsCache.bust(version.model.id);
+  await dataForModelsCache.refresh(version.model.id);
 
   return modelVersion;
 }

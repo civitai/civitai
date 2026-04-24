@@ -58,6 +58,12 @@ export const constants = {
     'VAE',
     'Config',
     'Archive',
+    'UNet',
+    'Diffusion Model',
+    'CLIPVision',
+    'ControlNet',
+    'Workflow',
+    'Upscaler',
   ],
   trainingMediaTypes: ['image', 'video'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
@@ -65,6 +71,46 @@ export const constants = {
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
   modelFileFp: ['fp16', 'fp8', 'nf4', 'fp32', 'bf16'],
+  modelFileQuantTypes: [
+    'Q8_0',
+    'Q6_K',
+    'Q5_K_M',
+    'Q5_K_S',
+    'Q5_1',
+    'Q5_0',
+    'Q4_K_M',
+    'Q4_K_S',
+    'Q4_1',
+    'Q4_0',
+    'Q3_K_L',
+    'Q3_K_M',
+    'Q3_K_S',
+    'Q2_K',
+    'Q2_K_S',
+    'IQ4_XS',
+    'IQ4_NL',
+    'IQ3_XS',
+    'IQ3_XXS',
+    'IQ2_XS',
+    'IQ2_XXS',
+    'IQ2_S',
+    'IQ2_M',
+    'IQ1_S',
+    'IQ1_M',
+  ],
+  modelFileComponentTypes: [
+    'Checkpoint',
+    'VAE',
+    'TextEncoder',
+    'UNet',
+    'DiffusionModel',
+    'CLIPVision',
+    'ControlNet',
+    'Upscaler',
+    'Workflow',
+    'Config',
+    'Other',
+  ],
   imageFormats: ['optimized', 'metadata'],
   tagFilterDefaults: {
     trendingTagsLimit: 20,
@@ -81,6 +127,12 @@ export const constants = {
     VAE: 5,
     Negative: 6,
     Archive: 7,
+    UNet: 8,
+    'Diffusion Model': 9,
+    CLIPVision: 10,
+    ControlNet: 11,
+    Workflow: 12,
+    Upscaler: 13,
   },
   cardSizes: {
     model: 320,
@@ -186,7 +238,37 @@ export const constants = {
   defaultCurrency: Currency.BUZZ,
   referrals: {
     referralCodeMinLength: 6,
-    referralCodeMaxCount: 3,
+    referralCodeMaxCount: 1,
+    cookieDurationDays: 30,
+    settlementWindowDays: 7,
+    tokenExpiryDays: 90,
+    minReferrerAccountAgeDays: 7,
+    maxPaidMonthsPerReferee: 3,
+    tokensPerTier: { bronze: 1, silver: 2, gold: 3 } as Record<string, number>,
+    // Referral Points drive both milestone progress and Recruiter Score.
+    // 1 point per Blue Buzz earned, plus a tier-weighted lump per paid
+    // referral month (≈10% of each tier's monthly Buzz value).
+    pointsPerTierMonth: { bronze: 1_000, silver: 2_500, gold: 5_000 } as Record<string, number>,
+    // Cap how far into the future a referral subscription can be queued. Prevents
+    // a hot referrer from queuing decades of perks (Stripe's date max is 2038).
+    maxQueuedDays: 365,
+    refereeBonusBuzzPct: 0.25,
+    buzzKickbackPct: 0.1,
+    shopItems: [
+      { cost: 1, tier: 'bronze', durationDays: 14 },
+      { cost: 2, tier: 'bronze', durationDays: 30 },
+      { cost: 3, tier: 'silver', durationDays: 14 },
+      { cost: 4, tier: 'silver', durationDays: 30 },
+      { cost: 5, tier: 'gold', durationDays: 14 },
+      { cost: 6, tier: 'gold', durationDays: 30 },
+    ] as ReadonlyArray<{ cost: number; tier: string; durationDays: number }>,
+    milestones: [
+      { threshold: 1_000, bonus: 500 },
+      { threshold: 10_000, bonus: 2_500 },
+      { threshold: 50_000, bonus: 15_000 },
+      { threshold: 200_000, bonus: 50_000 },
+      { threshold: 1_000_000, bonus: 250_000 },
+    ] as ReadonlyArray<{ threshold: number; bonus: number }>,
   },
   leaderboard: {
     legendScoring: {
@@ -367,6 +449,21 @@ export function isOrchestratorUrl(url: string) {
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
+
+export const modelFileQuantTypes = constants.modelFileQuantTypes;
+export const modelFileComponentTypes = constants.modelFileComponentTypes;
+
+/** ModelFileType values that represent component files (not main model weights) */
+export const componentFileTypes = [
+  'VAE',
+  'Text Encoder',
+  'UNet',
+  'Diffusion Model',
+  'CLIPVision',
+  'ControlNet',
+  'Upscaler',
+] as const;
+export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;

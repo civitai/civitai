@@ -102,7 +102,9 @@ src/pages/api/dev-local/*
 /.serena/
 
 docs/working/
+docs/incidents/
 .claude/*.local.*
+.claude/skills/cloudflare/.port-tmp-path
 local/
 .eslintcache
 nul
@@ -114,3 +116,10 @@ scripts/local-dev/
 tmpclaude-*-cwd
 .claude/skills/flipt/.env
 .claude/skills/freshdesk/.env
+
+# Ralph agent
+scripts/ralph/prd.json
+scripts/ralph/progress.txt
+
+# Claude temp files
+tmpclaude-*

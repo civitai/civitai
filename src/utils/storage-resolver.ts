@@ -1,4 +1,5 @@
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 
 export async function registerFileLocation(params: {
   fileId: number;
@@ -9,7 +10,14 @@ export async function registerFileLocation(params: {
   sizeKb: number;
 }) {
   if (!env.STORAGE_RESOLVER_INTERNAL_URL || !env.STORAGE_RESOLVER_INTERNAL_TOKEN) {
-    console.warn('Storage resolver internal URL/token not configured, skipping registration');
+    // Surface misconfig to Axiom — silently skipping here breaks downloads
+    // just as surely as a thrown error, and callers' catch blocks never fire.
+    logToAxiom({
+      type: 'warning',
+      name: 'register-file-location-skipped',
+      reason: 'storage-resolver-not-configured',
+      ...params,
+    }).catch(() => undefined);
     return;
   }
 

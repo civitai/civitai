@@ -1,15 +1,13 @@
 import type { GroupProps } from '@mantine/core';
 import { Box, Group, List, Popover, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import {
-  IconBrushOff,
+  IconBrush,
   IconCheck,
-  IconExchangeOff,
-  IconPhotoOff,
-  IconRotate2,
-  IconShoppingCartOff,
-  IconSpyOff,
-  IconUserCheck,
-  IconWorldOff,
+  IconCurrencyDollar,
+  IconGitMerge,
+  IconLicense,
+  IconRating18Plus,
+  IconUser,
   IconX,
 } from '@tabler/icons-react';
 import React from 'react';
@@ -18,8 +16,8 @@ import { CommercialUse } from '~/shared/utils/prisma/enums';
 
 export const PermissionIndicator = ({
   permissions,
-  size = 20,
-  gap = 2,
+  size = 24,
+  gap = 4,
   showNone = false,
   ...props
 }: Props) => {
@@ -44,34 +42,69 @@ export const PermissionIndicator = ({
     'Have different permissions when sharing merges': allowDifferentLicense,
     ...(isModerator && { 'Create NSFW generations': !sfwOnly }),
   };
-  const iconProps = { size, stroke: 1.5 };
-  const icons = [
-    isModerator && sfwOnly && { label: 'No mature content', icon: <IconSpyOff {...iconProps} /> },
-    !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
-    !canSellImages && {
-      label: 'No selling generated content',
-      icon: <IconPhotoOff {...iconProps} />,
+
+  const iconSize = Math.round(size / 2);
+  const badges: { label: string; icon: React.ReactNode; allowed: boolean; visible?: boolean }[] = [
+    {
+      label: canSellImages || canSell ? 'Commercial use allowed' : 'No commercial use',
+      icon: <IconCurrencyDollar size={iconSize} stroke={1.5} />,
+      allowed: canSellImages || canSell,
     },
-    !canRentCivit && { label: 'No Civitai generation', icon: <IconBrushOff {...iconProps} /> },
-    !canRent && { label: 'No generation services', icon: <IconWorldOff {...iconProps} /> },
-    !canSell && { label: 'No selling models', icon: <IconShoppingCartOff {...iconProps} /> },
-    !allowDerivatives && { label: 'No sharing merges', icon: <IconExchangeOff {...iconProps} /> },
-    !allowDifferentLicense && {
-      label: 'Same permissions required',
-      icon: <IconRotate2 {...iconProps} />,
+    {
+      label: canRentCivit || canRent ? 'Generation services allowed' : 'No generation services',
+      icon: <IconBrush size={iconSize} stroke={1.5} />,
+      allowed: canRentCivit || canRent,
     },
-  ].filter(Boolean) as { label: string; icon: React.ReactNode }[];
+    {
+      label: allowNoCredit ? 'No credit required' : 'Creator credit required',
+      icon: <IconUser size={iconSize} stroke={1.5} />,
+      allowed: allowNoCredit,
+    },
+    {
+      label: allowDerivatives ? 'Merges allowed' : 'No merges allowed',
+      icon: <IconGitMerge size={iconSize} stroke={1.5} />,
+      allowed: allowDerivatives,
+    },
+    {
+      label: allowDifferentLicense
+        ? 'Different permissions allowed on merges'
+        : 'Same permissions required on merges',
+      icon: <IconLicense size={iconSize} stroke={1.5} />,
+      allowed: allowDifferentLicense,
+    },
+    {
+      label: sfwOnly ? 'No NSFW generation' : 'NSFW generation allowed',
+      icon: <IconRating18Plus size={iconSize} stroke={1.5} />,
+      allowed: !sfwOnly,
+      visible: isModerator,
+    },
+  ];
 
   return (
     <Popover withArrow withinPortal>
       <Popover.Target>
         <Group gap={gap} style={{ cursor: 'pointer' }} wrap="nowrap" {...props}>
-          {icons.map(({ label, icon }, i) => (
-            <Tooltip key={i} label={label} withArrow withinPortal position="top">
-              <Box style={{ color: theme.colors.gray[5] }}>{icon}</Box>
-            </Tooltip>
-          ))}
-          {showNone && icons.length === 0 && (
+          {badges
+            .filter((b) => b.visible !== false)
+            .map(({ label, icon, allowed }, i) => (
+              <Tooltip key={i} label={label} withArrow withinPortal position="top">
+                <Box
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: size,
+                    height: size,
+                    borderRadius: theme.radius.sm,
+                    backgroundColor: allowed ? 'rgba(64, 192, 87, 0.2)' : 'rgba(250, 82, 82, 0.2)',
+                    color: allowed ? theme.colors.green[4] : theme.colors.red[4],
+                  }}
+                >
+                  {icon}
+                </Box>
+              </Tooltip>
+            ))}
+          {showNone && badges.filter((b) => b.visible !== false).every((b) => b.allowed) && (
             <Text fs="italic" size="xs">
               None
             </Text>

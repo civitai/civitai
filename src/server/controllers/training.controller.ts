@@ -64,6 +64,23 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
+    // TODO(replica-toast): overlay is a workaround — the data-packet logical subscriber drops
+    // TOASTed jsonb on UPDATE, leaving trainingResults empty. Remove once replication is fixed.
+    const fileIds = model.modelVersions.flatMap((v) => v.files.map((f) => f.id));
+    if (fileIds.length) {
+      const fresh = await dbWrite.modelFile.findMany({
+        where: { id: { in: fileIds } },
+        select: { id: true, metadata: true },
+      });
+      const metaById = new Map(fresh.map((f) => [f.id, f.metadata]));
+      for (const version of model.modelVersions) {
+        for (const file of version.files) {
+          const m = metaById.get(file.id);
+          if (m !== undefined) file.metadata = m;
+        }
+      }
+    }
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

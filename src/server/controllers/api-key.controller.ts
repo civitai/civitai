@@ -12,6 +12,7 @@ import {
   getApiKey,
   getUserApiKeys,
 } from '~/server/services/api-key.service';
+import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 export async function getApiKeyHandler({ input }: { input: GetAPIKeyInput }) {
@@ -50,6 +51,7 @@ export async function addApiKeyHandler({
 }) {
   const { user } = ctx;
   const apiKey = await addApiKey({ ...input, userId: user.id });
+  await preventReplicationLag('userApiKeys', user.id);
 
   return apiKey;
 }
@@ -68,6 +70,8 @@ export async function deleteApiKeyHandler({
 
     if (!deleted)
       throw throwNotFoundError(`No api key with id ${input.id} associated with your user account`);
+
+    await preventReplicationLag('userApiKeys', user.id);
 
     return deleted;
   } catch (error) {

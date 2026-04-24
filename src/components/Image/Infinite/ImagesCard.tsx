@@ -1,15 +1,4 @@
-import {
-  Alert,
-  Anchor,
-  Badge,
-  Box,
-  Group,
-  Loader,
-  Stack,
-  Text,
-  ThemeIcon,
-  Tooltip,
-} from '@mantine/core';
+import { Alert, Anchor, Badge, Loader, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -41,6 +30,13 @@ import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
+
+function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
+  const index = images.findIndex((x) => x.id === imageId);
+  if (index === -1) return [];
+  const minIndex = index - 50 > -1 ? index - 50 : 0;
+  return images.slice(minIndex, index + 50);
+}
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   return (
@@ -105,13 +101,6 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
     tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
   });
 
-  function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
-    const index = images.findIndex((x) => x.id === imageId);
-    if (index === -1) return [];
-    const minIndex = index - 50 > -1 ? index - 50 : 0;
-    return images.slice(minIndex, index + 50);
-  }
-
   return (
     <TwCosmeticWrapper
       cosmetic={image.cosmetic?.data}
@@ -124,11 +113,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
               <div className="relative flex-1">
                 <RoutedDialogLink
                   name="imageDetail"
-                  state={{
+                  state={{ imageId: image.id, ...contextProps }}
+                  getState={() => ({
                     imageId: image.id,
                     images: getDialogState(image.id, getImages()),
                     ...contextProps,
-                  }}
+                  })}
                   className="absolute inset-0"
                 >
                   {safe ? (
@@ -215,31 +205,34 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                   </div>
                 ) : !isBlocked ? (
                   isPending ? (
-                    <Box className={classes.footer} p="xs" style={{ width: '100%' }}>
-                      <Stack gap={4}>
-                        <Group gap={8} wrap="nowrap">
-                          <Loader size={20} />
-                          <Badge size="xs" color="yellow">
-                            Analyzing
-                          </Badge>
-                        </Group>
-                        <Text size="sm" inline>
-                          This image will be available to the community once processing is done.
-                        </Text>
-                      </Stack>
-                    </Box>
+                    <div
+                      className={clsx(
+                        classes.footer,
+                        '!flex-col !items-stretch !justify-start gap-1 p-2'
+                      )}
+                    >
+                      <div className="flex flex-nowrap items-center gap-2">
+                        <Loader size={20} />
+                        <Badge size="xs" color="yellow">
+                          Analyzing
+                        </Badge>
+                      </div>
+                      <Text size="sm" inline>
+                        This image will be available to the community once processing is done.
+                      </Text>
+                    </div>
                   ) : (
                     <div className="absolute bottom-1 right-1">
                       {data.hasMeta && (
                         <ImageMetaPopover2 imageId={data.id} type={data.type}>
-                          <IconInfoCircle
-                            color="white"
-                            filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                            opacity={0.8}
-                            strokeWidth={2.5}
-                            size={26}
-                            className="m-0.5"
-                          />
+                          <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
+                            <IconInfoCircle
+                              color="white"
+                              opacity={0.9}
+                              strokeWidth={2.5}
+                              size={20}
+                            />
+                          </div>
                         </ImageMetaPopover2>
                       )}
                     </div>
@@ -251,25 +244,23 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     radius={0}
                     className="absolute bottom-0 left-0 w-full p-2"
                     title={
-                      <Group gap={4}>
+                      <div className="flex items-center gap-1">
                         <IconInfoCircle />
                         <Text inline>Unable to verify AI generation</Text>
-                      </Group>
+                      </div>
                     }
                   >
                     {image.postId && (
-                      <div className="flex flex-col items-end">
-                        <Text size="sm" inline>
-                          This image has been blocked because it is has received a NSFW rating and
-                          we could not verify that it was generated using AI. To restore the image,
-                          please{' '}
-                          <Anchor c="yellow.8" href={`/posts/${image.postId}/edit`}>
-                            update your post
-                          </Anchor>{' '}
-                          with metadata detailing the generation process &ndash; minimally the
-                          prompt used.
-                        </Text>
-                      </div>
+                      <Text size="sm" inline>
+                        This image has been blocked because it is has received a NSFW rating and we
+                        could not verify that it was generated using AI. To restore the image,
+                        please{' '}
+                        <Anchor c="yellow.8" href={`/posts/${image.postId}/edit`}>
+                          update your post
+                        </Anchor>{' '}
+                        with metadata detailing the generation process &ndash; minimally the prompt
+                        used.
+                      </Text>
                     )}
                   </Alert>
                 ) : (
@@ -279,18 +270,16 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     radius={0}
                     className="absolute bottom-0 left-0 w-full p-1"
                     title={
-                      <Group gap={4}>
+                      <div className="flex items-center gap-1">
                         <IconInfoCircle />
                         <Text inline>TOS Violation</Text>
-                      </Group>
+                      </div>
                     }
                   >
-                    <div className="flex flex-col items-end">
-                      <Text size="sm" inline>
-                        The image you uploaded was determined to violate our TOS and will be
-                        completely removed from our service.
-                      </Text>
-                    </div>
+                    <Text size="sm" inline>
+                      The image you uploaded was determined to violate our TOS and will be
+                      completely removed from our service.
+                    </Text>
                   </Alert>
                 )}
                 {onSite && <OnsiteIndicator isRemix={isRemix} />}

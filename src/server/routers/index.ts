@@ -27,6 +27,7 @@ import { toolRouter } from '~/server/routers/tool.router';
 import { userRestrictionRouter } from '~/server/routers/user-restriction.router';
 import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
+import { referralRouter } from '~/server/routers/referral.router';
 import { vimeoRouter } from '~/server/routers/vimeo.router';
 import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
@@ -48,6 +49,7 @@ import { commentv2Router } from './commentv2.router';
 import { contentRouter } from './content.router';
 import { downloadRouter } from './download.router';
 import { generationRouter } from './generation.router';
+import { generationPresetRouter } from './generation-preset.router';
 import { hiddenPreferencesRouter } from './hidden-preferences.router';
 import { homeBlockRouter } from './home-block.router';
 import { imageRouter } from './image.router';
@@ -82,6 +84,7 @@ import { coinbaseRouter } from './coinbase.router';
 import { emerchantpayRouter } from './emerchantpay.router';
 import { comicsRouter } from './comics.router';
 import { strikeRouter } from '~/server/routers/strike.router';
+import { rewardsBonusEventRouter } from './rewards-bonus-event.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -128,10 +131,12 @@ export const appRouter = router({
   userLink: userLinkRouter,
   leaderboard: leaderboardRouter,
   generation: generationRouter,
+  generationPreset: generationPresetRouter,
   newsletter: newsletterRouter,
   system: systemRouter,
   hiddenPreferences: hiddenPreferencesRouter,
   userReferralCode: userReferralCodeRouter,
+  referral: referralRouter,
   userProfile: userProfileRouter,
   cosmetic: cosmeticRouter,
   event: eventRouter,
@@ -167,6 +172,7 @@ export const appRouter = router({
   emerchantpay: emerchantpayRouter,
   comics: comicsRouter,
   strike: strikeRouter,
+  rewardsBonusEvent: rewardsBonusEventRouter,
 });
 
 // export type definition of API

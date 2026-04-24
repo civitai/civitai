@@ -1,6 +1,7 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
 import {
   answerMetrics,
   articleMetrics,
@@ -40,54 +41,60 @@ const getReaction = async ({
   userId,
   reaction,
 }: ToggleReactionInput & { userId: number }) => {
+  // RAW — user toggles their own reaction. Normal rep-lag (<1s) is shorter
+  // than the user's click interval, so replica reads are fine. During a
+  // high-rep-lag incident the HIGH_REPLICATION_LAG_MODE Flipt flag routes
+  // this to primary to avoid stale existence checks (bogus UNIQUE-violation
+  // creates or 'removed' returns against rows that don't exist).
+  const db = await getDbWithoutLag();
   switch (entityType) {
     case 'question':
-      return await dbRead.questionReaction.findFirst({
+      return await db.questionReaction.findFirst({
         where: { userId, reaction, questionId: entityId },
         select: { id: true },
       });
     case 'answer':
-      return await dbRead.answerReaction.findFirst({
+      return await db.answerReaction.findFirst({
         where: { userId, reaction, answerId: entityId },
         select: { id: true },
       });
     case 'commentOld':
-      return await dbRead.commentReaction.findFirst({
+      return await db.commentReaction.findFirst({
         where: { userId, reaction, commentId: entityId },
         select: { id: true },
       });
     case 'comment':
-      return await dbRead.commentV2Reaction.findFirst({
+      return await db.commentV2Reaction.findFirst({
         where: { userId, reaction, commentId: entityId },
         select: { id: true },
       });
     case 'image':
-      return await dbRead.imageReaction.findFirst({
+      return await db.imageReaction.findFirst({
         where: { userId, reaction, imageId: entityId },
         select: { id: true },
       });
     case 'post':
-      return await dbRead.postReaction.findFirst({
+      return await db.postReaction.findFirst({
         where: { userId, reaction, postId: entityId },
         select: { id: true },
       });
     case 'resourceReview':
-      return await dbRead.resourceReviewReaction.findFirst({
+      return await db.resourceReviewReaction.findFirst({
         where: { userId, reaction, reviewId: entityId },
         select: { id: true },
       });
     case 'article':
-      return await dbRead.articleReaction.findFirst({
+      return await db.articleReaction.findFirst({
         where: { userId, reaction, articleId: entityId },
         select: { id: true },
       });
     case 'bountyEntry':
-      return await dbRead.bountyEntryReaction.findFirst({
+      return await db.bountyEntryReaction.findFirst({
         where: { userId, reaction, bountyEntryId: entityId },
         select: { userId: true },
       });
     case 'clubPost':
-      return await dbRead.clubPostReaction.findFirst({
+      return await db.clubPostReaction.findFirst({
         where: { userId, reaction, clubPostId: entityId },
         select: { userId: true },
       });

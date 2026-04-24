@@ -273,13 +273,8 @@ const injectedVersionIds = allInjectableResourceIds;
 async function getGenerationTasks(ctx: ModelMetricContext) {
   const generated = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId
-    FROM (
-      SELECT
-        arrayJoin(resourcesUsed) as modelVersionId
-      FROM orchestration.jobs
-      WHERE (jobType IN ('TextToImageV2', 'TextToImage', 'Comfy', 'falFlux2Image') OR jobType LIKE '%StableDiffusionCpp')
-        AND createdAt >= ${ctx.lastUpdate}
-    )
+    FROM orchestration.daily_resource_generation_counts
+    WHERE createdDate >= toDate(${ctx.lastUpdate})
   `;
   const affected = generated
     .map((x) => x.modelVersionId)

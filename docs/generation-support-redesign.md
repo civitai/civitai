@@ -182,7 +182,7 @@ const ecosystemSettings: EcosystemSettings[] = [
 
 ### 4. Cross-Ecosystem Rules
 
-Explicit rules for compatibility between unrelated ecosystems.
+**The only source of cross-ecosystem compatibility.** Every partial-compat relationship (parent↔child, sibling↔sibling, or truly unrelated) must be declared here. The parent-chain relationship is **not** used to infer compatibility — see note on identity below.
 
 ```typescript
 type CrossEcosystemRule = {
@@ -199,8 +199,15 @@ type CrossEcosystemRule = {
 const crossEcosystemRules: CrossEcosystemRule[] = [
   // SD1 TextualInversion works in SDXL family
   { sourceEcosystemId: 1, targetEcosystemId: 3, supportType: 'generation', modelTypes: ['TextualInversion'], support: 'Partial' },
+  // SDXL ↔ Pony (parent ↔ child — explicit, NOT inferred from parentEcosystemId)
+  { sourceEcosystemId: ECO.SDXL, targetEcosystemId: ECO.Pony, supportType: 'generation', modelTypes: sdxlCrossAddonTypes, support: 'Partial' },
+  { sourceEcosystemId: ECO.Pony, targetEcosystemId: ECO.SDXL, supportType: 'generation', modelTypes: sdxlCrossAddonTypes, support: 'Partial' },
 ];
 ```
+
+**Why explicit rules, not inferred via `parentEcosystemId`?**
+
+`parentEcosystemId` serves two distinct purposes: (1) settings/support inheritance and (2) identity resolution (AIR URN ecosystem, classification). For example, `Flux2Klein_9B`, `Flux2Klein_9B_base`, `Flux2Klein_4B`, and `Flux2Klein_4B_base` all list `Flux2` as parent so their AIRs emit `urn:air:flux2:...` — but a LoRA trained for Klein 4B is architecturally **incompatible** with Klein 9B. If compatibility were inferred from the shared parent, the generator would wire mismatched LoRAs into the orchestrator and fail. Keep compat explicit; let `parentEcosystemId` handle identity alone.
 
 ---
 
@@ -281,40 +288,43 @@ All lookups follow the same precedence (most specific wins):
 
 ```typescript
 function getGenerationSupport(
-  checkpointGroupId: number,
-  addonGroupId: number,
+  checkpointEcosystemId: number,
+  addonEcosystemId: number,
   addonModelType: ModelType
-): 'Full' | 'Partial' | 'None' {
-  const checkpointEco = getEcosystemForGroup(checkpointGroupId);
-  const addonEco = getEcosystemForGroup(addonGroupId);
-
-  // Check if model type is supported for generation
-  const support = getEcosystemSupport(checkpointEco.id, 'generation');
-  if (!support.enabled || !support.modelTypes.includes(addonModelType)) {
-    return 'None';
-  }
-
-  // Same group = Full
-  if (checkpointGroupId === addonGroupId) return 'Full';
-
+): 'Full' | 'Partial' | null {
   // Same ecosystem = Full
-  if (checkpointEco.id === addonEco.id) return 'Full';
+  if (checkpointEcosystemId === addonEcosystemId) return 'Full';
 
-  // Check if related (parent/child/sibling in same family tree)
-  const checkpointRoot = getRootEcosystem(checkpointEco);
-  const addonRoot = getRootEcosystem(addonEco);
+  // Check if the checkpoint ecosystem supports generation at all
+  const support = getEcosystemSupport(checkpointEcosystemId, 'generation');
+  if (!support || support.disabled) return null;
 
-  if (checkpointRoot.id === addonRoot.id) {
-    // Same family tree = Partial
-    return 'Partial';
-  }
-
-  // Cross-ecosystem = Check explicit rules
-  const crossRule = findCrossEcosystemRule(addonEco.id, checkpointEco.id, 'generation', addonModelType);
+  // Cross-ecosystem compatibility is driven ENTIRELY by explicit rules.
+  // The parent-chain relationship is NOT used to infer compatibility — it is
+  // reserved for identity concerns (AIR URN ecosystem, classification).
+  const crossRule = crossEcosystemRules.find(r =>
+    r.sourceEcosystemId === addonEcosystemId &&
+    r.targetEcosystemId === checkpointEcosystemId &&
+    r.supportType === 'generation' &&
+    (!r.modelTypes || r.modelTypes.includes(addonModelType))
+  );
   if (crossRule) return crossRule.support;
 
-  // No relationship = None
-  return 'None';
+  // Fallback: if the checkpoint has a parent, look for a rule targeting the
+  // root. This lets one rule (e.g. SD1 → SDXL) extend to all SDXL children
+  // without duplicating it for every child ecosystem.
+  const targetRoot = getRootEcosystem(checkpointEcosystemId);
+  if (targetRoot.id !== checkpointEcosystemId) {
+    const matchingRule = crossEcosystemRules.find(r =>
+      r.sourceEcosystemId === addonEcosystemId &&
+      r.targetEcosystemId === targetRoot.id &&
+      r.supportType === 'generation' &&
+      (!r.modelTypes || r.modelTypes.includes(addonModelType))
+    );
+    if (matchingRule) return matchingRule.support;
+  }
+
+  return null;
 }
 ```
 
@@ -376,22 +386,35 @@ getEcosystemSetting(ECO.Pony, 'cfg');                  // → 7 (inherited from 
 **"Can I use a Pony LORA with an Illustrious checkpoint?"**
 
 ```
-1. Check Illustrious supports LORA for generation → Yes (inherited from SDXL)
-2. Same group? No (Pony group ≠ Illustrious group)
-3. Same ecosystem? No (Pony ecosystem ≠ Illustrious ecosystem)
-4. Same family tree? Yes (both have SDXL as root)
+1. Same ecosystem? No (Pony ecosystem ≠ Illustrious ecosystem)
+2. Illustrious generation-supported? Yes (inherited from SDXL)
+3. Cross-ecosystem rule source=Pony, target=Illustrious, LORA? Yes
    → Result: PARTIAL support
 ```
 
-**"Can I use an SD1 TextualInversion with an SDXL checkpoint?"**
+**"Can I use an SD1 TextualInversion with an Illustrious checkpoint?"**
 
 ```
-1. Check SDXL supports TextualInversion for generation → Yes
-2. Same group? No
-3. Same ecosystem? No
-4. Same family tree? No (SD1 root ≠ SDXL root)
-5. Cross-ecosystem rule? Yes: { source: SD1, target: SDXL, modelTypes: ['TextualInversion'], support: 'Partial' }
+1. Same ecosystem? No
+2. Illustrious generation-supported? Yes
+3. Cross-ecosystem rule source=SD1, target=Illustrious, TextualInversion? Yes (explicit entry)
    → Result: PARTIAL support
+
+   (If the explicit SD1→Illustrious rule didn't exist, the target-root fallback
+    would find SD1→SDXL and apply it since Illustrious roots at SDXL.)
+```
+
+**"Can I use a Flux2 Klein 4B LORA with a Klein 9B checkpoint?"**
+
+```
+1. Same ecosystem? No (Klein 4B ≠ Klein 9B)
+2. Klein 9B generation-supported? Yes
+3. Cross-ecosystem rule source=Klein_4B, target=Klein_9B, LORA? No
+4. Target-root fallback: Klein 9B's root is Flux2. Any rule source=Klein_4B, target=Flux2? No
+   → Result: NOT SUPPORTED
+
+   (Klein variants share Flux2 as parent for AIR/identity only. Cross-variant
+    LoRA compat is intentionally absent because the architectures are distinct.)
 ```
 
 ---

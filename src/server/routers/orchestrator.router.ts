@@ -67,17 +67,7 @@ import {
   grokSizes,
 } from '~/server/common/constants';
 import type { SessionUser } from 'next-auth';
-import {
-  getFlagged,
-  getReasons,
-  getConsumerStrikes,
-  reviewConsumerStrikes,
-} from '../http/orchestrator/flagged-consumers';
-import {
-  getFlaggedConsumersSchema,
-  getFlaggedReasonsSchema,
-  getFlaggedConsumerStrikesSchema,
-} from '~/server/schema/orchestrator/flagged-consumers.schema';
+import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
@@ -126,6 +116,10 @@ const experimentalMiddleware = middleware(async ({ ctx, next }) => {
     isModerator: user.isModerator,
     isMember: user.tier != null && user.tier !== 'free',
   });
+
+  // `enhancedCompatibilitySdcpp` forces experimental on — it requires the
+  // experimental path in the orchestrator regardless of the Redis config.
+  if (ctx.features?.enhancedCompatibilitySdcpp) flags.experimental = true;
 
   return next({ ctx: { ...ctx, user, ...flags } });
 });
@@ -406,6 +400,7 @@ export const orchestratorRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
         token: ctx.token,
+        experimental: ctx.experimental,
         currencies: getAllowedAccountTypes(ctx.features, ['blue']),
       });
     } catch (e) {
@@ -439,12 +434,13 @@ export const orchestratorRouter = router({
   createTraining: orchestratorGuardedProcedure
     .input(imageTrainingRouterInputSchema)
     .mutation(async ({ ctx, input }) => {
+      const { buzzType, ...rest } = input;
       const args = {
-        ...input,
+        ...rest,
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
-        currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+        currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);
     }),
@@ -489,15 +485,6 @@ export const orchestratorRouter = router({
       return normalized;
     }),
 
-  getFlaggedConsumers: moderatorProcedure
-    .input(getFlaggedConsumersSchema)
-    .query(({ input }) => getFlagged(input)),
-  getFlaggedReasons: moderatorProcedure
-    .input(getFlaggedReasonsSchema)
-    .query(({ input }) => getReasons(input)),
-  getFlaggedConsumerStrikes: moderatorProcedure
-    .input(getFlaggedConsumerStrikesSchema)
-    .query(({ input }) => getConsumerStrikes(input)),
   reviewConsumerStrikes: moderatorProcedure
     .input(z.object({ userId: z.number() }))
     .mutation(({ input, ctx }) =>

@@ -303,22 +303,30 @@ const ageRegexes = templates.map((template) => {
   return new RegExp(regexStr, 'i');
 });
 
+// Danbooru-style tags that embed digits but aren't ages. Without stripping these,
+// prompts like `score_9, year 2025` falsely match the `{age} {years}` template
+// because the trailing digit in `score_9` sits within 3 non-alphanumeric chars of `year`.
+const falsePositiveTagPattern =
+  /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
+
 // --------------------------------------
 // Age Check Function (Two-Phase Approach)
 // --------------------------------------
 export function includesMinorAge(prompt: string | undefined) {
   if (!prompt) return { found: false, age: undefined };
 
+  const cleaned = prompt.replace(falsePositiveTagPattern, ' ');
+
   // Phase 1: Quick screening - skip if prompt clearly doesn't contain age references
   // This rejects 99%+ of prompts instantly with a tiny regex
-  if (!quickScreenPattern.test(prompt)) {
+  if (!quickScreenPattern.test(cleaned)) {
     return { found: false, age: undefined };
   }
 
   // Phase 2: Detailed matching - check each age with smaller per-age patterns
   for (const { age, regexes } of perAgeRegexes) {
     for (const regex of regexes) {
-      if (regex.test(prompt)) {
+      if (regex.test(cleaned)) {
         return { found: true, age };
       }
     }

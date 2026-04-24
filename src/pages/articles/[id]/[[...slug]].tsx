@@ -247,7 +247,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         alternate={`/articles/${article.id}`}
         deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
       />
-      <SensitiveShield contentNsfwLevel={article.nsfwLevel}>
+      <SensitiveShield contentNsfwLevel={article.nsfwLevel} bypassRating={isOwner}>
         <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
         <Container size="xl" pos="relative">
           <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />

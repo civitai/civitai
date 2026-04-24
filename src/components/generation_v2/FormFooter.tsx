@@ -72,6 +72,8 @@ import {
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import { SDCPP_SUPPORTED_ECOSYSTEMS } from '~/shared/constants/generation.constants';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
   openCompatibilityConfirmModal,
@@ -333,6 +335,8 @@ function PriorityAlertSpace({
     isLoading: isBuzzLoading,
   } = useQueryBuzz(availableTypes);
   const totalCost = useTotalGenerationCost();
+  const featureFlags = useFeatureFlags();
+  const graph = useGraph<GenerationGraphTypes>();
 
   // Check if user has insufficient buzz of the selected type
   // Don't show insufficient buzz until the buzz query has resolved
@@ -427,6 +431,43 @@ function PriorityAlertSpace({
         </div>
       </Notification>
     );
+  } else if (featureFlags.enhancedCompatibilitySdcpp) {
+    // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
+    // When enhancedCompatibility is on, the bonus doesn't apply — swap in a
+    // warning (with its own dismissal key) so users know how to qualify.
+    priorityAlert = (
+      <MultiController
+        graph={graph}
+        names={['ecosystem', 'enhancedCompatibility'] as const}
+        render={({ values }) => {
+          const ecosystem = values.ecosystem as string | undefined;
+          const enhancedCompatibility = values.enhancedCompatibility as boolean | undefined;
+          if (!ecosystem || !SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return null;
+          if (enhancedCompatibility) {
+            return (
+              <DismissibleAlert
+                id={`bogo-sdcpp-warn-${ecosystem}`}
+                color="yellow"
+                size="sm"
+                title="Miss Out on 2-for-1 Bonus"
+              >
+                Turn off Enhanced Compatibility to get 2 images per generation for the price of 1.
+              </DismissibleAlert>
+            );
+          }
+          return (
+            <DismissibleAlert
+              id={`bogo-sdcpp-${ecosystem}`}
+              color="blue"
+              size="sm"
+              title="2-for-1 Bonus Active"
+            >
+              Each generation produces 2 images for the price of 1 on this model.
+            </DismissibleAlert>
+          );
+        }}
+      />
+    );
   }
 
   return (
@@ -475,7 +516,10 @@ function SubmitButton({ isLoading: isSubmitting, onSubmit }: SubmitButtonProps) 
       className="h-full flex-1 px-2"
       color={color}
       loading={isSubmitting}
-      disabled={isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz}
+      disabled={
+        !running &&
+        (isWhatIfLoading || isBuzzLoading || isError || !canEstimateCost || insufficientBuzz)
+      }
       onClick={handleClick}
     />
   );
@@ -533,6 +577,12 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
   // Get whatIf data for buzz transaction checking
   const { data: whatIfData } = useWhatIfContext();
+
+  // Resolved buzz type shown in the UI — defaults to the site's primary type
+  // (e.g. green on .com) when the user hasn't explicitly picked one. Sent with
+  // the mutation so the server charges the account the user sees selected,
+  // instead of falling through to the orchestrator's priority-ordered list.
+  const { selectedType: selectedBuzzType } = useSelectedBuzzType();
 
   // Setup buzz transaction handling
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -631,9 +681,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Check if any resources have early access
     const hasEarlyAccess = resourceData.some((x) => x.earlyAccessConfig);
 
-    // Get the user-selected buzz type for this generation
-    const { buzzType: selectedBuzzType } = useGenerationFormStore.getState();
-
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
@@ -645,7 +692,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         creatorTip: hasCreatorTip ? creatorTip : 0,
         civitaiTip,
         tags: [WORKFLOW_TAGS.SOURCE.NEW],
-        ...(selectedBuzzType ? { buzzType: selectedBuzzType } : {}),
+        buzzType: selectedBuzzType,
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
       });

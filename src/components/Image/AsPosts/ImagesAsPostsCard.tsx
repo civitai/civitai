@@ -2,10 +2,8 @@ import type { ThemeIconProps } from '@mantine/core';
 import {
   Badge,
   getPrimaryShade,
-  Group,
   HoverCard,
   Paper,
-  Stack,
   Text,
   ThemeIcon,
   Tooltip,
@@ -22,7 +20,7 @@ import {
   IconPinFilled,
   IconUserPlus,
 } from '@tabler/icons-react';
-import { useCallback, memo } from 'react';
+import { memo, useMemo } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
@@ -57,6 +55,7 @@ type ImagesAsPostsCardProps = {
 };
 
 const pinnedIconProps = { size: 16, stroke: 1.5 };
+const edgeMediaWrapperProps = { style: { zIndex: 1 } };
 
 function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
   const { data, height } = props;
@@ -69,19 +68,22 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
   const pinned = gallerySettings
     ? gallerySettings.pinnedPosts?.[currentModelVersionId]?.includes(data.postId)
     : false;
-  const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
-  const cosmeticData =
-    cosmetic?.data || pinned
-      ? {
-          ...cosmetic?.data,
-          ...(pinned
-            ? {
-                border: theme.colors.orange[getPrimaryShade(theme, colorScheme)],
-                borderWidth: 2,
-              }
-            : undefined),
-        }
-      : undefined;
+  const cosmetic = useMemo(
+    () => data.images.find((i) => isDefined(i.cosmetic))?.cosmetic,
+    [data.images]
+  );
+  const cosmeticData = useMemo(() => {
+    if (!cosmetic?.data && !pinned) return undefined;
+    return {
+      ...cosmetic?.data,
+      ...(pinned
+        ? {
+            border: theme.colors.orange[getPrimaryShade(theme, colorScheme)],
+            borderWidth: 2,
+          }
+        : undefined),
+    };
+  }, [cosmetic?.data, pinned, theme, colorScheme]);
 
   return (
     <TwCosmeticWrapper
@@ -98,7 +100,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           className={clsx({ ['border']: !pinned })}
         >
           <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
-          {data.user.id !== -1 && <ImagesAsPostsCardHeader {...props} />}
+          {data.user.id !== -1 && <ImagesAsPostsCardHeader {...props} cosmetic={cosmetic} />}
 
           <div className="relative flex-1 overflow-hidden">
             <ImagesAsPostsCardContent data={props.data} />
@@ -135,19 +137,29 @@ function PinnedIndicator({
   );
 }
 
-function ImagesAsPostsCardHeader({ data }: ImagesAsPostsCardProps) {
+function ImagesAsPostsCardHeader({
+  data,
+  cosmetic,
+}: ImagesAsPostsCardProps & { cosmetic?: ImagesAsPostModel['images'][number]['cosmetic'] }) {
   const { modelVersions, model, filters } = useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
   const currentModelVersionId = filters.modelVersionId as number;
-  const fromAutoResource =
-    !targetModelVersion &&
-    data.images.some((i) => i.modelVersionIds?.includes(currentModelVersionId));
-  const fromManualResource =
-    !targetModelVersion &&
-    data.images.some((i) => i.modelVersionIdsManual?.includes(currentModelVersionId));
+  // Single pass: find both auto-resource and manual-resource matches
+  let fromAutoResource = false;
+  let fromManualResource = false;
+  if (!targetModelVersion) {
+    for (const i of data.images) {
+      if (!fromAutoResource && i.modelVersionIds?.includes(currentModelVersionId)) {
+        fromAutoResource = true;
+      }
+      if (!fromManualResource && i.modelVersionIdsManual?.includes(currentModelVersionId)) {
+        fromManualResource = true;
+      }
+      if (fromAutoResource && fromManualResource) break;
+    }
+  }
   const isThumbsUp = !!data.review?.recommended;
   const isOP = data.user.id === model?.user.id;
-  const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
 
   return (
     <Paper
@@ -161,14 +173,14 @@ function ImagesAsPostsCardHeader({ data }: ImagesAsPostsCardProps) {
       <UserAvatar
         user={data.user}
         subText={
-          <Group gap="xs" wrap="nowrap">
+          <div className="flex flex-nowrap items-center gap-2.5">
             {data.publishedAt || data.sortAt ? (
               <DaysFromNow date={data.publishedAt || data.sortAt} />
             ) : (
               <Text>Not published</Text>
             )}
             {(fromAutoResource || fromManualResource) && (
-              <Group ml={6} gap={4}>
+              <div className="ml-1.5 flex items-center gap-1">
                 {fromAutoResource && (
                   <Tooltip label="Auto-detected resource" withArrow>
                     <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
@@ -183,9 +195,9 @@ function ImagesAsPostsCardHeader({ data }: ImagesAsPostsCardProps) {
                     </ThemeIcon>
                   </Tooltip>
                 )}
-              </Group>
+              </div>
             )}
-          </Group>
+          </div>
         }
         subTextForce
         size="md"
@@ -224,10 +236,10 @@ function ImagesAsPostsCardHeader({ data }: ImagesAsPostsCardProps) {
               }}
               color={isThumbsUp ? 'success.5' : 'red'}
             >
-              <Group gap={4} wrap="nowrap">
+              <div className="flex flex-nowrap items-center gap-1">
                 {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
                 {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
-              </Group>
+              </div>
             </Badge>
           </RoutedDialogLink>
         ) : null}
@@ -240,18 +252,17 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
-  const handleRemixClick = useCallback(
-    (selectedImage: typeof image) => (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      generationGraphPanel.open({
-        type: selectedImage.type,
-        id: selectedImage.id,
-      });
-    },
-    []
-  );
+  // Not wrapping in useCallback: the returned inner closure captures
+  // `selectedImage` and is recreated per call regardless, so the outer
+  // `useCallback` would provide no stability benefit.
+  const handleRemixClick = (selectedImage: typeof image) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    generationGraphPanel.open({
+      type: selectedImage.type,
+      id: selectedImage.id,
+    });
+  };
 
   return data.images.length === 1 ? (
     <ImageGuard2 image={image}>
@@ -260,7 +271,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
           <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
           {safe && (
-            <Stack gap="xs" className="absolute right-2 top-2 z-10">
+            <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
               {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
                 <HoverActionButton
@@ -274,7 +285,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   <IconBrush stroke={2.5} size={16} />
                 </HoverActionButton>
               )}
-            </Stack>
+            </div>
           )}
           <RoutedDialogLink
             name="imageDetail"
@@ -293,7 +304,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   imageId={image.id}
                   width={450}
                   placeholder="empty"
-                  wrapperProps={{ style: { zIndex: 1 } }}
+                  wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
                   // fadeIn
                   className="z-[1] object-cover"
@@ -320,17 +331,11 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             disableBuzzTip={image.poi}
           />
           {image.hasMeta && (
-            <div className="absolute bottom-0.5 right-0.5 z-10">
+            <div className="absolute bottom-1 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                <LegacyActionIcon component="div" variant="transparent" size="lg">
-                  <IconInfoCircle
-                    color="white"
-                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                    opacity={0.8}
-                    strokeWidth={2.5}
-                    size={26}
-                  />
-                </LegacyActionIcon>
+                <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
+                  <IconInfoCircle color="white" opacity={0.9} strokeWidth={2.5} size={20} />
+                </div>
               </ImageMetaPopover2>
             </div>
           )}
@@ -349,7 +354,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                     {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
                     <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                     {safe && (
-                      <Stack gap="xs" className="absolute right-2 top-2 z-10">
+                      <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
                         <ImagesAsPostsContextMenu image={image} />
                         {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
                           <HoverActionButton
@@ -363,11 +368,12 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                             <IconBrush stroke={2.5} size={16} />
                           </HoverActionButton>
                         )}
-                      </Stack>
+                      </div>
                     )}
                     <RoutedDialogLink
                       name="imageDetail"
-                      state={{ imageId: image.id, images: data.images }}
+                      state={{ imageId: image.id }}
+                      getState={() => ({ imageId: image.id, images: data.images })}
                       className={classes.link}
                     >
                       <>
@@ -384,7 +390,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                             imageId={image.id}
                             width={450}
                             placeholder="empty"
-                            wrapperProps={{ style: { zIndex: 1 } }}
+                            wrapperProps={edgeMediaWrapperProps}
                             skip={getSkipValue(image)}
                             className="z-[1] object-cover"
                           />
@@ -409,17 +415,16 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                       disableBuzzTip={image.poi}
                     />
                     {image.hasMeta && (
-                      <div className="absolute bottom-0.5 right-0.5 z-10">
+                      <div className="absolute bottom-1 right-0.5 z-10">
                         <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                          <LegacyActionIcon component="div" variant="transparent" size="lg">
+                          <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
                             <IconInfoCircle
                               color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
+                              opacity={0.9}
                               strokeWidth={2.5}
-                              size={26}
+                              size={20}
                             />
-                          </LegacyActionIcon>
+                          </div>
                         </ImageMetaPopover2>
                       </div>
                     )}

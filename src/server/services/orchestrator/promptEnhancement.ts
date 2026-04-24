@@ -39,6 +39,14 @@ function buildInstruction(input: PromptEnhancementSchema): string | undefined {
     parts.push(input.instruction);
   }
 
+  if (input.segmentPrompt) {
+    parts.push(
+      'Organize the enhanced prompt into thematic segments (such as subject, setting, style, lighting, composition). Separate each segment with a blank line. Do not use bullet points or lists.'
+    );
+  } else {
+    parts.push('If possible, try to maintain the original formatting.');
+  }
+
   return parts.length ? parts.join('\n') : undefined;
 }
 

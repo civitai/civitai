@@ -55,6 +55,7 @@ export function QueueSnackbar({ right }: { right?: React.ReactNode }) {
         <span>{`${queued.length} job${queued.length > 1 ? 's' : ''} in `}</span>
         {includeQueueLink ? (
           <Text
+            component="span"
             inline
             c="blue.4"
             className="cursor-pointer"
@@ -123,6 +124,7 @@ export function QueueSnackbar({ right }: { right?: React.ReactNode }) {
               dictionary[queueStatus]()
             ) : includeQueueLink ? (
               <Text
+                component="span"
                 c="blue.4"
                 size="xs"
                 className="cursor-pointer"

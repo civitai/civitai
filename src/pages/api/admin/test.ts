@@ -12,8 +12,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    await userContentOverviewCache.bust(user.id);
-    res.status(200).json({ message: `Busted content overview cache for user ${user.id}` });
+    await userContentOverviewCache.refresh(user.id);
+    res.status(200).json({ message: `Refreshed content overview cache for user ${user.id}` });
   } catch (e) {
     console.log(e);
     res.status(400).json({ error: (e as Error).message });

@@ -1,21 +1,29 @@
 /**
  * Webhook Debouncing for Article Image Scan Updates
  *
- * Critical performance optimization: Prevents N+1 webhook calls for articles with many images
- * Example: Article with 50 images = 50 webhooks → 1 actual DB update (98% reduction)
+ * Coalesces bursts of image-scan webhooks for the same article into a single
+ * scheduled `updateArticleImageScanStatus` call, without losing the final
+ * "all images done" webhook in the burst.
  *
- * Uses Redis for distributed debouncing across multiple server instances
+ * Uses Redis for distributed debouncing across multiple server instances.
  */
 
 import type { RedisKeyStringsCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { logToAxiom } from '~/server/logging/client';
+import { dbRead } from '~/server/db/client';
+import { ImageConnectionType } from '~/server/common/enums';
 import { updateArticleImageScanStatus } from '~/server/services/article.service';
 
 /**
- * Debounce article update to prevent concurrent webhook processing
+ * Debounce article update to coalesce bursts of concurrent webhooks.
  *
- * When multiple images from the same article complete scanning simultaneously,
- * this ensures only one database update happens.
+ * The lock is released *before* the update runs (not after). A webhook that
+ * arrives while the update is in flight will then start a fresh debounce
+ * cycle, guaranteeing the latest image state is eventually reconciled.
+ * Concurrent updates for the same article are serialized inside
+ * `updateArticleImageScanStatus` via `pg_advisory_xact_lock`, so early release
+ * does not cause overlapping writes.
  *
  * @param articleId - Article to update
  */
@@ -26,29 +34,90 @@ export async function debounceArticleUpdate(articleId: number): Promise<void> {
     const exists = await redis.get(key);
 
     if (!exists) {
-      // Set lock with 2s TTL to prevent rapid successive updates
+      // Lock with 2s TTL so rapid-fire webhooks within the 1s delay window
+      // are coalesced into this scheduled update.
       await redis.setEx(key, 2, '1');
 
-      // Schedule update after short delay to let other webhooks arrive
       setTimeout(async () => {
+        // Release the lock *before* running the update. Any webhook that
+        // arrives during the update will then schedule its own follow-up
+        // cycle, preventing the "lost last webhook" race.
+        await redis.del(key).catch(() => {
+          // Ignore — TTL will expire the key anyway.
+        });
         try {
           await updateArticleImageScanStatus([articleId]);
         } catch (error) {
-          console.error(`Failed to update article ${articleId} scan status:`, error);
-        } finally {
-          // Clean up lock
-          await redis.del(key).catch(() => {
-            // Ignore cleanup errors - lock will expire anyway
-          });
+          await logToAxiom({
+            name: 'article-scan-debounce',
+            type: 'error',
+            message: `updateArticleImageScanStatus failed: ${
+              error instanceof Error ? error.message : 'Unknown error'
+            }`,
+            articleId,
+            stack: error instanceof Error ? error.stack : undefined,
+          }).catch(() => null);
         }
-      }, 1000); // 1s delay allows other concurrent webhooks to arrive
+      }, 1000);
     }
-    // If key exists, another webhook already scheduled the update - skip
+    // If key exists, the in-flight cycle will pick up this webhook's state
+    // after it releases the lock and starts fresh on the next webhook.
   } catch (error) {
-    console.error(`Debounce failed for article ${articleId}:`, error);
-    // Fallback: Update immediately if Redis fails
-    await updateArticleImageScanStatus([articleId]).catch((err) => {
-      console.error(`Fallback update failed for article ${articleId}:`, err);
+    await logToAxiom({
+      name: 'article-scan-debounce',
+      type: 'error',
+      message: `Debounce failed, falling back to direct update: ${
+        error instanceof Error ? error.message : 'Unknown error'
+      }`,
+      articleId,
+    }).catch(() => null);
+    // Fallback: run update immediately when Redis is unavailable.
+    await updateArticleImageScanStatus([articleId]).catch(async (err) => {
+      await logToAxiom({
+        name: 'article-scan-debounce',
+        type: 'error',
+        message: `Fallback updateArticleImageScanStatus failed: ${
+          err instanceof Error ? err.message : 'Unknown error'
+        }`,
+        articleId,
+        stack: err instanceof Error ? err.stack : undefined,
+      }).catch(() => null);
     });
+  }
+}
+
+/**
+ * Fan out an image's terminal-state update to any articles that embed it, either
+ * as a content image (via `ImageConnection`) or as the article cover (via
+ * `Article.coverId`). Each article debounce call coalesces concurrent webhooks
+ * and runs `recomputeArticleIngestion` so Blocked/Error/Scanned transitions all
+ * advance article state, and `updateArticleNsfwLevels` picks up the new cover
+ * rating so `Article.nsfwLevel` no longer lags the cover.
+ *
+ * Callers are responsible for gating on the `articleImageScanning` feature flag
+ * because the two webhook entrypoints resolve the flag differently (one reads
+ * from a request context, the other receives it as a parameter).
+ */
+export async function fanOutArticleImageUpdates(imageId: number): Promise<void> {
+  const [articleConnections, coverArticles] = await Promise.all([
+    dbRead.imageConnection.findMany({
+      where: { imageId, entityType: ImageConnectionType.Article },
+      select: { entityId: true },
+    }),
+    // Cover images live on `Article.coverId` and are NOT duplicated into
+    // `ImageConnection`, so fan-out must query them separately. Without this,
+    // a cover scan that resolves to R/X/XXX/Blocked never triggers
+    // `updateArticleNsfwLevels`, leaving `Article.nsfwLevel` pinned to the
+    // author-declared `userNsfwLevel` — the exact drift that lets PG-rated
+    // articles keep NSFW covers in the public feed.
+    dbRead.article.findMany({ where: { coverId: imageId }, select: { id: true } }),
+  ]);
+
+  const articleIds = new Set<number>([
+    ...articleConnections.map((c) => c.entityId),
+    ...coverArticles.map((a) => a.id),
+  ]);
+  for (const articleId of articleIds) {
+    await debounceArticleUpdate(articleId);
   }
 }

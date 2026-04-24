@@ -38,6 +38,7 @@ import { createOpenAIInput } from './openai.handler';
 import { createNanoBananaInput } from './nano-banana.handler';
 import { createAnimaInput } from './anima.handler';
 import { createChromaInput } from './chroma.handler';
+import { createErnieInput } from './ernie.handler';
 import { createZImageInput } from './z-image.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createPonyV7Input } from './pony-v7.handler';
@@ -55,6 +56,7 @@ import { createMochiInput } from './mochi.handler';
 import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
+import { createSeedanceInput } from './seedance.handler';
 
 // =============================================================================
 // Types - Derived from GenerationGraph
@@ -123,6 +125,9 @@ export type AnimaCtx = EcosystemGraphOutput & { ecosystem: 'Anima' };
 /** PonyV7 context */
 export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 
+/** Ernie context */
+export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
+
 /** Wan video ecosystems context */
 export type WanCtx = EcosystemGraphOutput & {
   ecosystem:
@@ -162,6 +167,9 @@ export type Veo3Ctx = EcosystemGraphOutput & { ecosystem: 'Veo3' };
 /** Grok context */
 export type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 
+/** Seedance context */
+export type SeedanceCtx = EcosystemGraphOutput & { ecosystem: 'Seedance' };
+
 /** AceAudio context */
 export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'AceAudio' };
 
@@ -185,6 +193,7 @@ export { createChromaInput } from './chroma.handler';
 export { createZImageInput } from './z-image.handler';
 export { createHiDreamInput } from './hi-dream.handler';
 export { createPonyV7Input } from './pony-v7.handler';
+export { createErnieInput } from './ernie.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
@@ -199,6 +208,7 @@ export { createMochiInput } from './mochi.handler';
 export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
+export { createSeedanceInput } from './seedance.handler';
 
 // Shared utilities
 export { createComfyInput } from './comfy-input';
@@ -328,6 +338,10 @@ async function createEcosystemStep(
     case 'NanoBanana':
       return createNanoBananaInput(normalizedData, handlerCtx);
 
+    // Ernie
+    case 'Ernie':
+      return createErnieInput(normalizedData, handlerCtx);
+
     // =========================================================================
     // Video Ecosystems - videoGen step type
     // =========================================================================
@@ -373,6 +387,10 @@ async function createEcosystemStep(
     // Veo3
     case 'Veo3':
       return createVeo3Input(normalizedData, handlerCtx);
+
+    // Seedance
+    case 'Seedance':
+      return createSeedanceInput(normalizedData, handlerCtx);
 
     // Grok (image + video)
     case 'Grok': {

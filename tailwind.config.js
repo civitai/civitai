@@ -209,6 +209,18 @@ module.exports = {
           '0%, 100%': { boxShadow: '0 0 4px 1px rgba(var(--buzz-color), 0.3)' },
           '50%': { boxShadow: '0 0 12px 4px rgba(var(--buzz-color), 0.7)' },
         },
+        'icon-glow': {
+          // Two stacked drop-shadows hug the stroke tightly so the lines
+          // themselves read as "lit" rather than the bounding box casting a halo.
+          '0%, 100%': {
+            filter:
+              'drop-shadow(0 0 0.5px rgba(var(--icon-glow-color), 0.9)) drop-shadow(0 0 2px rgba(var(--icon-glow-color), 0.4))',
+          },
+          '50%': {
+            filter:
+              'drop-shadow(0 0 1px rgba(var(--icon-glow-color), 1)) drop-shadow(0 0 4px rgba(var(--icon-glow-color), 0.7))',
+          },
+        },
       },
       animation: {
         wiggle: 'wiggle 1s ease-in-out infinite',
@@ -218,6 +230,7 @@ module.exports = {
         'gradient-shift': 'gradient-shift 8s ease infinite',
         shimmer: 'shimmer 6s ease-in-out infinite',
         'buzz-glow': 'buzz-glow 2s ease-in-out infinite',
+        'icon-glow': 'icon-glow 2s ease-in-out infinite',
       },
     },
   },

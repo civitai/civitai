@@ -599,7 +599,7 @@ export const toggleFollowUser = async ({
     data: { type: 'Follow', targetUserId, userId },
     select: { user: { select: { username: true } } },
   });
-  await userFollowsCache.bust(userId);
+  await userFollowsCache.refresh(userId);
 
   const details: NotifDetailsFollowedBy = {
     username: ret.user.username,
@@ -643,7 +643,7 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
-  await userFollowsCache.bust(userId);
+  await userFollowsCache.refresh(userId);
   return true;
 };
 
@@ -941,7 +941,7 @@ export async function getBasicDataForUsers(userIds: number[]) {
 }
 
 export async function deleteBasicDataForUser(userId: number) {
-  await userBasicCache.bust(userId);
+  await userBasicCache.refresh(userId);
 }
 
 export async function getCosmeticsForUsers(userIds: number[]) {
@@ -962,7 +962,7 @@ export async function getCosmeticsForUsers(userIds: number[]) {
 }
 
 export async function deleteUserCosmeticCache(userId: number) {
-  await userCosmeticCache.bust(userId);
+  await userCosmeticCache.refresh(userId);
 }
 
 export async function getProfilePicturesForUsers(userIds: number[]) {
@@ -970,7 +970,7 @@ export async function getProfilePicturesForUsers(userIds: number[]) {
 }
 
 export async function deleteUserProfilePictureCache(userId: number) {
-  await profilePictureCache.bust(userId);
+  await profilePictureCache.refresh(userId);
 }
 
 // #region [article engagement]
@@ -1176,7 +1176,7 @@ async function bulkUnpublishModelsForBannedUser({
   );
 
   // Bust user model count cache
-  await userModelCountCache.bust(odRef);
+  await userModelCountCache.refresh(odRef);
 
   // === Bulk bid deletion and refund ===
   let bidsRefunded = 0;

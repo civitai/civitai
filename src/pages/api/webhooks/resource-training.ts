@@ -3,6 +3,8 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { trainingCompleteEmail, trainingFailEmail } from '~/server/email/templates';
 import { logToAxiom } from '~/server/logging/client';
 import type { TrainingResultsV1 } from '~/server/schema/model-file.schema';
@@ -253,6 +255,8 @@ export async function updateRecords(
       trainingStatus: status,
     },
   });
+  await preventModelVersionLag(modelVersion.modelId, modelVersion.id);
+  await dataForModelsCache.refresh(modelVersion.modelId);
 
   // trigger webhook alert
   if (status === TrainingStatus.Paused) {

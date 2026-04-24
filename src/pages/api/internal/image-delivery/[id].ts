@@ -1,8 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
-import { dbRead } from '~/server/db/client';
-import { registerCounterWithLabels } from '~/server/prom/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { dbReadFallbackCounter, registerCounterWithLabels } from '~/server/prom/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({ id: z.string() });
@@ -27,7 +27,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
 
   const { id } = results.data;
 
-  const [image] = await dbRead.$queryRaw<ImageRow[]>`
+  const query = () => dbRead.$queryRaw<ImageRow[]>`
     SELECT
       id,
       url,
@@ -36,6 +36,19 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
     WHERE url = ${id}
     LIMIT 1
   `;
+
+  const [image] = await query().catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'image', caller: 'imageDelivery' });
+    return dbWrite.$queryRaw<ImageRow[]>`
+      SELECT
+        id,
+        url,
+        "hideMeta"
+      FROM "Image"
+      WHERE url = ${id}
+      LIMIT 1
+    `;
+  });
 
   if (!image) {
     imageDeliveryRequestCounter.inc({ status: 'not_found' });

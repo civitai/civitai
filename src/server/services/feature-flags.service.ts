@@ -46,7 +46,6 @@ const featureFlags = createFeatureFlags({
   aiToolkitChroma: { availability: ['mod'], fliptKey: 'ai-toolkit-chroma' },
   aiToolkitDefaultSd: { availability: ['mod'], fliptKey: 'ai-toolkit-default-sd' },
   kohyaTraining: { availability: ['public'], fliptKey: 'kohya-training' },
-  onboardingCaptchaReset: { availability: ['public'], fliptKey: 'onboarding-captcha-reset' },
   qwenTraining: { availability: ['mod'], fliptKey: 'qwen-training' },
   flux2Training: { availability: ['public'], fliptKey: 'flux2-training' },
   zimageturboTraining: { availability: ['mod'], fliptKey: 'zimage-turbo-training' },
@@ -54,10 +53,19 @@ const featureFlags = createFeatureFlags({
   fluxTwoKleinTraining: { availability: ['mod'], fliptKey: 'flux2-klein-training' },
   ltx2Training: { availability: ['mod'], fliptKey: 'ltx2-training' },
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
+  ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
+  trainingAutoLabelOrchestrator: {
+    availability: ['mod'],
+    fliptKey: 'training-auto-label-orchestrator',
+  },
   imageTrainingResults: { availability: ['user'], fliptKey: 'image-training-results' },
-  trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption' },
-  trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag' },
+  trainingAutoCaption: { availability: ['public'], fliptKey: 'training-auto-caption2' },
+  trainingAutoTag: { availability: ['public'], fliptKey: 'training-auto-tag2' },
   wan22MultiStep: { availability: ['public'], fliptKey: 'wan22-multi-step' },
+  enhancedCompatibilitySdcpp: {
+    availability: ['public'],
+    fliptKey: 'enhanced-compatibility-sdcpp',
+  },
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
   largerGenerationImages: {
@@ -79,6 +87,7 @@ const featureFlags = createFeatureFlags({
   profileCollections: ['public'],
   imageSearch: ['public'],
   buzz: ['public'],
+  referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
@@ -154,6 +163,7 @@ const featureFlags = createFeatureFlags({
   strikes: ['dev', 'granted'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
   articleImageScanning: ['public'],
+  generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

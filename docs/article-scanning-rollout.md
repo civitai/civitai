@@ -7,6 +7,8 @@
 
 > ⚠️ **Read §5.9 before rollout.** A review pass on 2026-04-10 surfaced a real leak window in the current deploy sequence (code ships with `articles: ['public']` before either backfill runs, so Civitai Green sees legacy articles at their pre-scan `nsfwLevel`). The mitigation is either a staged flag flip or a followup `Article.ingestion` refactor — both options are specced out in [`article-ingestion-status-proposal.md`](./article-ingestion-status-proposal.md). Do not merge without picking a path.
 
+> 📌 **Deprecation note (2026-04-17)**: `Article.nsfw` is no longer used as a reference anywhere in the app. The field remains in the DB schema but is neither written to nor read for any enforcement decision. Text moderation and Actioned NSFW user reports now enforce an R floor on `nsfwLevel` via `EXISTS` subqueries against `EntityModeration` and `ArticleReport`/`Report` inside `updateArticleNsfwLevels`. Because the floor is computed from persisted records rather than a flag on the Article row, it survives later image rescans (durable) *and* re-derives to the ground-truth level when those records disappear (e.g. a mod un-actions a report). Image-driven downgrades still work: `nsfwLevel = GREATEST(userNsfwLevel, image-derived level, moderation floor)`. References to `article.nsfw = true` below describe the historical behavior at the time this PR shipped.
+
 ---
 
 ## 1. TL;DR — what this PR does
@@ -15,7 +17,7 @@ Ships the full "articles get scanned like everything else" system and turns it o
 
 1. **Image extraction** — every `<img>` / `<edge-media>` inside article HTML is walked out of the Tiptap AST, persisted as `Image` + `ImageConnection` rows, and queued for the standard ingestion pipeline (WD14 / Hive / Clavata / Hash). Cover images already went through this; content images now do too.
 2. **Text moderation via xGuard** — on every article create/update, `(title + stripped content)` is fire-and-forget submitted to the orchestrator xGuard workflow with `labels: ['nsfw']`. A content-hash on `EntityModeration` dedupes unchanged text.
-3. **Composite NSFW level** — `updateArticleNsfwLevels` now folds cover image + content images + `userNsfwLevel` + `article.nsfw` into a single `nsfwLevel` mask. When text moderation flips `article.nsfw = true`, the level is written as `nsfwBrowsingLevelsFlag` so the standard `(nsfwLevel & browsingLevel) != 0` filter handles serving-path filtering.
+3. **Composite NSFW level** — `updateArticleNsfwLevels` computes `GREATEST(userNsfwLevel, image-derived level, moderation floor)`, where the moderation floor is an `EXISTS` subquery against `EntityModeration` (text-mod Succeeded + NSFW-or-blocked) and `ArticleReport`/`Report` (Actioned NSFW reports) that returns R when either is present, else 0. Because the floor is re-evaluated on every recompute, a text-flagged article lands at R minimum regardless of image ratings, and the floor drops automatically if a mod invalidates the underlying record. (Previously this was gated on `a.nsfw = TRUE` forcing the full `nsfwBrowsingLevelsFlag` mask — see deprecation note above.)
 4. **Serving-path hygiene for Civitai Green** — closed every read path that previously ignored `nsfwLevel` on articles (`getCivitaiNews`, `getCivitaiEvents`, `getArticleById`, `sitemap-articles.xml`, `/api/og`) so articles can be served to the `public` audience safely.
 5. **Profanity filter retired from articles** — orchestrator text moderation supersedes the lexical profanity keyword filter. `ArticleMetadata.profanityMatches`/`profanityEvaluation` fields were removed; the legacy `migrate-profanity-nsfw.ts` admin backfill no longer accepts `entity=articles` (models + bounties still use it).
 6. **Backfill endpoints** — `migrate-article-images.ts` backfills image links, `migrate-article-text-moderation.ts` backfills xGuard submissions. Both are cancellable on client disconnect.
@@ -69,20 +71,51 @@ The fix uses `GREATEST(max(cover), max(content))` — integer max over powers-of
 
 **Implication for deploy**: running `updateArticleNsfwLevels` over legacy articles (which happens implicitly when backfills complete) will **change existing masks** for any article that mixed PG + NSFW content images under the old code. Watch the articles Meilisearch index for re-index churn during the backfill. This is expected.
 
-### 2.4 `article.nsfw` folds into `nsfwLevel` via `CASE WHEN`
+### 2.4 Durable moderation floor via subqueries
 
-Same commit. The UPDATE at `nsfwLevels.service.ts:315-325` now does:
+> 🔁 Rewritten 2026-04-17 as part of the `Article.nsfw` deprecation. Original CASE-WHEN design preserved below for historical reference.
+
+The UPDATE at `nsfwLevels.service.ts` now computes the level from three ground-truth sources — image ratings, user-set level, and a moderation floor derived on-the-fly from persisted records:
 
 ```sql
-SET "nsfwLevel" = (
-  CASE
-    WHEN a.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-    ELSE GREATEST(a."userNsfwLevel", level."nsfwLevel")
-  END
+WITH level AS (
+  -- image-derived max (same as before)
+  ...
+),
+moderation_floor AS (
+  SELECT a.id,
+    CASE
+      WHEN EXISTS (
+        SELECT 1 FROM "EntityModeration" em
+        WHERE em."entityType" = 'Article' AND em."entityId" = a.id
+          AND em.status = 'Succeeded'
+          AND (em.blocked = TRUE OR 'nsfw' = ANY(em."triggeredLabels"))
+      ) OR EXISTS (
+        SELECT 1 FROM "ArticleReport" ar
+        JOIN "Report" r ON r.id = ar."reportId"
+        WHERE ar."articleId" = a.id
+          AND r.reason = 'NSFW' AND r.status = 'Actioned'
+      ) THEN 4 -- NsfwLevel.R
+      ELSE 0
+    END AS "floor"
+  ...
 )
+UPDATE "Article" a
+SET "nsfwLevel" = GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor")
+FROM level JOIN moderation_floor mf ON mf.id = level.id
+WHERE level.id = a.id
+  AND GREATEST(a."userNsfwLevel", level."nsfwLevel", mf."floor") != a."nsfwLevel"
 ```
 
-So the text-moderation webhook only needs to set `article.nsfw = true` and call `updateArticleNsfwLevels([id])` — the CASE branch handles the rest. This matches how `updateModelNsfwLevels` / `updateBountyNsfwLevels` already worked.
+Why this shape:
+
+- **Durable**: text-mod floor survives arbitrary later image rescans, because the `EntityModeration` row is the source of truth and gets re-read every time.
+- **Reversible**: if a mod un-actions an NSFW report or manually invalidates a text-mod record, the next recompute re-derives `nsfwLevel` from user + image ground truth — no sticky state to clean up.
+- **Image-responsive**: replacing NSFW content with SFW content genuinely downgrades `nsfwLevel` (the old ELSE branch's behavior, preserved). User manual downgrade attempts are still blocked upstream by the `upsertArticle` auto-clamp `data.userNsfwLevel = Math.max(data.userNsfwLevel, article.nsfwLevel)` for non-mods.
+- **Text-mod-only-flagged articles with PG images** land at `R` (NsfwLevel.R = 4) only — not the full `R|X|XXX|Blocked` mask the old `CASE WHEN` produced. This is the bug fix that motivated this PR.
+- The `Article.nsfw` boolean is no longer written or read.
+
+**Historical behavior (deprecated 2026-04-17):** the update was gated on `a.nsfw = TRUE`, setting `nsfwLevel = nsfwBrowsingLevelsFlag` (R|X|XXX|Blocked = 60). The text-mod webhook wrote `nsfw: true` before calling `updateArticleNsfwLevels([id])`. The NSFW-report path in `report.service.ts` did the same. Both are gone; the subqueries replace them.
 
 ### 2.5 Articles feature flag opened to `['public']`
 

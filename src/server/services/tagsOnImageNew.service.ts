@@ -112,7 +112,7 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
 
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
-    await thumbnailCache.bust(imageIds);
+    await thumbnailCache.refresh(imageIds);
   });
 }
 

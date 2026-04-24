@@ -23,13 +23,15 @@ export function useDomainSync(currentUser: SessionUser | undefined, status: stri
 
   useEffect(() => {
     if (isSyncing || typeof window === 'undefined') return;
-    isSyncing = true;
     const { searchParams, host, origin } = new URL(window.location.href);
     const syncColor = searchParams.get('sync-account') as ColorDomain | null;
     const syncRedirect = searchParams.get('sync-redirect');
     if (!syncColor) return;
     const syncDomain = serverDomains[syncColor];
     if (!syncDomain || host === syncDomain || status === 'loading') return;
+    // Latch only once we've committed to syncing — otherwise a status='loading'
+    // first render would lock the flag and never retry when the session resolves.
+    isSyncing = true;
 
     // Only allow same-origin path redirects — reject protocol-relative or absolute URLs.
     const redirectPath =

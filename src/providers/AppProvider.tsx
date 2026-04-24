@@ -49,7 +49,6 @@ export function AppProvider({
   // Populate the module-level server domain map so `syncAccount(url)` can
   // resolve hosts to colors without pulling from React context.
   setServerDomains(serverDomains);
-  console.log({ serverDomains });
   const [state] = useState(() => ({
     ...appContext,
     allowMatureContent: domain !== 'green',

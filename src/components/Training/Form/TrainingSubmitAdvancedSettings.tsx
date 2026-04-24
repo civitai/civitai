@@ -423,7 +423,9 @@ export const AdvancedSettings = ({
               onChange={(event) => {
                 const newEngine = event.currentTarget.checked
                   ? 'ai-toolkit'
-                  : getDefaultEngine(selectedRun.baseType, selectedRun.base, features);
+                  : getDefaultEngine(selectedRun.baseType, selectedRun.base, features, {
+                      ignoreDefaultPreference: true,
+                    });
 
                 updateRun(modelId, mediaType, selectedRun.id, {
                   params: { ...selectedRun.params, engine: newEngine },

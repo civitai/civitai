@@ -1,5 +1,5 @@
 import { Badge, Text } from '@mantine/core';
-import React from 'react';
+import React, { memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import { IconBolt, IconBookmark, IconEye, IconMessageCircle2 } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
@@ -13,19 +13,30 @@ import {
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ArticleStatus } from '~/shared/utils/prisma/enums';
 import clsx from 'clsx';
 
-export function ArticleCard({ data, aspectRatio }: Props) {
+const articleStatusBadge: Partial<Record<ArticleStatus, { label: string; color: string }>> = {
+  [ArticleStatus.Draft]: { label: 'Draft', color: 'yellow' },
+  [ArticleStatus.Unpublished]: { label: 'Unpublished', color: 'red' },
+  [ArticleStatus.UnpublishedViolation]: { label: 'Violation', color: 'red' },
+};
+
+export const ArticleCard = memo(function ArticleCard({ data, aspectRatio }: Props) {
   return (
     <MetricSubscriptionProvider entityType="Article" entityId={data.id}>
       <ArticleCardContent data={data} aspectRatio={aspectRatio} />
     </MetricSubscriptionProvider>
   );
-}
+});
 
 function ArticleCardContent({ data, aspectRatio }: Props) {
-  const { id, title, coverImage, publishedAt, user, tags, stats } = data;
+  const { id, title, coverImage, publishedAt, user, tags, stats, status } = data;
   const category = tags?.find((tag) => tag.isCategory);
+  const currentUser = useCurrentUser();
+  const canSeeStatus = !!currentUser && (currentUser.id === user.id || currentUser.isModerator);
+  const statusBadge = canSeeStatus && status ? articleStatusBadge[status] : null;
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: data.id });
 
   // Live metrics for article stats
@@ -46,16 +57,28 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
       cosmetic={data.cosmetic?.data}
       header={
         <div className="flex w-full justify-between">
-          {category && (
-            <Badge
-              size="sm"
-              variant="gradient"
-              gradient={{ from: 'cyan', to: 'blue' }}
-              className={cardClasses.chip}
-            >
-              {category.name}
-            </Badge>
-          )}
+          <div className="flex items-center gap-1">
+            {category && (
+              <Badge
+                size="sm"
+                variant="gradient"
+                gradient={{ from: 'cyan', to: 'blue' }}
+                className={cardClasses.chip}
+              >
+                {category.name}
+              </Badge>
+            )}
+            {statusBadge && (
+              <Badge
+                size="sm"
+                variant="light"
+                color={statusBadge.color}
+                className={cardClasses.chip}
+              >
+                {statusBadge.label}
+              </Badge>
+            )}
+          </div>
           <ArticleContextMenu article={data} />
         </div>
       }

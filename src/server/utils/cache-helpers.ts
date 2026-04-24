@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
+import { logToAxiom } from '~/server/logging/client';
 import { cacheHitCounter, cacheMissCounter, cacheRevalidateCounter } from '~/server/prom/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -265,21 +266,41 @@ export function createCachedArray<T extends object>({
   }
 
   async function refresh(id: number | number[]) {
-    if (!Array.isArray(id)) id = [id];
+    const ids = Array.isArray(id) ? id : [id];
 
-    const results = await lookupFn(id, true);
-    const cachedAt = new Date();
-    await Promise.all(
-      Object.entries(results).map(
-        ([id, x]) => redis.packed.set(`${key}:${id}`, { ...x, cachedAt }),
+    try {
+      const results = await lookupFn(ids, true);
+      // appendFn is a read-side decorator (attaches computed fields, may mutate
+      // records in place). refresh() is fire-and-forget — its output isn't
+      // returned to a caller — so running appendFn here only risks persisting
+      // post-mutation shape to Redis. Leave it to fetch().
+      const cachedAt = new Date();
+      const EX = staleWhileRevalidate ? ttl * 2 : ttl;
+      await Promise.all(
+        Object.entries(results).map(([rid, x]) =>
+          redis.packed.set(`${key}:${rid}`, { ...x, cachedAt }, { EX })
+        )
+      );
+
+      const toRemove = ids.filter((x) => !results[x]).map(String);
+      await Promise.all(toRemove.map((rid) => redis.del(`${key}:${rid}`)));
+    } catch (error) {
+      // Refresh is best-effort: swallow and fall back to bust semantics so the
+      // next reader re-fetches from primary via lookupFn. A committed mutation
+      // must not surface a 500 just because the cache refill failed.
+      logToAxiom(
         {
-          EX: ttl,
-        }
-      )
-    );
-
-    const toRemove = id.filter((x) => !results[x]).map(String);
-    await Promise.all(toRemove.map((id) => redis.del(`${key}:${id}`)));
+          type: 'error',
+          name: 'cache-refresh-failed',
+          cacheKey: key,
+          ids: ids.join(','),
+          error: error instanceof Error ? error.message : String(error),
+        },
+        'civitai-prod'
+      ).catch(() => undefined);
+      const fallbackBust = staleWhileRevalidate ? invalidate : bust;
+      await fallbackBust(ids).catch(() => undefined);
+    }
   }
 
   async function flush() {
@@ -397,12 +418,16 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
   await redis.packed.set(key, toCache, { KEEPTTL: true });
 }
 
-export async function clearCacheByPattern(pattern: string) {
+export async function clearCacheByPattern(
+  pattern: string,
+  onProgress?: (cleared: number) => void
+) {
   const cleared: string[] = [];
 
   if (!pattern.includes('*')) {
     await redis.del(pattern as RedisKeyTemplateCache);
     cleared.push(pattern);
+    onProgress?.(cleared.length);
     return cleared;
   }
 
@@ -422,11 +447,81 @@ export async function clearCacheByPattern(pattern: string) {
       await Promise.all(batches[i].map((key) => redis.del(key)));
       cleared.push(...batches[i]);
       log('Cleared batch:', i + 1, 'of', batches.length);
+      onProgress?.(cleared.length);
     }
   }
 
   log('Done clearing cache. Total cleared:', cleared.length);
   return cleared;
+}
+
+function globToRegex(pattern: string) {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp('^' + escaped + '$');
+}
+
+export type ClearCacheByPatternsProgress = {
+  total: number;
+  perPattern: { pattern: string; cleared: number }[];
+};
+
+// Single-pass purge across multiple patterns — iterates the keyspace once and
+// tests each key against every pattern regex. Replaces N full SCANs with 1.
+export async function clearCacheByPatterns(
+  patterns: string[],
+  onProgress?: (progress: ClearCacheByPatternsProgress) => void
+) {
+  const perPattern = patterns.map((pattern) => ({
+    pattern,
+    regex: globToRegex(pattern),
+    cleared: [] as string[],
+  }));
+
+  const exact = perPattern.filter((p) => !p.pattern.includes('*'));
+  const globbed = perPattern.filter((p) => p.pattern.includes('*'));
+
+  // Fast path for exact keys — no scan needed.
+  for (const p of exact) {
+    await redis.del(p.pattern as RedisKeyTemplateCache);
+    p.cleared.push(p.pattern);
+  }
+
+  if (globbed.length > 0) {
+    log('Scanning cache for', globbed.length, 'patterns in a single pass');
+    const stream = redis.scanIterator({ MATCH: '*', COUNT: 10000 });
+
+    for await (const keys of stream) {
+      const toDelete: RedisKeyTemplateCache[] = [];
+      for (const key of keys as RedisKeyTemplateCache[]) {
+        for (const p of globbed) {
+          if (p.regex.test(key)) {
+            p.cleared.push(key);
+            toDelete.push(key);
+            break;
+          }
+        }
+      }
+      if (toDelete.length === 0) continue;
+
+      const batches = chunk(toDelete, 10000);
+      for (const batch of batches) {
+        await Promise.all(batch.map((key) => redis.del(key)));
+      }
+      const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
+      onProgress?.({
+        total,
+        perPattern: perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length })),
+      });
+    }
+  } else {
+    const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
+    onProgress?.({
+      total,
+      perPattern: perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length })),
+    });
+  }
+
+  return perPattern.map((p) => ({ pattern: p.pattern, cleared: p.cleared.length }));
 }
 
 export async function fetchCacheByPattern(pattern: string) {

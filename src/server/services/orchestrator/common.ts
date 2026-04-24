@@ -107,8 +107,7 @@ export async function getResourceDataWithInjects<T extends TrueGenerationData>(
 ) {
   const results = await getResourceData(
     [...versions, ...allInjectableResourceIds.map((id) => ({ id }))],
-    user,
-    true
+    { user, generation: true }
   );
 
   const allResources = (cb ? results.map(cb) : results) as T[];
