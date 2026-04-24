@@ -51,13 +51,15 @@ export function MasonryGrid<TData>({
       createAdFeed({
         data,
         columnCount,
-        options: [
-          {
-            width: 300,
-            height: 250,
-            AdUnit: AdUnitIncontent_1,
-          },
-        ],
+        options: adsReallyAreEnabled
+          ? [
+              {
+                width: 300,
+                height: 250,
+                AdUnit: AdUnitIncontent_1,
+              },
+            ]
+          : undefined,
       }),
     [columnCount, data, adsReallyAreEnabled]
   );
@@ -108,6 +110,7 @@ export function MasonryGrid<TData>({
                   <IconCaretRightFilled size={16} />
                 </Button>
               </div>
+
               <div>
                 <item.data.AdUnit />
               </div>
