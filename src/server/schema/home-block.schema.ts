@@ -45,6 +45,15 @@ export const homeBlockMetaSchema = z
     link: z.string(),
     linkText: z.string(),
     cosmeticShopSection: cosmeticShopSectionSchema,
+    featuredCollections: z.object({
+      collectionIds: z.array(z.number()).default([]),
+      limit: z.number().int().min(1).max(50).default(8),
+      rows: z.number().int().min(1).max(4).default(2),
+      renderCount: z.number().int().min(1).max(10).default(3),
+      maxStaleDays: z.number().int().min(1).max(365).optional(),
+      minRecentItems: z.number().int().min(1).max(100).optional(),
+      nameSnapshots: z.record(z.string(), z.string()).default({}),
+    }),
     footer: z.string().optional(),
   })
   .partial();
@@ -96,6 +105,13 @@ export const upsertHomeBlockInput = z.object({
   type: z.enum(HomeBlockType).default(HomeBlockType.Collection),
   sourceId: z.number().optional(),
   index: z.number().optional(),
+});
+
+export type ToggleFeaturedCollectionInputSchema = z.infer<
+  typeof toggleFeaturedCollectionInputSchema
+>;
+export const toggleFeaturedCollectionInputSchema = z.object({
+  collectionId: z.number(),
 });
 
 export type SetHomeBlocksOrderInputSchema = z.infer<typeof setHomeBlocksOrderInput>;

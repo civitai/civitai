@@ -6,6 +6,9 @@ import { isEqual } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useDomainColor } from '~/hooks/useDomainColor';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
 import { FeedWrapper } from '~/components/Feed/FeedWrapper';
@@ -72,7 +75,15 @@ export function ImagesInfiniteContent({
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const browsingLevel = useBrowsingLevelDebounced();
+  const rawBrowsingLevel = useBrowsingLevelDebounced();
+  const domainColor = useDomainColor();
+  // On the green (SFW) domain we default to PG only on image/video feeds.
+  // Users opt in to PG-13 via the feed filter; otherwise narrow the forced
+  // domain cap (sfwBrowsingLevelsFlag = PG | PG-13) down to PG.
+  const capToPublic = domainColor === 'green' && !imageFilters.includePG13;
+  const browsingLevel = capToPublic
+    ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
+    : rawBrowsingLevel;
   const {
     images,
     fetchNextPage,

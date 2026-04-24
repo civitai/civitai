@@ -1,10 +1,20 @@
-import { isFlagProtected, protectedProcedure, publicProcedure, router } from '~/server/trpc';
 import {
+  isFlagProtected,
+  moderatorProcedure,
+  protectedProcedure,
+  publicProcedure,
+  router,
+} from '~/server/trpc';
+import {
+  acknowledgeFeaturedCollectionNameHandler,
+  addCollectionToFeaturedPoolHandler,
   createCollectionHomeBlockHandler,
   deleteUserHomeBlockHandler,
+  getFeaturedCollectionsPoolHandler,
   getHomeBlocksByIdHandler,
   getHomeBlocksHandler,
   getSystemHomeBlocksHandler,
+  removeCollectionFromFeaturedPoolHandler,
   setHomeBlocksOrderHandler,
 } from '~/server/controllers/home-block.controller';
 import { edgeCacheIt, noEdgeCache } from '~/server/middleware.trpc';
@@ -14,6 +24,7 @@ import {
   createCollectionHomeBlockInputSchema,
   getSystemHomeBlocksInputSchema,
   setHomeBlocksOrderInput,
+  toggleFeaturedCollectionInputSchema,
 } from '~/server/schema/home-block.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
 
@@ -44,4 +55,14 @@ export const homeBlockRouter = router({
     .input(getByIdSchema)
     .use(isFlagProtected('alternateHome'))
     .mutation(deleteUserHomeBlockHandler),
+  getFeaturedCollectionsPool: moderatorProcedure.query(getFeaturedCollectionsPoolHandler),
+  addCollectionToFeaturedPool: moderatorProcedure
+    .input(toggleFeaturedCollectionInputSchema)
+    .mutation(addCollectionToFeaturedPoolHandler),
+  removeCollectionFromFeaturedPool: moderatorProcedure
+    .input(toggleFeaturedCollectionInputSchema)
+    .mutation(removeCollectionFromFeaturedPoolHandler),
+  acknowledgeFeaturedCollectionName: moderatorProcedure
+    .input(toggleFeaturedCollectionInputSchema)
+    .mutation(acknowledgeFeaturedCollectionNameHandler),
 });

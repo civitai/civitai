@@ -65,6 +65,7 @@ import { processSubscriptionsRequiringRenewal } from '~/server/jobs/process-subs
 import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
+import { refreshFeaturedCollectionsEligibility } from '~/server/jobs/refresh-featured-collections-eligibility';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
@@ -119,6 +120,7 @@ export const jobs: Job[] = [
   cleanImageResources,
   deleteOldTrainingData,
   updateCollectionItemRandomId,
+  refreshFeaturedCollectionsEligibility,
   ...metricJobs,
   ...searchIndexJobs,
   searchIndexUserCleanupJob,

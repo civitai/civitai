@@ -4,7 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetHomeBlockByIdInputSchema,
@@ -27,6 +27,10 @@ import {
   getFeaturedModels,
   getModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
+import {
+  computeFeaturedCollectionsState,
+  getFeaturedCollectionsState,
+} from '~/server/jobs/refresh-featured-collections-eligibility';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   throwAuthorizationError,
@@ -143,12 +147,10 @@ export const getHomeBlockById = async ({
       id,
     },
   } as const;
-  const homeBlock = await dbRead.homeBlock
-    .findUniqueOrThrow(homeBlockFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
-      return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
-    });
+  const homeBlock = await dbRead.homeBlock.findUniqueOrThrow(homeBlockFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
+    return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
+  });
 
   if (!homeBlock) {
     return null;
@@ -167,6 +169,13 @@ type GetCollectionWithItems = AsyncReturnType<typeof getCollectionById> & {
 };
 type GetShopSectionsWithItems = AsyncReturnType<typeof getShopSectionsWithItems>[number];
 
+export type PickedFeaturedCollection = {
+  collection: AsyncReturnType<typeof getCollectionById>;
+  items: AsyncReturnType<typeof getCollectionItemsByCollectionId>['items'];
+  rows: number;
+  limit: number;
+};
+
 export type HomeBlockWithData = {
   id: number;
   metadata: HomeBlockMetaSchema;
@@ -179,6 +188,7 @@ export type HomeBlockWithData = {
   announcements?: GetAnnouncements;
   cosmeticShopSection?: GetShopSectionsWithItems;
   featuredModels?: GetModelsWithImagesAndModelVersions[];
+  pickedCollections?: PickedFeaturedCollection[];
 };
 
 export const getHomeBlockData = async ({
@@ -282,6 +292,82 @@ export const getHomeBlockData = async ({
         ...homeBlock,
         metadata,
         cosmeticShopSection,
+      };
+    }
+    case HomeBlockType.FeaturedCollections: {
+      // System block is source of truth for pool; cloned user blocks read through to source
+      // so mods only update the singleton and clones stay in sync.
+      let effectivePool = metadata.featuredCollections;
+      if (homeBlock.sourceId) {
+        const source = await dbRead.homeBlock.findUnique({
+          where: { id: homeBlock.sourceId },
+          select: { metadata: true },
+        });
+        const sourceMeta = (source?.metadata || {}) as HomeBlockMetaSchema;
+        effectivePool = sourceMeta.featuredCollections ?? effectivePool;
+      }
+      if (!effectivePool?.collectionIds?.length) return null;
+
+      const state = await getFeaturedCollectionsState();
+      let candidates: number[];
+      if (state === null) {
+        // Redis miss (pre-first-job-run) — bootstrap with full pool.
+        candidates = effectivePool.collectionIds;
+      } else {
+        const eligible = state.eligibleIds.filter((id) =>
+          effectivePool!.collectionIds.includes(id)
+        );
+        // Job ran and determined nothing qualifies — hide the block rather than show stale.
+        if (eligible.length === 0) return null;
+        candidates = eligible;
+      }
+
+      // Clamp to sane bounds — metadata is mutable JSON, don't trust blindly.
+      const limit = Math.min(50, Math.max(1, input.limit || effectivePool.limit || 8));
+      const rows = Math.min(4, Math.max(1, effectivePool.rows || 2));
+      const renderCount = Math.min(
+        10,
+        Math.max(1, effectivePool.renderCount ?? 3),
+        candidates.length
+      );
+
+      // Fisher-Yates shuffle, take N.
+      const pool = [...candidates];
+      for (let i = pool.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [pool[i], pool[j]] = [pool[j], pool[i]];
+      }
+      const picks = pool.slice(0, renderCount);
+
+      const hydrated = await Promise.all(
+        picks.map(async (id) => {
+          const col = await getCollectionById({ input: { id } });
+          if (!col) return null;
+          const result = input.withCoreData
+            ? { items: [], nextCursor: undefined }
+            : await getCollectionItemsByCollectionId({
+                user,
+                input: {
+                  collectionId: id,
+                  limit,
+                  browsingLevel: sfwBrowsingLevelsFlag,
+                },
+              });
+          // Drop picks with zero items post-SFW filter — don't render an empty grid block
+          // (e.g. a curator whose collection is all R/X would show a ghost section otherwise).
+          if (!input.withCoreData && result.items.length === 0) return null;
+          return { collection: col, items: result.items, rows, limit };
+        })
+      );
+
+      const pickedCollections = hydrated.filter(isDefined);
+      if (pickedCollections.length === 0) return null;
+
+      return {
+        ...homeBlock,
+        type: HomeBlockType.FeaturedCollections,
+        metadata,
+        pickedCollections,
       };
     }
     case HomeBlockType.FeaturedModelVersion: {
@@ -453,6 +539,146 @@ export const deleteHomeBlockById = async ({
   } catch {
     // Ignore errors
   }
+};
+
+const FEATURED_COLLECTIONS_DEFAULTS = {
+  limit: 8,
+  rows: 2,
+  renderCount: 3,
+  title: 'Featured Collection',
+};
+
+async function getOrCreateFeaturedCollectionsSystemBlock() {
+  const existing = await dbWrite.homeBlock.findFirst({
+    where: { userId: -1, type: HomeBlockType.FeaturedCollections },
+    select: homeBlockSelect,
+  });
+  if (existing) return existing;
+
+  return dbWrite.homeBlock.create({
+    data: {
+      userId: -1,
+      type: HomeBlockType.FeaturedCollections,
+      metadata: {
+        title: FEATURED_COLLECTIONS_DEFAULTS.title,
+        featuredCollections: {
+          collectionIds: [],
+          limit: FEATURED_COLLECTIONS_DEFAULTS.limit,
+          rows: FEATURED_COLLECTIONS_DEFAULTS.rows,
+          renderCount: FEATURED_COLLECTIONS_DEFAULTS.renderCount,
+          nameSnapshots: {},
+        },
+      },
+    },
+    select: homeBlockSelect,
+  });
+}
+
+export const getFeaturedCollectionsPool = async () => {
+  const block = await dbRead.homeBlock.findFirst({
+    where: { userId: -1, type: HomeBlockType.FeaturedCollections },
+    select: homeBlockSelect,
+  });
+  const metadata = (block?.metadata || {}) as HomeBlockMetaSchema;
+  const collectionIds = metadata.featuredCollections?.collectionIds ?? [];
+  return {
+    homeBlockId: block?.id ?? null,
+    collectionIds,
+    metadata,
+  };
+};
+
+type PoolMutation = {
+  ids?: (ids: number[]) => number[];
+  snapshots?: (snap: Record<string, string>) => Record<string, string>;
+};
+
+async function updateFeaturedPool(
+  mutation: PoolMutation
+): Promise<{ homeBlockId: number; collectionIds: number[] }> {
+  const block = await getOrCreateFeaturedCollectionsSystemBlock();
+  const metadata = (block.metadata || {}) as HomeBlockMetaSchema;
+  const currentIds = metadata.featuredCollections?.collectionIds ?? [];
+  const currentSnapshots = metadata.featuredCollections?.nameSnapshots ?? {};
+  const nextIds = mutation.ids ? mutation.ids(currentIds) : currentIds;
+  const nextSnapshots = mutation.snapshots
+    ? mutation.snapshots(currentSnapshots)
+    : currentSnapshots;
+
+  const newMetadata: HomeBlockMetaSchema = {
+    ...metadata,
+    featuredCollections: {
+      collectionIds: nextIds,
+      limit: metadata.featuredCollections?.limit ?? FEATURED_COLLECTIONS_DEFAULTS.limit,
+      rows: metadata.featuredCollections?.rows ?? FEATURED_COLLECTIONS_DEFAULTS.rows,
+      renderCount:
+        metadata.featuredCollections?.renderCount ?? FEATURED_COLLECTIONS_DEFAULTS.renderCount,
+      maxStaleDays: metadata.featuredCollections?.maxStaleDays,
+      minRecentItems: metadata.featuredCollections?.minRecentItems,
+      nameSnapshots: nextSnapshots,
+    },
+  };
+
+  // Only mutate the system block. Cloned user blocks (sourceId=block.id) may have user-customized
+  // fields (title, description) — we'd clobber them. Runtime hydration pulls pool state from the
+  // source block via sourceId lookup, so clones stay in sync without their metadata being touched.
+  await dbWrite.homeBlock.update({
+    where: { id: block.id },
+    data: { metadata: newMetadata },
+  });
+
+  // Bust the permanent-blocks list cache so if the FeaturedCollections row is flagged permanent,
+  // the 1-day-TTL'd list doesn't serve stale metadata to cold-cache users.
+  await redis.del(REDIS_KEYS.CACHES.HOME_BLOCKS_PERMANENT);
+
+  // Recompute Redis state after pool changes so eligibility reflects reality.
+  await computeFeaturedCollectionsState();
+
+  return { homeBlockId: block.id, collectionIds: nextIds };
+}
+
+export const addCollectionToFeaturedPool = async ({ collectionId }: { collectionId: number }) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, name: true },
+  });
+  if (!collection) throw throwNotFoundError('Collection not found');
+
+  return updateFeaturedPool({
+    ids: (current) => (current.includes(collectionId) ? current : [...current, collectionId]),
+    snapshots: (snap) => ({ ...snap, [collectionId]: collection.name }),
+  });
+};
+
+export const removeCollectionFromFeaturedPool = async ({
+  collectionId,
+}: {
+  collectionId: number;
+}) => {
+  return updateFeaturedPool({
+    ids: (current) => current.filter((id) => id !== collectionId),
+    snapshots: (snap) => {
+      const next = { ...snap };
+      delete next[collectionId];
+      return next;
+    },
+  });
+};
+
+export const acknowledgeFeaturedCollectionName = async ({
+  collectionId,
+}: {
+  collectionId: number;
+}) => {
+  const collection = await dbRead.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, name: true },
+  });
+  if (!collection) throw throwNotFoundError('Collection not found');
+
+  return updateFeaturedPool({
+    snapshots: (snap) => ({ ...snap, [collectionId]: collection.name }),
+  });
 };
 
 export const setHomeBlocksOrder = async ({

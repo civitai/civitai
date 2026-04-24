@@ -1,4 +1,14 @@
-import { Anchor, Button, Divider, Group, Paper, Stack, Tabs, Text, Title } from '@mantine/core';
+import {
+  Button,
+  Divider,
+  Group,
+  Paper,
+  Stack,
+  Tabs,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
 import { IconAlertTriangle, IconExternalLink, IconInfoCircle, IconX } from '@tabler/icons-react';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
@@ -12,7 +22,40 @@ type OnrampService = {
   url: string;
 };
 
-const regions: { value: string; label: string; services: OnrampService[] }[] = [
+type OnrampRegion = {
+  value: string;
+  label: string;
+  banner?: React.ReactNode;
+  services: OnrampService[];
+};
+
+const batchWalletTooltip =
+  "Some exchanges bundle withdrawals in a way NowPayments (our crypto payment provider) doesn't automatically pick up. Your funds are safe, but you'd need to contact support to get your Buzz credited.";
+
+function SelfCustodyHint({ label }: { label: string }) {
+  return (
+    <Tooltip
+      label={batchWalletTooltip}
+      withArrow
+      multiline
+      w={280}
+      events={{ hover: true, focus: true, touch: true }}
+    >
+      <Text
+        span
+        style={{
+          textDecorationLine: 'underline',
+          textDecorationStyle: 'dotted',
+          cursor: 'help',
+        }}
+      >
+        {label}
+      </Text>
+    </Tooltip>
+  );
+}
+
+const regions: OnrampRegion[] = [
   {
     value: 'us',
     label: 'US',
@@ -49,6 +92,12 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
   {
     value: 'europe',
     label: 'Europe',
+    banner: (
+      <>
+        Using an exchange? Route crypto through a self-custody wallet first &mdash;{' '}
+        <SelfCustodyHint label="direct exchange sends aren't always detected" />.
+      </>
+    ),
     services: [
       {
         name: 'Revolut',
@@ -70,20 +119,6 @@ const regions: { value: string; label: string; services: OnrampService[] }[] = [
         name: 'Coinbase',
         description: 'Free USDC withdrawals on Base — the lowest fee option.',
         tip: 'Send USDC on Base for the lowest fees.',
-        disclaimer: (
-          <>
-            Coinbase may block direct sends — send to your{' '}
-            <Anchor
-              href="https://wallet.coinbase.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              size="xs"
-            >
-              Coinbase Wallet
-            </Anchor>{' '}
-            first, then send here.
-          </>
-        ),
         url: 'https://www.coinbase.com',
       },
       {
@@ -264,6 +299,27 @@ export function OnrampGuidance() {
                   withBorder
                   className="bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10"
                 >
+                  {region.banner && (
+                    <>
+                      <Group
+                        gap={6}
+                        p="sm"
+                        wrap="nowrap"
+                        align="flex-start"
+                        className="bg-yellow-50 dark:bg-yellow-500/10"
+                      >
+                        <IconAlertTriangle
+                          size={14}
+                          className="text-yellow-700 dark:text-yellow-300"
+                          style={{ flexShrink: 0, marginTop: 2 }}
+                        />
+                        <Text size="xs" className="text-yellow-800 dark:text-yellow-200">
+                          {region.banner}
+                        </Text>
+                      </Group>
+                      <Divider />
+                    </>
+                  )}
                   {region.services.map((service, i) => (
                     <div key={service.name}>
                       {i > 0 && <Divider />}

@@ -505,6 +505,21 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
   'Flux1',
   'FluxKrea',
 ];
+
+// Ecosystems that run via the sdcpp engine and qualify for the 2-for-1 quantity
+// bonus + footer alert. Superset of EXPERIMENTAL_MODE_SUPPORTED_MODELS: includes
+// ecosystems that don't expose the `enhancedCompatibility` toggle but still use
+// sdcpp under the hood.
+export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
+  ...EXPERIMENTAL_MODE_SUPPORTED_MODELS,
+  'Anima',
+  'ZImageBase',
+  'ZImageTurbo',
+  'Flux2Klein_9B',
+  'Flux2Klein_9B_base',
+  'Flux2Klein_4B',
+  'Flux2Klein_4B_base',
+];
 export const fluxModeOptions = [
   { label: 'Draft', value: fluxDraftAir },
   { label: 'Standard', value: fluxStandardAir },

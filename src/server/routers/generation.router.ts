@@ -22,7 +22,7 @@ import {
   toggleUnavailableResource,
 } from '~/server/services/generation/generation.service';
 import { moderatorProcedure, publicProcedure, router } from '~/server/trpc';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, purgeOnSuccess } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import {
   getWorkflowDefinitions,
@@ -60,7 +60,7 @@ export const generationRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(({ input }) => checkResourcesCoverage(input)),
   getStatus: publicProcedure
-    .use(edgeCacheIt({ ttl: CacheTTL.xs }))
+    .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
     .query(() => getGenerationStatus()),
   setStatus: moderatorProcedure
     .input(
@@ -69,6 +69,7 @@ export const generationRouter = router({
         message: z.string().max(2000).nullish(),
       })
     )
+    .use(purgeOnSuccess(['generation-status']))
     .mutation(({ input }) => setGenerationStatus(input)),
   getGenerationConfig: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs }))

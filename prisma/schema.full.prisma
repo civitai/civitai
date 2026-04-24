@@ -2935,6 +2935,7 @@ enum HomeBlockType {
   Event
   CosmeticShop
   FeaturedModelVersion
+  FeaturedCollections
 }
 
 model HomeBlock {

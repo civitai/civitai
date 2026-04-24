@@ -132,7 +132,7 @@ export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
-export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion";
+export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion" | "FeaturedCollections";
 
 export type Currency = "USD" | "BUZZ" | "USDC";
 

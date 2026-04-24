@@ -141,6 +141,8 @@ export const modelFileUpdateSchema = z.object({
   modelVersionId: z.number().optional(), // nb: this should probably not be an option here
   visibility: z.enum(ModelFileVisibility).optional(),
   metadata: modelFileMetadataSchema.optional(),
+  backend: z.string().optional(),
+  s3Path: z.string().optional(),
 });
 
 export type ModelFileUpsertInput = z.infer<typeof modelFileUpsertSchema>;

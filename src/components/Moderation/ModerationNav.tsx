@@ -55,6 +55,10 @@ export function ModerationNav() {
           hidden: !features.announcements,
         },
         {
+          label: 'Featured Collections',
+          href: '/moderator/home-blocks/featured-collections',
+        },
+        {
           label: 'Rewards Bonus Events',
           href: '/moderator/rewards-bonus-events',
         },

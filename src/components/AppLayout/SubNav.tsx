@@ -17,7 +17,7 @@ import clsx from 'clsx';
 const filterSections = [
   { pathname: '/', component: <ManageHomepageButton ml="auto" /> },
   { pathname: '/models', component: <ModelFeedFilters ml="auto" /> },
-  { pathname: '/images', component: <ImageFeedFilters ml="auto" /> },
+  { pathname: '/images', component: <ImageFeedFilters ml="auto" hideMediaTypes /> },
   { pathname: '/videos', component: <VideoFeedFilters ml="auto" /> },
   { pathname: '/posts', component: <PostFeedFilters ml="auto" /> },
   { pathname: '/articles', component: <ArticleFeedFilters ml="auto" /> },
