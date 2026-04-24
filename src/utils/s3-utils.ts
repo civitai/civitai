@@ -279,6 +279,49 @@ export function isB2Url(url: string): boolean {
   }
 }
 
+/**
+ * Extract `{ bucket, key }` from a Backblaze B2 URL. Primary check is the
+ * `*.backblazeb2.com` hostname pattern, which works without any env config
+ * (important for admin scripts running in pods that don't set
+ * `S3_UPLOAD_B2_ENDPOINT`). If the primary check fails, we fall back to
+ * matching against the configured endpoint so custom proxies / non-public
+ * endpoints still parse correctly when the env IS set.
+ *
+ * Accepts path-style (`https://s3.<region>.backblazeb2.com/<bucket>/<key>`)
+ * and virtual-host style (`https://<bucket>.s3.<region>.backblazeb2.com/<key>`).
+ * Returns `null` if neither check recognizes the URL.
+ */
+export function parseB2Url(rawUrl: string): { bucket: string; key: string } | null {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return null;
+  }
+
+  const matchesPublicPattern = url.hostname.endsWith('.backblazeb2.com');
+  const matchesConfiguredHost = b2Host !== null && url.hostname === b2Host;
+  if (!matchesPublicPattern && !matchesConfiguredHost) return null;
+
+  // Path-style endpoint → bucket is the first path segment.
+  // We treat any `s3.*` hostname as path-style, and also whatever shape the
+  // configured endpoint advertises (exact hostname match).
+  const isPathStyle = url.hostname.startsWith('s3.') || matchesConfiguredHost;
+  if (isPathStyle) {
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (parts.length < 2) return null;
+    return { bucket: parts[0], key: parts.slice(1).join('/') };
+  }
+
+  // Virtual-host style → first hostname label is the bucket.
+  const dotIdx = url.hostname.indexOf('.');
+  if (dotIdx <= 0) return null;
+  const bucket = url.hostname.slice(0, dotIdx);
+  const key = url.pathname.replace(/^\/+/, '');
+  if (!key) return null;
+  return { bucket, key };
+}
+
 export async function getGetUrl(
   s3Url: string,
   { s3, expiresIn = DOWNLOAD_EXPIRATION, fileName, bucket }: GetObjectOptions = {}

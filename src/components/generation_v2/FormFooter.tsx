@@ -72,7 +72,7 @@ import {
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { EXPERIMENTAL_MODE_SUPPORTED_MODELS } from '~/shared/constants/generation.constants';
+import { SDCPP_SUPPORTED_ECOSYSTEMS } from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
@@ -433,21 +433,36 @@ function PriorityAlertSpace({
     );
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
-    // Controller returns null when the ecosystem node is inactive.
+    // When enhancedCompatibility is on, the bonus doesn't apply — swap in a
+    // warning (with its own dismissal key) so users know how to qualify.
     priorityAlert = (
-      <Controller
+      <MultiController
         graph={graph}
-        name="ecosystem"
-        render={({ value }) => {
-          if (!value || !EXPERIMENTAL_MODE_SUPPORTED_MODELS.includes(value)) return null;
+        names={['ecosystem', 'enhancedCompatibility'] as const}
+        render={({ values }) => {
+          const ecosystem = values.ecosystem as string | undefined;
+          const enhancedCompatibility = values.enhancedCompatibility as boolean | undefined;
+          if (!ecosystem || !SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return null;
+          if (enhancedCompatibility) {
+            return (
+              <DismissibleAlert
+                id={`bogo-sdcpp-warn-${ecosystem}`}
+                color="yellow"
+                size="sm"
+                title="Miss Out on 2-for-1 Bonus"
+              >
+                Turn off Enhanced Compatibility to get 2 images per generation for the price of 1.
+              </DismissibleAlert>
+            );
+          }
           return (
             <DismissibleAlert
-              id={`bogo-sdcpp-${value}`}
+              id={`bogo-sdcpp-${ecosystem}`}
               color="blue"
               size="sm"
               title="2-for-1 Bonus Active"
             >
-              This model is doubling your generations for a limited time.
+              Each generation produces 2 images for the price of 1 on this model.
             </DismissibleAlert>
           );
         }}

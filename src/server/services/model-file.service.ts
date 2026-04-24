@@ -105,11 +105,19 @@ export async function updateFile({
   metadata,
   userId,
   isModerator,
+  backend: _backend,
+  s3Path: _s3Path,
   ...inputData
 }: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
   const modelFile = await dbWrite.modelFile.findUnique({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
-    select: { id: true, metadata: true, modelVersionId: true },
+    select: {
+      id: true,
+      metadata: true,
+      modelVersionId: true,
+      sizeKB: true,
+      modelVersion: { select: { modelId: true } },
+    },
   });
   if (!modelFile) throw throwNotFoundError();
 
@@ -123,9 +131,13 @@ export async function updateFile({
   });
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
+  // Merge committed updates back into the snapshot so the returned record
+  // reflects post-update state (e.g. `sizeKB` on a re-upload). `updateMany`
+  // doesn't return the updated row, and we don't want a second round-trip.
   return {
     ...modelFile,
     metadata,
+    ...(inputData.sizeKB !== undefined ? { sizeKB: inputData.sizeKB } : {}),
   };
 }
 

@@ -1170,6 +1170,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     ? ModelFileVisibility.Sensitive
                     : ModelFileVisibility.Private,
                 metadata,
+                ...(result.backend === 'b2' ? { s3Path: result.key } : {}),
               });
             } catch (e: unknown) {
               setZipping(false);
@@ -1266,7 +1267,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         if (i.label.length > 0) {
           // Validate each tag individually to avoid cross-tag false positives
           // (e.g. "school_uniform, 1girl" matching composed "school...girl" pattern)
-          const tags = i.label.split(',').map((t) => t.trim()).filter(Boolean);
+          const tags = i.label
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean);
           let hasInvalid = false;
           for (const tag of tags) {
             const { blockedFor, success } = auditPrompt(tag, undefined, isGreen);
