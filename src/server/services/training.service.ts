@@ -26,6 +26,7 @@ import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type {
   AutoCaptionInput,
   AutoTagInput,
+  GetAutoLabelUploadUrlInput,
   GetAutoLabelWorkflowInput,
   MoveAssetInput,
   SubmitAutoLabelWorkflowInput,
@@ -711,7 +712,11 @@ function toOrchestratorError(error: unknown): never {
   }
 }
 
-export async function getAutoLabelUploadUrl() {
+export async function getAutoLabelUploadUrl({
+  userId,
+  modelId,
+}: GetAutoLabelUploadUrlInput & { userId: number }) {
+  await assertModelOwnership(modelId, userId);
   const { data, error } = await getConsumerBlobUploadUrl({
     client: internalOrchestratorClient,
   });

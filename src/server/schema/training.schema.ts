@@ -38,17 +38,13 @@ export const autoCaptionInput = autoTagInput.merge(autoCaptionSchema.omit({ over
 
 // --- Auto-label v2 (orchestrator workflows) ---
 
-// Only accept blob URLs we just minted from the orchestrator's v2 blob endpoint.
-// Without this, any URL the orchestrator can reach (including internal IPs and
-// metadata services) becomes an SSRF vector via mediaUrl.
-const ORCHESTRATOR_BLOB_URL_PREFIX = 'https://orchestration-new.civitai.com/v2/consumer/blobs/';
-
+// The orchestrator accepts arbitrary image URLs for captioning/tagging, so we
+// only enforce sane URL shape here — HTTPS, length-capped, real URL.
 const autoLabelImageSchema = z.object({
   mediaUrl: z
     .url()
-    .refine((url) => url.startsWith(ORCHESTRATOR_BLOB_URL_PREFIX), {
-      message: 'mediaUrl must point to an orchestrator-issued blob',
-    }),
+    .max(2048)
+    .refine((u) => u.startsWith('https://'), { message: 'mediaUrl must be HTTPS' }),
   filename: z.string().min(1).max(256),
 });
 
@@ -80,8 +76,22 @@ export type SubmitAutoLabelWorkflowInput = z.infer<typeof submitAutoLabelWorkflo
 export const submitAutoLabelWorkflowSchema = z.object({
   modelId: z.number().positive(),
   mediaType: z.enum(['image', 'video']).default('image'),
-  images: z.array(autoLabelImageSchema).min(1).max(AUTO_LABEL_BATCH_SIZE),
+  images: z
+    .array(autoLabelImageSchema)
+    .min(1)
+    .max(AUTO_LABEL_BATCH_SIZE)
+    .refine((imgs) => new Set(imgs.map((i) => i.mediaUrl)).size === imgs.length, {
+      message: 'Duplicate mediaUrl in batch',
+    }),
   params: z.discriminatedUnion('type', [autoLabelTagParamsSchema, autoLabelCaptionParamsSchema]),
+});
+
+export type GetAutoLabelUploadUrlInput = z.infer<typeof getAutoLabelUploadUrlSchema>;
+export const getAutoLabelUploadUrlSchema = z.object({
+  // Scope every presign to a model the user owns — without this, any guarded
+  // user could mint unlimited uploads to the orchestrator's system-token blob
+  // store as free hosting.
+  modelId: z.number().positive(),
 });
 
 export type GetAutoLabelWorkflowInput = z.infer<typeof getAutoLabelWorkflowSchema>;

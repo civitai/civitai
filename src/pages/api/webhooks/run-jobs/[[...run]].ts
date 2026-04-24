@@ -66,6 +66,7 @@ import { processVaultItems } from '~/server/jobs/process-vault-items';
 import { pushDiscordMetadata } from '~/server/jobs/push-discord-metadata';
 import { refreshAuctionCache } from '~/server/jobs/refresh-auction-cache';
 import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
+import { reindexRecentScheduledImages } from '~/server/jobs/reindex-recent-scheduled-images';
 import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
@@ -102,6 +103,7 @@ export const jobs: Job[] = [
   addOnDemandRunStrategiesJob,
   deliverPurchasedCosmetics,
   deliverLeaderboardCosmetics,
+  reindexRecentScheduledImages,
   resetImageViewCounts,
   pushDiscordMetadata,
   applyVotedTags,

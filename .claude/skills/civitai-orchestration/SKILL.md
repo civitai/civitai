@@ -254,7 +254,7 @@ Stored in `.claude/skills/civitai-orchestration/.env`:
 
 ```env
 CIVITAI_API_TOKEN=your_bearer_token
-CIVITAI_API_URL=https://orchestration-new.civitai.com
+CIVITAI_API_URL=https://orchestration.civitai.com
 ```
 
 ## API Reference

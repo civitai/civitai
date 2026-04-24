@@ -90,6 +90,7 @@ import {
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
+  type AutoLabelType,
   defaultTrainingState,
   defaultTrainingStateVideo,
   getShortNameFromUrl,
@@ -1266,7 +1267,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         if (i.label.length > 0) {
           // Validate each tag individually to avoid cross-tag false positives
           // (e.g. "school_uniform, 1girl" matching composed "school...girl" pattern)
-          const tags = i.label.split(',').map((t) => t.trim()).filter(Boolean);
+          const tags = i.label
+            .split(',')
+            .map((t) => t.trim())
+            .filter(Boolean);
           let hasInvalid = false;
           for (const tag of tags) {
             const { blockedFor, success } = auditPrompt(tag, undefined, isGreen);
@@ -1594,34 +1598,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             )}
             {autoLabeling.isRunning && (
               <Paper className="bg-gray-0 dark:bg-dark-6" my="lg" p="md" withBorder>
-                <Stack>
-                  <Text>Running auto labeling...</Text>
-                  {autoLabeling.successes + autoLabeling.fails.length > 0 ? (
-                    <Progress.Root size="xl" radius="xl">
-                      <Progress.Section
-                        value={
-                          ((autoLabeling.successes + autoLabeling.fails.length) /
-                            autoLabeling.total) *
-                          100
-                        }
-                        striped
-                        animated
-                      >
-                        <Progress.Label>
-                          {`${autoLabeling.successes + autoLabeling.fails.length} / ${
-                            autoLabeling.total
-                          }`}
-                        </Progress.Label>
-                      </Progress.Section>
-                    </Progress.Root>
-                  ) : (
-                    <Progress.Root size="xl" radius="xl">
-                      <Progress.Section value={100} striped animated>
-                        <Progress.Label>Waiting for data...</Progress.Label>
-                      </Progress.Section>
-                    </Progress.Root>
-                  )}
-                </Stack>
+                <AutoLabelProgress autoLabeling={autoLabeling} />
               </Paper>
             )}
             {imageList.length > 0 && (
@@ -1938,6 +1915,76 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         </Button>
       </Group>
     </>
+  );
+};
+
+const formatRemaining = (seconds: number) => {
+  if (!isFinite(seconds) || seconds <= 0) return '';
+  if (seconds < 60) return `~${Math.ceil(seconds)}s remaining`;
+  const minutes = Math.ceil(seconds / 60);
+  return `~${minutes}m remaining`;
+};
+
+const AutoLabelProgress = ({ autoLabeling }: { autoLabeling: AutoLabelType }) => {
+  const { phase, uploaded, total, successes, fails, uploadStartedAt } = autoLabeling;
+
+  // Pre-upload: source images are being fetched from CDN. Indeterminate bar
+  // since per-image progress isn't tracked here — and we don't want to start
+  // ticking the upload progress at 0/N for the whole fetch window.
+  if (phase === 'preparing') {
+    return (
+      <Stack>
+        <Text>Preparing images…</Text>
+        <Progress.Root size="xl" radius="xl">
+          <Progress.Section value={100} striped animated>
+            <Progress.Label>Reading source files</Progress.Label>
+          </Progress.Section>
+        </Progress.Root>
+      </Stack>
+    );
+  }
+
+  // Uploading. Show ETA only after a few uploads have completed so the
+  // estimate isn't based on a single noisy sample.
+  if (phase === 'uploading') {
+    const pct = total > 0 ? (uploaded / total) * 100 : 0;
+    let eta = '';
+    if (uploaded >= 3 && uploadStartedAt && uploaded < total) {
+      const elapsedMs = Date.now() - uploadStartedAt;
+      const msPerImage = elapsedMs / uploaded;
+      eta = formatRemaining(((total - uploaded) * msPerImage) / 1000);
+    }
+    return (
+      <Stack>
+        <Text>Uploading images{eta ? ` · ${eta}` : ''}</Text>
+        <Progress.Root size="xl" radius="xl">
+          <Progress.Section value={pct} striped animated>
+            <Progress.Label>{`${uploaded} / ${total}`}</Progress.Label>
+          </Progress.Section>
+        </Progress.Root>
+      </Stack>
+    );
+  }
+
+  // Labeling (orchestrator) or legacy zip path: same progress pattern.
+  const done = successes + fails.length;
+  return (
+    <Stack>
+      <Text>Running auto labeling…</Text>
+      {done > 0 ? (
+        <Progress.Root size="xl" radius="xl">
+          <Progress.Section value={(done / total) * 100} striped animated>
+            <Progress.Label>{`${done} / ${total}`}</Progress.Label>
+          </Progress.Section>
+        </Progress.Root>
+      ) : (
+        <Progress.Root size="xl" radius="xl">
+          <Progress.Section value={100} striped animated>
+            <Progress.Label>Waiting for data...</Progress.Label>
+          </Progress.Section>
+        </Progress.Root>
+      )}
+    </Stack>
   );
 };
 
