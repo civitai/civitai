@@ -6,7 +6,7 @@ import {
 } from '~/server/utils/errorHandling';
 import type { HomeBlockWithData } from '~/server/services/home-block.service';
 import {
-  acknowledgeFeaturedCollectionName,
+  acknowledgeFeaturedCollection,
   addCollectionToFeaturedPool,
   deleteHomeBlockById,
   getFeaturedCollectionsPool,
@@ -258,12 +258,14 @@ export const getFeaturedCollectionsPoolHandler = async () => {
         name: true,
         nsfwLevel: true,
         type: true,
+        write: true,
         image: { select: { id: true, url: true, nsfwLevel: true } },
         user: { select: { id: true, username: true } },
         _count: { select: { items: true } },
       },
     });
-    const snapshots = pool.metadata.featuredCollections?.nameSnapshots ?? {};
+    const nameSnapshots = pool.metadata.featuredCollections?.nameSnapshots ?? {};
+    const writeSnapshots = pool.metadata.featuredCollections?.writeSnapshots ?? {};
     const byId = new Map(collections.map((c) => [c.id, c]));
     const ordered = pool.collectionIds.map((id) => {
       const c = byId.get(id);
@@ -273,26 +275,31 @@ export const getFeaturedCollectionsPoolHandler = async () => {
         // remove the dangling id from the pool. `missing: true` is the UI's cue.
         return {
           id,
-          name: snapshots[id] ?? `Collection ${id}`,
+          name: nameSnapshots[id] ?? `Collection ${id}`,
           nsfwLevel: 0,
           type: null,
+          write: null,
           image: null,
           user: { id: -1, username: null },
           _count: { items: 0 },
-          approvedName: snapshots[id] ?? null,
+          approvedName: nameSnapshots[id] ?? null,
+          approvedWrite: writeSnapshots[id] ?? null,
           recentCount: 0,
           lastAcceptedAt: null,
           nameChanged: false,
+          writeChanged: false,
           eligible: false,
           missing: true as const,
         };
       }
       return {
         ...c,
-        approvedName: snapshots[id] ?? c.name,
+        approvedName: nameSnapshots[id] ?? c.name,
+        approvedWrite: writeSnapshots[id] ?? c.write,
         recentCount: entry?.recentCount ?? 0,
         lastAcceptedAt: entry?.lastAcceptedAt ?? null,
         nameChanged: entry?.nameChanged ?? false,
+        writeChanged: entry?.writeChanged ?? false,
         eligible: entry?.eligible ?? false,
         missing: false as const,
       };
@@ -343,14 +350,14 @@ export const removeCollectionFromFeaturedPoolHandler = async ({
   }
 };
 
-export const acknowledgeFeaturedCollectionNameHandler = async ({
+export const acknowledgeFeaturedCollectionHandler = async ({
   input,
 }: {
   ctx: DeepNonNullable<Context>;
   input: ToggleFeaturedCollectionInputSchema;
 }) => {
   try {
-    const result = await acknowledgeFeaturedCollectionName({ collectionId: input.collectionId });
+    const result = await acknowledgeFeaturedCollection({ collectionId: input.collectionId });
     await bustFeaturedCollectionsCache(result.homeBlockId);
     return result;
   } catch (error) {
