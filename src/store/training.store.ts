@@ -23,7 +23,12 @@ export type ImageDataType = {
 };
 
 type UpdateImageDataType = Partial<ImageDataType> & {
+  /** Match an image by `getShortNameFromUrl()` (legacy zip path's response keys
+   *  the result by short filename). Use {@link UpdateImageDataType.urlMatcher}
+   *  instead when you have the original URL — short filenames can collide. */
   matcher: string;
+  /** Match an image by exact URL — collision-proof, prefer this. */
+  urlMatcher?: string;
   appendLabel?: boolean;
 };
 
@@ -100,6 +105,14 @@ export type AutoLabelType = {
   total: number;
   successes: number;
   fails: string[];
+  // Orchestrator v2 only — left at defaults for the legacy zip path.
+  uploaded: number;
+  phase: 'idle' | 'preparing' | 'uploading' | 'labeling';
+  uploadStartedAt: number | null;
+  // Stable id for the in-flight orchestrator run. Background work tagged with
+  // an old runId must drop its writes once the store flips to a new id (so a
+  // poll loop from a previous run can't scribble into a fresh run's labels).
+  runId: number | null;
 };
 
 type Attest = { status: boolean; error: string };
@@ -212,6 +225,14 @@ type TrainingImageStore = {
     mediaType: TrainingDetailsObj['mediaType'],
     data: Partial<AutoLabelType>
   ) => void;
+  /** Race-safe partial update — receives the previous state and returns a partial.
+   *  Use this from concurrent callbacks (e.g. multiple poll responses landing in
+   *  the same tick) so you don't read-modify-write past each other. */
+  mutateAutoLabeling: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    update: (prev: AutoLabelType) => Partial<AutoLabelType>
+  ) => void;
   setAutoTagging: (
     modelId: number,
     mediaType: TrainingDetailsObj['mediaType'],
@@ -298,6 +319,10 @@ const defaultTrainingStateBase: Omit<TrainingDataState, 'labelType' | 'initialLa
       total: 0,
       successes: 0,
       fails: [],
+      uploaded: 0,
+      phase: 'idle',
+      uploadStartedAt: null,
+      runId: null,
     },
     autoTagging: {
       overwrite: overwriteDefault,
@@ -347,14 +372,15 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
     updateImage: (
       modelId,
       mediaType,
-      { matcher, url, name, type, label, appendLabel, invalidLabel, source }
+      { matcher, urlMatcher, url, name, type, label, appendLabel, invalidLabel, source }
     ) => {
       set((state) => {
         setModelState(state, modelId, mediaType);
 
         state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
-          const shortName = getShortNameFromUrl(i);
-          if (shortName === matcher) {
+          const matches =
+            urlMatcher !== undefined ? i.url === urlMatcher : getShortNameFromUrl(i) === matcher;
+          if (matches) {
             let newLabel = i.label;
             if (label !== undefined) {
               if (appendLabel && i.label.length > 0) {
@@ -459,6 +485,13 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         state[modelId]!.autoLabeling = { ...state[modelId]!.autoLabeling, ...labelData };
       });
     },
+    mutateAutoLabeling: (modelId, mediaType, update) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+        const current = state[modelId]!.autoLabeling;
+        state[modelId]!.autoLabeling = { ...current, ...update(current) };
+      });
+    },
     setAutoTagging: (modelId, mediaType, labelData) => {
       set((state) => {
         setModelState(state, modelId, mediaType);
@@ -549,6 +582,7 @@ export const trainingStore = {
   setInitialOwnRights: store.setInitialOwnRights,
   setInitialShareDataset: store.setInitialShareDataset,
   setAutoLabeling: store.setAutoLabeling,
+  mutateAutoLabeling: store.mutateAutoLabeling,
   setAutoTagging: store.setAutoTagging,
   setAutoCaptioning: store.setAutoCaptioning,
   addRun: store.addRun,
