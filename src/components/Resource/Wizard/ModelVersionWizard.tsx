@@ -133,6 +133,7 @@ const TrainSteps = ({
       await publishPrivateModelVersionMutation.mutateAsync({ id: modelVersion.id });
 
       utils.modelVersion.getById.invalidate({ id: modelVersion.id });
+      utils.modelVersion.getByIdForEdit.invalidate({ id: modelVersion.id });
       utils.model.getById.invalidate({ id: modelData.id });
 
       router.replace(`/models/${modelData.id}?modelVersionId=${modelVersion.id}`);
@@ -247,7 +248,7 @@ export function ModelVersionWizard({ data }: Props) {
     data: modelVersion,
     isInitialLoading,
     isError,
-  } = trpc.modelVersion.getById.useQuery(
+  } = trpc.modelVersion.getByIdForEdit.useQuery(
     { id: Number(versionId), withFiles: true },
     { enabled: !!versionId }
   );

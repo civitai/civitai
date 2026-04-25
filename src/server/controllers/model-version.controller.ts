@@ -85,18 +85,26 @@ export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: 
 };
 
 export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
-export const getModelVersionHandler = async ({
+
+// Internal: shared body for the public `getById` and the owner-only
+// `getByIdForEdit`. The `forceWriteDb` flag is set by the caller (controller-
+// level), never by tRPC input — keeping it server-side prevents a public
+// flag from being used to redirect read load onto the primary DB.
+const loadModelVersion = async ({
   input,
   ctx,
+  forceWriteDb,
 }: {
   input: GetModelVersionSchema;
   ctx: Context;
+  forceWriteDb: boolean;
 }) => {
   const { id, withFiles } = input;
 
   try {
     const version = await getVersionById({
       id,
+      forceWriteDb,
       select: {
         id: true,
         name: true,
@@ -259,6 +267,20 @@ export const getModelVersionHandler = async ({
     else throw throwDbError(e);
   }
 };
+
+export const getModelVersionHandler = async (params: {
+  input: GetModelVersionSchema;
+  ctx: Context;
+}) => loadModelVersion({ ...params, forceWriteDb: false });
+
+// Owner-only entry point. Always reads from the primary DB so freshly-mutated
+// files / linked components are visible regardless of replication lag. The
+// router gates this behind `protectedProcedure.use(isOwnerOrModerator)` so
+// only owners and moderators can hit it.
+export const getModelVersionForEditHandler = async (params: {
+  input: GetModelVersionSchema;
+  ctx: Context;
+}) => loadModelVersion({ ...params, forceWriteDb: true });
 
 export const toggleNotifyEarlyAccessHandler = async ({
   input,

@@ -16,6 +16,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { parseB2Url } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
+import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 
 // Wraps registerFileLocation so a resolver outage or misconfig becomes a
 // logged warning instead of a silent download-breaker. A missing row in
@@ -136,6 +137,10 @@ export const createFileHandler = async ({
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);
 
+    // Mark this version as recently mutated so subsequent reads route to the
+    // primary DB instead of the lagging replica.
+    await preventModelVersionLag(file.modelVersion.modelId, file.modelVersion.id);
+
     return file;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -178,6 +183,8 @@ export const updateFileHandler = async ({
       .modelFile({ type: 'Update', id: input.id, modelVersionId: result.modelVersionId })
       .catch(handleLogError);
 
+    await preventModelVersionLag(result.modelVersion.modelId, result.modelVersionId);
+
     return result;
   } catch (error) {
     throw throwDbError(error);
@@ -210,14 +217,17 @@ export const deleteFileHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const modelVersionId = await deleteFile({
+    const result = await deleteFile({
       id: input.id,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
-    if (!modelVersionId) throw throwNotFoundError(`No file with id ${input.id}`);
+    if (!result) throw throwNotFoundError(`No file with id ${input.id}`);
+    const { modelVersionId, modelId } = result;
 
     ctx.track.modelFile({ type: 'Delete', id: input.id, modelVersionId }).catch(handleLogError);
+
+    await preventModelVersionLag(modelId, modelVersionId);
 
     return { modelVersionId };
   } catch (error) {

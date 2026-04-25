@@ -174,7 +174,7 @@ export async function deleteFile({
     );
   }
 
-  const rows = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
+  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
@@ -182,13 +182,14 @@ export async function deleteFile({
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
     RETURNING
-      mv.id as "modelVersionId"
+      mv.id as "modelVersionId",
+      m.id as "modelId"
   `;
 
-  const modelVersionId = rows[0]?.modelVersionId;
-  if (modelVersionId) await deleteFilesForModelVersionCache(modelVersionId);
+  const row = rows[0];
+  if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
 
-  return modelVersionId;
+  return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;
 }
 
 export const getRecentTrainingData = async ({

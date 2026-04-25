@@ -286,11 +286,16 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     });
 
     await queryUtils.model.getById.invalidate({ id: modelId });
-    if (modelVersionId)
+    if (modelVersionId) {
       await queryUtils.modelVersion.getById.invalidate({
         id: modelVersionId,
         withFiles: true,
       });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({
+        id: modelVersionId,
+        withFiles: true,
+      });
+    }
   };
 
   const checkValidation = () => {
@@ -449,6 +454,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       });
 
       await queryUtils.modelVersion.getById.invalidate({
+        id: result.modelVersion.id,
+        withFiles: true,
+      });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({
         id: result.modelVersion.id,
         withFiles: true,
       });
