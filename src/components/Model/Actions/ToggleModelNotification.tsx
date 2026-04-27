@@ -38,7 +38,7 @@ export function ToggleModelNotification({
 
   const isWatching = watchedModels.includes(modelId);
   const isMuted = mutedModels.includes(modelId);
-  const alreadyFollowing = following.some((user) => userId == user.id);
+  const alreadyFollowing = following.includes(userId);
   const isOn = (alreadyFollowing || isWatching) && !isMuted;
 
   return (
