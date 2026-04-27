@@ -555,6 +555,10 @@ function FileCard({
         id: versionFile.versionId,
         withFiles: true,
       });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({
+        id: versionFile.versionId,
+        withFiles: true,
+      });
       if (modelId) await queryUtils.model.getById.invalidate({ id: modelId });
       removeFile(versionFile.uuid);
     },
