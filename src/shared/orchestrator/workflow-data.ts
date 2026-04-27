@@ -153,15 +153,11 @@ export class StepData {
   }
 
   get params(): Partial<NormalizedWorkflowMetadata['params']> {
-    const stepParams = this.metadata.params;
-    // Step params are only authoritative when they contain generation context markers
-    // (workflow key or ecosystem). Without those, they're transformation-specific
-    // (e.g. { upscaleWidth, upscaleHeight } for hires-fix) and we fall back to
-    // workflow-level metadata which holds the full generation context.
-    if (stepParams && ('workflow' in stepParams || 'ecosystem' in stepParams)) {
-      return stepParams;
-    }
-    return this.#workflow.metadata?.params ?? stepParams ?? {};
+    // Merge step params over workflow params: enhancement steps carry source
+    // generation context (prompt, seed, source workflow key) that should win
+    // over the workflow-level form input (e.g. the upscale form). Workflow
+    // params with no step-level conflict come through harmlessly.
+    return { ...this.#workflow.metadata?.params, ...this.metadata.params };
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;
