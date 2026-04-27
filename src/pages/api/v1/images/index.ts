@@ -8,7 +8,11 @@ import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getAllImages, getAllImagesIndex, getImagesFromFeedSearch } from '~/server/services/image.service';
+import {
+  getAllImages,
+  getAllImagesIndex,
+  getImagesFromFeedSearch,
+} from '~/server/services/image.service';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
@@ -113,9 +117,10 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
-    // Use legacy getAllImages for specific model/image lookups (unless BitDex active),
-    // BitDex getAllImagesIndex when flag is active, or feed search for index queries.
-    const useLegacyMethod = data.imageId || (!useBitdex && data.modelId);
+    // Always route modelId/imageId lookups through legacy getAllImages — BitDex
+    // and Meili feed search don't support filtering by modelId/imageId (they index
+    // postedToId/modelVersionId only), so they'd silently return the global feed.
+    const useLegacyMethod = data.imageId || data.modelId;
 
     const { items, nextCursor } = useLegacyMethod
       ? await getAllImages({
