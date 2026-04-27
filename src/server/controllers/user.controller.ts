@@ -83,6 +83,7 @@ import {
   getUserList,
   getUserPurchasedRewards,
   getUsers,
+  getUserContentSettings,
   getUserSettings,
   setDismissedAlerts,
   getUsersWithSearch,
@@ -1343,9 +1344,10 @@ export const toggleUserFeatureFlagHandler = async ({
 export const getUserSettingsHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
     const { id } = ctx.user;
-    const settings = await getUserSettings(id);
+    // Return JSON settings *and* the User-column content toggles so the client
+    // can patch all of them in a single React Query cache on mutation success.
+    const settings = await getUserContentSettings(id);
 
-    // Limits it to the input type
     return settings;
   } catch (error) {
     throw throwDbError(error);

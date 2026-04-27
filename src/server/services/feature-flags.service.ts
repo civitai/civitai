@@ -152,7 +152,7 @@ const featureFlags = createFeatureFlags({
   nowpaymentPayments: [],
   thirtyDayEarlyAccess: ['granted'],
   datapacketRead: ['public'],
-  modelVersionPopularity: ['public'],
+  modelVersionPopularity: ['mod'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
   cashManagement: ['granted'],

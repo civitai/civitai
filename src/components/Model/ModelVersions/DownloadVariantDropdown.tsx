@@ -4,7 +4,6 @@ import {
   Box,
   Collapse,
   Group,
-  Stack,
   Text,
   ThemeIcon,
   Tooltip,
@@ -118,12 +117,22 @@ export function DownloadVariantDropdown({
     );
   }
 
-  // If only one file, show simple download button
+  // If only one file, show the file summary above a full-width download button
   if (modelFiles.length === 1) {
     const file = modelFiles[0];
     return (
-      <Box p="sm">
-        <Stack gap={4}>
+      <Box>
+        <Box p="sm">
+          <FileSummaryRow file={file} />
+        </Box>
+        <Box
+          p="sm"
+          style={{
+            borderTop: `1px solid ${
+              colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
+            }`,
+          }}
+        >
           <DownloadButton
             component="a"
             href={archived || isLoadingAccess || !canDownload ? undefined : downloadUrl}
@@ -143,15 +152,7 @@ export function DownloadVariantDropdown({
               Download <Text span>({formatKBytes(file.sizeKB)})</Text>
             </Text>
           </DownloadButton>
-          <Group justify="space-between" wrap="nowrap" gap={0}>
-            <VerifiedText file={file} />
-            <Group gap={4}>
-              <Text size="xs" c="dimmed">
-                {file.metadata?.format}
-              </Text>
-            </Group>
-          </Group>
-        </Stack>
+        </Box>
       </Box>
     );
   }
@@ -186,6 +187,17 @@ export function DownloadVariantDropdown({
         {sectionFiles.map((file) => {
           const isSelected = file.id === activeFile?.id;
           const isBestMatch = file.id === bestMatchFile?.id;
+          const label = getFileLabel(file);
+          const description = getFileDescription(file);
+          const displayLabel = label ?? file.name;
+          const ariaLabel = [
+            displayLabel,
+            isBestMatch ? 'best match' : null,
+            description,
+            formatKBytes(file.sizeKB),
+          ]
+            .filter(Boolean)
+            .join(', ');
           const fileDownloadUrl = createModelFileDownloadUrl({
             versionId,
             type: file.type,
@@ -200,9 +212,7 @@ export function DownloadVariantDropdown({
               role="option"
               tabIndex={0}
               aria-selected={isSelected}
-              aria-label={`${getFileLabel(file)}${
-                isBestMatch ? ', best match' : ''
-              }, ${getFileDescription(file)}, ${formatKBytes(file.sizeKB)}`}
+              aria-label={ariaLabel}
               style={{
                 backgroundColor: isSelected ? 'rgba(34, 139, 230, 0.1)' : undefined,
                 borderBottom: `1px solid ${
@@ -226,16 +236,18 @@ export function DownloadVariantDropdown({
                   </Box>
                   <Box>
                     <Group gap={8}>
-                      <Text size="sm">{getFileLabel(file)}</Text>
+                      <Text size="sm">{displayLabel}</Text>
                       {isBestMatch && (
                         <Badge size="xs" color="green" variant="light">
                           Best match
                         </Badge>
                       )}
                     </Group>
-                    <Text size="xs" c="dimmed">
-                      {getFileDescription(file)}
-                    </Text>
+                    {description && (
+                      <Text size="xs" c="dimmed">
+                        {description}
+                      </Text>
+                    )}
                     <VerifiedText file={file} />
                   </Box>
                 </Group>
@@ -278,8 +290,9 @@ export function DownloadVariantDropdown({
         tabIndex={0}
         aria-expanded={opened}
         aria-haspopup="listbox"
-        aria-label={`Select download variant. Currently selected: ${getFileLabel(activeFile)} ${
-          activeFile.metadata?.format || ''
+        aria-label={`Select download variant. Currently selected: ${
+          [getFileLabel(activeFile), activeFile.metadata?.format].filter(Boolean).join(' ') ||
+          activeFile.name
         }`}
         style={{ cursor: 'pointer' }}
         onClick={toggle}
@@ -292,27 +305,7 @@ export function DownloadVariantDropdown({
         className="hover:bg-gray-1 dark:hover:bg-dark-6/50"
       >
         <Group justify="space-between" wrap="nowrap">
-          <Group gap="sm" wrap="nowrap">
-            <ThemeIcon size={36} radius="md" color="blue" variant="light">
-              <IconCategory size={20} />
-            </ThemeIcon>
-            <Box>
-              <Group gap={8}>
-                <Text size="sm" fw={500}>
-                  {getFileLabel(activeFile)} {activeFile.metadata?.format}
-                </Text>
-                {activeFile.id === bestMatchFile?.id && (
-                  <Badge size="xs" color="green" variant="light">
-                    Best match
-                  </Badge>
-                )}
-              </Group>
-              <Text size="xs" c="dimmed">
-                {getFileDescription(activeFile)} &bull; {formatKBytes(activeFile.sizeKB)}
-              </Text>
-              <VerifiedText file={activeFile} />
-            </Box>
-          </Group>
+          <FileSummaryRow file={activeFile} isBestMatch={activeFile.id === bestMatchFile?.id} />
           <IconChevronDown
             size={16}
             style={{
@@ -382,5 +375,37 @@ export function DownloadVariantDropdown({
         </DownloadButton>
       </Box>
     </Box>
+  );
+}
+
+function FileSummaryRow({ file, isBestMatch = false }: { file: FileType; isBestMatch?: boolean }) {
+  const label = getFileLabel(file);
+  const description = getFileDescription(file);
+  const format = file.metadata?.format;
+  const titleText = [label, format].filter(Boolean).join(' ') || file.name;
+  const detailText = [description, formatKBytes(file.sizeKB)].filter(Boolean).join(' • ');
+
+  return (
+    <Group gap="sm" wrap="nowrap">
+      <ThemeIcon size={36} radius="md" color="blue" variant="light">
+        <IconCategory size={20} />
+      </ThemeIcon>
+      <Box>
+        <Group gap={8}>
+          <Text size="sm" fw={500}>
+            {titleText}
+          </Text>
+          {isBestMatch && (
+            <Badge size="xs" color="green" variant="light">
+              Best match
+            </Badge>
+          )}
+        </Group>
+        <Text size="xs" c="dimmed">
+          {detailText}
+        </Text>
+        <VerifiedText file={file} />
+      </Box>
+    </Group>
   );
 }

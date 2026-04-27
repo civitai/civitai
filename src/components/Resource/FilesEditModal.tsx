@@ -39,7 +39,7 @@ function SaveButton() {
 export default function FilesEditModal({ modelVersionId }: { modelVersionId: number }) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
-  const { data: modelVersion, isLoading } = trpc.modelVersion.getById.useQuery({
+  const { data: modelVersion, isLoading } = trpc.modelVersion.getByIdForEdit.useQuery({
     id: modelVersionId,
     withFiles: true,
   });

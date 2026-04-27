@@ -157,9 +157,7 @@ export function RequiredComponentsSection({
       }
     }
     for (const lc of linkedComponents) {
-      downloadUrls.push(
-        createModelFileDownloadUrl({ versionId: lc.versionId, fileId: lc.fileId })
-      );
+      downloadUrls.push(createModelFileDownloadUrl({ versionId: lc.versionId, fileId: lc.fileId }));
     }
 
     for (let i = 0; i < downloadUrls.length; i++) {
@@ -555,6 +553,8 @@ function ComponentGroup({
           {files.map((file) => {
             const isSelected = file.id === activeFile?.id;
             const isBestMatch = file.id === bestMatch?.id;
+            const label = getFileLabel(file) ?? file.name;
+            const description = getFileDescription(file);
             const fileDownloadUrl = createModelFileDownloadUrl({
               versionId,
               fileId: file.id,
@@ -571,9 +571,14 @@ function ComponentGroup({
                 role="option"
                 tabIndex={0}
                 aria-selected={isSelected}
-                aria-label={`${getFileLabel(file)}${
-                  isBestMatch ? ', best match' : ''
-                }, ${getFileDescription(file)}, ${formatKBytes(file.sizeKB)}`}
+                aria-label={[
+                  label,
+                  isBestMatch ? 'best match' : null,
+                  description,
+                  formatKBytes(file.sizeKB),
+                ]
+                  .filter(Boolean)
+                  .join(', ')}
                 style={{
                   backgroundColor: isSelected ? 'rgba(34, 139, 230, 0.1)' : undefined,
                   borderBottom: `1px solid ${
@@ -597,16 +602,18 @@ function ComponentGroup({
                     </Box>
                     <Box>
                       <Group gap={8}>
-                        <Text size="sm">{getFileLabel(file)}</Text>
+                        <Text size="sm">{label}</Text>
                         {isBestMatch && (
                           <Badge size="xs" color="green" variant="light">
                             Best match
                           </Badge>
                         )}
                       </Group>
-                      <Text size="xs" c="dimmed">
-                        {getFileDescription(file)}
-                      </Text>
+                      {description && (
+                        <Text size="xs" c="dimmed">
+                          {description}
+                        </Text>
+                      )}
                       <VerifiedText file={file} />
                     </Box>
                   </Group>

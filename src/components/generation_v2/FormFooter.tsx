@@ -435,13 +435,16 @@ function PriorityAlertSpace({
     // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
     // When enhancedCompatibility is on, the bonus doesn't apply — swap in a
     // warning (with its own dismissal key) so users know how to qualify.
+    // BOGO/enhancedCompatibility only applies to txt2img.
     priorityAlert = (
       <MultiController
         graph={graph}
-        names={['ecosystem', 'enhancedCompatibility'] as const}
+        names={['workflow', 'ecosystem', 'enhancedCompatibility'] as const}
         render={({ values }) => {
+          const workflow = values.workflow as string | undefined;
           const ecosystem = values.ecosystem as string | undefined;
           const enhancedCompatibility = values.enhancedCompatibility as boolean | undefined;
+          if (workflow !== 'txt2img') return null;
           if (!ecosystem || !SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return null;
           if (enhancedCompatibility) {
             return (

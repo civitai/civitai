@@ -13,6 +13,9 @@ import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { SavePresetModal } from '~/components/generation_v2/preset/SavePresetModal';
 import { applyPreset } from '~/components/generation_v2/preset/applyPreset';
 import { useGraph } from '~/libs/data-graph/react';
+import { constants } from '~/server/common/constants';
+
+const SYSTEM_USER_ID = constants.system.user.id;
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import {
   filterPresetValues,
@@ -86,9 +89,11 @@ export function PresetControl() {
 
   const activePresetId = useGenerationPresetStore((s) => s.activePresetId);
   const activePresetName = useGenerationPresetStore((s) => s.activePresetName);
+  const activePresetUserId = useGenerationPresetStore((s) => s.activePresetUserId);
   const activePresetValues = useGenerationPresetStore((s) => s.activePresetValues);
   const closePreset = useGenerationPresetStore((s) => s.closePreset);
   const markClean = useGenerationPresetStore((s) => s.markClean);
+  const isSystemPreset = activePresetUserId === SYSTEM_USER_ID;
 
   const isDirty = useMemo(
     () => isPresetDirty(activePresetValues, filteredSnapshot, (k) => graph.isComputed(k as never)),
@@ -126,10 +131,18 @@ export function PresetControl() {
   };
 
   const handleReset = () => {
-    if (!activePresetId || !activePresetName || !activePresetValues) return;
+    if (
+      !activePresetId ||
+      !activePresetName ||
+      !activePresetValues ||
+      activePresetUserId === null
+    ) {
+      return;
+    }
     applyPreset({
       id: activePresetId,
       name: activePresetName,
+      userId: activePresetUserId,
       values: activePresetValues,
     }).catch((err: Error) =>
       showErrorNotification({ title: 'Failed to reset preset', error: err })
@@ -150,24 +163,27 @@ export function PresetControl() {
           <Badge size="xs" color="yellow" variant="light">
             Modified
           </Badge>
-          <PopConfirm
-            message="Update preset with current values?"
-            onConfirm={handleSaveDirty}
-            withinPortal
-            position="bottom-end"
-          >
-            <Tooltip label="Save" withArrow>
-              <ActionIcon
-                variant="subtle"
-                size="sm"
-                color="blue"
-                disabled={updatePreset.isLoading}
-                loading={updatePreset.isLoading}
-              >
-                <IconDeviceFloppy size={16} />
-              </ActionIcon>
-            </Tooltip>
-          </PopConfirm>
+          {/* In-place Save is hidden for system presets — users fork via Save as. */}
+          {!isSystemPreset && (
+            <PopConfirm
+              message="Update preset with current values?"
+              onConfirm={handleSaveDirty}
+              withinPortal
+              position="bottom-end"
+            >
+              <Tooltip label="Save" withArrow>
+                <ActionIcon
+                  variant="subtle"
+                  size="sm"
+                  color="blue"
+                  disabled={updatePreset.isLoading}
+                  loading={updatePreset.isLoading}
+                >
+                  <IconDeviceFloppy size={16} />
+                </ActionIcon>
+              </Tooltip>
+            </PopConfirm>
+          )}
           <Tooltip label="Save as new preset" withArrow>
             <ActionIcon variant="subtle" size="sm" onClick={openSaveAs}>
               <IconCopyPlus size={16} />

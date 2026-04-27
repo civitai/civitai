@@ -2,6 +2,7 @@ import {
   declineReviewHandler,
   deleteModelVersionHandler,
   earlyAccessModelVersionsOnTimeframeHandler,
+  getModelVersionForEditHandler,
   getModelVersionForTrainingReviewHandler,
   getModelVersionHandler,
   getModelVersionOwnerHandler,
@@ -89,6 +90,14 @@ const isOwnerOrModerator = middleware(async ({ ctx, input, next }) => {
 
 export const modelVersionRouter = router({
   getById: publicProcedure.input(getModelVersionSchema).query(getModelVersionHandler),
+  // Owner-only variant that reads from the primary DB. Used by the upload/edit
+  // wizards and the files modal so a freshly-mutated file or linked-component
+  // is immediately visible regardless of replication lag. Owner/moderator
+  // middleware guards the primary-read load.
+  getByIdForEdit: protectedProcedure
+    .input(getModelVersionSchema)
+    .use(isOwnerOrModerator)
+    .query(getModelVersionForEditHandler),
   getOwner: publicProcedure.input(getByIdSchema).query(getModelVersionOwnerHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
   getPopularity: publicProcedure

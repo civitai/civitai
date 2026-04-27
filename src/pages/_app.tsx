@@ -51,7 +51,7 @@ import { IsClientProvider } from '~/providers/IsClientProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
@@ -84,7 +84,7 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags: FeatureAccess;
   seed: number;
-  settings: UserSettingsSchema;
+  settings: UserContentSettings;
   canIndex: boolean;
   hasAuthCookie: boolean;
   region: RegionInfo;
@@ -293,7 +293,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const { settings, session } = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,
   }).then(async (res) => {
-    const data: { settings: UserSettingsSchema; session: Session | null } = await res.json();
+    const data: { settings: UserContentSettings; session: Session | null } = await res.json();
     return data;
   });
   // Pass this via the request so we can use it in SSR

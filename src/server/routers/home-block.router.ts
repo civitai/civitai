@@ -6,7 +6,7 @@ import {
   router,
 } from '~/server/trpc';
 import {
-  acknowledgeFeaturedCollectionNameHandler,
+  acknowledgeFeaturedCollectionHandler,
   addCollectionToFeaturedPoolHandler,
   createCollectionHomeBlockHandler,
   deleteUserHomeBlockHandler,
@@ -62,7 +62,7 @@ export const homeBlockRouter = router({
   removeCollectionFromFeaturedPool: moderatorProcedure
     .input(toggleFeaturedCollectionInputSchema)
     .mutation(removeCollectionFromFeaturedPoolHandler),
-  acknowledgeFeaturedCollectionName: moderatorProcedure
+  acknowledgeFeaturedCollection: moderatorProcedure
     .input(toggleFeaturedCollectionInputSchema)
-    .mutation(acknowledgeFeaturedCollectionNameHandler),
+    .mutation(acknowledgeFeaturedCollectionHandler),
 });

@@ -13,6 +13,7 @@ import {
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { applyPreset } from '~/components/generation_v2/preset/applyPreset';
+import { constants } from '~/server/common/constants';
 import {
   ecosystemByKey,
   getEcosystemDisplayItems,
@@ -22,6 +23,8 @@ import { getWorkflowsForEcosystem } from '~/shared/data-graph/generation/config/
 import { useGenerationPresetStore, type PresetValues } from '~/store/generation-preset.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+const SYSTEM_USER_ID = constants.system.user.id;
 
 function ecosystemLabel(key: string) {
   return ecosystemByKey.get(key)?.displayName ?? key;
@@ -85,7 +88,9 @@ export function PresetPickerModal() {
     [ecosystemItems]
   );
 
-  const presetsQuery = trpc.generationPreset.getOwn.useQuery();
+  // `getAvailable` returns the user's own presets plus curated system presets.
+  // System presets sort first because the server orders by `userId asc`.
+  const presetsQuery = trpc.generationPreset.getAvailable.useQuery();
   const presets = useMemo(() => presetsQuery.data ?? [], [presetsQuery.data]);
 
   const filteredPresets = useMemo(() => {
@@ -95,7 +100,12 @@ export function PresetPickerModal() {
     return presets.filter((p) => presetMatchesItem(p.ecosystem, item));
   }, [presets, selectedEcosystem, ecosystemItems]);
 
-  const handleLoad = (preset: { id: number; name: string; values: PresetValues }) => {
+  const handleLoad = (preset: {
+    id: number;
+    name: string;
+    userId: number;
+    values: PresetValues;
+  }) => {
     applyPreset(preset)
       .then(() => dialog.onClose())
       .catch((err: Error) =>
@@ -141,35 +151,50 @@ export function PresetPickerModal() {
         ) : (
           <ScrollArea.Autosize mah={400}>
             <Stack gap="xs">
-              {filteredPresets.map((p) => (
-                <UnstyledButton
-                  key={p.id}
-                  onClick={() =>
-                    handleLoad({ id: p.id, name: p.name, values: p.values as PresetValues })
-                  }
-                  className="rounded border border-gray-3 px-3 py-2 hover:bg-gray-0 dark:border-dark-4 dark:hover:bg-dark-6"
-                >
-                  <Group justify="space-between" wrap="nowrap" gap="sm">
-                    <div className="min-w-0 flex-1">
-                      <Text size="sm" fw={500} lineClamp={1}>
-                        {p.name}
-                      </Text>
-                      {p.description && (
-                        <Text size="xs" c="dimmed" lineClamp={1}>
-                          {p.description}
-                        </Text>
-                      )}
-                    </div>
-                    <Badge
-                      size="xs"
-                      variant={p.ecosystem === currentEcosystem ? 'light' : 'outline'}
-                      color={p.ecosystem === currentEcosystem ? 'blue' : 'gray'}
-                    >
-                      {ecosystemLabel(p.ecosystem)}
-                    </Badge>
-                  </Group>
-                </UnstyledButton>
-              ))}
+              {filteredPresets.map((p) => {
+                const isSystem = p.userId === SYSTEM_USER_ID;
+                return (
+                  <UnstyledButton
+                    key={p.id}
+                    onClick={() =>
+                      handleLoad({
+                        id: p.id,
+                        name: p.name,
+                        userId: p.userId,
+                        values: p.values as PresetValues,
+                      })
+                    }
+                    className="rounded border border-gray-3 px-3 py-2 hover:bg-gray-0 dark:border-dark-4 dark:hover:bg-dark-6"
+                  >
+                    <Group justify="space-between" wrap="nowrap" gap="sm">
+                      <div className="min-w-0 flex-1">
+                        <Group gap={6} wrap="nowrap" align="center">
+                          <Text size="sm" fw={500} lineClamp={1}>
+                            {p.name}
+                          </Text>
+                          {isSystem && (
+                            <Badge size="xs" color="blue" variant="filled">
+                              System
+                            </Badge>
+                          )}
+                        </Group>
+                        {p.description && (
+                          <Text size="xs" c="dimmed" lineClamp={1}>
+                            {p.description}
+                          </Text>
+                        )}
+                      </div>
+                      <Badge
+                        size="xs"
+                        variant={p.ecosystem === currentEcosystem ? 'light' : 'outline'}
+                        color={p.ecosystem === currentEcosystem ? 'blue' : 'gray'}
+                      >
+                        {ecosystemLabel(p.ecosystem)}
+                      </Badge>
+                    </Group>
+                  </UnstyledButton>
+                );
+              })}
             </Stack>
           </ScrollArea.Autosize>
         )}

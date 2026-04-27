@@ -38,10 +38,12 @@ const useAdProviderStore = create<{
   ready: boolean;
   adsBlocked: boolean;
   consent: boolean;
+  browserBlocked: boolean;
 }>(() => ({
   ready: false,
   adsBlocked: true,
   consent: true,
+  browserBlocked: false,
 }));
 
 const blockedUrls: string[] = [
@@ -56,6 +58,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const consent = useAdProviderStore((state) => state.consent);
+  const browserBlocked = useAdProviderStore((state) => state.browserBlocked);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
 
@@ -65,9 +68,14 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // .com (isGreen) → Snigel programmatic ads. .red (isRed) → CivitaiAdUnit direct ads only.
   // adsEnabled is domain-agnostic; useDirectAds chooses which ad system to render.
   const useDirectAds = features.isRed;
+  // Some browsers (e.g. Brave) cosmetic-filter our ad elements even when the
+  // Snigel loader succeeds, so `onError` never fires and we can't rely on
+  // `adsBlocked` alone. Disable ads entirely when the browser is known to
+  // silently block — no Snigel script, no interleaved slots.
   const adsEnabled = isDev
-    ? false
-    : (allowAds || !isMember) &&
+    ? true
+    : !browserBlocked &&
+      (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
       !router.asPath.split('?')[0].endsWith('/edit');
 
@@ -90,6 +98,15 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       .then(() => useAdProviderStore.setState({ adsBlocked: false }))
       .catch(() => useAdProviderStore.setState({ adsBlocked: true }));
   }, [useDirectAds, adsEnabled]);
+
+  useEffect(() => {
+    const nav = navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } };
+    if (typeof nav.brave?.isBrave === 'function') {
+      nav.brave.isBrave().then((isBrave) => {
+        if (isBrave) useAdProviderStore.setState({ browserBlocked: true });
+      });
+    }
+  }, []);
 
   useEffect(() => {
     function callback() {

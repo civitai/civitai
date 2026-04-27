@@ -6,6 +6,8 @@ import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbWrite } from '~/server/db/client';
 import {
+  getGenerationEcosystemConfig,
+  getResourceCanGenerate,
   getShouldChargeForResources,
   getUnavailableResources,
 } from '~/server/services/generation/generation.service';
@@ -37,6 +39,7 @@ type VersionRow = {
   minor: boolean;
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
+  modelUserId: number;
 };
 type FileRow = {
   id: number;
@@ -77,6 +80,7 @@ export default MixedAuthEndpoint(async function handler(
       m.type,
       m.minor,
       m."sfwOnly",
+      m."userId" as "modelUserId",
       mv."earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -182,18 +186,25 @@ export default MixedAuthEndpoint(async function handler(
   }
   const { format } = primaryFile.metadata;
 
-  // Check unavailable resources:
-  let canGenerate = modelVersion.covered ?? false;
-  if (canGenerate) {
-    const unavailableResources = await getUnavailableResources();
-    const isUnavailable = unavailableResources.some((r) => r === modelVersion.id);
-    if (isUnavailable) canGenerate = false;
-
-    // Only allow people with the right permission to generate with this model
-    if (modelVersion.usageControl === ModelUsageControl.InternalGeneration && !user?.isModerator) {
-      canGenerate = false;
-    }
-  }
+  const [unavailableResources, ecosystemConfig] = await Promise.all([
+    getUnavailableResources(),
+    getGenerationEcosystemConfig(),
+  ]);
+  const canGenerate = getResourceCanGenerate({
+    resource: {
+      id: modelVersion.id,
+      status: modelVersion.status,
+      availability: modelVersion.availability,
+      usageControl: modelVersion.usageControl,
+      baseModel: modelVersion.baseModel,
+      covered: modelVersion.covered ?? false,
+      modelUserId: modelVersion.modelUserId,
+    },
+    user: { id: user?.id, isModerator: user?.isModerator },
+    unavailableResources,
+    disabledEcosystems: new Set(ecosystemConfig.disabledEcosystems),
+    modOnlyEcosystems: new Set(ecosystemConfig.modOnlyEcosystems),
+  });
 
   // Check if should charge
   const shouldChargeResult = await getShouldChargeForResources([

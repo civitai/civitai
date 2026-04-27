@@ -3,7 +3,7 @@ import {
   handleError,
   type ConsumerBlobPresignResponse,
 } from '@civitai/client';
-import { createOrchestratorClientNew } from '~/server/services/orchestrator/client';
+import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
 export async function getConsumerBlobUploadUrlService({
@@ -11,7 +11,7 @@ export async function getConsumerBlobUploadUrlService({
 }: {
   token: string;
 }): Promise<ConsumerBlobPresignResponse> {
-  const client = createOrchestratorClientNew(token);
+  const client = createOrchestratorClient(token);
 
   const { data, error } = await getConsumerBlobUploadUrl({
     client,
