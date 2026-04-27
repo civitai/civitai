@@ -125,6 +125,15 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     // requests flow through the search index so engagement sorts
     // (MostReactions/MostComments/MostCollected) work, since getAllImages's gallery
     // sort branches for those are currently disabled. Fixes #2134.
+    //
+    // KNOWN LIMITATION: when only `modelId` is passed (no `modelVersionId`), the
+    // legacy DB path is the only option, and its MostReactions/MostComments/
+    // MostCollected branches are intentionally commented out at
+    // image.service.ts:1414-1422 with a `// TODO this causes the app to spike`
+    // note. As a result, those sorts collapse to newest-by-id for `modelId`-only
+    // queries. Callers that need engagement-sorted galleries should also pass a
+    // specific `modelVersionId`, which routes through the search index where
+    // those sorts are honored.
     const useLegacyMethod = data.imageId || (data.modelId && !data.modelVersionId);
 
     const { items, nextCursor } = useLegacyMethod
