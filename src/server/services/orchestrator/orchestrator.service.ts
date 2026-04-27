@@ -1,10 +1,13 @@
 import type { Priority, WorkflowStepTemplate, XGuardModerationStepTemplate } from '@civitai/client';
 import { submitWorkflow } from '@civitai/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
+import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 
 export async function createImageIngestionRequest({
@@ -250,6 +253,29 @@ export async function createModelFileScanRequest({
   baseModel: string;
   priority?: Priority;
 }) {
+  // Dev skip: when the orchestrator isn't reachable in non-prod, fake a
+  // successful scan so local files don't sit forever-Pending. Mirrors legacy
+  // requestScannerTasks().
+  if (!isProd || !env.ORCHESTRATOR_ACCESS_TOKEN) {
+    console.log('skipping orchestrator scan in non-prod or without access token');
+    const now = new Date();
+    await dbWrite.modelFile.update({
+      where: { id: fileId },
+      data: {
+        scanRequestedAt: now,
+        scannedAt: now,
+        virusScanResult: ScanResultCode.Success,
+        pickleScanResult: ScanResultCode.Success,
+      },
+    });
+    await dbWrite.modelFileHash.upsert({
+      where: { fileId_type: { fileId, type: ModelHashType.SHA256 } },
+      create: { fileId, type: ModelHashType.SHA256, hash: '0'.repeat(64) },
+      update: { hash: '0'.repeat(64) },
+    });
+    return;
+  }
+
   const air = stringifyAIR({
     baseModel,
     type: modelType,
@@ -304,8 +330,6 @@ export async function createModelFileScanRequest({
       ],
     },
   });
-
-  console.log({ workflowId: data?.id });
 
   if (!data) {
     logToAxiom({

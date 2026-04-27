@@ -13,10 +13,15 @@ import {
   isStorageResolverEnabled,
 } from '~/utils/delivery-worker';
 import { logToAxiom } from '~/server/logging/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
+  // When the orchestrator path is enabled, the new scanFilesFallbackJob handles
+  // pending files. Skip the legacy poll to avoid double-submitting.
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR)) return;
+
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
   const where: Prisma.ModelFileWhereInput = {
     virusScanResult: ScanResultCode.Pending,
@@ -198,6 +203,10 @@ const SCAN_FALLBACK_CONCURRENCY = 10;
 const SCAN_FALLBACK_BATCH_SIZE = 200;
 
 export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * *', async () => {
+  // Mirrors the legacy scanFilesJob gate, inverted: this is the orchestrator
+  // path and only runs when the flag is ON.
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR))) return;
+
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
 
   const files = await dbWrite.modelFile.findMany({
