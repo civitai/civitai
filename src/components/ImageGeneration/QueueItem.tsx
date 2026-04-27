@@ -155,15 +155,10 @@ export function QueueItem({
   };
 
   const handleGenerate = () => {
-    const isEnhancement = workflowDefinition?.enhancement === true;
-
-    // For enhancement workflows, use the first step's params/resources — the StepData getter
-    // resolves the full original generation context (falling back to workflow metadata as needed).
-    // For regular workflows, use workflow-level params/resources directly.
-    const firstStep = isEnhancement ? request.steps[0] : null;
-    const replayParams = firstStep ? firstStep.params : request.params;
-    const replayResources = firstStep ? firstStep.resources : request.resources;
-
+    // Workflow-level replay: read directly from workflow.metadata (the form input
+    // snapshot). Per-image remix lives on the GeneratedOutput menu and uses step
+    // metadata for source-lineage cases.
+    const replayParams = request.params;
     const isTxt2Img = replayParams?.workflow === 'txt2img';
     generationGraphStore.setData({
       params: {
@@ -172,7 +167,7 @@ export function QueueItem({
         // Clear images for txt2img to avoid stale data
         ...(isTxt2Img ? { images: null } : {}),
       },
-      resources: replayResources,
+      resources: request.resources,
       runType: 'replay',
       remixOfId: request.remixOfId,
     });
