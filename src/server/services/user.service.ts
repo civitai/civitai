@@ -1675,9 +1675,11 @@ export const createUserReferral = async ({
   };
 
   if (userReferralCode || source || landingPage || loginRedirectReason) {
-    // Confirm userReferralCode is valid:
+    // Confirm userReferralCode is valid. Use the primary so a referral code
+    // that was generated moments ago (e.g. fresh signup landing on a friend's
+    // profile) isn't missed by replica lag.
     const referralCode = !!userReferralCode
-      ? await dbRead.userReferralCode.findFirst({
+      ? await dbWrite.userReferralCode.findFirst({
           where: { code: userReferralCode, deletedAt: null },
         })
       : null;
@@ -1698,18 +1700,35 @@ export const createUserReferral = async ({
         referrerId: referralCode.userId,
       }).catch(handleLogError);
     } else if (!user.referral) {
-      // Create new referral:
-      await dbWrite.userReferral.create({
-        data: {
-          userId: id,
-          source,
-          landingPage,
-          loginRedirectReason,
-          userReferralCodeId: referralCode?.id ?? undefined,
-        },
-      });
+      // Create new referral. Two parallel calls (e.g. an onboarding submit
+      // racing with a redirect retry) could both pass the existing-check
+      // above and trip the unique(userId) constraint here. Catch the
+      // collision and treat it as success — the row is in place either way.
+      let createdReferral = true;
+      try {
+        await dbWrite.userReferral.create({
+          data: {
+            userId: id,
+            source,
+            landingPage,
+            loginRedirectReason,
+            userReferralCodeId: referralCode?.id ?? undefined,
+          },
+        });
+      } catch (err) {
+        if (
+          typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          (err as { code?: string }).code === 'P2002'
+        ) {
+          createdReferral = false;
+        } else {
+          throw err;
+        }
+      }
 
-      if (referralCode?.id) {
+      if (createdReferral && referralCode?.id) {
         await applyRewards({
           refereeId: id,
           referrerId: referralCode.userId,
