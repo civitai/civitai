@@ -295,8 +295,11 @@ Compare the two paths via Axiom logs (`name: scan-result` vs `name: model-file-s
 - [x] **Decision (D1)**: `rawScanResult` populated with a normalized envelope `{ source: 'orchestrator' | 'legacy', ... }` from both adapters. No schema migration.
 
 **Operational hygiene**
-- [x] Failed workflow handling: `applyScanOutcome` now bumps `scanRequestedAt = now()` when `outcome.failed === true` (D4), so the fallback job retries the file via the 24h-stale path. Prevents tight retry loops on permanently-broken AIRs; transient outages accept a 24h delay.
-- [x] Dev skip when `ORCHESTRATOR_ACCESS_TOKEN` missing in `createModelFileScanRequest()` — fake-success update mirrors legacy behavior. Production-gated: only fires when `!isProd`, so a missing token in prod surfaces as a real `submitWorkflow` error.
+- [x] Failed workflow handling: `applyScanOutcome` bumps `scanRequestedAt = now()` when `outcome.failed === true` (D4), so the file retries via the 24h-stale path. Prevents tight retry loops on permanently-broken AIRs.
+- [x] Submission-failure handling: `scanFilesFallbackJob` resets `scanRequestedAt = null` in its catch handler when `createModelFileScanRequest` throws, so transient orchestrator outages retry on the next 5-min tick (vs. the 24h workflow-failure backoff).
+- [x] `createModelFileScanRequest` now throws on submission failure (was silently returning `undefined`); sets `scanRequestedAt = now()` on success so concurrent paths don't double-submit while the orchestrator works on the file.
+- [x] Dev skip when `ORCHESTRATOR_ACCESS_TOKEN` missing — fires only when `!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN`. In prod, missing token surfaces as a real `submitWorkflow` error; never silently fake-succeeds.
+- [x] `applyScanOutcome` only advances `scannedAt` when a scan actually ran (`virusScan` or `pickleScan` present in outcome). Hash/metadata-only callers (e.g. `clean-up.ts` legacy path) no longer mark files as "scanned" without virus checks.
 - [x] Removed debug `console.log({ workflowId: data?.id })` in `orchestrator.service.ts`
 - [x] `src/pages/api/admin/test.ts` — kept as the scan-tester for manual canary verification (was previously reverted; re-applied by user). Will move to `src/pages/api/testing/model-file-scan.ts` per project convention before Phase 3.
 - [x] Restored trailing newline in `package.json`

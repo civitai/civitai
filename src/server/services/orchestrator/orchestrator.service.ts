@@ -253,11 +253,13 @@ export async function createModelFileScanRequest({
   baseModel: string;
   priority?: Priority;
 }) {
-  // Dev skip: when the orchestrator isn't reachable in non-prod, fake a
-  // successful scan so local files don't sit forever-Pending. Mirrors legacy
-  // requestScannerTasks().
-  if (!isProd || !env.ORCHESTRATOR_ACCESS_TOKEN) {
-    console.log('skipping orchestrator scan in non-prod or without access token');
+  // Dev skip: only when BOTH (a) we're in non-prod AND (b) no token is
+  // configured. In prod a missing token MUST surface as a real submitWorkflow
+  // failure — we never silently fake-success virus scans. In non-prod with a
+  // configured token, we still want real submissions so the new flow can be
+  // tested locally against a dev orchestrator.
+  if (!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN) {
+    console.log('skipping orchestrator scan in non-prod without access token');
     const now = new Date();
     await dbWrite.modelFile.update({
       where: { id: fileId },
@@ -341,7 +343,23 @@ export async function createModelFileScanRequest({
       responseStatus: response.status,
       error,
     });
+    // Throw so callers' try/catch / .catch() actually fire. Returning
+    // undefined silently here was hiding submission failures from
+    // scanFilesFallbackJob's `failed` counter and createFileHandler's
+    // Axiom error path.
+    throw new Error(
+      `Failed to submit model file scan workflow for file ${fileId}` +
+        (response?.status ? ` (status ${response.status})` : '')
+    );
   }
+
+  // Mark the file as in-flight so concurrent paths (scanFilesFallbackJob's
+  // next tick, an overlapping rescan, etc.) don't double-submit while the
+  // orchestrator works on it. The webhook callback will set scannedAt later.
+  await dbWrite.modelFile.update({
+    where: { id: fileId },
+    data: { scanRequestedAt: new Date() },
+  });
 
   return data;
 }

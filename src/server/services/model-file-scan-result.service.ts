@@ -147,8 +147,12 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
     : [];
   const existingAutoV2 = existingHashes.find((h) => h.type === ModelHashType.AutoV2)?.hash;
 
-  // Build the file-level update.
-  const data: Prisma.ModelFileUpdateInput = { scannedAt: new Date() };
+  // Build the file-level update. scannedAt only advances when a scan actually
+  // ran — legacy callers that request just `Hash`/`ParseMetadata` (e.g.
+  // clean-up.ts) shouldn't appear "scanned" without virus/pickle results.
+  const data: Prisma.ModelFileUpdateInput = {};
+  const ranScan = Boolean(outcome.virusScan || outcome.pickleScan);
+  if (ranScan) data.scannedAt = new Date();
 
   if (outcome.virusScan) {
     data.virusScanResult = outcome.virusScan.result;
