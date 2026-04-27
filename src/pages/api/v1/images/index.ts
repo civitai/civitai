@@ -8,7 +8,11 @@ import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
-import { getAllImages, getAllImagesIndex, getImagesFromFeedSearch } from '~/server/services/image.service';
+import {
+  getAllImages,
+  getAllImagesIndex,
+  getImagesFromFeedSearch,
+} from '~/server/services/image.service';
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
@@ -113,9 +117,24 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     );
     const useBitdex = bitdexMode === 'shadow' || bitdexMode === 'primary';
 
-    // Use legacy getAllImages for specific model/image lookups (unless BitDex active),
-    // BitDex getAllImagesIndex when flag is active, or feed search for index queries.
-    const useLegacyMethod = data.imageId || (!useBitdex && data.modelId);
+    // Always route modelId/imageId lookups through legacy getAllImages — BitDex
+    // and Meili feed search don't support filtering by modelId/imageId (they index
+    // postedToId/modelVersionId only), so they'd silently return the global feed.
+    // When both modelId and modelVersionId are passed, modelId is redundant
+    // (getAllImages also silently ignores it via an `else if` chain) — let those
+    // requests flow through the search index so engagement sorts
+    // (MostReactions/MostComments/MostCollected) work, since getAllImages's gallery
+    // sort branches for those are currently disabled. Fixes #2134.
+    //
+    // KNOWN LIMITATION: when only `modelId` is passed (no `modelVersionId`), the
+    // legacy DB path is the only option, and its MostReactions/MostComments/
+    // MostCollected branches are intentionally commented out at
+    // image.service.ts:1414-1422 with a `// TODO this causes the app to spike`
+    // note. As a result, those sorts collapse to newest-by-id for `modelId`-only
+    // queries. Callers that need engagement-sorted galleries should also pass a
+    // specific `modelVersionId`, which routes through the search index where
+    // those sorts are honored.
+    const useLegacyMethod = data.imageId || (data.modelId && !data.modelVersionId);
 
     const { items, nextCursor } = useLegacyMethod
       ? await getAllImages({
