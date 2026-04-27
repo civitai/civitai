@@ -6,6 +6,7 @@ import {
   getShopOffers,
   redeemTokens,
 } from '~/server/services/referral.service';
+import { isUsernamePermitted } from '~/server/services/user.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { constants } from '~/server/common/constants';
 import { TRPCError } from '@trpc/server';
@@ -29,7 +30,7 @@ async function getOrCreateCode(userId: number) {
     code = await dbWrite.userReferralCode.create({
       data: {
         userId,
-        code: generateCode(),
+        code: await generateCleanCode(),
       },
     });
   }
@@ -41,6 +42,19 @@ function generateCode() {
   let code = '';
   for (let i = 0; i < 8; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
   return code;
+}
+
+// Generate a code that doesn't trip the username blocklist (substring match
+// against the static JSON list + the dynamic Redis/DB list moderators
+// maintain). With 32^8 keyspace and a small blocklist, retry budget of 5 is
+// effectively never exhausted; if it ever is we fall back to a raw random
+// code rather than failing the whole dashboard load.
+async function generateCleanCode() {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const candidate = generateCode();
+    if (await isUsernamePermitted(candidate)) return candidate;
+  }
+  return generateCode();
 }
 
 export const referralRouter = router({
