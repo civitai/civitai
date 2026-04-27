@@ -202,6 +202,12 @@ export function DumbMarkerFiltersDropdown({
                     >
                       Videos
                     </FilterChip>
+                    <FilterChip
+                      checked={filters.tags?.includes(WORKFLOW_TAGS.AUDIO) ?? false}
+                      onChange={() => setFilters({ tags: [WORKFLOW_TAGS.AUDIO] })}
+                    >
+                      Audio
+                    </FilterChip>
                   </div>
                 </>
               )}
