@@ -14,6 +14,7 @@ import {
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
+import { getUserFollows } from '~/server/redis/caches';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
@@ -643,20 +644,7 @@ export const getCreatorsHandler = async ({ input }: { input: Partial<GetAllSchem
 
 export const getUserFollowingListHandler = async ({ ctx }: { ctx: DeepNonNullable<Context> }) => {
   try {
-    const { id: userId } = ctx.user;
-    const user = await getUserById({
-      id: userId,
-      select: {
-        engagingUsers: {
-          where: { type: 'Follow' },
-          select: { targetUser: { select: simpleUserSelect } },
-        },
-      },
-    });
-
-    if (!user) throw throwNotFoundError(`No user with id ${userId}`);
-
-    return user.engagingUsers.map(({ targetUser }) => targetUser);
+    return await getUserFollows(ctx.user.id);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -726,8 +714,8 @@ export const toggleFollowUserHandler = async ({
   try {
     const { ip, fingerprint, user } = ctx;
     const { id: userId } = user;
-    const result = await toggleFollowUser({ ...input, userId });
-    if (result) {
+    const following = await toggleFollowUser({ ...input, userId });
+    if (following) {
       await firstDailyFollowReward.apply(
         { followingId: input.targetUserId, userId },
         { ip, fingerprint }
@@ -746,6 +734,8 @@ export const toggleFollowUserHandler = async ({
         })
         .catch(handleLogError);
     }
+
+    return { following };
   } catch (error) {
     throw throwDbError(error);
   }
