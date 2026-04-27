@@ -110,6 +110,7 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
     .query(() => getTrainingServiceStatus()),
+  getStatusModerator: moderatorProcedure.query(() => getTrainingServiceStatus()),
   setStatus: moderatorProcedure
     .input(
       z.object({

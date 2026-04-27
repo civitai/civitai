@@ -56,7 +56,7 @@ export default function ServiceStatusPage() {
 
 function GenerationStatusCard() {
   const utils = trpc.useUtils();
-  const { data, isLoading } = trpc.generation.getStatus.useQuery();
+  const { data, isLoading } = trpc.generation.getStatusModerator.useQuery();
   const [available, setAvailable] = useState(true);
   const [message, setMessage] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -69,7 +69,7 @@ function GenerationStatusCard() {
 
   const setStatus = trpc.generation.setStatus.useMutation({
     onSuccess: async () => {
-      await utils.generation.getStatus.invalidate();
+      await utils.generation.getStatusModerator.invalidate();
       setDirty(false);
       showNotification({
         title: 'Saved',
@@ -150,7 +150,7 @@ function GenerationStatusCard() {
 
 function TrainingStatusCard() {
   const utils = trpc.useUtils();
-  const { data, isLoading } = trpc.training.getStatus.useQuery();
+  const { data, isLoading } = trpc.training.getStatusModerator.useQuery();
   const [available, setAvailable] = useState(true);
   const [message, setMessage] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -163,7 +163,7 @@ function TrainingStatusCard() {
 
   const setStatus = trpc.training.setStatus.useMutation({
     onSuccess: async () => {
-      await utils.training.getStatus.invalidate();
+      await utils.training.getStatusModerator.invalidate();
       setDirty(false);
       showNotification({
         title: 'Saved',
