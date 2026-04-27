@@ -17,6 +17,7 @@ import { ecosystemById, ecosystemByKey } from '~/shared/constants/basemodel.cons
 import {
   EXPERIMENTAL_MODE_SUPPORTED_MODELS,
   SDCPP_SUPPORTED_ECOSYSTEMS,
+  SDCPP_EXCLUDED_MODEL_IDS,
   fluxUltraAirId,
 } from '~/shared/constants/generation.constants';
 import {
@@ -72,10 +73,13 @@ function supportsEnhancedCompatibility(ecosystem: string, modelId?: number): boo
 /**
  * Whether the given ecosystem/model pair runs through sdcpp and qualifies for
  * the 2-for-1 quantity bonus. Superset of `supportsEnhancedCompatibility` —
- * includes ecosystems without the `enhancedCompatibility` toggle.
+ * includes ecosystems without the `enhancedCompatibility` toggle, minus
+ * specific model versions excluded via SDCPP_EXCLUDED_MODEL_IDS.
  */
 function supportsSdcpp(ecosystem: string, modelId?: number): boolean {
-  return SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem) && modelId !== fluxUltraAirId;
+  if (!SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return false;
+  if (modelId !== undefined && SDCPP_EXCLUDED_MODEL_IDS.includes(modelId)) return false;
+  return true;
 }
 
 /**
