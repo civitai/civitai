@@ -26,7 +26,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
-import { isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
@@ -1118,9 +1119,23 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 };
 
 export const rescanModel = async ({ id }: GetByIdInput) => {
+  const useOrchestrator = await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR);
+
   const modelFiles = await dbRead.modelFile.findMany({
     where: { modelVersion: { modelId: id } },
-    select: { id: true, url: true },
+    select: useOrchestrator
+      ? {
+          id: true,
+          url: true,
+          modelVersion: {
+            select: {
+              id: true,
+              baseModel: true,
+              model: { select: { id: true, type: true } },
+            },
+          },
+        }
+      : { id: true, url: true },
   });
 
   if (modelFiles.length === 0) return { sent: 0, failed: 0 };
@@ -1129,6 +1144,36 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
   const failed: number[] = [];
 
   const tasks = modelFiles.map((file) => async () => {
+    if (useOrchestrator) {
+      const f = file as (typeof modelFiles)[number] & {
+        modelVersion: {
+          id: number;
+          baseModel: string;
+          model: { id: number; type: ModelType };
+        } | null;
+      };
+      // Soft-deleted version → orphaned file. Skip rather than crash on the
+      // null dereference that the conditional-select cast hides.
+      if (!f.modelVersion) {
+        failed.push(f.id);
+        return;
+      }
+      try {
+        await createModelFileScanRequest({
+          fileId: f.id,
+          modelVersionId: f.modelVersion.id,
+          modelId: f.modelVersion.model.id,
+          modelType: f.modelVersion.model.type,
+          baseModel: f.modelVersion.baseModel,
+          priority: 'low',
+        });
+        sent.push(f.id);
+      } catch {
+        failed.push(f.id);
+      }
+      return;
+    }
+
     const result = await requestScannerTasks({
       file,
       tasks: ['Hash', 'Scan', 'ParseMetadata'],
@@ -2087,6 +2132,27 @@ export const unpublishModelById = async ({
 
   return model;
 };
+
+// Moved here from the legacy /api/webhooks/scan-result endpoint so the
+// orchestrator-side scan flow and the retroactive-hash-blocking job can both
+// import it from a stable location. Behavior unchanged.
+export async function unpublishBlockedModel(modelVersionId: number) {
+  const version = await dbWrite.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: { id: true, model: { select: { id: true, meta: true } } },
+  });
+  if (!version?.model?.id) return;
+
+  const meta = (version.model.meta as ModelMeta | null) || {};
+  await unpublishModelById({
+    id: version.model.id,
+    reason: 'duplicate',
+    meta,
+    customMessage: 'Model has been unpublished due to matching a blocked hash',
+    userId: -1,
+    isModerator: true,
+  });
+}
 
 export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
   const files = (
