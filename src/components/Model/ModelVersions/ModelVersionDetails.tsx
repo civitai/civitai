@@ -336,7 +336,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
     },
   });
   const isNotificationOn =
-    (followingUsers.some((f) => model.user.id === f.id) || watchedModels.includes(model.id)) &&
+    (followingUsers.includes(model.user.id) || watchedModels.includes(model.id)) &&
     !mutedModels.includes(model.id);
 
   const handlePublishClick = async (publishDate?: Date) => {

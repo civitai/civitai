@@ -583,15 +583,20 @@ export const toggleFollowUser = async ({
   });
 
   if (engagement) {
-    if (engagement.type === 'Follow')
+    if (engagement.type === 'Follow') {
       await dbWrite.userEngagement.delete({
         where: { userId_targetUserId: { userId, targetUserId } },
       });
-    else if (engagement.type === 'Hide')
+      await userFollowsCache.refresh(userId);
+      return false;
+    } else if (engagement.type === 'Hide') {
       await dbWrite.userEngagement.update({
         where: { userId_targetUserId: { userId, targetUserId } },
         data: { type: 'Follow' },
       });
+      await userFollowsCache.refresh(userId);
+      return true;
+    }
 
     return false;
   }

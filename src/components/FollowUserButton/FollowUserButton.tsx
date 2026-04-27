@@ -13,7 +13,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
   const { data: following = [] } = trpc.user.getFollowingUsers.useQuery(undefined, {
     enabled: !!currentUser,
   });
-  const alreadyFollowing = following.some((user) => userId == user.id);
+  const alreadyFollowing = following.includes(userId);
 
   const toggleFollowMutation = trpc.user.toggleFollow.useMutation({
     async onMutate() {
@@ -22,12 +22,7 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
       const prevFollowing = queryUtils.user.getFollowingUsers.getData();
 
       queryUtils.user.getFollowingUsers.setData(undefined, (old = []) =>
-        alreadyFollowing
-          ? old.filter((item) => item.id !== userId)
-          : [
-              ...old,
-              { id: userId, username: null, image: null, deletedAt: null, profilePicture: null },
-            ]
+        alreadyFollowing ? old.filter((id) => id !== userId) : [...old, userId]
       );
 
       const creatorCacheKey = { id: userId };
@@ -51,8 +46,13 @@ export function FollowUserButton({ userId, onToggleFollow, ...buttonProps }: Pro
       queryUtils.user.getFollowingUsers.setData(undefined, context?.prevFollowing);
       queryUtils.user.getCreator.setData({ id: userId }, context?.prevCreator);
     },
+    onSuccess(result) {
+      queryUtils.user.getFollowingUsers.setData(undefined, (old = []) => {
+        const without = old.filter((id) => id !== userId);
+        return result.following ? [...without, userId] : without;
+      });
+    },
     async onSettled() {
-      await queryUtils.user.getFollowingUsers.invalidate();
       await queryUtils.user.getLists.invalidate();
       await queryUtils.user.getList.invalidate();
     },
