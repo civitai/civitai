@@ -265,6 +265,135 @@ export const getModelHandler = async ({
         });
     }
 
+    const mappedVersions = filteredVersions.map((version) => {
+      let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
+      if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
+
+      const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
+      const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
+      const canDownload =
+        isDownloadable &&
+        model.mode !== ModelModifier.Archived &&
+        entityAccessForVersion?.hasAccess &&
+        (!earlyAccessDeadline ||
+          (entityAccessForVersion?.permissions ?? 0) >=
+            EntityAccessPermission.EarlyAccessDownload);
+
+      const canGenerate =
+        getResourceCanGenerate({
+          resource: {
+            id: version.id,
+            status: version.status,
+            availability: version.availability,
+            usageControl: version.usageControl,
+            baseModel: version.baseModel,
+            covered: version.generationCoverage?.covered ?? false,
+            modelUserId: model.user.id,
+          },
+          user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
+          unavailableResources: unavailableGenResources,
+          disabledEcosystems,
+          modOnlyEcosystems,
+        }) &&
+        isBaseModelGenerationSupported(version.baseModel, model.type) &&
+        (entityAccessForVersion?.hasAccess ?? false);
+
+      // sort version files by file type, 'Model' type goes first
+      // Note: VAE files from linked components are NOT pushed into version.files here
+      // because they are already returned in the linkedComponents array.
+      // The list endpoint and public API still push them for backward compat.
+      const files = isDownloadable
+        ? version.files
+            .filter((x) => x.visibility === 'Public' || canManage)
+            .sort((a, b) => {
+              const aType = a.type as ModelFileType;
+              const bType = b.type as ModelFileType;
+
+              if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+              else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
+              else return 0;
+            })
+        : [];
+
+      if (excludeTrainingData) {
+        for (const file of files) {
+          if (file.metadata && typeof file.metadata === 'object') {
+            delete (file.metadata as Record<string, any>).trainingResults;
+            delete (file.metadata as Record<string, any>).selectedEpochUrl;
+          }
+        }
+      }
+
+      const hashes = version.files
+        .filter((file) =>
+          (['Model', 'Pruned Model'] as ModelFileType[]).includes(file.type as ModelFileType)
+        )
+        .map((file) =>
+          file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
+        )
+        .filter(isDefined);
+
+      const versionMetrics = version.metrics[0];
+
+      return {
+        ...version,
+        metrics: undefined,
+        rank: {
+          generationCountAllTime: versionMetrics?.generationCount ?? 0,
+          downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
+          thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
+          thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
+          earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
+        },
+        posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
+        hashes,
+        earlyAccessDeadline,
+        earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
+        canDownload,
+        canGenerate,
+        files: files as Array<
+          Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
+        >,
+        baseModel: version.baseModel as BaseModel,
+        baseModelType: version.baseModelType as BaseModelType,
+        meta: version.meta
+          ? filterSensitiveProfanityData(version.meta as ModelVersionMeta, ctx?.user?.isModerator)
+          : null,
+        trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
+        settings: version.settings as RecommendedSettingsSchema | undefined,
+        recommendedResources: version.recommendedResources
+          .filter((item) => !isLinkedComponent(item.settings))
+          .map((item) => {
+            const match = generationResources.find((x) => x.id === item.resource.id);
+            if (!match) return null;
+            return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
+          })
+          .filter(isDefined),
+        linkedComponents: version.recommendedResources
+          .filter((r) => isLinkedComponent(r.settings))
+          .map((r) => {
+            const s = r.settings as LinkedComponentSettings;
+            const fileData = linkedFileDataMap.get(s.fileId);
+            return {
+              recommendedResourceId: r.id,
+              componentType: s.componentType as ModelFileComponentType,
+              modelId: s.modelId,
+              modelName: s.modelName,
+              versionId: r.resource?.id ?? 0,
+              versionName: s.versionName,
+              fileId: s.fileId,
+              fileName: fileData?.name ?? s.fileName,
+              sizeKB: fileData?.sizeKB,
+              fileType: fileData?.type,
+              fileMetadata: fileData?.metadata as
+                | { format?: string | null; size?: string | null; fp?: string | null }
+                | undefined,
+              isRequired: s.isRequired,
+            };
+          }),
+      };
+    });
+
     return {
       ...model,
       metrics: undefined,
@@ -278,12 +407,7 @@ export const getModelHandler = async ({
         collectedCountAllTime: metrics?.collectedCount ?? 0,
         generationCountAllTime: metrics?.generationCount ?? 0,
       },
-      canGenerate: filteredVersions.some(
-        (version) =>
-          !!version.generationCoverage?.covered &&
-          unavailableGenResources.indexOf(version.id) === -1 &&
-          isBaseModelGenerationSupported(version.baseModel, model.type)
-      ),
+      canGenerate: mappedVersions.some((v) => v.canGenerate),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta
         ? filterSensitiveProfanityData(model.meta as ModelMeta, ctx?.user?.isModerator)
@@ -298,136 +422,7 @@ export const getModelHandler = async ({
               isCategory: modelCategories.some((c) => c.id === id),
             },
           })) ?? [],
-      modelVersions: filteredVersions.map((version) => {
-        let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
-        if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
-          earlyAccessDeadline = undefined;
-
-        const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
-        const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
-        const canDownload =
-          isDownloadable &&
-          model.mode !== ModelModifier.Archived &&
-          entityAccessForVersion?.hasAccess &&
-          (!earlyAccessDeadline ||
-            (entityAccessForVersion?.permissions ?? 0) >=
-              EntityAccessPermission.EarlyAccessDownload);
-
-        const canGenerate =
-          getResourceCanGenerate({
-            resource: {
-              id: version.id,
-              status: version.status,
-              availability: version.availability,
-              usageControl: version.usageControl,
-              baseModel: version.baseModel,
-              covered: version.generationCoverage?.covered ?? false,
-              modelUserId: model.user.id,
-            },
-            user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
-            unavailableResources: unavailableGenResources,
-            disabledEcosystems,
-            modOnlyEcosystems,
-          }) &&
-          isBaseModelGenerationSupported(version.baseModel, model.type) &&
-          (entityAccessForVersion?.hasAccess ?? false);
-
-        // sort version files by file type, 'Model' type goes first
-        // Note: VAE files from linked components are NOT pushed into version.files here
-        // because they are already returned in the linkedComponents array.
-        // The list endpoint and public API still push them for backward compat.
-        const files = isDownloadable
-          ? version.files
-              .filter((x) => x.visibility === 'Public' || canManage)
-              .sort((a, b) => {
-                const aType = a.type as ModelFileType;
-                const bType = b.type as ModelFileType;
-
-                if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
-                else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType])
-                  return 1;
-                else return 0;
-              })
-          : [];
-
-        if (excludeTrainingData) {
-          for (const file of files) {
-            if (file.metadata && typeof file.metadata === 'object') {
-              delete (file.metadata as Record<string, any>).trainingResults;
-              delete (file.metadata as Record<string, any>).selectedEpochUrl;
-            }
-          }
-        }
-
-        const hashes = version.files
-          .filter((file) =>
-            (['Model', 'Pruned Model'] as ModelFileType[]).includes(file.type as ModelFileType)
-          )
-          .map((file) =>
-            file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
-          )
-          .filter(isDefined);
-
-        const versionMetrics = version.metrics[0];
-
-        return {
-          ...version,
-          metrics: undefined,
-          rank: {
-            generationCountAllTime: versionMetrics?.generationCount ?? 0,
-            downloadCountAllTime: versionMetrics?.downloadCount ?? 0,
-            thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
-            thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
-            earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
-          },
-          posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
-          hashes,
-          earlyAccessDeadline,
-          earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
-          canDownload,
-          canGenerate,
-          files: files as Array<
-            Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
-          >,
-          baseModel: version.baseModel as BaseModel,
-          baseModelType: version.baseModelType as BaseModelType,
-          meta: version.meta
-            ? filterSensitiveProfanityData(version.meta as ModelVersionMeta, ctx?.user?.isModerator)
-            : null,
-          trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
-          settings: version.settings as RecommendedSettingsSchema | undefined,
-          recommendedResources: version.recommendedResources
-            .filter((item) => !isLinkedComponent(item.settings))
-            .map((item) => {
-              const match = generationResources.find((x) => x.id === item.resource.id);
-              if (!match) return null;
-              return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
-            })
-            .filter(isDefined),
-          linkedComponents: version.recommendedResources
-            .filter((r) => isLinkedComponent(r.settings))
-            .map((r) => {
-              const s = r.settings as LinkedComponentSettings;
-              const fileData = linkedFileDataMap.get(s.fileId);
-              return {
-                recommendedResourceId: r.id,
-                componentType: s.componentType as ModelFileComponentType,
-                modelId: s.modelId,
-                modelName: s.modelName,
-                versionId: r.resource?.id ?? 0,
-                versionName: s.versionName,
-                fileId: s.fileId,
-                fileName: fileData?.name ?? s.fileName,
-                sizeKB: fileData?.sizeKB,
-                fileType: fileData?.type,
-                fileMetadata: fileData?.metadata as
-                  | { format?: string | null; size?: string | null; fp?: string | null }
-                  | undefined,
-                isRequired: s.isRequired,
-              };
-            }),
-        };
-      }),
+      modelVersions: mappedVersions,
     };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -1482,6 +1477,9 @@ export const getAssociatedResourcesCardDataHandler = async ({
       : [];
 
     const unavailableGenResources = await getUnavailableResources();
+    const ecosystemConfig = await getGenerationEcosystemConfig();
+    const disabledEcosystems = new Set(ecosystemConfig.disabledEcosystems);
+    const modOnlyEcosystems = new Set(ecosystemConfig.modOnlyEcosystems);
     const completeModels = models
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
@@ -1492,9 +1490,20 @@ export const getAssociatedResourcesCardDataHandler = async ({
           (modelInput.user || modelInput.username);
         if (!versionImages.length && !showImageless) return null;
         const canGenerate =
-          !!version.covered &&
-          !unavailableGenResources.includes(version.id) &&
-          isBaseModelGenerationSupported(version.baseModel, model.type);
+          getResourceCanGenerate({
+            resource: {
+              id: version.id,
+              status: version.status,
+              availability: version.availability,
+              baseModel: version.baseModel,
+              covered: version.covered,
+              modelUserId: model.user.id,
+            },
+            user: { id: user?.id, isModerator: user?.isModerator },
+            unavailableResources: unavailableGenResources,
+            disabledEcosystems,
+            modOnlyEcosystems,
+          }) && isBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
           ...model,

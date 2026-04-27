@@ -590,7 +590,8 @@ export const getFeaturedCollectionsPool = async () => {
 
 type PoolMutation = {
   ids?: (ids: number[]) => number[];
-  snapshots?: (snap: Record<string, string>) => Record<string, string>;
+  nameSnapshots?: (snap: Record<string, string>) => Record<string, string>;
+  writeSnapshots?: (snap: Record<string, string>) => Record<string, string>;
 };
 
 async function updateFeaturedPool(
@@ -599,11 +600,15 @@ async function updateFeaturedPool(
   const block = await getOrCreateFeaturedCollectionsSystemBlock();
   const metadata = (block.metadata || {}) as HomeBlockMetaSchema;
   const currentIds = metadata.featuredCollections?.collectionIds ?? [];
-  const currentSnapshots = metadata.featuredCollections?.nameSnapshots ?? {};
+  const currentNameSnaps = metadata.featuredCollections?.nameSnapshots ?? {};
+  const currentWriteSnaps = metadata.featuredCollections?.writeSnapshots ?? {};
   const nextIds = mutation.ids ? mutation.ids(currentIds) : currentIds;
-  const nextSnapshots = mutation.snapshots
-    ? mutation.snapshots(currentSnapshots)
-    : currentSnapshots;
+  const nextNameSnaps = mutation.nameSnapshots
+    ? mutation.nameSnapshots(currentNameSnaps)
+    : currentNameSnaps;
+  const nextWriteSnaps = mutation.writeSnapshots
+    ? mutation.writeSnapshots(currentWriteSnaps)
+    : currentWriteSnaps;
 
   const newMetadata: HomeBlockMetaSchema = {
     ...metadata,
@@ -615,7 +620,8 @@ async function updateFeaturedPool(
         metadata.featuredCollections?.renderCount ?? FEATURED_COLLECTIONS_DEFAULTS.renderCount,
       maxStaleDays: metadata.featuredCollections?.maxStaleDays,
       minRecentItems: metadata.featuredCollections?.minRecentItems,
-      nameSnapshots: nextSnapshots,
+      nameSnapshots: nextNameSnaps,
+      writeSnapshots: nextWriteSnaps,
     },
   };
 
@@ -640,13 +646,14 @@ async function updateFeaturedPool(
 export const addCollectionToFeaturedPool = async ({ collectionId }: { collectionId: number }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, write: true },
   });
   if (!collection) throw throwNotFoundError('Collection not found');
 
   return updateFeaturedPool({
     ids: (current) => (current.includes(collectionId) ? current : [...current, collectionId]),
-    snapshots: (snap) => ({ ...snap, [collectionId]: collection.name }),
+    nameSnapshots: (snap) => ({ ...snap, [collectionId]: collection.name }),
+    writeSnapshots: (snap) => ({ ...snap, [collectionId]: collection.write }),
   });
 };
 
@@ -657,7 +664,12 @@ export const removeCollectionFromFeaturedPool = async ({
 }) => {
   return updateFeaturedPool({
     ids: (current) => current.filter((id) => id !== collectionId),
-    snapshots: (snap) => {
+    nameSnapshots: (snap) => {
+      const next = { ...snap };
+      delete next[collectionId];
+      return next;
+    },
+    writeSnapshots: (snap) => {
       const next = { ...snap };
       delete next[collectionId];
       return next;
@@ -665,19 +677,18 @@ export const removeCollectionFromFeaturedPool = async ({
   });
 };
 
-export const acknowledgeFeaturedCollectionName = async ({
-  collectionId,
-}: {
-  collectionId: number;
-}) => {
+// Re-snapshot name + write for a single collection. Mods call this after reviewing
+// a drift warning to re-approve the collection's current state.
+export const acknowledgeFeaturedCollection = async ({ collectionId }: { collectionId: number }) => {
   const collection = await dbRead.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, name: true },
+    select: { id: true, name: true, write: true },
   });
   if (!collection) throw throwNotFoundError('Collection not found');
 
   return updateFeaturedPool({
-    snapshots: (snap) => ({ ...snap, [collectionId]: collection.name }),
+    nameSnapshots: (snap) => ({ ...snap, [collectionId]: collection.name }),
+    writeSnapshots: (snap) => ({ ...snap, [collectionId]: collection.write }),
   });
 };
 

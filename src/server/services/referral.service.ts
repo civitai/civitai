@@ -108,22 +108,27 @@ function expiryDate(from: Date = new Date()) {
 }
 
 async function resolveReferrerForReferee(refereeId: number) {
-  const referral = await dbRead.userReferral.findUnique({
-    where: { userId: refereeId },
-    select: {
-      id: true,
-      userReferralCodeId: true,
-      firstPaidAt: true,
-      paidMonthCount: true,
-      userReferralCode: {
-        select: {
-          id: true,
-          userId: true,
-          deletedAt: true,
-          user: { select: { createdAt: true } },
-        },
+  // Read against the primary, not the replica. This is called immediately
+  // after `bindReferralCodeForUser` writes the UserReferral row inside the
+  // invoice.paid handler — the replica may not have caught up yet, and a
+  // null read here silently aborts the entire reward path (incident 4/27).
+  const select = {
+    id: true,
+    userReferralCodeId: true,
+    firstPaidAt: true,
+    paidMonthCount: true,
+    userReferralCode: {
+      select: {
+        id: true,
+        userId: true,
+        deletedAt: true,
+        user: { select: { createdAt: true } },
       },
     },
+  } as const;
+  const referral = await dbWrite.userReferral.findUnique({
+    where: { userId: refereeId },
+    select,
   });
   if (!referral || !referral.userReferralCode || referral.userReferralCode.deletedAt) return null;
   const referrerId = referral.userReferralCode.userId;
@@ -154,12 +159,16 @@ async function resolveReferrerForReferee(refereeId: number) {
 }
 
 export async function bindReferralCodeForUser(userId: number, code: string) {
-  const referralCode = await dbRead.userReferralCode.findFirst({
+  // Both reads against the primary. Two concurrent invoice.paid retries can
+  // race here, and a stale replica read leads to either silent skip (when the
+  // existing row is missed downstream) or a unique-violation crash on the
+  // create path below (UserReferral has unique on userId).
+  const referralCode = await dbWrite.userReferralCode.findFirst({
     where: { code, deletedAt: null },
   });
   if (!referralCode || referralCode.userId === userId) return null;
 
-  const existing = await dbRead.userReferral.findUnique({ where: { userId } });
+  const existing = await dbWrite.userReferral.findUnique({ where: { userId } });
   if (existing && existing.userReferralCodeId === referralCode.id) return existing;
   if (existing && !existing.userReferralCodeId) {
     return dbWrite.userReferral.update({
@@ -168,9 +177,20 @@ export async function bindReferralCodeForUser(userId: number, code: string) {
     });
   }
   if (!existing) {
-    return dbWrite.userReferral.create({
-      data: { userId, userReferralCodeId: referralCode.id },
-    });
+    try {
+      return await dbWrite.userReferral.create({
+        data: { userId, userReferralCodeId: referralCode.id },
+      });
+    } catch (err) {
+      // Belt-and-suspenders: if a parallel call snuck a row in between our
+      // existing-check and the create, the unique(userId) constraint trips.
+      // Re-read and return that row instead of bubbling P2002 up to the
+      // webhook handler.
+      if (isUniqueViolation(err)) {
+        return dbWrite.userReferral.findUnique({ where: { userId } });
+      }
+      throw err;
+    }
   }
   return existing;
 }
@@ -185,7 +205,19 @@ export async function recordMembershipPaymentReward(params: {
 }) {
   const { refereeId, tier, monthlyBuzzAmount, sourceEventId, paidAt, payment } = params;
   const ctx = await resolveReferrerForReferee(refereeId);
-  if (!ctx) return null;
+  if (!ctx) {
+    // Surface so we can spot replica-lag races, missing-referral-row bugs, or
+    // referrers dropping out of the eligibility window. Silent return null was
+    // exactly the failure mode we missed in the 4/27 incident.
+    logToAxiom({
+      name: 'referral-membership-no-context',
+      type: 'warn',
+      refereeId,
+      tier,
+      sourceEventId,
+    }).catch(() => undefined);
+    return null;
+  }
   if (ctx.paidMonthCount >= constants.referrals.maxPaidMonthsPerReferee) {
     await recordAttribution({
       referralCodeId: ctx.referralCodeId,
@@ -200,7 +232,18 @@ export async function recordMembershipPaymentReward(params: {
   }
 
   const tokenAmount = tokensForTier(tier);
-  if (tokenAmount <= 0) return null;
+  if (tokenAmount <= 0) {
+    // Tier should always map; if it doesn't, our constants drifted from a
+    // product's metadata — log loudly so we don't quietly drop rewards.
+    logToAxiom({
+      name: 'referral-membership-zero-tokens',
+      type: 'warn',
+      refereeId,
+      tier,
+      sourceEventId,
+    }).catch(() => undefined);
+    return null;
+  }
 
   const now = paidAt ?? new Date();
 
@@ -331,7 +374,21 @@ export async function recordBuzzPurchaseKickback(params: {
   if (buzzAmount <= 0) return null;
 
   const ctx = await resolveReferrerForReferee(refereeId);
-  if (!ctx) return null;
+  if (!ctx) {
+    // Buzz purchases by users with no referral binding are common; only log
+    // when the buzzAmount is large enough to be worth investigating, so we
+    // don't drown the dataset in noise.
+    if (buzzAmount >= 1000) {
+      logToAxiom({
+        name: 'referral-kickback-no-context',
+        type: 'info',
+        refereeId,
+        buzzAmount,
+        sourceEventId,
+      }).catch(() => undefined);
+    }
+    return null;
+  }
   if (!ctx.firstPaidAt) {
     await recordAttribution({
       referralCodeId: ctx.referralCodeId,

@@ -32,7 +32,12 @@ function extractResourceIds(values: PresetValues): number[] {
  * Unavailable resources surface the standard unavailable-resource warning
  * because the fetch goes through the same `getGenerationData` pipeline.
  */
-export async function applyPreset(preset: { id: number; name: string; values: PresetValues }) {
+export async function applyPreset(preset: {
+  id: number;
+  name: string;
+  userId: number;
+  values: PresetValues;
+}) {
   const ids = extractResourceIds(preset.values);
   const resources = ids.length
     ? (await fetchGenerationData({ type: 'modelVersions', ids })).resources
@@ -73,6 +78,7 @@ export async function applyPreset(preset: { id: number; name: string; values: Pr
   useGenerationPresetStore.getState().loadPreset({
     id: preset.id,
     name: preset.name,
+    userId: preset.userId,
     values: live ?? preset.values,
   });
 }

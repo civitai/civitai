@@ -38,7 +38,10 @@ import {
 import { getJSZip } from '~/utils/lazy';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
-import { uploadAndSubmitAutoLabel } from '~/utils/training/auto-label-orchestrator';
+import {
+  type AutoLabelHandle,
+  uploadAndSubmitAutoLabel,
+} from '~/utils/training/auto-label-orchestrator';
 
 const overwrites: { [key in (typeof overwriteList)[number]]: string } = {
   ignore: 'Skip files with existing labels',
@@ -46,7 +49,34 @@ const overwrites: { [key in (typeof overwriteList)[number]]: string } = {
   overwrite: 'Overwrite existing labels',
 };
 
+// Legacy zip path bottlenecks past ~60 captioned files; the orchestrator path
+// chunks into batched workflows so the cap doesn't apply there.
 const maxImagesCaption = 60;
+// Browsers throttle concurrent fetches to one origin, but kicking off 500+
+// unbounded promises ties up memory holding all those blobs at once.
+const SOURCE_FETCH_CONCURRENCY = 6;
+
+// Track the in-flight orchestrator handle per model so a fresh submit can
+// cancel any prior run before it scribbles into the new run's labels.
+const inFlightHandles = new Map<number, AutoLabelHandle>();
+
+async function fetchWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  task: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const idx = cursor++;
+      if (idx >= items.length) return;
+      results[idx] = await task(items[idx]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 const useSubmitImages = ({
   modelId,
@@ -68,76 +98,192 @@ const useSubmitImages = ({
         ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
       }
   );
-  const { setAutoLabeling, updateImage } = trainingStore;
+  const { setAutoLabeling, mutateAutoLabeling, updateImage } = trainingStore;
 
   const filteredImages = imageList.filter((i) =>
     (type === 'caption' ? autoCaptioning : autoTagging).overwrite === 'ignore'
       ? i.label.length === 0
       : i
   );
-  const disabled = type === 'caption' && filteredImages.length > maxImagesCaption;
+  // Caption cap only applies on the legacy path — orchestrator handles arbitrary counts.
+  const disabled =
+    type === 'caption' &&
+    filteredImages.length > maxImagesCaption &&
+    !features.trainingAutoLabelOrchestrator;
 
   const submitViaOrchestrator = async () => {
-    // Materialize blobs from the same source URLs the legacy zip path used.
-    // Without the .ok check, a 403/404 HTML body would be uploaded as the "image".
-    const images = await Promise.all(
-      filteredImages.map(async (imgData) => {
-        const res = await fetch(imgData.url);
-        if (!res.ok) {
-          throw new Error(
-            `Failed to fetch ${getShortNameFromUrl(imgData)} (${res.status} ${res.statusText})`
-          );
-        }
-        return { filename: getShortNameFromUrl(imgData), blob: await res.blob() };
-      })
-    );
+    // Cancel any prior run for this model — without this, an old poll loop
+    // from a previous submit will keep firing onResult against the new run's
+    // store state and corrupt the new labels.
+    inFlightHandles.get(modelId)?.cancel();
+    inFlightHandles.delete(modelId);
+
+    // Stamp this run with a unique id so background callbacks from the prior
+    // run (which may still be mid-tick) can recognize they're stale.
+    const runId = Date.now() + Math.random();
 
     setAutoLabeling(modelId, mediaType, {
       url: null,
       isRunning: true,
-      total: images.length,
+      total: filteredImages.length,
       successes: 0,
       fails: [],
+      uploaded: 0,
+      phase: 'preparing',
+      uploadStartedAt: null,
+      runId,
     });
+
+    // Materialize blobs from the same source URLs the legacy zip path used,
+    // bounded so 500+ images don't all sit in memory at once. Bad URLs (e.g. CDN
+    // returning a 403 HTML page) are recorded as per-image failures rather than
+    // killing the whole run. Track failure reasons by image URL (collision-proof
+    // — short filenames can collide for duplicate uploads).
+    const failureReasons = new Map<string, string>();
+    const keyToFilename = new Map<string, string>(
+      filteredImages.map((i) => [i.url, getShortNameFromUrl(i)] as const)
+    );
+    const filenameFor = (key: string) => keyToFilename.get(key) ?? key;
+    const recordFailure = (key: string, reason: string) => {
+      if (key) failureReasons.set(key, reason);
+    };
+
+    type Sourced = { key: string; blob: Blob } | null;
+    const sourced = await fetchWithConcurrency<(typeof filteredImages)[number], Sourced>(
+      filteredImages,
+      SOURCE_FETCH_CONCURRENCY,
+      async (imgData) => {
+        const key = imgData.url;
+        try {
+          const res = await fetch(imgData.url);
+          if (!res.ok) {
+            recordFailure(key, `Source fetch failed (${res.status} ${res.statusText})`);
+            return null;
+          }
+          return { key, blob: await res.blob() };
+        } catch (err) {
+          recordFailure(key, err instanceof Error ? err.message : 'Source fetch failed');
+          return null;
+        }
+      }
+    );
+
+    // If the user kicked off a different run while we were fetching, drop ours.
+    if (useTrainingImageStore.getState()[modelId]?.autoLabeling.runId !== runId) return;
+
+    const images = sourced.filter((s): s is { key: string; blob: Blob } => s !== null);
+    // Push source-fetch failures into store immediately so the progress bar reflects them.
+    if (failureReasons.size > 0) {
+      mutateAutoLabeling(modelId, mediaType, (prev) => ({
+        fails: [...prev.fails, ...failureReasons.keys()],
+      }));
+    }
+
+    if (images.length === 0) {
+      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+      showErrorNotification({
+        title: 'Auto-label failed',
+        error: new Error('Could not fetch any source images.'),
+      });
+      return;
+    }
 
     const overwriteMode = (type === 'caption' ? autoCaptioning : autoTagging).overwrite;
 
-    const onResult = (filename: string, label: string) => {
-      updateImage(modelId, mediaType, {
-        matcher: filename,
-        label,
-        appendLabel: overwriteMode === 'append',
+    // All store mutations are gated on runId — if the user reset the run (close,
+    // start fresh, etc.), the store's runId will differ and we no-op.
+    const guard = (apply: () => void) => {
+      if (useTrainingImageStore.getState()[modelId]?.autoLabeling.runId === runId) apply();
+    };
+
+    const onUploadStart = () => {
+      guard(() =>
+        mutateAutoLabeling(modelId, mediaType, () => ({
+          phase: 'uploading',
+          uploaded: 0,
+          uploadStartedAt: Date.now(),
+        }))
+      );
+    };
+    const onUploadProgress = (uploadedCount: number) => {
+      guard(() => mutateAutoLabeling(modelId, mediaType, () => ({ uploaded: uploadedCount })));
+    };
+    const onUploadComplete = () => {
+      guard(() => mutateAutoLabeling(modelId, mediaType, () => ({ phase: 'labeling' })));
+    };
+
+    const onResult = (key: string, label: string) => {
+      guard(() => {
+        updateImage(modelId, mediaType, {
+          matcher: filenameFor(key),
+          urlMatcher: key,
+          label,
+          appendLabel: overwriteMode === 'append',
+        });
+        mutateAutoLabeling(modelId, mediaType, (prev) => ({ successes: prev.successes + 1 }));
       });
-      const current = useTrainingImageStore.getState()[modelId]?.autoLabeling;
-      if (current) {
-        setAutoLabeling(modelId, mediaType, {
-          ...current,
-          successes: current.successes + 1,
-        });
-      }
     };
-    const onFailure = (filename: string) => {
-      if (!filename) return;
-      const current = useTrainingImageStore.getState()[modelId]?.autoLabeling;
-      if (current) {
-        setAutoLabeling(modelId, mediaType, {
-          ...current,
-          fails: [...current.fails, filename],
-        });
-      }
+    const onFailure = (key: string, reason: string) => {
+      recordFailure(key, reason);
+      if (!key) return;
+      guard(() =>
+        mutateAutoLabeling(modelId, mediaType, (prev) => ({ fails: [...prev.fails, key] }))
+      );
     };
-    const onDone = ({ successes, fails }: { successes: number; fails: string[] }) => {
+    const onFatal = (reason: string) => {
+      // Catastrophic poll/setup failure — surface as a real toast rather than
+      // hiding it in the per-image grouping.
+      guard(() =>
+        showErrorNotification({
+          title: 'Auto-label crashed',
+          error: new Error(reason),
+          autoClose: false,
+        })
+      );
+    };
+    const onDone = ({ successes, failedKeys }: { successes: number; failedKeys: string[] }) => {
+      // Drop late events from a stale run.
+      if (useTrainingImageStore.getState()[modelId]?.autoLabeling.runId !== runId) return;
+
       const labelNoun = type === 'caption' ? 'caption' : 'tag';
       const labelVerb = type === 'caption' ? 'Captioned' : 'Tagged';
-      const message = `${labelVerb} ${successes} image${successes === 1 ? '' : 's'}.${
-        fails.length > 0 ? ` Failures: ${fails.length}` : ''
-      }`;
+
+      // Union the helper's failedKeys with any source-fetch failures recorded
+      // before submit — those never reach the helper, so they aren't in
+      // failedKeys but are very much real failures the user should see.
+      const allFailedKeys = new Set<string>(failedKeys);
+      for (const key of failureReasons.keys()) allFailedKeys.add(key);
+
+      // Group failure reasons so the user sees "5× content blocked" instead of
+      // a flat count or 50 toasts.
+      const reasonCounts = new Map<string, number>();
+      for (const key of allFailedKeys) {
+        const reason = failureReasons.get(key) ?? 'Unknown error';
+        reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
+      }
+      const reasonSummary = Array.from(reasonCounts.entries())
+        .sort(([, a], [, b]) => b - a)
+        .slice(0, 3)
+        .map(([reason, count]) => `${count}× ${reason}`)
+        .join('; ');
+
+      const totalFails = allFailedKeys.size;
+      const headline = `${labelVerb} ${successes} image${successes === 1 ? '' : 's'}.`;
+      const failureText =
+        totalFails > 0
+          ? ` ${totalFails} failure${totalFails === 1 ? '' : 's'}${
+              reasonSummary ? `: ${reasonSummary}` : ''
+            }`
+          : '';
+      const message = headline + failureText;
+
       if (successes === 0) {
         showErrorNotification({
           title: `Auto-${labelNoun} failed`,
           error: new Error(message),
         });
-      } else if (fails.length > 0) {
+      } else if (totalFails > 0) {
         showErrorNotification({
           title: `Auto-${labelNoun} finished with errors`,
           error: new Error(message),
@@ -148,9 +294,9 @@ const useSubmitImages = ({
           message,
         });
       }
-      const defaultState =
-        mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
       setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+      inFlightHandles.delete(modelId);
     };
 
     const postProcess = {
@@ -164,44 +310,61 @@ const useSubmitImages = ({
 
     // Polling continues after the modal closes — bail out cleanly if the user
     // resets the run from elsewhere (re-opens the modal, navigates away, etc.).
-    const isActive = () =>
-      useTrainingImageStore.getState()[modelId]?.autoLabeling.isRunning ?? false;
+    // Pair `isRunning` with `runId` so a fresh run's `isRunning: true` doesn't
+    // make a stale poll loop think it's still its own.
+    const isActive = () => {
+      const state = useTrainingImageStore.getState()[modelId]?.autoLabeling;
+      return !!state?.isRunning && state.runId === runId;
+    };
 
     try {
-      if (type === 'tag') {
-        await uploadAndSubmitAutoLabel({
-          modelId,
-          mediaType: mediaType ?? 'image',
-          type: 'tag',
-          images,
-          params: { threshold: autoTagging.threshold },
-          postProcess,
-          isActive,
-          onResult,
-          onFailure,
-          onDone,
-        });
+      const handle =
+        type === 'tag'
+          ? await uploadAndSubmitAutoLabel({
+              modelId,
+              mediaType: mediaType ?? 'image',
+              type: 'tag',
+              images,
+              params: { threshold: autoTagging.threshold },
+              postProcess,
+              isActive,
+              onUploadStart,
+              onUploadProgress,
+              onUploadComplete,
+              onResult,
+              onFailure,
+              onFatal,
+              onDone,
+            })
+          : await uploadAndSubmitAutoLabel({
+              modelId,
+              mediaType: mediaType ?? 'image',
+              type: 'caption',
+              images,
+              params: {
+                temperature: autoCaptioning.temperature,
+                maxNewTokens: autoCaptioning.maxNewTokens,
+              },
+              postProcess,
+              isActive,
+              onUploadStart,
+              onUploadProgress,
+              onUploadComplete,
+              onResult,
+              onFailure,
+              onFatal,
+              onDone,
+            });
+      // Only stash the handle if we're still the live run — otherwise a newer
+      // run's cancel could fire against our (now-stale) handle.
+      if (useTrainingImageStore.getState()[modelId]?.autoLabeling.runId === runId) {
+        inFlightHandles.set(modelId, handle);
       } else {
-        await uploadAndSubmitAutoLabel({
-          modelId,
-          mediaType: mediaType ?? 'image',
-          type: 'caption',
-          images,
-          params: {
-            temperature: autoCaptioning.temperature,
-            maxNewTokens: autoCaptioning.maxNewTokens,
-          },
-          postProcess,
-          isActive,
-          onResult,
-          onFailure,
-          onDone,
-        });
+        handle.cancel();
       }
     } catch (e) {
-      const defaultState =
-        mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
-      setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
+      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      guard(() => setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling }));
       throw e;
     }
   };
@@ -255,11 +418,24 @@ const useSubmitImages = ({
       // The orchestrator flag overrides — when on, we always use the new flow,
       // regardless of what trainingAutoTag / trainingAutoCaption say.
       if (features.trainingAutoLabelOrchestrator) {
-        await submitViaOrchestrator();
+        // Hand off to the page-level progress card so the modal doesn't sit on
+        // "Sending data..." through the entire upload+submit phase. The first
+        // setAutoLabeling call inside submitViaOrchestrator runs synchronously
+        // (zustand) so the store flips to isRunning: true before we close.
+        void submitViaOrchestrator().catch((e) => {
+          // Cancellation is expected (e.g. user starts a new run) — don't toast.
+          if ((e as DOMException | undefined)?.name === 'AbortError') return;
+          showErrorNotification({
+            error: e instanceof Error ? e : new Error('Please try again'),
+            title: 'Failed to send data',
+            autoClose: false,
+          });
+        });
+        handleClose();
       } else {
         await submitViaLegacyZip();
+        handleClose();
       }
-      handleClose();
     } catch (e) {
       showErrorNotification({
         error: e instanceof Error ? e : new Error('Please try again'),
@@ -464,7 +640,12 @@ const AutoCaptionSection = ({
       }
   );
   const { setAutoCaptioning } = trainingStore;
-  const { loading, handleSubmit, numImages, disabled: limitReached } = useSubmitImages({
+  const {
+    loading,
+    handleSubmit,
+    numImages,
+    disabled: limitReached,
+  } = useSubmitImages({
     modelId,
     mediaType,
     handleClose,
@@ -486,8 +667,8 @@ const AutoCaptionSection = ({
           iconColor="red"
         >
           <Text>
-            Auto-captioning is temporarily unavailable. We&apos;re actively looking into it -
-            please check back soon.
+            Auto-captioning is temporarily unavailable. We&apos;re actively looking into it - please
+            check back soon.
           </Text>
         </AlertWithIcon>
       )}

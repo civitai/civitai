@@ -376,17 +376,26 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
         );
 
         if (checkpoints.length) {
-          await dbWrite.$queryRaw`
-            TRUNCATE TABLE "CoveredCheckpoint"
-          `;
+          const modelIds = checkpoints.map((c) => c.model_id);
+          const versionIds = checkpoints.map((c) => c.version_id);
 
-          await dbWrite.coveredCheckpoint.createMany({
-            data: checkpoints.map((c) => ({
-              model_id: c.model_id,
-              version_id: c.version_id,
-            })),
-            skipDuplicates: true,
-          });
+          // Delta sync instead of TRUNCATE + INSERT: TRUNCATE isn't propagated
+          // by every replication setup, which left stale "covered" rows on the
+          // DataPacket replica.
+          await dbWrite.$transaction([
+            dbWrite.$executeRaw`
+              INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
+              SELECT * FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
+              ON CONFLICT DO NOTHING
+            `,
+            dbWrite.$executeRaw`
+              DELETE FROM "CoveredCheckpoint" cc
+              WHERE NOT EXISTS (
+                SELECT 1 FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
+                WHERE t.model_id = cc.model_id AND t.version_id = cc.version_id
+              )
+            `,
+          ]);
         }
       } catch (error) {
         const err = error as Error;

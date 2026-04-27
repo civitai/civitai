@@ -237,6 +237,8 @@ export default function TrainingSelectFile({
       // TODO [bw] ideally, we would simply update the proper values rather than invalidate to skip the loading step
       await queryUtils.modelVersion.getById.invalidate({ id: vData.id });
       await queryUtils.modelVersion.getById.invalidate({ id: vData.id, withFiles: true });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({ id: vData.id });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({ id: vData.id, withFiles: true });
       await queryUtils.model.getById.invalidate({ id: model?.id });
       await queryUtils.model.getMyTrainingModels.invalidate();
 

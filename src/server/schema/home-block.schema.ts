@@ -53,6 +53,7 @@ export const homeBlockMetaSchema = z
       maxStaleDays: z.number().int().min(1).max(365).optional(),
       minRecentItems: z.number().int().min(1).max(100).optional(),
       nameSnapshots: z.record(z.string(), z.string()).default({}),
+      writeSnapshots: z.record(z.string(), z.string()).default({}),
     }),
     footer: z.string().optional(),
   })

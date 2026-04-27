@@ -493,6 +493,7 @@ export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
 export const fluxDraftAir = 'urn:air:flux1:checkpoint:civitai:618692@699279';
 export const fluxKreaAir = 'urn:air:flux1:checkpoint:civitai:618692@2068000';
 export const fluxUltraAirId = 1088507;
+export const fluxProAirId = 922358;
 export const ponyV7Air = 'urn:air:auraflow:checkpoint:civitai:1901521@2152373';
 
 // Experimental mode supported models - only for Text-to-Image workflow
@@ -520,6 +521,11 @@ export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   'Flux2Klein_4B',
   'Flux2Klein_4B_base',
 ];
+
+// Specific model versions inside an SDCPP-supported ecosystem that opt out of
+// the sdcpp/BOGO path (e.g. Flux Pro 1.1 and Flux Ultra run on a different
+// engine even though their ecosystem is `Flux1`).
+export const SDCPP_EXCLUDED_MODEL_IDS: number[] = [fluxProAirId, fluxUltraAirId];
 export const fluxModeOptions = [
   { label: 'Draft', value: fluxDraftAir },
   { label: 'Standard', value: fluxStandardAir },

@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState } from 'react';
-import type { UserSettingsSchema } from '~/server/schema/user.schema';
+import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { setServerDomains } from '~/utils/sync-account';
@@ -7,7 +7,7 @@ import { trpc } from '~/utils/trpc';
 
 type AppProviderProps = {
   children: React.ReactNode;
-  settings: UserSettingsSchema;
+  settings: UserContentSettings;
   seed: number;
   canIndex: boolean;
   region: RegionInfo;

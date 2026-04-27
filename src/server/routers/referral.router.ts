@@ -17,7 +17,11 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 const redeemInput = z.object({ offerIndex: z.number().int().min(0) });
 
 async function getOrCreateCode(userId: number) {
-  let code = await dbRead.userReferralCode.findFirst({
+  // Read against the primary so two parallel dashboard loads don't both miss
+  // the existing row on a stale replica and end up creating two referral
+  // codes for the same user (the unique constraint is on `code`, not on
+  // userId, so duplicate creates succeed and leave orphan codes around).
+  let code = await dbWrite.userReferralCode.findFirst({
     where: { userId, deletedAt: null },
     orderBy: { createdAt: 'asc' },
   });

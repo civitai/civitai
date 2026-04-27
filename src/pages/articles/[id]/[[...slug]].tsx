@@ -54,7 +54,9 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { constants } from '~/server/common/constants';
 import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -129,6 +131,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const currentUser = useCurrentUser();
   const mobile = useContainerSmallerThan('sm');
   const { articles } = useFeatureFlags();
+  const domain = useDomainColor();
 
   const { data: article, isLoading, isRefetching } = trpc.article.getById.useQuery({ id });
   const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
@@ -245,7 +248,11 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         ogEndpoint={`/api/og?type=article&id=${article.id}`}
         canonical={`/articles/${article.id}/${slugit(article.title)}`}
         alternate={`/articles/${article.id}`}
-        deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
+        deIndex={
+          !article?.publishedAt ||
+          article?.availability === Availability.Unsearchable ||
+          (domain === 'green' && !hasSafeBrowsingLevel(article.nsfwLevel))
+        }
       />
       <SensitiveShield contentNsfwLevel={article.nsfwLevel} bypassRating={isOwner}>
         <TrackView entityId={article.id} entityType="Article" type="ArticleView" />

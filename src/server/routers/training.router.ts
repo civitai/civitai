@@ -2,13 +2,14 @@ import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import { getModelData } from '~/server/controllers/training.controller';
 import { dbKV } from '~/server/db/db-helpers';
-import { edgeCacheIt, purgeOnSuccess, rateLimit  } from '~/server/middleware.trpc';
+import { edgeCacheIt, purgeOnSuccess, rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   autoCaptionInput,
   autoTagInput,
   createTrainingRequestDryRunSchema,
   createTrainingRequestSchema,
+  getAutoLabelUploadUrlSchema,
   getAutoLabelWorkflowSchema,
   moveAssetInput,
   submitAutoLabelWorkflowSchema,
@@ -81,12 +82,13 @@ export const trainingRouter = router({
   // Tagging/captioning is free; the orchestrator work is billed to the system token
   // and not the user, so each endpoint needs a per-user rate cap to prevent abuse.
   getAutoLabelUploadUrl: guardedProcedure
+    .input(getAutoLabelUploadUrlSchema)
     .use(isFlagProtected('imageTraining'))
     .use(isFlagProtected('trainingAutoLabelOrchestrator'))
     // Per-image: ~1000 images/min is the soft ceiling we want to allow for legitimate
     // use, so the cap matches that 1:1 (each image needs one presign).
     .use(rateLimit({ limit: 1000, period: 60 }))
-    .mutation(() => getAutoLabelUploadUrl()),
+    .mutation(({ input, ctx }) => getAutoLabelUploadUrl({ ...input, userId: ctx.user.id })),
   submitAutoLabelWorkflow: guardedProcedure
     .input(submitAutoLabelWorkflowSchema)
     .use(isFlagProtected('imageTraining'))
@@ -108,6 +110,7 @@ export const trainingRouter = router({
     .use(isFlagProtected('imageTraining'))
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['training-status'] }))
     .query(() => getTrainingServiceStatus()),
+  getStatusModerator: moderatorProcedure.query(() => getTrainingServiceStatus()),
   setStatus: moderatorProcedure
     .input(
       z.object({

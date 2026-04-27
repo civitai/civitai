@@ -26,6 +26,7 @@ import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type {
   AutoCaptionInput,
   AutoTagInput,
+  GetAutoLabelUploadUrlInput,
   GetAutoLabelWorkflowInput,
   MoveAssetInput,
   SubmitAutoLabelWorkflowInput,
@@ -677,6 +678,43 @@ type AutoLabelStepMetadata = {
   filename: string;
 };
 
+// Block obvious SSRF without restricting which public host hosts the image.
+// Captioning/tagging is supposed to work with any user-supplied image URL, so
+// we don't gate on a host allowlist — but we DO want to refuse hostnames that
+// resolve to private/loopback/link-local space, since the orchestrator runs
+// inside our network and would happily fetch internal services if asked.
+const PRIVATE_HOST_PATTERNS = [
+  /^localhost$/i,
+  /^127\./,
+  /^10\./,
+  /^192\.168\./,
+  /^172\.(1[6-9]|2\d|3[01])\./,
+  /^169\.254\./, // link-local (incl. cloud metadata 169.254.169.254)
+  /^0\./,
+  /^::1$/,
+  /^fe80:/i,
+  /^fc/i, // unique local IPv6 (fc00::/7)
+  /^fd/i,
+];
+
+function assertSafeMediaUrls(urls: string[]) {
+  for (const raw of urls) {
+    let parsed: URL;
+    try {
+      parsed = new URL(raw);
+    } catch {
+      throw throwBadRequestError(`Invalid mediaUrl: ${raw.slice(0, 64)}`);
+    }
+    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) {
+      throw throwBadRequestError('mediaUrl must be a plain HTTPS URL');
+    }
+    const host = parsed.hostname.replace(/^\[|\]$/g, ''); // strip IPv6 brackets
+    if (PRIVATE_HOST_PATTERNS.some((re) => re.test(host))) {
+      throw throwBadRequestError('mediaUrl host is not reachable');
+    }
+  }
+}
+
 async function assertModelOwnership(modelId: number, userId: number) {
   const model = await dbRead.model.findUnique({
     where: { id: modelId },
@@ -711,7 +749,11 @@ function toOrchestratorError(error: unknown): never {
   }
 }
 
-export async function getAutoLabelUploadUrl() {
+export async function getAutoLabelUploadUrl({
+  userId,
+  modelId,
+}: GetAutoLabelUploadUrlInput & { userId: number }) {
+  await assertModelOwnership(modelId, userId);
   const { data, error } = await getConsumerBlobUploadUrl({
     client: internalOrchestratorClient,
   });
@@ -727,6 +769,7 @@ export async function submitAutoLabelWorkflow({
   params,
 }: SubmitAutoLabelWorkflowInput & { userId: number }) {
   await assertModelOwnership(modelId, userId);
+  assertSafeMediaUrls(images.map((i) => i.mediaUrl));
 
   const steps: WorkflowStepTemplate[] = images.map((img, index) => {
     const stepMetadata: AutoLabelStepMetadata = { filename: img.filename };

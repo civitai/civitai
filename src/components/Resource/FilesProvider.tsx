@@ -13,7 +13,7 @@ import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
-import { primaryFileTypesByModelType } from '~/utils/file-display-helpers';
+import { getPrimaryFileTypes, primaryFileTypesByModelType } from '~/utils/file-display-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
@@ -286,11 +286,16 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     });
 
     await queryUtils.model.getById.invalidate({ id: modelId });
-    if (modelVersionId)
+    if (modelVersionId) {
       await queryUtils.modelVersion.getById.invalidate({
         id: modelVersionId,
         withFiles: true,
       });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({
+        id: modelVersionId,
+        withFiles: true,
+      });
+    }
   };
 
   const checkValidation = () => {
@@ -329,7 +334,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
     // Skip for archive-primary model types (Workflows/Poses/Wildcards/Other) — their main file
     // is an archive/config, so they don't fit the "component-only" concept.
     if (!model?.type || !archivePrimaryModelTypes.includes(model.type)) {
-      const modelFiles = files.filter((f) => f.type && ['Model', 'Pruned Model'].includes(f.type));
+      const primaryTypes = getPrimaryFileTypes(model?.type);
+      const modelFiles = files.filter(
+        (f) => f.type && (primaryTypes as readonly string[]).includes(f.type)
+      );
       if (modelFiles.length === 0) {
         const uploadedRequiredComponents = files.filter(
           (f) =>
@@ -446,6 +454,10 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       });
 
       await queryUtils.modelVersion.getById.invalidate({
+        id: result.modelVersion.id,
+        withFiles: true,
+      });
+      await queryUtils.modelVersion.getByIdForEdit.invalidate({
         id: result.modelVersion.id,
         withFiles: true,
       });

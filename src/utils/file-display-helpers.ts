@@ -4,7 +4,7 @@
  */
 
 import type { ModelFileType } from '~/server/common/constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { getFileExtension } from '~/utils/string-helpers';
 import {
   IconAdjustments,
@@ -152,13 +152,36 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
  * Minimal file shape for display functions
  */
 export interface FileForDisplay {
+  type?: string | null;
   metadata?: FileMetadata | null;
 }
 
 /**
- * Get a short label for a file variant (e.g., "fp16", "Q4_K_M", "Pruned")
+ * File types specific enough to serve as a fallback label when metadata lacks
+ * precision/quant/size info. Plain "Model" and "Other" are excluded — they
+ * carry no differentiating information.
  */
-export function getFileLabel(file: FileForDisplay): string {
+const SPECIFIC_FALLBACK_TYPES = new Set([
+  'Pruned Model',
+  'VAE',
+  'UNet',
+  'Diffusion Model',
+  'CLIPVision',
+  'ControlNet',
+  'Upscaler',
+  'Text Encoder',
+  'Workflow',
+  'Archive',
+  'Config',
+  'Training Data',
+  'Negative',
+]);
+
+/**
+ * Get a short label for a file variant (e.g., "fp16", "Q4_K_M", "Pruned").
+ * Returns null when no meaningful label can be derived — callers should skip rendering.
+ */
+export function getFileLabel(file: FileForDisplay): string | null {
   const { fp, quantType, format, size } = file.metadata ?? {};
 
   // For GGUF files, show quant type
@@ -176,11 +199,17 @@ export function getFileLabel(file: FileForDisplay): string {
     return size === 'pruned' ? 'Pruned' : 'Full';
   }
 
-  return 'Standard';
+  // Fall back to a specific ModelFileType ("Pruned Model" → "Pruned", "VAE", "Archive", etc.)
+  if (file.type && SPECIFIC_FALLBACK_TYPES.has(file.type)) {
+    return file.type === 'Pruned Model' ? 'Pruned' : file.type;
+  }
+
+  return null;
 }
 
 /**
- * Get a human-readable description for a file variant
+ * Get a human-readable description for a file variant.
+ * Returns empty string when nothing meaningful can be derived — callers should skip rendering.
  */
 export function getFileDescription(file: FileForDisplay): string {
   const { fp, quantType, format, size } = file.metadata ?? {};
@@ -209,7 +238,7 @@ export function getFileDescription(file: FileForDisplay): string {
     parts.push(parts.length ? '(pruned)' : 'Pruned model');
   }
 
-  return parts.join(' ') || 'Standard variant';
+  return parts.join(' ');
 }
 
 /**

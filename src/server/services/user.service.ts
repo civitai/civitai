@@ -48,6 +48,7 @@ import type {
   ToggleBanUser,
   ToggleUserBountyEngagementsInput,
   UpdateContentSettingsInput,
+  UserContentSettings,
   UserMeta,
   UserSettingsInput,
 } from '~/server/schema/user.schema';
@@ -582,15 +583,20 @@ export const toggleFollowUser = async ({
   });
 
   if (engagement) {
-    if (engagement.type === 'Follow')
+    if (engagement.type === 'Follow') {
       await dbWrite.userEngagement.delete({
         where: { userId_targetUserId: { userId, targetUserId } },
       });
-    else if (engagement.type === 'Hide')
+      await userFollowsCache.refresh(userId);
+      return false;
+    } else if (engagement.type === 'Hide') {
       await dbWrite.userEngagement.update({
         where: { userId_targetUserId: { userId, targetUserId } },
         data: { type: 'Follow' },
       });
+      await userFollowsCache.refresh(userId);
+      return true;
+    }
 
     return false;
   }
@@ -1674,9 +1680,11 @@ export const createUserReferral = async ({
   };
 
   if (userReferralCode || source || landingPage || loginRedirectReason) {
-    // Confirm userReferralCode is valid:
+    // Confirm userReferralCode is valid. Use the primary so a referral code
+    // that was generated moments ago (e.g. fresh signup landing on a friend's
+    // profile) isn't missed by replica lag.
     const referralCode = !!userReferralCode
-      ? await dbRead.userReferralCode.findFirst({
+      ? await dbWrite.userReferralCode.findFirst({
           where: { code: userReferralCode, deletedAt: null },
         })
       : null;
@@ -1697,18 +1705,35 @@ export const createUserReferral = async ({
         referrerId: referralCode.userId,
       }).catch(handleLogError);
     } else if (!user.referral) {
-      // Create new referral:
-      await dbWrite.userReferral.create({
-        data: {
-          userId: id,
-          source,
-          landingPage,
-          loginRedirectReason,
-          userReferralCodeId: referralCode?.id ?? undefined,
-        },
-      });
+      // Create new referral. Two parallel calls (e.g. an onboarding submit
+      // racing with a redirect retry) could both pass the existing-check
+      // above and trip the unique(userId) constraint here. Catch the
+      // collision and treat it as success — the row is in place either way.
+      let createdReferral = true;
+      try {
+        await dbWrite.userReferral.create({
+          data: {
+            userId: id,
+            source,
+            landingPage,
+            loginRedirectReason,
+            userReferralCodeId: referralCode?.id ?? undefined,
+          },
+        });
+      } catch (err) {
+        if (
+          typeof err === 'object' &&
+          err !== null &&
+          'code' in err &&
+          (err as { code?: string }).code === 'P2002'
+        ) {
+          createdReferral = false;
+        } else {
+          throw err;
+        }
+      }
 
-      if (referralCode?.id) {
+      if (createdReferral && referralCode?.id) {
         await applyRewards({
           refereeId: id,
           referrerId: referralCode.userId,
@@ -1940,7 +1965,11 @@ export async function updateContentSettings({
 
     await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
   }
-  refreshSession(userId).catch((err) => {
+  // Await so the refresh marker is set in Redis before this mutation returns.
+  // Otherwise the fire-and-forget can race the next API call / session read
+  // and hand back a stale session.user, which then overrides the user's
+  // toggle client-side via BrowserSettingsProvider's smart-merge.
+  await refreshSession(userId).catch((err) => {
     console.error('Failed to refresh session for user', userId, err);
   });
 }
@@ -1959,25 +1988,76 @@ export const getUserByPaddleCustomerId = async ({
 };
 
 // #region [user settings]
-const userSettingsCache = createCachedObject<UserSettingsSchema & { userId: number }>({
+// User-level content preference columns that we cache alongside the settings
+// JSON so the client can patch them in one place (see getUserContentSettings).
+// Public type `UserContentSettings` lives in `~/server/schema/user.schema` so
+// client code can import it without dragging the service module into the
+// browser bundle.
+type CachedUserSettings = UserSettingsSchema & {
+  userId: number;
+  showNsfw: boolean;
+  blurNsfw: boolean;
+  autoplayGifs: boolean | null;
+};
+
+const userSettingsCache = createCachedObject<CachedUserSettings>({
   key: REDIS_KEYS.USER.SETTINGS,
   idKey: 'userId',
   ttl: CacheTTL.hour * 4,
   staleWhileRevalidate: false,
   lookupFn: async (ids) => {
-    const settings = await dbWrite.$queryRaw<{ id: number; settings: UserSettingsSchema }[]>`
-    SELECT id, settings
+    const rows = await dbWrite.$queryRaw<
+      {
+        id: number;
+        settings: UserSettingsSchema | null;
+        showNsfw: boolean;
+        blurNsfw: boolean;
+        autoplayGifs: boolean | null;
+      }[]
+    >`
+    SELECT id, settings, "showNsfw", "blurNsfw", "autoplayGifs"
     FROM "User"
     WHERE id IN (${Prisma.join(ids)})
   `;
-    return Object.fromEntries(settings.map((x) => [x.id, { userId: x.id, ...x.settings }]));
+    return Object.fromEntries(
+      rows.map((x) => [
+        x.id,
+        {
+          userId: x.id,
+          ...((x.settings ?? {}) as UserSettingsSchema),
+          showNsfw: x.showNsfw,
+          blurNsfw: x.blurNsfw,
+          autoplayGifs: x.autoplayGifs,
+        },
+      ])
+    );
   },
 });
 
-export async function getUserSettings(id: number) {
+/**
+ * JSON-settings-only view. Used by internal callers (e.g. setUserSetting) that
+ * need to read the JSON blob and write it back without polluting it with the
+ * User-column fields.
+ */
+export async function getUserSettings(id: number): Promise<UserSettingsSchema> {
   const result = await userSettingsCache.fetch([id]);
-  const { userId, ...settings } = result[id] ?? {};
+  const raw = result[id];
+  if (!raw) return {};
+  const { userId, showNsfw, blurNsfw, autoplayGifs, ...settings } = raw;
   return settings;
+}
+
+/**
+ * Full content settings view (JSON settings + User-column preferences).
+ * Use this for the tRPC `user.getSettings` endpoint / SSR hydration so the
+ * client can patch all toggles in a single React Query cache.
+ */
+export async function getUserContentSettings(id: number): Promise<UserContentSettings> {
+  const result = await userSettingsCache.fetch([id]);
+  const raw = result[id];
+  if (!raw) return {};
+  const { userId, ...rest } = raw;
+  return rest;
 }
 
 export async function setUserSetting(userId: number, settings: UserSettingsInput) {

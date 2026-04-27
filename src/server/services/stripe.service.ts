@@ -13,6 +13,7 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
+import { logToAxiom } from '~/server/logging/client';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createLogger } from '~/utils/logging';
@@ -779,6 +780,7 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
       (invoice as any).subscription_details?.metadata ?? (invoice as any).metadata ?? {};
     let refCode: string | undefined =
       typeof subscriptionMetadata.ref_code === 'string' ? subscriptionMetadata.ref_code : undefined;
+    let refCodeSource: 'metadata' | 'fallback-session' | 'none' = refCode ? 'metadata' : 'none';
     // Stripe doesn't guarantee webhook ordering. invoice.paid for a brand-new
     // subscription can land before checkout.session.completed has had a chance
     // to copy the ref_code custom_field onto the Subscription metadata. Fall
@@ -796,7 +798,10 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
           });
           const customField = sessions.data[0]?.custom_fields?.find((f) => f.key === 'ref_code');
           const fromField = customField?.text?.value?.trim().toUpperCase();
-          if (fromField) refCode = fromField;
+          if (fromField) {
+            refCode = fromField;
+            refCodeSource = 'fallback-session';
+          }
         }
       } catch (err) {
         handleLogError(err as Error);
@@ -804,6 +809,18 @@ export const manageInvoicePaid = async (invoice: Stripe.Invoice) => {
     }
     if (refCode) {
       await bindReferralCodeForUser(user.id, refCode).catch(handleLogError);
+      // Trace which path supplied the ref_code so we can spot when the
+      // metadata ordering breaks (and verify the fallback is doing its job).
+      logToAxiom(
+        {
+          name: 'invoice-paid-ref-code',
+          refereeId: user.id,
+          invoiceId: invoice.id,
+          refCode,
+          source: refCodeSource,
+        },
+        'webhooks'
+      ).catch(() => null);
     }
 
     const stripePaymentIntentId =

@@ -102,8 +102,9 @@ export const getModelVersionRunStrategies = async ({
 export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>({
   id,
   select,
-}: GetByIdInput & { select: TSelect }) => {
-  const db = await getDbWithoutLag('modelVersion', id);
+  forceWriteDb,
+}: GetByIdInput & { select: TSelect; forceWriteDb?: boolean }) => {
+  const db = forceWriteDb ? dbWrite : await getDbWithoutLag('modelVersion', id);
   const result = await db.modelVersion.findUnique({ where: { id }, select });
   return result;
 };
@@ -1817,6 +1818,12 @@ export const setLinkedComponents = async ({ id, components }: SetLinkedComponent
       })
     ),
   ]);
+
+  const source = await dbWrite.modelVersion.findUnique({
+    where: { id },
+    select: { modelId: true },
+  });
+  if (source) await preventModelVersionLag(source.modelId, id);
 };
 
 export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
@@ -1872,6 +1879,12 @@ export const addLinkedComponent = async (input: AddLinkedComponentInput) => {
           settings,
         },
       });
+
+  const source = await dbWrite.modelVersion.findUnique({
+    where: { id: input.id },
+    select: { modelId: true },
+  });
+  if (source) await preventModelVersionLag(source.modelId, input.id);
 
   const meta = primaryFile.metadata as Record<string, unknown> | null;
 

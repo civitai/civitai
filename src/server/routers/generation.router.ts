@@ -62,6 +62,7 @@ export const generationRouter = router({
   getStatus: publicProcedure
     .use(edgeCacheIt({ ttl: CacheTTL.xs, tags: () => ['generation-status'] }))
     .query(() => getGenerationStatus()),
+  getStatusModerator: moderatorProcedure.query(() => getGenerationStatus()),
   setStatus: moderatorProcedure
     .input(
       z.object({

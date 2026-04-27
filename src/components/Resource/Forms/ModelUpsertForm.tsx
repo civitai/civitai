@@ -725,6 +725,7 @@ export const PrivateModelAutomaticSetup = ({
       if (modelVersionId) {
         utils.model.getById.invalidate({ id: form.id });
         utils.modelVersion.getById.invalidate({ id: modelVersionId });
+        utils.modelVersion.getByIdForEdit.invalidate({ id: modelVersionId });
       }
 
       if (form.id) {

@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconSparkles } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -110,8 +110,22 @@ export function EnhanceTab({
     : null;
 
   const resultStatus = result?.status.toLowerCase();
+  const isTerminalFailure =
+    resultStatus === 'failed' || resultStatus === 'canceled' || resultStatus === 'expired';
   const isLoading =
-    submitting || (pendingWorkflowId !== null && (!result || resultStatus !== 'succeeded'));
+    submitting ||
+    (pendingWorkflowId !== null &&
+      (!result || (resultStatus !== 'succeeded' && !isTerminalFailure)));
+
+  useEffect(() => {
+    if (pendingWorkflowId && result && isTerminalFailure) {
+      showErrorNotification({
+        title: 'Enhancement failed',
+        error: new Error('The prompt enhancement could not be completed. Please try again.'),
+      });
+      setPendingWorkflowId(null);
+    }
+  }, [pendingWorkflowId, result, isTerminalFailure]);
 
   const buildMutationInput = () => {
     const values = form.getValues();
@@ -208,7 +222,7 @@ export function EnhanceTab({
   const currentTemperature = form.watch('temperature');
 
   const isWaitingForWorkflow =
-    pendingWorkflowId !== null && (!result || resultStatus !== 'succeeded');
+    pendingWorkflowId !== null && (!result || (resultStatus !== 'succeeded' && !isTerminalFailure));
   const hasSucceededResult = result && resultStatus === 'succeeded';
   const showInputForm = (!isWaitingForWorkflow && !hasSucceededResult) || editing;
   const showResult = hasSucceededResult && !editing && !isLoading;

@@ -72,7 +72,10 @@ import {
   isWorkflowAvailable,
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
-import { SDCPP_SUPPORTED_ECOSYSTEMS } from '~/shared/constants/generation.constants';
+import {
+  SDCPP_EXCLUDED_MODEL_IDS,
+  SDCPP_SUPPORTED_ECOSYSTEMS,
+} from '~/shared/constants/generation.constants';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import {
@@ -435,14 +438,19 @@ function PriorityAlertSpace({
     // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
     // When enhancedCompatibility is on, the bonus doesn't apply — swap in a
     // warning (with its own dismissal key) so users know how to qualify.
+    // BOGO/enhancedCompatibility only applies to txt2img.
     priorityAlert = (
       <MultiController
         graph={graph}
-        names={['ecosystem', 'enhancedCompatibility'] as const}
+        names={['workflow', 'ecosystem', 'model', 'enhancedCompatibility'] as const}
         render={({ values }) => {
+          const workflow = values.workflow as string | undefined;
           const ecosystem = values.ecosystem as string | undefined;
+          const model = values.model as { id?: number } | undefined;
           const enhancedCompatibility = values.enhancedCompatibility as boolean | undefined;
+          if (workflow !== 'txt2img') return null;
           if (!ecosystem || !SDCPP_SUPPORTED_ECOSYSTEMS.includes(ecosystem)) return null;
+          if (model?.id !== undefined && SDCPP_EXCLUDED_MODEL_IDS.includes(model.id)) return null;
           if (enhancedCompatibility) {
             return (
               <DismissibleAlert

@@ -100,6 +100,10 @@ function HistoryItem({
   const [expanded, setExpanded] = useState(false);
   const dialog = useDialogContext();
 
+  const statusLower = record.status.toLowerCase();
+  const isFailed =
+    statusLower === 'failed' || statusLower === 'canceled' || statusLower === 'expired';
+
   const date = new Date(record.createdAt);
   const timeStr = date.toLocaleDateString(undefined, {
     month: 'short',
@@ -159,6 +163,11 @@ function HistoryItem({
                 {record.ecosystem}
               </Badge>
             )}
+            {isFailed && (
+              <Badge size="xs" variant="light" color="red">
+                {statusLower}
+              </Badge>
+            )}
           </Group>
           {record.instruction ? (
             <Text size="sm" lineClamp={2}>
@@ -182,7 +191,7 @@ function HistoryItem({
       {expanded && (
         <Stack gap="sm" mt="sm">
           <EnhancementDetails record={record} />
-          {record.enhancedPrompt && (
+          {(record.enhancedPrompt || isFailed) && (
             <Group justify="flex-end">
               {onRemix && (
                 <Button
@@ -200,13 +209,15 @@ function HistoryItem({
                   Remix
                 </Button>
               )}
-              <Button
-                size="compact-sm"
-                onClick={handleApply}
-                leftSection={<IconSparkles size={14} />}
-              >
-                Apply
-              </Button>
+              {record.enhancedPrompt && (
+                <Button
+                  size="compact-sm"
+                  onClick={handleApply}
+                  leftSection={<IconSparkles size={14} />}
+                >
+                  Apply
+                </Button>
+              )}
             </Group>
           )}
         </Stack>

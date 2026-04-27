@@ -59,11 +59,11 @@ export default function FeaturedCollectionsAdmin() {
     },
   });
 
-  const acknowledgeMutation = trpc.homeBlock.acknowledgeFeaturedCollectionName.useMutation({
+  const acknowledgeMutation = trpc.homeBlock.acknowledgeFeaturedCollection.useMutation({
     async onSuccess() {
       showSuccessNotification({
         title: 'Approved',
-        message: 'New name approved — collection is eligible again',
+        message: 'Current name + write config approved — collection is eligible again',
       });
       await queryUtils.homeBlock.getFeaturedCollectionsPool.invalidate();
     },
@@ -176,6 +176,10 @@ export default function FeaturedCollectionsAdmin() {
                             <Badge size="sm" color="red" variant="filled">
                               Name changed — review
                             </Badge>
+                          ) : c.writeChanged ? (
+                            <Badge size="sm" color="red" variant="filled">
+                              Write config changed — review
+                            </Badge>
                           ) : (
                             <Badge
                               size="sm"
@@ -192,6 +196,15 @@ export default function FeaturedCollectionsAdmin() {
                             ? ` · last approval ${new Date(c.lastAcceptedAt).toLocaleDateString()}`
                             : ' · no approvals yet'}
                         </Text>
+                        {c.writeChanged && (
+                          <Text size="xs" c="red">
+                            Approved write {`"`}
+                            {c.approvedWrite}
+                            {`"`} · now {`"`}
+                            {c.write}
+                            {`"`}
+                          </Text>
+                        )}
                         {c.nameChanged && (
                           <Text size="xs" c="red">
                             Approved as {`"`}
@@ -204,11 +217,11 @@ export default function FeaturedCollectionsAdmin() {
                       </Stack>
                     </Group>
                     <Group>
-                      {c.nameChanged && (
+                      {(c.nameChanged || c.writeChanged) && (
                         <ActionIcon
                           color="teal"
                           variant="light"
-                          title="Approve new name"
+                          title="Approve current name + write config"
                           loading={acknowledgeMutation.isLoading}
                           onClick={() => acknowledgeMutation.mutate({ collectionId: c.id })}
                         >
