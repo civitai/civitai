@@ -120,7 +120,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     // Always route modelId/imageId lookups through legacy getAllImages — BitDex
     // and Meili feed search don't support filtering by modelId/imageId (they index
     // postedToId/modelVersionId only), so they'd silently return the global feed.
-    const useLegacyMethod = data.imageId || data.modelId;
+    // When both modelId and modelVersionId are passed, modelId is redundant
+    // (getAllImages also silently ignores it via an `else if` chain) — let those
+    // requests flow through the search index so engagement sorts
+    // (MostReactions/MostComments/MostCollected) work, since getAllImages's gallery
+    // sort branches for those are currently disabled. Fixes #2134.
+    const useLegacyMethod = data.imageId || (data.modelId && !data.modelVersionId);
 
     const { items, nextCursor } = useLegacyMethod
       ? await getAllImages({
