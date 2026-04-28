@@ -71,12 +71,13 @@ const CreateSteps = ({
             model={modelData}
             version={modelVersion}
             onSubmit={(result) => {
-              if (editing) return goNext();
               const skipFiles = result?.usageControl === ModelUsageControl.ExternalGeneration;
               const nextStep = skipFiles ? 3 : 2;
               router
                 .replace(
-                  `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=${nextStep}`
+                  `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=${nextStep}`,
+                  undefined,
+                  editing ? { shallow: true } : undefined
                 )
                 .then();
             }}
