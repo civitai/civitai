@@ -1,7 +1,6 @@
 import { Menu, useComputedColorScheme } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { showNotification, updateNotification } from '@mantine/notifications';
 import {
   IconArrowBackUp,
   IconBan,
@@ -13,7 +12,6 @@ import {
   IconGraph,
   IconMicrophone,
   IconMicrophoneOff,
-  IconX,
 } from '@tabler/icons-react';
 import React from 'react';
 import { useAccountContext } from '~/components/CivitaiWrapped/AccountProvider';
@@ -22,6 +20,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { impersonateUser } from '~/components/Moderation/impersonate.utils';
 // import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import UserBanModal from '~/components/Profile/UserBanModal';
@@ -29,11 +28,8 @@ import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
-import { impersonateEndpoint } from '~/shared/constants/auth.constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { QS } from '~/utils/qs';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -183,34 +179,14 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   //   });
   // };
   const handleImpersonate = async () => {
-    if (!user || !currentUser || !features.impersonation || user.id === currentUser?.id) return;
-    const notificationId = `impersonate-${user.id}`;
-
-    showNotification({
-      id: notificationId,
-      loading: true,
-      autoClose: false,
-      title: 'Switching accounts...',
-      message: `-> ${user.username as string} (${user.id})`,
+    if (!user || !currentUser || !features.impersonation) return;
+    await impersonateUser({
+      userId: user.id,
+      username: user.username,
+      currentUser,
+      swapAccount,
+      setOgAccount,
     });
-
-    const tokenResp = await fetch(`${impersonateEndpoint}?${QS.stringify({ userId: user.id })}`);
-    if (!tokenResp.ok) {
-      const errMsg = await tokenResp.text();
-      updateNotification({
-        id: notificationId,
-        icon: <IconX size={18} />,
-        color: 'red',
-        title: 'Failed to switch',
-        message: errMsg,
-      });
-      return;
-    }
-
-    const tokenJson: { token: EncryptedDataSchema } = await tokenResp.json();
-
-    setOgAccount({ id: currentUser.id, username: currentUser.username ?? '(unk)' });
-    await swapAccount(tokenJson.token);
   };
 
   if (userLoading || !user) {

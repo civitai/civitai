@@ -7,6 +7,15 @@ import type { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 import { civTokenEndpoint } from '~/shared/constants/auth.constants';
 import { deleteCookies } from '~/utils/cookies-helpers';
 
+async function clearOgModCookie() {
+  if (typeof window === 'undefined') return;
+  try {
+    await fetch('/api/auth/impersonate/clear', { method: 'POST' });
+  } catch {
+    // Best-effort; cookie will expire on its own (12h).
+  }
+}
+
 export type CivitaiAccount = {
   token: EncryptedDataSchema;
   active: boolean;
@@ -22,7 +31,7 @@ type ogAccountType = {
   id: number;
   username: string;
 } | null;
-const ogAccountKey = 'civitai-og-account';
+export const ogAccountKey = 'civitai-og-account';
 
 const deleteCookieList = ['ref_code', 'ref_source'];
 
@@ -69,6 +78,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
 
     // Remove og account storage
     removeOgAccount();
+    await clearOgModCookie();
 
     // - Remove logged out account from account switch list
     //   then log into first account in list if exists
@@ -93,6 +103,7 @@ export const AccountProvider = ({ children }: { children: ReactNode }) => {
   const logoutAll = async () => {
     deleteCookies(deleteCookieList);
     removeOgAccount();
+    await clearOgModCookie();
     removeAccounts();
     await signOut();
   };
