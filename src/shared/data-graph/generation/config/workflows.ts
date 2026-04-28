@@ -113,6 +113,7 @@ const TXT2VID_IDS = [
   // ECO.Lightricks,
   ECO.Grok,
   ECO.Seedance,
+  ECO.HappyHorse,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -267,7 +268,14 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23, ECO.WanVideo27],
+    ecosystemIds: [
+      ECO.Vidu,
+      ECO.Veo3,
+      ECO.Kling,
+      ECO.LTXV23,
+      ECO.WanVideo27,
+      ECO.HappyHorse,
+    ],
     excludeModelVersionIds: [viduVersionIds.q3],
   },
 
@@ -295,7 +303,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Edit Video',
     description: 'Edit a video with AI',
     category: 'video',
-    ecosystemIds: [ECO.Grok, ECO.WanVideo27],
+    ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
   },
 
   // 'vid2vid:extend': {
@@ -612,7 +620,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
       ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance,
+      ecoId === ECO.Seedance ||
+      ecoId === ECO.HappyHorse,
   ],
   [
     'img2vid',
@@ -621,14 +630,19 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
       ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance,
+      ecoId === ECO.Seedance ||
+      ecoId === ECO.HappyHorse,
   ],
 
   // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
   [
     'img2vid:ref2vid',
     (ecoId) =>
-      ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.Vidu || ecoId === ECO.WanVideo27,
+      ecoId === ECO.Kling ||
+      ecoId === ECO.Veo3 ||
+      ecoId === ECO.Vidu ||
+      ecoId === ECO.WanVideo27 ||
+      ecoId === ECO.HappyHorse,
   ],
 
   // NanoBanana V2 - only available in new form
