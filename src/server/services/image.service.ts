@@ -4468,6 +4468,11 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
+  // A negative-cached miss right after publish (before image ingestion finishes
+  // setting nsfwLevel / clearing needsReview) hides the model from feeds for
+  // the full TTL. Re-querying every miss is cheap; a 48h sticky-empty card
+  // isn't.
+  cacheNotFound: false,
   // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
   lookupFn: async (ids) => {
     const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
