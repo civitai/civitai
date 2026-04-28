@@ -19,7 +19,7 @@
  * - audioSetting: shown only for vid2vid:edit (auto / origin)
  * - seed
  *
- * NOTE: No model node — HappyHorse has no Civitai version published yet.
+ * Model is locked to a single Civitai version via ecosystemSettings.
  */
 
 import z from 'zod';
@@ -27,6 +27,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  createCheckpointGraph,
   enumNode,
   imagesNode,
   seedNode,
@@ -68,6 +69,9 @@ const happyHorseAudioSettings = [
 type HappyHorseCtx = { ecosystem: string; workflow: string };
 
 export const happyHorseGraph = new DataGraph<HappyHorseCtx, GenerationCtx>()
+  // Locked model from ecosystemSettings
+  .merge(createCheckpointGraph())
+
   // Images node — workflow-dependent
   .node(
     'images',

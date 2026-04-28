@@ -1233,8 +1233,8 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.HappyHorse,
     defaults: {
-      // TODO: set model.id once HappyHorse is published on Civitai
-      engine: 'happyHorse',
+      model: { id: 2902378 },
+      modelLocked: true,
     },
   },
   {
