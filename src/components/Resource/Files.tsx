@@ -52,7 +52,7 @@ import { isAndroidDevice } from '~/utils/device-helpers';
 import type { LinkedComponent } from '~/server/schema/model-file.schema';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
 
 // Small inline dropzone for adding files within a section
@@ -1010,7 +1010,8 @@ function FileEditForm({
 }
 
 export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
-  const { startUpload, files, hasPending } = useFilesContext();
+  const { startUpload, files, hasPending, usageControl } = useFilesContext();
+  const isExternalGeneration = usageControl === ModelUsageControl.ExternalGeneration;
 
   return (
     <Group mt="xl" justify="flex-end">
@@ -1022,7 +1023,7 @@ export function UploadStepActions({ onBackClick, onNextClick }: ActionProps) {
           const allFailed = files.every(
             (file) => file.status === 'aborted' || file.status === 'error'
           );
-          const showConfirmModal = !files.length || allFailed;
+          const showConfirmModal = !isExternalGeneration && (!files.length || allFailed);
 
           if (showConfirmModal) {
             return openConfirmModal({

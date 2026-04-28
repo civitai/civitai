@@ -11,7 +11,7 @@ import { UploadType } from '~/server/common/enums';
 import type { ModelVersionById } from '~/server/controllers/model-version.controller';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
-import { ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { getPrimaryFileTypes, primaryFileTypesByModelType } from '~/utils/file-display-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -56,6 +56,7 @@ type FilesContextState = {
   linkedComponents: LinkedComponent[];
   modelId?: number;
   baseModel?: string;
+  usageControl?: ModelUsageControl | null;
   dropzoneConfig: DropzoneOptions;
   onDrop: (files: File[], defaultType?: ModelFileType, skipInference?: boolean) => void;
   startUpload: () => Promise<void>;
@@ -71,7 +72,10 @@ type FilesContextState = {
 
 type FilesProviderProps = {
   model?: Partial<ModelUpsertInput>;
-  version?: Pick<Partial<ModelVersionById>, 'id' | 'files' | 'baseModel' | 'linkedComponents'>;
+  version?: Pick<
+    Partial<ModelVersionById>,
+    'id' | 'files' | 'baseModel' | 'linkedComponents' | 'usageControl'
+  >;
   children: React.ReactNode;
 };
 
@@ -330,10 +334,14 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
       return false;
     }
 
+    // External-generation versions (mod-only, routed via external engines) intentionally
+    // ship without files; skip the component-count requirement for them.
+    const isExternalGeneration = version?.usageControl === ModelUsageControl.ExternalGeneration;
+
     // Check component-only model constraint (needs access to linkedComponents).
     // Skip for archive-primary model types (Workflows/Poses/Wildcards/Other) — their main file
     // is an archive/config, so they don't fit the "component-only" concept.
-    if (!model?.type || !archivePrimaryModelTypes.includes(model.type)) {
+    if (!isExternalGeneration && (!model?.type || !archivePrimaryModelTypes.includes(model.type))) {
       const primaryTypes = getPrimaryFileTypes(model?.type);
       const modelFiles = files.filter(
         (f) => f.type && (primaryTypes as readonly string[]).includes(f.type)
@@ -591,6 +599,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
         dropzoneConfig,
         modelId: model?.id,
         baseModel: version?.baseModel ?? undefined,
+        usageControl: version?.usageControl,
         validationCheck: checkValidation,
         addLinkedComponent,
         removeLinkedComponent,

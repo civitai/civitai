@@ -780,6 +780,7 @@ enum ModelUsageControl {
   Download
   Generation
   InternalGeneration
+  ExternalGeneration
 }
 
 enum ModelModifier {

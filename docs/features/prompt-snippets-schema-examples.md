@@ -2,10 +2,11 @@
 
 **Status:** draft for DB review
 **Companion docs:**
+
 - [prompt-snippets.md](./prompt-snippets.md) (product/UX plan)
 - [prompt-snippets-schema.md](./prompt-snippets-schema.md) (schema spec — authoritative)
 
-Concrete walkthrough of the wildcard-set + personal-snippet schema, populated with real content from [fullFeatureFantasy v3.0](https://civitai.com/models?type=Wildcards). Row IDs are illustrative. All `category`/`name` columns use the PostgreSQL `citext` type — stored values preserve their original casing but comparisons and unique constraints are case-insensitive.
+Concrete walkthrough of the unified wildcard schema, populated with real content from [fullFeatureFantasy v3.0](https://civitai.com/models?type=Wildcards). Row IDs are illustrative. Three tables: `WildcardSet`, `WildcardSetCategory`, `UserWildcardSet`. No separate `PromptSnippet` table — user personal content lives in User-kind `WildcardSet`s alongside imported System-kind content.
 
 ---
 
@@ -13,47 +14,36 @@ Concrete walkthrough of the wildcard-set + personal-snippet schema, populated wi
 
 Three actors:
 
-- **Alice** (`userId: 1001`). Has a few of her own hand-crafted prompt snippets. Has never imported any wildcard models. About to import `fullFeatureFantasy v3.0` for the first time on Civitai.
-- **Bob** (`userId: 2042`). Power user, subscribed to 3 other wildcard sets previously. Will also subscribe to `fullFeatureFantasy v3.0` after Alice imports it.
+- **Alice** (`userId: 1001`). New to the snippet system. Will create personal snippets and subscribe to a wildcard model.
+- **Bob** (`userId: 2042`). Power user, already subscribed to other wildcard models. Will subscribe to `fullFeatureFantasy v3.0` after Alice imports it.
 - **`fullFeatureFantasy v3.0`** (`ModelVersion.id: 458231`, type `Wildcard`). 59 `.txt` files, ~1,850 values total.
 
-For tractable examples, we focus on 8 representative categories.
+For tractable examples we focus on a handful of representative categories from fullFeatureFantasy.
 
 ---
 
-## Stage 1 — Before Alice clicks "Add set"
+## Stage 1 — Initial state (before Alice does anything)
 
-### `WildcardSet` (global, shared)
+Three System-kind sets imported by other users earlier. No User-kind sets shown yet.
 
-Three sets already imported by other users earlier:
+### `WildcardSet` (existing rows)
 
-| id | modelVersionId | modelName | versionName | auditStatus | isInvalidated | sourceFileCount | totalValueCount | createdAt |
-|----|----|----|----|----|----|----|----|----|
-| 3 | 301004 | DarkFantasyChars | v1.2 | Clean | false | 14 | 310 | 2026-01-18 |
-| 12 | 401876 | MedievalEnvironments | v2.1 | Mixed | false | 22 | 904 | 2026-02-11 |
-| 16 | 412009 | AnimeExpressions | v1.0 | Clean | false | 8 | 128 | 2026-03-02 |
+| id | kind | modelVersionId | modelName | versionName | ownerUserId | name | auditStatus | isInvalidated | totalValueCount |
+|----|----|----|----|----|----|----|----|----|----|
+| 3 | System | 301004 | DarkFantasyChars | v1.2 | null | null | Clean | false | 310 |
+| 12 | System | 401876 | MedievalEnvironments | v2.1 | null | null | Mixed | false | 904 |
+| 16 | System | 412009 | AnimeExpressions | v1.0 | null | null | Clean | false | 128 |
 
-No row for fullFeatureFantasy yet.
+### `WildcardSetCategory` (sample from existing System-kind sets)
 
-### `WildcardSetCategory` (sample — a few from the three existing sets)
+| id | wildcardSetId | name | values (preview) | valueCount | auditStatus | nsfwLevel |
+|----|----|----|----|----|----|----|
+| 201 | 3 | character | `["elven ranger in forest green", "dwarven warrior with braided beard", ...]` | 42 | Clean | 1 |
+| 202 | 3 | weapon | `["{2.0::greatsword\|1.5::longsword\|...}"]` | 1 | Clean | 1 |
+| 215 | 12 | tavern | `["cozy medieval tavern with roaring fireplace", ...]` | 65 | Clean | 1 |
+| 401 | 16 | face_expression | `["soft smile, relaxed eyes", ...]` | 24 | Clean | 1 |
 
-| id | wildcardSetId | name | valueCount | displayOrder |
-|----|----|----|----|----|
-| 201 | 3 | character | 42 | 0 |
-| 202 | 3 | weapon | 18 | 1 |
-| 215 | 12 | tavern | 65 | 3 |
-| 216 | 12 | castle | 88 | 4 |
-| 401 | 16 | face_expression | 24 | 0 |
-| 402 | 16 | body_pose | 16 | 1 |
-
-### `WildcardSetValue` (sample — values pointing to those categories)
-
-| id | categoryId | value (preview) | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 12001 | 201 | `elven ranger in forest green` | Clean | 0 |
-| 12002 | 201 | `dwarven warrior with braided beard` | Clean | 1 |
-| 18040 | 215 | `cozy medieval tavern with roaring fireplace` | Clean | 0 |
-| 22500 | 401 | `soft smile, relaxed eyes` | Clean | 0 |
+`nsfwLevel` values follow the existing Civitai bitwise convention. `1` is a placeholder for "SFW only" — actual bit values are defined elsewhere.
 
 ### `UserWildcardSet` (Bob's existing pointers)
 
@@ -63,217 +53,201 @@ No row for fullFeatureFantasy yet.
 | 89 | 2042 | 12 | "Medieval env" | false | 1 | 2026-02-20 14:08:22 |
 | 104 | 2042 | 16 | null | true | 2 | 2026-03-10 19:44:01 |
 
-Alice has none yet.
-
-### `PromptSnippet` (Alice's personal editable snippets)
-
-| id | userId | category | name | value | auditStatus | auditRuleVersion | sortOrder |
-|----|----|----|----|----|----|----|----|
-| 412 | 1001 | character | "Zelda" | "blonde hair, green tunic, pointed ears, pointed cap, determined expression" | Clean | 2026-04-01-r3 | 0 |
-| 413 | 1001 | character | "Link" | "young man, green hat and tunic, sword and shield, Hylian ears" | Clean | 2026-04-01-r3 | 1 |
-| 414 | 1001 | setting | "Forest Cabin" | "wooden cabin in dense forest, moss, dappled sunlight, quiet" | Clean | 2026-04-01-r3 | 0 |
-| 415 | 1001 | setting | "Cyberpunk Street" | "neon-lit alley, rain-slicked pavement, holographic signs, futuristic" | Clean | 2026-04-01-r3 | 1 |
+Alice has no rows yet.
 
 ---
 
-## Stage 2 — Alice clicks "Add set" → fullFeatureFantasy v3.0
+## Stage 2 — Alice's first snippet save creates her User-kind set
 
-First-import transaction. Values are inserted in two passes: categories first (so their IDs exist for the values' FK), then values as a single bulk insert.
+Alice browses the picker for a `#character` reference, sees a value she likes from somewhere else, and clicks "Save to my snippets." Since she's never saved before, the service lazily creates a User-kind set for her, then a category in it.
 
 ```ts
 await prisma.$transaction(async (tx) => {
-  const existing = await tx.wildcardSet.findUnique({ where: { modelVersionId: 458231 } });
+  // 1. Find or create the user's default "My snippets" set
+  let userSet = await tx.wildcardSet.findFirst({
+    where: { kind: 'User', ownerUserId: 1001, name: 'My snippets' }
+  });
+
+  if (!userSet) {
+    userSet = await tx.wildcardSet.create({
+      data: {
+        kind: 'User',
+        ownerUserId: 1001,
+        name: 'My snippets',
+        auditStatus: 'Pending',
+        totalValueCount: 0,
+      }
+    });
+    await tx.userWildcardSet.create({
+      data: { userId: 1001, wildcardSetId: userSet.id, isActive: true }
+    });
+  }
+
+  // 2. Create a new category with the saved value (categories are immutable; this is always a new category)
+  await tx.wildcardSetCategory.create({
+    data: {
+      wildcardSetId: userSet.id,
+      name: 'character',
+      values: ['blonde hair, green tunic, pointed ears, pointed cap, determined expression'],
+      valueCount: 1,
+      auditStatus: 'Pending',
+      nsfwLevel: 0,
+    }
+  });
+
+  await tx.wildcardSet.update({
+    where: { id: userSet.id },
+    data: { totalValueCount: { increment: 1 } }
+  });
+});
+```
+
+### `WildcardSet` — new row 30 (Alice's User-kind set)
+
+| id | kind | modelVersionId | modelName | versionName | ownerUserId | name | auditStatus | totalValueCount |
+|----|----|----|----|----|----|----|----|----|
+| 30 | User | null | null | null | 1001 | "My snippets" | Pending | 1 |
+
+### `WildcardSetCategory` — new row 700
+
+| id | wildcardSetId | name | values | valueCount | auditStatus | nsfwLevel |
+|----|----|----|----|----|----|----|
+| 700 | 30 | character | `["blonde hair, green tunic, pointed ears, pointed cap, determined expression"]` | 1 | Pending | 0 |
+
+### `UserWildcardSet` — new row 490 (Alice's auto-pointer at her own set)
+
+| id | userId | wildcardSetId | nickname | isActive | sortOrder | addedAt |
+|----|----|----|----|----|----|----|
+| 490 | 1001 | 30 | null | true | 0 | 2026-04-24 12:00:00 |
+
+If Alice later saves more `character` values, the service creates new categories (e.g. `character-2`) rather than mutating row 700 — categories are immutable.
+
+After audit (next stage of background work), category 700 transitions to `Clean` with an `nsfwLevel` set, and `WildcardSet 30` rolls up to `Clean`.
+
+---
+
+## Stage 3 — Alice subscribes to fullFeatureFantasy v3.0 (first-import)
+
+Alice clicks "Add set" → fullFeatureFantasy v3.0. Nobody has imported this version before, so the service does the full extraction.
+
+```ts
+await prisma.$transaction(async (tx) => {
+  const existing = await tx.wildcardSet.findUnique({
+    where: { modelVersionId: 458231 }
+  });
+
   if (existing) {
-    await tx.userWildcardSet.create({ data: { userId: 1001, wildcardSetId: existing.id, isActive: true } });
+    await tx.userWildcardSet.create({
+      data: { userId: 1001, wildcardSetId: existing.id, isActive: true }
+    });
     return;
   }
 
   const files = await extractWildcardZip(458231);
   const totalValueCount = files.reduce((n, f) => n + f.lines.length, 0);
 
-  // 1. Set
   const set = await tx.wildcardSet.create({
     data: {
+      kind: 'System',
       modelVersionId: 458231,
-      modelName: "fullFeatureFantasy",
-      versionName: "v3.0",
-      auditStatus: "Pending",
+      modelName: 'fullFeatureFantasy',
+      versionName: 'v3.0',
       sourceFileCount: files.length,
       totalValueCount,
+      auditStatus: 'Pending',
     }
   });
 
-  // 2. Categories — createMany isn't enough because we need the IDs for values.
-  //    Insert one at a time (or use createManyAndReturn on newer Prisma).
-  const categories = [];
   for (const [i, f] of files.entries()) {
-    const cat = await tx.wildcardSetCategory.create({
+    await tx.wildcardSetCategory.create({
       data: {
         wildcardSetId: set.id,
-        name: f.name.replace(/\.txt$/, ""),
+        name: f.name.replace(/\.txt$/, ''),
+        values: f.lines,                  // JSONB string[]
         valueCount: f.lines.length,
         displayOrder: i,
+        auditStatus: 'Pending',
+        nsfwLevel: 0,
       }
     });
-    categories.push({ ...cat, lines: f.lines });
   }
 
-  // 3. Values — one bulk insert
-  await tx.wildcardSetValue.createMany({
-    data: categories.flatMap(c =>
-      c.lines.map((line, idx) => ({
-        categoryId: c.id,
-        value: line,
-        sourceLineIndex: idx,
-        auditStatus: "Pending",
-      }))
-    )
-  });
-
-  // 4. Alice's pointer
   await tx.userWildcardSet.create({
     data: { userId: 1001, wildcardSetId: set.id, isActive: true }
   });
 });
-
 // Post-commit: enqueue audit job for set.id
 ```
 
-**Concurrency note:** two users racing the first-import both try to create a `WildcardSet` with the same `modelVersionId`. The `@unique(modelVersionId)` constraint means one succeeds, one gets a unique-violation error — caught by the service and retried as the "existing" branch. Clean.
+### `WildcardSet` — new row 17 (System-kind)
 
-### `WildcardSet` — new row (id 17)
-
-| id | modelVersionId | modelName | versionName | auditStatus | isInvalidated | sourceFileCount | totalValueCount | createdAt |
-|----|----|----|----|----|----|----|----|----|
-| 17 | 458231 | fullFeatureFantasy | v3.0 | **Pending** | false | 59 | 1847 | 2026-04-24 12:33:07 |
+| id | kind | modelVersionId | modelName | versionName | ownerUserId | name | auditStatus | sourceFileCount | totalValueCount |
+|----|----|----|----|----|----|----|----|----|----|
+| 17 | System | 458231 | fullFeatureFantasy | v3.0 | null | null | Pending | 59 | 1847 |
 
 ### `WildcardSetCategory` — 59 new rows (representative sample)
 
-One row per `.txt` file. `name` uses the `citext` type — stores the filename as-is (minus extension), compared case-insensitively. `valueCount` is denormalized for display.
+Each row's `values` is a JSONB array of strings (one per non-empty line in the source `.txt`). `auditStatus` is `Pending` until the audit job runs.
 
-| id | wildcardSetId | name | valueCount | displayOrder |
-|----|----|----|----|----|
-| 601 | 17 | character | 2 | 0 |
-| 602 | 17 | character_f | 1 | 1 |
-| 603 | 17 | character_m | 1 | 2 |
-| 620 | 17 | color | 1 | 14 |
-| 631 | 17 | elemental_types | 16 | 22 |
-| 635 | 17 | expressions | 1 | 25 |
-| 654 | 17 | weapons_melee | 1 | 48 |
-| 656 | 17 | weather_time | 1 | 50 |
+| id | wildcardSetId | name | values (preview) | valueCount | auditStatus | nsfwLevel |
+|----|----|----|----|----|----|----|
+| 601 | 17 | character | `["__character_f__", "__character_m__"]` | 2 | Pending | 0 |
+| 602 | 17 | character_f | `["1girl, solo, __booru_looks_hair_length__, __booru_looks_hair_style__, __booru_looks_hair_color__, {__booru_looks_hair_accessories__\|}, __booru_looks_eye_color__"]` | 1 | Pending | 0 |
+| 603 | 17 | character_m | `["1boy, man, (muscular_male:0.6), (masculine:0.8), male_focus, solo, __booru_looks_hair_male__, __booru_looks_hair_color__, __booru_looks_eye_color__,"]` | 1 | Pending | 0 |
+| 620 | 17 | color | `["blackbluebrowndark_blue..."]` | 1 | Pending | 0 |
+| 631 | 17 | elemental_types | `["fire", "water", "earth", "wind", "ice", "lightning", "nature", "light", "shadow", "lava", "storm", "crystal", "metal", "void", "cosmic", "arcane"]` | 16 | Pending | 0 |
+| 635 | 17 | expressions | `["{3.0::serious\|3.0::determined\|2.5::smirk\|...}"]` | 1 | Pending | 0 |
+| 654 | 17 | weapons_melee | `["{3.0::sword\|3.0::dagger\|...}"]` | 1 | Pending | 0 |
+| 656 | 17 | weather_time | `["{1-2$$3.0::day\|3.0::night\|2.5::sun\|...}"]` | 1 | Pending | 0 |
 
-(…51 more category rows omitted)
+Observations:
 
-### `WildcardSetValue` — 1,847 new rows (representative sample)
+- Most categories contain a single line with internal Dynamic Prompts syntax (alternation/weights) → 1-element JSONB array. Resolver expands the syntax at gen time.
+- `elemental_types.txt` is the simple-list outlier — 16 distinct values.
+- Nested references (`__character_f__`, `__booru_looks_hair_color__`) are preserved literally and resolved at generation time within set 17's scope.
+- `color.txt` is malformed at source (no delimiters); audit won't reject this since it's not a policy violation, but it will produce a bad single value.
 
-Each value references its category via `categoryId`. Notice how the 16 `elemental_types` values all share `categoryId: 631` — no string duplication.
-
-**From `character.txt`** (categoryId 601; 2 lines, both nested references):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30401 | 601 | `__character_f__` | Pending | 0 |
-| 30402 | 601 | `__character_m__` | Pending | 1 |
-
-**From `character_f.txt`** (categoryId 602; complex template):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30403 | 602 | `1girl, solo, __booru_looks_hair_length__, __booru_looks_hair_style__, __booru_looks_hair_color__, {__booru_looks_hair_accessories__\|}, __booru_looks_eye_color__` | Pending | 0 |
-
-**From `character_m.txt`** (categoryId 603):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30404 | 603 | `1boy, man, (muscular_male:0.6), (masculine:0.8), male_focus,  solo, __booru_looks_hair_male__, __booru_looks_hair_color__, __booru_looks_eye_color__,` | Pending | 0 |
-
-**From `color.txt`** (categoryId 620; malformed source — one long line without delimiters):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30431 | 620 | `blackbluebrowndark_bluedark_browndark_greendark_orangedark_purpledark_redgraygreenlight_bluelight_brownlight_greenpurpleredpinkorangewhiteyellow` | Pending | 0 |
-
-**From `elemental_types.txt`** (categoryId 631; simple one-value-per-line list):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30445 | 631 | `fire` | Pending | 0 |
-| 30446 | 631 | `water` | Pending | 1 |
-| 30447 | 631 | `earth` | Pending | 2 |
-| 30448 | 631 | `wind` | Pending | 3 |
-| 30449 | 631 | `ice` | Pending | 4 |
-| 30450 | 631 | `lightning` | Pending | 5 |
-| 30451 | 631 | `nature` | Pending | 6 |
-| 30452 | 631 | `light` | Pending | 7 |
-| 30453 | 631 | `shadow` | Pending | 8 |
-| 30454 | 631 | `lava` | Pending | 9 |
-| 30455 | 631 | `storm` | Pending | 10 |
-| 30456 | 631 | `crystal` | Pending | 11 |
-| 30457 | 631 | `metal` | Pending | 12 |
-| 30458 | 631 | `void` | Pending | 13 |
-| 30459 | 631 | `cosmic` | Pending | 14 |
-| 30460 | 631 | `arcane` | Pending | 15 |
-
-All 16 point to the same `categoryId: 631`. This is the win of the normalized schema vs. having 16 copies of `"elemental_types"` in a `categoryName` column.
-
-**From `expressions.txt`** (categoryId 635; weighted alternation):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30512 | 635 | `{3.0::serious\|3.0::determined\|2.5::smirk\|2.5::smile\|2.5::light_smile\|2.0::angry\|2.0::grin\|2.0::frown\|1.5::evil_smile\|1.5::confident\|1.0::smug\|1.0::happy\|1.0::sad\|1.0::worried\|0.8::shouting\|0.8::laughing\|0.8::crying\|0.8::scared\|0.8::surprised\|0.8::annoyed\|0.8::crazy_smile\|0.8::grimace\|0.5::bored\|0.5::tired\|0.5::embarrassed\|0.5::nervous\|0.3::expressionless\|0.3::deadpan\|0.3::crazy_eyes}` | Pending | 0 |
-
-**From `weapons_melee.txt`** (categoryId 654):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30607 | 654 | `{3.0::sword\|3.0::dagger\|2.5::katana\|2.5::axe\|2.5::staff\|2.0::greatsword\| ... 35 more options ... \|0.3::beam_saber}` | Pending | 0 |
-
-**From `weather_time.txt`** (categoryId 656; weighted multi-pick):
-
-| id | categoryId | value | auditStatus | sourceLineIndex |
-|----|----|----|----|----|
-| 30742 | 656 | `{1-2$$3.0::day\|3.0::night\|2.5::sun\|2.5::moon\|2.0::cloudy_sky\| ... \|0.3::rainbow}` | Pending | 0 |
-
-**Key observations:**
-
-1. **Each file line = one `WildcardSetValue` row**, regardless of whether the line itself has internal A1111 syntax. `expressions.txt` has a single line with 29 weighted alternatives inside — that's 1 row in the DB, expanded by the resolver at generation time.
-2. **Nested references** (`__character_f__`) resolve at generation time. `character.txt` values point to other categories in the same set. The resolver looks up `character_f` via `WildcardSetCategory.name = 'character_f'` within `wildcardSetId = 17` first, then falls back to the user's other active sets / personal snippets.
-3. **Malformed content** (`color.txt`) passes through unchanged. Audit won't catch this. Could warrant a lint pass in a later version.
-
-### `UserWildcardSet` — Alice's new pointer
+### `UserWildcardSet` — Alice's new pointer at fullFeatureFantasy
 
 | id | userId | wildcardSetId | nickname | isActive | sortOrder | addedAt |
 |----|----|----|----|----|----|----|
-| 491 | 1001 | 17 | null | true | 0 | 2026-04-24 12:33:08 |
+| 491 | 1001 | 17 | null | true | 1 | 2026-04-24 12:33:08 |
+
+Alice now has two active sets: her own User-kind set (id 30) and the new System-kind set (id 17).
 
 ---
 
-## Stage 3 — Audit job runs
+## Stage 4 — Audit job runs
 
-Background worker processes `wildcardSetId = 17`. Per-value audit (~1,847 regex-based audits, a few ms each, ~3–5s wall-clock).
+Background worker processes all `Pending` categories with `wildcardSetId IN (17, 30)` (both Alice's set and the new System-kind set). Audit produces a per-category verdict + `nsfwLevel`.
 
-Imagine 6 of the 1,847 values flag the current rule version (`2026-04-01-r3`). Post-audit:
+Suppose 6 of fullFeatureFantasy's 59 categories fail audit (e.g. `character_f` flagged for `1girl`-related rules), and Alice's `character` category passes.
 
-| WildcardSetValue.id | value (preview) | auditStatus | auditNote |
-|----|----|----|----|
-| 30403 | `1girl, solo, __booru_looks_hair_length__, ...` | **Dirty** | "matches rule: implicit-age/1girl-combined" |
-| 30402, 30404, 30445–30460, 30512, 30607, 30742 | (others shown above) | Clean | — |
+| WildcardSetCategory.id | name | auditStatus | nsfwLevel | auditNote |
+|----|----|----|----|----|
+| 700 | character (Alice's) | Clean | 1 | — |
+| 601 | character | Clean | 1 | — |
+| 602 | character_f | **Dirty** | 0 | "matches rule: implicit-age/1girl-combined" |
+| 603 | character_m | Clean | 1 | — |
+| 631 | elemental_types | Clean | 1 | — |
+| 635 | expressions | Clean | 1 | — |
+| 654 | weapons_melee | Clean | 1 | — |
+| 656 | weather_time | Clean | 1 | — |
 
-`WildcardSet` row update:
+The set-level rollups update:
 
-| id | auditStatus | auditRuleVersion | auditedAt |
-|----|----|----|----|
-| 17 | **Mixed** | 2026-04-01-r3 | 2026-04-24 12:33:12 |
+| WildcardSet.id | name | auditStatus |
+|----|----|----|
+| 17 | fullFeatureFantasy v3.0 | **Mixed** (some categories dirty) |
+| 30 | "My snippets" | **Clean** |
 
-`Mixed` = set usable, just with 6 values excluded from pools automatically via the `auditStatus = 'Clean'` filter in the resolver.
-
-**Note:** `WildcardSetCategory.valueCount` is **not** decremented when values go Dirty. It reflects total rows in the category (for admin/audit transparency), not clean-only rows. The resolver computes clean counts per-query. If we want a "clean count" for display, we add a derived column or a small aggregate query.
+`Mixed` means the set is still usable — clean categories contribute to pools, dirty categories are excluded. The resolver's `auditStatus = 'Clean'` filter on `WildcardSetCategory` automatically handles this.
 
 ---
 
-## Stage 4 — Alice builds a prompt
+## Stage 5 — Alice writes a prompt and submits
 
-Alice types:
+Alice's prompt:
 
 ```
 A #character wearing armor, wielding #weapons_melee,
@@ -281,181 +255,171 @@ with #expressions expression in #weather_time weather,
 featuring #elemental_types magic — dramatic composition, 8k
 ```
 
-Defaults to all (no explicit selections). Active sources: her personal snippets + fullFeatureFantasy v3.0.
+She doesn't make explicit selections — defaults apply. Active sets contributing to her prompt:
+
+- **Set 30** (User-kind, "My snippets") — has category `character` (Alice's saved Zelda value)
+- **Set 17** (System-kind, fullFeatureFantasy v3.0) — has all the referenced categories
 
 ### Resolver query for `#character`
 
-Three-table JOIN through pointer → set → category → value:
+Single unified query (no separate path for personal snippets):
 
 ```sql
--- Personal snippets (unchanged)
-SELECT id, name, value, 'snippet' AS source, 'Alice' AS sourceLabel
-FROM "PromptSnippet"
-WHERE "userId" = 1001
-  AND category = 'character'
-  AND "auditStatus" = 'Clean';
--- Returns: id 412 (Zelda), id 413 (Link)
-
--- Wildcard values via active sets
-SELECT wsv.id, wsc.name AS categoryName, wsv.value,
-       ws."modelName" || ' ' || ws."versionName" AS sourceLabel,
-       'wildcardSet' AS source
+SELECT wsc.id           AS "categoryId",
+       wsc.name         AS "categoryName",
+       wsc.values       AS "values",
+       wsc."valueCount" AS "valueCount",
+       wsc."nsfwLevel"  AS "nsfwLevel",
+       ws.id            AS "setId",
+       ws.kind          AS "setKind",
+       ws."modelName",
+       ws."versionName",
+       ws.name          AS "userSetName",
+       ws."ownerUserId"
 FROM "UserWildcardSet" uws
   JOIN "WildcardSet" ws           ON uws."wildcardSetId" = ws.id
   JOIN "WildcardSetCategory" wsc  ON wsc."wildcardSetId" = ws.id
-  JOIN "WildcardSetValue" wsv     ON wsv."categoryId" = wsc.id
 WHERE uws."userId" = 1001
   AND uws."isActive" = true
   AND ws."isInvalidated" = false
   AND wsc.name = 'character'
-  AND wsv."auditStatus" = 'Clean';
--- Returns: id 30401 (`__character_f__` — from category 601)
---          id 30402 (`__character_m__` — from category 601)
+  AND wsc."auditStatus" = 'Clean'
+  AND (wsc."nsfwLevel" & 1) <> 0;   -- SFW context
 ```
 
-### Merged pools per category
+Returns 2 rows for `#character`:
 
-| Reference | My snippets | fullFeatureFantasy v3.0 | Total pool |
+- `categoryId: 700`, `setId: 30`, `setKind: User` — Alice's personal snippet (1 value: "blonde hair, green tunic...")
+- `categoryId: 601`, `setId: 17`, `setKind: System` — fullFeatureFantasy's character category (2 values: `__character_f__`, `__character_m__`). Note `__character_f__` will fail nested resolution at gen time because category 602 is Dirty — only `__character_m__` will produce content.
+
+### Merged pools per category (after applying defaults = full pool)
+
+| Reference | From My Snippets (set 30) | From fullFeatureFantasy v3.0 (set 17) | Total clean values |
 |----|----|----|----|
-| `#character` | 2 (Zelda, Link) | 2 (`__character_f__`, `__character_m__`) | 4 |
-| `#weapons_melee` | 0 | 1 | 1 |
+| `#character` | 1 (Alice's Zelda) | 2 (`__character_f__`*, `__character_m__`) | 3 |
+| `#weapons_melee` | 0 | 1 (weighted alternation) | 1 |
 | `#expressions` | 0 | 1 | 1 |
 | `#weather_time` | 0 | 1 | 1 |
 | `#elemental_types` | 0 | 16 | 16 |
 
-Cartesian: `4 × 1 × 1 × 1 × 16 = 64` → sampled to 10 via seed 847291.
+\* `__character_f__` resolves to nothing at gen time (category 602 is Dirty) but the value is still in the pool — the dirtiness only matters when the nested ref tries to expand. Implementation may want to surface this proactively in audit.
 
-### Submission payload
+Cartesian: `3 × 1 × 1 × 1 × 16 = 48 combinations` → over the 10-cap → seeded random sampling down to 10.
+
+### Submission payload (client → server)
 
 ```jsonc
 {
   "promptDoc": { /* Tiptap doc JSON */ },
   "promptTemplate": "A #character wearing armor, wielding #weapons_melee, with #expressions expression in #weather_time weather, featuring #elemental_types magic — dramatic composition, 8k",
-  "references": [
-    { "nodeId": "r-abc1", "category": "character", "selections": [] },
-    { "nodeId": "r-abc2", "category": "weapons_melee", "selections": [] },
-    { "nodeId": "r-abc3", "category": "expressions", "selections": [] },
-    { "nodeId": "r-abc4", "category": "weather_time", "selections": [] },
-    { "nodeId": "r-abc5", "category": "elemental_types", "selections": [] }
-  ],
-  "seed": 847291,
-  "quantity": 4
+  "snippets": {
+    "references": [
+      { "category": "character",        "kind": "batch", "selections": [] },
+      { "category": "weapons_melee",    "kind": "batch", "selections": [] },
+      { "category": "expressions",      "kind": "batch", "selections": [] },
+      { "category": "weather_time",     "kind": "batch", "selections": [] },
+      { "category": "elemental_types",  "kind": "batch", "selections": [] }
+    ]
+  },
+  "input": { "seed": 847291, "quantity": 4 /* ... other graph params */ }
 }
 ```
 
-### Workflow step metadata (one of the 10 sampled steps)
+`selections: []` means "use full pool" — the default.
 
-Stored on the existing step metadata JSON. Each resolved wildcard value records `wildcardSetId`, `categoryId`, and `valueId` so the full path is traceable later without JOINs:
+### Workflow step metadata (one of the 10 sampled steps)
 
 ```jsonc
 {
   "snippetReferences": [
     {
-      "nodeId": "r-abc1",
       "category": "character",
-      "resolvedValue": {
-        "source": "snippet",
-        "snippetId": 412,
-        "value": "blonde hair, green tunic, pointed ears, pointed cap, determined expression"
-      }
+      "referencePosition": 0,
+      "resolvedValues": [
+        { "wildcardSetId": 30, "categoryId": 700, "valueIndex": 0, "value": "blonde hair, green tunic, pointed ears..." }
+      ]
     },
     {
-      "nodeId": "r-abc2",
       "category": "weapons_melee",
-      "resolvedValue": {
-        "source": "wildcardSet",
-        "wildcardSetId": 17,
-        "categoryId": 654,
-        "valueId": 30607,
-        "value": "{3.0::sword|3.0::dagger|..."
-      }
+      "referencePosition": 1,
+      "resolvedValues": [
+        { "wildcardSetId": 17, "categoryId": 654, "valueIndex": 0, "value": "{3.0::sword|3.0::dagger|..." }
+      ]
     },
     {
-      "nodeId": "r-abc3",
       "category": "expressions",
-      "resolvedValue": {
-        "source": "wildcardSet",
-        "wildcardSetId": 17,
-        "categoryId": 635,
-        "valueId": 30512,
-        "value": "{3.0::serious|3.0::determined|..."
-      }
+      "referencePosition": 2,
+      "resolvedValues": [
+        { "wildcardSetId": 17, "categoryId": 635, "valueIndex": 0, "value": "{3.0::serious|3.0::determined|..." }
+      ]
     },
     {
-      "nodeId": "r-abc4",
       "category": "weather_time",
-      "resolvedValue": {
-        "source": "wildcardSet",
-        "wildcardSetId": 17,
-        "categoryId": 656,
-        "valueId": 30742,
-        "value": "{1-2$$3.0::day|3.0::night|..."
-      }
+      "referencePosition": 3,
+      "resolvedValues": [
+        { "wildcardSetId": 17, "categoryId": 656, "valueIndex": 0, "value": "{1-2$$3.0::day|3.0::night|..." }
+      ]
     },
     {
-      "nodeId": "r-abc5",
       "category": "elemental_types",
-      "resolvedValue": {
-        "source": "wildcardSet",
-        "wildcardSetId": 17,
-        "categoryId": 631,
-        "valueId": 30445,
-        "value": "fire"
-      }
+      "referencePosition": 4,
+      "resolvedValues": [
+        { "wildcardSetId": 17, "categoryId": 631, "valueIndex": 5, "value": "lightning" }
+      ]
     }
   ],
   "samplingSeed": 847291,
-  "cartesianTotal": 64,
+  "cartesianTotal": 48,
   "sampledTo": 10
 }
 ```
 
-The `wildcardSetId` + `categoryId` + `valueId` triple makes it trivial to trace the value back through the hierarchy without JOINs when reviewing a historical generation.
+Source identifier `(wildcardSetId, categoryId, valueIndex)` is uniform across User-kind and System-kind. The Dynamic Prompts expansion (`{3.0::sword|...}` → `sword`) happens later in the generation pipeline, downstream of this metadata.
 
 ---
 
-## Stage 5 — Alice saves a preset
+## Stage 6 — Alice saves a preset
 
-`GenerationPreset.values` gains:
+`GenerationPreset.values` gains a key recording active sets:
 
 ```jsonc
 {
   "prompt": "A #character wearing armor, ...",
   "seed": -1,
   "quantity": 4,
-  "activeWildcardSetIds": [491]
+  "activeWildcardSetIds": [490, 491]
 }
 ```
 
-Load flow:
-1. Read `activeWildcardSetIds: [491]`.
-2. `UPDATE "UserWildcardSet" SET "isActive" = false WHERE "userId" = 1001`.
-3. `UPDATE "UserWildcardSet" SET "isActive" = true WHERE "userId" = 1001 AND id IN (491)`.
-4. If any IDs are missing, surface a warning with a "re-add fullFeatureFantasy v3.0" shortcut.
+Loading the preset:
+
+1. Set all `UserWildcardSet WHERE userId = 1001` to `isActive = false`.
+2. Set rows with `id IN (490, 491)` to `isActive = true`.
+3. If any IDs no longer exist, surface a warning + "re-add fullFeatureFantasy v3.0" shortcut.
 
 ---
 
-## Stage 6 — Bob subscribes
+## Stage 7 — Bob subscribes to fullFeatureFantasy
 
-Bob clicks "Add set" → fullFeatureFantasy v3.0. The first-import transaction finds `WildcardSet` already exists (set.id = 17), skips the extract-and-audit path, and just writes a pointer:
+Bob clicks "Add set" → fullFeatureFantasy v3.0. The transaction finds existing `WildcardSet 17` and just adds a pointer:
 
 | id | userId | wildcardSetId | nickname | isActive | sortOrder | addedAt |
 |----|----|----|----|----|----|----|
 | 492 | 2042 | 17 | "FFv3" | true | 3 | 2026-04-25 08:17:33 |
 
-Bob immediately has access to all 1,841 clean values (1,847 total − 6 dirty). Zero content duplication; his pointer just joins through the global cache on resolve.
+Zero re-extraction, zero re-audit. Content sharing pays off.
 
 ---
 
 ## Edge case examples
 
-### Dirty value auto-excluded
+### Dirty category excluded automatically
 
-No additional writes happen for affected prompts — the resolver's `WHERE wsv."auditStatus" = 'Clean'` predicate filters Dirty values out transparently. If Alice's `#character_f` expansion now only has 0 clean values (the 1 row is Dirty), the nested `__character_f__` reference returns empty at expansion time. Alice's prompts still work but skew toward `__character_m__`.
+Category 602 (`character_f`) is `Dirty`. The resolver's `auditStatus = 'Clean'` filter excludes it transparently. When `__character_f__` is encountered during nested resolution at gen time, it fails to find a clean source and emits the literal text (or skips, depending on resolver policy). Alice's prompts skew toward `__character_m__`.
 
 ### Set invalidation
 
-Moderator unpublishes fullFeatureFantasy v3.0 for policy reasons:
+Mods unpublish fullFeatureFantasy v3.0 for policy reasons:
 
 ```sql
 UPDATE "WildcardSet"
@@ -465,29 +429,29 @@ SET "isInvalidated" = true,
 WHERE id = 17;
 ```
 
-Alice's pointer (id 491) stays. The resolver filters `ws."isInvalidated" = false`, so the set contributes nothing. Alice sees a warning badge on the set in her library.
+Resolver filter `ws."isInvalidated" = false` excludes the set immediately. Alice and Bob keep their pointers; the picker shows a warning badge.
 
 ### Audit rule version bump
 
-Audit rules update from `2026-04-01-r3` → `2026-05-01-r1`. Background job scans:
-
 ```sql
-SELECT wsv.id
-FROM "WildcardSetValue" wsv
-  JOIN "WildcardSetCategory" wsc ON wsc.id = wsv."categoryId"
-WHERE wsc."wildcardSetId" = 17
-  AND (wsv."auditRuleVersion" IS NULL OR wsv."auditRuleVersion" != '2026-05-01-r1');
+SELECT id FROM "WildcardSetCategory"
+WHERE "auditRuleVersion" IS NULL OR "auditRuleVersion" != '2026-05-01-r1';
 ```
 
-Re-audits each row and updates status. Aggregates `WildcardSet.auditStatus` afterward.
+Re-audit job sweeps affected categories and updates verdicts. Set-level aggregate is recomputed afterward.
 
-### Category with zero clean values — implications
+### User deletes their User-kind set
 
-If a category's only row goes Dirty (e.g. `character_f`'s single row), the category effectively disappears from pools until re-audit. The picker could either:
-- Hide the category (cleaner UX)
-- Show it with a "0 values available" warning chip
+```sql
+DELETE FROM "WildcardSet" WHERE id = 30 AND "ownerUserId" = 1001;
+```
 
-Open question for the UX pass — not a schema-level concern. The DB handles it either way.
+Cascades through:
+
+- `WildcardSetCategory` (Alice's `character` category, id 700) — deleted
+- `UserWildcardSet` (Alice's pointer, id 490) — deleted
+
+Other users are unaffected. Generation history still references the deleted IDs in step metadata; consumers should handle missing references gracefully ("snippet no longer available").
 
 ---
 
@@ -495,20 +459,19 @@ Open question for the UX pass — not a schema-level concern. The DB handles it 
 
 | Table | Row count |
 |----|----|
-| `WildcardSet` | 4 (3 pre-existing + 1 new) |
-| `WildcardSetCategory` | ~103 (44 pre-existing + 59 new for fullFeatureFantasy) |
-| `WildcardSetValue` | ~3,190 (1,343 pre-existing + 1,847 new) |
-| `UserWildcardSet` | 5 (3 Bob + 1 Alice on import + 1 Bob on Stage 6) |
-| `PromptSnippet` | 4 (Alice's personal, unchanged) |
+| `WildcardSet` | 5 (3 pre-existing System + 1 new System + 1 Alice User-kind) |
+| `WildcardSetCategory` | ~104 (44 pre-existing + 59 fullFeatureFantasy + 1 Alice's "character") |
+| `UserWildcardSet` | 6 (3 Bob existing + 1 Alice's own + 1 Alice subscription + 1 Bob subscription) |
 
-At projected year-one scale (§7 of schema spec): ~5k sets, ~250k categories, ~7.5M values, ~300k–1M pointers, ~500k–5M personal snippets.
+At projected year-one scale (§7 of schema spec): ~5k System sets, ~100k–500k User sets, ~500k–1M categories, ~500k–2M activation pointers.
 
 ---
 
 ## Takeaways for DB review
 
-1. **Write pressure at first-import is bursty:** one set, ~59 categories, ~1,850 values. `createMany` on values is fine; categories need per-row inserts (or `createManyAndReturn` on newer Prisma) to get FK IDs for values.
-2. **Read pressure is steady and cache-friendly:** resolver runs on every prompt autocomplete. Expected ~30–100 rows typical. Hot indexes: `(userId, isActive)` on pointers, `(wildcardSetId, name)` on categories, `(categoryId, auditStatus)` on values.
-3. **Audit writes are infrequent.** Set at import, updated only on rule-version bumps.
-4. **Most variety lives inside individual value text, not across rows.** A typical `#category` may have 1–2 rows whose values are complex A1111 templates. The resolver handles expansion at gen time.
-5. **Content sharing works:** Alice's first import serves Bob (and everyone else) for free. Storage scales with model-versions, not users.
+1. **Single content table for both kinds.** System-kind and User-kind sets share `WildcardSet` and `WildcardSetCategory` schemas. The `kind` discriminator + nullable `(modelVersionId, ownerUserId)` distinguishes them. CHECK constraint enforces the invariant.
+2. **Values inline as JSONB string arrays.** `WildcardSetCategory.values` is a JSONB array of plain strings. No separate value table. Per-category audit; the category is the atomic unit of allow/deny.
+3. **Resolver is a single query** across `UserWildcardSet → WildcardSet → WildcardSetCategory`. No app-side merging of separate sources.
+4. **Most write pressure is at System-kind first-import** (one bulk transaction per imported model version). User-kind writes are infrequent (one row per user save). Steady-state writes negligible.
+5. **Step metadata uses uniform source identifier** `(wildcardSetId, categoryId, valueIndex)` for both kinds, making historical generation reproducibility traceable without JOINs.
+6. **Categories are immutable post-create** — both kinds. User snippet workflow is "save creates a new category"; iterative growth means new categories (e.g. `character-2`) rather than mutating existing ones.

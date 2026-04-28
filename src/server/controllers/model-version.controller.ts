@@ -1,6 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import type { BaseModelType } from '~/server/common/constants';
-import { type BaseModel, DEPRECATED_BASE_MODELS, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
+import {
+  type BaseModel,
+  DEPRECATED_BASE_MODELS,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -231,13 +235,12 @@ const loadModelVersion = async ({
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, {
       user: ctx?.user,
-    }).then(
-      (data) =>
-        data.map((item) => {
-          const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
-            {}) as RecommendedSettingsSchema;
-          return { ...item, ...removeNulls(settings) };
-        })
+    }).then((data) =>
+      data.map((item) => {
+        const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
+          {}) as RecommendedSettingsSchema;
+        return { ...item, ...removeNulls(settings) };
+      })
     );
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
@@ -327,6 +330,10 @@ export const upsertModelVersionHandler = async ({
 
     if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
       throw throwBadRequestError('Only moderators can manage internal generation models');
+    }
+
+    if (input.usageControl === ModelUsageControl.ExternalGeneration && !ctx.user.isModerator) {
+      throw throwBadRequestError('Only moderators can manage external generation models');
     }
 
     if (input.trainingDetails === null) {
@@ -832,7 +839,7 @@ export async function queryModelVersionsForModeratorHandler({
 
   const workflowIds: string[] = [];
   const mappedItems = items.map(({ files, meta, ...version }) => {
-  const trainingFile = pickBestTrainingFile(files);
+    const trainingFile = pickBestTrainingFile(files);
     const trainingResults = (trainingFile?.metadata as FileMetadata)
       ?.trainingResults as TrainingResultsV2;
 
@@ -1002,9 +1009,7 @@ export async function publishPrivateModelVersionHandler({
         select: { id: true, metadata: true },
       })
     : [];
-  const selectedEpochUrl = freshFiles.some(
-    (f) => (f?.metadata as FileMetadata)?.selectedEpochUrl
-  );
+  const selectedEpochUrl = freshFiles.some((f) => (f?.metadata as FileMetadata)?.selectedEpochUrl);
 
   if (!selectedEpochUrl) {
     throw throwBadRequestError('No selected epoch found');

@@ -57,6 +57,7 @@ import { createSoraInput } from './sora.handler';
 import { createVeo3Input } from './veo3.handler';
 import { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 import { createSeedanceInput } from './seedance.handler';
+import { createHappyHorseInput } from './happy-horse.handler';
 
 // =============================================================================
 // Types - Derived from GenerationGraph
@@ -170,6 +171,9 @@ export type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 /** Seedance context */
 export type SeedanceCtx = EcosystemGraphOutput & { ecosystem: 'Seedance' };
 
+/** HappyHorse context */
+export type HappyHorseCtx = EcosystemGraphOutput & { ecosystem: 'HappyHorse' };
+
 /** AceAudio context */
 export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'Ace' };
 
@@ -209,6 +213,7 @@ export { createSoraInput } from './sora.handler';
 export { createVeo3Input } from './veo3.handler';
 export { createGrokImageInput, createGrokVideoInput } from './grok.handler';
 export { createSeedanceInput } from './seedance.handler';
+export { createHappyHorseInput } from './happy-horse.handler';
 
 // Shared utilities
 export { createComfyInput } from './comfy-input';
@@ -391,6 +396,10 @@ async function createEcosystemStep(
     // Seedance
     case 'Seedance':
       return createSeedanceInput(normalizedData, handlerCtx);
+
+    // HappyHorse
+    case 'HappyHorse':
+      return createHappyHorseInput(normalizedData, handlerCtx);
 
     // Grok (image + video)
     case 'Grok': {
