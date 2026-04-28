@@ -28,7 +28,11 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  getDbWithoutLagBatch,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import {
@@ -4268,6 +4272,7 @@ export const getImagesForModelVersion = async ({
   user,
   pending,
   browsingLevel,
+  db,
 }: {
   modelVersionIds: number | number[];
   excludedTagIds?: number[];
@@ -4278,6 +4283,10 @@ export const getImagesForModelVersion = async ({
   user?: SessionUser;
   pending?: boolean;
   browsingLevel?: number;
+  // Optional db override. Cache lookupFn passes dbWrite during refresh() so the
+  // cache always repopulates from primary; default reads still use the lagged
+  // replica.
+  db?: typeof dbRead;
 }) => {
   if (!Array.isArray(modelVersionIds)) modelVersionIds = [modelVersionIds];
   if (!modelVersionIds.length) return [] as ImagesForModelVersions[];
@@ -4400,7 +4409,7 @@ export const getImagesForModelVersion = async ({
     JOIN "Post" p ON p.id = i."postId"
     ORDER BY i."postId", i."index"
   `;
-  const images = await dbRead.$queryRaw<ImagesForModelVersions[]>(query);
+  const images = await (db ?? dbRead).$queryRaw<ImagesForModelVersions[]>(query);
 
   // const remainingModelVersionIds = modelVersionIds.filter(
   //   (x) => !images.some((i) => i.modelVersionId === x)
@@ -4468,9 +4477,23 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: env.IS_DATAPACKET ? CacheTTL.day : CacheTTL.sm,
+  // The lookupFn filters on async-populated columns (i.nsfwLevel != 0,
+  // i.needsReview IS NULL). A read between publish and ingestion-complete
+  // returns zero rows. We still cache notFound to skip the requery cost on
+  // versions that are genuinely empty, but cap the lifetime so a transient
+  // empty doesn't pin the model out of feeds for the full 1-day TTL.
+  notFoundTtl: CacheTTL.xs,
   // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
-  lookupFn: async (ids) => {
-    const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
+  lookupFn: async (ids, fromWrite) => {
+    // refresh() passes fromWrite=true. For plain fetch() misses, fall back to
+    // the lag-aware helper so a cache miss right after image upload doesn't
+    // poison the entry with `images: []` for a full TTL cycle.
+    const db = fromWrite ? dbWrite : await getDbWithoutLagBatch('modelVersion', ids);
+    const images = await getImagesForModelVersion({
+      modelVersionIds: ids,
+      imagesPerVersion: 20,
+      db,
+    });
 
     const records: Record<number, CachedImagesForModelVersions> = {};
     for (const image of images) {

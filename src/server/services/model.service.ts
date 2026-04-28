@@ -23,7 +23,11 @@ import {
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  preventModelVersionLagBatch,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { isFlipt } from '~/server/flipt/client';
@@ -2007,19 +2011,29 @@ export const publishModelById = async ({
     { timeout: 10000 }
   );
 
+  // Flag replica-lag BEFORE any post-commit reader runs so lag-aware lookups
+  // (dataForModelsCache.lookupFn, getDbWithoutLag) route to primary during the
+  // replication window — otherwise a concurrent feed read can poison
+  // dataForModelsCache with the pre-publish version state.
+  const allVersionIds = model.modelVersions.map((x) => x.id);
+  await preventModelVersionLagBatch(model.id, allVersionIds);
+
   await userModelCountCache.refresh(model.userId);
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
-    const versionIds = model.modelVersions.map((x) => x.id);
-    await bustMvCache(versionIds, model.id);
+    await bustMvCache(allVersionIds, model.id);
   }
 
-  // Fetch affected posts to update their images in search index
-  const posts = await dbRead.post.findMany({
-    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+  // Fetch affected posts to update their images in search index. Use dbWrite —
+  // these run immediately after publish commit and the replica may not yet
+  // have the post/image rows (especially when post + version are written in
+  // the same publish flow), which would silently drop them from the
+  // search-index update batch.
+  const posts = await dbWrite.post.findMany({
+    where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
     select: { id: true },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
@@ -2128,12 +2142,21 @@ export const unpublishModelById = async ({
     { timeout: 30000, maxWait: 10000 }
   );
 
-  // Fetch affected posts to remove their images from search index
-  const posts = await dbRead.post.findMany({
-    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+  // Flag replica-lag and refresh feed-side caches so the unpublished model
+  // disappears from feeds and the model page reflects the new status without
+  // waiting for cache TTL.
+  const allVersionIds = model.modelVersions.map((x) => x.id);
+  await preventModelVersionLagBatch(id, allVersionIds);
+  await bustMvCache(allVersionIds, id);
+
+  // Use dbWrite for the search-index lookups for the same reason as
+  // publishModelById — the replica may not yet reflect the txn we just
+  // committed.
+  const posts = await dbWrite.post.findMany({
+    where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
     select: { id: true },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
