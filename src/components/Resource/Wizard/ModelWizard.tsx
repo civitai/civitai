@@ -14,7 +14,7 @@ import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -126,7 +126,20 @@ const CreateSteps = ({
           <ModelVersionUpsertForm
             model={model ?? templateFields ?? bountyFields}
             version={modelVersion ?? templateFields?.version ?? bountyFields?.version}
-            onSubmit={goNext}
+            onSubmit={(result) => {
+              // ExternalGeneration versions are file-less — jump directly to the post step.
+              if (result?.usageControl === ModelUsageControl.ExternalGeneration) {
+                router
+                  .replace(
+                    getWizardUrl({ id: modelId, step: 4, templateId, bountyId }),
+                    undefined,
+                    { shallow: true }
+                  )
+                  .then();
+                return;
+              }
+              goNext();
+            }}
           >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
@@ -362,6 +375,8 @@ export function ModelWizard() {
 
       const hasVersions = model.modelVersions.length > 0;
       const hasFiles = model.modelVersions.some((version) => version.files.length > 0);
+      // File-less ExternalGeneration versions don't need the upload step.
+      const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
 
       if (!hasVersions)
         router
@@ -369,7 +384,7 @@ export function ModelWizard() {
             shallow: true,
           })
           .then();
-      else if (!hasFiles)
+      else if (!hasFiles && !skipFiles)
         router
           .replace(getWizardUrl({ id, step: 3, templateId, bountyId, src }), undefined, {
             shallow: true,
@@ -383,7 +398,7 @@ export function ModelWizard() {
           .then();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, isNew, model, templateId, bountyId, src]);
+  }, [id, isNew, model, modelVersion, templateId, bountyId, src]);
 
   const postId = modelVersion?.posts[0]?.id;
 
