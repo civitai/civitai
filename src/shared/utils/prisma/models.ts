@@ -38,7 +38,7 @@ export type CheckpointType = "Trained" | "Merge";
 
 export type ModelUploadType = "Created" | "Trained";
 
-export type ModelUsageControl = "Download" | "Generation" | "InternalGeneration";
+export type ModelUsageControl = "Download" | "Generation" | "InternalGeneration" | "ExternalGeneration";
 
 export type ModelModifier = "Archived" | "TakenDown";
 

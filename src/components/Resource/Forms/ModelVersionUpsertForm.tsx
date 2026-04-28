@@ -414,13 +414,16 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                         [ModelUsageControl.Download]: 'Download & On-Site Generation',
                         [ModelUsageControl.Generation]: 'On-Site Generation Only',
                         [ModelUsageControl.InternalGeneration]: 'Internal API Generation Only',
+                        [ModelUsageControl.ExternalGeneration]:
+                          'External API Generation (no files)',
                       },
                     }),
                   }))
                   .filter(
-                    // We don't want random people accessing this.
+                    // Mod-only options: hide unless already selected or user is a moderator.
                     (x) =>
-                      x.value !== ModelUsageControl.InternalGeneration ||
+                      (x.value !== ModelUsageControl.InternalGeneration &&
+                        x.value !== ModelUsageControl.ExternalGeneration) ||
                       x.value === usageControl ||
                       currentUser?.isModerator
                   )}
