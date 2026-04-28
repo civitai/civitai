@@ -82,13 +82,13 @@ import {
   getRecentlyRecommended,
   getSimpleModelWithVersions,
   migrateResourceToCollection,
-  rescanModel,
   setAssociatedResources,
   setModelsCategory,
   toggleCannotPromote,
   toggleCannotPublish,
   toggleLockComments,
 } from '~/server/services/model.service';
+import { rescanModel } from '~/server/services/model-file-scan.service';
 import {
   guardedProcedure,
   middleware,

@@ -1,5 +1,5 @@
 import { logToAxiom } from '~/server/logging/client';
-import { processModelFileScanResult } from '~/server/services/model-file-scan-result.service';
+import { processModelFileScanResult } from '~/server/services/model-file-scan.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async (req, res) => {

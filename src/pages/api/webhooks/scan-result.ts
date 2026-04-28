@@ -6,7 +6,7 @@ import {
   applyScanOutcome,
   examinePickleImports,
   type ScanOutcome,
-} from '~/server/services/model-file-scan-result.service';
+} from '~/server/services/model-file-scan.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 // Legacy scanner adapter. The legacy HTTP scanner POSTs ScanResult here; we

@@ -2,14 +2,22 @@ import type { Prisma } from '@prisma/client';
 import type { WorkflowEvent } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import type { NextApiRequest } from 'next';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { unpublishModelById } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
+import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 
 // -----------------------------------------------------------------------------
@@ -412,4 +420,111 @@ export async function processModelFileScanResult(req: NextApiRequest) {
     },
     'webhooks'
   ).catch();
+}
+
+// -----------------------------------------------------------------------------
+// rescanModel — admin/moderator-driven re-scan dispatch. Flag-branched between
+// the legacy scanner and the orchestrator path so a wrong branch can't silently
+// route to the wrong system.
+// -----------------------------------------------------------------------------
+
+export const rescanModel = async ({ id }: GetByIdInput) => {
+  const useOrchestrator = await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR);
+
+  const modelFiles = await dbRead.modelFile.findMany({
+    where: { modelVersion: { modelId: id } },
+    select: useOrchestrator
+      ? {
+          id: true,
+          url: true,
+          modelVersion: {
+            select: {
+              id: true,
+              baseModel: true,
+              model: { select: { id: true, type: true } },
+            },
+          },
+        }
+      : { id: true, url: true },
+  });
+
+  if (modelFiles.length === 0) return { sent: 0, failed: 0 };
+
+  const sent: number[] = [];
+  const failed: number[] = [];
+
+  const tasks = modelFiles.map((file) => async () => {
+    if (useOrchestrator) {
+      const f = file as (typeof modelFiles)[number] & {
+        modelVersion: {
+          id: number;
+          baseModel: string;
+          model: { id: number; type: ModelType };
+        } | null;
+      };
+      // Soft-deleted version → orphaned file. Skip rather than crash on the
+      // null dereference that the conditional-select cast hides.
+      if (!f.modelVersion) {
+        failed.push(f.id);
+        return;
+      }
+      try {
+        await createModelFileScanRequest({
+          fileId: f.id,
+          modelVersionId: f.modelVersion.id,
+          modelId: f.modelVersion.model.id,
+          modelType: f.modelVersion.model.type,
+          baseModel: f.modelVersion.baseModel,
+          priority: 'low',
+        });
+        sent.push(f.id);
+      } catch {
+        failed.push(f.id);
+      }
+      return;
+    }
+
+    const result = await requestScannerTasks({
+      file,
+      tasks: ['Hash', 'Scan', 'ParseMetadata'],
+      lowPriority: true,
+    });
+    if (result === 'sent') sent.push(file.id);
+    else failed.push(file.id);
+  });
+
+  await limitConcurrency(tasks, 10);
+
+  if (sent.length > 0) {
+    await dbWrite.modelFile.updateMany({
+      where: { id: { in: sent } },
+      data: { scanRequestedAt: new Date() },
+    });
+  }
+
+  return { sent: sent.length, failed: failed.length };
+};
+
+// -----------------------------------------------------------------------------
+// unpublishBlockedModel — invoked when a file's hash matches a blocked entry.
+// Lives here (vs. model.service.ts) so the orchestrator-side scan flow and the
+// retroactive-hash-blocking job can both import it from a stable location.
+// -----------------------------------------------------------------------------
+
+export async function unpublishBlockedModel(modelVersionId: number) {
+  const version = await dbWrite.modelVersion.findUnique({
+    where: { id: modelVersionId },
+    select: { id: true, model: { select: { id: true, meta: true } } },
+  });
+  if (!version?.model?.id) return;
+
+  const meta = (version.model.meta as ModelMeta | null) || {};
+  await unpublishModelById({
+    id: version.model.id,
+    reason: 'duplicate',
+    meta,
+    customMessage: 'Model has been unpublished due to matching a blocked hash',
+    userId: -1,
+    isModerator: true,
+  });
 }
