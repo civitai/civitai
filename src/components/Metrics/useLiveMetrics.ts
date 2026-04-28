@@ -2,14 +2,15 @@ import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
 import type { MetricEntityType, MetricType } from '~/components/Signals/metric-signals.types';
-import { useLiveMetricsEnabled } from './MetricSubscriptionProvider';
+import { useLiveMetricsEnabled } from './useLiveMetricsEnabled';
 
 type MetricsInput = Partial<Record<MetricType, number | undefined>>;
 
 /**
  * Hook for components that display multiple metrics.
- * Works with MetricSubscriptionProvider for in-view subscription,
- * or can be used standalone if subscription is handled elsewhere.
+ * Pair with `useMetricSubscription` in the same card body (or rely on an
+ * ancestor that subscribes) to receive live deltas; without a subscription,
+ * this hook still returns the base values.
  *
  * Deltas are always applied regardless of subscription state
  * (they persist in the store from when the card was visible).

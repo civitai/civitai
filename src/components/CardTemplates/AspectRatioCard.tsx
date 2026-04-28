@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import React from 'react';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
-import { useInView } from '~/hooks/useInView';
+import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import styles from './AspectRatioCard.module.scss';
 
@@ -31,25 +31,40 @@ export function AspectRatioCard({
   footerGradient,
   render,
 }: AspectRatioCardProps) {
-  const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
-
   const wrapperStyle = { aspectRatio: aspectRatioMap[aspectRatio] };
 
   return (
-    <CosmeticCard
+    <ElementInView
+      component={CosmeticCard}
       cosmetic={cosmetic}
       cosmeticStyle={cosmetic ? wrapperStyle : undefined}
-      ref={ref}
       style={!cosmetic ? wrapperStyle : undefined}
       className={clsx(className)}
     >
-      <div className={clsx(styles.content, { [styles.inView]: inView })}>
-        {render({ inView })}
-        {header && <div className={styles.header}>{header}</div>}
-        {footer && (
-          <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>{footer}</div>
-        )}
-      </div>
-    </CosmeticCard>
+      <AspectRatioCardContent
+        render={render}
+        header={header}
+        footer={footer}
+        footerGradient={footerGradient}
+      />
+    </ElementInView>
+  );
+}
+
+function AspectRatioCardContent({
+  render,
+  header,
+  footer,
+  footerGradient,
+}: Pick<AspectRatioCardProps, 'render' | 'header' | 'footer' | 'footerGradient'>) {
+  const inView = useElementInView() ?? false;
+  return (
+    <div className={clsx(styles.content, { [styles.inView]: inView })}>
+      {render({ inView })}
+      {header && <div className={styles.header}>{header}</div>}
+      {footer && (
+        <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>{footer}</div>
+      )}
+    </div>
   );
 }

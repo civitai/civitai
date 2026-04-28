@@ -11,7 +11,8 @@ import {
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
+import { AnimatedCount, Metrics } from '~/components/Metrics';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ArticleStatus } from '~/shared/utils/prisma/enums';
@@ -24,28 +25,15 @@ const articleStatusBadge: Partial<Record<ArticleStatus, { label: string; color: 
 };
 
 export const ArticleCard = memo(function ArticleCard({ data, aspectRatio }: Props) {
-  return (
-    <MetricSubscriptionProvider entityType="Article" entityId={data.id}>
-      <ArticleCardContent data={data} aspectRatio={aspectRatio} />
-    </MetricSubscriptionProvider>
-  );
+  return <ArticleCardContent data={data} aspectRatio={aspectRatio} />;
 });
 
 function ArticleCardContent({ data, aspectRatio }: Props) {
-  const { id, title, coverImage, publishedAt, user, tags, stats, status } = data;
+  const { id, title, coverImage, publishedAt, user, tags, status } = data;
   const category = tags?.find((tag) => tag.isCategory);
   const currentUser = useCurrentUser();
   const canSeeStatus = !!currentUser && (currentUser.id === user.id || currentUser.isModerator);
   const statusBadge = canSeeStatus && status ? articleStatusBadge[status] : null;
-  const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: data.id });
-
-  // Live metrics for article stats
-  const liveMetrics = useLiveMetrics('Article', data.id, {
-    commentCount: stats?.commentCount ?? 0,
-    viewCount: stats?.viewCount ?? 0,
-    collectedCount: stats?.collectedCount ?? 0,
-    tippedAmountCount: stats?.tippedAmountCount ?? 0,
-  });
 
   return (
     <AspectRatioImageCard
@@ -97,50 +85,73 @@ function ArticleCardContent({ data, aspectRatio }: Props) {
               </Text>
             )}
           </div>
-          <div className="flex items-center justify-between gap-1">
-            <Badge
-              className={clsx(cardClasses.statChip, cardClasses.chip)}
-              classNames={{ label: 'flex flex-nowrap gap-2' }}
-              variant="light"
-              radius="xl"
-            >
-              <div className="flex items-center gap-0.5">
-                <IconBookmark size={14} strokeWidth={2.5} />
-                <Text fw="bold" size="xs">
-                  <AnimatedCount value={liveMetrics.collectedCount} />
-                </Text>
-              </div>
-              <div className="flex items-center gap-0.5">
-                <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                <Text fw="bold" size="xs">
-                  <AnimatedCount value={liveMetrics.commentCount} />
-                </Text>
-              </div>
-              <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
-                <div className="flex items-center gap-0.5">
-                  <IconBolt size={14} strokeWidth={2.5} />
-                  <Text fw="bold" size="xs">
-                    <AnimatedCount value={liveMetrics.tippedAmountCount + tippedAmount} />
-                  </Text>
-                </div>
-              </InteractiveTipBuzzButton>
-            </Badge>
-            <Badge
-              className={clsx(cardClasses.statChip, cardClasses.chip)}
-              variant="light"
-              radius="xl"
-            >
-              <div className="flex items-center gap-0.5">
-                <IconEye size={14} strokeWidth={2.5} />
-                <Text fw="bold" size="xs">
-                  <AnimatedCount value={liveMetrics.viewCount} />
-                </Text>
-              </div>
-            </Badge>
-          </div>
+          <ArticleStats data={data} />
         </div>
       }
     />
+  );
+}
+
+function ArticleStats({ data }: { data: ArticleGetAllRecord }) {
+  const { id, user, stats } = data;
+  const inView = useElementInView();
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Article', entityId: id });
+  return (
+    <Metrics
+      entityType="Article"
+      entityId={id}
+      initial={{
+        commentCount: stats?.commentCount ?? 0,
+        viewCount: stats?.viewCount ?? 0,
+        collectedCount: stats?.collectedCount ?? 0,
+        tippedAmountCount: stats?.tippedAmountCount ?? 0,
+      }}
+      useLive={inView !== false}
+    >
+      {(m) => (
+        <div className="flex items-center justify-between gap-1">
+          <Badge
+            className={clsx(cardClasses.statChip, cardClasses.chip)}
+            classNames={{ label: 'flex flex-nowrap gap-2' }}
+            variant="light"
+            radius="xl"
+          >
+            <div className="flex items-center gap-0.5">
+              <IconBookmark size={14} strokeWidth={2.5} />
+              <Text fw="bold" size="xs">
+                <AnimatedCount value={m.collectedCount} />
+              </Text>
+            </div>
+            <div className="flex items-center gap-0.5">
+              <IconMessageCircle2 size={14} strokeWidth={2.5} />
+              <Text fw="bold" size="xs">
+                <AnimatedCount value={m.commentCount} />
+              </Text>
+            </div>
+            <InteractiveTipBuzzButton toUserId={user.id} entityType={'Article'} entityId={id}>
+              <div className="flex items-center gap-0.5">
+                <IconBolt size={14} strokeWidth={2.5} />
+                <Text fw="bold" size="xs">
+                  <AnimatedCount value={m.tippedAmountCount + tippedAmount} />
+                </Text>
+              </div>
+            </InteractiveTipBuzzButton>
+          </Badge>
+          <Badge
+            className={clsx(cardClasses.statChip, cardClasses.chip)}
+            variant="light"
+            radius="xl"
+          >
+            <div className="flex items-center gap-0.5">
+              <IconEye size={14} strokeWidth={2.5} />
+              <Text fw="bold" size="xs">
+                <AnimatedCount value={m.viewCount} />
+              </Text>
+            </div>
+          </Badge>
+        </div>
+      )}
+    </Metrics>
   );
 }
 
