@@ -88,6 +88,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             tipaltiPaymentsEnabled: event.eventData.isPayable,
             tipaltiWithdrawalMethod: (event.eventData.paymentMethod ??
               event.eventData.paymentMethodType) as CashWithdrawalMethod,
+            unpayableReasons: Array.isArray(event.eventData.unpayableReasons)
+              ? (event.eventData.unpayableReasons as string[])
+              : undefined,
           });
           break;
         case 'paymentGroupApproved':

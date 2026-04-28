@@ -11,6 +11,7 @@ import type { UserPaymentConfiguration } from '~/shared/utils/prisma/models';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import type { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
 import type { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
+import { tipaltiTaxFormRequiredEmail } from '~/server/email/templates';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
@@ -289,12 +290,14 @@ export async function updateByTipaltiAccount({
   tipaltiAccountStatus,
   tipaltiPaymentsEnabled,
   tipaltiWithdrawalMethod,
+  unpayableReasons,
   userId,
 }: {
   tipaltiAccountId?: string;
   tipaltiAccountStatus: TipaltiStatus;
   tipaltiPaymentsEnabled: boolean;
   tipaltiWithdrawalMethod?: CashWithdrawalMethod;
+  unpayableReasons?: string[];
   userId?: number;
 }) {
   const userPaymentConfig = await dbWrite.userPaymentConfiguration.findUnique({
@@ -341,6 +344,31 @@ export async function updateByTipaltiAccount({
     }).catch(() => {
       log({ method: 'createNotification', userId: userPaymentConfig.userId });
     });
+  }
+
+  // If the user just transitioned from payable -> not payable because of a Tax issue,
+  // email them so they can resolve it and we can resume payouts.
+  const wasPreviouslyPayable = userPaymentConfig.tipaltiPaymentsEnabled === true;
+  const isNowUnpayable = tipaltiPaymentsEnabled === false;
+  const hasTaxReason = unpayableReasons?.some((r) => r?.toLowerCase() === 'tax') ?? false;
+
+  if (wasPreviouslyPayable && isNowUnpayable && hasTaxReason) {
+    const user = await dbRead.user.findUnique({
+      where: { id: userPaymentConfig.userId },
+      select: { email: true, username: true },
+    });
+
+    if (user?.email) {
+      await tipaltiTaxFormRequiredEmail
+        .send({ email: user.email, username: user.username })
+        .catch((error) => {
+          log({
+            method: 'tipaltiTaxFormRequiredEmail',
+            error,
+            userId: userPaymentConfig.userId,
+          });
+        });
+    }
   }
 
   return updated;
