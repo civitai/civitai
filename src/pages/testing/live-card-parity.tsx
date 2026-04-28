@@ -12,12 +12,15 @@ import {
   Text,
   Title,
 } from '@mantine/core';
+import NumberFlow from '@number-flow/react';
 import { useState } from 'react';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useLiveMetricsEnabled } from '~/components/Metrics';
+import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';
+import { Metrics } from '~/components/Metrics/Metrics';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
@@ -36,6 +39,7 @@ export default function LiveCardParityTest() {
   const [articleId, setArticleId] = useState(900001);
   const [userId, setUserId] = useState(900002);
   const [imageId, setImageId] = useState(900003);
+  const [cnfEntityId, setCnfEntityId] = useState(900004);
 
   const [articleMounted, setArticleMounted] = useState(true);
   const [creatorMounted, setCreatorMounted] = useState(true);
@@ -48,11 +52,10 @@ export default function LiveCardParityTest() {
         <Stack p="md" gap="md" maw={1100} mx="auto">
           <Title>Live Card Parity Test</Title>
           <Text size="sm" c="dimmed">
-            Each feed card below is mounted with mock data. Click the emit buttons to push
-            deltas through <Code>useMetricSignalsStore.applyDelta</Code> — identical to what
-            the live metric listener does when the hub pushes a message. The relevant{' '}
-            <Code>AnimatedCount</Code> on each card should tick up and play its highlight
-            animation.
+            Each feed card below is mounted with mock data. Click the emit buttons to push deltas
+            through <Code>useMetricSignalsStore.applyDelta</Code> — identical to what the live
+            metric listener does when the hub pushes a message. The relevant{' '}
+            <Code>AnimatedCount</Code> on each card should tick up and play its highlight animation.
           </Text>
 
           <FeatureFlagBanner />
@@ -82,6 +85,9 @@ export default function LiveCardParityTest() {
             <Grid.Col span={{ base: 12, md: 6 }}>
               <ImagesCardHarness id={imageId} setId={setImageId} />
             </Grid.Col>
+            <Grid.Col span={{ base: 12 }}>
+              <CustomNumberFlowHarness id={cnfEntityId} setId={setCnfEntityId} />
+            </Grid.Col>
           </Grid>
         </Stack>
       </ImagesProvider>
@@ -94,7 +100,7 @@ function FeatureFlagBanner() {
   return (
     <Alert color={enabled ? 'green' : 'yellow'} variant="light">
       <Group justify="space-between">
-        <Text size="sm">
+        <Text component="span" size="sm">
           <Code>liveMetrics</Code> feature flag:{' '}
           <Badge color={enabled ? 'green' : 'yellow'} variant="filled">
             {enabled ? 'ON' : 'OFF'}
@@ -221,6 +227,80 @@ function UnmountedPlaceholder() {
   );
 }
 
+function CustomNumberFlowHarness({ id, setId }: { id: number; setId: (n: number) => void }) {
+  const initial = {
+    likeCount: 0,
+    heartCount: 0,
+    commentCount: 0,
+    viewCount: 1234,
+    collectedCount: 0,
+    tippedAmountCount: 0,
+  };
+  return (
+    <HarnessCard
+      title="CustomNumberFlow vs NumberFlow (live deltas)"
+      entityType="Image"
+      entityId={id}
+      setEntityId={setId}
+      metrics={['likeCount', 'heartCount', 'commentCount', 'viewCount', 'collectedCount']}
+    >
+      <Text size="sm" c="dimmed" mb="xs">
+        Both renderers are wired to the same <Code>Metrics</Code> subscription and apply the same
+        deltas. Click the <Code>+1</Code> buttons above; rows should tick in lockstep — visually
+        confirms <Code>CustomNumberFlow</Code> animates equivalently to <Code>NumberFlow</Code>.
+      </Text>
+      <Metrics entityType="Image" entityId={id} initial={initial}>
+        {(metrics) => (
+          <Grid gutter="xs">
+            <Grid.Col span={4}>
+              <Text size="xs" fw={600} c="dimmed">
+                metric
+              </Text>
+            </Grid.Col>
+            <Grid.Col span={4}>
+              <Badge color="violet" variant="light" size="sm">
+                CustomNumberFlow
+              </Badge>
+            </Grid.Col>
+            <Grid.Col span={4}>
+              <Badge color="gray" variant="light" size="sm">
+                NumberFlow
+              </Badge>
+            </Grid.Col>
+            {(Object.keys(initial) as (keyof typeof initial)[]).map((key) => {
+              const v = metrics[key] ?? 0;
+              return <CnfCompareRow key={key} label={key as string} value={v} />;
+            })}
+          </Grid>
+        )}
+      </Metrics>
+    </HarnessCard>
+  );
+}
+
+function CnfCompareRow({ label, value }: { label: string; value: number }) {
+  return (
+    <>
+      <Grid.Col span={4}>
+        <Code>{label}</Code>
+      </Grid.Col>
+      <Grid.Col span={4}>
+        <Text size="xl" fw={600} ff="monospace">
+          <CustomNumberFlow
+            value={value}
+            format={{ notation: 'compact', maximumFractionDigits: 1 }}
+          />
+        </Text>
+      </Grid.Col>
+      <Grid.Col span={4}>
+        <Text size="xl" fw={600} ff="monospace">
+          <NumberFlow value={value} format={{ notation: 'compact', maximumFractionDigits: 1 }} />
+        </Text>
+      </Grid.Col>
+    </>
+  );
+}
+
 function ImagesCardHarness({ id, setId }: { id: number; setId: (n: number) => void }) {
   // ImagesCard lives inside a more complex tree — ImagesProvider + MasonryProvider
   // above handle the missing context. We skip rendering it here because the reaction
@@ -235,8 +315,8 @@ function ImagesCardHarness({ id, setId }: { id: number; setId: (n: number) => vo
       metrics={['likeCount', 'heartCount', 'laughCount', 'cryCount', 'tippedAmountCount']}
     >
       <Text size="sm" c="dimmed">
-        Mount an <Code>ImagesCard</Code> by opening a normal feed page with this entity id;
-        emit deltas here and watch the live counts tick on that page. Included here for
+        Mount an <Code>ImagesCard</Code> by opening a normal feed page with this entity id; emit
+        deltas here and watch the live counts tick on that page. Included here for
         topic-registration parity checks only.
       </Text>
     </HarnessCard>

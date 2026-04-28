@@ -57,10 +57,6 @@ export const createAceAudioInput = defineHandler<AceAudioCtx, StepInput[]>((data
     instrumentalWeight:
       'instrumentalWeight' in data ? (data.instrumentalWeight as number) : undefined,
     vocalWeight: 'vocalWeight' in data ? (data.vocalWeight as number) : undefined,
-    timeSignature:
-      'timeSignature' in data ? (data.timeSignature as string | undefined) : undefined,
-    language: 'language' in data ? (data.language as string | undefined) : undefined,
-    key: 'key' in data ? (data.key as string | undefined) : undefined,
     steps: 'steps' in data ? (data.steps as number | undefined) : undefined,
     cfg: 'cfgScale' in data ? (data.cfgScale as number | undefined) : undefined,
     diffusionModel,

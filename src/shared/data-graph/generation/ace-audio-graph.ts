@@ -26,9 +26,6 @@
  * - bpm: Beats per minute
  * - instrumentalWeight: Instrumental element weight
  * - vocalWeight: Vocal element weight
- * - timeSignature: Time signature (e.g., "4/4")
- * - language: Language code (e.g., "en", "zh", "ja", "ko")
- * - key: Musical key (e.g., "C major")
  */
 
 import z from 'zod';
@@ -212,27 +209,6 @@ export const aceAudioGraph = new DataGraph<AceAudioCtx, GenerationCtx>()
     output: z.number().min(0).max(1),
     defaultValue: 0.5,
     meta: { min: 0, max: 1, step: 0.1 },
-  })
-
-  // Time signature (e.g., "4/4")
-  .node('timeSignature', {
-    input: z.string().optional(),
-    output: z.string().optional(),
-    defaultValue: '',
-  })
-
-  // Language code (e.g., "en", "zh", "ja", "ko")
-  .node('language', {
-    input: z.string().optional(),
-    output: z.string().optional(),
-    defaultValue: '',
-  })
-
-  // Musical key (e.g., "C major")
-  .node('key', {
-    input: z.string().optional(),
-    output: z.string().optional(),
-    defaultValue: '',
   })
 
   // Reset cfgScale and steps to variant defaults when switching models.

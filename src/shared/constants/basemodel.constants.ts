@@ -847,7 +847,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.LTXV23, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // AceAudio - checkpoint only (audio generation)
-  // { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },

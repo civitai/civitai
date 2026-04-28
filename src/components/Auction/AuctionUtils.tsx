@@ -1,9 +1,9 @@
 import { Group, Paper, Stack, Text, Tooltip } from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
-import NumberFlow from '@number-flow/react';
 import { IconCheck, IconUsers, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
+import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import {
@@ -156,7 +156,7 @@ export const AuctionViews = () => {
       <Paper radius="sm" shadow="xs" px={8} py={4} withBorder className="bg-gray-0 dark:bg-dark-6">
         <Group gap={4} className="min-w-[55px] cursor-default justify-center">
           <IconUsers size={14} />
-          <NumberFlow
+          <CustomNumberFlow
             format={{ notation: 'compact' }}
             respectMotionPreference={false}
             value={views}

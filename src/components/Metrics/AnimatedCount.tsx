@@ -1,8 +1,8 @@
-import NumberFlow, { type Format } from '@number-flow/react';
 import { useEffect, useRef, useState } from 'react';
+import { CustomNumberFlow } from './CustomNumberFlow';
 import classes from './AnimatedCount.module.css';
 
-const compactFormat: Format = {
+const compactFormat: Intl.NumberFormatOptions = {
   notation: 'compact',
   maximumFractionDigits: 1,
 };
@@ -28,7 +28,7 @@ interface AnimatedCountProps {
  * Animated number display with smooth digit transitions, a scale/glow
  * pulse, and a floating "+N" indicator when the value increases.
  *
- * Uses @number-flow/react for digit morphing and CSS animations
+ * Uses CustomNumberFlow for digit morphing and CSS animations
  * for visual feedback on value changes.
  */
 export function AnimatedCount({
@@ -69,7 +69,7 @@ export function AnimatedCount({
 
   return (
     <span ref={spanRef} className={`${classes.wrapper} ${className ?? ''}`}>
-      <NumberFlow
+      <CustomNumberFlow
         respectMotionPreference={false}
         value={value}
         format={abbreviate ? compactFormat : undefined}
