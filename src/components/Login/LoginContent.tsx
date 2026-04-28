@@ -45,14 +45,45 @@ export function LoginContent(args: {
   const message = reason ? loginRedirectReasons[reason] : args.message;
 
   // Show "Login with [green domain]" on any domain that isn't green (.com)
-  const greenDomain = useServerDomains().green;
-  const isOnGreen = useAppContext().domain.green;
+  const serverDomains = useServerDomains();
+  const greenDomain = serverDomains.green;
+  const {
+    domain: domainFlags,
+    serverDomains: serverDomainConfigs,
+    availableOAuthProviders,
+  } = useAppContext();
+  const isOnGreen = domainFlags.green;
   const currentHost = typeof window !== 'undefined' ? window.location.host : '';
   const civitaiLoginHref = !isOnGreen
     ? `//${greenDomain}/login?returnUrl=${encodeURIComponent(
         `https://${currentHost}${returnUrl}?sync-account=green`
       )}`
     : undefined;
+
+  // Detect alias-host case: current host is configured for a color but is NOT
+  // that color's primary. On alias hosts we render a "Continue on <primary>"
+  // button so users can fall back to the canonical host's full provider list
+  // when the alias has limited OAuth credentials. Bounce uses sync-account.
+  const aliasFallback = (() => {
+    if (typeof window === 'undefined') return undefined;
+    const normalized = currentHost.toLowerCase();
+    for (const [color, cfg] of Object.entries(serverDomainConfigs)) {
+      if (!cfg) continue;
+      if (cfg.aliases.includes(normalized) && cfg.primary !== normalized) {
+        return { primary: cfg.primary, color };
+      }
+    }
+    return undefined;
+  })();
+  const aliasFallbackHref = aliasFallback
+    ? `//${aliasFallback.primary}/login?returnUrl=${encodeURIComponent(
+        `https://${currentHost}${returnUrl}?sync-account=${aliasFallback.color}`
+      )}`
+    : undefined;
+
+  // Filter the static provider list down to providers with credentials
+  // configured for the active host (computed server-side per request).
+  const availableProviders = providers.filter((p) => availableOAuthProviders.includes(p.id));
 
   useEffect(() => {
     if (reason) {
@@ -129,7 +160,18 @@ export function LoginContent(args: {
               {greenDomain}
             </Button>
           )}
-          {providers.map((provider) => (
+          {aliasFallbackHref && (
+            <Button
+              component="a"
+              href={aliasFallbackHref}
+              size="md"
+              leftSection={<IconCivitai size={20} />}
+              variant="outline"
+            >
+              Continue on {aliasFallback?.primary}
+            </Button>
+          )}
+          {availableProviders.map((provider) => (
             <SocialButton
               key={provider.name}
               size="md"
