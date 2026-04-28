@@ -17,7 +17,7 @@ import { generationGraphPanel } from '~/store/generation-graph.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { fetchBlob } from '~/utils/file-utils';
 import { getJSZip } from '~/utils/lazy';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { getStepMeta } from './GenerationForm/generation.utils';
@@ -83,7 +83,26 @@ export function GeneratedImageActions({
   const isMutating = isLoading || createPostMutation.isLoading;
 
   const postSelectedImages = async () => {
-    const imageData = selected.map((image) => ({
+    // Audio outputs aren't supported by the post system — filter them out.
+    const postable = selected.filter((image) => image.mediaType !== 'audio');
+    const skipped = selected.length - postable.length;
+
+    if (postable.length === 0) {
+      showErrorNotification({
+        title: 'Cannot create post',
+        error: new Error('Audio outputs cannot be added to a post'),
+      });
+      return;
+    }
+
+    if (skipped > 0) {
+      showWarningNotification({
+        title: 'Some outputs were skipped',
+        message: `${skipped} audio output${skipped === 1 ? '' : 's'} cannot be added to a post.`,
+      });
+    }
+
+    const imageData = postable.map((image) => ({
       url: image.url,
       meta: getStepMeta(image.step),
     }));

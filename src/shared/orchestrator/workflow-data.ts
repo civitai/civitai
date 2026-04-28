@@ -179,6 +179,24 @@ export class StepData {
     return (this.metadata as any)?.suppressOutput === true;
   }
 
+  /**
+   * Logical media type of this step's output, independent of the blob container format.
+   * aceStepAudio emits a VideoBlob (audio + cover) or AudioBlob; both are semantically 'audio'.
+   */
+  get mediaType(): 'image' | 'video' | 'audio' {
+    switch (this.$type) {
+      case 'videoGen':
+      case 'videoUpscaler':
+      case 'videoEnhancement':
+      case 'videoInterpolation':
+        return 'video';
+      case 'aceStepAudio':
+        return 'audio';
+      default:
+        return 'image';
+    }
+  }
+
   /** Outputs that have landed, not blocked, and not hidden. */
   get succeededOutput(): Array<ImageBlob | VideoBlob | AudioBlob> {
     if (this.suppressOutput) return [];
@@ -362,6 +380,15 @@ export abstract class BlobData {
     return this.#index;
   }
 
+  /**
+   * Logical media type, derived from the parent step's `$type`.
+   * Distinct from `type` (the blob container format): aceStepAudio emits a VideoBlob when a
+   * cover image is combined with audio, but its mediaType is still 'audio'.
+   */
+  get mediaType(): 'image' | 'video' | 'audio' {
+    return this.#step.mediaType;
+  }
+
   /** Parent step. */
   get step(): StepData {
     return this.#step;
@@ -432,6 +459,9 @@ export class VideoBlob extends BlobData {
 export class AudioBlob extends BlobData {
   readonly type = 'audio' as const;
   readonly aspect = 1;
+  /** Audio has no intrinsic dimensions — these defaults size the card layout uniformly with image/video. */
+  readonly width = 512;
+  readonly height = 512;
   duration?: number | null;
   constructor(args: BlobConstructorArgs & { data: NormalizedAudioOutput }) {
     super(args);

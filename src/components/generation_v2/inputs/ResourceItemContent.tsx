@@ -17,7 +17,6 @@ import type { ReactNode } from 'react';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
-import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 
@@ -177,13 +176,6 @@ export function ResourceItemContent({
   const modelUrl = `/models/${resource.model.id}?modelVersionId=${resource.id}`;
   const showLink = (showLinkProp ?? true) && shouldShowModelLink(resource);
 
-  let ecosystemName: string;
-  try {
-    ecosystemName = getRootEcosystem(resource.baseModel).name;
-  } catch {
-    ecosystemName = resource.baseModel;
-  }
-
   return (
     <>
       <Group gap="xs" justify="space-between" wrap="nowrap">
@@ -218,9 +210,6 @@ export function ResourceItemContent({
           )}
           {/* Version name + warnings — second line */}
           <Group gap={4} wrap="nowrap">
-            {/* <Badge size="xs" variant="outline" color="gray" className="shrink-0">
-              {ecosystemName}
-            </Badge> */}
             {resource.name && resource.model.name && resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
               <Text size="xs" c="dimmed" className="shrink-0">
                 ({resource.name})
