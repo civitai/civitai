@@ -44,6 +44,7 @@ const CreateSteps = ({
   modelId,
   router,
   postId,
+  skipFiles,
 }: {
   step: number;
   model?: ModelWithTags;
@@ -53,6 +54,7 @@ const CreateSteps = ({
   modelId: number | undefined;
   router: NextRouter;
   postId: number | undefined;
+  skipFiles: boolean;
 }) => {
   const { getStatus: getUploadStatus } = useS3UploadStore();
   const { uploading, error, aborted } = getUploadStatus(
@@ -60,6 +62,10 @@ const CreateSteps = ({
   );
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
+
+  // URL step → stepper-rendered index. When skipFiles=true the Files step (URL step 3)
+  // is omitted, so URL step 4 (post) collapses to rendered index 2.
+  const activeIndex = skipFiles && step >= 3 ? Math.max(0, step - 2) : step - 1;
 
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
@@ -85,12 +91,13 @@ const CreateSteps = ({
 
   return (
     <Stepper
-      active={step - 1}
-      onStepClick={(step) =>
-        router.replace(getWizardUrl({ id: modelId, step: step + 1, templateId }), undefined, {
+      active={activeIndex}
+      onStepClick={(idx) => {
+        const urlStep = skipFiles && idx >= 2 ? idx + 2 : idx + 1;
+        router.replace(getWizardUrl({ id: modelId, step: urlStep, templateId }), undefined, {
           shallow: true,
-        })
-      }
+        });
+      }}
       allowNextStepsSelect={false}
       size="sm"
       classNames={{ steps: 'container max-w-sm' }}
@@ -156,17 +163,19 @@ const CreateSteps = ({
       </Stepper.Step>
 
       {/* Step 3: Upload Files */}
-      <Stepper.Step
-        label="Upload files"
-        loading={uploading > 0}
-        color={error + aborted > 0 ? 'red' : undefined}
-      >
-        <div className="container flex max-w-sm flex-col gap-3">
-          <Title order={3}>Upload files</Title>
-          <Files />
-          <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
-        </div>
-      </Stepper.Step>
+      {!skipFiles && (
+        <Stepper.Step
+          label="Upload files"
+          loading={uploading > 0}
+          color={error + aborted > 0 ? 'red' : undefined}
+        >
+          <div className="container flex max-w-sm flex-col gap-3">
+            <Title order={3}>Upload files</Title>
+            <Files />
+            <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
+          </div>
+        </Stepper.Step>
+      )}
 
       <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
         {model && modelVersion && (
@@ -367,6 +376,10 @@ export function ModelWizard() {
     }
   };
 
+  // File-less ExternalGeneration versions don't need the upload step. Hoisted so the
+  // CreateSteps stepper and the auto-redirect effect agree on the same step layout.
+  const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
+
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
@@ -375,8 +388,6 @@ export function ModelWizard() {
 
       const hasVersions = model.modelVersions.length > 0;
       const hasFiles = model.modelVersions.some((version) => version.files.length > 0);
-      // File-less ExternalGeneration versions don't need the upload step.
-      const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
 
       if (!hasVersions)
         router
@@ -479,6 +490,7 @@ export function ModelWizard() {
               step={step}
               router={router}
               postId={postId}
+              skipFiles={skipFiles}
             />
           )}
         </>
