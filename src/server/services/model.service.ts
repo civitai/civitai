@@ -761,24 +761,22 @@ export const getModelsRaw = async ({
 
   const modelQuery =
     splittable && cursorStrict && cursorEquality
-      ? // Split-cursor path: UNION ALL of (strict tuple-compare branch) +
-        // (equality tie-handler branch). The strict branch carries 99%+ of the
+      ? // Split-cursor path: UNION ALL of (equality tie-handler branch) +
+        // (strict tuple-compare branch). The strict branch carries 99%+ of the
         // rows and benefits from an index seek. The equality branch is a
         // bounded "ties at the cursor boundary" lookup that almost always
         // returns 0 rows ("never executed" in most plans).
+        //
+        // Branch order matters: for DESC head fields, equality rows
+        // (head = cursor values) sort BEFORE strict rows (head < cursor values).
+        // PostgreSQL's Append node returns rows from the first child fully
+        // before the second, so emitting equality first yields the correct
+        // merged sort order without an outer ORDER BY. We can't add an outer
+        // ORDER BY because output column names don't preserve table aliases
+        // (mm."lastVersionAt" → "lastVersionAt"; thumbsUpCount/downloadCount
+        // are buried inside the rank JSONB and aren't directly accessible).
         Prisma.sql`
     ${queryWith}
-    (
-      SELECT
-        ${selectList}
-      ${fromAndJoin}
-      WHERE
-        ${baseAndClause} AND ${cursorStrict}
-      ORDER BY
-        ${orderByRaw}
-      LIMIT ${limitValue}
-    )
-    UNION ALL
     (
       SELECT
         ${selectList}
@@ -789,8 +787,17 @@ export const getModelsRaw = async ({
         ${orderByRaw}
       LIMIT ${limitValue}
     )
-    ORDER BY
-      ${orderByRaw}
+    UNION ALL
+    (
+      SELECT
+        ${selectList}
+      ${fromAndJoin}
+      WHERE
+        ${baseAndClause} AND ${cursorStrict}
+      ORDER BY
+        ${orderByRaw}
+      LIMIT ${limitValue}
+    )
     LIMIT ${limitValue}
   `
       : // No cursor or single-field sort: original single-branch query
