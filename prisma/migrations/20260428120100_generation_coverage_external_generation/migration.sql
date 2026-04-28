@@ -18,8 +18,10 @@ WHERE
   -- External generation: file-less mod-published versions routed via external
   -- engines (e.g. NanoBanana, Seedream). Normal users can generate with these
   -- via the dedicated engine UIs; canGenerate is unrestricted.
+  -- The NOT m.poi guard mirrors the catch-all branch so PoI models can't be
+  -- silently flipped into a covered/generatable state via the usageControl flag.
   -- ========================================
-  OR (mv."usageControl" = 'ExternalGeneration' AND mv.status = 'Published')
+  OR (mv."usageControl" = 'ExternalGeneration' AND mv.status = 'Published' AND NOT m.poi)
 
   -- ========================================
   -- Everything else: shared conditions + type-specific logic
