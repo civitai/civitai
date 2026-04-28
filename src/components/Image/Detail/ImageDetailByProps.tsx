@@ -42,7 +42,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import type { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -253,14 +253,12 @@ export function ImageDetailByProps({
                     />
                     <Paper p="sm" radius={0}>
                       <Stack gap={8}>
-                        <MetricSubscriptionProvider entityType="Image" entityId={image.id}>
-                          <ImageDetailByPropsReactions
-                            imageId={image.id}
-                            reactions={reactions}
-                            stats={stats}
-                            userId={user?.id}
-                          />
-                        </MetricSubscriptionProvider>
+                        <ImageDetailByPropsReactions
+                          imageId={image.id}
+                          reactions={reactions}
+                          stats={stats}
+                          userId={user?.id}
+                        />
                         {user?.id && <ImageDetailComments imageId={image.id} userId={user.id} />}
                       </Stack>
                     </Paper>
@@ -432,21 +430,27 @@ function ImageDetailByPropsReactions({
   } | null;
   userId?: number;
 }) {
-  const reactionMetrics = useLiveMetrics('Image', imageId, {
-    likeCount: stats?.likeCountAllTime ?? 0,
-    dislikeCount: stats?.dislikeCountAllTime ?? 0,
-    heartCount: stats?.heartCountAllTime ?? 0,
-    laughCount: stats?.laughCountAllTime ?? 0,
-    cryCount: stats?.cryCountAllTime ?? 0,
-  });
-
   return (
-    <Reactions
+    <Metrics
+      entityType="Image"
       entityId={imageId}
-      entityType="image"
-      reactions={reactions}
-      metrics={reactionMetrics}
-      targetUserId={userId}
-    />
+      initial={{
+        likeCount: stats?.likeCountAllTime ?? 0,
+        dislikeCount: stats?.dislikeCountAllTime ?? 0,
+        heartCount: stats?.heartCountAllTime ?? 0,
+        laughCount: stats?.laughCountAllTime ?? 0,
+        cryCount: stats?.cryCountAllTime ?? 0,
+      }}
+    >
+      {(metrics) => (
+        <Reactions
+          entityId={imageId}
+          entityType="image"
+          reactions={reactions}
+          metrics={metrics}
+          targetUserId={userId}
+        />
+      )}
+    </Metrics>
   );
 }

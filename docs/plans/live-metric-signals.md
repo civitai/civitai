@@ -1,7 +1,18 @@
 # Live Metric Signals Implementation Plan
 
 **Session ID:** `1d51f5de-f13a-4480-a5a7-87b9bfa89cd0`
-**Status:** Partially implemented (ImageCard done, other cards pending)
+**Status:** Landed, then superseded.
+
+> **Superseded by the metrics refactor.** This plan described the original live-metric-signals rollout, including a `MetricSubscriptionProvider` component. That component shipped and has since been replaced by:
+>
+> - `useMetricSubscription` hook (no wrapper component, no DOM node).
+> - `<Metrics>` render-prop component for visibility-gated live-metric rendering.
+> - `ElementInView` polymorphic primitive (replaces per-card `IntersectionObserver` calls).
+> - Refcounted `SignalProvider` with event-driven reconnect re-registration and retry.
+>
+> Current entry points in the code: [`useMetricSubscription`](../../src/components/Metrics/useMetricSubscription.ts), [`Metrics`](../../src/components/Metrics/Metrics.tsx), [`ElementInView`](../../src/components/IntersectionObserver/ElementInView.tsx), [`SignalsProvider`](../../src/components/Signals/SignalsProvider.tsx). See [signal-refcount-known-issues.md](../signal-refcount-known-issues.md) and [signal-topic-subscription-overhead.md](../signal-topic-subscription-overhead.md) for context on the refactor.
+>
+> The plan body below is kept as historical context for the original design.
 
 ---
 

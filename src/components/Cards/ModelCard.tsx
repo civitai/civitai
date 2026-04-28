@@ -26,7 +26,8 @@ import { useModelCardContext } from '~/components/Cards/ModelCardContext';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
-import { AnimatedCount, MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { useElementInView } from '~/components/IntersectionObserver/ElementInView';
+import { AnimatedCount, Metrics } from '~/components/Metrics';
 import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -51,11 +52,7 @@ function ModFlagBadge({ labels }: { labels: string[] }) {
 }
 
 export const ModelCard = memo(function ModelCard({ data }: Props) {
-  return (
-    <MetricSubscriptionProvider entityType="Model" entityId={data.id}>
-      <ModelCardContent data={data} />
-    </MetricSubscriptionProvider>
-  );
+  return <ModelCardContent data={data} />;
 });
 
 function ModelCardContent({ data }: Props) {
@@ -63,10 +60,6 @@ function ModelCardContent({ data }: Props) {
   const colorScheme = useComputedColorScheme('dark');
 
   const currentUser = useCurrentUser();
-  const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
-
-  const reviewedModelIds = useReviewedModelIds();
-  const hasReview = reviewedModelIds.has(data.id);
 
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
@@ -100,26 +93,6 @@ function ModelCardContent({ data }: Props) {
     }),
     [isEarlyAccess, isUpdated, theme, colorScheme]
   );
-
-  // Live metrics for model stats — memoize base so useLiveMetrics' internal
-  // useMemo can actually hit its cache across non-rank-changing re-renders.
-  const baseMetrics = useMemo(
-    () => ({
-      downloadCount: data.rank?.downloadCount ?? 0,
-      collectedCount: data.rank?.collectedCount ?? 0,
-      commentCount: data.rank?.commentCount ?? 0,
-      tippedAmountCount: data.rank?.tippedAmountCount ?? 0,
-      thumbsUpCount: data.rank?.thumbsUpCount ?? 0,
-      thumbsDownCount: data.rank?.thumbsDownCount ?? 0,
-    }),
-    [data.rank]
-  );
-  const liveMetrics = useLiveMetrics('Model', data.id, baseMetrics);
-
-  const thumbsUpCount = liveMetrics.thumbsUpCount;
-  const thumbsDownCount = liveMetrics.thumbsDownCount;
-  const totalCount = thumbsUpCount + thumbsDownCount;
-  const positiveRating = totalCount > 0 ? thumbsUpCount / totalCount : 0;
 
   const { useModelVersionRedirect } = useModelCardContext();
   const href = useMemo(() => {
@@ -211,74 +184,113 @@ function ModelCardContent({ data }: Props) {
           <Text className={cardClasses.dropShadow} size="xl" fw={700} lineClamp={3} lh={1.2}>
             {data.name}
           </Text>
-          {data.rank && (
-            <div className="flex flex-wrap items-center justify-between gap-1">
-              {(!!liveMetrics.downloadCount ||
-                !!liveMetrics.collectedCount ||
-                !!liveMetrics.tippedAmountCount) && (
-                <Badge
-                  className={clsx(cardClasses.statChip, cardClasses.chip)}
-                  classNames={{ label: 'flex flex-nowrap gap-2' }}
-                  variant="light"
-                  radius="xl"
-                >
-                  <div className="flex items-center gap-0.5">
-                    <IconDownload size={14} strokeWidth={2.5} />
-                    <Text size="xs" lh={1} fw="bold">
-                      <AnimatedCount value={liveMetrics.downloadCount} />
-                    </Text>
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    <IconBookmark size={14} strokeWidth={2.5} />
-                    <Text size="xs" lh={1} fw="bold">
-                      <AnimatedCount value={liveMetrics.collectedCount} />
-                    </Text>
-                  </div>
-                  <div className="flex items-center gap-0.5">
-                    <IconMessageCircle2 size={14} strokeWidth={2.5} />
-                    <Text size="xs" lh={1} fw="bold">
-                      <AnimatedCount value={liveMetrics.commentCount} />
-                    </Text>
-                  </div>
-                  {!isPOI && (
-                    <InteractiveTipBuzzButton
-                      toUserId={data.user.id}
-                      entityType={'Model'}
-                      entityId={data.id}
-                    >
-                      <div className="flex items-center gap-0.5">
-                        <IconBolt size={14} strokeWidth={2.5} />
-                        <Text size="xs" lh={1} fw="bold">
-                          <AnimatedCount value={liveMetrics.tippedAmountCount + tippedAmount} />
-                        </Text>
-                      </div>
-                    </InteractiveTipBuzzButton>
-                  )}
-                </Badge>
-              )}
-              {!data.locked && !!thumbsUpCount && (
-                <Badge
-                  className={clsx(cardClasses.statChip, cardClasses.chip)}
-                  pl={6}
-                  pr={8}
-                  data-reviewed={hasReview}
-                  radius="xl"
-                  title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
-                  classNames={{ label: 'gap-2 flex items-center' }}
-                >
-                  <Text c={hasReview ? 'success.5' : 'yellow.8'} mt={2} lh={1} span>
-                    <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
-                  </Text>
-                  <Text fz={16} fw={500} lh={1} span>
-                    <AnimatedCount value={thumbsUpCount} />
-                  </Text>
-                </Badge>
-              )}
-            </div>
-          )}
+          {data.rank && <ModelCardStats data={data} />}
         </div>
       }
     />
+  );
+}
+
+/**
+ * Gated live-metrics render for the ModelCard footer stats. Lives inside the
+ * AspectRatioCard's ElementInView subtree so it can read visibility context
+ * and pass `useLive` into Metrics. Only subscribes + renders live values when
+ * the card is visible; matches the old `MetricSubscriptionProvider` gating.
+ */
+function ModelCardStats({ data }: { data: Props['data'] }) {
+  const inView = useElementInView();
+  const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
+  const reviewedModelIds = useReviewedModelIds();
+  const hasReview = reviewedModelIds.has(data.id);
+  const isPOI = data.poi;
+
+  const baseMetrics = useMemo(
+    () => ({
+      downloadCount: data.rank?.downloadCount ?? 0,
+      collectedCount: data.rank?.collectedCount ?? 0,
+      commentCount: data.rank?.commentCount ?? 0,
+      tippedAmountCount: data.rank?.tippedAmountCount ?? 0,
+      thumbsUpCount: data.rank?.thumbsUpCount ?? 0,
+      thumbsDownCount: data.rank?.thumbsDownCount ?? 0,
+    }),
+    [data.rank]
+  );
+
+  return (
+    <Metrics
+      entityType="Model"
+      entityId={data.id}
+      initial={baseMetrics}
+      useLive={inView !== false}
+    >
+      {(m) => {
+        const totalCount = m.thumbsUpCount + m.thumbsDownCount;
+        const positiveRating = totalCount > 0 ? m.thumbsUpCount / totalCount : 0;
+        return (
+          <div className="flex flex-wrap items-center justify-between gap-1">
+            {(!!m.downloadCount || !!m.collectedCount || !!m.tippedAmountCount) && (
+              <Badge
+                className={clsx(cardClasses.statChip, cardClasses.chip)}
+                classNames={{ label: 'flex flex-nowrap gap-2' }}
+                variant="light"
+                radius="xl"
+              >
+                <div className="flex items-center gap-0.5">
+                  <IconDownload size={14} strokeWidth={2.5} />
+                  <Text size="xs" lh={1} fw="bold">
+                    <AnimatedCount value={m.downloadCount} />
+                  </Text>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <IconBookmark size={14} strokeWidth={2.5} />
+                  <Text size="xs" lh={1} fw="bold">
+                    <AnimatedCount value={m.collectedCount} />
+                  </Text>
+                </div>
+                <div className="flex items-center gap-0.5">
+                  <IconMessageCircle2 size={14} strokeWidth={2.5} />
+                  <Text size="xs" lh={1} fw="bold">
+                    <AnimatedCount value={m.commentCount} />
+                  </Text>
+                </div>
+                {!isPOI && (
+                  <InteractiveTipBuzzButton
+                    toUserId={data.user.id}
+                    entityType={'Model'}
+                    entityId={data.id}
+                  >
+                    <div className="flex items-center gap-0.5">
+                      <IconBolt size={14} strokeWidth={2.5} />
+                      <Text size="xs" lh={1} fw="bold">
+                        <AnimatedCount value={m.tippedAmountCount + tippedAmount} />
+                      </Text>
+                    </div>
+                  </InteractiveTipBuzzButton>
+                )}
+              </Badge>
+            )}
+            {!data.locked && !!m.thumbsUpCount && (
+              <Badge
+                className={clsx(cardClasses.statChip, cardClasses.chip)}
+                pl={6}
+                pr={8}
+                data-reviewed={hasReview}
+                radius="xl"
+                title={`${Math.round(positiveRating * 100)}% of reviews are positive`}
+                classNames={{ label: 'gap-2 flex items-center' }}
+              >
+                <Text c={hasReview ? 'success.5' : 'yellow.8'} mt={2} lh={1} span>
+                  <ThumbsUpIcon size={20} filled={hasReview} strokeWidth={2.5} />
+                </Text>
+                <Text fz={16} fw={500} lh={1} span>
+                  <AnimatedCount value={m.thumbsUpCount} />
+                </Text>
+              </Badge>
+            )}
+          </div>
+        );
+      }}
+    </Metrics>
   );
 }
 

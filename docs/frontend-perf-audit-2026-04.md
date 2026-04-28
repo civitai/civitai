@@ -135,6 +135,14 @@ This is the #1 contributor to the `ShadowRoot`, `digit__num`, `CSSStyleDeclarati
 
 ### 2. Per-card IntersectionObserver instead of shared
 
+**Status (resolved)**: `MetricSubscriptionProvider` has been removed entirely.
+Cards now share a single observer via the polymorphic `ElementInView`
+primitive, which is built on the shared `IntersectionObserverProvider`.
+Visibility-gated subscription is expressed via
+`<Metrics useLive={inView === true}>` rather than a per-card observer. See
+[signal-refcount-known-issues.md](./signal-refcount-known-issues.md) and
+[signal-topic-subscription-overhead.md](./signal-topic-subscription-overhead.md).
+
 `src/components/Metrics/MetricSubscriptionProvider.tsx:77-90` creates a brand
 new `IntersectionObserver` for every card. The repo already has a shared one
 (`src/components/IntersectionObserver/IntersectionObserverProvider.tsx`) that
@@ -190,8 +198,13 @@ query cache. Needs source-map lookup to confirm.
 2. **Switch `MetricSubscriptionProvider` to the shared
    `IntersectionObserverProvider`.** One observer for the feed instead of one
    per card. Fixes `computeIntersections` churn and a detached-node vector.
-   **Status: already done in this branch via `343778e1a ModelCard optimizations`
-   (not yet in prod).**
+   **Status: superseded.** `MetricSubscriptionProvider` was removed entirely.
+   Subscription is now a hook (`useMetricSubscription`) gated by the
+   polymorphic `ElementInView` primitive (built on the shared observer).
+   Additionally: `SignalProvider` refcounts topics so duplicate subscribers
+   dedupe at the hub, and the per-card 60s keep-alive timer was replaced
+   with event-driven re-registration on reconnect. See
+   [signal-refcount-known-issues.md](./signal-refcount-known-issues.md).
 3. **~~Find and disconnect the stuck `PerformanceObserver`.~~** Investigated
    — no `PerformanceObserver` registration in our source (`rg "new PerformanceObserver"` empty; no `web-vitals` / `@sentry` / `@vercel/analytics` /
    `posthog` deps). The `+1,381 PerformanceEventTiming` retention is coming
@@ -236,7 +249,11 @@ query cache. Needs source-map lookup to confirm.
 
 ### P2
 
-8. Audit `useSignalTopic` cleanup when topic becomes undefined.
+8. Audit `useSignalTopic` cleanup when topic becomes undefined. **Status:
+   refactored.** `useSignalTopic` now goes through `registerTopic` /
+   `releaseTopic` on a refcounted provider; cleanup is explicit and tested
+   in `/testing/metrics-refcount`. Topic-undefined transitions still need
+   spot-checking after the refactor.
 9. Drop NumberFlow animation entirely for low-motion metrics (downloads, likes);
    use CSS pulse on value change instead.
 10. `MasonryGridVirtual.tsx:61` — `useBrowsingLevelDebounced` + `adsReallyAreEnabled`

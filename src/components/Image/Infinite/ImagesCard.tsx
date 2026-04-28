@@ -14,7 +14,8 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { MetricSubscriptionProvider, useLiveMetrics } from '~/components/Metrics';
+import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
+import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
@@ -39,11 +40,7 @@ function getDialogState<T extends { id?: number }>(imageId: number, images: T[] 
 }
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  return (
-    <MetricSubscriptionProvider entityType="Image" entityId={data.id}>
-      <ImagesCardContent data={data} height={height} />
-    </MetricSubscriptionProvider>
-  );
+  return <ImagesCardContent data={data} height={height} />;
 }
 
 function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height: number }) {
@@ -92,21 +89,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
     return !image.cosmetic?.data ? { height } : undefined;
   }, [image.cosmetic, height]);
 
-  const reactionMetrics = useLiveMetrics('Image', image.id, {
-    likeCount: image.stats?.likeCountAllTime ?? 0,
-    dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
-    heartCount: image.stats?.heartCountAllTime ?? 0,
-    laughCount: image.stats?.laughCountAllTime ?? 0,
-    cryCount: image.stats?.cryCountAllTime ?? 0,
-    tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
-  });
-
   return (
     <TwCosmeticWrapper
       cosmetic={image.cosmetic?.data}
       style={image.cosmetic?.data ? { height } : undefined}
     >
-      <TwCard style={twCardStyle} className="border">
+      <ElementInView component={TwCard} style={twCardStyle} className="border">
         <ImageGuard2 image={image}>
           {(safe) => (
             <>
@@ -286,25 +274,48 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
               </div>
               {!contextProps.hideReactions && (
                 <div>
-                  <Reactions
-                    entityId={image.id}
-                    entityType="image"
-                    reactions={image.reactions}
-                    metrics={reactionMetrics}
-                    targetUserId={image.user.id}
-                    readonly={!safe || (isScanned && isBlocked)}
-                    className="justify-between p-2"
-                    invisibleEmpty
-                    disableBuzzTip={image.poi}
-                  />
+                  <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
                 </div>
               )}
             </>
           )}
         </ImageGuard2>
-      </TwCard>
+      </ElementInView>
     </TwCosmeticWrapper>
   );
 }
 
 export const ImagesCardMemoized = memo(ImagesCard);
+
+function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; readonly: boolean }) {
+  const inView = useElementInView();
+  return (
+    <Metrics
+      entityType="Image"
+      entityId={image.id}
+      initial={{
+        likeCount: image.stats?.likeCountAllTime ?? 0,
+        dislikeCount: image.stats?.dislikeCountAllTime ?? 0,
+        heartCount: image.stats?.heartCountAllTime ?? 0,
+        laughCount: image.stats?.laughCountAllTime ?? 0,
+        cryCount: image.stats?.cryCountAllTime ?? 0,
+        tippedAmountCount: image.stats?.tippedAmountCountAllTime ?? 0,
+      }}
+      useLive={inView !== false}
+    >
+      {(metrics) => (
+        <Reactions
+          entityId={image.id}
+          entityType="image"
+          reactions={image.reactions}
+          metrics={metrics}
+          targetUserId={image.user.id}
+          readonly={readonly}
+          className="justify-between p-2"
+          invisibleEmpty
+          disableBuzzTip={image.poi}
+        />
+      )}
+    </Metrics>
+  );
+}
