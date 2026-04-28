@@ -215,7 +215,7 @@ export function GeneratedOutputWrapper({
               infoSlot={
                 <ImageMetaPopover
                   meta={step.params as any}
-                  zIndex={imageGenerationDrawerZIndex + 1}
+                  zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
                   hideSoftware
                 >
                   <LegacyActionIcon size="md" variant="subtle" color="gray">
