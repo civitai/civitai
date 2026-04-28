@@ -356,6 +356,9 @@
       "sharp",
       "unrs-resolver",
       "utf-8-validate"
-    ]
+    ],
+    "patchedDependencies": {
+      "@mantine/hooks": "patches/@mantine__hooks.patch"
+    }
   }
 }
