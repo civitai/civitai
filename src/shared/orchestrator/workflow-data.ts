@@ -459,6 +459,9 @@ export class VideoBlob extends BlobData {
 export class AudioBlob extends BlobData {
   readonly type = 'audio' as const;
   readonly aspect = 1;
+  /** Audio has no intrinsic dimensions — these defaults size the card layout uniformly with image/video. */
+  readonly width = 512;
+  readonly height = 512;
   duration?: number | null;
   constructor(args: BlobConstructorArgs & { data: NormalizedAudioOutput }) {
     super(args);

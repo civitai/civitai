@@ -14,7 +14,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
 import { useGeneratedItemWorkflows } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { fetchBlob } from '~/utils/file-utils';
+import { downloadBlob, fetchBlob } from '~/utils/file-utils';
 import { showErrorNotification } from '~/utils/notifications';
 
 import classes from './GeneratedImage.module.css';
@@ -48,14 +48,8 @@ export function GeneratedOutputActions({
       const blob = await fetchBlob(output.url);
       if (!blob) throw new Error('Failed to fetch file');
       const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') ?? 'bin';
-      const href = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = href;
-      a.download = `${output.id}.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(href);
+      const baseName = output.id.replace(/\.[^./\\]+$/, '');
+      downloadBlob(blob, `${baseName}.${ext}`);
     } catch (e) {
       showErrorNotification({
         title: 'Download failed',

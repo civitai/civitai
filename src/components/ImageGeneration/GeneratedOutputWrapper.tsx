@@ -154,9 +154,15 @@ export function GeneratedOutputWrapper({
       className={clsx(
         'max-w-full border',
         isLightbox ? 'max-h-[calc(100vh-32px)]' : 'w-full self-start',
-        isLightbox && image.mediaType === 'audio' && 'w-full max-w-[512px]',
         selected && 'ring-2 ring-blue-5/60'
       )}
+      style={
+        isLightbox
+          ? {
+              width: `min(${image.width}px, 100%, calc((100vh - 76px) * ${image.aspect}))`,
+            }
+          : undefined
+      }
     >
       {!isLightbox && !inView && <div style={{ aspectRatio }} />}
       {(isLightbox || inView) && (
