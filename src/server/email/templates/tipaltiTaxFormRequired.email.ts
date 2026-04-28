@@ -54,7 +54,7 @@ Thanks,
 The Civitai Team
 `;
   },
-  testData: async () => ({
+  testData: async (): Promise<TipaltiTaxFormRequiredData> => ({
     email: 'test@tester.com',
     username: 'testuser',
   }),
