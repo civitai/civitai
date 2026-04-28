@@ -171,7 +171,7 @@ export type GrokCtx = EcosystemGraphOutput & { ecosystem: 'Grok' };
 export type SeedanceCtx = EcosystemGraphOutput & { ecosystem: 'Seedance' };
 
 /** AceAudio context */
-export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'AceAudio' };
+export type AceAudioCtx = EcosystemGraphOutput & { ecosystem: 'Ace' };
 
 // =============================================================================
 // Exports - Individual handlers
@@ -408,7 +408,7 @@ async function createEcosystemStep(
     // Audio Ecosystems - aceStepAudio step type
     // =========================================================================
 
-    case 'AceAudio':
+    case 'Ace':
       return createAceAudioInput(normalizedData, handlerCtx);
 
     default:

@@ -31,7 +31,6 @@ export type GenerationMode = 'txt2img' | 'img2img' | 'txt2vid' | 'img2vid' | 'vi
 export type EcosystemRecord = {
   id: number;
   key: string; // Stable identifier for data mapping (e.g., 'SDXL', 'Flux1')
-  name: string; // Lowercase ecosystem name for matching (e.g., 'sdxl', 'flux1')
   displayName: string; // Human/SEO friendly display name (e.g., 'Stable Diffusion XL')
   description?: string; // Brief description for UI display
   parentEcosystemId?: number;
@@ -177,7 +176,7 @@ export const ECO = {
   Grok: 61,
 
   // Root ecosystems - Audio models
-  AceAudio: 66,
+  AceAudio: 68,
 
   // Utility ecosystems
   Upscaler: 66,
@@ -203,7 +202,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux1,
     key: 'Flux1',
-    name: 'flux1',
     displayName: 'Flux.1',
     familyId: 1,
     sortOrder: 0,
@@ -211,7 +209,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.FluxKrea,
     key: 'FluxKrea',
-    name: 'fluxkrea',
     displayName: 'Flux.1 Krea',
     familyId: 1,
     sortOrder: 1,
@@ -219,7 +216,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux1Kontext,
     key: 'Flux1Kontext',
-    name: 'flux1kontext',
     displayName: 'Flux.1 Kontext',
     familyId: 1,
     sortOrder: 2,
@@ -227,7 +223,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux2,
     key: 'Flux2',
-    name: 'flux2',
     displayName: 'Flux.2',
     familyId: 1,
     sortOrder: 3,
@@ -235,7 +230,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux2Klein_9B,
     key: 'Flux2Klein_9B',
-    name: 'flux2klein_9b',
     displayName: 'Flux.2 Klein 9B',
     familyId: 1,
     sortOrder: 4,
@@ -244,7 +238,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux2Klein_9B_base,
     key: 'Flux2Klein_9B_base',
-    name: 'flux2klein_9b_base',
     displayName: 'Flux.2 Klein 9B Base',
     familyId: 1,
     sortOrder: 5,
@@ -253,7 +246,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux2Klein_4B,
     key: 'Flux2Klein_4B',
-    name: 'flux2klein_4b',
     displayName: 'Flux.2 Klein 4B',
     familyId: 1,
     sortOrder: 6,
@@ -262,7 +254,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Flux2Klein_4B_base,
     key: 'Flux2Klein_4B_base',
-    name: 'flux2klein_4b_base',
     displayName: 'Flux.2 Klein 4B Base',
     familyId: 1,
     sortOrder: 7,
@@ -273,7 +264,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SD1,
     key: 'SD1',
-    name: 'sd1',
     displayName: 'Stable Diffusion 1.x',
     familyId: 2,
     sortOrder: 10,
@@ -281,7 +271,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SD2,
     key: 'SD2',
-    name: 'sd2',
     displayName: 'Stable Diffusion 2.x',
     familyId: 2,
     sortOrder: 11,
@@ -289,7 +278,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SD3,
     key: 'SD3',
-    name: 'sd3',
     displayName: 'Stable Diffusion 3',
     familyId: 2,
     sortOrder: 12,
@@ -297,7 +285,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SD35M,
     key: 'SD3_5M',
-    name: 'sd35m',
     displayName: 'Stable Diffusion 3.5 Medium',
     familyId: 2,
     sortOrder: 13,
@@ -305,7 +292,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SDXL,
     key: 'SDXL',
-    name: 'sdxl',
     displayName: 'Stable Diffusion XL',
     familyId: 2,
     sortOrder: 14,
@@ -313,7 +299,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SDXLDistilled,
     key: 'SDXLDistilled',
-    name: 'sdxldistilled',
     displayName: 'SDXL Distilled',
     familyId: 2,
     sortOrder: 15,
@@ -321,7 +306,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SCascade,
     key: 'SCascade',
-    name: 'scascade',
     displayName: 'Stable Cascade',
     familyId: 2,
     sortOrder: 16,
@@ -329,7 +313,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.SVD,
     key: 'SVD',
-    name: 'svd',
     displayName: 'Stable Video Diffusion',
     familyId: 2,
     sortOrder: 17,
@@ -339,7 +322,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Illustrious,
     key: 'Illustrious',
-    name: 'illustrious',
     displayName: 'Illustrious',
     parentEcosystemId: ECO.SDXL,
     familyId: 3,
@@ -348,7 +330,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.NoobAI,
     key: 'NoobAI',
-    name: 'noobai',
     displayName: 'NoobAI',
     parentEcosystemId: ECO.SDXL,
     familyId: 3,
@@ -359,7 +340,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.HyDit1,
     key: 'HyDit1',
-    name: 'hydit1',
     displayName: 'Hunyuan DiT',
     familyId: 4,
     sortOrder: 40,
@@ -367,7 +347,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.HyV1,
     key: 'HyV1',
-    name: 'hyv1',
     displayName: 'Hunyuan Video',
     familyId: 4,
     sortOrder: 41,
@@ -377,7 +356,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo,
     key: 'WanVideo',
-    name: 'wanvideo',
     displayName: 'Wan Video',
     familyId: 5,
     sortOrder: 50,
@@ -385,7 +363,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo1_3B_T2V,
     key: 'WanVideo1_3B_T2V',
-    name: 'wanvideo1_3b_t2v',
     displayName: 'Wan Video 1.3B T2V',
     familyId: 5,
     sortOrder: 51,
@@ -393,7 +370,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo14B_T2V,
     key: 'WanVideo14B_T2V',
-    name: 'wanvideo14b_t2v',
     displayName: 'Wan Video 14B T2V',
     familyId: 5,
     sortOrder: 52,
@@ -401,7 +377,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo14B_I2V_480p,
     key: 'WanVideo14B_I2V_480p',
-    name: 'wanvideo14b_i2v_480p',
     displayName: 'Wan Video 14B I2V 480p',
     familyId: 5,
     sortOrder: 53,
@@ -409,7 +384,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo14B_I2V_720p,
     key: 'WanVideo14B_I2V_720p',
-    name: 'wanvideo14b_i2v_720p',
     displayName: 'Wan Video 14B I2V 720p',
     familyId: 5,
     sortOrder: 54,
@@ -417,7 +391,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo22_TI2V_5B,
     key: 'WanVideo-22-TI2V-5B',
-    name: 'wanvideo-22-ti2v-5b',
     displayName: 'Wan Video 2.2 TI2V 5B',
     familyId: 5,
     sortOrder: 55,
@@ -425,7 +398,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo22_I2V_A14B,
     key: 'WanVideo-22-I2V-A14B',
-    name: 'wanvideo-22-i2v-a14b',
     displayName: 'Wan Video 2.2 I2V A14B',
     familyId: 5,
     sortOrder: 56,
@@ -433,7 +405,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo22_T2V_A14B,
     key: 'WanVideo-22-T2V-A14B',
-    name: 'wanvideo-22-t2v-a14b',
     displayName: 'Wan Video 2.2 T2V A14B',
     familyId: 5,
     sortOrder: 57,
@@ -441,7 +412,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo25_T2V,
     key: 'WanVideo-25-T2V',
-    name: 'wanvideo-25-t2v',
     displayName: 'Wan Video 2.5 T2V',
     familyId: 5,
     sortOrder: 58,
@@ -449,7 +419,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo25_I2V,
     key: 'WanVideo-25-I2V',
-    name: 'wanvideo-25-i2v',
     displayName: 'Wan Video 2.5 I2V',
     familyId: 5,
     sortOrder: 59,
@@ -457,7 +426,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanImage27,
     key: 'WanImage27',
-    name: 'wanimage27',
     displayName: 'Wan Image 2.7',
     familyId: 5,
     sortOrder: 60,
@@ -465,7 +433,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.WanVideo27,
     key: 'WanVideo27',
-    name: 'wanvideo27',
     displayName: 'Wan Video 2.7',
     familyId: 5,
     sortOrder: 61,
@@ -475,7 +442,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.PixArtA,
     key: 'PixArtA',
-    name: 'pixarta',
     displayName: 'PixArt Alpha',
     familyId: 6,
     sortOrder: 60,
@@ -483,7 +449,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.PixArtE,
     key: 'PixArtE',
-    name: 'pixarte',
     displayName: 'PixArt Sigma',
     familyId: 6,
     sortOrder: 61,
@@ -493,7 +458,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Imagen4,
     key: 'Imagen4',
-    name: 'imagen4',
     displayName: 'Imagen 4',
     familyId: 7,
     sortOrder: 70,
@@ -501,7 +465,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.NanoBanana,
     key: 'NanoBanana',
-    name: 'nanobanana',
     displayName: 'Nano Banana',
     familyId: 7,
     sortOrder: 71,
@@ -509,7 +472,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Veo3,
     key: 'Veo3',
-    name: 'veo3',
     displayName: 'Veo 3',
     familyId: 7,
     sortOrder: 72,
@@ -519,7 +481,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.OpenAI,
     key: 'OpenAI',
-    name: 'openai',
     displayName: 'OpenAI',
     familyId: 8,
     sortOrder: 80,
@@ -527,7 +488,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Sora2,
     key: 'Sora2',
-    name: 'sora2',
     displayName: 'Sora 2',
     familyId: 8,
     sortOrder: 81,
@@ -537,7 +497,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Pony,
     key: 'Pony',
-    name: 'pony',
     displayName: 'Pony Diffusion',
     parentEcosystemId: ECO.SDXL,
     familyId: 9,
@@ -546,7 +505,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.PonyV7,
     key: 'PonyV7',
-    name: 'ponyv7',
     displayName: 'Pony Diffusion V7',
     parentEcosystemId: ECO.AuraFlow,
     familyId: 9,
@@ -554,11 +512,10 @@ export const ecosystems: EcosystemRecord[] = [
   },
 
   // Qwen Family (familyId: 10)
-  { id: ECO.Qwen, key: 'Qwen', name: 'qwen', displayName: 'Qwen', familyId: 10, sortOrder: 90 },
+  { id: ECO.Qwen, key: 'Qwen', displayName: 'Qwen', familyId: 10, sortOrder: 90 },
   {
     id: ECO.Qwen2,
     key: 'Qwen2',
-    name: 'qwen2',
     displayName: 'Qwen 2',
     familyId: 10,
     sortOrder: 91,
@@ -568,7 +525,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.ZImageTurbo,
     key: 'ZImageTurbo',
-    name: 'zimageturbo',
     displayName: 'ZImageTurbo',
     familyId: 11,
     sortOrder: 100,
@@ -576,7 +532,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.ZImageBase,
     key: 'ZImageBase',
-    name: 'zimagebase',
     displayName: 'ZImageBase',
     familyId: 11,
     sortOrder: 101,
@@ -586,7 +541,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Seedream,
     key: 'Seedream',
-    name: 'seedream',
     displayName: 'Seedream',
     familyId: 12,
     sortOrder: 110,
@@ -596,20 +550,18 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Ernie,
     key: 'Ernie',
-    name: 'ernie',
     displayName: 'Ernie',
     familyId: 17,
     sortOrder: 120,
   },
 
   // Standalone ecosystems (no family)
-  { id: ECO.Anima, key: 'Anima', name: 'anima', displayName: 'Anima', sortOrder: 199 },
-  { id: ECO.AuraFlow, key: 'AuraFlow', name: 'auraflow', displayName: 'AuraFlow', sortOrder: 200 },
-  { id: ECO.Chroma, key: 'Chroma', name: 'chroma', displayName: 'Chroma', sortOrder: 201 },
+  { id: ECO.Anima, key: 'Anima', displayName: 'Anima', sortOrder: 199 },
+  { id: ECO.AuraFlow, key: 'AuraFlow', displayName: 'AuraFlow', sortOrder: 200 },
+  { id: ECO.Chroma, key: 'Chroma', displayName: 'Chroma', sortOrder: 201 },
   {
     id: ECO.CogVideoX,
     key: 'CogVideoX',
-    name: 'cogvideox',
     displayName: 'CogVideoX',
     sortOrder: 202,
     // No generation support - training only
@@ -617,15 +569,13 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.HiDream,
     key: 'HiDream',
-    name: 'hidream',
     displayName: 'HiDream',
     sortOrder: 203,
   },
-  { id: ECO.Kolors, key: 'Kolors', name: 'kolors', displayName: 'Kolors', sortOrder: 204 },
+  { id: ECO.Kolors, key: 'Kolors', displayName: 'Kolors', sortOrder: 204 },
   {
     id: ECO.LTXV,
     key: 'LTXV',
-    name: 'ltxv',
     displayName: 'LTX Video',
     familyId: 16,
     sortOrder: 205,
@@ -633,7 +583,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.LTXV2,
     key: 'LTXV2',
-    name: 'ltxv2',
     displayName: 'LTX Video 2',
     familyId: 16,
     sortOrder: 206,
@@ -641,23 +590,20 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.LTXV23,
     key: 'LTXV23',
-    name: 'ltxv23',
     displayName: 'LTX Video 2.3',
     familyId: 16,
     sortOrder: 207,
   },
-  { id: ECO.Lumina, key: 'Lumina', name: 'lumina', displayName: 'Lumina', sortOrder: 208 },
+  { id: ECO.Lumina, key: 'Lumina', displayName: 'Lumina', sortOrder: 208 },
   {
     id: ECO.Mochi,
     key: 'Mochi',
-    name: 'mochi',
     displayName: 'Mochi',
     sortOrder: 209,
   },
   {
     id: ECO.Vidu,
     key: 'Vidu',
-    name: 'vidu',
     displayName: 'Vidu',
     familyId: 15,
     sortOrder: 210,
@@ -666,7 +612,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.MiniMax,
     key: 'MiniMax',
-    name: 'minimax',
     displayName: 'Hailuo by MiniMax',
     sortOrder: 211,
     // txt2vid + img2vid (no vid2vid support currently)
@@ -674,17 +619,15 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Kling,
     key: 'Kling',
-    name: 'kling',
     displayName: 'Kling',
     familyId: 14,
     sortOrder: 212,
     // txt2vid + img2vid (no vid2vid support currently)
   },
-  { id: ECO.Grok, key: 'Grok', name: 'grok', displayName: 'Grok', familyId: 13, sortOrder: 216 },
+  { id: ECO.Grok, key: 'Grok', displayName: 'Grok', familyId: 13, sortOrder: 216 },
   {
     id: ECO.Haiper,
     key: 'Haiper',
-    name: 'haiper',
     displayName: 'Haiper',
     sortOrder: 213,
     // txt2vid + img2vid
@@ -692,7 +635,6 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Lightricks,
     key: 'Lightricks',
-    name: 'lightricks',
     displayName: 'Lightricks',
     familyId: 16,
     sortOrder: 214,
@@ -701,29 +643,25 @@ export const ecosystems: EcosystemRecord[] = [
   {
     id: ECO.Seedance,
     key: 'Seedance',
-    name: 'seedance',
     displayName: 'Seedance',
     sortOrder: 215,
   },
-  { id: ECO.ODOR, key: 'ODOR', name: 'odor', displayName: 'ODOR', sortOrder: 208 },
+  { id: ECO.ODOR, key: 'ODOR', displayName: 'ODOR', sortOrder: 208 },
   {
     id: ECO.PlaygroundV2,
     key: 'PlaygroundV2',
-    name: 'playgroundv2',
     displayName: 'Playground v2',
     sortOrder: 209,
   },
   {
     id: ECO.Upscaler,
     key: 'Upscaler',
-    name: 'upscaler',
     displayName: 'Upscaler',
     sortOrder: 998,
   },
   {
     id: ECO.Other,
     key: 'Other',
-    name: 'other',
     displayName: 'Other',
     sortOrder: 999,
   },
@@ -731,8 +669,7 @@ export const ecosystems: EcosystemRecord[] = [
   // Audio ecosystems
   {
     id: ECO.AceAudio,
-    key: 'AceAudio',
-    name: 'aceaudio',
+    key: 'Ace',
     displayName: 'ACE Audio',
     sortOrder: 300,
   },
@@ -740,7 +677,6 @@ export const ecosystems: EcosystemRecord[] = [
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
 export const ecosystemByKey = new Map(ecosystems.map((e) => [e.key, e]));
-export const ecosystemByName = new Map(ecosystems.map((e) => [e.name, e]));
 
 // =============================================================================
 // Ecosystem Support
@@ -911,7 +847,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.LTXV23, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // AceAudio - checkpoint only (audio generation)
-  { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
+  // { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -1290,6 +1226,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.AceAudio,
     defaults: {
+      model: { id: 2864949 },
       modelLocked: true,
     },
   },
@@ -2847,18 +2784,6 @@ export function getEcosystem(baseModel: string) {
 }
 
 /**
- * Gets the ecosystem name (lowercase) for a base model display name.
- * Used for constructing AIR strings.
- * @param baseModel - The base model display name (e.g., 'SD 1.5', 'SDXL 1.0')
- * @returns The ecosystem name (e.g., 'sd1', 'sdxl') or lowercase input as fallback
- */
-export function getEcosystemName(baseModel: string): string {
-  const ecosystem = getEcosystem(baseModel);
-  if (!ecosystem) return baseModel.toLowerCase();
-  return ecosystem?.name ?? baseModel.toLowerCase();
-}
-
-/**
  * Check if any base model in an ecosystem is marked as experimental
  * @param ecosystemKey - The ecosystem key (e.g., 'SD3', 'Qwen')
  * @returns true if any base model in the ecosystem is experimental
@@ -3332,15 +3257,6 @@ export function getAuctionBaseModels(): BaseModelRecord[] {
 }
 
 /**
- * Get base models by ecosystem name (lowercase ecosystem name)
- */
-export function getBaseModelsByEcosystemName(ecosystemName: string): BaseModelRecord[] {
-  const ecosystem = ecosystemByName.get(ecosystemName);
-  if (!ecosystem) return [];
-  return getBaseModelsByEcosystemId(ecosystem.id);
-}
-
-/**
  * Get compatible base models for an ecosystem and model type
  * Returns base models that can be used with the given ecosystem, split by support level
  */
@@ -3657,7 +3573,6 @@ export type BaseModelCompatibilityStatus = {
  */
 export type CompatibleEcosystemResult = {
   ecosystemId: number;
-  ecosystemName: string;
   ecosystemKey: string;
   baseModels: BaseModelCompatibilityStatus[];
 };
@@ -3669,7 +3584,7 @@ export type GenerationCompatibilityResult = {
   /** The primary base model used to determine the generation ecosystem */
   primaryBaseModel: string;
   /** The ecosystem determined by the primary base model */
-  primaryEcosystem: { id: number; name: string; key: string } | null;
+  primaryEcosystem: { id: number; key: string } | null;
   /** Whether all requested base models are compatible with the primary ecosystem */
   allCompatible: boolean;
   /** Compatibility status for each requested base model within the primary ecosystem */
@@ -3797,7 +3712,6 @@ export function checkGenerationCompatibility(
       if (ecoBaseModels.length > 0) {
         alternativeEcosystems.push({
           ecosystemId: eco.id,
-          ecosystemName: eco.name,
           ecosystemKey: eco.key,
           baseModels: ecoBaseModels,
         });
@@ -3812,7 +3726,6 @@ export function checkGenerationCompatibility(
     primaryBaseModel: baseModelOrEcosystem,
     primaryEcosystem: {
       id: primaryEcosystem.id,
-      name: primaryEcosystem.name,
       key: primaryEcosystem.key,
     },
     allCompatible: incompatible.length === 0,
@@ -3958,28 +3871,6 @@ export function getBaseModelSeoName(baseModel?: string): string {
   if (group) return group.displayName;
 
   return ecosystem.displayName ?? ecosystem.key;
-}
-
-/**
- * Get ecosystem name (lowercase) for a base model
- * @param baseModel - Base model name
- * @returns Ecosystem name (lowercase)
- */
-/**
- * Get ecosystem name (lowercase) for a base model
- * Returns the root ecosystem name for child ecosystems (e.g., Pony returns "sdxl")
- * @param baseModel - Base model name
- * @returns Root ecosystem name (lowercase)
- */
-export function getBaseModelEcosystem(baseModel: string): string {
-  // Match legacy base-model.constants.ts behavior: accept both the base model
-  // display name (e.g. "Nano Banana") AND the ecosystem key (e.g. "NanoBanana")
-  // via the getBaseModelConfig fallback chain.
-  const record = getBaseModelConfig(baseModel);
-  if (!record || record.name === 'Other') return 'other';
-  // Get root ecosystem (walks up parent chain)
-  const rootEcosystem = getRootEcosystem(record.ecosystemId);
-  return rootEcosystem.name;
 }
 
 /**

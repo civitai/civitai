@@ -1,12 +1,21 @@
 import { Menu } from '@mantine/core';
-import { IconHeart, IconThumbDown, IconThumbUp, IconWand } from '@tabler/icons-react';
+import {
+  IconDownload,
+  IconHeart,
+  IconThumbDown,
+  IconThumbUp,
+  IconWand,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { ReactNode } from 'react';
 import { useState } from 'react';
 
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
 import { useGeneratedItemWorkflows } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
+import { fetchBlob } from '~/utils/file-utils';
+import { showErrorNotification } from '~/utils/notifications';
 
 import classes from './GeneratedImage.module.css';
 
@@ -14,39 +23,52 @@ export function GeneratedOutputActions({
   output,
   state,
   isLightbox,
-  isOverlay,
-  isMobileFooter,
+  infoSlot,
   onToggleFavorite,
   onToggleFeedback,
 }: {
   output: BlobData;
   state: { favorite?: boolean; feedback?: string };
   isLightbox?: boolean;
-  isOverlay?: boolean;
-  isMobileFooter?: boolean;
+  infoSlot?: ReactNode;
   onToggleFavorite: (value: boolean) => void;
   onToggleFeedback: (feedback: 'liked' | 'disliked') => void;
 }) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const { groups } = useGeneratedItemWorkflows({
     outputType: output.mediaType,
     ecosystemKey: output.ecosystemKey,
   });
   const hasWorkflows = groups.some((g) => g.workflows.length > 0);
 
-  if (isLightbox || isOverlay) {
-    return (
-      <div
-        className={clsx(
-          classes.actionsWrapper,
-          (menuOpen || isLightbox) && classes.actionsVisible,
-          isOverlay && classes.desktopOnly,
-          hasWorkflows && (output.type === 'video' || output.type === 'audio')
-            ? 'bottom-2 left-12'
-            : 'bottom-1 left-1',
-          'absolute flex flex-wrap items-center gap-1 p-1'
-        )}
-      >
+  const [downloading, setDownloading] = useState(false);
+  const handleDownload = async () => {
+    if (downloading) return;
+    setDownloading(true);
+    try {
+      const blob = await fetchBlob(output.url);
+      if (!blob) throw new Error('Failed to fetch file');
+      const ext = blob.type.split('/')[1]?.replace('jpeg', 'jpg') ?? 'bin';
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `${output.id}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      showErrorNotification({
+        title: 'Download failed',
+        error: e instanceof Error ? e : new Error('Unknown error'),
+      });
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return (
+    <div className={clsx(classes.actionsFooter, 'flex w-full items-center')}>
+      <div className="flex items-center gap-1">
         <LegacyActionIcon
           size="md"
           className={state.favorite ? classes.favoriteButton : undefined}
@@ -81,13 +103,9 @@ export function GeneratedOutputActions({
             trigger="click-hover"
             openDelay={100}
             closeDelay={100}
-            transitionProps={{
-              transition: 'fade',
-              duration: 150,
-            }}
+            transitionProps={{ transition: 'fade', duration: 150 }}
             withinPortal
             position="top"
-            onChange={setMenuOpen}
             withArrow
           >
             <Menu.Target>
@@ -100,67 +118,20 @@ export function GeneratedOutputActions({
             </Menu.Dropdown>
           </Menu>
         )}
+
+        <LegacyActionIcon
+          size="md"
+          onClick={handleDownload}
+          loading={downloading}
+          aria-label="Download"
+        >
+          <IconDownload size={16} />
+        </LegacyActionIcon>
       </div>
-    );
-  }
-
-  return (
-    <div
-      className={clsx(classes.actionsFooter, isMobileFooter && classes.mobileOnly, 'flex w-full')}
-    >
-      <LegacyActionIcon
-        className={classes.footerActionIcon}
-        variant={state.favorite ? 'light' : 'subtle'}
-        color={state.favorite ? 'red' : 'gray'}
-        onClick={() => onToggleFavorite(!state.favorite)}
-      >
-        <IconHeart size={16} />
-      </LegacyActionIcon>
-
-      <div className={classes.footerDivider} />
-
-      <LegacyActionIcon
-        className={classes.footerActionIcon}
-        variant={state.feedback === 'liked' ? 'light' : 'subtle'}
-        color={state.feedback === 'liked' ? 'green' : 'gray'}
-        onClick={() => onToggleFeedback('liked')}
-      >
-        <IconThumbUp size={16} />
-      </LegacyActionIcon>
-
-      <div className={classes.footerDivider} />
-
-      <LegacyActionIcon
-        className={classes.footerActionIcon}
-        variant={state.feedback === 'disliked' ? 'light' : 'subtle'}
-        color={state.feedback === 'disliked' ? 'red' : 'gray'}
-        onClick={() => onToggleFeedback('disliked')}
-      >
-        <IconThumbDown size={16} />
-      </LegacyActionIcon>
-
-      {hasWorkflows && (
+      {infoSlot && (
         <>
-          <div className={classes.footerDivider} />
-
-          <Menu
-            zIndex={400}
-            trigger="click"
-            transitionProps={{ transition: 'fade', duration: 150 }}
-            withinPortal
-            position="top"
-            onChange={setMenuOpen}
-            withArrow
-          >
-            <Menu.Target>
-              <LegacyActionIcon className={classes.footerActionIcon}>
-                <IconWand size={16} />
-              </LegacyActionIcon>
-            </Menu.Target>
-            <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
-              <GeneratedItemWorkflowMenu image={output} workflowsOnly />
-            </Menu.Dropdown>
-          </Menu>
+          <div className="flex-1" />
+          {infoSlot}
         </>
       )}
     </div>

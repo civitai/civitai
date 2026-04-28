@@ -117,7 +117,7 @@ export const ecosystemGraph = new DataGraph<
         .filter((key): key is string => !!key);
       // Default ecosystem by output type
       const outputDefault =
-        ctx.output === 'audio' ? 'AceAudio' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
+        ctx.output === 'audio' ? 'Ace' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
       const defaultValue = compatibleEcosystems.includes(outputDefault)
         ? outputDefault
         : compatibleEcosystems[0] ?? 'SDXL';
@@ -274,7 +274,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Grok'] as const, graph: grokGraph },
     { values: ['Seedance'] as const, graph: seedanceGraph },
     // Audio ecosystems
-    { values: ['AceAudio'] as const, graph: aceAudioGraph },
+    { values: ['Ace'] as const, graph: aceAudioGraph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(
@@ -313,13 +313,17 @@ export const ecosystemGraph = new DataGraph<
   .node(
     'prompt',
     (ctx) => {
-      const isAudio = ctx.ecosystem === 'AceAudio';
+      const isAudio = ctx.ecosystem === 'Ace';
       const images = 'images' in ctx ? (ctx.images as unknown[]) : undefined;
       // const multiShot = 'multiShot' in ctx ? (ctx.multiShot as boolean) : false;
       const isKlingV3 = ctx.ecosystem === 'Kling' && ctx.model?.id === klingVersionIds.v3;
       const isGrok = ctx.ecosystem === 'Grok';
-      // Audio workflows use musicDescription — prompt is present but not required
-      return { ...promptNode({ required: isAudio ? false : !images?.length || isKlingV3 || isGrok }) };
+      // Audio workflows use musicDescription — prompt stays in the graph (so handler types
+      // remain non-optional) but is non-required and stripped from stored metadata in
+      // orchestration-new.service.ts before persistence.
+      return {
+        ...promptNode({ required: isAudio ? false : !images?.length || isKlingV3 || isGrok }),
+      };
     },
     ['images', 'multiShot', 'ecosystem']
   )

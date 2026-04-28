@@ -30,6 +30,7 @@ import {
   Switch,
   Text,
   Textarea,
+  TextInput,
   Tooltip,
   UnstyledButton,
 } from '@mantine/core';
@@ -132,7 +133,7 @@ export function GenerationForm() {
   const workflowHistory = useWorkflowHistoryStore();
   const currentUser = useCurrentUser();
   const gatedEcosystems = useGatedEcosystems();
-  const isMember = !!currentUser && currentUser.tier !== 'free';
+  const isMember = !!currentUser && (currentUser.tier !== 'free' || !!currentUser.isModerator);
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
   const snapshot = graph.getSnapshot() as {
     workflow?: string;
@@ -347,8 +348,8 @@ export function GenerationForm() {
     <GenerationLayout>
       {/* Preset control */}
       <PresetControl />
-      {/* Workflow and ecosystem selectors — always visible */}
-      <>
+      {/* Workflow and ecosystem selectors — always visible, single row */}
+      <div className="flex w-full min-w-0 items-center gap-2 overflow-hidden sm:gap-4">
         <Controller
           graph={graph}
           name="workflow"
@@ -362,32 +363,26 @@ export function GenerationForm() {
             />
           )}
         />
-
-        <Group gap="xs" wrap="nowrap">
-          <Text size="xs" c="dimmed" fw={500}>
-            Ecosystem
-          </Text>
-          <Controller
-            graph={graph}
-            name="ecosystem"
-            render={({ value, meta }) => (
-              <BaseModelInput
-                value={value}
-                onChange={(newValue) => {
-                  // Get ecosystem label for the modal
-                  const label = newValue; // Will be resolved in the component
-                  handleBaseModelChange(newValue, label);
-                }}
-                compatibleEcosystems={meta?.compatibleEcosystems}
-                excludeEcosystems={gatedEcosystems.length ? gatedEcosystems : undefined}
-                isCompatible={compatibility.isEcosystemKeyCompatible}
-                getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
-                outputType={compatibility.currentOutputType}
-              />
-            )}
-          />
-        </Group>
-      </>
+        <Controller
+          graph={graph}
+          name="ecosystem"
+          render={({ value, meta }) => (
+            <BaseModelInput
+              value={value}
+              onChange={(newValue) => {
+                // Get ecosystem label for the modal
+                const label = newValue; // Will be resolved in the component
+                handleBaseModelChange(newValue, label);
+              }}
+              compatibleEcosystems={meta?.compatibleEcosystems}
+              excludeEcosystems={gatedEcosystems.length ? gatedEcosystems : undefined}
+              isCompatible={compatibility.isEcosystemKeyCompatible}
+              getTargetWorkflow={(key) => compatibility.getTargetWorkflowForEcosystem(key).label}
+              outputType={compatibility.currentOutputType}
+            />
+          )}
+        />
+      </div>
 
       {/* img2meta: self-contained panel, no graph controllers */}
       {snapshot.workflow === 'img2meta' && (
@@ -615,6 +610,20 @@ export function GenerationForm() {
             {/* Ready State Alert - Resources need downloading */}
             <ReadyAlert />
 
+            {/* Generate cover toggle (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="generateCover"
+              render={({ value, onChange }) => (
+                <Checkbox
+                  label="Generate cover image"
+                  description="Auto-generate an album cover using AI"
+                  checked={value}
+                  onChange={(e) => onChange(e.currentTarget.checked)}
+                />
+              )}
+            />
+
             {/* Source images with optional mode selector */}
             <Controller
               graph={graph}
@@ -735,132 +744,134 @@ export function GenerationForm() {
             />
 
             {/* Prompt with Trigger Words (hidden for audio workflows which use musicDescription) */}
-            {snapshot.workflow !== 'txt2music' && <Controller
-              graph={graph}
-              name="prompt"
-              render={({ value, onChange, meta, error }) => (
-                <Input.Wrapper
-                  styles={{ label: { width: '100%' } }}
-                  label={
-                    <Group justify="space-between" wrap="nowrap" className="w-full">
-                      <ControllerLabel
-                        label="Prompt"
-                        info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
-                        required={meta.required}
-                      />
-                      {value && (
-                        <Button
-                          variant="subtle"
-                          size="compact-xs"
-                          leftSection={<IconSparkles size={14} />}
-                          onClick={() => {
-                            const snap = graph.getSnapshot() as {
-                              ecosystem?: string;
-                              negativePrompt?: string;
-                              resources?: {
-                                id: number;
-                                model: { type: string };
-                                trainedWords?: string[];
-                                strength?: number;
-                              }[];
-                            };
-                            triggerPromptEnhance(
-                              {
-                                prompt: value as string,
-                                negativePrompt: snap.negativePrompt,
-                                ecosystem: snap.ecosystem ?? '',
-                                resources: snap.resources,
-                              },
-                              (wf) =>
-                                graph.set({
-                                  workflow: wf,
-                                } as Parameters<typeof graph.set>[0])
-                            );
-                          }}
-                        >
-                          Enhance
-                        </Button>
-                      )}
-                    </Group>
-                  }
-                  error={error?.message}
-                >
-                  <Paper
-                    radius="md"
-                    withBorder
-                    data-tour="gen:prompt"
-                    className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
+            {snapshot.workflow !== 'txt2music' && (
+              <Controller
+                graph={graph}
+                name="prompt"
+                render={({ value, onChange, meta, error }) => (
+                  <Input.Wrapper
+                    styles={{ label: { width: '100%' } }}
+                    label={
+                      <Group justify="space-between" wrap="nowrap" className="w-full">
+                        <ControllerLabel
+                          label="Prompt"
+                          info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
+                          required={meta.required}
+                        />
+                        {value && (
+                          <Button
+                            variant="subtle"
+                            size="compact-xs"
+                            leftSection={<IconSparkles size={14} />}
+                            onClick={() => {
+                              const snap = graph.getSnapshot() as {
+                                ecosystem?: string;
+                                negativePrompt?: string;
+                                resources?: {
+                                  id: number;
+                                  model: { type: string };
+                                  trainedWords?: string[];
+                                  strength?: number;
+                                }[];
+                              };
+                              triggerPromptEnhance(
+                                {
+                                  prompt: value as string,
+                                  negativePrompt: snap.negativePrompt,
+                                  ecosystem: snap.ecosystem ?? '',
+                                  resources: snap.resources,
+                                },
+                                (wf) =>
+                                  graph.set({
+                                    workflow: wf,
+                                  } as Parameters<typeof graph.set>[0])
+                              );
+                            }}
+                          >
+                            Enhance
+                          </Button>
+                        )}
+                      </Group>
+                    }
+                    error={error?.message}
                   >
-                    <PromptInput
-                      px="sm"
-                      name="prompt"
-                      value={value}
-                      onChange={onChange}
-                      onFillForm={(metadata) => {
-                        const { resources, ...data } = metadata;
-                        graph.set(data as Parameters<typeof graph.set>[0]);
-                      }}
-                      placeholder="Your prompt goes here..."
-                      autosize
-                      minRows={2}
-                      variant="unstyled"
-                      styles={(theme) => ({
-                        input: {
-                          padding: '10px 0',
-                          backgroundColor: 'transparent',
-                          lineHeight: theme.lineHeights.sm,
-                        },
-                        error: { display: 'none' },
-                        wrapper: { margin: 0 },
-                      })}
-                    />
-                    {/* Nested trigger words controller */}
-                    <Controller
-                      graph={graph}
-                      name="triggerWords"
-                      render={({ value }) => {
-                        const triggerWords = value as string[] | undefined;
-                        if (!triggerWords || triggerWords.length === 0) return null;
-                        return (
-                          <div className="mb-1 flex flex-col gap-2">
-                            <Divider />
-                            <Text c="dimmed" className="text-xs font-semibold">
-                              Trigger words
-                            </Text>
-                            <div className="mb-2 flex items-center gap-1">
-                              <TrainedWords
-                                type="LORA"
-                                trainedWords={triggerWords}
-                                badgeProps={{
-                                  style: {
-                                    textTransform: 'none',
-                                    height: 'auto',
-                                    cursor: 'pointer',
-                                  },
-                                }}
-                              />
-                              <CopyButton value={triggerWords.join(', ')}>
-                                {({ copied, copy, Icon, color }) => (
-                                  <Button
-                                    variant="subtle"
-                                    color={color ?? 'blue.5'}
-                                    onClick={copy}
-                                    size="compact-xs"
-                                    classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
-                                  >
-                                    {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
-                                  </Button>
-                                )}
-                              </CopyButton>
+                    <Paper
+                      radius="md"
+                      withBorder
+                      data-tour="gen:prompt"
+                      className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
+                    >
+                      <PromptInput
+                        px="sm"
+                        name="prompt"
+                        value={value}
+                        onChange={onChange}
+                        onFillForm={(metadata) => {
+                          const { resources, ...data } = metadata;
+                          graph.set(data as Parameters<typeof graph.set>[0]);
+                        }}
+                        placeholder="Your prompt goes here..."
+                        autosize
+                        minRows={2}
+                        variant="unstyled"
+                        styles={(theme) => ({
+                          input: {
+                            padding: '10px 0',
+                            backgroundColor: 'transparent',
+                            lineHeight: theme.lineHeights.sm,
+                          },
+                          error: { display: 'none' },
+                          wrapper: { margin: 0 },
+                        })}
+                      />
+                      {/* Nested trigger words controller */}
+                      <Controller
+                        graph={graph}
+                        name="triggerWords"
+                        render={({ value }) => {
+                          const triggerWords = value as string[] | undefined;
+                          if (!triggerWords || triggerWords.length === 0) return null;
+                          return (
+                            <div className="mb-1 flex flex-col gap-2">
+                              <Divider />
+                              <Text c="dimmed" className="text-xs font-semibold">
+                                Trigger words
+                              </Text>
+                              <div className="mb-2 flex items-center gap-1">
+                                <TrainedWords
+                                  type="LORA"
+                                  trainedWords={triggerWords}
+                                  badgeProps={{
+                                    style: {
+                                      textTransform: 'none',
+                                      height: 'auto',
+                                      cursor: 'pointer',
+                                    },
+                                  }}
+                                />
+                                <CopyButton value={triggerWords.join(', ')}>
+                                  {({ copied, copy, Icon, color }) => (
+                                    <Button
+                                      variant="subtle"
+                                      color={color ?? 'blue.5'}
+                                      onClick={copy}
+                                      size="compact-xs"
+                                      classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
+                                    >
+                                      {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
+                                    </Button>
+                                  )}
+                                </CopyButton>
+                              </div>
                             </div>
-                          </div>
-                        );
-                      }}
-                    />
-                  </Paper>
-                </Input.Wrapper>
-              )}
-            />}
+                          );
+                        }}
+                      />
+                    </Paper>
+                  </Input.Wrapper>
+                )}
+              />
+            )}
 
             {/* Negative prompt (SD only) */}
             <Controller
@@ -904,7 +915,9 @@ export function GenerationForm() {
                 <Textarea
                   label="Lyrics"
                   description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
-                  placeholder={'[Verse]\nBreaking through the walls tonight\nNothing\'s gonna stop this fight\n\n[Chorus]\nRock and roll forever\nWe\'re in this together'}
+                  placeholder={
+                    "[Verse]\nBreaking through the walls tonight\nNothing's gonna stop this fight\n\n[Chorus]\nRock and roll forever\nWe're in this together"
+                  }
                   value={value as string}
                   onChange={(e) => onChange(e.currentTarget.value)}
                   autosize
@@ -1516,16 +1529,47 @@ export function GenerationForm() {
                 )}
               />
 
-              {/* Generate cover toggle (audio workflows) */}
+              {/* Time signature (audio workflows) */}
               <Controller
                 graph={graph}
-                name="generateCover"
+                name="timeSignature"
                 render={({ value, onChange }) => (
-                  <Checkbox
-                    label="Generate cover image"
-                    description="Auto-generate an album cover using AI"
-                    checked={value}
-                    onChange={(e) => onChange(e.currentTarget.checked)}
+                  <TextInput
+                    label="Time Signature"
+                    description="e.g. 4/4, 3/4, 6/8"
+                    placeholder="4/4"
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
+                  />
+                )}
+              />
+
+              {/* Language (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="language"
+                render={({ value, onChange }) => (
+                  <TextInput
+                    label="Language"
+                    description='Language code (e.g. "en", "zh", "ja", "ko")'
+                    placeholder="en"
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
+                  />
+                )}
+              />
+
+              {/* Musical key (audio workflows) */}
+              <Controller
+                graph={graph}
+                name="key"
+                render={({ value, onChange }) => (
+                  <TextInput
+                    label="Key"
+                    description='Musical key (e.g. "C major", "E minor")'
+                    placeholder="C major"
+                    value={(value as string) ?? ''}
+                    onChange={(e) => onChange(e.currentTarget.value)}
                   />
                 )}
               />

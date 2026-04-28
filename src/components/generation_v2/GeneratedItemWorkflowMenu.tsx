@@ -22,6 +22,7 @@ import {
 
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { generationGraphStore } from '~/store/generation-graph.store';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
@@ -56,7 +57,8 @@ export function GeneratedItemWorkflowMenu({
   const { updateImages } = useUpdateImageStepMetadata();
   const { copied, copy } = useClipboard();
   const status = useGenerationStatus();
-  const isMember = status.tier !== 'free';
+  const currentUser = useCurrentUser();
+  const isMember = status.tier !== 'free' || !!currentUser?.isModerator;
 
   const { groups, isCompatible } = useGeneratedItemWorkflows({
     outputType: image.mediaType,

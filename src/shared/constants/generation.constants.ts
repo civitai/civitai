@@ -15,7 +15,6 @@ import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
-  getBaseModelEcosystem,
   getBaseModelGroup,
   getBaseModelMediaType,
   getResourceGenerationSupport,
@@ -298,7 +297,7 @@ export function getBaseModelSetType(baseModel?: string, defaultType: BaseModelGr
 }
 
 export function getIsSdxl(baseModel?: string) {
-  return baseModel ? getBaseModelEcosystem(baseModel) === 'sdxl' : false;
+  return baseModel ? getBaseModelSetType(baseModel) === 'SDXL' : false;
 }
 
 export function getIsHiDream(baseModel?: string) {
