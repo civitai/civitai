@@ -188,14 +188,14 @@ describe('recordMembershipPaymentReward', () => {
   };
 
   it('returns null if no bound referrer', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue(null);
+    mockDbWrite.userReferral.findUnique.mockResolvedValue(null);
     const result = await recordMembershipPaymentReward(basePayload);
     expect(result).toBeNull();
     expect(mockDbWrite.referralReward.create).not.toHaveBeenCalled();
   });
 
   it('skips when referee has already paid 3 months (cap)', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: new Date(),
@@ -214,7 +214,7 @@ describe('recordMembershipPaymentReward', () => {
   });
 
   it('creates both referrer token and referee bonus on first payment', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: null,
@@ -250,7 +250,7 @@ describe('recordMembershipPaymentReward', () => {
   });
 
   it('does not create referee bonus on subsequent months', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: new Date('2025-01-01'),
@@ -280,7 +280,7 @@ describe('recordMembershipPaymentReward', () => {
 
   it('treats locked paidMonthCount > 0 as not first payment (race protection)', async () => {
     // Pre-tx ctx says paidMonthCount=0 (read from replica before lock).
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: null,
@@ -313,7 +313,7 @@ describe('recordMembershipPaymentReward', () => {
   });
 
   it('returns null when locked paidMonthCount has hit the cap', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: new Date('2025-01-01'),
@@ -336,7 +336,7 @@ describe('recordMembershipPaymentReward', () => {
   });
 
   it('swallows unique-violation on duplicate sourceEventId (idempotent)', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: null,
@@ -360,7 +360,7 @@ describe('recordMembershipPaymentReward', () => {
 
   it('rejects referrer accounts younger than the minimum age', async () => {
     const yesterday = new Date(Date.now() - 1 * 86_400_000);
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: null,
@@ -390,7 +390,7 @@ describe('recordMembershipPaymentReward', () => {
 
 describe('recordBuzzPurchaseKickback', () => {
   it('skips kickback when referee has never paid a membership', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: null,
@@ -412,7 +412,7 @@ describe('recordBuzzPurchaseKickback', () => {
   });
 
   it('grants 10% kickback when referee has firstPaidAt', async () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: new Date('2025-01-01'),
@@ -656,7 +656,7 @@ describe('recordMembershipPaymentReward inline RefereeBonus settle', () => {
   };
 
   const okCtx = () => {
-    mockDbRead.userReferral.findUnique.mockResolvedValue({
+    mockDbWrite.userReferral.findUnique.mockResolvedValue({
       id: 1,
       userReferralCodeId: 99,
       firstPaidAt: null,
