@@ -319,28 +319,30 @@ const hasFeature = (
     if (!regionAccess) return false;
   }
 
-  // Server/domain restrictions always apply — Flipt cannot override them
+  // Server/domain restrictions always apply — Flipt cannot override them.
+  // Each color maps to a primary host plus an optional alias list — any of
+  // those hosts counts as "on this color".
   let serverMatch = true;
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
   );
   if (!availableServers.length || !host) serverMatch = true;
   else {
-    const domains = colorDomainNames
-      .map(
-        (color) =>
-          [
-            color,
-            process.env[`SERVER_DOMAIN_${color.toUpperCase()}`] as string | undefined,
-          ] as const
-      )
-      .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability));
-
-    serverMatch = domains.some(([, domain]) => {
-      if (host === domain) return true;
-      return false;
+    const normalizedHost = host.toLowerCase();
+    const matchedColor = colorDomainNames.find((color) => {
+      if (!availableServers.includes(color as ServerAvailability)) return false;
+      const primary = process.env[`SERVER_DOMAIN_${color.toUpperCase()}`]?.toLowerCase();
+      if (primary && primary === normalizedHost) return true;
+      const aliasesRaw = process.env[`SERVER_DOMAIN_${color.toUpperCase()}_ALIASES`];
+      if (!aliasesRaw) return false;
+      const aliases = aliasesRaw
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      return aliases.includes(normalizedHost);
     });
 
+    serverMatch = !!matchedColor;
     if (!serverMatch) return false;
   }
 

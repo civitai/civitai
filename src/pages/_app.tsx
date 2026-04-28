@@ -90,6 +90,7 @@ type CustomAppProps = {
   region: RegionInfo;
   domain: ColorDomain;
   serverDomains: ServerDomains;
+  availableOAuthProviders: string[];
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -107,6 +108,7 @@ function MyApp(props: CustomAppProps) {
       region,
       domain,
       serverDomains,
+      availableOAuthProviders,
       ...pageProps
     },
   } = props;
@@ -153,6 +155,7 @@ function MyApp(props: CustomAppProps) {
       region={region}
       domain={domain}
       serverDomains={serverDomains}
+      availableOAuthProviders={availableOAuthProviders}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -282,11 +285,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   let hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const { serverDomainMap, getRequestDomainColor } = await import(
-    '~/server/utils/server-domain'
-  );
-  const serverDomains: ServerDomains = { ...serverDomainMap };
-  const canIndex = Object.values(serverDomainMap).includes(request.headers.host);
+  const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
+    await import('~/server/utils/server-domain');
+  const serverDomains: ServerDomains = {
+    green: serverDomainMap.green,
+    blue: serverDomainMap.blue,
+    red: serverDomainMap.red,
+  };
+  const canIndex = getAllServerHosts().includes((request.headers.host ?? '').toLowerCase());
+  const availableOAuthProviders = getAvailableOAuthProviders(request.headers.host);
 
   const region = getRegion(request);
 
@@ -327,6 +334,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       region,
       domain,
       serverDomains,
+      availableOAuthProviders,
       // @ts-ignore
       host: appContext.ctx.req?.headers.host,
     },
