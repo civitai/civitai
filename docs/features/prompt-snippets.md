@@ -1,6 +1,6 @@
 # Prompt Snippets
 
-A reusable text-fragment library for the image generator. Users save perfected prompt segments (subjects, settings, lighting, moods, characters, etc.) under named categories, then reference them in prompts via a wildcard syntax. Selecting multiple values for a reference fans the submission out into a batch of workflow steps, one per expanded prompt.
+A unified library of reusable prompt content for the image generator. Users reference saved values in prompts via `#category` syntax. Selecting multiple values per reference fans the submission out into a batch of workflow steps, one per expanded prompt. Content comes from two sources, treated uniformly: user-curated personal collections and read-only sets imported from wildcard-type models on Civitai.
 
 ## Status
 
@@ -8,138 +8,116 @@ Planning. Not yet implemented.
 
 ---
 
-## Design decisions (settled)
+## Key concepts
 
-- **Per-snippet model:** each snippet is a single named piece of text grouped under a user-defined **category**. Category is the wildcard token; name is human-readable. Example: category = `character`, name = `Zelda`, value = `a young woman with blonde hair, pointed ears, green tunic, pointed cap...`.
-- **Expansion is server-side.** Client submits the template prompt plus the picked snippet ids. Server performs the cartesian expansion and creates N `StepInput` objects — one per expanded prompt — in a single workflow. This leverages the existing multi-step support at [orchestration-new.service.ts:488-609](../../src/server/services/orchestrator/orchestration-new.service.ts#L488-L609).
-- **Batch unit:** each combination = one workflow step. Existing `quantity` field (images per step) is unchanged.
-- **Combination cap:** 10 per submission.
-- **No-repeat rule:** when a category appears multiple times in one prompt, a single combination may not reuse the same snippet-value across those slots. Expansion is k-permutations of n (where k = reference count, n = picked values).
-- **Over-cap behavior:** accept submission, randomly sample 10 unique combinations. UI shows a clear alert ("24 combinations — randomly running 10") with a **reroll** control to resample.
-- **Pre-audit snippets at creation** — block save if audit fails, store audit verdict + rule version on the record. Do not re-audit snippet content at submission. Submission audit only inspects the user's literal (template-side) text; the external moderation tool handles the composed prompt.
-- **Presets and snippets are separate features.** Presets saving the prompt save `#references` as literal text; at load time, any reference whose category no longer exists in the user's library is shown as an unresolved reference chip.
+- **WildcardSet** — the unified content table. Every set has a `kind`:
+  - **System-kind:** content imported from a wildcard-type model. Globally cached, shared across all users who subscribe.
+  - **User-kind:** owned by one user. Their personal collection, e.g. the default "My snippets" set.
+- **WildcardSetCategory** — categories within a set (e.g. `character`, `setting`). Each category holds a JSONB array of plain string values. Values can be plain text or use Dynamic Prompts syntax (`{a|b}`, `__nested__`, weights).
+- **UserWildcardSet** — per-user activation pointer. Decides which sets contribute to the user's current picker. Used for both kinds: subscription pointer for System-kind, auto-created owner pointer for User-kind. `isActive` flag governs picker visibility.
+- **Reference syntax:**
+  - `#category` — batch mode. Selecting multiple values fans out into combinations.
+  - `#?category` — random-pick mode. One value picked per workflow step.
+
+For Prisma definitions, queries, indexes, and migration plan, see [prompt-snippets-schema.md](./prompt-snippets-schema.md). For a populated walkthrough using real wildcard-model content, see [prompt-snippets-schema-examples.md](./prompt-snippets-schema-examples.md).
 
 ---
 
-## Resolved decisions
+## Resolved design decisions
 
-- **Syntax:** `#category` with server-side namespace resolution (unmatched `#tokens` pass through to the existing textual-inversion parser). See *Syntax and parsing* below.
-- **Seeded sampling and random-pick:** both use the existing generation-form `seed`. Same `seed` + same payload = same sampled combinations and same `#?` picks. No separate sampling seed is introduced; the form's seed is the single source of determinism.
-- **Literal-prompt audit at submission:** kept for v1. Snippet content is pre-audited at creation and not re-audited; the user's template (text outside any `#reference`) is audited on submit. Revisit if external moderation is confirmed to cover Civitai-specific policy terms.
-- **Random-pick mode (`#?category`):** in scope as Phase 6. See *Random-pick mode* below.
+- **Default selection = full pool.** When a user references `#category` without explicitly selecting values, the resolver uses every clean value across the user's active sets. Users opt into narrower selections deliberately.
+- **Categories are immutable post-create.** Both kinds. Editing a category means creating a new one (with appended suffix, or a fresh name). System-kind reflects the source model's content; User-kind enforces the same rule for consistency and audit simplicity.
+- **One audit verdict per category.** Audit runs across all values in a category and produces a single `Clean | Dirty` outcome. Dirty categories are excluded from generation pools entirely. No per-value audit.
+- **NSFW classification is per-category.** Audit also produces an `nsfwLevel` (bitwise, following Civitai convention). The site router uses this to decide whether the category appears on `.com` (SFW) vs `.red` (NSFW) vs both.
+- **Combination cap:** 10 per submission. Over-cap fan-out is randomly sampled with a seeded PRNG; user can reroll.
+- **No-repeat rule.** When a category appears multiple times in one prompt, no single combination reuses the same value across slots.
+- **Syntax:** `#category` (batch) and `#?category` (random-pick). Server resolves these against the user's active sets; unmatched `#tokens` pass through to the existing textual-inversion parser.
+- **Determinism:** the existing generation-form `seed` drives all snippet randomness (cap sampling + `#?` picks). Same seed + same payload = byte-identical expanded prompts.
+- **Submission audit:** snippet content is pre-audited at category creation. The user's literal template text (outside any `#reference`) is audited at submission. Composed prompt goes to external moderation as part of the normal submission flow.
 
 ---
 
 ## Data model
 
-### `PromptSnippet` (new Prisma model)
+See [prompt-snippets-schema.md](./prompt-snippets-schema.md) for full Prisma definitions, indexes, and CHECK constraints. Quick summary:
 
-Follows the [GenerationPreset](../../prisma/schema.prisma) shape for consistency.
+- `WildcardSet` — `kind: System | User` discriminator. System-kind has `modelVersionId`, `modelName`, `versionName`. User-kind has `ownerUserId`, `name`. Audit aggregate, invalidation flags, denormalized `totalValueCount`.
+- `WildcardSetCategory` — `name CITEXT`, `values JSONB string[]`, per-category `auditStatus`, `nsfwLevel` (bitwise int), `valueCount`.
+- `UserWildcardSet` — `(userId, wildcardSetId, isActive)`. Activation pointer for both kinds.
 
-```prisma
-model PromptSnippet {
-  id               Int      @id @default(autoincrement())
-  userId           Int
-  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  category         String   // wildcard token, e.g. "character". Indexed with userId.
-  name             String   // human-readable title, e.g. "Zelda". Unique per (userId, category).
-  value            String   // the prompt text that substitutes in
-  description      String?
-
-  auditStatus      SnippetAuditStatus @default(Pending) // Pending | Clean | Dirty | NeedsRecheck
-  auditRuleVersion String?            // which audit-ruleset version produced the verdict
-  auditedAt        DateTime?
-
-  sortOrder        Int      @default(0)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  @@unique([userId, category, name])
-  @@index([userId, category])
-}
-
-enum SnippetAuditStatus {
-  Pending
-  Clean
-  Dirty
-  NeedsRecheck
-}
-```
-
-**Notes:**
-
-- `category` is a free-form string chosen by the user at save time. We don't pre-seed categories — users discover their own organization. A small "common categories" suggestion list in the save modal is fine UX but non-authoritative.
-- `auditStatus = Dirty` snippets are retained (so the user can edit them) but cannot be referenced in a submission. Prompts containing a reference to a dirty snippet are rejected server-side.
-- `auditStatus = NeedsRecheck` is set by a background job when rules update; treated as `Pending` for submission purposes until the job re-audits.
-
-### Prisma migration
-
-Standard `prisma migrate dev` — new table, one enum, no data backfill.
+There is no separate `PromptSnippet` table. User personal content is a User-kind `WildcardSet` whose categories live in the same table as System-kind imported content.
 
 ---
 
 ## Syntax and parsing
 
-**Trigger:** `#category`.
+**Trigger characters:**
 
-**Collision with existing `#textualInversion` syntax** is resolved on the server. Snippet expansion runs first and replaces any `#token` that matches a snippet category owned by the submitting user. Unmatched `#tokens` pass through to the existing downstream parsers (textual inversion resource extraction, etc.) unchanged. Edge case: a user who owns both a snippet category `foo` and a textual-inversion resource `foo` will see the snippet win — this conflict is user-created and expected to be rare; we can add a "shadowed resource" warning in the snippet manager if it becomes an issue.
+- `#` — batch mode. `#category` references the category for cartesian-product fan-out.
+- `#?` — random-pick mode. `#?category` picks one value per workflow step.
 
-**Grammar:** `#` + identifier matching `[A-Za-z][A-Za-z0-9_]*`. Categories are case-insensitive on lookup, stored lowercase.
+**Grammar:** trigger + identifier matching `[A-Za-z][A-Za-z0-9_]*`. Categories are matched case-insensitively (citext storage preserves original casing for display).
+
+**Collision with existing `#textualInversion` syntax** is resolved at the server. Snippet expansion runs first and replaces any `#token` matching one of the user's accessible category names. Unmatched `#tokens` pass through to the textual-inversion parser unchanged. Edge case: a user with both a wildcard category named `foo` and a textual-inversion resource named `foo` will see the wildcard win — rare conflict, surface a warning if it ever happens.
 
 **Parser:** new helper in [src/utils/prompt-helpers.ts](../../src/utils/prompt-helpers.ts), co-located with the existing `parsePromptResources`.
 
 ```ts
-// new regex
-const snippetReferencePattern = /#([a-zA-Z][a-zA-Z0-9_]*)/g;
-
-export const parsePromptSnippetReferences = (value: string): string[] => { ... };
-// returns ordered list of referenced categories (with duplicates preserved for slot-counting)
-
-export const expandPromptSnippets = (
-  template: string,
-  assignments: Record<string, string[]>, // category -> ordered list of values for each slot in that combination
-): string => { ... };
+const snippetReferencePattern = /(#\??)([a-zA-Z][a-zA-Z0-9_]*)/g;
+// Returns ordered list of references: [{ kind: 'batch' | 'random', category, position }]
 ```
 
-**Slot-counting:** a prompt like `"#character fights #character"` contains two `#character` slots. Expansion must produce one value per slot; the no-repeat rule ensures the two slots within a single combination hold different values.
+**Slot-counting:** `"#character fights #character"` contains two batch slots for `character`. The no-repeat rule ensures the two slots within a single combination hold different values.
+
+**Nested resolution:** values within a category may contain `__name__` references to other categories. These resolve at generation time within the source set's scope (System-kind nested refs stay inside the same WildcardSet; User-kind nested refs stay inside the same User-kind set). Recursion is bounded with a hard depth limit and cycle detection.
 
 ---
 
 ## Client UI
 
-### Snippet library (CRUD)
+### User-kind set management
 
-Mirrors the preset pattern:
+A library section in the user account (or a modal accessible from the generator) for managing User-kind WildcardSets:
 
-- **Save dialog:** `src/components/Generation/Snippet/SaveSnippetModal.tsx`. Fields: category (autocomplete against user's existing categories + allow new), name, value, optional description. On save, shows inline audit result — if dirty, displays the offending rule and blocks save until the user edits.
-- **Manage dialog / drawer:** `src/components/Generation/Snippet/ManageSnippetsModal.tsx`. Groupable by category, filter by name, edit/delete/reorder within a category. Dirty snippets flagged visually.
+- List sets owned by the user; create/delete sets; rename via `name` field.
+- Within a set, list categories; create new categories with `(name, values[])` at create time.
+- No edit affordances on existing categories. Delete + recreate to change content.
+- A default User-kind set called "My snippets" is auto-created on first save.
+
+### Wildcard model browsing — System content discovery
+
+A new "Wildcards" tab in the resources picker (alongside LoRAs, embeddings):
+
+- Browse Civitai wildcard-type models.
+- Click "Add to my library" → creates a System-kind `WildcardSet` (extracts and caches content if not already cached) + a `UserWildcardSet` activation pointer for the user.
+- Subsequent users adding the same model version get only a pointer (content is shared globally — see schema doc §6.1).
 
 ### Prompt input integration
 
-Wrap the existing [InputPrompt.tsx](../../src/components/Generate/Input/InputPrompt.tsx) with an autocomplete-aware shell that:
+Wrap the existing [InputPrompt.tsx](../../src/components/Generate/Input/InputPrompt.tsx) with an autocomplete-aware shell:
 
-1. Watches the textarea for the `#` trigger character and the token that follows. The popover only opens if the character was typed outside an existing resource reference (e.g., not inside a `<lora:...>` block).
-2. Opens a positioned popover (Mantine `Popover` + `ScrollArea`) listing the user's snippet categories, filtered by the partial token. Arrow keys navigate, Enter inserts.
-3. After insertion, the text `#category` is plain text in the textarea (no rich tokenization) — simpler to implement and survives copy/paste, preset save/load, and server round-tripping.
-4. Highlights existing `#references` in the textarea using a lightweight overlay (match behavior of existing `<lora:...>` highlighting if any — to confirm during implementation).
+1. Watches the textarea for `#` or `#?` trigger characters.
+2. Opens a positioned popover (Mantine `Popover` + `ScrollArea`) showing matching categories from the user's active sets, with source labels (e.g., "from My snippets" vs "from fullFeatureFantasy v3.0").
+3. Arrow keys navigate, Enter inserts. Inserted text is plain `#category` (no rich tokenization) — survives copy/paste, preset save/load, server round-tripping.
+4. Existing `#references` in the textarea are highlighted via lightweight overlay.
 
 ### Per-reference picker panel
 
-Below the prompt input, a new `SnippetReferencePanel` component:
+Below the prompt input, a `SnippetReferencePanel` component:
 
-- Lists each unique `#category` found in the prompt (with slot count: `#character ×2`).
-- For each, shows the user's snippets in that category as checkbox chips with the snippet name; clicking expands to preview the value.
-- Footer row: **combinations counter** (e.g. *"24 combinations → 10 will run (randomly sampled)"*), a **reroll** button when sampling is active, and a **validation error** if selection is insufficient (e.g. "`#character` appears 2× — pick at least 2 snippets").
-- If a category in the prompt is unknown (typo, or snippet deleted since typing), it shows as an unresolved chip with a "create snippet" shortcut.
+- Lists each unique `#category` / `#?category` reference found in the prompt.
+- For each reference: shows the merged pool of values across active sets, grouped by source (e.g. "From My Snippets," "From fullFeatureFantasy v3.0"). **No values selected = full pool used by default.** Users opt into narrower selections explicitly via per-source filter pills + per-row checkboxes.
+- Search box per reference (filter values across sources within one category — handles large libraries).
+- Per-row `⋯` menu for affordances like "Save to my snippets" (copies a value from a System-kind set into the user's User-kind set as a new category).
+- Footer: combinations counter ("24 combinations → running 10, sampled by seed 847291"), reroll button when sampling is active, validation errors when slot count exceeds picked values.
 
 ### Form submission gate
 
 Submit is disabled when:
 
-- Any `#reference` in the prompt is unresolved (no snippets exist in that category).
+- Any `#reference` is unresolved (no clean matching category exists).
 - Any category has fewer picked values than its slot count in the prompt.
-- Any picked snippet has `auditStatus = Dirty`.
+- Any active set's category referenced is `Dirty` or its set is `isInvalidated`.
 
 Submit is enabled (with an info alert) when:
 
@@ -149,183 +127,197 @@ Submit is enabled (with an info alert) when:
 
 ## Submission payload
 
-Extend the `generateFromGraph` call at [generationRequestHooks.ts:216-237](../../src/components/ImageGeneration/utils/generationRequestHooks.ts#L216-L237) to include snippet context. The tRPC input currently is `z.any()` ([orchestrator.router.ts:337-380](../../src/server/routers/orchestrator.router.ts#L337-L380)), so the change is client-side payload shape + server-side handler reading it.
+Extend the `generateFromGraph` call ([generationRequestHooks.ts:216-237](../../src/components/ImageGeneration/utils/generationRequestHooks.ts#L216-L237)) to include snippet context:
 
 ```ts
 type GenerateFromGraphInput = {
   input: GraphInput;          // existing (already contains the form `seed`)
   civitaiTip, creatorTip, tags, remixOfId, buzzType;  // existing
   snippets?: {                // new
-    references: { category: string; snippetIds: number[] }[];
+    references: {
+      category: string;
+      kind: 'batch' | 'random';
+      // empty selections array = "use full pool" (default behavior)
+      selections: { wildcardSetId: number; categoryId: number; valueIndex: number }[];
+    }[];
   };
 };
 ```
 
-- Client does **not** expand. Server is the sole source of truth for permutation enumeration, cap enforcement, and sampling — this keeps the cap un-spoofable.
-- If `snippets` is omitted or empty, behavior is identical to today.
-- **Determinism:** the existing generation-form `seed` drives all snippet-related randomness (cap sampling + `#?` picks). No new seed is introduced. If the user requested `seed = -1`, the server resolves a random seed early and uses it for both image generation and snippet resolution so the resolved seed is the single record of reproducibility.
-- **Reroll UX:** the picker panel's "reroll" button changes the form's seed (or resolves a new random one) and re-requests the combination preview. Same seed always yields the same sample.
+- Client does **not** expand. Server is the sole source of truth for permutation enumeration, cap enforcement, and seed-based sampling — keeps the cap un-spoofable.
+- If `snippets` is omitted or empty, behavior is identical to today (literal prompt, no expansion).
+- **Determinism:** the generation-form `seed` drives all snippet randomness. If the user requested `seed = -1`, the server resolves a random seed early and uses it for both image generation and snippet resolution. The resolved seed is the single record of reproducibility.
+- **Reroll UX:** the picker panel's "reroll" button swaps the form's seed and re-requests a combination preview.
 
 ---
 
-## Server expansion and step fan-out
+## Server resolution and step fan-out
 
-Snippet expansion slots into [orchestration-new.service.ts](../../src/server/services/orchestrator/orchestration-new.service.ts) at `createStepInputs` (around line 574), **before** the existing per-step build.
+Snippet expansion slots into [orchestration-new.service.ts](../../src/server/services/orchestrator/orchestration-new.service.ts) at `createStepInputs`, before per-step build:
 
 ```ts
-// new helper in a sibling file, e.g. orchestrator/snippetExpansion.ts
 async function expandSnippetsToPrompts(
   template: string,
-  references: { category: string; snippetIds: number[] }[],
+  references: SnippetReference[],
   userId: number,
-  seed: number, // resolved form seed — drives cap sampling AND #? picks
-): Promise<{ prompt: string; assignment: Record<string, string[]> }[]> {
-  // 1. Load all referenced snippets. Verify ownership. Reject if any Dirty.
-  // 2. Parse template to count slots per category for `#category` batch refs,
-  //    and note which category slots are `#?category` random-pick refs.
-  // 3. For batch refs: enumerate k-permutations per category, then cartesian-product across categories.
-  // 4. If total batch combinations > 10: Fisher-Yates shuffle keyed by `seed`, take first 10.
-  // 5. For each resulting combination, resolve `#?category` refs by picking one snippet
-  //    from the category's selected set using a PRNG keyed by (seed, stepIndex, referencePosition).
-  // 6. Substitute values into template, return one expanded prompt + assignment per combination.
+  seed: number,
+): Promise<{ prompt: string; assignment: ResolvedAssignment }[]> {
+  // 1. For each reference, fetch the merged pool (all active sets × matching category) — clean only,
+  //    nsfwLevel-filtered for the request's site context.
+  // 2. If reference.selections is empty, use the full pool. Otherwise restrict to selections.
+  // 3. For batch refs (#): enumerate k-permutations per category, then cartesian-product across categories.
+  //    If total > 10: Fisher-Yates shuffle keyed by seed, take first 10.
+  // 4. For random-pick refs (#?): pick one value per workflow step using PRNG keyed by
+  //    (seed, stepIndex, refPosition).
+  // 5. Substitute values into template; recursively resolve any nested __name__ refs within source set scope.
+  // 6. Return one expanded prompt + assignment per combination.
 }
 ```
 
-**Determinism contract:** the sampling and random-pick must be pure functions of `(seed, references, snippetIds, template)`. Implementation uses a seeded PRNG (e.g. `mulberry32` / `xorshift`); no wall-clock or process-level randomness. Re-submitting the same payload with the same seed yields byte-identical expanded prompts and assignments.
+**Determinism contract:** sampling and random-pick are pure functions of `(seed, references, selections, template)`. Implementation uses a seeded PRNG (e.g. `mulberry32`); no wall-clock or process-level randomness.
 
-The result (an array of prompts) then drives N parallel calls to the existing step-builder:
+**Workflow shape:** single `submitWorkflow()` call with all N steps. Same submission boundary, same buzz-accounting path.
 
-```ts
-// inside createStepInputs, after expandSnippetsToPrompts
-const expansions = await expandSnippetsToPrompts(...);
-const steps = await Promise.all(
-  expansions.map((e) => buildStepFromPrompt({ ...baseParams, prompt: e.prompt }))
-);
-return steps;
-```
-
-**Workflow shape:** a single `submitWorkflow()` call with all N steps — same submission boundary, same buzz-accounting path, no change to downstream consumers of the workflow record.
-
-**Metadata:** each step records its `assignment` (the snippet ids and values used) in the step metadata so result cards can label which combination produced each image.
+**Step metadata:** each step records its resolved values (with `wildcardSetId`, `categoryId`, `valueIndex`, and the literal value text) for reproducibility and result-card display. Schema doc §4.4 has the JSON shape.
 
 ---
 
 ## Auditing
 
-### Creation-time
+### Category-level, at create
 
-On snippet create/update:
+Audit runs per-category when a `WildcardSetCategory` is created:
 
-1. Call `auditPromptEnriched` on the snippet value.
-2. If clean → `auditStatus: Clean`, store current rule version.
-3. If dirty → reject the save with the matching rule returned to the client for display. The snippet is not persisted (or is persisted with `Dirty` and hidden from pickers — TBD during impl; I lean "reject the save" for simpler mental model).
+1. Read all values in the JSONB array.
+2. Run audit rules across the values.
+3. Produce one verdict (`Clean` or `Dirty`) plus an `nsfwLevel` classification.
+4. Update the category row.
+5. Roll up to the parent `WildcardSet.auditStatus` aggregate (`Clean` / `Mixed` / `Dirty`).
+
+If a category is `Dirty`, it's excluded from generation pools entirely. There's no per-value exclusion — the category is the audit unit.
 
 ### Submission-time
 
-1. Verify all referenced snippets are owned by the submitter and have `auditStatus: Clean`.
-2. Audit the user's **template** prompt (with `#references` stripped or replaced with harmless placeholders) via `auditPromptEnriched`. This catches problematic text the user typed outside any snippet.
-3. The **composed** prompt (after expansion) goes to the external moderation tool as part of the normal submission flow. No second local audit pass over the composition.
+1. Verify all referenced categories are `Clean` and not invalidated.
+2. Audit the user's **literal template text** (`#references` stripped/replaced) via `auditPromptEnriched`. Catches problematic text outside any reference.
+3. The composed prompt (after expansion) goes to external moderation as part of normal submission flow. No second local audit.
 
 ### Rule version drift
 
-Background cron job `reauditSnippets`:
-
-- Runs when the `auditPromptEnriched` rule version bumps.
-- Scans `PromptSnippet` rows where `auditRuleVersion != current`, re-audits in batches, updates `auditStatus` + `auditRuleVersion`.
-- During the window between rule bump and job completion, affected snippets are treated as `NeedsRecheck` → blocked from submission. The job should be fast (audit is cheap regex) so the window is minutes.
+Background cron job re-audits affected categories when audit rule version bumps. Cheap (regex-based audit). During the window, affected categories are blocked from submission via the `Pending`/`Dirty` filter in the resolver query.
 
 ---
 
 ## Preset interaction
 
-Presets live in [generation-preset.router.ts](../../src/server/routers/generation-preset.router.ts). They save a `values` JSON blob that may contain `prompt`.
+Presets snapshot the user's active sets at save time. `GenerationPreset.values` gains:
 
-- **Save:** no change. If the saved prompt contains `#references`, they save as literal text. The preset does not snapshot the snippet values; it snapshots only the references.
-- **Load:** when a preset is loaded into the form, parse the prompt for `#references` and populate the reference picker panel. For each category:
-  - If the user has snippets in that category: show the picker with **no** values pre-selected (user chooses what to include). Optionally, pre-select the most-recently-used value as a sensible default.
-  - If the user has no snippets in that category: show an unresolved reference chip with a "create snippet" shortcut.
-- **Share a preset (future):** presets are per-user today, but if sharing is ever added, cross-user `#references` will always be unresolved on the receiver's side. That's acceptable — the receiver sees the structure and fills with their own snippets.
+- `activeWildcardSetIds: number[]` — list of `UserWildcardSet.id`s that were active when the preset was saved.
+- `prompt` continues to save with `#references` as literal text.
+
+On load:
+
+- The user's `UserWildcardSet.isActive` is updated to match the preset's snapshot (deactivate everything, then activate the listed IDs).
+- If any IDs in the snapshot no longer exist, the preset load surfaces a warning and offers a "re-add these sets" shortcut for missing System-kind sets.
+- For each `#reference` in the loaded prompt, the picker panel populates per-reference selection state. Defaults to "all selected" (full pool); user adjusts.
+
+Future cross-user preset sharing: cross-user `#references` will be unresolved on the receiver's side. Acceptable — receiver fills with their own content.
 
 ---
 
 ## Implementation phases
 
-Each phase is independently shippable.
+Each phase is independently shippable. Backend phases ship before any client UI work.
 
-### Phase 1 — snippet library only (no prompt integration)
+### Phase 1 — schema + tRPC scaffolding (backend only)
 
-- Prisma model + migration + enum
-- tRPC router (`promptSnippet`): `getOwn`, `getByCategory`, `create`, `update`, `delete`, `reorder`
-- Save / manage modals in `src/components/Generation/Snippet/*`
-- Entry point: a "Snippets" button in the generator form header, next to Presets
+- Prisma migration: `WildcardSet`, `WildcardSetCategory`, `UserWildcardSet` + 3 enums + CHECK constraint
+- `wildcardSet` tRPC router (read endpoints + import for System-kind)
+- Audit pipeline for categories (background job runner, creation-time hook)
 
-This ships a usable feature (organized library of prompt fragments the user can copy/paste manually) without any generator-side changes.
+No user-visible features. Validates the data model end-to-end via API testing.
 
-### Phase 2 — prompt parsing + autocomplete
+### Phase 2 — System-kind import flow
 
-- Add `parsePromptSnippetReferences` and `expandPromptSnippets` to `prompt-helpers.ts`
-- Build the autocomplete popover wrapping `InputPrompt`
-- Highlight `#references` in the textarea
+- Wildcard-type model browsing (resources picker tab)
+- "Add to library" creates `WildcardSet` (with first-import extraction + audit) + a `UserWildcardSet` pointer
+- User can browse their imported sets in a library page
+- Resolver query (read-only, returns merged-pool data for a `#category` lookup)
 
-No submission changes yet — references still behave as literal text server-side.
+Users can subscribe to wildcard models but don't yet see them in the prompt UI.
 
-### Phase 3 — per-reference picker + batch math
+### Phase 3 — User-kind set + snippet save
+
+- `WildcardSet` `kind = User` creation flow (lazy on first save, "My snippets" default)
+- "Save to my snippets" action from picker rows (creates new categories)
+- User can create / delete sets, create / delete categories (no edits)
+
+Users can manage personal content; no prompt integration yet.
+
+### Phase 4 — prompt parsing + autocomplete
+
+- `parsePromptSnippetReferences` in `prompt-helpers.ts`
+- Autocomplete popover wrapping `InputPrompt` with source-grouped results
+- Highlight `#references` in textarea
+
+No submission changes yet — references behave as literal text server-side.
+
+### Phase 5 — per-reference picker + batch math
 
 - `SnippetReferencePanel` component
-- Combination counter, cap alert, reroll control, validation
-- Still no server submission changes — pickers exist in UI but selections aren't sent
+- Combinations counter, cap alert, reroll, validation
+- Defaults = full pool
 
-### Phase 4 — server expansion + step fan-out
+Pickers show in UI; selections aren't sent yet.
+
+### Phase 6 — server expansion + step fan-out
 
 - Augment `generateFromGraph` payload
 - `snippetExpansion.ts` module in `server/services/orchestrator/`
 - Hook into `createStepInputs`
-- Step metadata records the assignment
+- Step metadata records resolved values
 
 First end-to-end working slice.
 
-### Phase 5 — auditing completeness
+### Phase 7 — random-pick mode (`#?category`)
 
-- Pre-audit on snippet save
-- `SnippetAuditStatus` blocking at submit
-- Background `reauditSnippets` cron
-- Literal-prompt audit at submission
+- Extend parser to recognize `#?` as a distinct kind
+- Per-step seeded PRNG resolution in `expandSnippetsToPrompts`
+- Picker panel adds "random pool" affordances (bulk select)
 
-### Phase 6 — random-pick mode (`#?category`)
+### Phase 8 — nested wildcard resolution
 
-Adds A1111-style wildcard picking: `#?category` resolves to one randomly chosen snippet value per workflow step, instead of fanning the submission out into a batch. See *Random-pick mode* below for semantics.
-
-- Extend `parsePromptSnippetReferences` to recognize `#?` as a distinct reference kind.
-- In `expandSnippetsToPrompts`, resolve `#?` refs per-step using a seeded PRNG keyed by `(seed, stepIndex, referencePosition)`.
-- Picker panel adds a "random pool" section for `#?` references with bulk-select affordances (*Select all*, *Select none*) since random-pick users typically want wide pools.
-- Step metadata records the `#?` picks so a result card can show which value was chosen for each image.
+- Recursive `__name__` expansion within source-set scope (max depth + cycle detection)
+- Transitive `Dirty` propagation: if a category references another `Dirty` category, mark this one `Dirty` too
 
 ---
 
 ## Random-pick mode
 
-Two reference kinds share the same `#category` selection pool but differ in expansion semantics:
+Two reference kinds share the same selection pool but differ in expansion semantics:
 
-- **`#category` — batch mode.** Each reference slot uses a selected snippet value; selections cartesian-product across categories into multiple workflow steps. *Fans out a batch.*
-- **`#?category` — random-pick mode.** One snippet is randomly picked from the selected pool per workflow step and inserted into every `#?category` occurrence in that step. *Does not fan out.*
+- **`#category` — batch mode.** Each reference slot uses one selected value; selections cartesian-product across categories into multiple workflow steps. *Fans out a batch.*
+- **`#?category` — random-pick mode.** One value is randomly picked from the pool per workflow step and inserted into every `#?category` occurrence in that step. *Does not fan out.*
 
-**Combined usage:** a prompt may mix both modes. Example: `"#character walking through #?setting"` with 3 characters and 5 settings picked → 3 workflow steps (one per character), each step's `#?setting` independently resolves to one of the 5 settings via seeded PRNG. Total images = 3 steps × `quantity` per step.
+**Combined usage:** A prompt may mix both modes. Example: `"#character walking through #?setting"` with 3 characters and 5 settings → 3 workflow steps (one per character), each step's `#?setting` independently picks one of the 5 settings via seeded PRNG. Total images = 3 steps × `quantity` per step.
 
-**Per-step, not per-image.** Inside a single workflow step (which produces `quantity` images), all images share the same `#?` resolution. Users who want per-image variance should set `quantity = 1` and rely on batch fan-out. This keeps the one-prompt-per-step contract intact and avoids orchestration changes.
+**Per-step, not per-image.** All images in a single workflow step share the same `#?` resolution. For per-image variance, set `quantity = 1` and rely on batch fan-out.
 
-**Validation:** `#?category` requires at least 1 selected snippet in that category. Same-category occurrences share one pick per step — so `"#?character vs #?character"` in random-pick mode always substitutes the same character into both slots within a given step (intentional — use batch mode if different values are wanted).
+**Validation:** `#?category` requires at least one available value (after default = full pool rule applies). Same-category occurrences within a prompt share one pick per step.
 
-**Shared selection pool with batch mode.** A prompt like `"#character fights #?character"` uses a single selection set for the `character` category: batch slots iterate through selections, random-pick slots draw from the same set. If users want different pools for different reference kinds, that's a v2 enhancement (separate per-reference selections).
+**Shared selection pool with batch.** A prompt like `"#character fights #?character"` uses one selection set for `character` — batch slots iterate, random-pick slots draw from the same set. Separate per-reference pools is a v2 enhancement.
 
 ---
 
 ## Out of scope for v1
 
-- Shared public snippets / a snippet marketplace
-- Nested snippets (a snippet's value containing `#references` to other snippets)
+- Cross-user sharing of User-kind sets (a `Shared` or `Public` `kind` value would be additive when we want it)
+- Editing existing categories' values (categories are immutable post-create)
+- Per-snippet labels for User-kind sets (values are plain strings; users find content by reading + searching)
 - Per-reference "shared pick" toggle (all `#character` occurrences get the same value within a combination)
 - Per-reference separate selection pools (batch and random-pick drawing from different sets within the same category)
 - Per-image random-pick resolution (currently per-step)
 - Weight syntax for snippets (e.g., `#character:1.2`)
+- Search indexes over wildcard content (Postgres GIN on JSONB `values` is an option later)
 
-All deliberately deferred until the v1 shape is validated.
+These are deliberately deferred. The schema accommodates them as additive changes later.

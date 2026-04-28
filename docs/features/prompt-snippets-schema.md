@@ -34,82 +34,98 @@ Wildcard-set content is **cached globally** — one extracted copy per model ver
 ## 3. Entity overview
 
 ```
-┌─────────────────────┐       ┌─────────────────────┐
-│   ModelVersion      │◀──────│   WildcardSet       │   Global content
-│   (existing)        │ 1:1   │   (new)             │   (shared across users)
-└─────────────────────┘       └──────────┬──────────┘
-                                          │ 1:N
-                                          ▼
-                              ┌─────────────────────┐
-                              │ WildcardSetCategory │
-                              │   (new)             │
-                              └──────────┬──────────┘
-                                          │ 1:N
-                                          ▼
-                              ┌─────────────────────┐
-                              │  WildcardSetValue   │
-                              │    (new)            │
-                              └──────────▲──────────┘
-                                          │ N:1
-                                          │
-┌─────────────────────┐       ┌──────────┴──────────┐
-│   User (existing)   │◀──────│  UserWildcardSet    │   Per-user pointer
-│                     │ 1:N   │    (new)            │   (subscription)
-└─────────┬───────────┘       └─────────────────────┘
-          │ 1:N
-          │
-          ▼
-┌─────────────────────┐
-│   PromptSnippet     │   User-owned editable content
-│      (new)          │
-└─────────────────────┘
+                              ┌─────────────────────────────────┐
+                              │           WildcardSet           │
+                              │             (new)               │
+┌─────────────────┐ ◀──────── │  kind: System | User            │
+│  ModelVersion   │ 1:1 (opt) │   - System sets: ownedBy zip    │
+│   (existing)    │           │   - User sets:   ownedBy user   │
+└─────────────────┘           └────────────────┬────────────────┘
+                                                │ 1:N
+                                                ▼
+                              ┌─────────────────────────────────┐
+                              │     WildcardSetCategory         │
+                              │           (new)                 │
+                              │   values: JSONB string[]        │
+                              │   audit + nsfwLevel here        │
+                              └─────────────────────────────────┘
+
+┌─────────────────────┐       ┌──────────────────────────────────┐
+│   User (existing)   │◀──────│       UserWildcardSet            │ ──→ WildcardSet
+│                     │ 1:N   │            (new)                 │   (per-user pointer
+│                     │       │   isActive flag for picker scope │    for both kinds)
+└─────────────────────┘       └──────────────────────────────────┘
 ```
 
-**New tables:** `WildcardSet`, `WildcardSetCategory`, `WildcardSetValue`, `UserWildcardSet`, `PromptSnippet`.
+**New tables:** `WildcardSet`, `WildcardSetCategory`, `UserWildcardSet`.
 **Modified tables:** none (existing `GenerationPreset.values` JSON gets a new optional key, no schema change).
+
+**Key shape decisions:**
+
+- **One unified content table.** `WildcardSet` covers both globally-shared content imported from wildcard-type models (`kind = System`) and user-owned personal collections (`kind = User`). The discriminator + nullable owner/model FKs differentiate them; the resolver and picker treat them uniformly.
+- **Values are inline JSONB string arrays.** No separate value table. Audit and site-availability flags live on the category. Categories are the atomic unit of audit + visibility — if a category fails audit it disappears from generation pools entirely; if it passes, its `nsfwLevel` controls whether it shows on .com (SFW) vs .red (NSFW) vs both.
+- **`UserWildcardSet` is the activation/scoping mechanism for both kinds.** Owners of User-kind sets get a `UserWildcardSet` row pointing at their own set; subscribers to System-kind sets get a row pointing at the system set. `isActive` controls whether the set contributes to picker results regardless of kind.
 
 ---
 
 ## 4. Table specs
 
-### 4.1 `WildcardSet` — global cached wildcard-model content
+### 4.1 `WildcardSet` — global cached or user-owned wildcard collection
 
-One record per `ModelVersion` of type `Wildcard`. Created on first user import; shared by all subsequent importers.
+The unified content table. Two kinds:
+
+- **`kind = System`** — one record per `ModelVersion` of type `Wildcard`. Created on first user import; shared by all subsequent importers. Immutable after import.
+- **`kind = User`** — owned by one user. Created lazily (first time the user saves a personal snippet) or explicitly. The contained categories are immutable after create — users add new categories or new sets, they don't edit existing ones.
 
 ```prisma
 model WildcardSet {
   id                  Int                  @id @default(autoincrement())
-  modelVersionId      Int                  @unique
-  modelVersion        ModelVersion         @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
 
-  // Denormalized display fields (snapshotted at import). Saves a JOIN per picker render.
-  modelName           String               // e.g. "fullFeatureFantasy"
-  versionName         String               // e.g. "v3.0"
+  kind                WildcardSetKind                            // discriminator
 
-  // Aggregate audit — derived from WildcardSetValue.auditStatus rollup.
-  // "Clean" = all values clean; "Mixed" = some dirty (still usable, dirty values excluded);
-  // "Dirty" = all values dirty (set unusable until re-audit); "Pending" = not yet audited.
+  // System-kind only (null for User-kind):
+  modelVersionId      Int?                 @unique
+  modelVersion        ModelVersion?        @relation(fields: [modelVersionId], references: [id], onDelete: Restrict)
+  modelName           String?              // denormalized e.g. "fullFeatureFantasy"
+  versionName         String?              // denormalized e.g. "v3.0"
+  sourceFileCount     Int?                 // number of .txt files in the source zip
+
+  // User-kind only (null for System-kind):
+  ownerUserId         Int?
+  owner               User?                @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  name                String?              @db.Citext // user-given display name e.g. "My snippets"
+
+  // Shared:
+  // Aggregate audit — derived from WildcardSetCategory.auditStatus rollup.
+  // "Clean" = all categories clean; "Mixed" = some dirty (still usable, dirty categories excluded);
+  // "Dirty" = all categories dirty (set unusable until re-audit); "Pending" = not yet audited.
   auditStatus         WildcardSetAuditStatus @default(Pending)
   auditRuleVersion    String?
   auditedAt           DateTime?
 
-  // Set becomes invalidated if model is unpublished for policy reasons.
-  // Existing UserWildcardSet pointers remain but get a warning state.
+  // Invalidation — flagged if a System-kind set's source model is unpublished for policy reasons,
+  // or if a User-kind set's content is administratively suspended. Pointers remain but the set
+  // is excluded from generation pools.
   isInvalidated       Boolean              @default(false)
   invalidationReason  String?
   invalidatedAt       DateTime?
 
-  // Content extraction metadata.
-  sourceFileCount     Int                  // number of .txt files in the source zip
   totalValueCount     Int                  // denormalized sum of all category value counts
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
 
   categories          WildcardSetCategory[]
-  userSubscriptions   UserWildcardSet[]
+  userSubscriptions   UserWildcardSet[]    // per-user activation pointers (both kinds)
 
+  @@index([kind])
+  @@index([ownerUserId])
   @@index([auditStatus])
   @@index([isInvalidated])
+}
+
+enum WildcardSetKind {
+  System
+  User
 }
 
 enum WildcardSetAuditStatus {
@@ -122,65 +138,57 @@ enum WildcardSetAuditStatus {
 
 **Field notes:**
 
-- `modelVersionId` is `@unique` because we never create two `WildcardSet`s for the same version. Concurrent first-import is handled by the service layer (see §6.1).
-- `onDelete: Restrict` on `modelVersion` — we don't want a `ModelVersion` deletion to cascade through user pointers. If a version is hard-deleted, it should be blocked until dependent sets are invalidated first.
-- `modelName` / `versionName` are denormalized because the picker renders these constantly and we don't want JOINs through the models tables on every autocomplete call.
-- `totalValueCount` is denormalized for quick "38 values · 3 sources" displays in the picker header.
+- **Kind invariant.** Exactly one of `(modelVersionId, ownerUserId)` is non-null per row, determined by `kind`. Enforced via a CHECK constraint at migration time (see §8).
+- `modelVersionId` is `@unique` (only enforced when non-null) because we never create two System-kind sets for the same version. Concurrent first-import is handled by the service layer (see §6.1).
+- `onDelete: Restrict` on `modelVersion` — a `ModelVersion` hard-delete is blocked until dependent System-kind sets are invalidated first. `onDelete: Cascade` on `owner` — deleting a user removes their User-kind sets and their categories.
+- `modelName` / `versionName` are denormalized for picker rendering on System-kind sets without JOINs through the models tables.
+- `name` (User-kind only) is `citext` — case-insensitive, preserves user's casing for display. No global uniqueness; multiple users can have a set called "My snippets," and one user can have several sets like "Characters" and "characters" treated as the same name within their own scope.
+- `totalValueCount` is denormalized for quick "38 values · 3 sources" displays.
 
-### 4.2 `WildcardSetCategory` — categories within a wildcard set
+### 4.2 `WildcardSetCategory` — categories within a wildcard set, values inline
 
-One row per `.txt` file in the source zip (e.g. `character.txt` → one category).
+One row per `.txt` file in the source zip (e.g. `character.txt` → one category). The category's values are stored directly on this row as a `JSONB` array — no separate value table. Audit and site-availability flags live here so that a category is the atomic unit of "is this content allowed to be used."
 
 ```prisma
 model WildcardSetCategory {
-  id              Int                  @id @default(autoincrement())
-  wildcardSetId   Int
-  wildcardSet     WildcardSet          @relation(fields: [wildcardSetId], references: [id], onDelete: Cascade)
+  id                Int                     @id @default(autoincrement())
+  wildcardSetId     Int
+  wildcardSet       WildcardSet             @relation(fields: [wildcardSetId], references: [id], onDelete: Cascade)
 
-  name            String               @db.Citext // e.g. "character" — case-insensitive via citext; matches `#category` token regardless of case
-  valueCount      Int                  // denormalized count of WildcardSetValue rows in this category
-  displayOrder    Int                  @default(0)
-  createdAt       DateTime             @default(now())
+  name              String                  @db.Citext // e.g. "character" — citext makes comparisons and the unique constraint case-insensitive; original filename casing is preserved for display
 
-  values          WildcardSetValue[]
+  // Values are an ordered array of strings — one entry per non-empty line in the source .txt.
+  // Each string preserves Dynamic Prompts syntax literally (`{a|b|c}`, `__nested__`, weights);
+  // the resolver expands that syntax at generation time.
+  values            Json                    @db.JsonB
+
+  // Denormalized count for fast displays ("24 values") without parsing the JSON.
+  valueCount        Int
+
+  // Audit applies to the category as a whole. If audit fails, the category is excluded
+  // from generation pools globally — Dirty categories don't get returned by the resolver.
+  auditStatus       CategoryAuditStatus     @default(Pending)
+  auditRuleVersion  String?
+  auditedAt         DateTime?
+  auditNote         String?                 // populated when Dirty — which rule matched
+
+  // NSFW classification — bitwise flags following the existing Civitai NsfwLevel convention
+  // (see docs/features/bitwise-flags.md). The site router uses this to decide whether the
+  // category is offered on .com (SFW) vs .red (NSFW) vs both. Set during import/audit; can
+  // be overridden by moderators. 0 = unrated (treated as not-yet-available).
+  nsfwLevel         Int                     @default(0)
+
+  displayOrder      Int                     @default(0)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
 
   @@unique([wildcardSetId, name])
   @@index([wildcardSetId])
-}
-```
-
-**Field notes:**
-
-- `name` uses the PostgreSQL `citext` type — case-insensitive comparisons and unique constraint automatically. Stores the source filename's casing; the picker can display it as-is, and prompts match it regardless of how the user typed `#Character` vs `#character`. Removes the need for a separate `displayName` column.
-- `valueCount` is denormalized for autocomplete displays ("24 values"). Maintained by application code at import and when per-value audit updates.
-- Cascades from `WildcardSet` — deleting a set deletes its categories.
-
-### 4.3 `WildcardSetValue` — individual values within a category
-
-One row per line in the source `.txt` file. The value text preserves Dynamic Prompts syntax (`{a|b|c}`, `__nested__`, weights) literally — expansion happens at generation time in the resolver.
-
-```prisma
-model WildcardSetValue {
-  id                Int                 @id @default(autoincrement())
-  categoryId        Int
-  category          WildcardSetCategory @relation(fields: [categoryId], references: [id], onDelete: Cascade)
-
-  value             String              @db.Text   // raw line from source .txt, may contain A1111 syntax
-  auditStatus       ValueAuditStatus    @default(Pending)
-  auditRuleVersion  String?
-  auditedAt         DateTime?
-  auditNote         String?             // populated when Dirty — which rule matched
-
-  // Source line index in the original file — useful for update diffs later.
-  sourceLineIndex   Int
-
-  createdAt         DateTime            @default(now())
-
-  @@index([categoryId])
-  @@index([categoryId, auditStatus]) // picker fetches clean values for a category
+  @@index([wildcardSetId, auditStatus])     // resolver: clean categories per set
+  @@index([auditStatus])                    // background audit / re-audit job
 }
 
-enum ValueAuditStatus {
+enum CategoryAuditStatus {
   Pending
   Clean
   Dirty
@@ -189,14 +197,16 @@ enum ValueAuditStatus {
 
 **Field notes:**
 
-- `value` is `@db.Text` because some wildcard lines can be long (weighted alternation with 40+ options).
-- `sourceLineIndex` lets us produce a meaningful diff when a new model version is imported — we can tell the user "added 5, removed 2 vs v3.0."
-- `(categoryId, auditStatus)` composite index serves the primary picker query: `SELECT * WHERE categoryId = ? AND auditStatus = 'Clean'`.
-- No per-user data here. Dirty values are globally dirty; no user-specific suppression at this level.
+- `name` uses the PostgreSQL `citext` type — case-insensitive comparisons and unique constraint automatically. Stores the source filename's casing as-is; the picker can render it directly, and prompts match it regardless of how the user types `#Character` vs `#character`. Removes the need for a separate `displayName` column.
+- `values` is a JSONB array of strings, e.g. `["fire", "water", "earth", ...]` for `elemental_types`, or `["{3.0::serious|3.0::determined|...}"]` for a single-line weighted-alternation file. Empty source lines are dropped at import. Order is preserved via array position.
+- **Audit is one verdict per category, not per value.** If any line in the category fails audit, the whole category becomes `Dirty` and is excluded from resolution. Authors curate categories as cohesive lists; partial use after a partial-audit-fail isn't a workflow we want to support, and per-line audit columns aren't needed.
+- `nsfwLevel` follows the existing Civitai bitwise NSFW convention so the site router can filter categories using the same logic it already uses for images, models, etc. A category with `nsfwLevel = 0` (unrated) is treated as not-yet-available pending classification.
+- `valueCount` is denormalized for picker headers — derivable from `jsonb_array_length(values)` but cached to avoid the function call on hot reads.
+- Cascades from `WildcardSet` — deleting a set deletes its categories.
 
-### 4.4 `UserWildcardSet` — user's pointer/subscription
+### 4.3 `UserWildcardSet` — per-user activation pointer
 
-Each row = "this user has access to this wildcard set." Ownership is only conceptual (users don't own content); `isActive` flips whether the set participates in the user's current generation context.
+Each row = "this user has this wildcard set active in their picker." Used for both `kind = System` (subscribed to a shared set) and `kind = User` (using their own owned set). When a user creates a User-kind set, a `UserWildcardSet` row is auto-created so the resolver doesn't need a special-case query path.
 
 ```prisma
 model UserWildcardSet {
@@ -207,67 +217,25 @@ model UserWildcardSet {
   wildcardSetId   Int
   wildcardSet     WildcardSet @relation(fields: [wildcardSetId], references: [id], onDelete: Cascade)
 
-  nickname        String?     // optional user rename for display
+  nickname        String?     // optional user rename for display (overrides set's own name in their picker)
   isActive        Boolean     @default(true)
   sortOrder       Int         @default(0)
   addedAt         DateTime    @default(now())
 
   @@unique([userId, wildcardSetId])
   @@index([userId, isActive])  // primary resolver query: "what sets does this user have active?"
-  @@index([wildcardSetId])     // occasional: "who subscribes to this set?" for invalidation fan-out
+  @@index([wildcardSetId])     // occasional: "who has this set active?" for invalidation fan-out
 }
 ```
 
 **Field notes:**
 
-- Cascades on both sides. Deleting a user drops their subscriptions; deleting a `WildcardSet` (rare — happens if we ever purge a no-longer-used global set) drops dependent pointers.
+- **Pointer for both kinds.** For System-kind, the user explicitly added the set (subscription). For User-kind, the row is auto-created when the user creates the set; deactivating it hides the set from the picker without deleting it. Deleting a User-kind set cascades through this row.
+- Cascades on both sides. Deleting a user drops their pointers; deleting a `WildcardSet` drops all dependent pointers (including the owner's pointer for User-kind).
 - `(userId, isActive)` is the hottest index — every prompt's autocomplete fetch uses it.
-- No audit fields here; the authoritative audit lives on the global set.
+- No audit fields here; the authoritative audit lives on the `WildcardSet` and its categories.
 
-### 4.5 `PromptSnippet` — user's personal editable snippets
-
-User-owned mutable content. Conceptually the "My snippets" default-active set in the UI, but stored separately from wildcard sets because the data shape and editability are different.
-
-```prisma
-model PromptSnippet {
-  id                  Int                 @id @default(autoincrement())
-  userId              Int
-  user                User                @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  category            String              @db.Citext // e.g. "character" — arbitrary, user-defined; citext gives case-insensitive matching and uniqueness
-  name                String              @db.Citext // e.g. "Zelda"
-  value               String              @db.Text
-  description         String?
-
-  auditStatus         SnippetAuditStatus  @default(Pending)
-  auditRuleVersion    String?
-  auditedAt           DateTime?
-
-  sortOrder           Int                 @default(0)
-  createdAt           DateTime            @default(now())
-  updatedAt           DateTime            @updatedAt
-
-  @@unique([userId, category, name])
-  @@index([userId, category])   // primary picker query
-  @@index([userId, auditStatus]) // for admin: "which of this user's snippets are dirty?"
-}
-
-enum SnippetAuditStatus {
-  Pending
-  Clean
-  Dirty
-  NeedsRecheck
-}
-```
-
-**Field notes:**
-
-- `category` and `name` both use `citext` — users typing "Character" or "character" get the same category, and "Zelda" vs "zelda" are treated as the same snippet within a category. Original casing is preserved for display.
-- `category` is a free-form string the user chooses at save time. Not a FK — there's no "Categories" table. Users coin their own taxonomy.
-- `(userId, category, name)` unique — a user can't have two snippets named "Zelda" in the category "character" (case-insensitive).
-- `NeedsRecheck` is set by the re-audit background job (§6.4) and treated as `Pending` for resolution purposes.
-
-### 4.6 Metadata conventions (no schema change)
+### 4.4 Metadata conventions (no schema change)
 
 Two existing JSON blobs gain new conventional keys.
 
@@ -282,8 +250,8 @@ Two existing JSON blobs gain new conventional keys.
       "category": "character",
       "referencePosition": 0,
       "resolvedValues": [
-        { "source": "snippet",     "snippetId": 421,    "value": "Zelda" },
-        { "source": "wildcardSet", "valueId":   18927,  "value": "1girl, __character_f__" }
+        { "wildcardSetId": 42, "categoryId": 991, "valueIndex": 2, "value": "blonde hair, green tunic, pointed ears..." },
+        { "wildcardSetId": 17, "categoryId": 631, "valueIndex": 5, "value": "lightning" }
       ]
     }
   ],
@@ -293,7 +261,7 @@ Two existing JSON blobs gain new conventional keys.
 }
 ```
 
-This captures enough for a future "re-run this step" feature without requiring the global content to be immutable — if a wildcard value changes, we still know what was originally used.
+The source identifier is always `(wildcardSetId, categoryId, valueIndex)` — pointing into the JSONB `values` array on `WildcardSetCategory`. Both User-kind and System-kind sets share this shape; consumers can look up `WildcardSet.kind` if they need to distinguish (e.g., to label "from your library" vs "from a model"). Categories are immutable post-create, so the index is stable. The literal `value` text is also recorded for human-readable history.
 
 ---
 
@@ -301,38 +269,49 @@ This captures enough for a future "re-run this step" feature without requiring t
 
 | Table | Index | Purpose |
 |---|---|---|
-| `WildcardSet` | `(modelVersionId)` unique | Idempotent first-import lookup |
+| `WildcardSet` | `(modelVersionId)` unique | Idempotent first-import lookup (System-kind) |
+| `WildcardSet` | `(kind)` | Filter by kind in admin/listing queries |
+| `WildcardSet` | `(ownerUserId)` | List a user's owned User-kind sets |
 | `WildcardSet` | `(auditStatus)` | Background audit job scans |
 | `WildcardSet` | `(isInvalidated)` | Admin queries; invalidation fan-out |
 | `WildcardSetCategory` | `(wildcardSetId, name)` unique | Resolver: get category X in set Y |
 | `WildcardSetCategory` | `(wildcardSetId)` | List all categories in a set |
-| `WildcardSetValue` | `(categoryId)` | List values in a category |
-| `WildcardSetValue` | `(categoryId, auditStatus)` | Picker: fetch clean values only |
-| `UserWildcardSet` | `(userId, wildcardSetId)` unique | Enforce no duplicate subscriptions |
+| `WildcardSetCategory` | `(wildcardSetId, auditStatus)` | Resolver: clean categories per set |
+| `WildcardSetCategory` | `(auditStatus)` | Background audit / re-audit job |
+| `UserWildcardSet` | `(userId, wildcardSetId)` unique | Enforce one pointer per user/set |
 | `UserWildcardSet` | `(userId, isActive)` | Primary resolver query per user |
 | `UserWildcardSet` | `(wildcardSetId)` | Fan-out when invalidating a set |
-| `PromptSnippet` | `(userId, category, name)` unique | Name collision prevention |
-| `PromptSnippet` | `(userId, category)` | Picker query: user's snippets in category X |
-| `PromptSnippet` | `(userId, auditStatus)` | Admin / background re-audit |
 
 ---
 
 ## 6. Key operations and query patterns
 
-### 6.1 First-import of a wildcard model
+### 6.1 First-import of a wildcard model (System-kind)
 
-Atomic transaction:
+Atomic transaction. Fewer rows now that values live inline on categories — one insert per category, one bulk transaction per set.
 
 ```
 BEGIN
-  SELECT id FROM WildcardSet WHERE modelVersionId = ?
+  SELECT id FROM WildcardSet WHERE modelVersionId = ? AND kind = 'System'
   IF found: create UserWildcardSet (userId, wildcardSetId=found.id, isActive=true)
   ELSE:
-    INSERT WildcardSet (modelVersionId, modelName, versionName, sourceFileCount, totalValueCount, auditStatus='Pending')
+    INSERT WildcardSet (
+      kind = 'System',
+      modelVersionId, modelName, versionName,
+      sourceFileCount, totalValueCount,
+      auditStatus = 'Pending'
+    )
     FOR each .txt file:
-      INSERT WildcardSetCategory (wildcardSetId, name, valueCount, displayOrder)
-      FOR each non-empty line:
-        INSERT WildcardSetValue (categoryId, value, sourceLineIndex, auditStatus='Pending')
+      lines = read non-empty lines from file
+      INSERT WildcardSetCategory (
+        wildcardSetId,
+        name,                      -- citext, preserves source filename casing
+        values = jsonb(lines),     -- JSONB array of strings
+        valueCount = length(lines),
+        displayOrder,
+        auditStatus = 'Pending',
+        nsfwLevel = 0
+      )
     INSERT UserWildcardSet (userId, wildcardSetId, isActive=true)
 COMMIT
 -- Then: enqueue audit job for the new WildcardSet
@@ -340,56 +319,122 @@ COMMIT
 
 Concurrency: two users hitting first-import for the same model version at once — the `(modelVersionId)` unique constraint makes one of them lose with a unique-violation; we catch it in the service layer and retry the "find existing" path.
 
+### 6.1a User-kind set creation and snippet save
+
+User-kind sets are created lazily. The first time a user clicks "Save to my snippets" (from a wildcard picker row, or via a "create snippet" form), the service ensures a User-kind set exists for them and adds a category to it.
+
+```
+BEGIN
+  -- Find or create the user's default set
+  SELECT id FROM WildcardSet WHERE kind = 'User' AND ownerUserId = ? AND name = 'My snippets'
+  IF not found:
+    INSERT WildcardSet (
+      kind = 'User',
+      ownerUserId, name = 'My snippets',
+      totalValueCount = 0, auditStatus = 'Pending'
+    )
+    INSERT UserWildcardSet (userId = ownerUserId, wildcardSetId = new.id, isActive = true)
+
+  -- Find or create the category
+  SELECT id, values FROM WildcardSetCategory WHERE wildcardSetId = ? AND name = ?
+  IF not found:
+    INSERT WildcardSetCategory (
+      wildcardSetId,
+      name = '<chosen category, e.g. "character">',
+      values = jsonb([newValue]),     -- single-element array on creation
+      valueCount = 1,
+      auditStatus = 'Pending',
+      nsfwLevel = 0
+    )
+  ELSE:
+    -- Categories are immutable post-create per the agreed model.
+    -- Adding a new value to an existing category creates a NEW category
+    -- (e.g. "character" → "character-2") OR the user picks a different name.
+    -- We surface this to the user at save time rather than mutating in place.
+    REJECT or PROMPT for new category name
+
+  UPDATE WildcardSet.totalValueCount += new values added
+COMMIT
+-- Enqueue audit for the new WildcardSetCategory
+```
+
+This preserves the immutability invariant: existing categories never change. If a user wants to grow their character collection, they're either creating a new category (e.g. `characters_v2`) or starting fresh. UX-side, we'll need to make this clear in the "save to my snippets" flow — either auto-name new categories as `<base>-N`, or prompt the user.
+
+> **Open product question:** is per-category immutability the right semantic for User-kind sets, or do we want categories to grow over time as users save more values? Strict immutability matches System-kind (which is desirable for uniformity) but creates UX friction for the iterative-saving workflow. See §9 open question 5.
+
 ### 6.2 Resolver: get active content for a `#category` reference
 
-Given `userId` and `category='character'`, fetch everything selectable:
+Given `userId`, `category='character'`, and the request's site context (SFW vs NSFW expressed as a `requiredNsfwMask` int), fetch everything selectable. With the unified design, this is a **single query** — no separate path for personal snippets:
 
 ```sql
--- User's personal snippets
-SELECT id, name, value, 'snippet' as source, auditStatus
-FROM "PromptSnippet"
-WHERE userId = ? AND category = 'character' AND auditStatus = 'Clean';
-
--- Values from active wildcard sets
-SELECT wsv.id, wsc.name as categoryName, wsv.value, ws.id as setId, ws.modelName, ws.versionName, 'wildcardSet' as source, wsv.auditStatus
+SELECT wsc.id           AS "categoryId",
+       wsc.name         AS "categoryName",
+       wsc.values       AS "values",
+       wsc."valueCount" AS "valueCount",
+       wsc."nsfwLevel"  AS "nsfwLevel",
+       ws.id            AS "setId",
+       ws.kind          AS "setKind",
+       ws."modelName",
+       ws."versionName",
+       ws.name          AS "userSetName",   -- non-null for User-kind sets
+       ws."ownerUserId"
 FROM "UserWildcardSet" uws
-  JOIN "WildcardSet" ws ON uws.wildcardSetId = ws.id
-  JOIN "WildcardSetCategory" wsc ON wsc.wildcardSetId = ws.id
-  JOIN "WildcardSetValue" wsv ON wsv.categoryId = wsc.id
-WHERE uws.userId = ?
-  AND uws.isActive = true
-  AND ws.isInvalidated = false
+  JOIN "WildcardSet" ws           ON uws."wildcardSetId" = ws.id
+  JOIN "WildcardSetCategory" wsc  ON wsc."wildcardSetId" = ws.id
+WHERE uws."userId" = ?
+  AND uws."isActive" = true
+  AND ws."isInvalidated" = false
   AND wsc.name = 'character'
-  AND wsv.auditStatus = 'Clean';
+  AND wsc."auditStatus" = 'Clean'
+  AND (wsc."nsfwLevel" & ?) <> 0;   -- bitwise filter: category overlaps with required site rating
 ```
 
-The second query is the expensive one. Indexes `(userId, isActive)` on `UserWildcardSet` and `(wildcardSetId, name)` on `WildcardSetCategory` and `(categoryId, auditStatus)` on `WildcardSetValue` should keep it bounded. Expected result size: ~30–100 rows typical, maybe 1000+ for power users with many large sets active.
+The picker UI groups results by `setKind` for display ("From My Snippets" for User-kind, "From fullFeatureFantasy v3.0" for System-kind), but storage and querying are uniform.
 
-### 6.3 Audit job — value-level
+**Indexes carrying this query:** `(userId, isActive)` on `UserWildcardSet`, `(wildcardSetId, name)` + `(wildcardSetId, auditStatus)` on `WildcardSetCategory`. Two-table-FK-walk; well-indexed three-table joins at this scale are sub-millisecond.
 
-Triggered on WildcardSet creation and when audit rules version bumps:
+**Expected result size:** ~3–20 category rows (one per active set that has the category). The app unpacks `values` arrays in code to produce the picker's flat list.
+
+### 6.3 Audit job — category-level
+
+Triggered on WildcardSet creation and when audit rules version bumps. Audit is per-category: read all values from the JSONB array, run audit rules across them, produce one verdict for the whole category. If any line fails, the category is `Dirty`.
 
 ```
-FOR each WildcardSetValue WHERE categoryId IN (SELECT id FROM WildcardSetCategory WHERE wildcardSetId = ?)
+FOR each WildcardSetCategory WHERE wildcardSetId = ?
   AND (auditStatus = 'Pending' OR auditRuleVersion != currentRuleVersion):
-    run audit
-    UPDATE WildcardSetValue SET auditStatus, auditRuleVersion, auditedAt, auditNote
+    lines = parse JSONB values array
+    verdict, nsfwLevel, note = runAudit(lines)
+    UPDATE WildcardSetCategory
+      SET auditStatus = verdict,
+          nsfwLevel = nsfwLevel,
+          auditRuleVersion = currentRuleVersion,
+          auditedAt = NOW(),
+          auditNote = note
 
--- After all values processed:
+-- After all categories processed:
   Recompute WildcardSet.auditStatus aggregate (Clean | Mixed | Dirty)
   UPDATE WildcardSet SET auditStatus, auditRuleVersion, auditedAt
 ```
 
-Runs as a background worker. Batch size tuned so a single set's audit finishes in under ~30s.
+The audit service produces both the pass/fail verdict and the `nsfwLevel` classification in one pass. A category that fails outright is marked `Dirty` (excluded everywhere); a category that passes gets a `nsfwLevel` reflecting its content rating, and the site router decides where it shows. Runs as a background worker, ~one category per regex pass — finishes a typical 60-category set well under a minute.
 
-### 6.4 Set invalidation (model unpublished for policy)
+### 6.4 Set invalidation
+
+For System-kind sets, when a model is unpublished for policy:
 
 ```
 UPDATE "WildcardSet" SET isInvalidated = true, invalidationReason = ?, invalidatedAt = NOW()
 WHERE modelVersionId = ?;
 ```
 
-Downstream: resolver already filters `isInvalidated = false`, so content is immediately excluded from pools. Users keep their pointers but see a warning badge in the library. Admin tooling can force-hard-delete (cascade through `UserWildcardSet`) if we need to purge.
+For User-kind sets, when a moderator suspends a user's content:
+
+```
+UPDATE "WildcardSet" SET isInvalidated = true, invalidationReason = ?, invalidatedAt = NOW()
+WHERE id = ? AND kind = 'User';
+```
+
+Downstream: resolver filters `isInvalidated = false`, so content is immediately excluded from pools. Users keep their pointers but see a warning badge. Admin tooling can force-hard-delete a User-kind set (cascade through `UserWildcardSet` and `WildcardSetCategory`) if we need to purge content entirely; System-kind sets shouldn't be hard-deleted because we can't be sure all submission-history references are no longer needed.
 
 ### 6.5 Preset save / load
 
@@ -423,60 +468,69 @@ Educated guesses based on current Civitai scale; DB reviewer should sanity-check
 
 | Table | Per unit | Estimated total at year 1 |
 |---|---|---|
-| `WildcardSet` | ~1 per imported model version | ~5k rows |
-| `WildcardSetCategory` | ~50 per set | ~250k rows |
-| `WildcardSetValue` | ~30 per category | ~7.5M rows |
-| `UserWildcardSet` | ~3 per active snippet user | ~300k–1M rows |
-| `PromptSnippet` | variable per user | ~500k–5M rows |
+| `WildcardSet` (System-kind) | ~1 per imported model version | ~5k rows |
+| `WildcardSet` (User-kind) | ~1–3 per active snippet user | ~100k–500k rows |
+| `WildcardSetCategory` | System: ~50 per set, ~6KB JSONB. User: ~5 per set, smaller JSONB | ~500k–1M rows |
+| `UserWildcardSet` | ~3–10 per active user (subscriptions + own User-kind sets) | ~500k–2M rows |
 
-`WildcardSetValue` at 7.5M rows is the biggest table but still well within Postgres comfort zone with the proposed indexes. Main write pressure is at import time (bulk insert on first-import of a popular model); steady-state writes are negligible.
+`WildcardSetCategory` total storage is dominated by System-kind sets (~1.5GB across 250k rows from imported wildcard models). User-kind categories are typically smaller — fewer values per category, shorter values — and add negligible storage compared to System-kind. Postgres TOAST handles the larger JSONB blobs automatically.
+
+Write pressure is at import time (one bulk transaction per System-kind set; one row at a time for User-kind set creation/category-add). Steady-state writes are negligible.
 
 ---
 
 ## 8. Migration plan
 
-Single additive migration — no existing data needs to move. Requires the standard PostgreSQL `citext` extension for case-insensitive category/name columns.
+Single additive migration — no existing data needs to move. Requires the standard PostgreSQL `citext` extension for case-insensitive name columns.
 
-```
+```sql
 CREATE EXTENSION IF NOT EXISTS citext;
 
+CREATE TYPE "WildcardSetKind" AS ENUM ('System', 'User');
 CREATE TYPE "WildcardSetAuditStatus" AS ENUM ('Pending', 'Clean', 'Mixed', 'Dirty');
-CREATE TYPE "ValueAuditStatus" AS ENUM ('Pending', 'Clean', 'Dirty');
-CREATE TYPE "SnippetAuditStatus" AS ENUM ('Pending', 'Clean', 'Dirty', 'NeedsRecheck');
+CREATE TYPE "CategoryAuditStatus" AS ENUM ('Pending', 'Clean', 'Dirty');
 
-CREATE TABLE "WildcardSet" (...);
-CREATE TABLE "WildcardSetCategory" (...);
-CREATE TABLE "WildcardSetValue" (...);
-CREATE TABLE "UserWildcardSet" (...);
-CREATE TABLE "PromptSnippet" (...);
+CREATE TABLE "WildcardSet" (...);              -- has `kind`, nullable model FKs, nullable owner FK, `name CITEXT`
+CREATE TABLE "WildcardSetCategory" (...);      -- has `values JSONB`, `auditStatus`, `nsfwLevel`, `name CITEXT`
+CREATE TABLE "UserWildcardSet" (...);          -- per-user activation pointer for both kinds
+
+ALTER TABLE "WildcardSet" ADD CONSTRAINT wildcard_set_kind_owner_check CHECK (
+  (kind = 'System' AND "modelVersionId" IS NOT NULL AND "ownerUserId" IS NULL) OR
+  (kind = 'User'   AND "modelVersionId" IS NULL     AND "ownerUserId" IS NOT NULL)
+);
 
 CREATE UNIQUE INDEX ... ;  -- per index table in §5
 CREATE INDEX ... ;
 ```
 
-No data backfill. No existing columns modified. `CREATE EXTENSION IF NOT EXISTS` is idempotent — if `citext` is already enabled on the cluster (common; it's a contrib extension), the statement is a no-op.
+No data backfill. No existing columns modified. `CREATE EXTENSION IF NOT EXISTS` is idempotent.
 
-**Rollback story:** drop the 5 tables + 3 enums. Leave the `citext` extension in place — other features may adopt it, and dropping it requires no dependencies to exist against it. Existing generation, preset, and model flows are untouched by this migration (the metadata JSON conventions in §4.6 are additive and ignored by pre-feature code).
+**Rollback story:** drop the 3 tables + 3 enums. Leave the `citext` extension in place. Existing generation, preset, and model flows are untouched by this migration (the metadata JSON conventions in §4.4 are additive and ignored by pre-feature code).
 
 ---
 
 ## 9. Open questions for DB review
 
-1. **`WildcardSetValue.value` type.** `@db.Text` chosen for unbounded length. Some values (weighted alternation) can realistically hit 2-3KB. Any concern about TOAST overhead given we're fetching many per picker call?
-2. **Denormalization of `valueCount` / `totalValueCount`.** Kept for read-path performance; updated in app code at import and on per-value audit flips. Would a generated column (or a trigger) be preferred for consistency guarantees?
-3. **Global set deletion.** Current plan: `WildcardSet` rows are never hard-deleted; `isInvalidated` handles policy-driven removals. Do we want a separate `deletedAt` for a softer concept, or is hard-delete-with-cascade acceptable if reviewed case-by-case?
-4. **Partitioning `WildcardSetValue`?** At 7.5M rows with mostly append-only writes, probably not needed for v1, but worth noting if we think read patterns justify it.
-5. **Audit rule version as a string.** Letting the audit service own the versioning scheme. Alternative: a dedicated `AuditRuleset` table and FK to it. Simpler-as-string for v1?
-6. **Snippet category as free-form string vs FK to a categories table.** Current plan: free-form string, users coin their own. Alternative: a `SnippetCategory` FK table for normalization + autocomplete against existing categories. Simpler-as-string for v1; we can add a table later if we want cross-user category discovery.
+1. **`WildcardSetCategory.values` as JSONB vs `text[]`.** Postgres `text[]` would also work and is slightly more constrained (always array-of-string). JSONB is more flexible if we later want to attach per-value metadata. Preference?
+2. **JSONB read patterns.** Resolver fetches the whole `values` array per category and unpacks in app code. Alternative: server-side `jsonb_array_elements_text(values)` to unnest at query time. Either is fine at this scale; flagging in case there's a house preference.
+3. **Denormalization of `valueCount` / `totalValueCount`.** Kept for read-path performance. `valueCount` is derivable from `jsonb_array_length(values)` — could be a generated column. Worth doing, or overkill?
+4. **`nsfwLevel` set by audit pipeline vs explicit moderator action.** Current plan: audit produces a verdict + an inferred `nsfwLevel` based on content rules. Mods can override later. Is there a more rigorous classification process the team would want here (e.g., human-in-the-loop required before any non-zero rating)?
+5. **User-kind category immutability vs. growth.** §6.1a's flow says categories are immutable post-create — adding a value means creating a new category (e.g. `character-2`). Strict but matches System-kind. Alternative: allow appending to a User-kind category's `values` JSONB. Less strict; complicates audit (re-audit on every append) and step-metadata stability (`valueIndex` shifts if we ever reorder). Preference?
+6. **Global set deletion.** Current plan: `WildcardSet` rows are never hard-deleted; `isInvalidated` handles policy-driven removals. Do we want a separate `deletedAt` for a softer concept, or is hard-delete-with-cascade acceptable for User-kind sets specifically (since we won't have step-history risk for personal content)?
+7. **Audit rule version as a string.** Letting the audit service own the versioning scheme. Alternative: a dedicated `AuditRuleset` table and FK to it. Simpler-as-string for v1?
+8. **CHECK constraint enforcement.** The `(kind, modelVersionId, ownerUserId)` invariant is enforced via a single CHECK constraint at migration time. Worth reviewing whether this is the right level of enforcement, or whether we'd prefer a partial unique index approach or trigger-based.
+9. **Default User-kind set name.** New users get a User-kind set called "My snippets" lazily created on first save. Hardcoded? Localizable? Prompted? Probably hardcoded for v1 with a per-user rename allowed via `name`.
 
 ---
 
 ## 10. Out of scope for v1
 
-- Search indexes over snippet/wildcard content (we defer to straightforward WHERE clauses until scale warrants).
-- Cross-user snippet discovery (public snippet library).
-- Wildcard set version-diff storage (we keep `sourceLineIndex` for future use).
+- Search indexes over snippet/wildcard content (we defer to straightforward WHERE clauses until scale warrants — Postgres GIN on the JSONB `values` column is an option later).
+- Cross-user sharing of User-kind sets (a "Shared" or "Public" `kind` value would be additive when we want it).
+- Wildcard set version-diff storage (immutable JSONB makes diffing a future concern).
+- Per-line audit results within a category (audit is atomic at the category level).
 - Set favoriting, tagging, or grouping beyond `sortOrder`.
-- A dedicated `SnippetCategory` normalization table.
+- Editing existing categories' values (categories are immutable post-create).
+- Per-snippet labels for User-kind sets (values are plain strings; users find content by reading + searching).
 
 These are deliberately punted — the schema above accommodates them as additive changes later.
