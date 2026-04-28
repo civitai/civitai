@@ -58,6 +58,7 @@ import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
 import { ernieGraph } from './ernie-graph';
 import { seedanceGraph } from './seedance-graph';
+import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
 
 // =============================================================================
@@ -277,6 +278,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['Veo3'] as const, graph: veo3Graph },
     { values: ['Grok'] as const, graph: grokGraph },
     { values: ['Seedance'] as const, graph: seedanceGraph },
+    { values: ['HappyHorse'] as const, graph: happyHorseGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
   ])

@@ -174,6 +174,7 @@ export const ECO = {
   Seedance: 60,
   Anima: 59,
   Grok: 61,
+  HappyHorse: 52,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -555,6 +556,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 120,
   },
 
+  // Alibaba - Taotian Family (familyId: 18)
+  {
+    id: ECO.HappyHorse,
+    key: 'HappyHorse',
+    displayName: 'HappyHorse',
+    familyId: 18,
+    sortOrder: 130,
+  },
+
   // Standalone ecosystems (no family)
   { id: ECO.Anima, key: 'Anima', displayName: 'Anima', sortOrder: 199 },
   { id: ECO.AuraFlow, key: 'AuraFlow', displayName: 'AuraFlow', sortOrder: 200 },
@@ -822,6 +832,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Seedance - checkpoint only
   { ecosystemId: ECO.Seedance, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // HappyHorse - checkpoint only
+  { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Anima - checkpoint only
   { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -1215,6 +1228,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     defaults: {
       model: { id: 2863858 },
       modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.HappyHorse,
+    defaults: {
+      // TODO: set model.id once HappyHorse is published on Civitai
+      engine: 'happyHorse',
     },
   },
   {
@@ -1682,6 +1702,7 @@ export const BM = {
   Upscaler: 82,
   Ernie: 83,
   AceAudio: 84,
+  HappyHorse: 85,
 } as const;
 
 export const supportOverrides: SupportOverride[] = [
@@ -1850,6 +1871,11 @@ export const licenses: LicenseRecord[] = [
     name: 'Grok',
     url: 'https://x.ai/legal/terms-of-service',
   },
+  {
+    id: 27,
+    name: 'HappyHorse',
+    url: 'https://happyhorsesai.com/',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -1943,6 +1969,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 17,
     name: 'Baidu',
     description: "Baidu's image generation models",
+  },
+  {
+    id: 18,
+    name: 'Alibaba - Taotian',
+    description: "Alibaba Taotian Future Life Lab's video generation models",
   },
 ];
 
@@ -2087,6 +2118,17 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: ['image', 'video'],
     ecosystemId: ECO.Grok,
     licenseId: 26,
+  },
+
+  // HappyHorse
+  {
+    id: BM.HappyHorse,
+    name: 'HappyHorse',
+    description:
+      "Alibaba's video generation model with synchronized audio, supporting text-to-video and image-to-video",
+    type: 'video',
+    ecosystemId: ECO.HappyHorse,
+    licenseId: 27,
   },
 
   // HiDream
