@@ -66,7 +66,7 @@ export function GeneratedImageOutput({
         ...(isLightbox && {
           style: {
             width: 'auto',
-            maxHeight: 'calc(100vh - 32px)',
+            maxHeight: 'calc(100vh - 76px)',
             maxWidth: 'calc(100vw - 32px)',
           },
         }),

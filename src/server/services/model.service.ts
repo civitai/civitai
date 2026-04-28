@@ -23,7 +23,11 @@ import {
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  preventModelVersionLagBatch,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { isFlipt } from '~/server/flipt/client';
@@ -110,7 +114,7 @@ import {
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   DEFAULT_PAGE_SIZE,
-  getCursor,
+  getCursorClauses,
   getPagination,
   getPagingData,
 } from '~/server/utils/pagination-helpers';
@@ -618,9 +622,15 @@ export const getModelsRaw = async ({
     orderBy = `${pAlias}."imageCount" DESC, ${pAlias}."thumbsUpCount" DESC, ${pAlias}."modelId"`;
   else if (sort === ModelSort.Oldest) orderBy = `mm."lastVersionAt" ASC, ${pAlias}."modelId"`;
 
-  // eslint-disable-next-line prefer-const
-  let { where: cursorClause, prop: cursorProp } = getCursor(orderBy, cursor);
-  if (cursorClause) AND.push(cursorClause);
+  // Cursor predicate split (perf): we build two branches that are combined with
+  // UNION ALL when there is a multi-field sort + cursor. The OR-form predicate
+  // produced by the legacy `getCursor` can't be pushed into an index seek and
+  // degrades sharply at deep offsets (~211 ms on production at offset ~100K vs
+  // ~0.83 ms for the UNION ALL form). When splittable=false (no cursor or
+  // single-field sort), we apply the strict clause directly to AND like before.
+  const { strict: cursorStrict, equality: cursorEquality, prop: cursorProp, splittable } =
+    getCursorClauses(orderBy, cursor);
+  if (!splittable && cursorStrict) AND.push(cursorStrict);
 
   if (!!fileFormats?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -706,10 +716,13 @@ export const getModelsRaw = async ({
       JOIN "Model" m ON m."id" = mbm."modelId"
       JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`;
 
-  // Unified query - uses pSql for denormalized fields and per-base-model stats
-  const modelQuery = Prisma.sql`
-    ${queryWith}
-    SELECT
+  // Unified query - uses pSql for denormalized fields and per-base-model stats.
+  //
+  // Branch shape: the SELECT list, FROM/JOIN, and ORDER BY are identical between
+  // branches. Only the WHERE predicate differs. We extract them as reusable
+  // fragments so the splittable path can emit a UNION ALL of two branches
+  // (strict tuple-compare + tie-handler) with no duplication.
+  const selectList = Prisma.sql`
       ${pSql}."modelId" as "id",
       m."name",
       ${ifDetails`
@@ -741,14 +754,68 @@ export const getModelsRaw = async ({
         'tippedAmountCount', mm."tippedAmountCount"
       ) as "rank",
       mm."userId",
-      ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
-    ${fromClause}
-      ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
+      ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
+
+  const fromAndJoin = Prisma.sql`${fromClause}
+      ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}`;
+
+  const limitValue = (take ?? 100) + 1;
+  const orderByRaw = Prisma.raw(orderBy);
+  const baseAndClause = Prisma.join(AND, ' AND ');
+
+  const modelQuery =
+    splittable && cursorStrict && cursorEquality
+      ? // Split-cursor path: UNION ALL of (equality tie-handler branch) +
+        // (strict tuple-compare branch). The strict branch carries 99%+ of the
+        // rows and benefits from an index seek. The equality branch is a
+        // bounded "ties at the cursor boundary" lookup that almost always
+        // returns 0 rows ("never executed" in most plans).
+        //
+        // Branch order matters: for DESC head fields, equality rows
+        // (head = cursor values) sort BEFORE strict rows (head < cursor values).
+        // PostgreSQL's Append node returns rows from the first child fully
+        // before the second, so emitting equality first yields the correct
+        // merged sort order without an outer ORDER BY. We can't add an outer
+        // ORDER BY because output column names don't preserve table aliases
+        // (mm."lastVersionAt" → "lastVersionAt"; thumbsUpCount/downloadCount
+        // are buried inside the rank JSONB and aren't directly accessible).
+        Prisma.sql`
+    ${queryWith}
+    (
+      SELECT
+        ${selectList}
+      ${fromAndJoin}
+      WHERE
+        ${baseAndClause} AND ${cursorEquality}
+      ORDER BY
+        ${orderByRaw}
+      LIMIT ${limitValue}
+    )
+    UNION ALL
+    (
+      SELECT
+        ${selectList}
+      ${fromAndJoin}
+      WHERE
+        ${baseAndClause} AND ${cursorStrict}
+      ORDER BY
+        ${orderByRaw}
+      LIMIT ${limitValue}
+    )
+    LIMIT ${limitValue}
+  `
+      : // No cursor or single-field sort: original single-branch query
+        // (cursorStrict, when present, has already been pushed into AND above).
+        Prisma.sql`
+    ${queryWith}
+    SELECT
+      ${selectList}
+    ${fromAndJoin}
     WHERE
-      ${Prisma.join(AND, ' AND ')}
+      ${baseAndClause}
     ORDER BY
-      ${Prisma.raw(orderBy)}
-    LIMIT ${(take ?? 100) + 1}
+      ${orderByRaw}
+    LIMIT ${limitValue}
   `;
 
   // const models = await dbRead.$queryRaw<(ModelRaw & { cursorId: string | bigint | null })[]>(
@@ -1944,19 +2011,29 @@ export const publishModelById = async ({
     { timeout: 10000 }
   );
 
+  // Flag replica-lag BEFORE any post-commit reader runs so lag-aware lookups
+  // (dataForModelsCache.lookupFn, getDbWithoutLag) route to primary during the
+  // replication window — otherwise a concurrent feed read can poison
+  // dataForModelsCache with the pre-publish version state.
+  const allVersionIds = model.modelVersions.map((x) => x.id);
+  await preventModelVersionLagBatch(model.id, allVersionIds);
+
   await userModelCountCache.refresh(model.userId);
 
   if (includeVersions && status !== ModelStatus.Scheduled) {
-    const versionIds = model.modelVersions.map((x) => x.id);
-    await bustMvCache(versionIds, model.id);
+    await bustMvCache(allVersionIds, model.id);
   }
 
-  // Fetch affected posts to update their images in search index
-  const posts = await dbRead.post.findMany({
-    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+  // Fetch affected posts to update their images in search index. Use dbWrite —
+  // these run immediately after publish commit and the replica may not yet
+  // have the post/image rows (especially when post + version are written in
+  // the same publish flow), which would silently drop them from the
+  // search-index update batch.
+  const posts = await dbWrite.post.findMany({
+    where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
     select: { id: true },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
@@ -2065,12 +2142,21 @@ export const unpublishModelById = async ({
     { timeout: 30000, maxWait: 10000 }
   );
 
-  // Fetch affected posts to remove their images from search index
-  const posts = await dbRead.post.findMany({
-    where: { modelVersionId: { in: model.modelVersions.map((x) => x.id) }, userId: model.userId },
+  // Flag replica-lag and refresh feed-side caches so the unpublished model
+  // disappears from feeds and the model page reflects the new status without
+  // waiting for cache TTL.
+  const allVersionIds = model.modelVersions.map((x) => x.id);
+  await preventModelVersionLagBatch(id, allVersionIds);
+  await bustMvCache(allVersionIds, id);
+
+  // Use dbWrite for the search-index lookups for the same reason as
+  // publishModelById — the replica may not yet reflect the txn we just
+  // committed.
+  const posts = await dbWrite.post.findMany({
+    where: { modelVersionId: { in: allVersionIds }, userId: model.userId },
     select: { id: true },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });

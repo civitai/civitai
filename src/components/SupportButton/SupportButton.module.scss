@@ -2,6 +2,7 @@
 .supportButton {
   position: relative;
   overflow: hidden;
+  will-change: transform;
   font-weight: 700;
   border: none;
   border-radius: var(--mantine-radius-sm);
@@ -146,6 +147,7 @@
 .supportButtonIcon {
   color: rgba(255, 255, 255, 0.9);
   transition: all 0.2s ease;
+  will-change: transform;
   flex-shrink: 0;
 
   .supportButton:hover & {

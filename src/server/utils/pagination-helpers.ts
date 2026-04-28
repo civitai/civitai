@@ -147,6 +147,118 @@ export function getCursor(sortString: string, cursor: string | number | bigint |
   };
 }
 
+/**
+ * Split-cursor variant of {@link getCursor} that returns the cursor predicate as
+ * two separate clauses suitable for a UNION ALL rewrite.
+ *
+ * The standard `getCursor` produces an OR-chain like:
+ *   (A < a) OR (A = a AND B < b) OR (A = a AND B = b AND C >= c)
+ *
+ * Postgres can't push that OR predicate into an index seek — it scans the entire
+ * matching range and applies a Filter, which is fast for page 1 but slows
+ * dramatically at deep offsets (~211 ms vs ~7 ms in production).
+ *
+ * When the split is applicable (cursor present, ≥2 sort fields, head fields all
+ * DESC), `getCursorClauses` returns:
+ *   - `strict`: (A, ..., second_to_last) < (cursorA, ..., cursorPenult)
+ *               — pushes into an `Index Cond: ROW(...) < ROW(...)` seek
+ *   - `equality`: A = a AND ... AND penultimate = penultimateCursor AND last </>= lastCursor
+ *               — handles the tie at the exact tuple boundary; usually 0 rows
+ * with `splittable=true`. Combining `(strict UNION ALL equality)` reproduces the
+ * original result set with the same ordering and allows the index seek.
+ *
+ * In all other cases (no cursor, single-field sort, or non-DESC head fields)
+ * `getCursorClauses` returns the legacy single OR-predicate in `strict` with
+ * `splittable=false`. The caller should AND that into its existing WHERE.
+ *
+ * Why DESC-only? The legacy `getCursor` uses `>=` on the last field of every
+ * AND-chain, including all head positions for ASC sorts. The resulting predicate
+ * `(A >= a) OR (A = a AND B >= b)` collapses to `A >= a`, which Postgres already
+ * seeks fine — and the looser equality semantics mean a UNION ALL split would
+ * change which rows match. Restricting the split to DESC head fields preserves
+ * the legacy result set exactly while still catching the slow path (every
+ * production "feed_*" sort has DESC head fields).
+ *
+ * The `prop` (cursorId encoding) matches `getCursor` exactly so callers can
+ * swap helpers without touching pagination state.
+ */
+export function getCursorClauses(
+  sortString: string,
+  cursor: string | number | bigint | Date | undefined
+) {
+  const sortFields = parseSortString(sortString);
+  const sortProps = sortFields.map((x) => x.field);
+  const prop =
+    sortFields.length === 1 ? sortFields[0].field : `CONCAT(${sortProps.join(`, '|', `)})`;
+
+  if (!cursor) {
+    return { strict: undefined, equality: undefined, prop, splittable: false };
+  }
+
+  const cursors = parseCursor(sortFields, cursor);
+
+  // Helper: rebuild the legacy `getCursor` OR-predicate over the full sort.
+  // Used as a single-branch fallback when split isn't applicable.
+  const buildLegacyPredicate = (): Prisma.Sql => {
+    const conditions: Prisma.Sql[] = [];
+    for (let i = 0; i < sortFields.length; i++) {
+      const conditionParts: Prisma.Sql[] = [];
+      for (let j = 0; j <= i; j++) {
+        const { field, order } = sortFields[j];
+        const operator = j < i ? '=' : order === 'DESC' ? '<' : '>=';
+        conditionParts.push(
+          Prisma.sql`${Prisma.raw(field)} ${Prisma.raw(operator)} ${cursors[field]}`
+        );
+      }
+      conditions.push(Prisma.sql`(${Prisma.join(conditionParts, ' AND ')})`);
+    }
+    return Prisma.sql`(${Prisma.join(conditions, ' OR ')})`;
+  };
+
+  // Single-field sort: legacy predicate is `A < a` or `A >= a`, both already
+  // index-seekable. No split needed.
+  if (sortFields.length === 1) {
+    return { strict: buildLegacyPredicate(), equality: undefined, prop, splittable: false };
+  }
+
+  // Multi-field but head fields aren't all DESC: legacy predicate either
+  // collapses to a single inequality (all-ASC case) or has mixed semantics that
+  // wouldn't be preserved exactly by a tuple compare. Fall back to legacy.
+  const lastIdx = sortFields.length - 1;
+  const headFields = sortFields.slice(0, lastIdx);
+  const allHeadDesc = headFields.every((f) => f.order === 'DESC');
+  if (!allHeadDesc) {
+    return { strict: buildLegacyPredicate(), equality: undefined, prop, splittable: false };
+  }
+
+  // Splittable case: head fields all DESC.
+  // Strict branch: (head fields) < (head cursor values) as a tuple compare,
+  // which Postgres pushes into an `Index Cond: ROW(...) < ROW(...)` seek.
+  const fieldList = Prisma.join(
+    headFields.map((f) => Prisma.raw(f.field)),
+    ', '
+  );
+  const valueList = Prisma.join(
+    headFields.map((f) => Prisma.sql`${cursors[f.field]}`),
+    ', '
+  );
+  const strict = Prisma.sql`((${fieldList}) < (${valueList}))`;
+
+  // Equality branch: every head field equals its cursor value, last field uses
+  // the same comparator as legacy (< for DESC, >= for ASC).
+  const lastField = sortFields[lastIdx];
+  const equalityParts: Prisma.Sql[] = headFields.map(
+    ({ field }) => Prisma.sql`${Prisma.raw(field)} = ${cursors[field]}`
+  );
+  const lastOperator = lastField.order === 'DESC' ? '<' : '>=';
+  equalityParts.push(
+    Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${cursors[lastField.field]}`
+  );
+  const equality = Prisma.sql`(${Prisma.join(equalityParts, ' AND ')})`;
+
+  return { strict, equality, prop, splittable: true };
+}
+
 export function getNextPage({
   req,
   currentPage,

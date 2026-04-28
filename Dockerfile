@@ -16,6 +16,7 @@ COPY prisma/schema.full.prisma ./prisma/
 # even when this layer is invalidated.
 COPY pnpm-lock.yaml package.json ./
 COPY scripts ./scripts
+COPY patches ./patches
 
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile

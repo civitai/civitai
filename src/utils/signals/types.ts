@@ -49,12 +49,29 @@ type SignalWorkerDebugDump = {
   data: SignalWorkerStatus;
 };
 
+export type SignalTopicMethod = 'subscribe' | 'subscribeNotify' | 'unsubscribe';
+
+/**
+ * Result of a `topicInvoke` call on the hub. Broadcast to all ports so the
+ * main-thread provider can retry failed subscribes and surface subscription
+ * state to consumers.
+ */
+export type SignalTopicStatus = {
+  type: 'topic:status';
+  topic: string;
+  method: SignalTopicMethod;
+  ok: boolean;
+  /** Present on failure. `'no-connection'` when the worker wasn't connected. */
+  reason?: string;
+};
+
 export type WorkerOutgoingMessage =
   | SignalWorkerReady
   | SignalEventReceived
   | SignalWorkerPong
   | SignalWorkerState
-  | SignalWorkerDebugDump;
+  | SignalWorkerDebugDump
+  | SignalTopicStatus;
 
 export type WorkerIncomingMessage =
   | { type: 'connection:init'; token: string; userId: number }

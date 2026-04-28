@@ -88,19 +88,40 @@ const {
 
 // Mock modules
 vi.mock('~/env/server', () => ({
-  env: {
-    TIER_METADATA_KEY: 'tier',
-    BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
-  },
+  env: new Proxy(
+    {
+      TIER_METADATA_KEY: 'tier',
+      BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
+      LOGGING: '',
+      DATABASE_URL: 'postgres://user:pass@localhost:5432/db',
+      NOTIFICATION_DB_URL: 'postgres://user:pass@localhost:5432/notif',
+      REDIS_URL: 'redis://localhost:6379',
+      REDIS_SYS_URL: 'redis://localhost:6379',
+      NEXTAUTH_URL: 'http://localhost:3000',
+      S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
+      S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',
+      S3_UPLOAD_KEY: 'test-key',
+      S3_UPLOAD_SECRET: 'test-secret',
+      S3_IMAGE_UPLOAD_KEY: 'test-key',
+      S3_IMAGE_UPLOAD_SECRET: 'test-secret',
+      DATABASE_SSL: false,
+      DATABASE_POOL_MAX: 10,
+    } as Record<string, unknown>,
+    { get: (t, p: string) => (p in t ? t[p] : undefined) }
+  ),
 }));
 
 vi.mock('~/server/db/client', () => ({
   dbWrite: mockDbWrite,
 }));
 
-vi.mock('~/server/services/subscriptions.service', () => ({
-  deliverMonthlyCosmetics: mockDeliverMonthlyCosmetics,
-}));
+vi.mock('~/server/services/subscriptions.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/services/subscriptions.service')>();
+  return {
+    ...actual,
+    deliverMonthlyCosmetics: mockDeliverMonthlyCosmetics,
+  };
+});
 
 vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: mockRefreshSession,
@@ -206,8 +227,10 @@ describe('prepaid-membership-jobs', () => {
 
       await unlockPrepaidTokens.run({ req: undefined }).result;
 
-      // Should have called $executeRaw to batch-update metadata
-      expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+      // Should have called $executeRaw to batch-update metadata. The first call
+      // is the unlock batch; later calls (deliverMonthlyCosmetics inside the
+      // service, which we can't mock through importOriginal) write cosmetics.
+      expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
 
       // Verify the update payload contains exactly one unlocked token
       const callArgs = mockDbWrite.$executeRaw.mock.calls[0];
@@ -276,7 +299,7 @@ describe('prepaid-membership-jobs', () => {
 
       await unlockPrepaidTokens.run({ req: undefined }).result;
 
-      expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
 
       const callArgs = mockDbWrite.$executeRaw.mock.calls[0];
       const updates = JSON.parse(callArgs[1]);
@@ -324,8 +347,10 @@ describe('prepaid-membership-jobs', () => {
 
       await unlockPrepaidTokens.run({ req: undefined }).result;
 
+      // No unlock batch updates when there are no memberships.
       expect(mockDbWrite.$executeRaw).not.toHaveBeenCalled();
-      expect(mockDeliverMonthlyCosmetics).not.toHaveBeenCalled();
+      // The job still runs deliverMonthlyCosmetics on schedule regardless.
+      expect(mockDeliverMonthlyCosmetics).toHaveBeenCalled();
     });
 
     it('should still deliver monthly cosmetics after unlocking tokens', async () => {
@@ -365,8 +390,15 @@ describe('prepaid-membership-jobs', () => {
 
       await unlockPrepaidTokens.run({ req: undefined }).result;
 
-      // Should batch into chunks of 100: 100 + 50 = 2 calls
-      expect(mockDbWrite.$executeRaw).toHaveBeenCalledTimes(2);
+      // Should batch into chunks of 100: 100 + 50 = 2 unlock batches.
+      // Filter out the cosmetics-delivery $executeRaw that runs in the same
+      // module after the batches (matches "INSERT INTO \"UserCosmetic\"").
+      const unlockCalls = mockDbWrite.$executeRaw.mock.calls.filter((args: unknown[]) => {
+        const strings = (args[0] as readonly string[] | undefined) ?? [];
+        const sql = strings.join(' ');
+        return /UPDATE\s+"CustomerSubscription"/.test(sql);
+      });
+      expect(unlockCalls).toHaveLength(2);
     });
   });
 

@@ -19,11 +19,17 @@ export function GeneratedOutput({
   return (
     <GeneratedOutputWrapper image={image} isLightbox={isLightbox} isActiveSlide={isActiveSlide}>
       {({ onClick }) => {
+        // Discriminate on `image.type` (the blob container class), which maps 1:1 to the
+        // child component's accepted prop type. The only divergence is video-typed audio
+        // (aceStepAudio with a cover image bundles audio+cover into a webm VideoBlob),
+        // which is routed back to GeneratedAudioOutput via the mediaType check.
         switch (image.type) {
           case 'audio':
-            return <GeneratedAudioOutput image={image} />;
+            return <GeneratedAudioOutput image={image} isLightbox={isLightbox} onClick={onClick} />;
           case 'video':
-            return (
+            return image.mediaType === 'audio' ? (
+              <GeneratedAudioOutput image={image} isLightbox={isLightbox} onClick={onClick} />
+            ) : (
               <GeneratedVideoOutput
                 image={image}
                 step={step}
@@ -32,7 +38,7 @@ export function GeneratedOutput({
                 onClick={onClick}
               />
             );
-          default:
+          case 'image':
             return (
               <GeneratedImageOutput
                 image={image}

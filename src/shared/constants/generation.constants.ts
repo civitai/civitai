@@ -15,7 +15,6 @@ import type { TextToImageParams } from '~/server/schema/orchestrator/textToImage
 import type { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import {
-  getBaseModelEcosystem,
   getBaseModelGroup,
   getBaseModelMediaType,
   getResourceGenerationSupport,
@@ -42,6 +41,7 @@ export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
   IMAGE: 'img',
   VIDEO: 'vid',
+  AUDIO: 'aud',
   FAVORITE: 'favorite',
   FOLDER: 'folder',
   FEEDBACK: {
@@ -66,6 +66,8 @@ export const WORKFLOW_TAGS = {
     VID_UPSCALE: 'process:vid-upscale',
     VID_INTERPOLATION: 'process:vid-interpolation',
     VID_ENHANCEMENT: 'process:vid-enhancement',
+    // Audio processes
+    TXT2MUSIC: 'process:txt2music',
   },
 };
 
@@ -76,7 +78,7 @@ export const WORKFLOW_TAGS = {
 export function getProcessTagFromWorkflow(
   workflow: string,
   hasSourceImage: boolean,
-  mediaType: 'image' | 'video' = 'image'
+  mediaType: 'image' | 'video' | 'audio' = 'image'
 ): string {
   // Check for specific workflow types first
   if (workflow.includes('background-removal')) return WORKFLOW_TAGS.PROCESS.BACKGROUND_REMOVAL;
@@ -86,6 +88,11 @@ export function getProcessTagFromWorkflow(
   if (workflow.includes('interpolation')) return WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION;
   if (workflow.includes('enhancement') && mediaType === 'video')
     return WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT;
+
+  // Audio workflows
+  if (mediaType === 'audio') {
+    return WORKFLOW_TAGS.PROCESS.TXT2MUSIC;
+  }
 
   // Default based on media type and source image
   if (mediaType === 'video') {
@@ -107,6 +114,8 @@ export const PROCESS_TYPE_OPTIONS = [
   { value: WORKFLOW_TAGS.PROCESS.VID_UPSCALE, label: 'Video Upscale' },
   { value: WORKFLOW_TAGS.PROCESS.VID_INTERPOLATION, label: 'Interpolation' },
   { value: WORKFLOW_TAGS.PROCESS.VID_ENHANCEMENT, label: 'Enhancement' },
+  // Audio processes
+  { value: WORKFLOW_TAGS.PROCESS.TXT2MUSIC, label: 'Text to Music' },
 ] as const;
 
 export const generationServiceCookie = {
@@ -288,7 +297,7 @@ export function getBaseModelSetType(baseModel?: string, defaultType: BaseModelGr
 }
 
 export function getIsSdxl(baseModel?: string) {
-  return baseModel ? getBaseModelEcosystem(baseModel) === 'sdxl' : false;
+  return baseModel ? getBaseModelSetType(baseModel) === 'SDXL' : false;
 }
 
 export function getIsHiDream(baseModel?: string) {

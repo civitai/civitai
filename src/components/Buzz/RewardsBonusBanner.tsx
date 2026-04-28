@@ -35,10 +35,10 @@ export function RewardsBonusBanner() {
       className="relative flex w-full cursor-pointer items-center justify-center gap-2 overflow-hidden border-0 px-4 py-1.5 text-sm font-semibold transition-opacity hover:opacity-90 motion-reduce:animate-none"
     >
       {/* Animated gradient background */}
-      <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-cyan-700 via-cyan-500 to-cyan-700 bg-[length:200%_100%] motion-reduce:animate-none" />
+      <div className="absolute inset-0 animate-gradient-shift bg-gradient-to-r from-cyan-700 via-cyan-500 to-cyan-700 bg-[length:200%_100%] will-change-transform motion-reduce:animate-none" />
 
       {/* Shimmer overlay */}
-      <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent bg-[length:200%_100%] motion-reduce:animate-none" />
+      <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/20 to-transparent bg-[length:200%_100%] will-change-transform motion-reduce:animate-none" />
 
       {/* Content */}
       <div className="relative flex items-center gap-2 text-white [text-shadow:0_1px_3px_rgba(0,0,0,0.4)]">

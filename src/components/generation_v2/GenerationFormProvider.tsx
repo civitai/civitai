@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
@@ -218,8 +219,11 @@ function InnerProvider({
   skipStorage = false,
 }: GenerationFormProviderProps) {
   const status = useGenerationStatus();
+  const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
   const { registerResourceId, unregisterResourceId } = useResourceDataContext();
+
+  const isModerator = !!currentUser?.isModerator;
 
   // Build external context from generation status
   const externalContext = useMemo<GenerationCtx>(
@@ -229,12 +233,12 @@ function InnerProvider({
         maxResources: status.limits.resources,
       },
       user: {
-        isMember: status.tier !== 'free',
+        isMember: status.tier !== 'free' || isModerator,
         tier: status.tier,
       },
       flags: featureFlags,
     }),
-    [status.limits.quantity, status.limits.resources, status.tier, featureFlags]
+    [status.limits.quantity, status.limits.resources, status.tier, isModerator, featureFlags]
   );
 
   // Initialize the DataGraph (clone, attach storage, init once)

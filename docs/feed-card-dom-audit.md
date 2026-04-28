@@ -369,7 +369,7 @@ Each `<Tooltip>` creates a Floating-UI instance and attaches hover listeners on 
 
 ## Worth verifying (can't be determined from this file alone)
 
-- **`MetricSubscriptionProvider` per card** ([L36-38](../src/components/Image/Infinite/ImagesCard.tsx#L36-L38)) — 200 subscriptions per page. Confirm this multiplexes over a shared socket.
+- **Metric subscriptions per card** — 200 per-entity subscriptions on a typical feed. Now refcounted in `SignalProvider` (duplicate subscribers to the same entity dedup to a single hub registration) and event-driven: no keep-alive timer, re-register on connection-state transitions. Still ~200 distinct topics registered on an active feed — the shared SignalR socket multiplexes them all. See [signal-refcount-known-issues.md](./signal-refcount-known-issues.md). (Originally referenced `MetricSubscriptionProvider`, which has been removed.)
 - **`EdgeMedia2` with video type** — 200 autoplaying videos in a feed is a known GPU-memory hazard. Confirm viewport-gated playback.
 - **`ImageContextMenu` / `HoverActionButton`** — confirm their handlers attach on hover/mount-of-trigger, not eagerly at card mount (400+ listeners per page if eager).
 

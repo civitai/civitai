@@ -63,6 +63,13 @@ type CachedLookupOptions<T extends object> = {
   ttl?: number;
   debounceTime?: number;
   cacheNotFound?: boolean;
+  // Separate TTL for negative-cache markers. When the lookupFn legitimately
+  // returns nothing for an id we cache `{ notFound: true }` to skip the work
+  // next time — but if the empty result is transient (e.g. async scan/ingest
+  // hasn't populated the row yet, or replication lag), caching it for the
+  // full ttl pins the bad state. Set this short on caches whose underlying
+  // query depends on async-populated columns. Defaults to ttl.
+  notFoundTtl?: number;
   dontCacheFn?: (data: T) => boolean;
   staleWhileRevalidate?: boolean;
 };
@@ -74,6 +81,7 @@ export function createCachedArray<T extends object>({
   ttl = CacheTTL.xs,
   debounceTime = 10,
   cacheNotFound = true,
+  notFoundTtl,
   dontCacheFn,
   staleWhileRevalidate = true,
 }: CachedLookupOptions<T>) {
@@ -193,12 +201,17 @@ export function createCachedArray<T extends object>({
         );
 
       // Use NX to avoid overwriting a value with a not found...
-      if (Object.keys(toCacheNotFound).length > 0)
+      // notFoundTtl lets a caller cap negative-cache lifetime separately from
+      // positive results — useful when an empty lookupFn result is likely to
+      // be transient (async ingestion, replication lag) rather than truly empty.
+      if (Object.keys(toCacheNotFound).length > 0) {
+        const notFoundEX = notFoundTtl ?? EX;
         await Promise.all(
           Object.entries(toCacheNotFound).map(([id, cache]) =>
-            redis.packed.set(`${key}:${id}`, cache, { EX, NX: true })
+            redis.packed.set(`${key}:${id}`, cache, { EX: notFoundEX, NX: true })
           )
         );
+      }
     }
 
     // Remove locks

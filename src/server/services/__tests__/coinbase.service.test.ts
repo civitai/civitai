@@ -76,10 +76,14 @@ vi.mock('~/server/services/cosmetic.service', () => ({
   grantCosmetics: mockGrantCosmetics,
 }));
 
-vi.mock('~/server/common/constants', () => ({
-  COINBASE_FIXED_FEE: 0,
-  specialCosmeticRewards: { crypto: [] },
-}));
+vi.mock('~/server/common/constants', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/server/common/constants')>();
+  return {
+    ...actual,
+    COINBASE_FIXED_FEE: 0,
+    specialCosmeticRewards: { crypto: [] },
+  };
+});
 
 vi.mock('~/server/email/templates/redeemableCodePurchase.email', () => ({
   redeemableCodePurchaseEmail: {
@@ -93,9 +97,13 @@ vi.mock('~/server/schema/subscriptions.schema', () => ({
   },
 }));
 
-vi.mock('~/utils/string-helpers', () => ({
-  generateToken: vi.fn(() => 'ABCD'),
-}));
+vi.mock('~/utils/string-helpers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('~/utils/string-helpers')>();
+  return {
+    ...actual,
+    generateToken: vi.fn(() => 'ABCD'),
+  };
+});
 
 // Import after mocks
 import {
@@ -295,7 +303,7 @@ describe('coinbase.service', () => {
           unitValue: 10000,
           type: 'Buzz',
           userId: 42,
-          transactionId: 'code-42-1708862400000',
+          metadata: { orderId: 'code-42-1708862400000' },
         }),
       });
     });

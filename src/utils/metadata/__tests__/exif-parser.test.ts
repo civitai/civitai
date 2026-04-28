@@ -14,8 +14,12 @@ const realGenerationDetails = `an ancient warrior princess with sad face, from t
 Negative prompt: photo , photography, bad quality, bad anatomy, worst quality, low quality, low resolution, extra fingers, blur, blurry, ugly, wrong proportions, watermark, image artifacts, lowres, ugly, jpeg artifacts, deformed, noisy image
 Steps: 40, Sampler: DPM++ 2M Karras, CFG scale: 7, Seed: 2027225909, Size: 1216x832, Clip skip: 2, Created Date: 2026-02-25T22:09:08.8166925Z, Civitai resources: [{"type":"checkpoint","modelVersionId":1714314,"modelName":"Plant Milk \\uD83C\\uDF3F - Model Suite","modelVersionName":"Hemp II"}], Civitai metadata: {"workflow":"txt2img","output":"image","input":"text","priority":"low","outputFormat":"jpeg","ecosystem":"Illustrious","quantity":4,"aspectRatio":{"value":"3:2","width":1216,"height":832},"negativePrompt":"photo , photography, bad quality, bad anatomy, worst quality, low quality, low resolution, extra fingers, blur, blurry, ugly, wrong proportions, watermark, image artifacts, lowres, ugly, jpeg artifacts, deformed, noisy image","sampler":"DPM++ 2M Karras","cfgScale":7,"steps":40,"clipSkip":2,"seed":2027225909,"enhancedCompatibility":false,"prompt":"an ancient warrior princess with sad face, from the side, looking up, in rain, a small stream of water running down over her face, high contrast shadowing,\\n candid style. high contrast, grain effect prominent throughout image, high contrast lighting creating dramatic shadows, grainy film-like texture, nipples","resources":[{"modelVersionId":1714314,"strength":1,"type":"Checkpoint"}]}`;
 
+// This test fetches a real image over HTTP. Skipped by default to keep the
+// unit suite hermetic; run with EXIF_NETWORK_TESTS=1 to exercise it locally.
+const networkTest = process.env.EXIF_NETWORK_TESTS === '1' ? it : it.skip;
+
 describe('ExifParser - test image URL', () => {
-  it('should parse metadata from the test image without error', async () => {
+  networkTest('should parse metadata from the test image without error', async () => {
     const parser = await ExifParser(testImageUrl);
     const parsed = parser.parse();
 
@@ -70,7 +74,10 @@ describe('automaticMetadataProcessor - Civitai metadata with nested JSON', () =>
     const result = automaticMetadataProcessor.parse(exif);
     expect(result.steps).toBe('20');
     expect(result.sampler).toBe('Euler');
-    expect(result['Size']).toBe('512x512');
+    // The processor extracts "Size" into width/height and deletes the original key.
+    expect(result.width).toBe(512);
+    expect(result.height).toBe(512);
+    expect(result['Size']).toBeUndefined();
     // Civitai metadata should be fully removed from details line, not leaking into other fields
     expect(result['Civitai metadata']).toBeUndefined();
   });

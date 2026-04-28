@@ -3,6 +3,18 @@ export async function fetchBlob(src: string | Blob | File) {
   else return await fetch(src).then((response) => response.blob().catch(() => null));
 }
 
+/** Trigger a browser download for the given blob with the provided filename. */
+export function downloadBlob(blob: Blob, filename: string) {
+  const href = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = href;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(href);
+}
+
 export function blobToFile(
   blob: Blob,
   filename = new Date().getTime().toString(),
