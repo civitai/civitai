@@ -23,7 +23,9 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
+import { useGatedEcosystems } from '~/components/generation_v2/hooks/useGatedEcosystems';
 import {
+  filterWorkflowsByGatedEcosystems,
   getAllWorkflowsGrouped,
   workflowOptionById,
   workflowConfigByKey,
@@ -407,8 +409,14 @@ export function WorkflowInput({
   const [videoOpened, { close: closeVideo, open: openVideo }] = useDisclosure(false);
   const [audioOpened, { close: closeAudio, open: openAudio }] = useDisclosure(false);
 
-  // Get all workflows grouped by category (static - no ecosystem filtering)
-  const options = useMemo(() => getAllWorkflowsGrouped(), []);
+  // Get all workflows grouped by category, then drop any whose backing ecosystems
+  // are all gated for this user (so e.g. the Audio segment disappears when the
+  // only audio ecosystem is mod-only and the user is not a mod).
+  const gatedEcosystems = useGatedEcosystems();
+  const options = useMemo(() => {
+    const all = getAllWorkflowsGrouped();
+    return filterWorkflowsByGatedEcosystems(all, new Set(gatedEcosystems));
+  }, [gatedEcosystems]);
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
   // Separate image, video, and audio categories

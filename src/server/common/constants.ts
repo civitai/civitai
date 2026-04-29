@@ -1622,21 +1622,55 @@ export const DEFAULT_LIVE_FEATURE_FLAGS: LiveFeatureFlags = {
 };
 
 /**
- * Dynamic, Redis-backed gating for generator ecosystems.
- * Lives under REDIS_SYS_KEYS.SYSTEM.FEATURES, hash field
- * `generation:ecosystem-config`. Operators set this to hide ecosystems
- * from non-mods (`modOnlyEcosystems`) or kill them entirely (`disabledEcosystems`).
+ * Dynamic, Redis-backed gating for generator ecosystems and individual
+ * model versions. Lives under REDIS_SYS_KEYS.SYSTEM.FEATURES, hash field
+ * `generation:ecosystem-config`.
+ *
+ * Two scopes — ecosystems (string keys) and model version IDs (numbers).
+ * ID-level rules override ecosystem-level rules so a single version can be
+ * disabled/tested/mod-only while its ecosystem is otherwise enabled.
+ *
+ * Three states per scope:
+ * - `disabled*`: kill-switch, off for everyone including mods
+ * - `modOnly*`: hidden from non-moderators
+ * - `testing*`: visible to mods and users who pass the `generation-testing`
+ *   Flipt flag (testers); hidden from everyone else
  */
 export type GenerationEcosystemConfig = {
-  /** Ecosystem keys hidden from non-moderator users (still visible to mods) */
   modOnlyEcosystems: string[];
-  /** Ecosystem keys disabled for everyone including mods (kill-switch) */
   disabledEcosystems: string[];
+  testingEcosystems: string[];
+  /**
+   * Ecosystem keys that should show the "experimental build" alert in the
+   * generator UI. Unioned with the static `isEcosystemExperimental` check
+   * (which derives experimental-ness from base-model records) — this is the
+   * dynamic override for ecosystems not yet flagged in code.
+   */
+  experimentalEcosystems: string[];
+  modOnlyIds: number[];
+  disabledIds: number[];
+  testingIds: number[];
 };
 
 export const DEFAULT_GENERATION_ECOSYSTEM_CONFIG: GenerationEcosystemConfig = {
   modOnlyEcosystems: [],
   disabledEcosystems: [],
+  testingEcosystems: [],
+  experimentalEcosystems: [],
+  modOnlyIds: [],
+  disabledIds: [],
+  testingIds: [],
+};
+
+/**
+ * Runtime-evaluated ecosystem config: the operator-set lists from Redis
+ * plus the per-user Flipt result for `generation-testing`. Returned by
+ * `getGenerationEcosystemConfig(user)` and passed wholesale into
+ * `getResourceCanGenerate`.
+ */
+export type GenerationEcosystemContext = GenerationEcosystemConfig & {
+  /** Whether the current user passes the `generation-testing` Flipt flag (mods always do). */
+  hasTestingAccess: boolean;
 };
 
 export const EARLY_ACCESS_CONFIG: {
