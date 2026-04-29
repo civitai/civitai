@@ -12,6 +12,7 @@ import { checkNotUpToDate } from '~/server/db/db-helpers';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
+import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { isDefined } from '~/utils/type-guards';
 
@@ -46,13 +47,7 @@ export function WebhookEndpoint(
 const PUBLIC_CACHE_MAX_AGE = 300;
 const PUBLIC_CACHE_STALE_WHILE_REVALIDATE = PUBLIC_CACHE_MAX_AGE / 2;
 
-const allowedOrigins = [
-  env.NEXTAUTH_URL,
-  ...env.TRPC_ORIGINS,
-  env.SERVER_DOMAIN_GREEN,
-  env.SERVER_DOMAIN_BLUE,
-  env.SERVER_DOMAIN_RED,
-]
+const allowedOrigins = [env.NEXTAUTH_URL, ...env.TRPC_ORIGINS, ...getAllServerHosts()]
   .filter(isDefined)
   .map((origin) => {
     if (!origin.startsWith('http')) return `https://${origin}`;

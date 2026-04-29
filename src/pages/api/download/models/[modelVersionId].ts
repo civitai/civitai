@@ -3,7 +3,6 @@ import requestIp from 'request-ip';
 import * as z from 'zod';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
-import { getRequestDomainColor, serverDomainMap } from '~/server/utils/server-domain';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';

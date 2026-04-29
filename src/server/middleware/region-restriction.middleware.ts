@@ -6,15 +6,25 @@ import {
 } from '~/server/middleware/region-middleware-utils';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
+// Edge runtime can't import the env module — read raw process.env here.
+function parseGreenHosts(): string[] {
+  const primary = process.env.SERVER_DOMAIN_GREEN?.toLowerCase();
+  const aliases = (process.env.SERVER_DOMAIN_GREEN_ALIASES ?? '')
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return [primary, ...aliases].filter(Boolean) as string[];
+}
+
 export const regionRestrictionMiddleware = createMiddleware({
   matcher: regionMiddlewareMatcher,
   shouldRun: (request) => {
     const { nextUrl } = request;
     const pathname = nextUrl.pathname;
 
-    // Don't run if we're already on the green domain
-    const host = request.headers.get('host');
-    if (host === process.env.SERVER_DOMAIN_GREEN) {
+    // Don't run if we're already on the green domain (primary or any alias).
+    const host = request.headers.get('host')?.toLowerCase();
+    if (host && parseGreenHosts().includes(host)) {
       return false;
     }
 
@@ -30,7 +40,7 @@ export const regionRestrictionMiddleware = createMiddleware({
 
     // Check if the user is from a restricted region
     if (isRegionRestricted(region)) {
-      // Get the green domain URL
+      // Always redirect to the canonical green primary, never an alias.
       const greenDomain = process.env.SERVER_DOMAIN_GREEN;
 
       if (!greenDomain) {
