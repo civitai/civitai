@@ -6,6 +6,7 @@ import {
   deliverMonthlyCosmetics,
   unlockPrepaidTokensForDate,
 } from '../services/subscriptions.service';
+import { syncActiveBadgeMetadata } from '../services/product-badge.service';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type {
   SubscriptionMetadata,
@@ -21,6 +22,12 @@ export const unlockPrepaidTokens = createJob(
   'unlock-prepaid-tokens',
   '0 1 * * *', // Run daily at 1 AM UTC (same schedule as before)
   async () => {
+    
+        // Promote any future-dated membership badges whose availableStart has now
+        // passed into Product.metadata so the live subscription UI shows them.
+    const badgeSync = await syncActiveBadgeMetadata();
+    console.log(`Synced ${badgeSync.synced} active membership badge(s) to product metadata`);
+    
     const result = await unlockPrepaidTokensForDate({ date: new Date() });
     console.log(result.message);
 

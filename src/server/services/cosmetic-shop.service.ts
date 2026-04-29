@@ -79,20 +79,47 @@ export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticS
 };
 
 export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
-  const { id, videoUrl } = input;
+  const { id, videoUrl, name, description, type, source, permanentUnlock, data } = input;
 
-  if (!id) {
-    throw new Error('ID is required to update the video URL');
+  if (id) {
+    try {
+      const result = await dbWrite.cosmetic.update({
+        where: { id },
+        data: {
+          videoUrl,
+          ...(name !== undefined ? { name } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(type !== undefined ? { type } : {}),
+          ...(source !== undefined ? { source } : {}),
+          ...(permanentUnlock !== undefined ? { permanentUnlock } : {}),
+          ...(data !== undefined ? { data: data as Prisma.InputJsonValue } : {}),
+        },
+      });
+      return result;
+    } catch (error) {
+      throw new Error('Failed to update cosmetic');
+    }
+  }
+
+  // Create — schema-level refinement guarantees these are present.
+  if (!name || !type || !source) {
+    throw new Error('name, type, and source are required to create a cosmetic');
   }
 
   try {
-    const result = await dbWrite.cosmetic.update({
-      where: { id },
-      data: { videoUrl },
+    return await dbWrite.cosmetic.create({
+      data: {
+        name,
+        description: description ?? null,
+        type,
+        source,
+        permanentUnlock: permanentUnlock ?? false,
+        data: (data ?? {}) as Prisma.InputJsonValue,
+        videoUrl: videoUrl ?? null,
+      },
     });
-    return result;
   } catch (error) {
-    throw new Error('Failed to update cosmetic');
+    throw new Error('Failed to create cosmetic');
   }
 };
 
