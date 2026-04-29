@@ -48,7 +48,15 @@ const createPrismaClient = ({ readonly }: { readonly: boolean }): PrismaClient =
     });
   }
   const dbUrl = readonly ? env.DATABASE_REPLICA_URL : env.DATABASE_URL;
-  const options = { log, datasources: { db: { url: dbUrl } } } as Prisma.PrismaClientOptions;
+  const options = {
+    log,
+    datasources: { db: { url: dbUrl } },
+    // Bumped from Prisma defaults (maxWait 2s, timeout 5s) to avoid pods entering
+    // a "Transaction already closed: timeout was 5000 ms" failure loop during
+    // event-loop starvation on DP. Per-call overrides via prisma.$transaction(cb,
+    // { timeout: N }) still take precedence.
+    transactionOptions: { maxWait: 5000, timeout: 20000 },
+  } as Prisma.PrismaClientOptions;
   const prisma = new PrismaClient(options);
 
   // use with prisma-slow,prisma-showparams
