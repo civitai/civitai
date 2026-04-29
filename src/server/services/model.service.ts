@@ -338,11 +338,34 @@ export const getModelsRaw = async ({
   const useBaseModelMetrics =
     baseModels?.length && (_forceBaseModelMetrics ?? (await isFlipt('base-model-feed-metrics')));
 
+  // Multi-baseModel + Newest/Oldest sort gets a special path: the legacy aggregate
+  // subquery scans every "ModelBaseModelMetric" row matching the requested base
+  // models BEFORE the cursor predicate can be applied (since the cursor lives on
+  // mm."lastVersionAt"). On production this is ~2.8s/query at deep cursors. The
+  // new path drives from "ModelMetric" using the feed_newest / feed_oldest
+  // covering index, semi-joins to "ModelBaseModelMetric" via EXISTS, and pulls
+  // the per-base-model rank sums via LATERAL aggregate that fires only for the
+  // LIMIT survivors.
+  const useNewestOldestMultiBmPath =
+    !!useBaseModelMetrics &&
+    (baseModels?.length ?? 0) > 1 &&
+    (sort === ModelSort.Newest || sort === ModelSort.Oldest);
+
   // Dynamic alias: 'mbm' for ModelBaseModelMetric path, 'mm' for standard ModelMetric path
   // pSql is used for columns denormalized on both tables (status, nsfwLevel, availability, mode, minor, poi)
   // mm.* is still used for ModelMetric-only columns (userId, lastVersionAt, commentCount, collectedCount, etc.)
-  const pAlias = useBaseModelMetrics ? 'mbm' : 'mm';
+  //
+  // The newest/oldest multi-bm path drives from mm and only references mbm for the
+  // per-base-model rank sums (downloadCount, thumbsUpCount). All other denormalized
+  // columns come from mm so the feed_newest/feed_oldest covering index is fully
+  // exploited (filters are applied during the index scan, not after).
+  const pAlias = useBaseModelMetrics && !useNewestOldestMultiBmPath ? 'mbm' : 'mm';
   const pSql = Prisma.raw(pAlias);
+
+  // For the SELECT-list rank fields, the per-base-model sums must come from mbm
+  // (the ModelBaseModelMetric driver in the legacy paths, or the LATERAL alias in
+  // the new path). Other paths can keep using `${pSql}` directly.
+  const rankPSql = useNewestOldestMultiBmPath ? Prisma.raw('mbm') : pSql;
 
   if (searchModelIds.length) {
     AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
@@ -462,7 +485,10 @@ export const getModelsRaw = async ({
   // Base model filtering:
   // - Standard path: EXISTS subquery on ModelVersion
   // - Base model metrics, single base model: direct equality on mbm."baseModel" (preserves index scan)
-  // - Base model metrics, multiple base models: filter is inside the FROM subquery (see fromClause)
+  // - Base model metrics, multiple base models, Newest/Oldest sort: EXISTS semi-join
+  //   on ModelBaseModelMetric (planner-friendly, lets feed_newest/feed_oldest drive)
+  // - Base model metrics, multiple base models, per-base-model-stat sort: filter is
+  //   inside the FROM subquery (see fromClause)
   if (baseModels?.length && !useBaseModelMetrics) {
     AND.push(
       Prisma.sql`EXISTS (
@@ -474,6 +500,17 @@ export const getModelsRaw = async ({
   } else if (useBaseModelMetrics && baseModels!.length === 1) {
     // Single base model: filter in WHERE clause so covering indexes can be fully utilized
     AND.push(Prisma.sql`mbm."baseModel" = ${baseModels![0]}`);
+  } else if (useNewestOldestMultiBmPath) {
+    // Multi-base-model + lastVersionAt sort: semi-join via EXISTS so the planner
+    // keeps the feed_newest/feed_oldest index as the driver. The PK on
+    // (modelId, baseModel) makes this lookup index-only.
+    AND.push(
+      Prisma.sql`EXISTS (
+          SELECT 1 FROM "ModelBaseModelMetric" mbmm
+          WHERE mbmm."modelId" = mm."modelId"
+            AND mbmm."baseModel" IN (${Prisma.join(baseModels!, ',')})
+        )`
+    );
   }
 
   if (period && period !== MetricTimeframe.AllTime && periodMode !== 'stats') {
@@ -685,12 +722,18 @@ export const getModelsRaw = async ({
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
 
   // Build dynamic FROM clause based on query path
-  // Three paths:
+  // Four paths:
   // 1. Standard: ModelMetric JOIN Model (no base model metrics)
   // 2. Base model metrics, single base model: direct JOIN on ModelBaseModelMetric
   //    (preserves covering index scan + sort order + early LIMIT termination)
-  // 3. Base model metrics, multiple base models: aggregate subquery on ModelBaseModelMetric
-  //    (GROUP BY modelId prevents duplicates when a model has versions in multiple matching base models)
+  // 3. Base model metrics, multiple base models, lastVersionAt-based sort
+  //    (Newest/Oldest): drive from ModelMetric so the feed_newest/feed_oldest
+  //    index seek + cursor pushdown work; semi-join to ModelBaseModelMetric via
+  //    EXISTS; pull per-base-model rank sums via LATERAL that fires only for the
+  //    LIMIT survivors.
+  // 4. Base model metrics, multiple base models, per-base-model-stat sort
+  //    (HighestRated/MostDownloaded/ImageCount): aggregate subquery on
+  //    ModelBaseModelMetric so the mbmm_feed_* covering indexes can be used.
   const fromClause = !useBaseModelMetrics
     ? Prisma.sql`FROM "ModelMetric" mm
       JOIN "Model" m ON m."id" = mm."modelId"`
@@ -698,6 +741,17 @@ export const getModelsRaw = async ({
     ? Prisma.sql`FROM "ModelBaseModelMetric" mbm
       JOIN "Model" m ON m."id" = mbm."modelId"
       JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`
+    : useNewestOldestMultiBmPath
+    ? Prisma.sql`FROM "ModelMetric" mm
+      JOIN "Model" m ON m."id" = mm."modelId"
+      LEFT JOIN LATERAL (
+        SELECT
+          SUM("downloadCount")::int as "downloadCount",
+          SUM("thumbsUpCount")::int as "thumbsUpCount"
+        FROM "ModelBaseModelMetric"
+        WHERE "modelId" = mm."modelId"
+          AND "baseModel" IN (${Prisma.join(baseModels!, ',')})
+      ) mbm ON true`
     : Prisma.sql`FROM (
         SELECT "modelId",
           SUM("downloadCount")::int as "downloadCount",
@@ -746,8 +800,8 @@ export const getModelsRaw = async ({
       ${pSql}."mode",
       ${pSql}."availability",
       jsonb_build_object(
-        'downloadCount', ${pSql}."downloadCount",
-        'thumbsUpCount', ${pSql}."thumbsUpCount",
+        'downloadCount', ${rankPSql}."downloadCount",
+        'thumbsUpCount', ${rankPSql}."thumbsUpCount",
         'thumbsDownCount', mm."thumbsDownCount",
         'commentCount', mm."commentCount",
         'collectedCount', mm."collectedCount",
