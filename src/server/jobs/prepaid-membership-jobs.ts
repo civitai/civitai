@@ -6,6 +6,7 @@ import {
   deliverMonthlyCosmetics,
   unlockPrepaidTokensForDate,
 } from '../services/subscriptions.service';
+import { syncActiveBadgeMetadata } from '../services/product-badge.service';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type {
   SubscriptionMetadata,
@@ -21,6 +22,16 @@ export const unlockPrepaidTokens = createJob(
   'unlock-prepaid-tokens',
   '0 1 * * *', // Run daily at 1 AM UTC (same schedule as before)
   async () => {
+    // Promote any future-dated membership badges whose availableStart has now
+    // passed into Product.metadata so the live subscription UI shows them.
+    // Wrapped so a sync failure can't block prepaid token unlocks below.
+    try {
+      const badgeSync = await syncActiveBadgeMetadata();
+      console.log(`Synced ${badgeSync.synced} active membership badge(s) to product metadata`);
+    } catch (error) {
+      console.error('Failed to sync active membership badge metadata', error);
+    }
+
     const result = await unlockPrepaidTokensForDate({ date: new Date() });
     console.log(result.message);
 
@@ -166,9 +177,7 @@ export const processPrepaidMembershipTransitions = createJob(
         }
 
         if (!nextTier || (nextMonths <= 0 && nextProratedDays <= 0)) {
-          console.log(
-            `User ${membership.userId}: No prepaid tokens left, canceling subscription`
-          );
+          console.log(`User ${membership.userId}: No prepaid tokens left, canceling subscription`);
           membershipUpdates.push({
             id: membership.id,
             status: 'canceled',
@@ -185,9 +194,7 @@ export const processPrepaidMembershipTransitions = createJob(
         }
 
         const newPeriodStart = now;
-        const newPeriodEnd = newPeriodStart
-          .add(nextMonths, 'month')
-          .add(nextProratedDays, 'day');
+        const newPeriodEnd = newPeriodStart.add(nextMonths, 'month').add(nextProratedDays, 'day');
 
         // Clear prorated days for this tier since we're using them
         const updatedProratedDays = { ...proratedDays };
@@ -333,7 +340,8 @@ export const cancelExpiredPrepaidMemberships = createJob(
     // 1. Has unclaimed tokens (locked or unlocked) → set to 'expired_claimable'
     //    Also unlock all locked tokens since the unlock job won't run for non-active subs.
     // 2. No unclaimed tokens → fully cancel
-    const toExpireClaimable: Array<{ id: string; userId: number; metadata: SubscriptionMetadata }> = [];
+    const toExpireClaimable: Array<{ id: string; userId: number; metadata: SubscriptionMetadata }> =
+      [];
     const toCancel: string[] = [];
     const allUserIds: number[] = [];
 

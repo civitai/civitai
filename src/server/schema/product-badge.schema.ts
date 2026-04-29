@@ -20,4 +20,6 @@ export const upsertProductBadgeInput = z.object({
   productIds: z.array(z.string()).min(1),
   availableStart: z.date(),
   availableEnd: z.date(),
+  sourceWidth: z.number().int().positive().optional(),
+  sourceHeight: z.number().int().positive().optional(),
 });

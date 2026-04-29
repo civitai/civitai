@@ -6,6 +6,7 @@ import {
   IconGridDots,
   IconClockHour9,
   IconWifiOff,
+  IconSettings,
   IconToggleLeft,
   IconToggleRight,
 } from '@tabler/icons-react';
@@ -173,6 +174,17 @@ function GenerationTabsContent({ fullScreen }: { fullScreen?: boolean }) {
               >
                 <LegacyActionIcon size="lg" onClick={toggleGenerator} variant="transparent">
                   {useLegacy ? <IconToggleLeft size={20} /> : <IconToggleRight size={20} />}
+                </LegacyActionIcon>
+              </Tooltip>
+            )}
+            {currentUser?.isModerator && (
+              <Tooltip label="Generation config (mods)">
+                <LegacyActionIcon
+                  size="lg"
+                  variant="transparent"
+                  onClick={() => router.push('/moderator/generation-config')}
+                >
+                  <IconSettings size={20} />
                 </LegacyActionIcon>
               </Tooltip>
             )}

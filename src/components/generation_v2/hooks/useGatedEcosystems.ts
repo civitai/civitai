@@ -26,21 +26,23 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
  * `excludeEcosystems` prop (or any other consumer of ecosystem lists).
  */
 export function useGatedEcosystems(): string[] {
-  const config = useGenerationConfig();
+  // `?? []` guards against stale React Query caches from before any of these
+  // fields were added to `getGenerationConfig` — without it, a returning user
+  // with cached data crashes on `[...undefined]` or `.push(...undefined)`.
+  const {
+    disabledEcosystems = [],
+    modOnlyEcosystems = [],
+    testingEcosystems = [],
+    hasTestingAccess: hasTestingAccessRaw = false,
+  } = useGenerationConfig();
   const currentUser = useCurrentUser();
   const isModerator = !!currentUser?.isModerator;
-  const hasTestingAccess = config.hasTestingAccess || isModerator;
+  const hasTestingAccess = hasTestingAccessRaw || isModerator;
 
   return useMemo(() => {
-    const gated = [...config.disabledEcosystems];
-    if (!isModerator) gated.push(...config.modOnlyEcosystems);
-    if (!hasTestingAccess) gated.push(...config.testingEcosystems);
+    const gated = [...disabledEcosystems];
+    if (!isModerator) gated.push(...modOnlyEcosystems);
+    if (!hasTestingAccess) gated.push(...testingEcosystems);
     return gated;
-  }, [
-    config.disabledEcosystems,
-    config.modOnlyEcosystems,
-    config.testingEcosystems,
-    isModerator,
-    hasTestingAccess,
-  ]);
+  }, [disabledEcosystems, modOnlyEcosystems, testingEcosystems, isModerator, hasTestingAccess]);
 }
