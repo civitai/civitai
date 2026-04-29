@@ -268,14 +268,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [
-      ECO.Vidu,
-      ECO.Veo3,
-      ECO.Kling,
-      ECO.LTXV23,
-      ECO.WanVideo27,
-      ECO.HappyHorse,
-    ],
+    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23, ECO.WanVideo27, ECO.HappyHorse],
     excludeModelVersionIds: [viduVersionIds.q3],
   },
 
@@ -325,6 +318,7 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [ECO.AceAudio],
     stepDisplay: 'separate',
     memberOnly: true,
+    hidden: true,
   },
 
   // ===========================================================================

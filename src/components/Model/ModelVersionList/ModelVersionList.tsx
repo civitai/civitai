@@ -24,7 +24,7 @@ import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
 import classes from './ModelVersionList.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -101,7 +101,11 @@ export function ModelVersionList({
         {versions.map((version) => {
           const active = selected === version.id;
           const isTraining = !!version.trainingStatus;
-          const missingFiles = !version.files.length;
+          const isExternalGeneration =
+            version.usageControl === ModelUsageControl.ExternalGeneration;
+          // ExternalGeneration versions are intentionally file-less (routed via external
+          // engines), so missing files isn't a problem state for them.
+          const missingFiles = !isExternalGeneration && !version.files.length;
           const missingPosts = !version.posts.length;
           const published = version.status === 'Published';
           const scheduled = version.status === 'Scheduled';
