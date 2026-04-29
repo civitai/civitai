@@ -38,10 +38,10 @@ function restoreMethodOverride(req: import('next').NextApiRequest) {
 const trpcHandler = createNextApiHandler({
   router: appRouter,
   createContext,
-  responseMeta: ({ ctx, type }) => {
+  responseMeta: ({ ctx, type, errors }) => {
     const headers: Record<string, string> = {};
     const willEdgeCache = ctx?.cache && !!ctx?.cache.edgeTTL && ctx?.cache.edgeTTL > 0;
-    if (willEdgeCache && type === 'query') {
+    if (willEdgeCache && type === 'query' && errors.length === 0) {
       ctx.res?.removeHeader('Set-Cookie');
       headers['Cache-Control'] = [
         'public',
