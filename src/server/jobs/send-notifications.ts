@@ -18,7 +18,6 @@ const log = createLogger('send-notifications', 'blue');
 
 const batchSize = 5000;
 const concurrent = 8;
-const MAX_NOTIFICATION_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
 
 export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async (e) => {
   try {
@@ -28,45 +27,18 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
     for (const batch of notificationBatches) {
       e.checkIfCanceled();
       const promises = batch.map(({ prepareQuery, key, category }) => async () => {
-        let isWindowCapped = false;
-        let effectiveNowDate = new Date();
-        let setLastSent: (date?: Date) => Promise<void | null> = async () => null;
-
         try {
           e.checkIfCanceled();
           log('sending', key, 'notifications');
-          const [lastSent, _setLastSent] = await getJobDate(
+          const [lastSent, setLastSent] = await getJobDate(
             'last-sent-notification-' + key,
             lastRun
           );
-          setLastSent = _setLastSent;
-
-          // Cap the query window to prevent death spiral when cursor falls behind.
-          // If lastSent is too far in the past, limit the window and catch up incrementally.
-          const runTime = new Date();
-          const windowMs = runTime.getTime() - lastSent.getTime();
-          isWindowCapped = windowMs > MAX_NOTIFICATION_WINDOW_MS;
-          effectiveNowDate = isWindowCapped
-            ? new Date(lastSent.getTime() + MAX_NOTIFICATION_WINDOW_MS)
-            : runTime;
-          const effectiveNow = effectiveNowDate.toISOString();
-
-          if (isWindowCapped) {
-            logToAxiom(
-              {
-                type: 'warning',
-                name: 'Notification window capped',
-                details: { key, lastSent: lastSent.toISOString(), windowMs, effectiveNow },
-              },
-              'notifications'
-            ).catch();
-          }
 
           let query = prepareQuery?.({
             lastSent: lastSent.toISOString(),
             lastSentDate: lastSent,
             clickhouse,
-            effectiveNow,
           });
           if (query) {
             const start = Date.now();
@@ -125,31 +97,11 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
               }
             }
 
-            await setLastSent(effectiveNowDate);
+            await setLastSent();
             log('sent', key, 'notifications in', (Date.now() - start) / 1000, 's');
           }
         } catch (e) {
           const error = e as Error;
-          const isTimeout = error.message?.includes('statement timeout');
-
-          // If the query timed out and the window was already capped,
-          // advance the cursor anyway to prevent permanent stall.
-          if (isTimeout && isWindowCapped) {
-            logToAxiom(
-              {
-                type: 'error',
-                name: 'Notification query timed out with capped window - advancing cursor',
-                details: {
-                  key,
-                  effectiveNow: effectiveNowDate.toISOString(),
-                  message: error.message,
-                },
-              },
-              'notifications'
-            ).catch();
-            await setLastSent(effectiveNowDate).catch(() => null);
-          }
-
           logToAxiom(
             {
               type: 'error',

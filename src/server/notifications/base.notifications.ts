@@ -30,8 +30,6 @@ export type NotificationProcessorRunInput = {
   lastSent: string;
   lastSentDate: Date;
   clickhouse: CustomClickHouseClient | undefined;
-  /** Upper bound for query window. Use instead of now() in SQL to support window capping. */
-  effectiveNow: string;
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {
