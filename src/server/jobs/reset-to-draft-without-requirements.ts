@@ -8,9 +8,11 @@ export const resetToDraftWithoutRequirements = createJob(
   'reset-to-draft-without-requirements',
   '43 2 * * *',
   async () => {
-    // Get all published model versions that have no posts
-    // ExternalGeneration versions are excluded — their showcase posts may belong to
-    // accounts other than the model owner (orchestration / curated content).
+    // Get all published model versions that have no published posts (by anyone).
+    // We intentionally don't require posts to be authored by the current model owner —
+    // models that have been transferred or had their showcase posts reassigned still
+    // satisfy the "version has a showcase" intent if any community post exists.
+    // ExternalGeneration versions are excluded — they're routed via external engines.
     const modelVersionsWithoutPosts = await dbWrite.$queryRaw<{ modelVersionId: number }[]>`
       SELECT
         mv.id "modelVersionId"
@@ -21,7 +23,7 @@ export const resetToDraftWithoutRequirements = createJob(
         AND m.status = 'Published'
         AND m."userId" != -1
         AND mv."usageControl" != 'ExternalGeneration'
-        AND NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."userId" = m."userId")
+        AND NOT EXISTS (SELECT 1 FROM "Post" p WHERE p."modelVersionId" = mv.id AND p."publishedAt" IS NOT NULL)
         AND m."deletedAt" IS NULL;
     `;
 

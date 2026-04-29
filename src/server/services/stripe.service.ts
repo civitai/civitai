@@ -184,6 +184,16 @@ export const createSubscribeSession = async ({
         });
       }
 
+      // Upgrades don't go through Stripe Checkout, so the custom_fields
+      // ref_code path on createCheckout doesn't apply. Capture an explicitly
+      // entered refCode (or the cookie carried into the upgrade modal) by
+      // patching it onto the subscription metadata in the same update call.
+      // The next invoice.paid (billing_reason: subscription_update) will
+      // surface it via subscription_details.metadata and route through
+      // recordMembershipPaymentReward.
+      const cleanRefCode = refCode?.trim().toUpperCase();
+      const sanitizedRefCode = cleanRefCode && cleanRefCode.length > 0 ? cleanRefCode : undefined;
+
       await stripe.subscriptions.update(subscriptionId, {
         items,
         billing_cycle_anchor: isUpgrade ? 'now' : 'unchanged',
@@ -192,7 +202,15 @@ export const createSubscribeSession = async ({
         payment_behavior: isUpgrade ? 'default_incomplete' : undefined,
         // @ts-ignore This is valid as per stripe's documentation
         discounts,
+        ...(sanitizedRefCode ? { metadata: { ref_code: sanitizedRefCode } } : {}),
       });
+
+      if (sanitizedRefCode) {
+        const { bindReferralCodeForUser } = await import(
+          '~/server/services/referral.service'
+        );
+        await bindReferralCodeForUser(user.id, sanitizedRefCode).catch(handleLogError);
+      }
 
       await refreshSession(user.id);
       return {

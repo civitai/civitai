@@ -118,7 +118,7 @@ export const modelNotifications = createNotificationProcessor({
         details.modelVersionId ? `?modelVersionId=${details.modelVersionId}` : ''
       }`,
     }),
-    prepareQuery: ({ lastSent, effectiveNow }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_model_version AS (
         SELECT
           m."userId",
@@ -135,7 +135,7 @@ export const modelNotifications = createNotificationProcessor({
           AND mv."publishedAt" - m."publishedAt" > INTERVAL '2 hour'
           AND (
             -- handle scheduled posts - these can take a little while to update via another job
-            (mv."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND '${effectiveNow}'::timestamptz AND mv.status = 'Published')
+            (mv."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND now() AND mv.status = 'Published')
             OR (mv."publishedAt" <= '${lastSent}' AND mv.status = 'Scheduled')
           )
       ), followers AS (
@@ -179,7 +179,7 @@ export const modelNotifications = createNotificationProcessor({
       }`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: ({ lastSent, effectiveNow }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH new_model_from_following AS (
         SELECT DISTINCT
           ue."userId" "ownerId",
@@ -198,7 +198,7 @@ export const modelNotifications = createNotificationProcessor({
           -- process-scheduled-publishing jobs (both */1 * * * *). Without it, a model can be
           -- missed if its publishedAt falls just before the cursor after the previous run advanced.
           -- Duplicates are safe due to ON CONFLICT upsert in PendingNotification.
-          AND m."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND '${effectiveNow}'::timestamptz
+          AND m."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND now()
           AND m.status IN ('Published', 'Scheduled')
       )
       SELECT
@@ -218,7 +218,7 @@ export const modelNotifications = createNotificationProcessor({
       message: `${details.modelName}: ${details.versionName} has left Early Access!`,
       url: `/models/${details.modelId}?modelVersionId=${details.versionId}`,
     }),
-    prepareQuery: ({ lastSent, effectiveNow }) => `
+    prepareQuery: ({ lastSent }) => `
       WITH early_access_versions AS (
          SELECT
           mv.id version_id,
@@ -244,7 +244,7 @@ export const modelNotifications = createNotificationProcessor({
           ) details
         FROM early_access_versions ev
         JOIN "ModelVersionEngagement" mve ON mve."modelVersionId" = ev.version_id AND mve.type = 'Notify'
-        WHERE ev.updated_published_at > '${lastSent}' AND ev.updated_published_at < '${effectiveNow}'::timestamptz
+        WHERE ev.updated_published_at > '${lastSent}' AND ev.updated_published_at < now()
       )
       SELECT
         concat('early-access-complete:', details->>'versionId') "key",
