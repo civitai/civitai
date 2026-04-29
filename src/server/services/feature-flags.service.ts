@@ -155,7 +155,7 @@ const featureFlags = createFeatureFlags({
   modelVersionPopularity: ['mod'],
   kinguinIframe: ['dev'],
   trainingModelsModeration: ['granted'],
-  cashManagement: ['granted'],
+  cashManagement: { availability: ['granted'], fliptKey: 'feature-cash-management' },
   auctionsMod: ['granted'],
   challengePlatform: ['public'],
   comicCreator: { availability: ['mod'], fliptKey: 'comic-creator' },
