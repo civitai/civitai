@@ -24,7 +24,12 @@ async function getOrCreateCode(userId: number) {
   // userId, so duplicate creates succeed and leave orphan codes around).
   let code = await dbWrite.userReferralCode.findFirst({
     where: { userId, deletedAt: null },
-    orderBy: { createdAt: 'asc' },
+    // Secondary sort by id breaks ties when a user has multiple codes with
+    // identical createdAt (e.g. a 2023 admin batch-insert that gave one user
+    // four DAZ-* codes in the same millisecond). Without it Postgres' order
+    // is implementation-defined and the dashboard would flip between codes
+    // on different query runs.
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
   });
   if (!code) {
     code = await dbWrite.userReferralCode.create({
