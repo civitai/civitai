@@ -11,6 +11,12 @@ import {
 /**
  * OAuth provider IDs we expose on the login page. Order matters — login UI
  * iterates this list to render buttons.
+ *
+ * IMPORTANT: keep in sync with the `providers` array in
+ * `src/server/auth/next-auth-options.ts`. Any OAuth provider added there but
+ * not listed here will bypass the per-host filter (treated as a non-OAuth
+ * provider) and would auth fine on a primary host but fail silently on an
+ * alias host because no alias-keyed credential lookup runs.
  */
 export const oauthProviderIds = ['discord', 'github', 'google', 'reddit'] as const;
 export type OAuthProviderId = (typeof oauthProviderIds)[number];

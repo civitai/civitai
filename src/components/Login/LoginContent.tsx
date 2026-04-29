@@ -44,15 +44,18 @@ export function LoginContent(args: {
   const reason = args.reason ?? query.reason;
   const message = reason ? loginRedirectReasons[reason] : args.message;
 
-  // Show "Login with [green domain]" on any domain that isn't green (.com)
+  // Show "Login with [green domain]" on any domain that isn't green (.com).
+  // Skip if currentHost isn't known — encoding an empty host into the
+  // returnUrl would produce `https:///...` and break the post-login redirect.
   const greenDomain = useServerDomains().green;
   const { domain: domainFlags, host: currentHost, availableOAuthProviders } = useAppContext();
   const isOnGreen = domainFlags.green;
-  const civitaiLoginHref = !isOnGreen
-    ? `//${greenDomain}/login?returnUrl=${encodeURIComponent(
-        `https://${currentHost}${returnUrl}?sync-account=green`
-      )}`
-    : undefined;
+  const civitaiLoginHref =
+    !isOnGreen && currentHost
+      ? `//${greenDomain}/login?returnUrl=${encodeURIComponent(
+          `https://${currentHost}${returnUrl}?sync-account=green`
+        )}`
+      : undefined;
 
   // Filter the static provider list down to providers with credentials
   // configured for the active host (computed server-side per request).
@@ -122,7 +125,7 @@ export function LoginContent(args: {
       )}
       {status !== 'submitted' ? (
         <div className="flex flex-col gap-3">
-          {!isOnGreen && (
+          {civitaiLoginHref && (
             <Button
               component="a"
               href={civitaiLoginHref}

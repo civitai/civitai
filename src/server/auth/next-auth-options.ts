@@ -541,8 +541,10 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   // Filter OAuth providers to those with credentials configured for this host.
   // Alias hosts only see providers with explicit per-alias credentials — no
   // fallback to the global default. Primary hosts keep the legacy fallback.
+  // Run on every request with a host (not gated on domainColor) so unknown
+  // hosts get the same filter that signin/callback would apply downstream.
   const host = req.headers.host;
-  if (domainColor && host) {
+  if (host) {
     options.providers = options.providers.filter((provider) => {
       if (!oauthProviderIds.includes(provider.id as OAuthProviderId)) return true;
       return resolveOAuthCredentialsForHost(provider.id as OAuthProviderId, host) !== null;

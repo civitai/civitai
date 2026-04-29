@@ -10,6 +10,25 @@ import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.co
 
 export type ServerAvailability = ColorDomain;
 
+// Parsed once at module load — env is immutable at runtime. Each color maps
+// to the set of lowercased hosts (primary + aliases) that resolve to it.
+// Used in `hasFeature` to short-circuit per-color server availability checks
+// without re-parsing CSV env vars on every flag lookup.
+const colorHostSets: Record<ColorDomain, Set<string>> = colorDomainNames.reduce((acc, color) => {
+  const hosts = new Set<string>();
+  const primary = process.env[`SERVER_DOMAIN_${color.toUpperCase()}`]?.toLowerCase();
+  if (primary) hosts.add(primary);
+  const aliasesRaw = process.env[`SERVER_DOMAIN_${color.toUpperCase()}_ALIASES`];
+  if (aliasesRaw) {
+    for (const alias of aliasesRaw.split(',')) {
+      const trimmed = alias.trim().toLowerCase();
+      if (trimmed) hosts.add(trimmed);
+    }
+  }
+  acc[color] = hosts;
+  return acc;
+}, {} as Record<ColorDomain, Set<string>>);
+
 // --------------------------
 // Feature Availability
 // --------------------------
@@ -321,7 +340,8 @@ const hasFeature = (
 
   // Server/domain restrictions always apply — Flipt cannot override them.
   // Each color maps to a primary host plus an optional alias list — any of
-  // those hosts counts as "on this color".
+  // those hosts counts as "on this color". Lookup uses the precomputed
+  // `colorHostSets` so we don't re-parse env on every flag check.
   let serverMatch = true;
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
@@ -329,20 +349,9 @@ const hasFeature = (
   if (!availableServers.length || !host) serverMatch = true;
   else {
     const normalizedHost = host.toLowerCase();
-    const matchedColor = colorDomainNames.find((color) => {
-      if (!availableServers.includes(color as ServerAvailability)) return false;
-      const primary = process.env[`SERVER_DOMAIN_${color.toUpperCase()}`]?.toLowerCase();
-      if (primary && primary === normalizedHost) return true;
-      const aliasesRaw = process.env[`SERVER_DOMAIN_${color.toUpperCase()}_ALIASES`];
-      if (!aliasesRaw) return false;
-      const aliases = aliasesRaw
-        .split(',')
-        .map((s) => s.trim().toLowerCase())
-        .filter(Boolean);
-      return aliases.includes(normalizedHost);
-    });
-
-    serverMatch = !!matchedColor;
+    serverMatch = availableServers.some((server) =>
+      colorHostSets[server as ColorDomain]?.has(normalizedHost)
+    );
     if (!serverMatch) return false;
   }
 
