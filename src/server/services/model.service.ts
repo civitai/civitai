@@ -6,7 +6,7 @@ import { isEmpty, uniq } from 'lodash-es';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
-import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import type { BaseModelType } from '~/server/common/constants';
 import {
   CacheTTL,
@@ -62,6 +62,7 @@ import type {
   SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
+  TransferModelOwnershipInput,
   UnpublishModelSchema,
 } from '~/server/schema/model.schema';
 import { ingestModelSchema } from '~/server/schema/model.schema';
@@ -101,7 +102,11 @@ import {
 } from '~/server/services/model-version.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
-import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  deleteBasicDataForUser,
+  getCosmeticsForUsers,
+  getProfilePicturesForUsers,
+} from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
@@ -628,8 +633,12 @@ export const getModelsRaw = async ({
   // degrades sharply at deep offsets (~211 ms on production at offset ~100K vs
   // ~0.83 ms for the UNION ALL form). When splittable=false (no cursor or
   // single-field sort), we apply the strict clause directly to AND like before.
-  const { strict: cursorStrict, equality: cursorEquality, prop: cursorProp, splittable } =
-    getCursorClauses(orderBy, cursor);
+  const {
+    strict: cursorStrict,
+    equality: cursorEquality,
+    prop: cursorProp,
+    splittable,
+  } = getCursorClauses(orderBy, cursor);
   if (!splittable && cursorStrict) AND.push(cursorStrict);
 
   if (!!fileFormats?.length) {
@@ -3817,3 +3826,86 @@ export const getTrainingModelsForModerators = async ({
     nextCursor,
   };
 };
+
+export async function transferModelOwnership({
+  modelIds,
+  targetUserId,
+  modUserId,
+}: TransferModelOwnershipInput & { modUserId: number }) {
+  const targetUser = await dbWrite.user.findFirst({
+    where: { id: targetUserId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!targetUser) throw throwNotFoundError('Target user not found or deleted');
+
+  const models = await dbWrite.model.findMany({
+    where: { id: { in: modelIds } },
+    select: { id: true, userId: true, nsfw: true },
+  });
+  if (models.length !== modelIds.length) {
+    const found = new Set(models.map((m) => m.id));
+    const missing = modelIds.filter((id) => !found.has(id));
+    throw throwNotFoundError(`Models not found: ${missing.join(', ')}`);
+  }
+
+  const sourceUserIds = Array.from(new Set(models.map((m) => m.userId)));
+  if (models.some((m) => m.userId === targetUserId))
+    throw throwBadRequestError('One or more models already belong to the target user');
+
+  const result = await dbWrite.$transaction([
+    dbWrite.model.updateMany({
+      where: { id: { in: modelIds } },
+      data: { userId: targetUserId },
+    }),
+    dbWrite.modelMetric.updateMany({
+      where: { modelId: { in: modelIds } },
+      data: { userId: targetUserId },
+    }),
+    dbWrite.$executeRaw`
+      UPDATE "Post"
+      SET "userId" = ${targetUserId}
+      WHERE "modelVersionId" IN (
+        SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${modelIds}::int[])
+      )
+    `,
+    dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET "userId" = ${targetUserId}
+      WHERE "postId" IN (
+        SELECT p.id FROM "Post" p
+        JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+        WHERE mv."modelId" = ANY(${modelIds}::int[])
+      )
+    `,
+  ]);
+
+  const tracker = new Tracker();
+  for (const m of models) {
+    await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
+  }
+
+  await logToAxiom({
+    type: 'info',
+    name: 'model-ownership-transfer',
+    message: 'Mod transferred model ownership',
+    error: {
+      modelIds,
+      targetUserId,
+      sourceUserIds,
+      modUserId,
+      modelsUpdated: result[0].count,
+      metricsUpdated: result[1].count,
+      postsUpdated: Number(result[2]),
+      imagesUpdated: Number(result[3]),
+    },
+  }).catch(() => null);
+
+  await Promise.all([...sourceUserIds, targetUserId].map((id) => deleteBasicDataForUser(id)));
+
+  return {
+    modelsUpdated: result[0].count,
+    metricsUpdated: result[1].count,
+    postsUpdated: Number(result[2]),
+    imagesUpdated: Number(result[3]),
+  };
+}

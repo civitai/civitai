@@ -155,7 +155,8 @@ export type ModelActivty =
   | 'Archive'
   | 'Takedown'
   | 'Delete'
-  | 'PermanentDelete';
+  | 'PermanentDelete'
+  | 'Transfer';
 export type ResourceReviewType = 'Create' | 'Delete' | 'Exclude' | 'Include' | 'Update';
 export type ReactionType =
   | 'Images_Create'

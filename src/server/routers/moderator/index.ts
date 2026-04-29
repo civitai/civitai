@@ -13,7 +13,11 @@ import {
 } from '~/server/schema/creator-program.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
-import { getAllModelsSchema, getTrainingModerationFeedSchema } from '~/server/schema/model.schema';
+import {
+  getAllModelsSchema,
+  getTrainingModerationFeedSchema,
+  transferModelOwnershipSchema,
+} from '~/server/schema/model.schema';
 import { getModeratorArticles } from '~/server/services/article.service';
 import {
   getCash,
@@ -23,7 +27,11 @@ import {
 } from '~/server/services/creator-program.service';
 import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
-import { getModelModRules, getTrainingModelsForModerators } from '~/server/services/model.service';
+import {
+  getModelModRules,
+  getTrainingModelsForModerators,
+  transferModelOwnership,
+} from '~/server/services/model.service';
 import { moderatorProcedure, protectedProcedure, router, isFlagProtected } from '~/server/trpc';
 import { throwDbError } from '~/server/utils/errorHandling';
 import type { ModerationRule } from '~/shared/utils/prisma/models';
@@ -46,6 +54,9 @@ export const modRouter = router({
     queryTraining: trainingModerationProcedure
       .input(getTrainingModerationFeedSchema)
       .query(({ input }) => getTrainingModelsForModerators(input)),
+    transferOwnership: moderatorProcedure
+      .input(transferModelOwnershipSchema)
+      .mutation(({ input, ctx }) => transferModelOwnership({ ...input, modUserId: ctx.user.id })),
   }),
   modelVersions: router({
     query: moderatorProcedure
