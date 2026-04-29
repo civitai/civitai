@@ -108,7 +108,19 @@ Three changes to undo:
   req.context.session = checkAndSetSessionHeaders(session, res);
   ```
 
-### 4. `src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx`
+### 4. `src/server/redis/client.ts`
+
+Remove the `REFRESH_CAUSE` entry added to `REDIS_SYS_KEYS.SESSION`:
+
+```ts
+SESSION: {
+  ALL: 'session:all',
+  TOKEN_STATE: 'session:token-state',
+  REFRESH_CAUSE: 'session:refresh-cause', // ← remove this line
+},
+```
+
+### 5. `src/components/UpdateRequiredWatcher/UpdateRequiredWatcher.tsx`
 
 Remove the three `console.warn` lines inside the fetch interceptor's session-refresh
 header handler:
@@ -130,6 +142,6 @@ The instrumentation writes per-user keys at `session-refresh-cause:{userId}`
 with a 1-hour TTL. They expire on their own; no cleanup is required. If you
 want to flush them immediately after revert:
 
-```
+```bash
 redis-cli --scan --pattern 'session-refresh-cause:*' | xargs redis-cli del
 ```
