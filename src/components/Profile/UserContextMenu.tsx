@@ -5,6 +5,7 @@ import { showNotification, updateNotification } from '@mantine/notifications';
 import {
   IconArrowBackUp,
   IconBan,
+  IconCoin,
   IconCrystalBall,
   IconDotsVertical,
   IconFlag,
@@ -13,6 +14,7 @@ import {
   IconGraph,
   IconMicrophone,
   IconMicrophoneOff,
+  IconRefresh,
   IconX,
 } from '@tabler/icons-react';
 import React from 'react';
@@ -114,6 +116,40 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
+  const { data: tipaltiStatus } = trpc.user.getTipaltiStatus.useQuery(
+    { id: user?.id as number },
+    { enabled: !!isMod && !!user?.id }
+  );
+
+  const enableTipaltiMutation = trpc.user.enableTipalti.useMutation({
+    onSuccess() {
+      showNotification({
+        title: 'Tipalti Enabled',
+        message: `Tipalti has been enabled for ${username}`,
+      });
+      queryUtils.user.getTipaltiStatus.invalidate({ id: user?.id as number });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message ?? 'Unable to enable Tipalti, please try again.'),
+      });
+    },
+  });
+
+  const resetSubscriptionCachesMutation = trpc.user.resetSubscriptionCaches.useMutation({
+    onSuccess() {
+      showNotification({
+        title: 'Caches Cleared',
+        message: `Membership caches have been cleared for ${username}`,
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message ?? 'Unable to clear caches, please try again.'),
+      });
+    },
+  });
+
   const toggleLeaderboardMutation = trpc.user.setLeaderboardEligibility.useMutation({
     async onMutate({ setTo }) {
       await queryUtils.user.getCreator.cancel({ username });
@@ -182,6 +218,14 @@ export const UserContextMenu = ({ username }: { username: string }) => {
   //     onConfirm: () => deleteAccountMutation.mutate({ id: user.id }),
   //   });
   // };
+  const handleEnableTipalti = () => {
+    if (user) enableTipaltiMutation.mutate({ id: user.id });
+  };
+
+  const handleResetSubscriptionCaches = () => {
+    if (user) resetSubscriptionCachesMutation.mutate({ id: user.id });
+  };
+
   const handleImpersonate = async () => {
     if (!user || !currentUser || !features.impersonation || user.id === currentUser?.id) return;
     const notificationId = `impersonate-${user.id}`;
@@ -307,6 +351,20 @@ export const UserContextMenu = ({ username }: { username: string }) => {
                 onClick={handleToggleMute}
               >
                 {user.muted ? 'Unmute user' : 'Mute user'}
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconCoin size={14} stroke={1.5} />}
+                onClick={handleEnableTipalti}
+                disabled={tipaltiStatus?.enabled || enableTipaltiMutation.isLoading}
+              >
+                {tipaltiStatus?.enabled ? 'Tipalti Enabled' : 'Enable Tipalti'}
+              </Menu.Item>
+              <Menu.Item
+                leftSection={<IconRefresh size={14} stroke={1.5} />}
+                onClick={handleResetSubscriptionCaches}
+                disabled={resetSubscriptionCachesMutation.isLoading}
+              >
+                Clear Membership Cache
               </Menu.Item>
             </>
           )}

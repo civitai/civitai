@@ -55,7 +55,7 @@ export interface BaseModelInputProps {
   /** Get the target workflow label for an incompatible ecosystem */
   getTargetWorkflow?: (ecosystemKey: string) => string;
   /** Current output type - only ecosystems supporting this type will be shown */
-  outputType?: 'image' | 'video';
+  outputType?: 'image' | 'video' | 'audio';
 }
 
 type FamilyGroup = {
@@ -95,8 +95,9 @@ const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         disabled={disabled}
+        title={label}
         className={clsx(
-          'relative flex min-w-0 items-center gap-1.5 rounded-md border px-3 py-1.5 transition-colors',
+          'relative flex h-8 min-w-0 max-w-full flex-1 items-center gap-1.5 rounded-md border px-2 transition-colors sm:flex-none sm:max-w-[240px]',
           'border-gray-3 bg-white text-gray-7 hover:border-blue-3',
           'dark:border-dark-4 dark:bg-dark-6 dark:text-gray-3 dark:hover:border-dark-3',
           disabled && 'cursor-not-allowed opacity-50',
@@ -104,9 +105,10 @@ const TriggerButton = forwardRef<HTMLButtonElement, TriggerButtonProps>(
             'ring-2 ring-blue-5/20 after:absolute after:-bottom-2 after:left-0 after:h-2 after:w-full'
         )}
       >
-        <Text size="sm" fw={500} className="min-w-0 truncate">
-          {label}
-        </Text>
+        <span className="shrink-0 border-r border-gray-3 pr-1.5 text-xs font-medium text-gray-6 dark:border-dark-4 dark:text-dark-2">
+          Eco
+        </span>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{label}</span>
         <IconChevronDown
           size={14}
           className={clsx('shrink-0 text-gray-5 transition-transform', opened && 'rotate-180')}

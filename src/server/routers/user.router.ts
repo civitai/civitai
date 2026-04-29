@@ -101,6 +101,12 @@ import {
 import { CacheTTL } from '~/server/common/constants';
 import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
+import { addSystemPermission } from '~/server/services/system-cache';
+import { createNotification } from '~/server/services/notification.service';
+import { NotificationCategory } from '~/server/common/enums';
+import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
+import { dbRead } from '~/server/db/client';
 
 export const userRouter = router({
   getCreator: publicProcedure
@@ -245,4 +251,29 @@ export const userRouter = router({
   updateContentSettings: protectedProcedure
     .input(updateContentSettingsSchema)
     .mutation(({ input, ctx }) => updateContentSettings({ userId: ctx.user.id, ...input })),
+  getTipaltiStatus: moderatorProcedure
+    .input(getByIdSchema)
+    .query(async ({ input }) => {
+      const config = await dbRead.userPaymentConfiguration.findUnique({
+        where: { userId: input.id },
+        select: { tipaltiAccountId: true },
+      });
+      return { enabled: !!config?.tipaltiAccountId };
+    }),
+  enableTipalti: moderatorProcedure.input(getByIdSchema).mutation(async ({ input }) => {
+    await createTipaltiPayee({ userId: input.id });
+    await createNotification({
+      userId: input.id,
+      type: 'creators-program-enabled',
+      category: NotificationCategory.System,
+      key: `creators-program-enabled:${input.id}`,
+      details: {},
+    }).catch();
+    await addSystemPermission('creatorsProgram', input.id);
+  }),
+  resetSubscriptionCaches: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(async ({ input }) => {
+      await invalidateSubscriptionCaches(input.id);
+    }),
 });

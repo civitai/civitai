@@ -136,9 +136,14 @@ export function UserAvatar({
   const passesSfwGate = currentUser
     ? hasSafeBrowsingLevel(nsfwLevel)
     : hasPublicBrowsingLevel(nsfwLevel);
+  // Let owners preview their own picture while it's still pending ingestion (nsfwLevel: 0).
+  const isPendingOwnerPreview =
+    !!currentUser &&
+    currentUser.id === avatarUser.id &&
+    avatarUser.profilePicture?.ingestion === 'Pending';
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
-    (!canViewNsfw ? !passesSfwGate : nsfwLevel > browsingLevel);
+    (!isPendingOwnerPreview && (!canViewNsfw ? !passesSfwGate : nsfwLevel > browsingLevel));
   const avatarBgColor = colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 
   const image = avatarUser.profilePicture;

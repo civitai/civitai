@@ -32,7 +32,7 @@ export interface CompatibilityInfo {
   /** Current ecosystem key */
   currentEcosystemKey: string | undefined;
   /** Current workflow's output type */
-  currentOutputType: 'image' | 'video' | undefined;
+  currentOutputType: 'image' | 'video' | 'audio' | undefined;
   /** Set of ecosystem keys compatible with the current workflow */
   compatibleEcosystemKeys: Set<string>;
   /** Map of workflow ID to whether it's compatible with current ecosystem */

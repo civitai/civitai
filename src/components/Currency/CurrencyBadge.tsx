@@ -1,8 +1,8 @@
 import type { BadgeProps, MantineSize } from '@mantine/core';
 import { Badge, Loader, Text, Tooltip, useComputedColorScheme } from '@mantine/core';
-import NumberFlow from '@number-flow/react';
 import type { IconProps } from '@tabler/icons-react';
 import React, { forwardRef } from 'react';
+import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';
 import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
@@ -103,7 +103,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>((props, ref) => {
           ) : (
             <div className="flex items-center gap-1">
               {asCounter ? (
-                <NumberFlow respectMotionPreference={false} value={unitAmount} />
+                <CustomNumberFlow respectMotionPreference={false} value={unitAmount} />
               ) : (
                 <Text fw={600} size="xs">
                   {formatter

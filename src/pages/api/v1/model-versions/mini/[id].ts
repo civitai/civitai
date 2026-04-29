@@ -188,7 +188,7 @@ export default MixedAuthEndpoint(async function handler(
 
   const [unavailableResources, ecosystemConfig] = await Promise.all([
     getUnavailableResources(),
-    getGenerationEcosystemConfig(),
+    getGenerationEcosystemConfig({ id: user?.id, isModerator: user?.isModerator }),
   ]);
   const canGenerate = getResourceCanGenerate({
     resource: {
@@ -202,8 +202,7 @@ export default MixedAuthEndpoint(async function handler(
     },
     user: { id: user?.id, isModerator: user?.isModerator },
     unavailableResources,
-    disabledEcosystems: new Set(ecosystemConfig.disabledEcosystems),
-    modOnlyEcosystems: new Set(ecosystemConfig.modOnlyEcosystems),
+    ecosystemConfig,
   });
 
   // Check if should charge

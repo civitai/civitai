@@ -1,5 +1,4 @@
 import type { CardProps } from '@mantine/core';
-import { createPolymorphicComponent } from '@mantine/core';
 import { forwardRef } from 'react';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
@@ -15,7 +14,7 @@ type MasonryCardProps = CardProps &
   };
 
 // TODO - when children not in view, replace child react nodes with static html
-const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
+export const MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
   (
     {
       height,
@@ -46,6 +45,4 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
     );
   }
 );
-_MasonryCard.displayName = 'MasonryCard';
-
-export const MasonryCard = createPolymorphicComponent<'div', MasonryCardProps>(_MasonryCard);
+MasonryCard.displayName = 'MasonryCard';

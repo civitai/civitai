@@ -10,8 +10,8 @@ import { Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/cor
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconArrowLeft,
-  IconChevronDown,
   IconCheck,
+  IconMusic,
   IconPhoto,
   IconVideo,
   IconDiamond,
@@ -23,7 +23,9 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
+import { useGatedEcosystems } from '~/components/generation_v2/hooks/useGatedEcosystems';
 import {
+  filterWorkflowsByGatedEcosystems,
   getAllWorkflowsGrouped,
   workflowOptionById,
   workflowConfigByKey,
@@ -131,12 +133,14 @@ function WorkflowMenuItem({
     return (
       <RequireMembership>
         <SupportButtonPolymorphic
-          icon={IconDiamond}
           position="right"
           className="!h-auto !min-h-[44px] w-full !px-3 !py-2.5"
         >
           <div className="flex flex-col items-start gap-0.5 py-0.5">
-            <span className="text-sm leading-tight">{workflow.label}</span>
+            <span className="flex items-center gap-1 text-sm leading-tight">
+              {workflow.label}
+              <IconDiamond size={14} className="shrink-0" />
+            </span>
             {workflow.description && (
               <span className="text-dimmed text-xs leading-tight opacity-70">
                 {workflow.description}
@@ -174,22 +178,22 @@ function WorkflowMenuItem({
 }
 
 // =============================================================================
-// Workflow Type Button (Image/Video toggle)
+// Workflow Segment Button (icon-only segment within the segmented control)
 // =============================================================================
 
-interface WorkflowTypeButtonProps {
+interface WorkflowSegmentButtonProps {
   icon: React.ReactNode;
   label: string;
   isActive: boolean;
-  opened: boolean;
+  hasDivider: boolean;
   disabled?: boolean;
   onClick: () => void;
   onMouseEnter?: () => void;
   onMouseLeave?: () => void;
 }
 
-const WorkflowTypeButton = forwardRef<HTMLButtonElement, WorkflowTypeButtonProps>(
-  ({ icon, label, isActive, opened, disabled, onClick, onMouseEnter, onMouseLeave }, ref) => {
+const WorkflowSegmentButton = forwardRef<HTMLButtonElement, WorkflowSegmentButtonProps>(
+  ({ icon, label, isActive, hasDivider, disabled, onClick, onMouseEnter, onMouseLeave }, ref) => {
     return (
       <UnstyledButton
         ref={ref}
@@ -197,29 +201,24 @@ const WorkflowTypeButton = forwardRef<HTMLButtonElement, WorkflowTypeButtonProps
         onMouseEnter={onMouseEnter}
         onMouseLeave={onMouseLeave}
         disabled={disabled}
+        title={label}
+        aria-label={label}
         className={clsx(
-          'flex items-center gap-1.5 rounded-md border px-3 py-1.5 transition-colors',
+          'flex h-full items-center justify-center px-3.5 transition-colors',
+          hasDivider && 'border-l border-gray-3 dark:border-dark-4',
           isActive
-            ? 'border-blue-5 bg-blue-0 text-blue-7 dark:border-blue-6 dark:bg-blue-9/20 dark:text-blue-4'
-            : 'border-gray-3 bg-white text-gray-7 hover:border-blue-3 dark:border-dark-4 dark:bg-dark-6 dark:text-gray-3 dark:hover:border-dark-3',
-          disabled && 'cursor-not-allowed opacity-50',
-          opened && 'ring-2 ring-blue-5/20'
+            ? 'bg-blue-0 text-blue-7 dark:bg-blue-9/20 dark:text-blue-4'
+            : 'text-gray-6 hover:bg-gray-1 hover:text-gray-9 dark:text-dark-2 dark:hover:bg-dark-5 dark:hover:text-gray-2',
+          disabled && 'cursor-not-allowed opacity-50'
         )}
       >
         {icon}
-        <Text size="sm" fw={isActive ? 600 : 500}>
-          {label}
-        </Text>
-        <IconChevronDown
-          size={14}
-          className={clsx('text-gray-5 transition-transform', opened && 'rotate-180')}
-        />
       </UnstyledButton>
     );
   }
 );
 
-WorkflowTypeButton.displayName = 'WorkflowTypeButton';
+WorkflowSegmentButton.displayName = 'WorkflowSegmentButton';
 
 // =============================================================================
 // Workflow List Content (shared between Popover and Modal)
@@ -353,7 +352,7 @@ export function SelectedWorkflowDisplay({
   onBack,
 }: SelectedWorkflowDisplayProps) {
   const resolvedId = workflowId
-    ? (workflowConfigByKey.get(workflowId)?.variantOf ?? workflowId)
+    ? workflowConfigByKey.get(workflowId)?.variantOf ?? workflowId
     : undefined;
   const workflow = resolvedId ? workflowOptionById.get(resolvedId) : undefined;
   if (!workflow) return null;
@@ -408,18 +407,27 @@ export function WorkflowInput({
   const isMobile = useMediaQuery('(max-width: 768px)');
   const [imageOpened, { close: closeImage, open: openImage }] = useDisclosure(false);
   const [videoOpened, { close: closeVideo, open: openVideo }] = useDisclosure(false);
+  const [audioOpened, { close: closeAudio, open: openAudio }] = useDisclosure(false);
 
-  // Get all workflows grouped by category (static - no ecosystem filtering)
-  const options = useMemo(() => getAllWorkflowsGrouped(), []);
+  // Get all workflows grouped by category, then drop any whose backing ecosystems
+  // are all gated for this user (so e.g. the Audio segment disappears when the
+  // only audio ecosystem is mod-only and the user is not a mod).
+  const gatedEcosystems = useGatedEcosystems();
+  const options = useMemo(() => {
+    const all = getAllWorkflowsGrouped();
+    return filterWorkflowsByGatedEcosystems(all, new Set(gatedEcosystems));
+  }, [gatedEcosystems]);
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
-  // Separate image and video categories
+  // Separate image, video, and audio categories
   const imageCategories = options.filter((cat) => cat.category === 'image');
   const videoCategories = options.filter((cat) => cat.category === 'video');
+  const audioCategories = options.filter((cat) => cat.category === 'audio');
 
-  // Check if current selection is image or video
+  // Check if current selection is image, video, or audio
   const isImageWorkflow = selected && selected.category.category === 'image';
   const isVideoWorkflow = selected && selected.category.category === 'video';
+  const isAudioWorkflow = selected && selected.category.category === 'audio';
 
   const handleImageSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
@@ -429,6 +437,11 @@ export function WorkflowInput({
   const handleVideoSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
     onChange?.(graphKey, ecosystemIds, optionId);
     closeVideo();
+  };
+
+  const handleAudioSelect = (graphKey: string, ecosystemIds: number[], optionId: string) => {
+    onChange?.(graphKey, ecosystemIds, optionId);
+    closeAudio();
   };
 
   const openImageModal = () => {
@@ -463,32 +476,65 @@ export function WorkflowInput({
     });
   };
 
-  // Check if video workflows are available
-  const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
+  const openAudioModal = () => {
+    dialogStore.trigger({
+      id: 'workflow-select-audio',
+      component: WorkflowSelectModal,
+      props: {
+        title: 'Select Audio Workflow',
+        categories: audioCategories,
+        selectedValue: selected?.workflow.id,
+        onSelect: (graphKey: string, ecosystemIds: number[], optionId: string) =>
+          onChange?.(graphKey, ecosystemIds, optionId),
+        isCompatible,
+        isMember,
+      },
+    });
+  };
 
-  // Mobile: use dialogStore modal
+  // Check if video/audio workflows are available
+  const hasVideoWorkflows = videoCategories.some((cat) => cat.workflows.length > 0);
+  const hasAudioWorkflows = audioCategories.some((cat) => cat.workflows.length > 0);
+
+  const segmentedContainerClass = clsx(
+    'flex h-8 shrink-0 items-center overflow-hidden rounded-md border bg-white dark:bg-dark-6',
+    'border-gray-3 dark:border-dark-4',
+    className
+  );
+
+  // Mobile: use dialogStore modal — same segmented layout, click-to-open
   if (isMobile) {
     return (
-      <Group gap="xs" className={className} wrap="nowrap">
-        <WorkflowTypeButton
-          icon={null}
+      <div className={segmentedContainerClass}>
+        <WorkflowSegmentButton
+          icon={<IconPhoto size={16} />}
           label="Image"
           isActive={isImageWorkflow ?? false}
-          opened={false}
+          hasDivider={false}
           disabled={disabled}
           onClick={openImageModal}
         />
         {hasVideoWorkflows && (
-          <WorkflowTypeButton
-            icon={null}
+          <WorkflowSegmentButton
+            icon={<IconVideo size={16} />}
             label="Video"
             isActive={isVideoWorkflow ?? false}
-            opened={false}
+            hasDivider
             disabled={disabled}
             onClick={openVideoModal}
           />
         )}
-      </Group>
+        {hasAudioWorkflows && (
+          <WorkflowSegmentButton
+            icon={<IconMusic size={16} />}
+            label="Audio"
+            isActive={isAudioWorkflow ?? false}
+            hasDivider
+            disabled={disabled}
+            onClick={openAudioModal}
+          />
+        )}
+      </div>
     );
   }
 
@@ -496,6 +542,7 @@ export function WorkflowInput({
   const handleImageMouseEnter = () => {
     if (!disabled) {
       closeVideo();
+      closeAudio();
       openImage();
     }
   };
@@ -503,12 +550,24 @@ export function WorkflowInput({
   const handleVideoMouseEnter = () => {
     if (!disabled) {
       closeImage();
+      closeAudio();
       openVideo();
     }
   };
 
+  const handleAudioMouseEnter = () => {
+    if (!disabled) {
+      closeImage();
+      closeVideo();
+      openAudio();
+    }
+  };
+
+  const hasSecondSegment = hasVideoWorkflows;
+  const hasThirdSegment = hasAudioWorkflows;
+
   return (
-    <Group gap="xs" className={className} wrap="nowrap">
+    <div className={segmentedContainerClass}>
       <Popover
         opened={imageOpened}
         onChange={(isOpen) => !isOpen && closeImage()}
@@ -518,11 +577,11 @@ export function WorkflowInput({
         withinPortal
       >
         <Popover.Target>
-          <WorkflowTypeButton
+          <WorkflowSegmentButton
             icon={<IconPhoto size={16} />}
             label="Image"
             isActive={isImageWorkflow ?? false}
-            opened={imageOpened}
+            hasDivider={false}
             disabled={disabled}
             onClick={() => undefined}
             onMouseEnter={handleImageMouseEnter}
@@ -545,7 +604,7 @@ export function WorkflowInput({
         </Popover.Dropdown>
       </Popover>
 
-      {hasVideoWorkflows && (
+      {hasSecondSegment && (
         <Popover
           opened={videoOpened}
           onChange={(isOpen) => !isOpen && closeVideo()}
@@ -555,11 +614,11 @@ export function WorkflowInput({
           withinPortal
         >
           <Popover.Target>
-            <WorkflowTypeButton
+            <WorkflowSegmentButton
               icon={<IconVideo size={16} />}
               label="Video"
               isActive={isVideoWorkflow ?? false}
-              opened={videoOpened}
+              hasDivider
               disabled={disabled}
               onClick={() => undefined}
               onMouseEnter={handleVideoMouseEnter}
@@ -582,6 +641,44 @@ export function WorkflowInput({
           </Popover.Dropdown>
         </Popover>
       )}
-    </Group>
+
+      {hasThirdSegment && (
+        <Popover
+          opened={audioOpened}
+          onChange={(isOpen) => !isOpen && closeAudio()}
+          position="bottom-start"
+          width={300}
+          shadow="md"
+          withinPortal
+        >
+          <Popover.Target>
+            <WorkflowSegmentButton
+              icon={<IconMusic size={16} />}
+              label="Audio"
+              isActive={isAudioWorkflow ?? false}
+              hasDivider
+              disabled={disabled}
+              onClick={() => undefined}
+              onMouseEnter={handleAudioMouseEnter}
+              onMouseLeave={closeAudio}
+            />
+          </Popover.Target>
+          <Popover.Dropdown
+            p="xs"
+            onMouseEnter={openAudio}
+            onMouseLeave={closeAudio}
+            className="before:absolute before:-top-2 before:left-0 before:h-2 before:w-full"
+          >
+            <WorkflowListContent
+              categories={audioCategories}
+              selectedValue={selected?.workflow.id}
+              onSelect={handleAudioSelect}
+              isCompatible={isCompatible}
+              isMember={isMember}
+            />
+          </Popover.Dropdown>
+        </Popover>
+      )}
+    </div>
   );
 }

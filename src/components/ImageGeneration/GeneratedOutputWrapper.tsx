@@ -153,11 +153,16 @@ export function GeneratedOutputWrapper({
       ref={ref}
       className={clsx(
         'max-w-full border',
-        isLightbox ? 'max-h-[calc(100vh-32px)] items-center justify-center' : 'w-full self-start',
-        classes.imageWrapper,
+        isLightbox ? 'max-h-[calc(100vh-32px)]' : 'w-full self-start',
         selected && 'ring-2 ring-blue-5/60'
       )}
-      style={isLightbox ? { aspectRatio } : undefined}
+      style={
+        isLightbox
+          ? {
+              width: `min(${image.width}px, 100%, calc((100vh - 76px) * ${image.aspect}))`,
+            }
+          : undefined
+      }
     >
       {!isLightbox && !inView && <div style={{ aspectRatio }} />}
       {(isLightbox || inView) && (
@@ -165,12 +170,11 @@ export function GeneratedOutputWrapper({
           <div
             className={clsx(
               'relative flex items-center justify-center',
-              isLightbox ? 'max-h-[calc(100vh-32px)]' : 'max-h-full'
+              isLightbox ? 'max-h-[calc(100vh-76px)]' : 'max-h-full'
             )}
             style={{ aspectRatio }}
           >
             {children({ onClick: handleClick })}
-            <div className="pointer-events-none absolute size-full shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
 
             {!isLightbox && !image.blockedReason && (
               <label className="absolute left-3 top-3" data-tour="gen:select">
@@ -199,46 +203,26 @@ export function GeneratedOutputWrapper({
                 </Menu.Dropdown>
               </Menu>
             )}
-
-            {!image.blockedReason && (
-              <GeneratedOutputActions
-                output={image}
-                state={state}
-                isLightbox={isLightbox}
-                isOverlay={!isLightbox}
-                onToggleFavorite={handleToggleFavorite}
-                onToggleFeedback={handleToggleFeedback}
-              />
-            )}
-
-            {!isLightbox && (
-              <div className="absolute bottom-2 right-2">
-                <ImageMetaPopover
-                  meta={step.params as any}
-                  zIndex={imageGenerationDrawerZIndex + 1}
-                  hideSoftware
-                >
-                  <LegacyActionIcon variant="transparent" size="md">
-                    <IconInfoCircle
-                      color="white"
-                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                      opacity={0.8}
-                      strokeWidth={2.5}
-                      size={26}
-                    />
-                  </LegacyActionIcon>
-                </ImageMetaPopover>
-              </div>
-            )}
           </div>
 
-          {!isLightbox && !image.blockedReason && (
+          {!image.blockedReason && (
             <GeneratedOutputActions
               output={image}
               state={state}
-              isMobileFooter
+              isLightbox={isLightbox}
               onToggleFavorite={handleToggleFavorite}
               onToggleFeedback={handleToggleFeedback}
+              infoSlot={
+                <ImageMetaPopover
+                  meta={step.params as any}
+                  zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
+                  hideSoftware
+                >
+                  <LegacyActionIcon size="md" variant="subtle" color="gray">
+                    <IconInfoCircle size={16} />
+                  </LegacyActionIcon>
+                </ImageMetaPopover>
+              }
             />
           )}
         </>

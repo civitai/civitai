@@ -225,15 +225,20 @@ describe('getUserUnjudgedEntries', () => {
     mockGetChallengeConfig.mockResolvedValue(mockConfig);
   });
 
-  it('should return empty entries if reviewCostType is None', async () => {
+  it('returns hasFlatRatePurchase=false for non-Flat reviewCostType regardless of stored entries', async () => {
+    // Non-Flat cost types skip the transaction lookup. We don't short-circuit
+    // entry collection here (collection is the gate), but hasFlatRatePurchase
+    // must always be false when the challenge isn't flat-rate.
     mockDbRead.challenge.findUnique.mockResolvedValue({
       collectionId: 100,
       reviewCostType: 'None',
       reviewCost: 0,
     });
+    mockDbRead.$queryRaw.mockResolvedValue([]);
 
     const result = await getUserUnjudgedEntries(1, 42);
-    expect(result).toEqual({ entries: [], hasFlatRatePurchase: false });
+    expect(result.hasFlatRatePurchase).toBe(false);
+    expect(result.entries).toEqual([]);
   });
 
   it('should return empty entries if no collection', async () => {

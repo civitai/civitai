@@ -780,10 +780,22 @@ export async function createWorkflowStepsFromGraph({
   };
 
   // Resolve seed before creating step input and metadata so both use the same value.
-  const resolvedData =
-    !('seed' in data) || data.seed == null
-      ? { ...data, seed: Math.floor(Math.random() * maxRandomSeed) }
-      : data;
+  // Always shallow-clone so downstream mutations (e.g. the audio prompt strip below)
+  // don't affect the caller's `data`.
+  const resolvedData = {
+    ...data,
+    seed:
+      'seed' in data && data.seed != null ? data.seed : Math.floor(Math.random() * maxRandomSeed),
+  };
+
+  // Audio (ACE Audio) workflows use musicDescription/lyrics rather than the shared
+  // prompt/negativePrompt nodes. Strip those fields here so they don't bleed into
+  // stored workflow metadata (where they would otherwise persist a stale value carried
+  // over from an image/video workflow via the global localStorage scope).
+  if ('ecosystem' in resolvedData && resolvedData.ecosystem === 'Ace') {
+    delete (resolvedData as Record<string, unknown>).prompt;
+    delete (resolvedData as Record<string, unknown>).negativePrompt;
+  }
 
   // Calculate timeout: base 20 minutes + 1 minute per additional resource
   const timeSpan = new TimeSpan(0, 20, 0);
@@ -899,7 +911,12 @@ export async function generateFromGraph({
 
   // Determine workflow tags
   const ecosystem = 'ecosystem' in data ? data.ecosystem : undefined;
-  const outputTag = data.output === 'image' ? WORKFLOW_TAGS.IMAGE : WORKFLOW_TAGS.VIDEO;
+  const outputTag =
+    data.output === 'image'
+      ? WORKFLOW_TAGS.IMAGE
+      : data.output === 'audio'
+      ? WORKFLOW_TAGS.AUDIO
+      : WORKFLOW_TAGS.VIDEO;
 
   const tags = [
     WORKFLOW_TAGS.GENERATION,

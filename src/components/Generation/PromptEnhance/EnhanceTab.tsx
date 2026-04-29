@@ -131,7 +131,7 @@ export function EnhanceTab({
     const values = form.getValues();
     let orchestratorEcosystem = ecosystem;
     try {
-      orchestratorEcosystem = getRootEcosystem(ecosystem).name;
+      orchestratorEcosystem = getRootEcosystem(ecosystem).key.toLowerCase();
     } catch {}
     return {
       ecosystem: orchestratorEcosystem,

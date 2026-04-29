@@ -11,6 +11,8 @@ import type {
   SignalEventEntry,
   SignalLogEntry,
   SignalStatus,
+  SignalTopicMethod,
+  SignalTopicStatus,
   SignalWorkerStatus,
   WorkerIncomingMessage,
   WorkerOutgoingMessage,
@@ -131,6 +133,7 @@ const emitter = new EventEmitter<{
   stateChanged: SignalConnectionState;
   pong: undefined;
   debugDump: SignalWorkerStatus;
+  topicStatus: Omit<SignalTopicStatus, 'type'>;
 }>();
 
 function setConnectionState(args: { state: SignalStatus; message?: string }) {
@@ -258,17 +261,23 @@ async function registerEvents(targets: string[]) {
 // --------------------------------
 // Topic operations with error handling
 // --------------------------------
-async function topicInvoke(method: string, topic: string) {
+async function topicInvoke(method: SignalTopicMethod, topic: string) {
+  let ok = false;
+  let reason: string | undefined;
   try {
     if (!connection) {
+      reason = 'no-connection';
       workerLog(`topic:${method}:no-connection`, topic);
-      return;
+    } else {
+      await connection.invoke(method, topic);
+      ok = true;
+      workerLog(`topic:${method}:ok`, topic);
     }
-    await connection.invoke(method, topic);
-    workerLog(`topic:${method}:ok`, topic);
   } catch (e) {
-    workerLog(`topic:${method}:failed`, `${topic}: ${(e as Error).message}`);
+    reason = (e as Error).message;
+    workerLog(`topic:${method}:failed`, `${topic}: ${reason}`);
   }
+  emitter.emit('topicStatus', { topic, method, ok, reason });
 }
 
 // --------------------------------
@@ -294,6 +303,7 @@ const start = async (port: MessagePort) => {
     ),
     emitter.on('pong', () => postMessage({ type: 'pong' })),
     emitter.on('debugDump', (data) => postMessage({ type: 'debug:dump', data })),
+    emitter.on('topicStatus', (status) => postMessage({ type: 'topic:status', ...status })),
   ];
 
   // incoming messages

@@ -58,7 +58,7 @@ import { CollectionFollowAction } from '~/components/Collections/components/Coll
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { AnimatedCount, useLiveMetrics, MetricSubscriptionProvider } from '~/components/Metrics';
+import { AnimatedCount, useLiveMetrics, useMetricSubscription } from '~/components/Metrics';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openCollectionSelectModal } from '~/components/Dialog/triggers/collection-select';
 import { openReportModal } from '~/components/Dialog/triggers/report';
@@ -134,14 +134,11 @@ import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
 
 export function ModelVersionDetails(props: Props) {
-  return (
-    <MetricSubscriptionProvider entityType="ModelVersion" entityId={props.version.id}>
-      <ModelVersionDetailsContent {...props} />
-    </MetricSubscriptionProvider>
-  );
+  return <ModelVersionDetailsContent {...props} />;
 }
 
 function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: Props) {
+  useMetricSubscription('ModelVersion', version.id);
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
@@ -197,7 +194,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const hashes = primaryFile?.hashes ?? [];
 
   const filesCount = version.files?.length;
-  const hasFiles = filesCount > 0;
+  // ExternalGeneration versions are intentionally file-less (routed via external engines),
+  // so publish/republish gates should treat them as having the required assets.
+  const isExternalGeneration = version.usageControl === ModelUsageControl.ExternalGeneration;
+  const hasFiles = filesCount > 0 || isExternalGeneration;
   const filesVisible = useMemo(
     () => version.files?.filter((f) => f.visibility === ModelFileVisibility.Public || isOwnerOrMod),
     [version.files, isOwnerOrMod]

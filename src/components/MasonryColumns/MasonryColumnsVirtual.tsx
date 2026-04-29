@@ -139,6 +139,11 @@ function VirtualColumn<TData>({
             width: '100%',
             height: items[item.index].height,
             transform: `translateY(${item.start - rowVirtualizer.options.scrollMargin}px)`,
+            // Skip layout/paint for offscreen overscan rows; the explicit
+            // `height` above keeps layout space reserved so the virtualizer's
+            // scroll math stays correct.
+            contentVisibility: 'auto',
+            containIntrinsicSize: `0 ${items[item.index].height}px`,
           }}
         >
           <VirtualItem index={item.index} item={items[item.index]} {...rest} />

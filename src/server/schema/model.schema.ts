@@ -430,3 +430,9 @@ export const getMyTrainingModelsSchema = paginationSchema.extend({
   type: z.string().optional(),
   sort: z.enum(trainingModelsSortOptions).default('startDesc'),
 });
+
+export type TransferModelOwnershipInput = z.infer<typeof transferModelOwnershipSchema>;
+export const transferModelOwnershipSchema = z.object({
+  modelIds: z.array(z.number().int().positive()).min(1),
+  targetUserId: z.number().int().positive(),
+});

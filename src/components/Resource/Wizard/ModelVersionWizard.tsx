@@ -1,5 +1,10 @@
 import { Alert, Anchor, Button, Group, Stack, Stepper, Text, Title } from '@mantine/core';
-import { Availability, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  ModelUploadType,
+  ModelUsageControl,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { NextRouter } from 'next/router';
@@ -31,6 +36,7 @@ const CreateSteps = ({
   goNext,
   router,
   postId,
+  skipFiles,
 }: {
   step: number;
   versionId?: string | string[];
@@ -40,6 +46,7 @@ const CreateSteps = ({
   goNext: () => void;
   router: NextRouter;
   postId: number | undefined;
+  skipFiles: boolean;
 }) => {
   const { getStatus: getUploadStatus } = useS3UploadStore();
   const { uploading, error, aborted } = getUploadStatus(
@@ -47,14 +54,19 @@ const CreateSteps = ({
   );
   const editing = !!modelVersion?.id;
 
+  // URL step → stepper-rendered index. When skipFiles=true the Files step (URL step 2)
+  // is omitted, so URL step 3 (post) collapses to rendered index 1.
+  const activeIndex = skipFiles && step >= 2 ? Math.max(0, step - 2) : step - 1;
+
   return (
     <Stepper
-      active={step - 1}
-      onStepClick={(step) =>
+      active={activeIndex}
+      onStepClick={(idx) => {
+        const urlStep = skipFiles && idx >= 1 ? idx + 2 : idx + 1;
         router.replace(
-          `/models/${modelData?.id}/model-versions/${versionId}/wizard?step=${step + 1}`
-        )
-      }
+          `/models/${modelData?.id}/model-versions/${versionId}/wizard?step=${urlStep}`
+        );
+      }}
       allowNextStepsSelect={false}
       size="sm"
       classNames={{ steps: 'container max-w-sm' }}
@@ -66,9 +78,14 @@ const CreateSteps = ({
             model={modelData}
             version={modelVersion}
             onSubmit={(result) => {
-              if (editing) return goNext();
+              const skipFiles = result?.usageControl === ModelUsageControl.ExternalGeneration;
+              const nextStep = skipFiles ? 3 : 2;
               router
-                .replace(`/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=2`)
+                .replace(
+                  `/models/${result?.modelId}/model-versions/${result?.id}/wizard?step=${nextStep}`,
+                  undefined,
+                  editing ? { shallow: true } : undefined
+                )
                 .then();
             }}
           >
@@ -82,17 +99,19 @@ const CreateSteps = ({
           </ModelVersionUpsertForm>
         </div>
       </Stepper.Step>
-      <Stepper.Step
-        label="Upload files"
-        loading={uploading > 0}
-        color={error + aborted > 0 ? 'red' : undefined}
-      >
-        <div className="container flex max-w-sm flex-col gap-3">
-          <Title order={3}>Upload files</Title>
-          <Files />
-          <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
-        </div>
-      </Stepper.Step>
+      {!skipFiles && (
+        <Stepper.Step
+          label="Upload files"
+          loading={uploading > 0}
+          color={error + aborted > 0 ? 'red' : undefined}
+        >
+          <div className="container flex max-w-sm flex-col gap-3">
+            <Title order={3}>Upload files</Title>
+            <Files />
+            <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
+          </div>
+        </Stepper.Step>
+      )}
       <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
         {modelVersion && modelData && (
           <PostUpsertForm2
@@ -276,6 +295,7 @@ export function ModelVersionWizard({ data }: Props) {
   };
 
   const hasFiles = modelVersion && !!modelVersion.files?.length;
+  const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
 
   // Filter to posts belonging to the owner of the model
   const postId = modelVersion?.posts?.filter((post) => post.userId === modelData?.user.id)?.[0]?.id;
@@ -286,7 +306,7 @@ export function ModelVersionWizard({ data }: Props) {
 
     // redirect to correct step if missing values
     if (!isNew) {
-      if (!hasFiles)
+      if (!hasFiles && !skipFiles)
         router
           .replace(`/models/${id}/model-versions/${versionId}/wizard?step=2`, undefined, {
             shallow: true,
@@ -300,7 +320,7 @@ export function ModelVersionWizard({ data }: Props) {
           .then();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasFiles, id, isNew, versionId]);
+  }, [hasFiles, skipFiles, id, isNew, versionId]);
 
   return (
     <FilesProvider model={modelData} version={modelVersion}>
@@ -343,6 +363,7 @@ export function ModelVersionWizard({ data }: Props) {
           goNext={goNext}
           router={router}
           postId={postId}
+          skipFiles={skipFiles}
         />
       )}
     </FilesProvider>

@@ -18,6 +18,7 @@ import {
   ecosystemById,
   getEcosystemSupport,
 } from '~/shared/constants/basemodel.constants';
+import type { OutputType } from './types';
 import { klingVersionIds } from '~/shared/data-graph/generation/kling-graph';
 import { nanoBananaVersionIds } from '~/shared/data-graph/generation/nano-banana-graph';
 import { viduVersionIds } from '~/shared/data-graph/generation/vidu-graph';
@@ -112,6 +113,7 @@ const TXT2VID_IDS = [
   // ECO.Lightricks,
   ECO.Grok,
   ECO.Seedance,
+  ECO.HappyHorse,
 ];
 
 /** I2V-only Wan ecosystems (no T2V support) — added to video:create with required images */
@@ -266,7 +268,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Reference to Video',
     description: 'Generate video using a reference image',
     category: 'video',
-    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23, ECO.WanVideo27],
+    ecosystemIds: [ECO.Vidu, ECO.Veo3, ECO.Kling, ECO.LTXV23, ECO.WanVideo27, ECO.HappyHorse],
     excludeModelVersionIds: [viduVersionIds.q3],
   },
 
@@ -294,7 +296,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Edit Video',
     description: 'Edit a video with AI',
     category: 'video',
-    ecosystemIds: [ECO.Grok, ECO.WanVideo27],
+    ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
   },
 
   // 'vid2vid:extend': {
@@ -303,6 +305,20 @@ export const workflowConfigs: WorkflowConfigs = {
   //   category: 'video',
   //   ecosystemIds: [ECO.LTXV23],
   // },
+
+  // ===========================================================================
+  // Audio Workflows
+  // ===========================================================================
+
+  txt2music: {
+    label: 'Create Music',
+    modeLabel: 'Text to Music',
+    description: 'Generate music from text description and lyrics',
+    category: 'audio',
+    ecosystemIds: [ECO.AceAudio],
+    stepDisplay: 'separate',
+    memberOnly: true,
+  },
 
   // ===========================================================================
   // Text Output Workflows (hidden from picker, triggered programmatically)
@@ -460,6 +476,7 @@ export function getWorkflowsForEcosystem(
 export const workflowCategories: { category: WorkflowCategory; label: string }[] = [
   { category: 'image', label: 'Image' },
   { category: 'video', label: 'Video' },
+  { category: 'audio', label: 'Audio' },
 ];
 
 /**
@@ -500,6 +517,31 @@ export function getAllWorkflowsGrouped(): {
 }
 
 /**
+ * Drop workflow options whose backing ecosystems are all in `gatedEcosystemKeys`.
+ * Standalone workflows (no ecosystem) are always kept; a workflow with at least
+ * one ungated ecosystem is kept too.
+ *
+ * Used by `WorkflowInput` so e.g. the Audio segment disappears when the
+ * AceAudio ecosystem is mod-only and the current user is not a moderator.
+ */
+export function filterWorkflowsByGatedEcosystems<T extends { workflows: WorkflowOption[] }>(
+  grouped: T[],
+  gatedEcosystemKeys: ReadonlySet<string>
+): T[] {
+  if (gatedEcosystemKeys.size === 0) return grouped;
+  return grouped.map((group) => ({
+    ...group,
+    workflows: group.workflows.filter((w) => {
+      if (w.ecosystemIds.length === 0) return true;
+      return w.ecosystemIds.some((id) => {
+        const key = ecosystemById.get(id)?.key;
+        return !key || !gatedEcosystemKeys.has(key);
+      });
+    }),
+  }));
+}
+
+/**
  * Get the first compatible ecosystem for a workflow.
  */
 export function getDefaultEcosystemForWorkflow(workflowId: string): number | undefined {
@@ -531,7 +573,7 @@ export function getInputTypeForWorkflow(workflowId: string): 'text' | 'image' | 
 /**
  * Get the output type from a workflow key.
  */
-export function getOutputTypeForWorkflow(workflowId: string): 'image' | 'video' {
+export function getOutputTypeForWorkflow(workflowId: string): OutputType {
   const config = workflowConfigByKey.get(workflowId);
   return config?.category ?? 'image';
 }
@@ -595,7 +637,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
       ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance,
+      ecoId === ECO.Seedance ||
+      ecoId === ECO.HappyHorse,
   ],
   [
     'img2vid',
@@ -604,14 +647,19 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       (ecoId === ECO.Vidu && modelId === viduVersionIds.q3) ||
       ecoId === ECO.Grok ||
       ecoId === ECO.WanVideo27 ||
-      ecoId === ECO.Seedance,
+      ecoId === ECO.Seedance ||
+      ecoId === ECO.HappyHorse,
   ],
 
   // ref2vid: legacy forms for Kling, Veo3, and Vidu don't support this workflow
   [
     'img2vid:ref2vid',
     (ecoId) =>
-      ecoId === ECO.Kling || ecoId === ECO.Veo3 || ecoId === ECO.Vidu || ecoId === ECO.WanVideo27,
+      ecoId === ECO.Kling ||
+      ecoId === ECO.Veo3 ||
+      ecoId === ECO.Vidu ||
+      ecoId === ECO.WanVideo27 ||
+      ecoId === ECO.HappyHorse,
   ],
 
   // NanoBanana V2 - only available in new form
@@ -639,6 +687,9 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
 
   // vid2vid:extend - no legacy equivalent
   ['vid2vid:extend', true],
+
+  // Audio workflows - no legacy equivalent
+  ['txt2music', true],
 ]);
 
 /**

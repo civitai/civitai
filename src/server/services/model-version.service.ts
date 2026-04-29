@@ -63,7 +63,7 @@ import {
 } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
-import { uploadImageFromUrl } from '~/server/services/image.service';
+import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { addPostImage, createPost } from '~/server/services/post.service';
@@ -908,12 +908,22 @@ export const publishModelVersionById = async ({
 
   if (!version) throw throwNotFoundError('Something went wrong. Please try again.');
 
-  // Fetch all posts and images related to the model version to update in search index
-  const posts = await dbRead.post.findMany({
+  // Flag replica-lag BEFORE any post-commit reader runs so lag-aware lookups
+  // (dataForModelsCache.lookupFn, getDbWithoutLag) route to primary during the
+  // replication window — otherwise a concurrent feed read can poison
+  // dataForModelsCache with the pre-publish version state.
+  await preventModelVersionLag(version.modelId, id);
+
+  // Fetch posts and images for search-index update. Use dbWrite — these run
+  // immediately after publish commit and the replica may not yet have the
+  // post/image rows (especially when post + version are written in the same
+  // publish flow), which would silently drop them from the search-index
+  // update batch.
+  const posts = await dbWrite.post.findMany({
     where: { modelVersionId: version.id, userId: version.model.userId },
     select: { id: true },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
@@ -921,8 +931,6 @@ export const publishModelVersionById = async ({
   if (!republishing && !meta?.unpublishedBy)
     await updateModelLastVersionAt({ id: version.modelId });
   await bustMvCache(version.id, version.modelId);
-
-  await preventModelVersionLag(version.modelId, id);
 
   // Update search index for model and images
   await modelsSearchIndex.queueUpdate([
@@ -987,19 +995,22 @@ export const unpublishModelVersionById = async ({
         AND "modelVersionId" = ${updatedVersion.id}
       `;
 
-      await preventModelVersionLag(updatedVersion.model.id, updatedVersion.id);
-
       return updatedVersion;
     },
     { timeout: 10000 }
   );
 
-  // Fetch all posts and images related to the model version to remove from search index
-  const posts = await dbRead.post.findMany({
+  // Post-commit only — flagging lag inside the txn would publish a flag for
+  // a write that could still roll back.
+  await preventModelVersionLag(version.model.id, version.id);
+
+  // Use dbWrite for search-index lookups — replica may not yet reflect the
+  // post metadata update we just committed.
+  const posts = await dbWrite.post.findMany({
     where: { modelVersionId: version.id, userId: version.model.userId },
     select: { id: true },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { postId: { in: posts.map((x) => x.id) } },
     select: { id: true },
   });
@@ -1643,9 +1654,17 @@ export const bustMvCache = async (
   await resourceDataCache.bust(versionIds);
   await bustOrchestratorModelCache(versionIds, userId);
   await modelVersionAccessCache.refresh(versionIds);
-  // TODO shouldnt this be the model IDs?
+  // Refresh imagesForModelVersionsCache too — TTL is up to 1 day on Datapacket,
+  // so a stale `images: []` entry from the publish race will hide the model
+  // from feeds (the feed render drops items with no images for non-self
+  // viewers) until the next image upload or natural expiry.
+  await imagesForModelVersionsCache.refresh(versionIds);
   if (modelIds) {
     const mIds = Array.isArray(modelIds) ? modelIds : [modelIds];
+    // Refresh dataForModelsCache so callers don't have to remember to do it
+    // separately. Stale entries here filter the model out of feeds (versions
+    // with status='Draft' get dropped by the post-fetch transform).
+    await dataForModelsCache.refresh(mIds);
     await modelsSearchIndex.queueUpdate(
       mIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );

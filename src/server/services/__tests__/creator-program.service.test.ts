@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vitest';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -151,6 +151,18 @@ function mockBankedAmounts(green: number, yellow: number) {
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
+// Pin time to mid-month so both banking (1st-27th) and (flipped) extraction
+// (1st-27th) phases are open during tests. The default getPhases logic puts
+// extraction in the last 3 days of the month; running tests near month-end
+// flips banking closed and breaks every bank/extract test otherwise.
+beforeAll(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+});
+afterAll(() => {
+  vi.useRealTimers();
+});
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockSysRedis.get.mockResolvedValue(null);

@@ -1,0 +1,40 @@
+diff --git a/cjs/use-click-outside/use-click-outside.cjs b/cjs/use-click-outside/use-click-outside.cjs
+index f4517e2d0f3708746515343ed7f7b7513d75add9..0c83d577636adc4305327f1f8b51d1262763c35f 100644
+--- a/cjs/use-click-outside/use-click-outside.cjs
++++ b/cjs/use-click-outside/use-click-outside.cjs
+@@ -17,9 +17,13 @@ function useClickOutside(handler, events, nodes) {
+         handler();
+       }
+     };
+-    (events || DEFAULT_EVENTS).forEach((fn) => document.addEventListener(fn, listener));
++    (events || DEFAULT_EVENTS).forEach(
++      (fn) => document.addEventListener(fn, listener, fn.startsWith("touch") ? { passive: true } : undefined)
++    );
+     return () => {
+-      (events || DEFAULT_EVENTS).forEach((fn) => document.removeEventListener(fn, listener));
++      (events || DEFAULT_EVENTS).forEach(
++        (fn) => document.removeEventListener(fn, listener, fn.startsWith("touch") ? { passive: true } : undefined)
++      );
+     };
+   }, [ref, handler, nodes]);
+   return ref;
+diff --git a/esm/use-click-outside/use-click-outside.mjs b/esm/use-click-outside/use-click-outside.mjs
+index ecaecb8bccbcaac9ae27c60e5c9b8cd79a14deaa..547bba8c3235aeaa88796123b1d5acf61a9c9225 100644
+--- a/esm/use-click-outside/use-click-outside.mjs
++++ b/esm/use-click-outside/use-click-outside.mjs
+@@ -15,9 +15,13 @@ function useClickOutside(handler, events, nodes) {
+         handler();
+       }
+     };
+-    (events || DEFAULT_EVENTS).forEach((fn) => document.addEventListener(fn, listener));
++    (events || DEFAULT_EVENTS).forEach(
++      (fn) => document.addEventListener(fn, listener, fn.startsWith("touch") ? { passive: true } : undefined)
++    );
+     return () => {
+-      (events || DEFAULT_EVENTS).forEach((fn) => document.removeEventListener(fn, listener));
++      (events || DEFAULT_EVENTS).forEach(
++        (fn) => document.removeEventListener(fn, listener, fn.startsWith("touch") ? { passive: true } : undefined)
++      );
+     };
+   }, [ref, handler, nodes]);
+   return ref;

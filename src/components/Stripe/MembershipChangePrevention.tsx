@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Center,
+  Collapse,
   Group,
   Image,
   Loader,
@@ -11,9 +12,11 @@ import {
   Radio,
   Stack,
   Text,
+  TextInput,
+  UnstyledButton,
   Badge,
 } from '@mantine/core';
-import { IconAlertTriangle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -36,6 +39,9 @@ import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getClientStripe } from '~/utils/get-client-stripe';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -468,6 +474,43 @@ export const MembershipUpgradeModal = ({
   const handleClose = dialog.onClose;
   const { name, image, benefits } = meta;
 
+  // Capture an optional referral code on upgrade. Pre-fill from the
+  // ref_code cookie (set by ?ref_code= landing) so users referred by a
+  // friend don't have to remember the code on the upgrade flow.
+  const { code: cookieRefCode } = useReferralsContext();
+  const [refCodeInput, setRefCodeInput] = useState(cookieRefCode ?? '');
+  // Open by default if a code is already in the cookie so users referred by
+  // a friend see it pre-attached without hunting for the field.
+  const [refCodeOpen, setRefCodeOpen] = useState(!!cookieRefCode);
+
+  const queryUtils = trpc.useUtils();
+  const currentUser = useCurrentUser();
+  const { mutate: upgrade, isLoading: upgrading } =
+    trpc.stripe.createSubscriptionSession.useMutation({
+      async onSuccess({ sessionId, url }) {
+        await currentUser?.refresh();
+        await queryUtils.subscriptions.getUserSubscription.reset();
+        handleClose();
+        if (url) Router.push(url);
+        else if (sessionId) {
+          const stripe = await getClientStripe();
+          if (!stripe) return;
+          await stripe.redirectToCheckout({ sessionId });
+        }
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Sorry, there was an error while trying to upgrade. Please try again later',
+          error: new Error(error.message),
+        });
+      },
+    });
+
+  const submit = () => {
+    const trimmed = refCodeInput.trim();
+    upgrade({ priceId, refCode: trimmed.length > 0 ? trimmed : undefined });
+  };
+
   return (
     <Modal
       {...dialog}
@@ -498,6 +541,32 @@ export const MembershipUpgradeModal = ({
           </Paper>
         )}
 
+        <Stack gap="xs">
+          <UnstyledButton
+            onClick={() => setRefCodeOpen((v) => !v)}
+            className="w-full"
+            aria-expanded={refCodeOpen}
+            disabled={upgrading}
+          >
+            <Group gap={6} justify="space-between" wrap="nowrap">
+              <Text size="sm" c="blue.4" td="underline">
+                Have a referral code?
+              </Text>
+              {refCodeOpen ? <IconChevronUp size={14} /> : <IconChevronDown size={14} />}
+            </Group>
+          </UnstyledButton>
+          <Collapse in={refCodeOpen}>
+            <TextInput
+              description="Add a friend's code so they earn referral perks on this upgrade — and you get bonus Blue Buzz."
+              placeholder="ABCD1234"
+              value={refCodeInput}
+              onChange={(e) => setRefCodeInput(e.currentTarget.value.toUpperCase())}
+              maxLength={32}
+              disabled={upgrading}
+            />
+          </Collapse>
+        </Stack>
+
         <Alert color="orange">
           <Stack>
             <Text>
@@ -522,21 +591,10 @@ export const MembershipUpgradeModal = ({
         </Alert>
 
         <Group grow>
-          <SubscribeButton priceId={priceId} onSuccess={handleClose}>
-            {({ onClick, ...props }) => (
-              <Button
-                color="blue"
-                onClick={() => {
-                  onClick();
-                }}
-                radius="xl"
-                {...props}
-              >
-                Upgrade now
-              </Button>
-            )}
-          </SubscribeButton>
-          <Button color="gray" onClick={handleClose} radius="xl">
+          <Button color="blue" onClick={submit} radius="xl" loading={upgrading}>
+            Upgrade now
+          </Button>
+          <Button color="gray" onClick={handleClose} radius="xl" disabled={upgrading}>
             Don&rsquo;t change plan
           </Button>
         </Group>

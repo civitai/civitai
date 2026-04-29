@@ -6,7 +6,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { PostEdit } from '~/components/Post/EditV2/PostEdit';
 import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -65,7 +65,11 @@ export function PostUpsertForm2({
   const is404 = !data && !isInitialLoading && !isCreatePage;
   const loading = isInitialLoading && !isCreatePage;
   const isUploading = uploading > 0;
-  const hasFiles = !!modelVersion?.files?.length;
+  // ExternalGeneration versions are intentionally file-less (routed via external engines),
+  // so the no-files publish warning doesn't apply to them.
+  const isExternalGeneration =
+    modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
+  const hasFiles = !!modelVersion?.files?.length || isExternalGeneration;
   const confirmPublish = isUploading || !hasFiles;
   const confirmMessage = isUploading
     ? 'Files are still uploading. Publishing now will make your model visible, but downloads will not work until uploads finish. Continue?'

@@ -6,7 +6,11 @@ import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/genera
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  preventReplicationLag,
+  preventReplicationLagBatch,
+} from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import {
   imageMetaCache,
@@ -42,6 +46,7 @@ import {
   deleteImageFromS3,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
+  imagesForModelVersionsCache,
   ingestImage,
   invalidateManyImageExistence,
   purgeImageGenerationDataCache,
@@ -1082,7 +1087,9 @@ export const addPostImage = async ({
 
 export async function bustCachesForPosts(postIds: number | number[]) {
   const ids = Array.isArray(postIds) ? postIds : [postIds];
-  const results = await dbRead.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
+  // Use dbWrite — bustCachesForPosts runs immediately after image/post writes
+  // so the replica may not yet reflect the post.modelVersionId we need.
+  const results = await dbWrite.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
     SELECT m."userId" = p."userId" as "isShowcase",
            p."modelVersionId"
     FROM "Post" p
@@ -1091,9 +1098,16 @@ export async function bustCachesForPosts(postIds: number | number[]) {
     WHERE p."id" IN (${Prisma.join(ids)})
   `;
 
-  await deleteImagesForModelVersionCache(
-    results.filter((x) => x.isShowcase).map((x) => x.modelVersionId)
-  );
+  const showcaseVersionIds = results.filter((x) => x.isShowcase).map((x) => x.modelVersionId);
+  if (!showcaseVersionIds.length) return;
+
+  // Flag modelVersion-lag so imagesForModelVersionsCache.lookupFn (cache-miss
+  // path) routes to primary during the replication window. Then refresh
+  // instead of bust — refresh actively repopulates from primary, so a
+  // concurrent reader can't poison the cache with `images: []` during the
+  // bust debounce window.
+  await preventReplicationLagBatch('modelVersion', showcaseVersionIds);
+  await imagesForModelVersionsCache.refresh(showcaseVersionIds);
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {

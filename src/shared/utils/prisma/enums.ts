@@ -210,6 +210,7 @@ export const ModelUsageControl = {
   Download: 'Download',
   Generation: 'Generation',
   InternalGeneration: 'InternalGeneration',
+  ExternalGeneration: 'ExternalGeneration',
 } as const;
 
 export type ModelUsageControl = (typeof ModelUsageControl)[keyof typeof ModelUsageControl];

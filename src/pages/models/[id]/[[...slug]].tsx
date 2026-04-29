@@ -73,6 +73,10 @@ const MigrateModelToCollection = dynamic(
 const MergeVersions = dynamic(() => import('~/components/Model/Actions/MergeVersions'), {
   ssr: false,
 });
+const TransferModelOwnership = dynamic(
+  () => import('~/components/Model/Actions/TransferModelOwnership'),
+  { ssr: false }
+);
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -1079,6 +1083,17 @@ export default function ModelDetailsV2({
                                     Bring Back
                                   </Menu.Item>
                                 )}
+                                <Menu.Item
+                                  leftSection={<IconArrowsLeftRight size={14} stroke={1.5} />}
+                                  onClick={() =>
+                                    dialogStore.trigger({
+                                      component: TransferModelOwnership,
+                                      props: { modelId: model.id },
+                                    })
+                                  }
+                                >
+                                  Transfer Ownership
+                                </Menu.Item>
                               </>
                             )}
                           </>

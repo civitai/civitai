@@ -14,7 +14,7 @@ import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -44,6 +44,7 @@ const CreateSteps = ({
   modelId,
   router,
   postId,
+  skipFiles,
 }: {
   step: number;
   model?: ModelWithTags;
@@ -53,6 +54,7 @@ const CreateSteps = ({
   modelId: number | undefined;
   router: NextRouter;
   postId: number | undefined;
+  skipFiles: boolean;
 }) => {
   const { getStatus: getUploadStatus } = useS3UploadStore();
   const { uploading, error, aborted } = getUploadStatus(
@@ -60,6 +62,10 @@ const CreateSteps = ({
   );
   const editing = !!model;
   const hasVersions = model && model.modelVersions.length > 0;
+
+  // URL step → stepper-rendered index. When skipFiles=true the Files step (URL step 3)
+  // is omitted, so URL step 4 (post) collapses to rendered index 2.
+  const activeIndex = skipFiles && step >= 3 ? Math.max(0, step - 2) : step - 1;
 
   const result = querySchema.safeParse(router.query);
   const templateId = result.success ? result.data.templateId : undefined;
@@ -85,12 +91,13 @@ const CreateSteps = ({
 
   return (
     <Stepper
-      active={step - 1}
-      onStepClick={(step) =>
-        router.replace(getWizardUrl({ id: modelId, step: step + 1, templateId }), undefined, {
+      active={activeIndex}
+      onStepClick={(idx) => {
+        const urlStep = skipFiles && idx >= 2 ? idx + 2 : idx + 1;
+        router.replace(getWizardUrl({ id: modelId, step: urlStep, templateId }), undefined, {
           shallow: true,
-        })
-      }
+        });
+      }}
       allowNextStepsSelect={false}
       size="sm"
       classNames={{ steps: 'container max-w-sm' }}
@@ -126,7 +133,20 @@ const CreateSteps = ({
           <ModelVersionUpsertForm
             model={model ?? templateFields ?? bountyFields}
             version={modelVersion ?? templateFields?.version ?? bountyFields?.version}
-            onSubmit={goNext}
+            onSubmit={(result) => {
+              // ExternalGeneration versions are file-less — jump directly to the post step.
+              if (result?.usageControl === ModelUsageControl.ExternalGeneration) {
+                router
+                  .replace(
+                    getWizardUrl({ id: modelId, step: 4, templateId, bountyId }),
+                    undefined,
+                    { shallow: true }
+                  )
+                  .then();
+                return;
+              }
+              goNext();
+            }}
           >
             {({ loading, canSave }) => (
               <Group mt="xl" justify="flex-end">
@@ -143,17 +163,19 @@ const CreateSteps = ({
       </Stepper.Step>
 
       {/* Step 3: Upload Files */}
-      <Stepper.Step
-        label="Upload files"
-        loading={uploading > 0}
-        color={error + aborted > 0 ? 'red' : undefined}
-      >
-        <div className="container flex max-w-sm flex-col gap-3">
-          <Title order={3}>Upload files</Title>
-          <Files />
-          <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
-        </div>
-      </Stepper.Step>
+      {!skipFiles && (
+        <Stepper.Step
+          label="Upload files"
+          loading={uploading > 0}
+          color={error + aborted > 0 ? 'red' : undefined}
+        >
+          <div className="container flex max-w-sm flex-col gap-3">
+            <Title order={3}>Upload files</Title>
+            <Files />
+            <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
+          </div>
+        </Stepper.Step>
+      )}
 
       <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
         {model && modelVersion && (
@@ -354,6 +376,10 @@ export function ModelWizard() {
     }
   };
 
+  // File-less ExternalGeneration versions don't need the upload step. Hoisted so the
+  // CreateSteps stepper and the auto-redirect effect agree on the same step layout.
+  const skipFiles = modelVersion?.usageControl === ModelUsageControl.ExternalGeneration;
+
   useEffect(() => {
     // redirect to correct step if missing values
     if (!isNew) {
@@ -369,7 +395,7 @@ export function ModelWizard() {
             shallow: true,
           })
           .then();
-      else if (!hasFiles)
+      else if (!hasFiles && !skipFiles)
         router
           .replace(getWizardUrl({ id, step: 3, templateId, bountyId, src }), undefined, {
             shallow: true,
@@ -383,7 +409,7 @@ export function ModelWizard() {
           .then();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, isNew, model, templateId, bountyId, src]);
+  }, [id, isNew, model, modelVersion, templateId, bountyId, src]);
 
   const postId = modelVersion?.posts[0]?.id;
 
@@ -464,6 +490,7 @@ export function ModelWizard() {
               step={step}
               router={router}
               postId={postId}
+              skipFiles={skipFiles}
             />
           )}
         </>
