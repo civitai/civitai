@@ -89,7 +89,7 @@ export function createCachedArray<T extends object>({
     if (!ids.length) return [] as T[];
     const results = new Set<T>();
     const cacheResults: T[] = [];
-    for (const batch of chunk(ids, 200)) {
+    for (const batch of chunk([...new Set(ids)], 200)) {
       const batchResults = await redis.packed.mGet<T>(
         batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
       );
