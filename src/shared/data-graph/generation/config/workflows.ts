@@ -318,7 +318,6 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [ECO.AceAudio],
     stepDisplay: 'separate',
     memberOnly: true,
-    hidden: true,
   },
 
   // ===========================================================================
