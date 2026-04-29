@@ -1,5 +1,7 @@
+import { useEffect } from 'react';
 import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import type { MetricEntityType } from '~/components/Signals/metric-signals.types';
+import { signalDebug } from '~/components/Signals/signalDebug';
 import { SignalTopic } from '~/server/common/enums';
 import { useLiveMetricsEnabled } from './useLiveMetricsEnabled';
 
@@ -29,5 +31,13 @@ import { useLiveMetricsEnabled } from './useLiveMetricsEnabled';
 export function useMetricSubscription(entityType: MetricEntityType, entityId: number) {
   const enabled = useLiveMetricsEnabled();
   const topic = enabled ? (`${SignalTopic.Metric}:${entityType}:${entityId}` as const) : undefined;
+  useEffect(() => {
+    if (!topic) {
+      signalDebug('useMetricSubscription skipped (flag off)', { entityType, entityId });
+      return;
+    }
+    signalDebug('useMetricSubscription effect: subscribe', { topic });
+    return () => signalDebug('useMetricSubscription effect: unsubscribe', { topic });
+  }, [topic, entityType, entityId]);
   useSignalTopic(topic);
 }

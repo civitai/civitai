@@ -20,6 +20,7 @@ import type { SignalWorker, TopicStatusHandler } from '~/utils/signals/useSignal
 import { useSignalsWorker } from '~/utils/signals/useSignalsWorker';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
 import { trpc } from '~/utils/trpc';
+import { setSignalDebug, signalDebug } from './signalDebug';
 
 type TopicString = `${SignalTopic}${'' | `:${number | string}`}`;
 
@@ -51,6 +52,11 @@ declare global {
       emitMetric: MetricSignalsStoreState['applyDelta'];
       /** Clears accumulated deltas for an entity (or a single metric). */
       clearDeltas: MetricSignalsStoreState['clearDelta'];
+      /**
+       * Toggles `[signal]` debug logging across SignalsProvider and the
+       * Metrics consumers. Off by default; flip on while reproducing churn.
+       */
+      setDebug: (value: boolean) => void;
     };
   }
 }
@@ -193,6 +199,13 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       if (count === 0) {
         setRegisteredTopics((prev) => (prev.includes(topic) ? prev : [...prev, topic]));
       }
+      signalDebug('registerTopic', {
+        topic,
+        prev: count,
+        next: count + 1,
+        transition: count === 0 ? '0→1 (state update)' : `${count}→${count + 1}`,
+        workerReady: !!worker,
+      });
     },
     [worker]
   );
@@ -207,8 +220,21 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         cancelRetry(topic);
         worker?.topicUnsubscribe(topic);
         setRegisteredTopics((prev) => prev.filter((t) => t !== topic));
+        signalDebug('releaseTopic', {
+          topic,
+          prev: count,
+          next: 0,
+          transition: '1→0 (state update + worker unsubscribe)',
+          workerReady: !!worker,
+        });
       } else {
         refs.set(topic, count - 1);
+        signalDebug('releaseTopic', {
+          topic,
+          prev: count,
+          next: count - 1,
+          transition: `${count}→${count - 1}`,
+        });
       }
     },
     [worker, cancelRetry]
@@ -302,7 +328,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   // refcount, retry, and topic-status behavior can be exercised from the
   // console. Guarded by NODE_ENV so it's stripped in production.
   useEffect(() => {
-    if (process.env.NODE_ENV === 'production' || typeof window === 'undefined') return;
+    if (typeof window === 'undefined') return;
     const refs = topicRefs.current!;
     const retries = topicRetries.current!;
     const confirmed = topicLastConfirmed.current!;
@@ -322,11 +348,25 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       getDeltas: () => ({ ...useMetricSignalsStore.getState().deltas }),
       emitMetric: useMetricSignalsStore.getState().applyDelta,
       clearDeltas: useMetricSignalsStore.getState().clearDelta,
+      setDebug: (value: boolean) => {
+        setSignalDebug(value);
+        console.log(`[signal] debug logging ${value ? 'ENABLED' : 'disabled'}`);
+      },
     };
     return () => {
       delete window.__signals;
     };
   }, []);
+
+  // Render-count log (gated). Lets us see context-cascade re-renders separately
+  // from the explicit register/release events above.
+  const renderCount = useRef(0);
+  renderCount.current += 1;
+  signalDebug('SignalProvider render', {
+    renderCount: renderCount.current,
+    status,
+    topicCount: registeredTopics.length,
+  });
 
   const connected = status === 'connected';
 

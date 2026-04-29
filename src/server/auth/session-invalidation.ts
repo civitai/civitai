@@ -47,6 +47,26 @@ export async function refreshSession(userId: number, { sendSignal = true } = {})
   }
 
   log(`Refreshed session for user ${userId} - ${userTokens.length} token(s) marked for refresh`);
+  // Temporary: capture caller stack so we can surface it via response header.
+  // Skips the internal JWT 'update' callback path (next-auth-options.ts) which
+  // re-marks tokens by design and clears its own marker immediately after.
+  const stack = new Error().stack ?? '';
+  if (!stack.includes('next-auth-options')) {
+    console.warn(`[refreshSession] userId=${userId} sendSignal=${sendSignal}\n${stack}`);
+    try {
+      // Compact the stack into a single-line, header-safe string and stash in
+      // Redis. The session callback will read this and surface it to the
+      // client via x-session-refresh-cause.
+      const compact = stack
+        .split('\n')
+        .slice(1, 8)
+        .map((s) => s.trim())
+        .join(' | ')
+        .replace(/[^\x20-\x7E]/g, ' ')
+        .slice(0, 1500);
+      await sysRedis.set(`session-refresh-cause:${userId}`, compact, { EX: 60 * 60 });
+    } catch {}
+  }
 }
 
 export async function invalidateSession(userId: number) {

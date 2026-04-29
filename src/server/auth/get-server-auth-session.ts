@@ -6,6 +6,7 @@ import { createAuthOptions } from './next-auth-options';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
 import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
+import { sysRedis } from '~/server/redis/client';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -17,7 +18,10 @@ type AuthResponse = GetServerSidePropsContext['res'] | NextApiResponse;
  * This signals to the client that it should refresh its session cookie.
  * The flag is deleted after use so it doesn't appear in the returned session.
  */
-function checkAndSetSessionHeaders(session: Session | null, res: AuthResponse): Session | null {
+async function checkAndSetSessionHeaders(
+  session: Session | null,
+  res: AuthResponse
+): Promise<Session | null> {
   if (session?.needsCookieRefresh) {
     res.setHeader(SESSION_REFRESH_HEADER, 'true');
     // Also set a cookie that persists across page refreshes (5 min expiry)
@@ -25,6 +29,15 @@ function checkAndSetSessionHeaders(session: Session | null, res: AuthResponse): 
       'Set-Cookie',
       `${SESSION_REFRESH_COOKIE}=true; Path=/; Max-Age=300; SameSite=Lax`
     );
+    // Best-effort: surface the original refreshSession() caller stack to the
+    // client so we can identify unexpected sources from DevTools.
+    try {
+      const userId = session.user?.id;
+      if (userId) {
+        const cause = await sysRedis.get(`session-refresh-cause:${userId}`);
+        if (cause) res.setHeader('x-session-refresh-cause', cause);
+      }
+    } catch {}
     delete session.needsCookieRefresh;
   }
   return session;
@@ -57,7 +70,7 @@ export const getServerAuthSession = async ({
   try {
     const authOptions = createAuthOptions(req);
     const session = await getServerSession(req, res, authOptions);
-    req.context.session = checkAndSetSessionHeaders(session, res);
+    req.context.session = await checkAndSetSessionHeaders(session, res);
 
     return req.context.session as Session | null;
   } catch (error) {
