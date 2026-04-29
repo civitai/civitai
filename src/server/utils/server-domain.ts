@@ -83,6 +83,24 @@ export function isPrimaryHost(host: string): boolean {
 }
 
 /**
+ * True if `host` resolves to a color but is NOT that color's primary —
+ * i.e. it's a registered alias host. Used to suppress login surfaces that
+ * should only run on the canonical primaries (e.g. email magic-link, which
+ * would otherwise create a session scoped to the alias and bypass the
+ * intended sync-from-primary flow).
+ */
+export function isAliasHost(host: string): boolean {
+  const normalized = host.toLowerCase();
+  for (const color of colorDomainNames) {
+    const cfg = serverDomainMap[color];
+    if (!cfg) continue;
+    if (cfg.primary === normalized) return false;
+    if (cfg.aliases.includes(normalized)) return true;
+  }
+  return false;
+}
+
+/**
  * Resolve OAuth credentials for `provider` on `host`.
  *
  * - Primary hosts: prefer the per-color override
