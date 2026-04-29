@@ -55,8 +55,12 @@ import { isDefined } from '~/utils/type-guards';
 import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { baseModelByName, ecosystemById } from '~/shared/constants/basemodel.constants';
-import type { GenerationEcosystemConfig } from '~/server/common/constants';
+import type {
+  GenerationEcosystemConfig,
+  GenerationEcosystemContext,
+} from '~/server/common/constants';
 import { DEFAULT_GENERATION_ECOSYSTEM_CONFIG } from '~/server/common/constants';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   getBaseModelEngine,
   getBaseModelMediaType,
@@ -480,19 +484,70 @@ export async function getUnstableResources() {
   return cachedData ?? [];
 }
 
-export async function getGenerationEcosystemConfig(): Promise<GenerationEcosystemConfig> {
-  const cached = await sysRedis
-    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
-    .then((data) => (data ? fromJson<GenerationEcosystemConfig>(data) : null))
-    .catch(() => null); // fallback to default if redis fails
+/**
+ * Loads the operator-set ecosystem gating config from Redis and resolves
+ * the `generation-testing` Flipt flag for the given user in parallel,
+ * returning the combined context that gets passed to `getResourceCanGenerate`.
+ *
+ * Mods are always treated as having testing access. Pass an empty user
+ * object for unauthenticated/anonymous calls — `hasTestingAccess` will be
+ * `false`.
+ */
+export async function getGenerationEcosystemConfig(
+  user: { id?: number; isModerator?: boolean } = {}
+): Promise<GenerationEcosystemContext> {
+  const [cached, hasTestingAccess] = await Promise.all([
+    sysRedis
+      .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config')
+      .then((data) => (data ? fromJson<Partial<GenerationEcosystemConfig>>(data) : null))
+      .catch(() => null), // fallback to default if redis fails
+    resolveTestingAccess(user),
+  ]);
 
-  return cached ?? DEFAULT_GENERATION_ECOSYSTEM_CONFIG;
+  // Spread defaults so legacy Redis values without the new fields stay valid.
+  return { ...DEFAULT_GENERATION_ECOSYSTEM_CONFIG, ...(cached ?? {}), hasTestingAccess };
+}
+
+async function resolveTestingAccess(user: {
+  id?: number;
+  isModerator?: boolean;
+}): Promise<boolean> {
+  if (user.isModerator) return true;
+  if (!user.id) return false;
+  return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, String(user.id), {
+    isModerator: 'false',
+  });
+}
+
+/**
+ * Persists the operator-set ecosystem gating config to Redis. Used by the
+ * moderator UI at `/moderator/generation-config`. The shape matches
+ * `GenerationEcosystemConfig`; arrays are written as-is, no merging with
+ * the previous value, so the form is the single source of truth for what
+ * gets stored.
+ */
+export async function setGenerationEcosystemConfig(input: GenerationEcosystemConfig) {
+  await sysRedis.hSet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:ecosystem-config', toJson(input));
+  return input;
 }
 
 export type GenerationConfig = {
   unstableResources: number[];
   modOnlyEcosystems: string[];
   disabledEcosystems: string[];
+  testingEcosystems: string[];
+  /**
+   * Ecosystem keys that should display the "experimental build" alert in
+   * the generator UI. Surfaced to the client so `ExperimentalModelAlert`
+   * can union this list with the static `isEcosystemExperimental` check.
+   */
+  experimentalEcosystems: string[];
+  /**
+   * Whether the requesting user has access to ecosystems listed in
+   * `testingEcosystems` (mods always do, plus users matched by the
+   * `generation-testing` Flipt flag).
+   */
+  hasTestingAccess: boolean;
 };
 
 /**
@@ -500,16 +555,25 @@ export type GenerationConfig = {
  * Bundles unstable resources (set programmatically by the
  * `resource-gen-availability` cron) with operator-controlled ecosystem
  * gating, so the generator only needs one query to get all of it.
+ *
+ * User-scoped: `hasTestingAccess` is resolved per-request so the client
+ * can hide testing ecosystems from non-testers without exposing the ID
+ * lists (those stay server-side).
  */
-export async function getGenerationConfig(): Promise<GenerationConfig> {
+export async function getGenerationConfig(
+  user: { id?: number; isModerator?: boolean } = {}
+): Promise<GenerationConfig> {
   const [unstableResources, ecosystemConfig] = await Promise.all([
     getUnstableResources(),
-    getGenerationEcosystemConfig(),
+    getGenerationEcosystemConfig(user),
   ]);
   return {
     unstableResources,
     modOnlyEcosystems: ecosystemConfig.modOnlyEcosystems,
     disabledEcosystems: ecosystemConfig.disabledEcosystems,
+    testingEcosystems: ecosystemConfig.testingEcosystems,
+    experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
+    hasTestingAccess: ecosystemConfig.hasTestingAccess,
   };
 }
 
@@ -582,6 +646,37 @@ const explicitCoveredModelAirs = [fluxUltraAir, ponyV7Air];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 
 /**
+ * Resolves the gating state for a resource: `disabled`, `modOnly`,
+ * `testing`, or `enabled`. Model version ID rules override ecosystem-level
+ * rules so a single version can be flipped without changing the ecosystem.
+ *
+ * Returned `enabled` does not necessarily mean the user can generate — the
+ * caller still applies coverage / status / private checks separately.
+ */
+function getResourceGatingState({
+  resourceId,
+  ecosystemKey,
+  ecosystemConfig,
+}: {
+  resourceId: number;
+  ecosystemKey: string | undefined;
+  ecosystemConfig: GenerationEcosystemConfig;
+}): 'disabled' | 'modOnly' | 'testing' | 'enabled' {
+  // ID-level rules override ecosystem-level rules.
+  if (ecosystemConfig.disabledIds.includes(resourceId)) return 'disabled';
+  if (ecosystemConfig.modOnlyIds.includes(resourceId)) return 'modOnly';
+  if (ecosystemConfig.testingIds.includes(resourceId)) return 'testing';
+
+  if (ecosystemKey) {
+    if (ecosystemConfig.disabledEcosystems.includes(ecosystemKey)) return 'disabled';
+    if (ecosystemConfig.modOnlyEcosystems.includes(ecosystemKey)) return 'modOnly';
+    if (ecosystemConfig.testingEcosystems.includes(ecosystemKey)) return 'testing';
+  }
+
+  return 'enabled';
+}
+
+/**
  * Single source of truth for deciding whether a resource can be used for
  * generation. Mirrors the checks in `transformGenerationData` so callers
  * outside of `getResourceData` (e.g. `getModelHandler`) can stay in sync.
@@ -590,8 +685,7 @@ export function getResourceCanGenerate({
   resource,
   user,
   unavailableResources,
-  disabledEcosystems,
-  modOnlyEcosystems,
+  ecosystemConfig,
 }: {
   resource: {
     id: number;
@@ -604,8 +698,7 @@ export function getResourceCanGenerate({
   };
   user: { id?: number; isModerator?: boolean };
   unavailableResources: number[];
-  disabledEcosystems: Set<string>;
-  modOnlyEcosystems: Set<string>;
+  ecosystemConfig: GenerationEcosystemContext;
 }): boolean {
   const isUnavailable = unavailableResources.includes(resource.id);
   const isOwnedByUser = !!user.id && user.id === resource.modelUserId;
@@ -627,15 +720,21 @@ export function getResourceCanGenerate({
     canGenerate = false;
   }
 
-  if (canGenerate && (disabledEcosystems.size > 0 || modOnlyEcosystems.size > 0)) {
+  if (canGenerate) {
     const baseModel = baseModelByName.get(resource.baseModel);
     const ecosystemKey = baseModel ? ecosystemById.get(baseModel.ecosystemId)?.key : undefined;
-    if (ecosystemKey) {
-      if (disabledEcosystems.has(ecosystemKey)) {
-        canGenerate = false;
-      } else if (modOnlyEcosystems.has(ecosystemKey) && !user.isModerator) {
-        canGenerate = false;
-      }
+    const state = getResourceGatingState({
+      resourceId: resource.id,
+      ecosystemKey,
+      ecosystemConfig,
+    });
+
+    if (state === 'disabled') {
+      canGenerate = false;
+    } else if (state === 'modOnly' && !user.isModerator) {
+      canGenerate = false;
+    } else if (state === 'testing' && !ecosystemConfig.hasTestingAccess) {
+      canGenerate = false;
     }
   }
 
@@ -663,9 +762,7 @@ export async function getResourceData(
 
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
-  const ecosystemConfig = await getGenerationEcosystemConfig();
-  const disabledEcosystems = new Set(ecosystemConfig.disabledEcosystems);
-  const modOnlyEcosystems = new Set(ecosystemConfig.modOnlyEcosystems);
+  const ecosystemConfig = await getGenerationEcosystemConfig(user);
 
   function transformGenerationData(
     { settings, ...item }: GenerationResourceDataModel,
@@ -688,8 +785,7 @@ export async function getResourceData(
       },
       user,
       unavailableResources,
-      disabledEcosystems,
-      modOnlyEcosystems,
+      ecosystemConfig,
     });
 
     if (!canGenerate) {

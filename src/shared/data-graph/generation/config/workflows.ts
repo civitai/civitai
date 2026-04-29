@@ -517,6 +517,31 @@ export function getAllWorkflowsGrouped(): {
 }
 
 /**
+ * Drop workflow options whose backing ecosystems are all in `gatedEcosystemKeys`.
+ * Standalone workflows (no ecosystem) are always kept; a workflow with at least
+ * one ungated ecosystem is kept too.
+ *
+ * Used by `WorkflowInput` so e.g. the Audio segment disappears when the
+ * AceAudio ecosystem is mod-only and the current user is not a moderator.
+ */
+export function filterWorkflowsByGatedEcosystems<T extends { workflows: WorkflowOption[] }>(
+  grouped: T[],
+  gatedEcosystemKeys: ReadonlySet<string>
+): T[] {
+  if (gatedEcosystemKeys.size === 0) return grouped;
+  return grouped.map((group) => ({
+    ...group,
+    workflows: group.workflows.filter((w) => {
+      if (w.ecosystemIds.length === 0) return true;
+      return w.ecosystemIds.some((id) => {
+        const key = ecosystemById.get(id)?.key;
+        return !key || !gatedEcosystemKeys.has(key);
+      });
+    }),
+  }));
+}
+
+/**
  * Get the first compatible ecosystem for a workflow.
  */
 export function getDefaultEcosystemForWorkflow(workflowId: string): number | undefined {

@@ -157,10 +157,17 @@ interface ExperimentalModelAlertProps {
 /**
  * Displays an alert when the selected ecosystem has experimental base models.
  * Should be used inside a Controller for 'baseModel'.
+ *
+ * Sources unioned: the static `isEcosystemExperimental` check (derived from
+ * base-model `experimental` flags) plus `experimentalEcosystems` from the
+ * Redis-backed `generation:ecosystem-config` — operators flip the latter to
+ * mark an ecosystem experimental without a code change.
  */
 export function ExperimentalModelAlert({ ecosystem }: ExperimentalModelAlertProps) {
-  // Check if current ecosystem is experimental using the config
-  const isExperimental = ecosystem ? isEcosystemExperimental(ecosystem) : false;
+  const { experimentalEcosystems } = useGenerationConfig();
+  const isExperimental = ecosystem
+    ? isEcosystemExperimental(ecosystem) || experimentalEcosystems.includes(ecosystem)
+    : false;
 
   if (!isExperimental || !ecosystem) {
     return null;

@@ -212,9 +212,7 @@ export const getModelHandler = async ({
 
     const modelCategories = await getCategoryTags('model');
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig();
-    const disabledEcosystems = new Set(ecosystemConfig.disabledEcosystems);
-    const modOnlyEcosystems = new Set(ecosystemConfig.modOnlyEcosystems);
+    const ecosystemConfig = await getGenerationEcosystemConfig(ctx.user ?? {});
 
     const metrics = model.metrics[0];
     const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
@@ -292,8 +290,7 @@ export const getModelHandler = async ({
           },
           user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
           unavailableResources: unavailableGenResources,
-          disabledEcosystems,
-          modOnlyEcosystems,
+          ecosystemConfig,
         }) &&
         isBaseModelGenerationSupported(version.baseModel, model.type) &&
         (entityAccessForVersion?.hasAccess ?? false);
@@ -1477,9 +1474,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
       : [];
 
     const unavailableGenResources = await getUnavailableResources();
-    const ecosystemConfig = await getGenerationEcosystemConfig();
-    const disabledEcosystems = new Set(ecosystemConfig.disabledEcosystems);
-    const modOnlyEcosystems = new Set(ecosystemConfig.modOnlyEcosystems);
+    const ecosystemConfig = await getGenerationEcosystemConfig(user ?? {});
     const completeModels = models
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
@@ -1501,8 +1496,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
             },
             user: { id: user?.id, isModerator: user?.isModerator },
             unavailableResources: unavailableGenResources,
-            disabledEcosystems,
-            modOnlyEcosystems,
+            ecosystemConfig,
           }) && isBaseModelGenerationSupported(version.baseModel, model.type);
 
         return {
