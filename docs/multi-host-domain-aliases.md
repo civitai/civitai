@@ -54,10 +54,10 @@ GOOGLE_AUTH_civitai_blue=<google_alias_client_id>,<google_alias_secret>
 # Reddit not registered → Reddit button hidden on civitai.blue
 ```
 
-When a provider is hidden on an alias, the login page renders a "Continue on
-`<primary>`" button that bounces the user through the canonical host. The
-canonical login picks any provider, then sync-account brings the session back
-to the alias.
+When all providers are hidden on an alias, users still see the existing
+"Login with `<greenDomain>`" button (rendered on every non-green host). That
+button bounces them to the green primary, where they sign in with any
+provider, then `sync-account=green` brings the session back to the alias.
 
 ## Cookie Behavior
 
@@ -93,7 +93,7 @@ hops don't need a sync round-trip.
 | Allowlists | `src/server/createContext.ts`, `src/server/utils/endpoint-helpers.ts`, `src/pages/_app.tsx`, `next-sitemap.config.js`, `src/server/middleware/region-restriction.middleware.ts`, `src/server/services/feature-flags.service.ts` | Walk all hosts (primary + aliases) |
 | Outbound | `src/server/utils/url-helpers.ts`, `src/providers/AppProvider.tsx`, `src/utils/sync-account.ts`, `src/hooks/useDomainSync.tsx` | Canonical-only URLs; alias-aware short-circuit |
 | Auth | `src/server/auth/next-auth-options.ts` | Per-host provider filtering + alias-keyed credential lookup |
-| UI | `src/components/Login/LoginContent.tsx` | Filter providers list, render "Continue on `<primary>`" fallback button on alias hosts |
+| UI | `src/components/Login/LoginContent.tsx` | Filter providers list against per-host availability |
 | Docs | `.claude/skills/rgb-proxy/SKILL.md` | Local alias testing instructions |
 
 ## Out-of-Scope (Operational)
