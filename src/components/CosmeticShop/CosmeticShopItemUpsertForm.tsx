@@ -1,6 +1,5 @@
 import type { ComboboxItem } from '@mantine/core';
 import {
-  ActionIcon,
   Box,
   Button,
   Divider,
@@ -111,11 +110,7 @@ const isImageBasedCosmeticType = (type: CosmeticType) =>
  * metadata, persists a new Cosmetic record, and hands the resulting id back to
  * the parent form so it can finish saving the shop item.
  */
-const NewCosmeticInlineCreator = ({
-  onCreated,
-}: {
-  onCreated: (cosmeticId: number) => void;
-}) => {
+const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: number) => void }) => {
   const { upsertCosmetic, upsertingCosmetic } = useMutateCosmeticShop();
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
 
@@ -452,9 +447,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
               <Tabs.Panel value="existing" pt="sm">
                 <CosmeticSearch
                   cosmetic={cosmetic ?? undefined}
-                  onCosmeticSelected={(newCosmeticId) =>
-                    form.setValue('cosmeticId', newCosmeticId)
-                  }
+                  onCosmeticSelected={(newCosmeticId) => form.setValue('cosmeticId', newCosmeticId)}
                 />
               </Tabs.Panel>
               <Tabs.Panel value="new" pt="sm">

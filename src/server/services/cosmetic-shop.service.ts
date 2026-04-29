@@ -45,12 +45,10 @@ export const getShopItemById = async ({ id }: GetByIdInput) => {
     },
     select: cosmeticShopItemSelect,
   } as const;
-  return dbRead.cosmeticShopItem
-    .findUniqueOrThrow(shopItemFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
-      return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
-    });
+  return dbRead.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'getShopItemById' });
+    return dbWrite.cosmeticShopItem.findUniqueOrThrow(shopItemFindArgs);
+  });
 };
 
 export const getPaginatedCosmeticShopItems = async (input: GetPaginatedCosmeticShopItemInput) => {
@@ -82,23 +80,18 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
   const { id, videoUrl, name, description, type, source, permanentUnlock, data } = input;
 
   if (id) {
-    try {
-      const result = await dbWrite.cosmetic.update({
-        where: { id },
-        data: {
-          videoUrl,
-          ...(name !== undefined ? { name } : {}),
-          ...(description !== undefined ? { description } : {}),
-          ...(type !== undefined ? { type } : {}),
-          ...(source !== undefined ? { source } : {}),
-          ...(permanentUnlock !== undefined ? { permanentUnlock } : {}),
-          ...(data !== undefined ? { data: data as Prisma.InputJsonValue } : {}),
-        },
-      });
-      return result;
-    } catch (error) {
-      throw new Error('Failed to update cosmetic');
-    }
+    return dbWrite.cosmetic.update({
+      where: { id },
+      data: {
+        videoUrl,
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(type !== undefined ? { type } : {}),
+        ...(source !== undefined ? { source } : {}),
+        ...(permanentUnlock !== undefined ? { permanentUnlock } : {}),
+        ...(data !== undefined ? { data: data as Prisma.InputJsonValue } : {}),
+      },
+    });
   }
 
   // Create — schema-level refinement guarantees these are present.
@@ -106,21 +99,17 @@ export const upsertCosmetic = async (input: UpsertCosmeticInput) => {
     throw new Error('name, type, and source are required to create a cosmetic');
   }
 
-  try {
-    return await dbWrite.cosmetic.create({
-      data: {
-        name,
-        description: description ?? null,
-        type,
-        source,
-        permanentUnlock: permanentUnlock ?? false,
-        data: (data ?? {}) as Prisma.InputJsonValue,
-        videoUrl: videoUrl ?? null,
-      },
-    });
-  } catch (error) {
-    throw new Error('Failed to create cosmetic');
-  }
+  return dbWrite.cosmetic.create({
+    data: {
+      name,
+      description: description ?? null,
+      type,
+      source,
+      permanentUnlock: permanentUnlock ?? false,
+      data: (data ?? {}) as Prisma.InputJsonValue,
+      videoUrl: videoUrl ?? null,
+    },
+  });
 };
 
 export const upsertCosmeticShopItem = async ({
@@ -265,12 +254,10 @@ export const getSectionById = async ({ id }: GetByIdInput) => {
       },
     },
   } as const;
-  const section = await dbRead.cosmeticShopSection
-    .findUniqueOrThrow(sectionFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'cosmeticShopSection', caller: 'getSectionById' });
-      return dbWrite.cosmeticShopSection.findUniqueOrThrow(sectionFindArgs);
-    });
+  const section = await dbRead.cosmeticShopSection.findUniqueOrThrow(sectionFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'cosmeticShopSection', caller: 'getSectionById' });
+    return dbWrite.cosmeticShopSection.findUniqueOrThrow(sectionFindArgs);
+  });
 
   return {
     ...section,
@@ -374,12 +361,10 @@ export const deleteCosmeticShopItem = async ({ id }: GetByIdInput) => {
       },
     },
   } as const;
-  const item = await dbRead.cosmeticShopItem
-    .findUniqueOrThrow(deleteItemFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'deleteCosmeticShopItem' });
-      return dbWrite.cosmeticShopItem.findUniqueOrThrow(deleteItemFindArgs);
-    });
+  const item = await dbRead.cosmeticShopItem.findUniqueOrThrow(deleteItemFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'cosmeticShopItem', caller: 'deleteCosmeticShopItem' });
+    return dbWrite.cosmeticShopItem.findUniqueOrThrow(deleteItemFindArgs);
+  });
 
   if (item._count.purchases > 0) {
     throw new Error('Cannot delete item with purchases. Please mark it as archived instead.');

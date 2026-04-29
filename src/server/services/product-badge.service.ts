@@ -148,9 +148,7 @@ export const resizeBadgeImage = async ({
           $type: 'convertImage',
           input: {
             image: sourceUrl,
-            transforms: [
-              { type: 'resize', targetWidth: BADGE_TARGET_SIZE } as ResizeTransform,
-            ],
+            transforms: [{ type: 'resize', targetWidth: BADGE_TARGET_SIZE } as ResizeTransform],
             output: {
               format: 'webp',
               quality: 100,
@@ -169,7 +167,22 @@ export const resizeBadgeImage = async ({
     throw new Error(`Badge resize failed: ${message ?? 'unknown error'}`);
   }
 
+  // The orchestrator may return before the step finishes when wait=30 isn't
+  // enough (e.g. animated sources). Treat anything other than `succeeded` as a
+  // failure rather than reading garbage off `step.output`.
+  const workflowStatus = (data as any)?.status as string | undefined;
   const step = (data.steps ?? [])[0] as any;
+  const stepStatus = step?.status as string | undefined;
+  if (workflowStatus && workflowStatus !== 'succeeded') {
+    throw new Error(
+      `Badge resize workflow did not complete (status: ${workflowStatus}${
+        stepStatus ? `, step: ${stepStatus}` : ''
+      })`
+    );
+  }
+  if (stepStatus && stepStatus !== 'succeeded') {
+    throw new Error(`Badge resize step did not complete (status: ${stepStatus})`);
+  }
   const blobUrl: string | undefined = step?.output?.blob?.url;
   if (!blobUrl) throw new Error('Badge resize did not return an output blob');
 
@@ -211,26 +224,34 @@ export const upsertProductBadge = async (input: UpsertProductBadgeInput) => {
     throw new Error('Available end date must be after start date');
   }
 
-  // Always normalize badge dimensions to 200x200 so the live UI stays consistent.
+  // On edit, fetch the existing cosmetic up-front so we can skip the orchestrator
+  // workflow when the badge image hasn't actually changed — otherwise saving
+  // unrelated metadata (name, dates) would re-encode and re-upload the same
+  // image, churning the stored UUID on every save.
+  const existing = id
+    ? await dbRead.cosmetic.findUnique({
+        where: { id },
+        select: { id: true, productId: true, data: true },
+      })
+    : null;
+  if (id && !existing) throw new Error('Cosmetic not found');
+
+  const existingUrl = (existing?.data as { url?: string } | null)?.url;
+  const isUnchangedUrl = !!existingUrl && existingUrl === badgeUrl;
+  // Normalize badge dimensions to 200x200 so the live UI stays consistent.
   // The convertImage workflow preserves all frames for animated sources by
   // default (maxFrames is unset), so animated badges flow through the same path.
-  const resolvedBadgeUrl = await resizeBadgeImage({
-    url: badgeUrl,
-    width: sourceWidth,
-    height: sourceHeight,
-  });
+  const resolvedBadgeUrl = isUnchangedUrl
+    ? existingUrl
+    : await resizeBadgeImage({
+        url: badgeUrl,
+        width: sourceWidth,
+        height: sourceHeight,
+      });
 
   const results = [];
 
   if (id) {
-    // Update existing cosmetic
-    const existing = await dbRead.cosmetic.findUnique({
-      where: { id },
-      select: { id: true, productId: true },
-    });
-
-    if (!existing) throw new Error('Cosmetic not found');
-
     const updated = await dbWrite.cosmetic.update({
       where: { id },
       data: {
@@ -305,17 +326,25 @@ export const syncActiveBadgeMetadata = async ({
     }
   }
 
+  // Batch-fetch every product's metadata in one query (the daily cron runs
+  // without `productIds`, so a per-product findUnique would be N+1).
+  const productIdsToCheck = Array.from(byProduct.keys());
+  const products = productIdsToCheck.length
+    ? await dbRead.product.findMany({
+        where: { id: { in: productIdsToCheck } },
+        select: { id: true, metadata: true },
+      })
+    : [];
+  const metadataByProductId = new Map(products.map((p) => [p.id, p.metadata]));
+
+  let synced = 0;
   for (const [productId, badge] of byProduct.entries()) {
     const badgeData = badge.data as { url?: string; animated?: boolean } | null;
     if (!badgeData?.url) continue;
 
-    const product = await dbRead.product.findUnique({
-      where: { id: productId },
-      select: { metadata: true },
-    });
-    if (!product) continue;
+    if (!metadataByProductId.has(productId)) continue;
 
-    const existingMeta = (product.metadata as Record<string, unknown>) ?? {};
+    const existingMeta = (metadataByProductId.get(productId) as Record<string, unknown>) ?? {};
     const nextBadgeType = badgeData.animated ? 'animated' : 'static';
 
     if (existingMeta.badge === badgeData.url && existingMeta.badgeType === nextBadgeType) {
@@ -332,7 +361,8 @@ export const syncActiveBadgeMetadata = async ({
         },
       },
     });
+    synced++;
   }
 
-  return { synced: byProduct.size };
+  return { synced };
 };
