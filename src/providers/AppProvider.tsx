@@ -12,6 +12,7 @@ type AppProviderProps = {
   canIndex: boolean;
   region: RegionInfo;
   domain: ColorDomain;
+  host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
 };
@@ -22,6 +23,7 @@ type AppContext = {
   region: RegionInfo;
   allowMatureContent: boolean;
   domain: Record<ColorDomain, boolean>;
+  host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
 };
@@ -48,6 +50,7 @@ export function AppProvider({
   children,
   settings,
   domain,
+  host,
   serverDomains,
   availableOAuthProviders,
   ...appContext
@@ -64,6 +67,7 @@ export function AppProvider({
       blue: domain === 'blue',
       red: domain === 'red',
     },
+    host,
     serverDomains,
     availableOAuthProviders,
   }));

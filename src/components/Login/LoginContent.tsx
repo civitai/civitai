@@ -46,9 +46,8 @@ export function LoginContent(args: {
 
   // Show "Login with [green domain]" on any domain that isn't green (.com)
   const greenDomain = useServerDomains().green;
-  const { domain: domainFlags, availableOAuthProviders } = useAppContext();
+  const { domain: domainFlags, host: currentHost, availableOAuthProviders } = useAppContext();
   const isOnGreen = domainFlags.green;
-  const currentHost = typeof window !== 'undefined' ? window.location.host : '';
   const civitaiLoginHref = !isOnGreen
     ? `//${greenDomain}/login?returnUrl=${encodeURIComponent(
         `https://${currentHost}${returnUrl}?sync-account=green`

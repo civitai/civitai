@@ -89,6 +89,7 @@ type CustomAppProps = {
   hasAuthCookie: boolean;
   region: RegionInfo;
   domain: ColorDomain;
+  host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
 }>;
@@ -107,6 +108,7 @@ function MyApp(props: CustomAppProps) {
       settings,
       region,
       domain,
+      host,
       serverDomains,
       availableOAuthProviders,
       ...pageProps
@@ -154,6 +156,7 @@ function MyApp(props: CustomAppProps) {
       settings={settings}
       region={region}
       domain={domain}
+      host={host}
       serverDomains={serverDomains}
       availableOAuthProviders={availableOAuthProviders}
     >
@@ -335,8 +338,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       domain,
       serverDomains,
       availableOAuthProviders,
-      // @ts-ignore
-      host: appContext.ctx.req?.headers.host,
+      host: appContext.ctx.req?.headers.host ?? '',
     },
     ...appProps,
   };
