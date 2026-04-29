@@ -53,7 +53,7 @@ export const tagIdsForImagesCache = createCachedObject<{
       },
     });
 
-    const tagIds = [...new Set(imageTags.map((t) => t.tagId))];
+    const tagIds = imageTags.map((t) => t.tagId);
     const tags = await tagCache.fetch(tagIds);
 
     const hasWD: { [p: string]: boolean } = {};
