@@ -6,7 +6,7 @@ import { createAuthOptions } from './next-auth-options';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { getSessionFromBearerToken } from './bearer-token';
 import { SESSION_REFRESH_HEADER, SESSION_REFRESH_COOKIE } from '~/shared/constants/auth.constants';
-import { sysRedis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 type AuthRequest = (GetServerSidePropsContext['req'] | NextApiRequest) & {
   context?: Record<string, unknown>;
@@ -34,7 +34,7 @@ async function checkAndSetSessionHeaders(
     try {
       const userId = session.user?.id;
       if (userId) {
-        const cause = await sysRedis.get(`session-refresh-cause:${userId}`);
+        const cause = await sysRedis.get(`${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`);
         if (cause) res.setHeader('x-session-refresh-cause', cause);
       }
     } catch {}

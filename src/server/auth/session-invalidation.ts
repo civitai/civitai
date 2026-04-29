@@ -64,7 +64,9 @@ export async function refreshSession(userId: number, { sendSignal = true } = {})
         .join(' | ')
         .replace(/[^\x20-\x7E]/g, ' ')
         .slice(0, 1500);
-      await sysRedis.set(`session-refresh-cause:${userId}`, compact, { EX: 60 * 60 });
+      await sysRedis.set(`${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`, compact, {
+        EX: 60 * 60,
+      });
     } catch {}
   }
 }
