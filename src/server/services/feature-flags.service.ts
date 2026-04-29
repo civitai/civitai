@@ -10,6 +10,25 @@ import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.co
 
 export type ServerAvailability = ColorDomain;
 
+// Parsed once at module load — env is immutable at runtime. Each color maps
+// to the set of lowercased hosts (primary + aliases) that resolve to it.
+// Used in `hasFeature` to short-circuit per-color server availability checks
+// without re-parsing CSV env vars on every flag lookup.
+const colorHostSets: Record<ColorDomain, Set<string>> = colorDomainNames.reduce((acc, color) => {
+  const hosts = new Set<string>();
+  const primary = process.env[`SERVER_DOMAIN_${color.toUpperCase()}`]?.toLowerCase();
+  if (primary) hosts.add(primary);
+  const aliasesRaw = process.env[`SERVER_DOMAIN_${color.toUpperCase()}_ALIASES`];
+  if (aliasesRaw) {
+    for (const alias of aliasesRaw.split(',')) {
+      const trimmed = alias.trim().toLowerCase();
+      if (trimmed) hosts.add(trimmed);
+    }
+  }
+  acc[color] = hosts;
+  return acc;
+}, {} as Record<ColorDomain, Set<string>>);
+
 // --------------------------
 // Feature Availability
 // --------------------------
@@ -319,28 +338,20 @@ const hasFeature = (
     if (!regionAccess) return false;
   }
 
-  // Server/domain restrictions always apply — Flipt cannot override them
+  // Server/domain restrictions always apply — Flipt cannot override them.
+  // Each color maps to a primary host plus an optional alias list — any of
+  // those hosts counts as "on this color". Lookup uses the precomputed
+  // `colorHostSets` so we don't re-parse env on every flag check.
   let serverMatch = true;
   const availableServers = availability.filter((x) =>
     serverAvailability.includes(x as ServerAvailability)
   );
   if (!availableServers.length || !host) serverMatch = true;
   else {
-    const domains = colorDomainNames
-      .map(
-        (color) =>
-          [
-            color,
-            process.env[`SERVER_DOMAIN_${color.toUpperCase()}`] as string | undefined,
-          ] as const
-      )
-      .filter(([key, domain]) => domain && availableServers.includes(key as ServerAvailability));
-
-    serverMatch = domains.some(([, domain]) => {
-      if (host === domain) return true;
-      return false;
-    });
-
+    const normalizedHost = host.toLowerCase();
+    serverMatch = availableServers.some((server) =>
+      colorHostSets[server as ColorDomain]?.has(normalizedHost)
+    );
     if (!serverMatch) return false;
   }
 

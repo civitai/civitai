@@ -3,9 +3,9 @@ import { QS } from '~/utils/qs';
 
 /**
  * Module-level server domain map, populated by AppProvider on mount. Both the
- * current host and any URL host are resolved against this map to determine
- * their color, so the function adapts automatically to whichever hosts are
- * configured in the active environment (prod, dev, etc.).
+ * current host and any URL host are resolved against this map (primary +
+ * aliases) to determine their color, so the function adapts automatically to
+ * whichever hosts are configured in the active environment (prod, dev, etc.).
  */
 let serverDomains: ServerDomains | undefined;
 
@@ -49,8 +49,10 @@ function extractHost(url: string): string | undefined {
 
 function hostToColor(host: string, domains: ServerDomains): ColorDomain | undefined {
   const normalized = host.toLowerCase();
-  for (const [color, domain] of Object.entries(domains)) {
-    if (domain && domain.toLowerCase() === normalized) return color as ColorDomain;
+  for (const [color, cfg] of Object.entries(domains)) {
+    if (!cfg) continue;
+    if (cfg.primary === normalized) return color as ColorDomain;
+    if (cfg.aliases.includes(normalized)) return color as ColorDomain;
   }
   return undefined;
 }

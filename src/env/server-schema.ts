@@ -295,7 +295,14 @@ export const serverSchema = z.object({
   BITDEX_URL: z.string().optional().default(''),
 
   // Color environment domains (server-only; delivered to client via AppProvider).
+  // SERVER_DOMAIN_<COLOR> is the canonical host used for all outbound URLs.
+  // SERVER_DOMAIN_<COLOR>_ALIASES is a comma-separated list of additional hosts
+  // that resolve to the same color on inbound requests. Aliases never appear in
+  // outbound URLs and do not inherit per-color OAuth credentials.
   SERVER_DOMAIN_GREEN: z.string().optional(),
+  SERVER_DOMAIN_GREEN_ALIASES: z.string().optional(),
   SERVER_DOMAIN_BLUE: z.string().optional(),
+  SERVER_DOMAIN_BLUE_ALIASES: z.string().optional(),
   SERVER_DOMAIN_RED: z.string().optional(),
+  SERVER_DOMAIN_RED_ALIASES: z.string().optional(),
 });

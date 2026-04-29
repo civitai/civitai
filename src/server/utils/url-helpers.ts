@@ -1,10 +1,12 @@
 import { env } from '~/env/server';
+import { serverDomainPrimaryMap } from '~/server/utils/server-domain';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 
-export const getBaseUrl = (color?: 'green' | 'yellow' | 'red') => {
-  if (color === 'green' && env.SERVER_DOMAIN_GREEN)
-    return `https://${env.SERVER_DOMAIN_GREEN}`;
-  if (color === 'red' && env.SERVER_DOMAIN_RED) return `https://${env.SERVER_DOMAIN_RED}`;
-  if (color === 'yellow' && env.SERVER_DOMAIN_BLUE) return `https://${env.SERVER_DOMAIN_BLUE}`;
+export const getBaseUrl = (color?: ColorDomain) => {
+  if (color) {
+    const primary = serverDomainPrimaryMap[color];
+    if (primary) return `https://${primary}`;
+  }
 
   if (typeof window !== 'undefined') return ''; // browser should use relative url
   if (env.NEXTAUTH_URL) return env.NEXTAUTH_URL;

@@ -12,7 +12,9 @@ type AppProviderProps = {
   canIndex: boolean;
   region: RegionInfo;
   domain: ColorDomain;
+  host: string;
   serverDomains: ServerDomains;
+  availableOAuthProviders: string[];
 };
 
 type AppContext = {
@@ -21,7 +23,9 @@ type AppContext = {
   region: RegionInfo;
   allowMatureContent: boolean;
   domain: Record<ColorDomain, boolean>;
+  host: string;
   serverDomains: ServerDomains;
+  availableOAuthProviders: string[];
 };
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
@@ -30,19 +34,25 @@ export function useAppContext() {
   return context;
 }
 
+/**
+ * Returns the canonical (primary) host for each color. Use this for outbound
+ * URL construction — never link to an alias host.
+ */
 export function useServerDomains(): Record<ColorDomain, string> {
   const { serverDomains } = useAppContext();
   return {
-    green: serverDomains.green ?? 'civitai.green',
-    blue: serverDomains.blue ?? 'civitai.com',
-    red: serverDomains.red ?? 'civitai.red',
+    green: serverDomains.green?.primary ?? 'civitai.green',
+    blue: serverDomains.blue?.primary ?? 'civitai.com',
+    red: serverDomains.red?.primary ?? 'civitai.red',
   };
 }
 export function AppProvider({
   children,
   settings,
   domain,
+  host,
   serverDomains,
+  availableOAuthProviders,
   ...appContext
 }: AppProviderProps) {
   trpc.user.getSettings.useQuery(undefined, { initialData: settings });
@@ -57,7 +67,9 @@ export function AppProvider({
       blue: domain === 'blue',
       red: domain === 'red',
     },
+    host,
     serverDomains,
+    availableOAuthProviders,
   }));
 
   return <Context.Provider value={state}>{children}</Context.Provider>;
