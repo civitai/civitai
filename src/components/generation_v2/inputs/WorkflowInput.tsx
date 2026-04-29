@@ -131,12 +131,14 @@ function WorkflowMenuItem({
     return (
       <RequireMembership>
         <SupportButtonPolymorphic
-          icon={IconDiamond}
           position="right"
           className="!h-auto !min-h-[44px] w-full !px-3 !py-2.5"
         >
           <div className="flex flex-col items-start gap-0.5 py-0.5">
-            <span className="text-sm leading-tight">{workflow.label}</span>
+            <span className="flex items-center gap-1 text-sm leading-tight">
+              {workflow.label}
+              <IconDiamond size={14} className="shrink-0" />
+            </span>
             {workflow.description && (
               <span className="text-dimmed text-xs leading-tight opacity-70">
                 {workflow.description}

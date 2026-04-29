@@ -926,6 +926,55 @@ export function GenerationForm() {
               )}
             />
 
+            {/* BPM (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="bpm"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="BPM"
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                />
+              )}
+            />
+
+            {/* Instrumental weight (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="instrumentalWeight"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="Instrumental Weight"
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                  step={(meta as { step: number }).step}
+                  precision={1}
+                />
+              )}
+            />
+
+            {/* Vocal weight (audio workflows) */}
+            <Controller
+              graph={graph}
+              name="vocalWeight"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="Vocal Weight"
+                  value={value as number}
+                  onChange={onChange}
+                  min={(meta as { min: number }).min}
+                  max={(meta as { max: number }).max}
+                  step={(meta as { step: number }).step}
+                  precision={1}
+                />
+              )}
+            />
+
             {/* Aspect ratio */}
             <Controller
               graph={graph}
@@ -1476,55 +1525,6 @@ export function GenerationForm() {
                     description="Generate audio along with the video"
                     checked={value}
                     onChange={(e) => onChange(e.currentTarget.checked)}
-                  />
-                )}
-              />
-
-              {/* BPM (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="bpm"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="BPM"
-                    value={value as number}
-                    onChange={onChange}
-                    min={(meta as { min: number }).min}
-                    max={(meta as { max: number }).max}
-                  />
-                )}
-              />
-
-              {/* Instrumental weight (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="instrumentalWeight"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="Instrumental Weight"
-                    value={value as number}
-                    onChange={onChange}
-                    min={(meta as { min: number }).min}
-                    max={(meta as { max: number }).max}
-                    step={(meta as { step: number }).step}
-                    precision={1}
-                  />
-                )}
-              />
-
-              {/* Vocal weight (audio workflows) */}
-              <Controller
-                graph={graph}
-                name="vocalWeight"
-                render={({ value, meta, onChange }) => (
-                  <SliderInput
-                    label="Vocal Weight"
-                    value={value as number}
-                    onChange={onChange}
-                    min={(meta as { min: number }).min}
-                    max={(meta as { max: number }).max}
-                    step={(meta as { step: number }).step}
-                    precision={1}
                   />
                 )}
               />
