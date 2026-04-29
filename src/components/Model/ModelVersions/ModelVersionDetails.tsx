@@ -194,7 +194,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const hashes = primaryFile?.hashes ?? [];
 
   const filesCount = version.files?.length;
-  const hasFiles = filesCount > 0;
+  // ExternalGeneration versions are intentionally file-less (routed via external engines),
+  // so publish/republish gates should treat them as having the required assets.
+  const isExternalGeneration = version.usageControl === ModelUsageControl.ExternalGeneration;
+  const hasFiles = filesCount > 0 || isExternalGeneration;
   const filesVisible = useMemo(
     () => version.files?.filter((f) => f.visibility === ModelFileVisibility.Public || isOwnerOrMod),
     [version.files, isOwnerOrMod]
