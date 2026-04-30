@@ -30,8 +30,14 @@ import {
   isWorkflowAvailable,
   isEnhancementWorkflow,
   getOutputTypeForWorkflow,
+  getWorkflowsForEcosystem,
+  workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
-import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
+import {
+  ecosystemByKey,
+  getBaseModelConfig,
+  getBaseModelMediaType,
+} from '~/shared/constants/basemodel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 
 // =============================================================================
@@ -331,7 +337,22 @@ function resolveWorkflowFromParams(
     return 'txt2vid';
   }
 
-  // 7. Fallback
+  // 7. Fallback — pick the first non-enhancement, non-utility workflow that
+  // matches the baseModel's media type AND is supported by the ecosystem.
+  // More future-proof than hardcoding 'txt2music' for audio: new audio
+  // ecosystems may have different primary workflows, so we let the workflow
+  // config drive the choice.
+  if (baseModel) {
+    const mediaType = getBaseModelMediaType(baseModel);
+    const config = getBaseModelConfig(baseModel);
+    if (mediaType && config && config.name !== 'Other') {
+      const found = getWorkflowsForEcosystem(config.ecosystemId).find((w) => {
+        const wConfig = workflowConfigByKey.get(w.graphKey);
+        return wConfig?.category === mediaType && !wConfig.enhancement && !wConfig.noSubmit;
+      });
+      if (found) return found.graphKey;
+    }
+  }
   return 'txt2img';
 }
 
