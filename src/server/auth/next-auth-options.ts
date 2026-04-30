@@ -24,6 +24,7 @@ import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refre
 import { refreshSession } from '~/server/auth/session-invalidation';
 import {
   getRequestDomainColor,
+  isAliasHost,
   oauthProviderIds,
   resolveOAuthCredentialsForHost,
   type OAuthProviderId,
@@ -538,14 +539,20 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
   }
 
-  // Filter OAuth providers to those with credentials configured for this host.
-  // Alias hosts only see providers with explicit per-alias credentials — no
-  // fallback to the global default. Primary hosts keep the legacy fallback.
-  // Run on every request with a host (not gated on domainColor) so unknown
-  // hosts get the same filter that signin/callback would apply downstream.
+  // Filter providers based on host:
+  // - OAuth providers (discord/github/google/reddit): require credentials
+  //   configured for this host. Alias hosts need an explicit alias-keyed
+  //   credential; primary hosts keep the legacy global fallback.
+  // - Email provider: hidden on alias hosts. The magic-link flow would
+  //   otherwise create a session scoped to the alias and bypass the
+  //   intended sync-from-primary model.
+  // Other providers (account-switch, token-login, testing-login) pass
+  // through unchanged regardless of host.
   const host = req.headers.host;
   if (host) {
+    const onAlias = isAliasHost(host);
     options.providers = options.providers.filter((provider) => {
+      if (provider.id === 'email') return !onAlias;
       if (!oauthProviderIds.includes(provider.id as OAuthProviderId)) return true;
       return resolveOAuthCredentialsForHost(provider.id as OAuthProviderId, host) !== null;
     });
