@@ -69,26 +69,33 @@ The notifications-db lives on the DataPacket cluster. Direct network access from
 
    `clusters/production/apps/notifications-db/secrets/bastion-ssh-keys.enc.yaml`
 
-2. Add an SSH config entry (`~/.ssh/config`) so the tunnel is one command:
+2. Get the bastion host, port, and forward target from zach (or read
+   them out of the `datapacket-talos` repo: bastion deployment is at
+   `clusters/production/apps/notifications-db/bastion.yaml`, public
+   host/port are in `clusters/production/apps/minio/nginx-reverse-proxy.yaml`).
+
+3. Add an SSH config entry (`~/.ssh/config`) so the tunnel is one command:
 
    ```
    Host notif-bastion
-     HostName 185.180.13.69
-     Port 2223
+     HostName <bastion-host>
+     Port <bastion-port>
      User bastion
      IdentityFile ~/.ssh/id_ed25519
-     # Tunnel local 5433 → cluster pgbouncer ro pooler
-     LocalForward 5433 pgbouncer-pooler-notifications-ro.cnpg-database.svc.cluster.local:5432
+     # Tunnel local 5433 → in-cluster ro pgbouncer pooler
+     LocalForward 5433 <ro-pooler-host>:5432
      ServerAliveInterval 60
    ```
 
-3. Add the connection string to your project `.env` (or `.claude/skills/postgres-query/.env`):
+4. Add the connection string to your project `.env` (or `.claude/skills/postgres-query/.env`):
 
    ```
    NOTIFICATION_DB_REPLICA_URL=postgresql://notifications_readonly:<password>@127.0.0.1:5433/notification_prod?sslmode=disable
    ```
 
-   Get the password from zach (it's stored in `bastion-pg-creds.enc.yaml` in the datapacket-talos repo). The same password is also preloaded inside the bastion's `.pgpass` for in-pod use.
+   Get the password from zach (stored in the `bastion-pg-creds.enc.yaml`
+   secret in the datapacket-talos repo). The same password is also
+   preloaded inside the bastion's `.pgpass` for in-pod use.
 
 ### Running queries
 
