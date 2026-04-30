@@ -1,6 +1,6 @@
 import type { MenuProps } from '@mantine/core';
 import { Menu } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import { useQueryClient } from '@tanstack/react-query';
 import {
   IconEdit,
   IconHome,
@@ -9,9 +9,12 @@ import {
   IconStarOff,
   IconTrash,
 } from '@tabler/icons-react';
+import { getQueryKey } from '@trpc/react-query';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -25,6 +28,8 @@ import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { CollectionFollowAction } from './CollectionFollow';
 
+type CollectionWithId = { id: number };
+
 export function CollectionContextMenu({
   collectionId,
   ownerId,
@@ -34,44 +39,88 @@ export function CollectionContextMenu({
   ...menuProps
 }: Props) {
   const queryUtils = trpc.useUtils();
+  const queryClient = useQueryClient();
   const router = useRouter();
   const currentUser = useCurrentUser();
 
-  const atDetailsPage = router.pathname === '/collections/[collectionId]';
   const isMod = currentUser?.isModerator ?? false;
   const isOwner = currentUser?.id === ownerId;
 
-  const deleteCollectionMutation = trpc.collection.delete.useMutation();
+  const deleteCollectionMutation = trpc.collection.delete.useMutation({
+    // Optimistically remove the deleted collection from every variant of
+    // getAllUser cache (it's called with several input shapes across the app:
+    // {permission: VIEW}, {permissions: [ADD, ADD_REVIEW], type}, etc.).
+    // This prevents the /collections page's auto-redirect from picking the
+    // just-deleted ID off a stale cache entry on the way out of the details
+    // page.
+    onMutate: async ({ id }) => {
+      const queryKey = getQueryKey(trpc.collection.getAllUser);
+      await queryClient.cancelQueries({ queryKey, exact: false });
+      const snapshot = queryClient.getQueriesData<CollectionWithId[]>({
+        queryKey,
+        exact: false,
+      });
+      queryClient.setQueriesData<CollectionWithId[]>({ queryKey, exact: false }, (old) =>
+        old?.filter((c) => c.id !== id)
+      );
+      return { snapshot };
+    },
+    onError: (_error, _vars, ctx) => {
+      // Restore the pre-mutation cache so the deleted item reappears if the
+      // server rejected the delete.
+      ctx?.snapshot.forEach(([key, data]) => {
+        queryClient.setQueryData(key, data);
+      });
+    },
+    onSettled: async () => {
+      await queryUtils.collection.getAllUser.invalidate();
+    },
+  });
+
   const handleDeleteClick = () => {
-    openConfirmModal({
-      title: 'Delete collection',
-      children:
-        'Are you sure that you want to delete this collection? This action is destructive and cannot be reversed.',
-      labels: { cancel: "No, don't delete it", confirm: 'Delete collection' },
-      onConfirm: () =>
-        deleteCollectionMutation.mutate(
-          { id: collectionId },
-          {
-            async onSuccess() {
-              showSuccessNotification({
-                title: 'Collection deleted',
-                message: 'Your collection has been deleted',
-              });
+    // Capture route info at click time so the redirect decision can't be
+    // affected by route changes that happen while the dialog is open.
+    const onDeletedCollectionPage =
+      router.pathname.startsWith('/collections/[collectionId]') &&
+      Number(router.query.collectionId) === collectionId;
 
-              await queryUtils.collection.getInfinite.invalidate();
-              await queryUtils.collection.getAllUser.invalidate();
-
-              if (atDetailsPage) await router.push('/collections');
-            },
-            onError(error) {
-              showErrorNotification({
-                title: 'Failed to delete collection',
-                error: new Error(error.message),
-              });
-            },
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Delete collection',
+        message:
+          'Are you sure that you want to delete this collection? This action is destructive and cannot be reversed.',
+        labels: { cancel: "No, don't delete it", confirm: 'Delete collection' },
+        confirmProps: { color: 'red' },
+        // ConfirmDialog awaits this promise — the dialog stays open with a
+        // loading spinner until the mutation completes, and only then
+        // does the dialog close.
+        onConfirm: async () => {
+          try {
+            await deleteCollectionMutation.mutateAsync({ id: collectionId });
+          } catch (error) {
+            showErrorNotification({
+              title: 'Failed to delete collection',
+              error: error instanceof Error ? error : new Error(String(error)),
+            });
+            return;
           }
-        ),
-      confirmProps: { color: 'red' },
+
+          showSuccessNotification({
+            title: 'Collection deleted',
+            message: 'Your collection has been deleted',
+          });
+
+          // Cache for getAllUser is already updated optimistically in onMutate,
+          // so /collections's auto-redirect will pick a non-deleted collection
+          // (or fall through to the landing view if none remain).
+          if (onDeletedCollectionPage) {
+            await router.replace('/collections');
+          }
+          await queryUtils.collection.getInfinite.invalidate();
+          await queryUtils.collection.getById.invalidate({ id: collectionId });
+        },
+      },
     });
   };
 
@@ -167,7 +216,7 @@ export function CollectionContextMenu({
     <Menu {...menuProps} withArrow>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
-        {permissions && (
+        {permissions && !permissions.isOwner && (
           <Menu.Item component="div">
             <CollectionFollowAction
               variant="transparent"
