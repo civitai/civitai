@@ -25,6 +25,16 @@ export const BOT_DETECTION_MATCHER = [
   '/collections/:path*',
 ];
 
+// Match only detail pages where the segment after the prefix is numeric
+// (e.g. /models/123/slug, /images/12345). This deliberately excludes:
+//   - listing pages (/models, /images)
+//   - create/edit flows (/models/create)
+//   - static assets that share the prefix (/images/android-chrome-192x192.png,
+//     /images/splash/apple-splash-2048-2732.jpg)
+// All entity detail routes use numeric `[id]` params, so this is precise.
+const DETAIL_PAGE_RE =
+  /^\/(?:models|images|posts|articles|bounties|challenges|collections)\/\d+(?:\/|$)/;
+
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
 function getClientIp(request: NextRequest): string | null {
@@ -45,23 +55,12 @@ function getClientIp(request: NextRequest): string | null {
 
 export const botDetectionMiddleware = createMiddleware({
   matcher: BOT_DETECTION_MATCHER,
+  shouldRun: ({ nextUrl }) => DETAIL_PAGE_RE.test(nextUrl.pathname),
   handler: async ({ request }) => {
     const ua = request.headers.get('user-agent');
     const ip = getClientIp(request);
 
     const bot = verifyBot(ua, ip);
-
-    if (IS_DEV) {
-      // Visibility into what the middleware actually saw — request headers
-      // aren't visible in browser devtools, so this is the easiest way to
-      // confirm the middleware is firing and BOT_TEST_IPS is matching.
-      console.log(
-        `[bot-detection] path=${request.nextUrl.pathname} ip=${ip ?? '<null>'} bot=${
-          bot ?? '<none>'
-        }`
-      );
-    }
-
     if (!bot) return; // pass through unchanged
 
     const headers = new Headers(request.headers);

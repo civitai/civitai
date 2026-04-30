@@ -73,6 +73,8 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import { VERIFIED_BOT_HEADER } from '~/server/middleware/bot-detection.middleware';
+import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
 
@@ -92,6 +94,7 @@ type CustomAppProps = {
   host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
+  verifiedBot: VerifiedBot | null;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -111,6 +114,7 @@ function MyApp(props: CustomAppProps) {
       host,
       serverDomains,
       availableOAuthProviders,
+      verifiedBot = null,
       ...pageProps
     },
   } = props;
@@ -159,6 +163,7 @@ function MyApp(props: CustomAppProps) {
       host={host}
       serverDomains={serverDomains}
       availableOAuthProviders={availableOAuthProviders}
+      verifiedBot={verifiedBot}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -300,6 +305,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const region = getRegion(request);
 
+  // Read the verified-bot header set by botDetectionMiddleware. Header
+  // names are lowercased on IncomingMessage; values are string | string[].
+  const rawVerifiedBot = request.headers[VERIFIED_BOT_HEADER];
+  const verifiedBotValue = Array.isArray(rawVerifiedBot) ? rawVerifiedBot[0] : rawVerifiedBot;
+  const verifiedBot: VerifiedBot | null =
+    verifiedBotValue === 'googlebot' || verifiedBotValue === 'bingbot' ? verifiedBotValue : null;
+
   const { settings, session } = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,
   }).then(async (res) => {
@@ -339,6 +351,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
+      verifiedBot,
     },
     ...appProps,
   };

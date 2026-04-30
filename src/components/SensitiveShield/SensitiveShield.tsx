@@ -25,7 +25,7 @@ import {
 import { useSession } from 'next-auth/react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { useServerDomains } from '~/providers/AppProvider';
+import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
@@ -47,6 +47,7 @@ export function SensitiveShield({
   const { canViewNsfw } = useFeatureFlags();
   const { status } = useSession();
   const redDomain = useServerDomains().red;
+  const verifiedBot = useAppContext().verifiedBot;
 
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
 
@@ -69,9 +70,12 @@ export function SensitiveShield({
   const isPG13Only =
     hasSafeBrowsingLevel(contentNsfwLevel) && !hasPublicBrowsingLevel(contentNsfwLevel);
 
-  // PG13 on the SFW site requires login — prompt instead of redirecting to red
+  // PG13 on the SFW site requires login — prompt instead of redirecting to red.
+  // Verified search-engine crawlers bypass: they get full content + paywall
+  // structured data so the URL is indexable. Humans still get the gate.
   if (!canViewNsfw && !currentUser && !nsfw && isPG13Only && !isUnratedOwnerPreview) {
     if (isLoading) return <PageLoader />;
+    if (verifiedBot) return <BotIndexableContent>{children}</BotIndexableContent>;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
@@ -94,8 +98,12 @@ export function SensitiveShield({
       </div>
     );
   }
+  // Logged-out on civitai.red hitting non-safe content. Same bot bypass as
+  // above: crawlers get full content with paywall structured data; humans
+  // get the login gate.
   if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
     if (isLoading) return <PageLoader />;
+    if (verifiedBot) return <BotIndexableContent>{children}</BotIndexableContent>;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
@@ -105,6 +113,45 @@ export function SensitiveShield({
   }
 
   return <>{children}</>;
+}
+
+const PAYWALL_SELECTOR_CLASS = 'paywalled-content';
+const PAYWALL_SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebPage',
+  isAccessibleForFree: false,
+  hasPart: {
+    '@type': 'WebPageElement',
+    isAccessibleForFree: false,
+    cssSelector: `.${PAYWALL_SELECTOR_CLASS}`,
+  },
+};
+
+/**
+ * Wraps a gated subtree for verified search-engine crawlers: emits
+ * schema.org paywall structured data and tags the wrapper with the
+ * cssSelector that the schema points at. This is Google's sanctioned
+ * pattern for serving full content to bots while gating it for humans —
+ * the structured data is the contract that makes it not-cloaking.
+ *
+ * `display: contents` on the wrapper keeps it transparent for layout, so
+ * the gated content renders identically to the non-gated path.
+ */
+function BotIndexableContent({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(PAYWALL_SCHEMA) }}
+          key="paywall-schema"
+        />
+      </Head>
+      <div className={PAYWALL_SELECTOR_CLASS} style={{ display: 'contents' }}>
+        {children}
+      </div>
+    </>
+  );
 }
 
 function MatureContentRedirect({ redUrl }: { redUrl: string }) {
