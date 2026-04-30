@@ -2,11 +2,10 @@
  * One-time backfill for redeemable-code memberships that missed monthly Buzz deliveries.
  * =============================================================================
  *
- * Hidden testing route. Guarded by the WEBHOOK_TOKEN (Bearer header).
+ * Mod-only admin route. Requires an authenticated moderator session.
  *
  * Usage:
- *   POST /api/testing/membership-buzz-backfill
- *   Authorization: Bearer $WEBHOOK_TOKEN
+ *   POST /api/admin/temp/membership-buzz-backfill
  *   Content-Type: application/json
  *
  * Body shape:
@@ -40,7 +39,7 @@ import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { prepaidTokenUnlockedEmail } from '~/server/email/templates/prepaidTokenUnlocked.email';
 import { invalidateSubscriptionCaches, getPrepaidTokens } from '~/server/utils/subscription.utils';
-import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { PrepaidToken, SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
 
 const PRODUCT_TIER = {
@@ -252,7 +251,7 @@ function summarize(results: EntryResult[]) {
   return { subs: results.length, totalTokens, totalBuzz, byTier };
 }
 
-export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
+export default ModEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const payload = schema.safeParse(req.body ?? {});
   if (!payload.success) {
     return res.status(400).json({ error: 'Invalid request', issues: payload.error.issues });
@@ -301,4 +300,4 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     failed,
     failures: results.filter((r) => !r.ok || r.error),
   });
-});
+}, ['POST']);
