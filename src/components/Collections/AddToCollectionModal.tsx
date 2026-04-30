@@ -175,10 +175,13 @@ function CollectionListForm({
 
   const { data: collections = [], isLoading: loadingCollections } =
     trpc.collection.getAllUser.useQuery({
+      // Only request collections where the user can actually add items.
+      // MANAGE-only contributors on a Private-write collection can configure
+      // the collection but can't write to it, so including MANAGE here would
+      // surface unsaveable collections in the picker.
       permissions: [
         CollectionContributorPermission.ADD,
         CollectionContributorPermission.ADD_REVIEW,
-        CollectionContributorPermission.MANAGE,
       ],
       type: props.type,
     });
