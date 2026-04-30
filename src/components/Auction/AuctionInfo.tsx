@@ -51,6 +51,7 @@ import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { useSignalTopicsStore } from '~/store/signal-topics.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -123,7 +124,8 @@ export const AuctionTopSection = ({
   const features = useFeatureFlags();
   const { runTour } = useTourContext();
   const { drawerToggle, selectedAuction } = useAuctionContext();
-  const { connected, registeredTopics } = useSignalContext();
+  const { connected } = useSignalContext();
+  const auctionTopics = useSignalTopicsStore((s) => s.registeredTopics);
   const router = useRouter();
   const ref = useRef<HTMLButtonElement>(null);
 
@@ -210,7 +212,7 @@ export const AuctionTopSection = ({
       <Group justify="flex-end" className="max-sm:justify-center">
         {(!connected ||
           (selectedAuction?.id &&
-            !registeredTopics.includes(`${SignalTopic.Auction}:${selectedAuction?.id}`))) && (
+            !auctionTopics.includes(`${SignalTopic.Auction}:${selectedAuction?.id}`))) && (
           <Tooltip label="Not connected. May not receive live updates.">
             <IconPlugConnected color="orangered" />
           </Tooltip>

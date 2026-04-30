@@ -13,6 +13,7 @@ import {
 } from '~/components/Signals/SignalsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
+import { useSignalTopicsStore } from '~/store/signal-topics.store';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -22,7 +23,8 @@ export function usePurchaseBid() {
   const queryUtils = trpc.useUtils();
   const [createLoading, setCreateLoading] = useState(false);
   const { setJustBid } = useAuctionContext();
-  const { connected, registeredTopics } = useSignalContext();
+  const { connected } = useSignalContext();
+  const auctionTopics = useSignalTopicsStore((s) => s.registeredTopics);
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance: number) =>
@@ -69,7 +71,7 @@ export function usePurchaseBid() {
         withCloseButton: true,
       });
 
-      if (!connected || !registeredTopics.includes(`${SignalTopic.Auction}:${auctionId}`)) {
+      if (!connected || !auctionTopics.includes(`${SignalTopic.Auction}:${auctionId}`)) {
         await queryUtils.auction.getBySlug.invalidate({ slug: res.slug });
       }
       // TODO updates instead for MyBids
