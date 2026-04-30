@@ -177,6 +177,7 @@ describe('createModelFileScanRequest', () => {
         type: 'Checkpoint',
         modelId: 100,
         id: 10,
+        fileId: 1,
       });
       const submitCall = mockSubmitWorkflow.mock.calls[0][0];
       const stepTypes = submitCall.body.steps.map((s: { $type: string }) => s.$type);
