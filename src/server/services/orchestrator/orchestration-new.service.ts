@@ -901,6 +901,24 @@ export async function generateFromGraph({
     });
   }
 
+  // Audit ACE Audio creative fields (musicDescription + lyrics). Routed through
+  // the same auditor as image/video prompts so regex + external moderation apply.
+  const musicDescription =
+    'musicDescription' in data && typeof data.musicDescription === 'string'
+      ? data.musicDescription
+      : undefined;
+  const lyrics =
+    'lyrics' in data && typeof data.lyrics === 'string' ? data.lyrics : undefined;
+  if ((musicDescription && musicDescription.trim()) || (lyrics && lyrics.trim())) {
+    await auditPromptServer({
+      prompt: [musicDescription, lyrics].filter((v) => v && v.trim()).join('\n'),
+      userId,
+      isGreen: !!isGreen,
+      isModerator,
+      track,
+    });
+  }
+
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
     data,
     user: { id: userId, isModerator },
@@ -977,9 +995,16 @@ export async function whatIfFromGraph({
   currencies,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
-  // The client excludes prompt/negativePrompt from whatIf queries for optimization,
+  // The client excludes content fields (prompt/negativePrompt for image/video,
+  // musicDescription/lyrics for ACE audio) from whatIf queries for optimization,
   // so we default them to pass validation when not provided.
-  const whatIfInput = { prompt: 'cost-estimation', negativePrompt: '', ...input };
+  const whatIfInput = {
+    prompt: 'cost-estimation',
+    negativePrompt: '',
+    musicDescription: 'cost-estimation',
+    lyrics: '',
+    ...input,
+  };
   const data = validateInput(whatIfInput, externalCtx);
   const { steps } = await createWorkflowStepsFromGraph({
     data,

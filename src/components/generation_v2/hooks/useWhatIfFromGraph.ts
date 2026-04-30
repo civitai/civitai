@@ -32,7 +32,14 @@ import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/Sou
  * Note: 'prompt' is now ignored because the site identity (not prompt content)
  * determines the buzz type, and prompt moderation happens at submission time.
  */
-const IGNORED_KEYS_FOR_WHATIF = ['prompt', 'negativePrompt', 'seed', 'denoise'] as const;
+const IGNORED_KEYS_FOR_WHATIF = [
+  'prompt',
+  'negativePrompt',
+  'seed',
+  'denoise',
+  'musicDescription',
+  'lyrics',
+] as const;
 
 /** Strip resource strength values from a snapshot so they don't trigger whatIf re-fetches. */
 function stripResourceStrengths(snapshot: Record<string, unknown>): Record<string, unknown> {
@@ -107,14 +114,15 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const snapshot = useMemo(() => graph.getSnapshot() as Record<string, unknown>, [revision, graph]);
 
-  // Validate snapshot with a placeholder prompt for cost estimation.
-  // Prompt doesn't affect pricing (site identity determines buzz type), but the
-  // graph may require a non-empty prompt for validation.
+  // Validate snapshot with placeholders for content fields. These don't affect
+  // pricing (site identity determines buzz type), but the graph may require
+  // them to be non-empty for validation (e.g. ACE audio's musicDescription).
   const validationResult = useMemo(() => {
     if (!snapshot) return null;
     return graph.validate({
       ...snapshot,
       prompt: (snapshot.prompt as string) || 'cost estimation',
+      musicDescription: (snapshot.musicDescription as string) || 'cost estimation',
     });
   }, [snapshot, graph]);
 
@@ -123,7 +131,8 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   // Build the query payload from validated data.
   // Note: buzz type is NOT included here — cost is the same regardless of which
   // buzz type the user selects. Buzz type only matters at submission time.
-  // Prompt/negativePrompt are stripped — they don't affect cost and shouldn't
+  // Content fields (prompt/negativePrompt for image/video, musicDescription/
+  // lyrics for ACE audio) are stripped — they don't affect cost and shouldn't
   // be sent to the server until actual submission.
   const queryPayload = useMemo(() => {
     if (!validationResult?.success) return null;
@@ -131,6 +140,8 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
     const outputSnapshot = omit(validationResult.data as Record<string, unknown>, [
       'prompt',
       'negativePrompt',
+      'musicDescription',
+      'lyrics',
     ]);
 
     return filterSnapshotForSubmit(outputSnapshot, {
