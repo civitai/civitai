@@ -48,7 +48,12 @@ export function LoginContent(args: {
   // Skip if currentHost isn't known — encoding an empty host into the
   // returnUrl would produce `https:///...` and break the post-login redirect.
   const greenDomain = useServerDomains().green;
-  const { domain: domainFlags, host: currentHost, availableOAuthProviders } = useAppContext();
+  const {
+    domain: domainFlags,
+    host: currentHost,
+    serverDomains: serverDomainConfigs,
+    availableOAuthProviders,
+  } = useAppContext();
   const isOnGreen = domainFlags.green;
   const civitaiLoginHref =
     !isOnGreen && currentHost
@@ -57,9 +62,28 @@ export function LoginContent(args: {
         )}`
       : undefined;
 
+  // Detect alias-host case: current host is registered for a color but is NOT
+  // that color's primary. On alias hosts we suppress every login surface
+  // except the green-bounce button so all auth happens on the canonical
+  // primary and syncs back via sync-account.
+  const isOnAlias = (() => {
+    if (!currentHost) return false;
+    const normalized = currentHost.toLowerCase();
+    for (const cfg of Object.values(serverDomainConfigs)) {
+      if (!cfg) continue;
+      if (cfg.primary === normalized) return false;
+      if (cfg.aliases.includes(normalized)) return true;
+    }
+    return false;
+  })();
+
   // Filter the static provider list down to providers with credentials
   // configured for the active host (computed server-side per request).
-  const availableProviders = providers.filter((p) => availableOAuthProviders.includes(p.id));
+  // On alias hosts, suppress entirely so the green-bounce button is the
+  // only login path.
+  const availableProviders = isOnAlias
+    ? []
+    : providers.filter((p) => availableOAuthProviders.includes(p.id));
 
   useEffect(() => {
     if (reason) {
@@ -151,8 +175,17 @@ export function LoginContent(args: {
               }}
             />
           ))}
-          <Text className="py-2 text-center text-sm font-semibold">Or continue with Email</Text>
-          <EmailLogin returnUrl={returnUrl} size="md" status={status} onStatusChange={setStatus} />
+          {!isOnAlias && (
+            <>
+              <Text className="py-2 text-center text-sm font-semibold">Or continue with Email</Text>
+              <EmailLogin
+                returnUrl={returnUrl}
+                size="md"
+                status={status}
+                onStatusChange={setStatus}
+              />
+            </>
+          )}
         </div>
       ) : (
         <Alert

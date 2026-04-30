@@ -1698,6 +1698,8 @@ export const upsertModel = async (
 
     const modelMeta = result.meta as ModelMeta | null;
     if (modelMeta?.showcaseCollectionId) {
+      // Best-effort — model create should not fail if the showcase collection
+      // can't be written to (e.g. user references one they don't own).
       await saveItemInCollections({
         input: {
           collections: [{ collectionId: modelMeta.showcaseCollectionId }],
@@ -1706,7 +1708,14 @@ export const upsertModel = async (
           userId,
           isModerator,
         },
-      });
+      }).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'save-model-showcase-collection',
+          error,
+          message: error.message,
+        })
+      );
     }
 
     await modelTagCache.refresh(result.id);
@@ -1864,7 +1873,7 @@ export const upsertModel = async (
 
     if (showcaseCollectionChanged) {
       if (modelMeta?.showcaseCollectionId) {
-        saveItemInCollections({
+        await saveItemInCollections({
           input: {
             collections: [{ collectionId: modelMeta.showcaseCollectionId }],
             modelId: id,

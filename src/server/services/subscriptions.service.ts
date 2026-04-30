@@ -420,6 +420,7 @@ export const claimPrepaidToken = async ({
         userId,
         status: { in: ['active', 'expired_claimable'] },
         product: { provider: 'Civitai' },
+        buzzType: 'yellow', // Prepaid tokens are only for yellow tier
       },
       select: {
         id: true,

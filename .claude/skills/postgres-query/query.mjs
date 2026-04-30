@@ -74,6 +74,7 @@ let query = '';
 let explain = false;
 let writable = false;
 let dataPacket = false;
+let notifications = false;
 let jsonOutput = false;
 let quiet = false;
 let timeoutSeconds = DEFAULT_TIMEOUT_SECONDS;
@@ -86,6 +87,8 @@ for (let i = 0; i < args.length; i++) {
     writable = true;
   } else if (arg === '--data-packet') {
     dataPacket = true;
+  } else if (arg === '--notifications') {
+    notifications = true;
   } else if (arg === '--json') {
     jsonOutput = true;
   } else if (arg === '--quiet' || arg === '-q') {
@@ -130,7 +133,11 @@ Examples:
 
 // Select connection string
 let connectionString;
-if (dataPacket) {
+if (notifications) {
+  // notifications-db on DataPacket (read-only via SSH bastion tunnel).
+  // Set NOTIFICATION_DB_REPLICA_URL in .env after starting the tunnel.
+  connectionString = process.env.NOTIFICATION_DB_REPLICA_URL;
+} else if (dataPacket) {
   connectionString = process.env.DATABASE_DATA_PACKET_URL;
 } else if (writable) {
   connectionString = process.env.DATABASE_URL;
@@ -139,17 +146,26 @@ if (dataPacket) {
 }
 
 if (!connectionString) {
-  console.error('Error: No database connection string found in environment');
+  if (notifications) {
+    console.error('Error: NOTIFICATION_DB_REPLICA_URL is not set. Start the SSH tunnel and add it to .env (see SKILL.md).');
+  } else {
+    console.error('Error: No database connection string found in environment');
+  }
   process.exit(1);
 }
 
 // Safety check for writable operations
-if (!writable) {
+// --notifications connects through a read-only role on a replica — writes
+// would fail anyway, but block them client-side so users get a clearer error.
+if (!writable || notifications) {
   const upperQuery = query.toUpperCase().trim();
   const writeOps = ['INSERT', 'UPDATE', 'DELETE', 'DROP', 'ALTER', 'TRUNCATE', 'CREATE'];
   for (const op of writeOps) {
     if (upperQuery.startsWith(op)) {
-      console.error(`Error: Write operation detected (${op}). Use --writable flag to confirm.`);
+      const ctx = notifications
+        ? '--notifications is read-only (bastion routes through a replica).'
+        : 'Use --writable flag to confirm.';
+      console.error(`Error: Write operation detected (${op}). ${ctx}`);
       console.error('This requires explicit user permission as it modifies the database.');
       process.exit(1);
     }
@@ -168,11 +184,13 @@ async function main() {
     await client.connect();
 
     if (!quiet) {
-      const dbType = dataPacket
-        ? 'DATA-PACKET REPLICA (read-only)'
-        : writable
-          ? 'PRIMARY (writable)'
-          : 'REPLICA (read-only)';
+      const dbType = notifications
+        ? 'NOTIFICATIONS-DB REPLICA via bastion (read-only)'
+        : dataPacket
+          ? 'DATA-PACKET REPLICA (read-only)'
+          : writable
+            ? 'PRIMARY (writable)'
+            : 'REPLICA (read-only)';
       console.error(`Connected to ${dbType} (timeout: ${timeoutSeconds}s)\n`);
     }
 
