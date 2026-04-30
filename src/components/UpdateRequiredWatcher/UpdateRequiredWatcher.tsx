@@ -79,6 +79,11 @@ export function UpdateRequiredWatcher({ children }: { children: React.ReactEleme
       // Handle session refresh signal from server
       // When the server updates session data, it signals that the client's cookie needs refreshing
       if (response.headers.has(SESSION_REFRESH_HEADER) && !sessionRefreshPending) {
+        // eslint-disable-next-line no-console
+        console.warn('[session-refresh] triggered by response from', response.url);
+        const cause = response.headers.get('x-session-refresh-cause');
+        // eslint-disable-next-line no-console
+        if (cause) console.warn('[session-refresh] cause:', cause);
         sessionRefreshPending = true;
         // Use update() to refresh session and update React state
         // This triggers the JWT callback which fetches fresh user data and updates the cookie
