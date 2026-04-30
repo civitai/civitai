@@ -11,7 +11,9 @@ const schema = z.object({
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const { userId, reportId, status } = schema.parse(req.body);
+  const result = schema.safeParse(req.body);
+  if (!result.success) return res.status(400).json({ error: result.error });
+  const { userId, reportId, status } = result.data;
 
   await bulkSetReportStatus({ ids: [reportId], status, userId, ip: '' });
 
