@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
 import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.middleware';
+import { botDetectionMiddleware } from '~/server/middleware/bot-detection.middleware';
 import type { Middleware } from '~/server/middleware/middleware-utils';
 import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
 import { regionBlockMiddleware } from '~/server/middleware/region-block.middleware';
@@ -12,7 +13,10 @@ import { regionRestrictionMiddleware } from '~/server/middleware/region-restrict
 import { previewAuthMiddleware } from '~/server/middleware/preview-auth.middleware';
 import { routeGuardsMiddleware } from '~/server/middleware/route-guards.middleware';
 
-// NOTE: order matters! Preview auth first, then region blocking, then restriction redirect
+// NOTE: order matters! Preview auth first, then region blocking, then restriction redirect.
+// botDetectionMiddleware MUST be last — it returns NextResponse.next({ request }) to
+// inject a header for downstream handlers, which would short-circuit any middleware
+// scheduled after it.
 const middlewares: Middleware[] = [
   previewAuthMiddleware,
   regionBlockMiddleware,
@@ -21,6 +25,7 @@ const middlewares: Middleware[] = [
   routeGuardsMiddleware,
   apiCacheMiddleware,
   redirectsMiddleware,
+  botDetectionMiddleware,
 ];
 
 export const middlewareMatcher = middlewares.flatMap((middleware) => middleware.matcher);
