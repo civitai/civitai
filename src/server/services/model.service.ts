@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { ManipulateType } from 'dayjs';
-import dayjs from '~/shared/utils/dayjs';
 import { isEmpty, uniq } from 'lodash-es';
+import dayjs from '~/shared/utils/dayjs';
+import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
@@ -1491,6 +1491,17 @@ export const permaDeleteModelById = async ({
 }: GetByIdInput & {
   userId: number;
 }) => {
+  // Collect ModelFile URLs before the cascade delete — read-only, no need to
+  // run inside the transaction. Doing this outside shrinks the 30s tx window.
+  // Safety: best-effort cleanup, so a row added/removed between read and tx
+  // commit just means a benign 404 on S3 delete.
+  const modelFileUrls = (
+    await dbRead.modelFile.findMany({
+      where: { modelVersion: { modelId: id } },
+      select: { url: true },
+    })
+  ).map((f) => f.url);
+
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
       const model = await tx.model.findUnique({
@@ -1534,19 +1545,13 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      // Collect ModelFile URLs before cascade delete removes the rows
-      const modelFileUrls = await tx.modelFile.findMany({
-        where: { modelVersion: { modelId: id } },
-        select: { url: true },
-      });
-
       const deletedModel = await tx.model.delete({ where: { id } });
-      return { deletedModel, imagesToDelete, modelFileUrls: modelFileUrls.map((f) => f.url) };
+      return { deletedModel, imagesToDelete };
     },
     { maxWait: 10000, timeout: 30000 }
   );
 
-  const { deletedModel, imagesToDelete, modelFileUrls } = deletionResult;
+  const { deletedModel, imagesToDelete } = deletionResult;
 
   if (deletedModel) {
     // Delete model bids
@@ -1562,11 +1567,18 @@ export const permaDeleteModelById = async ({
         action: SearchIndexUpdateQueueAction.Delete,
       });
     }
-    // Clean up S3 objects for all deleted ModelFiles (best-effort)
-    if (modelFileUrls && modelFileUrls.length > 0) {
-      deleteModelFileObjects(modelFileUrls).catch((err) =>
-        console.error(`Failed to delete S3 objects for model ${id}:`, err)
-      );
+    // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
+    if (modelFileUrls.length > 0) {
+      try {
+        await deleteModelFileObjects(modelFileUrls);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'model-perma-delete-s3-objects',
+          message: `Failed to delete S3 objects for model ${id}`,
+          error,
+        });
+      }
     }
   }
 

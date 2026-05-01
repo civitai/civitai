@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -138,8 +139,13 @@ export async function updateFile({
 
   // Clean up old S3 object after DB update succeeds (best-effort)
   if (oldUrl) {
-    deleteModelFileObject(oldUrl).catch((err) =>
-      console.error(`Failed to delete old S3 object for file ${id}:`, err)
+    deleteModelFileObject(oldUrl).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-s3-object',
+        message: `Failed to delete old S3 object for file ${id}`,
+        error,
+      })
     );
   }
 
@@ -204,8 +210,13 @@ export async function deleteFile({
 
   // Clean up S3 object after DB delete succeeds (best-effort)
   if (row && file.url) {
-    deleteModelFileObject(file.url).catch((err) =>
-      console.error(`Failed to delete S3 object for file ${id}:`, err)
+    deleteModelFileObject(file.url).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-s3-object',
+        message: `Failed to delete S3 object for file ${id}`,
+        error,
+      })
     );
   }
 
