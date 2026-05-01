@@ -311,6 +311,15 @@ export default defineNextConfig(
           destination: '/games/knights-of-new-order',
           permanent: true,
         },
+        {
+          // Reserved-name redirect: the legacy 'civitai' user account moved to
+          // 'CivitaiOfficial'. Handled here (not in middleware) so it runs at
+          // framework/edge level before any middleware, with no JS execution
+          // per request.
+          source: '/user/civitai',
+          destination: '/user/CivitaiOfficial',
+          permanent: true,
+        },
       ];
     },
     output: 'standalone',

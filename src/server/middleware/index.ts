@@ -7,7 +7,6 @@ import { apiCacheMiddleware } from '~/server/middleware/api-cache.middleware';
 import { apiRegionBlockMiddleware } from '~/server/middleware/api-region-block.middleware';
 import { botDetectionMiddleware } from '~/server/middleware/bot-detection.middleware';
 import type { Middleware } from '~/server/middleware/middleware-utils';
-import { redirectsMiddleware } from '~/server/middleware/redirects.middleware';
 import { regionBlockMiddleware } from '~/server/middleware/region-block.middleware';
 import { regionRestrictionMiddleware } from '~/server/middleware/region-restriction.middleware';
 import { previewAuthMiddleware } from '~/server/middleware/preview-auth.middleware';
@@ -25,7 +24,6 @@ const middlewares: Middleware[] = [
   apiRegionBlockMiddleware,
   routeGuardsMiddleware,
   apiCacheMiddleware,
-  redirectsMiddleware,
   botDetectionMiddleware,
 ];
 

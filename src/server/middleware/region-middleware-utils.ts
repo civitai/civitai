@@ -7,23 +7,9 @@ export const excludedPaths = ['/api', '/_next', '/fonts', '/sounds'];
 
 export const excludedFiles = ['favicon.ico', 'robots.txt', 'site.webmanifest'];
 
-export const staticFileExtensions = [
-  '.ico',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.svg',
-  '.webp',
-  '.css',
-  '.js',
-  '.woff',
-  '.woff2',
-  '.ttf',
-  '.eot',
-  '.xml',
-  '.json',
-];
+// Static asset file extensions — paths ending in these are skipped by the
+// region middlewares. Compiled once at module init.
+const STATIC_FILE_EXT_RE = /\.(ico|png|jpg|jpeg|gif|svg|webp|css|js|woff2?|ttf|eot|xml|json)$/i;
 
 // Common matcher pattern for region middlewares
 export const regionMiddlewareMatcher = [
@@ -53,9 +39,7 @@ export function shouldRunRegionMiddleware(pathname: string, excludeRegionBlocked
   }
 
   // Don't run on any static files (including static images)
-  if (pathname.includes('.') && staticFileExtensions.some((ext) => pathname.endsWith(ext))) {
-    return false;
-  }
+  if (STATIC_FILE_EXT_RE.test(pathname)) return false;
 
   return true;
 }

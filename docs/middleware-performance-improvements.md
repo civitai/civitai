@@ -87,39 +87,28 @@ Add a per-request memoization slot to the `runMiddlewares` ctx:
 
 ### Trade-off
 
-Adds one `new Map()` per request (~100ns) for the savings of two `getRegion`
-calls. Net win is small per request, but the cache slot is a foundation any
-future middleware can use for free. Worth doing as infrastructure even if
-region-specific savings are modest.
+**Not a real perf win in isolation.** Adds ~100-200ns of cache infrastructure
+per request (Map allocation + lookups) to save ~200-500ns from one redundant
+`getRegion` call — roughly a wash. Only worth doing as foundation if/when we
+need to share other parsed-once data between middlewares (parsed UA, parsed
+cookies, etc.). For getRegion alone, skip it.
 
 **Estimated change size**: ~30 lines across 4 files. Low risk — purely
 additive.
 
 ---
 
-## ⏳ Low priority — static-file extension regex
+## ✅ Static-file extension regex (cleanliness)
 
 [`shouldRunRegionMiddleware`](../src/server/middleware/region-middleware-utils.ts)
-checks for static file extensions via:
+now uses a precompiled regex instead of `staticFileExtensions.some(...)`.
 
-```ts
-if (pathname.includes('.') && staticFileExtensions.some((ext) => pathname.endsWith(ext))) {
-  return false;
-}
-```
-
-Could be replaced with a precompiled regex:
-
-```ts
-const STATIC_FILE_EXT_RE = /\.(ico|png|jpg|jpeg|gif|svg|webp|css|js|woff2?|ttf|eot|xml|json)$/i;
-// in shouldRunRegionMiddleware:
-if (STATIC_FILE_EXT_RE.test(pathname)) return false;
-```
-
-The redundant `pathname.includes('.')` guard goes away — the regex covers it.
-
-**Savings**: ~150ns per request that doesn't match a static file. Negligible
-at request scale; do it for cleanliness if/when somebody is in the area.
+**Was not actually a perf win**: the original `pathname.includes('.')` guard
+short-circuited in ~10ns for paths without a dot (most page traffic), which
+is faster than a regex test. The regex is roughly equal or slightly slower
+on the typical hot path. Shipped purely for code clarity — the redundant
+`includes('.')` guard goes away and the array of strings becomes one
+self-documenting pattern.
 
 ---
 
@@ -142,26 +131,30 @@ here so we don't re-discover it.
 
 ---
 
-## 🤔 Deferred — `redirectsMiddleware` over-eager session fetch
+## ✅ `redirectsMiddleware` removed — moved to `next.config.mjs`
 
-[`redirectsMiddleware`](../src/server/middleware/redirects.middleware.ts)
-declares `useSession: true` because the `/user/@me` redirect needs the
-current user. But the runner pre-fetches the next-auth token before the
-handler runs, so non-`@me` `/user/<username>` paths pay the JWT-verify cost
-(~50-200µs of crypto) for nothing.
+Previously declared `useSession: true` because the `/user/@me` redirect
+needed the current user, which forced the runner to JWT-verify (~50-200µs)
+on every `/user/*` request — including all the ones that didn't actually
+need it.
 
-Two ways to skip the wasted token fetch:
+**Resolved by**:
 
-1. **Split into two `addRedirect` calls**: one matcher for `/user/civitai`
-   (no session needed), one for `/user/@me/:path*` (session needed). Requires
-   `addRedirect` to support per-redirect `useSession`. Decent refactor of the
-   helper.
-2. **Move `useSession` from middleware-level to handler-level**, lazily
-   fetching the token only when the handler actually accesses `user`. Larger
-   change to the `Middleware` type and runner.
+1. Removing `/user/@me` (no internal links referenced it).
+2. Changing `/user/civitai → /404` to `/user/civitai → /user/CivitaiOfficial`.
+3. Moving the remaining redirect from middleware into `next.config.mjs`'s
+   `redirects()` array. Next.js processes config-level redirects **before**
+   middleware runs, so `/user/civitai` never hits the middleware chain.
 
-**Recommendation**: skip both unless `/user/<not-@me>` traffic shows up as a
-hot path. Listed here for completeness.
+The middleware file is deleted. The runner no longer iterates a redirect
+entry for any `/user/*` request.
+
+**Savings**:
+
+- ~50-200µs per `/user/<username>` request (no JWT verify)
+- One fewer middleware iteration in the chain on every request
+- `/user/civitai` itself: framework-level redirect, no JS execution per
+  request (faster than middleware-driven redirect)
 
 ---
 
