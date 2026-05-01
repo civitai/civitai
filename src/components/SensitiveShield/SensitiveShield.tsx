@@ -25,7 +25,7 @@ import {
 import { useSession } from 'next-auth/react';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { useServerDomains } from '~/providers/AppProvider';
+import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
@@ -43,10 +43,9 @@ export function SensitiveShield({
   bypassRating?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const router = useRouter();
   const { canViewNsfw } = useFeatureFlags();
   const { data, status } = useSession();
-  const redDomain = useServerDomains().red;
+  const verifiedBot = useAppContext().verifiedBot;
 
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) return null;
 
@@ -69,13 +68,16 @@ export function SensitiveShield({
   const isPG13Only =
     hasSafeBrowsingLevel(contentNsfwLevel) && !hasPublicBrowsingLevel(contentNsfwLevel);
 
-  // PG13 on the SFW site requires login — prompt instead of redirecting to red
+  // PG13 on the SFW site requires login — prompt instead of redirecting to red.
+  // Verified bots aren't a special case here: civitai.com is strictly SFW
+  // even for crawlers, so a bot hitting a PG13 page sees the same login
+  // gate (with noindex) any anonymous user would.
   if (!canViewNsfw && !currentUser && !nsfw && isPG13Only && !isUnratedOwnerPreview) {
     if (isLoading) return <PageLoader />;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
-        <LoginRequiredCard returnUrl={router.asPath} />
+        <LoginRequiredCard />
       </div>
     );
   }
@@ -86,20 +88,22 @@ export function SensitiveShield({
   if (!canViewNsfw && (nsfw || !meetsAllowedLevel) && !isUnratedOwnerPreview) {
     if (isLoading) return <PageLoader />;
 
-    const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
-
     return (
       <div className="absolute inset-0 flex items-center justify-center">
-        <MatureContentRedirect redUrl={redUrl} />
+        <MatureContentRedirect />
       </div>
     );
   }
+  // Logged-out on civitai.red hitting non-safe content. Same bot bypass as
+  // above: crawlers get full content with paywall structured data; humans
+  // get the login gate.
   if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
     if (isLoading) return <PageLoader />;
+    if (verifiedBot) return <BotIndexableContent>{children}</BotIndexableContent>;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
-        <LoginRequiredCard returnUrl={router.asPath} />
+        <LoginRequiredCard />
       </div>
     );
   }
@@ -107,7 +111,49 @@ export function SensitiveShield({
   return <>{children}</>;
 }
 
-function MatureContentRedirect({ redUrl }: { redUrl: string }) {
+const PAYWALL_SELECTOR_CLASS = 'paywalled-content';
+const PAYWALL_SCHEMA = {
+  '@context': 'https://schema.org',
+  '@type': 'WebPage',
+  isAccessibleForFree: false,
+  hasPart: {
+    '@type': 'WebPageElement',
+    isAccessibleForFree: false,
+    cssSelector: `.${PAYWALL_SELECTOR_CLASS}`,
+  },
+};
+
+/**
+ * Wraps a gated subtree for verified search-engine crawlers: emits
+ * schema.org paywall structured data and tags the wrapper with the
+ * cssSelector that the schema points at. This is Google's sanctioned
+ * pattern for serving full content to bots while gating it for humans —
+ * the structured data is the contract that makes it not-cloaking.
+ *
+ * `display: contents` on the wrapper keeps it transparent for layout, so
+ * the gated content renders identically to the non-gated path.
+ */
+function BotIndexableContent({ children }: { children: React.ReactNode }) {
+  return (
+    <>
+      <Head>
+        <script
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(PAYWALL_SCHEMA) }}
+          key="paywall-schema"
+        />
+      </Head>
+      <div className={PAYWALL_SELECTOR_CLASS} style={{ display: 'contents' }}>
+        {children}
+      </div>
+    </>
+  );
+}
+
+function MatureContentRedirect() {
+  const router = useRouter();
+  const redDomain = useServerDomains().red;
+  const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
   const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const el = spotlightRef.current;
@@ -328,7 +374,9 @@ function FeatureRow({
   );
 }
 
-function LoginRequiredCard({ returnUrl }: { returnUrl: string }) {
+function LoginRequiredCard() {
+  const router = useRouter();
+  const returnUrl = router.asPath;
   const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const el = spotlightRef.current;

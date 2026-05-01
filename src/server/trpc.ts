@@ -12,6 +12,10 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
+import {
+  parseVerifiedBotHeader,
+  VERIFIED_BOT_HEADER,
+} from '~/server/utils/bot-detection/header';
 import type { Context } from './createContext';
 
 const t = initTRPC.context<Context>().create({
@@ -76,11 +80,19 @@ const applyDomainFeature = t.middleware((options) => {
   const { next, ctx } = options;
   const input = (options.rawInput ?? {}) as { browsingLevel?: number };
 
+  // Verified search-engine crawlers (set by botDetectionMiddleware) are
+  // treated as authorized only on mature-allowed domains. On the SFW site
+  // they're a regular public user — no level expansion. This enables the
+  // bot bypass on civitai.red while keeping civitai.com strictly SFW for
+  // crawlers and humans alike.
+  const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
+  const isAuthorized = !!ctx.user || (verifiedBot !== null && ctx.features.canViewNsfw);
+
   // Cap rules:
-  //   anonymous (any domain)      → publicBrowsingLevelsFlag (PG only)
-  //   logged-in on green domain   → sfwBrowsingLevelsFlag    (PG, PG-13)
-  //   logged-in on blue/red       → no cap, respect caller
-  const maxAllowed = !ctx.user
+  //   anonymous (any domain), or bot on green → publicBrowsingLevelsFlag (PG)
+  //   logged-in on green domain               → sfwBrowsingLevelsFlag    (PG, PG-13)
+  //   logged-in or bot on blue/red            → no cap, respect caller
+  const maxAllowed = !isAuthorized
     ? publicBrowsingLevelsFlag
     : !ctx.features.canViewNsfw
     ? sfwBrowsingLevelsFlag

@@ -73,6 +73,11 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import {
+  parseVerifiedBotHeader,
+  VERIFIED_BOT_HEADER,
+} from '~/server/utils/bot-detection/header';
+import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
 
@@ -92,6 +97,7 @@ type CustomAppProps = {
   host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
+  verifiedBot: VerifiedBot | null;
 }>;
 
 function MyApp(props: CustomAppProps) {
@@ -111,6 +117,7 @@ function MyApp(props: CustomAppProps) {
       host,
       serverDomains,
       availableOAuthProviders,
+      verifiedBot = null,
       ...pageProps
     },
   } = props;
@@ -159,6 +166,7 @@ function MyApp(props: CustomAppProps) {
       host={host}
       serverDomains={serverDomains}
       availableOAuthProviders={availableOAuthProviders}
+      verifiedBot={verifiedBot}
     >
       <Head>
         <title>Civitai | Share your models</title>
@@ -300,6 +308,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const region = getRegion(request);
 
+  // Read the verified-bot header set by botDetectionMiddleware.
+  const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
+
   const { settings, session } = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,
   }).then(async (res) => {
@@ -339,6 +350,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       serverDomains,
       availableOAuthProviders,
       host: appContext.ctx.req?.headers.host ?? '',
+      verifiedBot,
     },
     ...appProps,
   };
