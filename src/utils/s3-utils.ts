@@ -166,6 +166,83 @@ export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client |
   );
 }
 
+/**
+ * Delete the S3 object referenced by a ModelFile URL.
+ * Determines the correct backend (R2 or B2) and extracts the S3 key from the URL.
+ * Best-effort: callers should catch errors and log rather than blocking.
+ */
+export async function deleteModelFileObject(url: string) {
+  if (!url) return;
+
+  const isB2 = url.includes('backblazeb2.com');
+  const key = extractKeyFromModelFileUrl(url);
+  if (!key) return;
+
+  const s3Client = isB2 ? getB2S3Client() : getS3Client();
+  const bucket = isB2
+    ? env.S3_UPLOAD_B2_BUCKET ?? 'civitai-modelfiles'
+    : env.S3_UPLOAD_BUCKET;
+
+  await deleteObject(bucket, key, s3Client);
+}
+
+/**
+ * Batch-delete S3 objects for multiple ModelFile URLs.
+ * Groups by backend (R2 vs B2) and issues one batch delete per backend.
+ */
+export async function deleteModelFileObjects(urls: string[]) {
+  const r2Keys: string[] = [];
+  const b2Keys: string[] = [];
+
+  for (const url of urls) {
+    if (!url) continue;
+    const key = extractKeyFromModelFileUrl(url);
+    if (!key) continue;
+
+    if (url.includes('backblazeb2.com')) {
+      b2Keys.push(key);
+    } else {
+      r2Keys.push(key);
+    }
+  }
+
+  const promises: Promise<unknown>[] = [];
+
+  if (r2Keys.length > 0) {
+    promises.push(deleteManyObjects(env.S3_UPLOAD_BUCKET, r2Keys, getS3Client()));
+  }
+  if (b2Keys.length > 0) {
+    const b2Bucket = env.S3_UPLOAD_B2_BUCKET ?? 'civitai-modelfiles';
+    promises.push(deleteManyObjects(b2Bucket, b2Keys, getB2S3Client()));
+  }
+
+  await Promise.all(promises);
+}
+
+function extractKeyFromModelFileUrl(url: string): string | undefined {
+  try {
+    const parsed = new URL(url);
+    let path = parsed.pathname.replace(/^\//, '');
+
+    // Strip known bucket prefixes for path-style URLs
+    const bucketPrefixes = [
+      'civitai-delivery-worker-prod',
+      'civitai-prod-settled',
+      'civitai-modelfiles',
+    ];
+    for (const prefix of bucketPrefixes) {
+      if (path.startsWith(prefix + '/')) {
+        path = path.slice(prefix.length + 1);
+        break;
+      }
+    }
+
+    return path || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
