@@ -76,12 +76,16 @@ export function stringifyAIR({
   type,
   modelId,
   id,
+  fileId,
   source = 'civitai',
 }: {
   baseModel: string;
   type: ModelType;
   modelId: number | string;
   id?: number | string;
+  /** Optional ModelFile id; emitted as `+<fileId>` so the orchestrator can
+   * disambiguate among multiple files attached to the same version. */
+  fileId?: number | string;
   source?: string;
 }) {
   let ecosystem = baseModel;
@@ -99,5 +103,6 @@ export function stringifyAIR({
     source,
     id: String(modelId),
     version: String(id),
+    modelFileId: fileId !== undefined && fileId !== null ? String(fileId) : undefined,
   });
 }

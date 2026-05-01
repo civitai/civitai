@@ -15,11 +15,17 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import type { ModelType, ModelHashType } from '~/shared/utils/prisma/enums';
-import { Availability, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import type { ModelType, ModelHashType, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 
-const schema = z.object({ id: z.coerce.number(), epoch: z.number().optional() });
+const schema = z.object({
+  id: z.coerce.number(),
+  epoch: z.number().optional(),
+  // When supplied, the response describes that exact ModelFile (download url,
+  // hashes, size, AIR with `+<fileId>`) rather than the version's primary file.
+  modelFileId: z.coerce.number().int().positive().optional(),
+});
 
 type VersionRow = {
   id: number;
@@ -132,25 +138,31 @@ export default MixedAuthEndpoint(async function handler(
     GROUP BY mf.id, mf.type, mf.visibility, mf.url, mf.metadata, mf."sizeKB", mf.name
   `;
 
-  const primaryFile = getPrimaryFile(files);
-  if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
+  const { modelFileId } = results.data;
+  // Caller-specified file overrides the version's primary file. Falls back to
+  // primary when modelFileId is omitted, preserving legacy behavior.
+  const targetFile = modelFileId ? files.find((f) => f.id === modelFileId) : getPrimaryFile(files);
+  if (!targetFile) {
+    return res.status(404).json({
+      error: modelFileId
+        ? `Model file ${modelFileId} not found in version ${id}`
+        : 'Missing model file',
+    });
+  }
 
   const baseUrl = getBaseUrl();
   let air: string;
   let downloadUrl: string;
 
-  if (
-    modelVersion.availability === Availability.Private &&
-    !!primaryFile.metadata.trainingResults
-  ) {
+  if (modelVersion.availability === Availability.Private && !!targetFile.metadata.trainingResults) {
     const epoch =
-      primaryFile.metadata.trainingResults.epochs?.find((e) => {
+      targetFile.metadata.trainingResults.epochs?.find((e) => {
         if ('epoch_number' in e) {
           return e.epoch_number === results.data.epoch;
         }
 
         return e.epochNumber === results.data.epoch;
-      }) ?? primaryFile.metadata.trainingResults.epochs?.pop();
+      }) ?? targetFile.metadata.trainingResults.epochs?.pop();
 
     if (!epoch) {
       return res.status(404).json({ error: 'Missing epoch' });
@@ -171,12 +183,13 @@ export default MixedAuthEndpoint(async function handler(
     });
   } else {
     // this does not work for things like Flux
-    // if (primaryFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
+    // if (targetFile.type !== 'Model') return res.status(404).json({ error: 'File is not a model' });
 
-    air = stringifyAIR(modelVersion);
+    air = stringifyAIR({ ...modelVersion, fileId: modelFileId });
     downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
       versionId: modelVersion.id,
-      primary: true,
+      fileId: modelFileId,
+      primary: !modelFileId,
     })}`;
   }
 
@@ -184,7 +197,7 @@ export default MixedAuthEndpoint(async function handler(
   if (req.headers.host?.includes('api.')) {
     downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
   }
-  const { format } = primaryFile.metadata;
+  const { format } = targetFile.metadata;
 
   const [unavailableResources, ecosystemConfig] = await Promise.all([
     getUnavailableResources(),
@@ -210,7 +223,7 @@ export default MixedAuthEndpoint(async function handler(
     {
       modelType: modelVersion.type,
       modelId: modelVersion.modelId,
-      fileSizeKB: primaryFile.sizeKB,
+      fileSizeKB: targetFile.sizeKB,
     },
   ]);
 
@@ -225,11 +238,11 @@ export default MixedAuthEndpoint(async function handler(
     baseModel: modelVersion.baseModel,
     availability: modelVersion.availability,
     publishedAt: modelVersion.publishedAt,
-    size: primaryFile.sizeKB, // nullable
-    fileType: primaryFile.type,
-    fileName: primaryFile.name,
+    size: targetFile.sizeKB, // nullable
+    fileType: targetFile.type,
+    fileName: targetFile.name,
     // nullable - hashes (all available hash types)
-    hashes: primaryFile.hashes,
+    hashes: targetFile.hashes,
     downloadUrls: [downloadUrl], // nullable
     format, // nullable
     canGenerate,
