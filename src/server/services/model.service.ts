@@ -2489,8 +2489,14 @@ export async function updateModelLastVersionAt({
 }) {
   const dbClient = tx ?? dbWrite;
 
+  // lte: NOW() — never propagate a future publishedAt into lastVersionAt;
+  // a future value pins the model to the top of the Newest feed.
   const modelVersion = await dbClient.modelVersion.findFirst({
-    where: { modelId: id, status: ModelStatus.Published, publishedAt: { not: null } },
+    where: {
+      modelId: id,
+      status: ModelStatus.Published,
+      publishedAt: { not: null, lte: new Date() },
+    },
     select: { publishedAt: true },
     orderBy: { publishedAt: 'desc' },
   });
