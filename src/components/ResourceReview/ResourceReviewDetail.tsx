@@ -110,6 +110,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
         }`}
         canonical={`/reviews/${reviewId}`}
         schema={metaSchema}
+        deIndex={!data.details}
       />
       <Container my="md" w="100%">
         <Stack>
