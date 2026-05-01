@@ -288,58 +288,6 @@ export async function createModelFileScanRequest({
 
   const metadata = { fileId, modelVersionId };
   const callbackUrl = `${env.NEXTAUTH_URL}/api/webhooks/model-file-scan-result?token=${env.WEBHOOK_TOKEN}`;
-  console.dir(
-    {
-      air,
-      body: {
-        metadata,
-        currencies: [],
-        tags: ['civitai', 'model-scan'],
-        steps: [
-          {
-            $type: 'modelClamScan',
-            name: 'clamScan',
-            metadata,
-            priority,
-            input: { model: air },
-          } as WorkflowStepTemplate,
-          {
-            $type: 'modelPickleScan',
-            name: 'pickleScan',
-            metadata,
-            priority,
-            input: { model: air },
-          } as WorkflowStepTemplate,
-          {
-            $type: 'modelHash',
-            name: 'hash',
-            metadata,
-            priority,
-            input: { model: air },
-          } as WorkflowStepTemplate,
-          {
-            $type: 'modelParseMetadata',
-            name: 'parseMetadata',
-            metadata,
-            priority,
-            input: { model: air },
-          } as WorkflowStepTemplate,
-        ],
-        callbacks: [
-          {
-            url: callbackUrl,
-            type: [
-              'workflow:succeeded',
-              'workflow:failed',
-              'workflow:expired',
-              'workflow:canceled',
-            ],
-          },
-        ],
-      },
-    },
-    { depth: null }
-  );
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
