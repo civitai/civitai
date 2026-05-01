@@ -35,6 +35,8 @@ import {
 import { Collection } from '~/components/Collection/Collection';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { env } from '~/env/client';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -239,17 +241,56 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     </Group>
   );
 
+  const articleBodyText = removeTags(article.content);
+  const articleSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: article.title,
+    description: truncate(articleBodyText, { length: 200 }),
+    // articleBody intentionally omitted — Google reads the page body
+    // directly for ranking. Embedding the full text in JSON-LD bloats
+    // <head> on long articles without adding meaningful SEO signal.
+    image: article.coverImage?.url
+      ? getEdgeUrl(article.coverImage.url, { width: 1200 })
+      : undefined,
+    author:
+      article.user.username && !article.user.deletedAt
+        ? {
+            '@type': 'Person',
+            name: article.user.username,
+            url: env.NEXT_PUBLIC_BASE_URL
+              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${article.user.username}`
+              : undefined,
+          }
+        : undefined,
+    datePublished: article.publishedAt,
+    dateModified: article.updatedAt,
+    publisher: {
+      '@type': 'Organization',
+      name: 'Civitai',
+      url: env.NEXT_PUBLIC_BASE_URL,
+    },
+    keywords: article.tags?.map((t) => t.name).join(', ') || undefined,
+    mainEntityOfPage: env.NEXT_PUBLIC_BASE_URL
+      ? {
+          '@type': 'WebPage',
+          '@id': `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
+        }
+      : undefined,
+  };
+
   return (
     <Gated
       contentNsfwLevel={article.nsfwLevel}
       bypassRating={isOwner}
       meta={{
         title: `${article.title} | Civitai`,
-        description: truncate(removeTags(article.content), { length: 150 }),
+        description: truncate(articleBodyText, { length: 150 }),
         images: article?.coverImage,
         ogEndpoint: `/api/og?type=article&id=${article.id}`,
         canonical: `/articles/${article.id}/${slugit(article.title)}`,
         alternate: `/articles/${article.id}`,
+        schema: articleSchema,
         deIndex:
           !article?.publishedAt ||
           article?.availability === Availability.Unsearchable ||
