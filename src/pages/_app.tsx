@@ -73,7 +73,10 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
-import { VERIFIED_BOT_HEADER } from '~/server/middleware/bot-detection.middleware';
+import {
+  parseVerifiedBotHeader,
+  VERIFIED_BOT_HEADER,
+} from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
@@ -305,12 +308,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   const region = getRegion(request);
 
-  // Read the verified-bot header set by botDetectionMiddleware. Header
-  // names are lowercased on IncomingMessage; values are string | string[].
-  const rawVerifiedBot = request.headers[VERIFIED_BOT_HEADER];
-  const verifiedBotValue = Array.isArray(rawVerifiedBot) ? rawVerifiedBot[0] : rawVerifiedBot;
-  const verifiedBot: VerifiedBot | null =
-    verifiedBotValue === 'googlebot' || verifiedBotValue === 'bingbot' ? verifiedBotValue : null;
+  // Read the verified-bot header set by botDetectionMiddleware.
+  const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
 
   const { settings, session } = await fetch(`${baseUrl as string}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,

@@ -227,25 +227,12 @@ export const getServerSideProps = createServerSideProps({
     // }
 
     if (ssg) {
-      await ssg.hiddenPreferences.getHidden.prefetch();
-
-      if (modelVersionIdParsed) {
-        await ssg.common.getEntityAccess.prefetch({
-          entityId: modelVersionIdParsed as number,
-          entityType: 'ModelVersion',
-        });
-      }
-
-      // Fetch model to check slug and prefetch for client hydration
+      // Fetch the model first so we can short-circuit on slug mismatch before
+      // doing any other prefetch work. Stale links from search results /
+      // bookmarks land here often; bailing early saves ~5 DB roundtrips.
       const model = await ssg.model.getById
         .fetch({ id, excludeTrainingData: true })
         .catch(() => null);
-
-      await ssg.model.getCollectionShowcase.prefetch({ id });
-      if (session) {
-        await ssg.user.getEngagedModelVersions.prefetch({ id });
-        await ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id });
-      }
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (model) {
@@ -274,6 +261,24 @@ export const getServerSideProps = createServerSideProps({
           };
         }
       }
+
+      // No redirect — fire the remaining prefetches in parallel. They have no
+      // mutual dependencies, so SSR latency drops from sum(latencies) to
+      // max(latency).
+      await Promise.all(
+        [
+          ssg.hiddenPreferences.getHidden.prefetch(),
+          modelVersionIdParsed
+            ? ssg.common.getEntityAccess.prefetch({
+                entityId: modelVersionIdParsed as number,
+                entityType: 'ModelVersion',
+              })
+            : null,
+          ssg.model.getCollectionShowcase.prefetch({ id }),
+          session ? ssg.user.getEngagedModelVersions.prefetch({ id }) : null,
+          session ? ssg.resourceReview.getUserResourceReview.prefetch({ modelId: id }) : null,
+        ].filter(Boolean)
+      );
     }
 
     return {

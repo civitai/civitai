@@ -71,11 +71,11 @@ export function SensitiveShield({
     hasSafeBrowsingLevel(contentNsfwLevel) && !hasPublicBrowsingLevel(contentNsfwLevel);
 
   // PG13 on the SFW site requires login — prompt instead of redirecting to red.
-  // Verified search-engine crawlers bypass: they get full content + paywall
-  // structured data so the URL is indexable. Humans still get the gate.
+  // Verified bots aren't a special case here: civitai.com is strictly SFW
+  // even for crawlers, so a bot hitting a PG13 page sees the same login
+  // gate (with noindex) any anonymous user would.
   if (!canViewNsfw && !currentUser && !nsfw && isPG13Only && !isUnratedOwnerPreview) {
     if (isLoading) return <PageLoader />;
-    if (verifiedBot) return <BotIndexableContent>{children}</BotIndexableContent>;
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
