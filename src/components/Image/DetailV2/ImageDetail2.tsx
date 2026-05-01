@@ -34,6 +34,8 @@ import {
 } from '@tabler/icons-react';
 import { useRef } from 'react';
 import clsx from 'clsx';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -238,6 +240,28 @@ export function ImageDetail2() {
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
+  const imageSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'ImageObject',
+    contentUrl: getEdgeUrl(image.url),
+    thumbnailUrl: getEdgeUrl(image.url, { width: 450 }),
+    caption: image.user.username ? `Image by ${image.user.username}` : 'Image on Civitai',
+    width: image.width ?? undefined,
+    height: image.height ?? undefined,
+    creator:
+      image.user.username && !image.user.deletedAt
+        ? {
+            '@type': 'Person',
+            name: image.user.username,
+            url: env.NEXT_PUBLIC_BASE_URL
+              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
+              : undefined,
+          }
+        : undefined,
+    uploadDate: image.createdAt,
+    datePublished: image.createdAt,
+  };
+
   return (
     <Gated
       contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
@@ -247,6 +271,7 @@ export function ImageDetail2() {
         images: image,
         ogEndpoint: `/api/og?type=image&id=${image.id}`,
         canonical: `/images/${image.id}`,
+        schema: imageSchema,
         deIndex: nsfw || !!image.needsReview || image.availability === Availability.Unsearchable,
       }}
     >
