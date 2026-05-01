@@ -75,6 +75,25 @@ const ImageSelectModal = dynamic(
   { ssr: false }
 );
 
+/** Pick the model aspect-ratio whose w:h is closest to the source image's. */
+function pickClosestAspectRatio(
+  source: SourceImage | null | undefined,
+  sizes: { label: string; width: number; height: number }[] | undefined
+): string | null {
+  if (!source || !sizes?.length) return null;
+  const sourceRatio = source.width / source.height;
+  let closest = sizes[0];
+  let minDiff = Math.abs(sizes[0].width / sizes[0].height - sourceRatio);
+  for (const s of sizes.slice(1)) {
+    const diff = Math.abs(s.width / s.height - sourceRatio);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = s;
+    }
+  }
+  return closest.label;
+}
+
 export interface IterativeImageEditorProps {
   initialSource?: SourceImage | null;
   config: IterativeEditorConfig;
@@ -206,7 +225,14 @@ export function IterativeImageEditor({
   const [prompt, setPrompt] = useState('');
   // Legacy enhance toggle — only shown when enhanceInPlace is not provided (non-comic usage)
   const [enhancePromptToggle, setEnhancePromptToggle] = useState(true);
-  const [aspectRatio, setAspectRatio] = useState(config.defaultAspectRatio);
+  // Default the aspect ratio to whatever best matches the source image being
+  // edited — falling back to the config default when there's no source. Picking
+  // 3:4 regardless of input would silently squash/expand the image on first
+  // generation, which catches users out.
+  const [aspectRatio, setAspectRatio] = useState(() =>
+    pickClosestAspectRatio(initialSource, config.modelSizes[config.defaultModel]) ??
+    config.defaultAspectRatio
+  );
   const [generationModel, setGenerationModel] = useState<string | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
   const [quantity, setQuantity] = useState(1);

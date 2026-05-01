@@ -67,7 +67,7 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ComicChapterStatus, ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
 import styles from './ProjectWorkspace.module.scss';
@@ -877,15 +877,58 @@ function ProjectWorkspace() {
     eaConfig: { buzzPrice: number; timeframe: number } | null,
     scheduledAt?: Date
   ) => {
-    if (activeChapterPosition == null) return;
+    if (activeChapterPosition == null || !project) return;
+    const isScheduled = scheduledAt && scheduledAt > new Date();
+    const chapterPosition = activeChapterPosition;
+    const chapterName =
+      project.chapters.find((ch) => ch.position === chapterPosition)?.name ??
+      `Chapter ${chapterPosition + 1}`;
+
     publishChapterMutation.mutate(
       {
         projectId,
-        chapterPosition: activeChapterPosition,
+        chapterPosition,
         earlyAccessConfig: eaConfig,
         scheduledAt,
       },
-      { onSuccess: () => closePublishModal() }
+      {
+        onSuccess: () => {
+          closePublishModal();
+          if (isScheduled) {
+            showSuccessNotification({
+              title: 'Chapter scheduled',
+              message: `${chapterName} will publish on ${scheduledAt!.toLocaleString()}.`,
+              autoClose: 5000,
+            });
+            return;
+          }
+
+          // Drop the creator into their published work — basking is mandatory.
+          const publicUrl = `/comics/${projectId}/${slugit(project.name)}/${
+            chapterPosition + 1
+          }/${slugit(chapterName)}`;
+          showSuccessNotification({
+            title: 'Chapter published! 🎉',
+            message: (
+              <Text size="sm">
+                {chapterName} is live.{' '}
+                <Text
+                  component={Link}
+                  href={publicUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  c="blue"
+                  td="underline"
+                >
+                  View it live ↗
+                </Text>
+              </Text>
+            ),
+            autoClose: 6000,
+          });
+          window.open(publicUrl, '_blank', 'noopener,noreferrer');
+        },
+      }
     );
   };
 

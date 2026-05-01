@@ -3842,27 +3842,23 @@ export const comicsRouter = router({
   setProjectNsfwLevel: comicModeratorProcedure
     .input(z.object({ id: z.number().int(), nsfwLevel: z.number().refine((n) => [1, 2, 4, 8, 16, 32].includes(n), 'Invalid NSFW level') }))
     .mutation(async ({ ctx, input }) => {
-      // Set project level
-      await dbWrite.comicProject.update({
-        where: { id: input.id },
-        data: { nsfwLevel: input.nsfwLevel },
-      });
-
-      // Waterfall: set all chapters to the same level
-      await dbWrite.comicChapter.updateMany({
-        where: { projectId: input.id },
-        data: { nsfwLevel: input.nsfwLevel },
-      });
-
-      // Waterfall: set all panel images to the same level
+      // Cap any panel image whose level exceeds the chosen cap. Lower-rated
+      // images (and unprocessed/0) are left alone — the action is "no higher
+      // than this", not "set everything to this".
       await dbWrite.$executeRaw`
         UPDATE "Image" i
         SET "nsfwLevel" = ${input.nsfwLevel}
         FROM "ComicPanel" p
         WHERE p."imageId" = i.id
           AND p."projectId" = ${input.id}
-          AND i."nsfwLevel" != ${input.nsfwLevel}
+          AND i."nsfwLevel" > ${input.nsfwLevel}
       `;
+
+      // Recompute chapter levels from the (now-capped) images, then bubble up
+      // to the project level. The bit_or aggregate naturally falls below the
+      // cap once images have been capped.
+      await updateComicChapterNsfwLevels([input.id]);
+      await updateComicProjectNsfwLevels([input.id]);
 
       await trackModActivity(ctx.user.id, {
         entityType: 'comicProject',
@@ -3886,18 +3882,9 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Set chapter level
-      await dbWrite.comicChapter.update({
-        where: {
-          projectId_position: {
-            projectId: input.projectId,
-            position: input.chapterPosition,
-          },
-        },
-        data: { nsfwLevel: input.nsfwLevel },
-      });
-
-      // Set all panel images in this chapter to the same level
+      // Cap any panel image in this chapter whose level exceeds the cap.
+      // Lower-rated images are left alone — the action is "no higher than
+      // this", not "set everything to this".
       await dbWrite.$executeRaw`
         UPDATE "Image" i
         SET "nsfwLevel" = ${input.nsfwLevel}
@@ -3905,10 +3892,12 @@ export const comicsRouter = router({
         WHERE p."imageId" = i.id
           AND p."projectId" = ${input.projectId}
           AND p."chapterPosition" = ${input.chapterPosition}
-          AND i."nsfwLevel" != ${input.nsfwLevel}
+          AND i."nsfwLevel" > ${input.nsfwLevel}
       `;
 
-      // Recalculate project NSFW level from chapters
+      // Recompute the chapter level from its (capped) images, then bubble up
+      // to the project level.
+      await updateComicChapterNsfwLevels([input.projectId]);
       await updateComicProjectNsfwLevels([input.projectId]);
 
       await trackModActivity(ctx.user.id, {

@@ -64,6 +64,16 @@ export async function planChapterPanels(input: {
     throw new Error('LLM returned invalid panel breakdown');
   }
 
+  // The LLM occasionally invents @CharName tokens for characters not in the
+  // provided list. Strip the @ from any mention that isn't a real character so
+  // the user-visible plan and downstream generation don't reference ghosts.
+  const allowed = new Set(input.characterNames.map((n) => n.toLowerCase()));
+  const stripGhostMentions = (text: string) =>
+    text.replace(/@([\w\p{L}'-]+)/gu, (match, name) =>
+      allowed.has(String(name).toLowerCase()) ? match : String(name)
+    );
+  parsed.panels = parsed.panels.map((p) => ({ ...p, prompt: stripGhostMentions(p.prompt) }));
+
   return parsed;
 }
 
