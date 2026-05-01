@@ -168,79 +168,64 @@ export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client |
 
 /**
  * Delete the S3 object referenced by a ModelFile URL.
- * Determines the correct backend (R2 or B2) and extracts the S3 key from the URL.
+ * Resolves the correct backend (R2 vs B2) and bucket from the URL itself —
+ * never assumes a single bucket env var, since ModelFile URLs span historical
+ * R2 buckets (civitai-delivery-worker-prod, civitai-prod-settled, ...).
  * Best-effort: callers should catch errors and log rather than blocking.
  */
 export async function deleteModelFileObject(url: string) {
   if (!url) return;
-
-  const isB2 = url.includes('backblazeb2.com');
-  const key = extractKeyFromModelFileUrl(url);
-  if (!key) return;
-
-  const s3Client = isB2 ? getB2S3Client() : getS3Client();
-  const bucket = isB2
-    ? env.S3_UPLOAD_B2_BUCKET ?? 'civitai-modelfiles'
-    : env.S3_UPLOAD_BUCKET;
-
-  await deleteObject(bucket, key, s3Client);
+  const b2 = parseB2Url(url);
+  if (b2) return deleteObject(b2.bucket, b2.key, getB2S3Client());
+  const { key, bucket } = parseKey(url);
+  if (!key || !bucket) return;
+  await deleteObject(bucket, key);
 }
 
 /**
  * Batch-delete S3 objects for multiple ModelFile URLs.
- * Groups by backend (R2 vs B2) and issues one batch delete per backend.
+ * Groups by `(backend, bucket)` and issues one DeleteObjects call per group —
+ * S3 DeleteObjects is per-bucket, so different R2 buckets need separate calls.
  */
 export async function deleteModelFileObjects(urls: string[]) {
-  const r2Keys: string[] = [];
-  const b2Keys: string[] = [];
+  const groups = new Map<
+    string,
+    { backend: 'b2' | 'r2'; bucket: string; keys: string[] }
+  >();
 
   for (const url of urls) {
     if (!url) continue;
-    const key = extractKeyFromModelFileUrl(url);
-    if (!key) continue;
-
-    if (url.includes('backblazeb2.com')) {
-      b2Keys.push(key);
-    } else {
-      r2Keys.push(key);
-    }
-  }
-
-  const promises: Promise<unknown>[] = [];
-
-  if (r2Keys.length > 0) {
-    promises.push(deleteManyObjects(env.S3_UPLOAD_BUCKET, r2Keys, getS3Client()));
-  }
-  if (b2Keys.length > 0) {
-    const b2Bucket = env.S3_UPLOAD_B2_BUCKET ?? 'civitai-modelfiles';
-    promises.push(deleteManyObjects(b2Bucket, b2Keys, getB2S3Client()));
-  }
-
-  await Promise.all(promises);
-}
-
-function extractKeyFromModelFileUrl(url: string): string | undefined {
-  try {
-    const parsed = new URL(url);
-    let path = parsed.pathname.replace(/^\//, '');
-
-    // Strip known bucket prefixes for path-style URLs
-    const bucketPrefixes = [
-      'civitai-delivery-worker-prod',
-      'civitai-prod-settled',
-      'civitai-modelfiles',
-    ];
-    for (const prefix of bucketPrefixes) {
-      if (path.startsWith(prefix + '/')) {
-        path = path.slice(prefix.length + 1);
-        break;
+    const b2 = parseB2Url(url);
+    if (b2) {
+      const groupKey = `b2:${b2.bucket}`;
+      let group = groups.get(groupKey);
+      if (!group) {
+        group = { backend: 'b2', bucket: b2.bucket, keys: [] };
+        groups.set(groupKey, group);
       }
+      group.keys.push(b2.key);
+      continue;
     }
-
-    return path || undefined;
-  } catch {
-    return undefined;
+    const { key, bucket } = parseKey(url);
+    if (!key || !bucket) continue;
+    const groupKey = `r2:${bucket}`;
+    let group = groups.get(groupKey);
+    if (!group) {
+      group = { backend: 'r2', bucket, keys: [] };
+      groups.set(groupKey, group);
+    }
+    group.keys.push(key);
   }
+
+  await Promise.all(
+    Array.from(groups.values()).map((group) =>
+      deleteManyObjects(
+        group.bucket,
+        group.keys,
+        group.backend === 'b2' ? getB2S3Client() : getS3Client()
+      )
+    )
+  );
 }
 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
