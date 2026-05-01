@@ -109,10 +109,14 @@ export const getServerSideProps = createServerSideProps({
         const correctSlug = slugit(article.title);
         const currentSlug = result.data.slug?.join('/');
         if (currentSlug !== correctSlug) {
+          // 308 when no slug was supplied (bare-id URLs are a stable canonical
+          // mapping); 307 when the slug is wrong (article rename can happen
+          // again, so don't let browsers cache the redirect).
+          const permanent = !currentSlug;
           return {
             redirect: {
               destination: `/articles/${result.data.id}/${correctSlug}`,
-              permanent: false,
+              permanent,
             },
           };
         }

@@ -253,10 +253,14 @@ export const getServerSideProps = createServerSideProps({
           }
           const qs = passthrough.toString();
           const queryString = qs ? `?${qs}` : '';
+          // 308 when no slug was supplied (bare-id URLs are a stable canonical
+          // mapping); 307 when the slug is wrong (model rename can happen
+          // again, so don't let browsers cache the redirect).
+          const permanent = !currentSlug;
           return {
             redirect: {
               destination: `/models/${id}/${correctSlug}${queryString}`,
-              permanent: false,
+              permanent,
             },
           };
         }
