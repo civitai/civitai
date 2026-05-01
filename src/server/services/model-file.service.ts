@@ -137,16 +137,20 @@ export async function updateFile({
   });
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
-  // Clean up old S3 object after DB update succeeds (best-effort)
+  // Clean up old S3 object after DB update succeeds (best-effort).
+  // Terminal .catch on the chain so an Axiom-side rejection can't leak as
+  // an unhandled rejection in this fire-and-forget path.
   if (oldUrl) {
-    deleteModelFileObject(oldUrl).catch((error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'model-file-delete-s3-object',
-        message: `Failed to delete old S3 object for file ${id}`,
-        error,
-      })
-    );
+    deleteModelFileObject(oldUrl)
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-s3-object',
+          message: `Failed to delete old S3 object for file ${id}`,
+          error,
+        })
+      )
+      .catch(() => {});
   }
 
   // Merge committed updates back into the snapshot so the returned record
@@ -208,16 +212,20 @@ export async function deleteFile({
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
 
-  // Clean up S3 object after DB delete succeeds (best-effort)
+  // Clean up S3 object after DB delete succeeds (best-effort).
+  // Terminal .catch on the chain so an Axiom-side rejection can't leak as
+  // an unhandled rejection in this fire-and-forget path.
   if (row && file.url) {
-    deleteModelFileObject(file.url).catch((error) =>
-      logToAxiom({
-        type: 'error',
-        name: 'model-file-delete-s3-object',
-        message: `Failed to delete S3 object for file ${id}`,
-        error,
-      })
-    );
+    deleteModelFileObject(file.url)
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-s3-object',
+          message: `Failed to delete S3 object for file ${id}`,
+          error,
+        })
+      )
+      .catch(() => {});
   }
 
   return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;

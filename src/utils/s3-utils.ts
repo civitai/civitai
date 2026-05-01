@@ -217,15 +217,19 @@ export async function deleteModelFileObjects(urls: string[]) {
     group.keys.push(key);
   }
 
-  await Promise.all(
-    Array.from(groups.values()).map((group) =>
-      deleteManyObjects(
-        group.bucket,
-        group.keys,
-        group.backend === 'b2' ? getB2S3Client() : getS3Client()
-      )
-    )
-  );
+  // Resolve clients up-front so a missing-env throw in getB2S3Client doesn't
+  // skip the R2 group via a synchronous escape from inside .map().
+  // Use allSettled so one group's failure doesn't drop the others.
+  const tasks: Promise<unknown>[] = [];
+  for (const group of groups.values()) {
+    try {
+      const client = group.backend === 'b2' ? getB2S3Client() : getS3Client();
+      tasks.push(deleteManyObjects(group.bucket, group.keys, client));
+    } catch {
+      // B2 env not configured in this pod — skip B2 group, keep R2 deletes running.
+    }
+  }
+  await Promise.allSettled(tasks);
 }
 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours

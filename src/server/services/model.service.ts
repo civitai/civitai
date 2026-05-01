@@ -3,7 +3,6 @@ import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
-import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
@@ -143,6 +142,7 @@ import {
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
+import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -1493,10 +1493,10 @@ export const permaDeleteModelById = async ({
 }) => {
   // Collect ModelFile URLs before the cascade delete — read-only, no need to
   // run inside the transaction. Doing this outside shrinks the 30s tx window.
-  // Safety: best-effort cleanup, so a row added/removed between read and tx
-  // commit just means a benign 404 on S3 delete.
+  // Use dbWrite (primary) so we don't miss recently-added rows due to CDC lag;
+  // this only runs once per admin-triggered perma-delete.
   const modelFileUrls = (
-    await dbRead.modelFile.findMany({
+    await dbWrite.modelFile.findMany({
       where: { modelVersion: { modelId: id } },
       select: { url: true },
     })
