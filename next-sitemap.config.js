@@ -28,11 +28,22 @@ const exclude = [
   '/questions/*',
 ];
 
+const splitAliases = (value) =>
+  (value ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
 const allowedDomains = [
   process.env.SERVER_DOMAIN_BLUE,
+  ...splitAliases(process.env.SERVER_DOMAIN_BLUE_ALIASES),
   process.env.SERVER_DOMAIN_GREEN,
+  ...splitAliases(process.env.SERVER_DOMAIN_GREEN_ALIASES),
   process.env.SERVER_DOMAIN_RED,
-].map((domain) => domain.includes('http') ? domain : 'https://' + domain);
+  ...splitAliases(process.env.SERVER_DOMAIN_RED_ALIASES),
+]
+  .filter(Boolean)
+  .map((domain) => (domain.includes('http') ? domain : 'https://' + domain));
 
 const disallow = exclude.filter((path) => !path.includes('sitemap.xml'));
 const isProdDomain = allowedDomains.includes(process.env.NEXT_PUBLIC_BASE_URL);

@@ -1,21 +1,34 @@
 import type { ComboboxItem } from '@mantine/core';
 import {
-  ActionIcon,
   Box,
   Button,
   Divider,
   Group,
   Input,
   Loader,
+  LoadingOverlay,
   Paper,
   Select,
   Stack,
+  Switch,
+  Tabs,
   Text,
+  TextInput,
+  Textarea,
 } from '@mantine/core';
+import { Dropzone } from '@mantine/dropzone';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconCalendar, IconCalendarDue, IconX } from '@tabler/icons-react';
+import {
+  IconCalendar,
+  IconCalendarDue,
+  IconPhoto,
+  IconTrash,
+  IconUpload,
+  IconX,
+} from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useMemo, useState } from 'react';
 import type * as z from 'zod';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -23,6 +36,8 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { CosmeticSample } from '~/components/Shop/CosmeticSample';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { constants } from '~/server/common/constants';
 
 import {
   Form,
@@ -36,7 +51,11 @@ import {
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { upsertCosmeticShopItemInput } from '~/server/schema/cosmetic-shop.schema';
 import type { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import { IMAGE_MIME_TYPE } from '~/shared/constants/mime-types';
+import { CosmeticSource, CosmeticType, MediaType } from '~/shared/utils/prisma/enums';
 import type { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
+import { formatBytes } from '~/utils/number-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { isDefined } from '~/utils/type-guards';
 
 const formSchema = upsertCosmeticShopItemInput;
@@ -63,6 +82,250 @@ const CosmeticSearchSelectItem = forwardRef<HTMLDivElement, CosmeticSearchCombob
 );
 
 CosmeticSearchSelectItem.displayName = 'CosmeticSearchSelectItem';
+
+const cosmeticTypeOptions: { value: CosmeticType; label: string }[] = [
+  { value: CosmeticType.Badge, label: 'Badge' },
+  { value: CosmeticType.ProfileDecoration, label: 'Profile Decoration' },
+  { value: CosmeticType.ContentDecoration, label: 'Content Decoration' },
+  { value: CosmeticType.ProfileBackground, label: 'Profile Background' },
+  { value: CosmeticType.NamePlate, label: 'Name Plate' },
+];
+
+const cosmeticSourceOptions: { value: CosmeticSource; label: string }[] = [
+  { value: CosmeticSource.Purchase, label: 'Purchase' },
+  { value: CosmeticSource.Membership, label: 'Membership' },
+  { value: CosmeticSource.Trophy, label: 'Trophy' },
+  { value: CosmeticSource.Event, label: 'Event' },
+  { value: CosmeticSource.Claim, label: 'Claim' },
+];
+
+const isImageBasedCosmeticType = (type: CosmeticType) =>
+  type === CosmeticType.Badge ||
+  type === CosmeticType.ProfileDecoration ||
+  type === CosmeticType.ContentDecoration ||
+  type === CosmeticType.ProfileBackground;
+
+/**
+ * Inline cosmetic creator. Lets a moderator drop in an image and basic
+ * metadata, persists a new Cosmetic record, and hands the resulting id back to
+ * the parent form so it can finish saving the shop item.
+ */
+const NewCosmeticInlineCreator = ({ onCreated }: { onCreated: (cosmeticId: number) => void }) => {
+  const { upsertCosmetic, upsertingCosmetic } = useMutateCosmeticShop();
+  const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
+
+  const [type, setType] = useState<CosmeticType>(CosmeticType.Badge);
+  const [source, setSource] = useState<CosmeticSource>(CosmeticSource.Purchase);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [animated, setAnimated] = useState(false);
+  const [imageId, setImageId] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  const requiresImage = isImageBasedCosmeticType(type);
+
+  const handleDrop = async (files: File[]) => {
+    const [file] = files;
+    if (!file) return;
+
+    const maxSize = constants.mediaUpload.maxImageFileSize;
+    if (file.size > maxSize) {
+      showErrorNotification({
+        title: 'File too large',
+        error: new Error(`File should not exceed ${formatBytes(maxSize)}`),
+      });
+      return;
+    }
+
+    const result = await uploadToCF(file);
+    setImageId(result.id);
+    setPreviewUrl(result.objectUrl ?? result.id);
+  };
+
+  const handleRemoveImage = () => {
+    setImageId(null);
+    setPreviewUrl(null);
+    resetFiles();
+  };
+
+  const handleCreate = async () => {
+    if (!name.trim()) {
+      showErrorNotification({
+        title: 'Missing name',
+        error: new Error('Enter a cosmetic name'),
+      });
+      return;
+    }
+
+    if (requiresImage && !imageId) {
+      showErrorNotification({
+        title: 'Missing image',
+        error: new Error('Upload an image for this cosmetic type'),
+      });
+      return;
+    }
+
+    let data: Record<string, unknown> = {};
+    if (type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration) {
+      data = { url: imageId, animated };
+    } else if (type === CosmeticType.ContentDecoration) {
+      data = { url: imageId };
+    } else if (type === CosmeticType.ProfileBackground) {
+      data = { url: imageId, type: MediaType.image };
+    }
+    // NamePlate gets `data: {}` — moderator can fill styling later via DB tools.
+
+    try {
+      const cosmetic = await upsertCosmetic({
+        name: name.trim(),
+        description: description.trim() || null,
+        type,
+        source,
+        permanentUnlock: false,
+        data,
+      });
+
+      showSuccessNotification({
+        title: 'Cosmetic created',
+        message: `"${cosmetic.name}" is ready to be added as a shop product.`,
+      });
+      onCreated(cosmetic.id);
+    } catch {
+      // notification surfaced by mutation hook
+    }
+  };
+
+  const imageFile = imageFiles[0];
+  const showLoading = imageFile && imageFile.progress < 100;
+
+  return (
+    <Paper withBorder p="md" radius="md">
+      <Stack>
+        <Text fw="bold">Create a new cosmetic</Text>
+        <Text size="xs" c="dimmed">
+          The new cosmetic record is created immediately. After it&apos;s created, you&apos;ll
+          continue filling in the shop product details below.
+        </Text>
+
+        <Group grow>
+          <Select
+            label="Type"
+            data={cosmeticTypeOptions}
+            value={type}
+            onChange={(value) => value && setType(value as CosmeticType)}
+            allowDeselect={false}
+            withAsterisk
+          />
+          <Select
+            label="Source"
+            data={cosmeticSourceOptions}
+            value={source}
+            onChange={(value) => value && setSource(value as CosmeticSource)}
+            allowDeselect={false}
+            withAsterisk
+          />
+        </Group>
+
+        <TextInput
+          label="Name"
+          value={name}
+          onChange={(e) => setName(e.currentTarget.value)}
+          placeholder="e.g. Founder Badge"
+          withAsterisk
+        />
+
+        <Textarea
+          label="Description"
+          value={description}
+          onChange={(e) => setDescription(e.currentTarget.value)}
+          placeholder="Optional description shown to users"
+          autosize
+          minRows={2}
+        />
+
+        {requiresImage ? (
+          <div>
+            <Text fw={500} size="sm" mb={4}>
+              Image <span style={{ color: 'var(--mantine-color-red-6)' }}>*</span>
+            </Text>
+            {showLoading ? (
+              <Paper style={{ position: 'relative', width: '100%', height: 150 }} withBorder>
+                <LoadingOverlay visible />
+              </Paper>
+            ) : previewUrl ? (
+              <div style={{ position: 'relative', display: 'inline-block' }}>
+                <LegacyActionIcon
+                  size="sm"
+                  variant="filled"
+                  color="red"
+                  onClick={handleRemoveImage}
+                  className="absolute right-1 top-1 z-[1]"
+                >
+                  <IconTrash size={14} />
+                </LegacyActionIcon>
+                <Paper withBorder p="sm" radius="md">
+                  <EdgeMedia
+                    src={previewUrl}
+                    type={MediaType.image}
+                    width={120}
+                    style={{ width: 120, height: 120, objectFit: 'contain' }}
+                    anim
+                  />
+                </Paper>
+              </div>
+            ) : (
+              <Dropzone
+                accept={IMAGE_MIME_TYPE}
+                onDrop={handleDrop}
+                maxFiles={1}
+                style={{ maxWidth: 400 }}
+              >
+                <Dropzone.Accept>
+                  <Group justify="center" gap="xs">
+                    <IconUpload size={32} stroke={1.5} className="text-blue-6 dark:text-blue-4" />
+                    <Text c="dimmed">Drop image here</Text>
+                  </Group>
+                </Dropzone.Accept>
+                <Dropzone.Reject>
+                  <Group justify="center" gap="xs">
+                    <IconX size={32} stroke={1.5} className="text-red-6 dark:text-red-4" />
+                    <Text>File not accepted</Text>
+                  </Group>
+                </Dropzone.Reject>
+                <Dropzone.Idle>
+                  <Group justify="center" gap="xs" p="sm">
+                    <IconPhoto size={32} stroke={1.5} />
+                    <Text c="dimmed">Drop image here or click to browse</Text>
+                  </Group>
+                </Dropzone.Idle>
+              </Dropzone>
+            )}
+          </div>
+        ) : (
+          <Text size="sm" c="dimmed">
+            Name plates do not have an image — additional styling fields can be added later via the
+            existing cosmetics tools.
+          </Text>
+        )}
+
+        {(type === CosmeticType.Badge || type === CosmeticType.ProfileDecoration) && (
+          <Switch
+            label="Animated"
+            description="Toggle on for animated GIF/APNG sources"
+            checked={animated}
+            onChange={(e) => setAnimated(e.currentTarget.checked)}
+          />
+        )}
+
+        <Group justify="flex-end">
+          <Button onClick={handleCreate} loading={upsertingCosmetic}>
+            Create cosmetic
+          </Button>
+        </Group>
+      </Stack>
+    </Paper>
+  );
+};
 
 const CosmeticSearch = ({
   cosmetic,
@@ -176,10 +439,23 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
       <Stack gap="md">
         <Stack gap="md">
           {!shopItem && (
-            <CosmeticSearch
-              cosmetic={cosmetic ?? undefined}
-              onCosmeticSelected={(newCosmeticId) => form.setValue('cosmeticId', newCosmeticId)}
-            />
+            <Tabs defaultValue="existing">
+              <Tabs.List>
+                <Tabs.Tab value="existing">Use existing cosmetic</Tabs.Tab>
+                <Tabs.Tab value="new">Create new cosmetic</Tabs.Tab>
+              </Tabs.List>
+              <Tabs.Panel value="existing" pt="sm">
+                <CosmeticSearch
+                  cosmetic={cosmetic ?? undefined}
+                  onCosmeticSelected={(newCosmeticId) => form.setValue('cosmeticId', newCosmeticId)}
+                />
+              </Tabs.Panel>
+              <Tabs.Panel value="new" pt="sm">
+                <NewCosmeticInlineCreator
+                  onCreated={(newCosmeticId) => form.setValue('cosmeticId', newCosmeticId)}
+                />
+              </Tabs.Panel>
+            </Tabs>
           )}
           {shopItem && (
             <InputSwitch

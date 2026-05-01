@@ -63,6 +63,21 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
+const readImageDimensions = (file: File): Promise<{ width: number; height: number }> =>
+  new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new window.Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Failed to read image dimensions'));
+    };
+    img.src = url;
+  });
+
 type ProductWithBadge = {
   id: string;
   name: string;
@@ -215,6 +230,10 @@ function BadgeForm({
   const { uploadToCF, files: imageFiles, resetFiles } = useCFImageUpload();
   const [uploadedUrl, setUploadedUrl] = useState<string | null>(badge?.url ?? null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(badge?.url ?? null);
+  const [sourceDimensions, setSourceDimensions] = useState<{
+    width: number;
+    height: number;
+  } | null>(null);
 
   const queryUtils = trpc.useUtils();
   const upsertMutation = trpc.productBadge.upsertProductBadge.useMutation({
@@ -258,14 +277,27 @@ function BadgeForm({
       return;
     }
 
+    const dimensions = await readImageDimensions(file).catch(() => null);
+    if (dimensions && dimensions.width !== dimensions.height) {
+      showErrorNotification({
+        title: 'Badge must be square',
+        error: new Error(
+          `Badges must be 1:1 (square). This image is ${dimensions.width}×${dimensions.height}.`
+        ),
+      });
+      return;
+    }
+
     const result = await uploadToCF(file);
     setUploadedUrl(result.id);
     setPreviewUrl(result.objectUrl ?? result.id);
+    setSourceDimensions(dimensions);
   };
 
   const handleRemoveImage = () => {
     setUploadedUrl(null);
     setPreviewUrl(null);
+    setSourceDimensions(null);
     resetFiles();
   };
 
@@ -301,6 +333,8 @@ function BadgeForm({
       productIds: formProductIds,
       availableStart: formAvailableStart,
       availableEnd: formAvailableEnd,
+      sourceWidth: sourceDimensions?.width,
+      sourceHeight: sourceDimensions?.height,
     });
   };
 

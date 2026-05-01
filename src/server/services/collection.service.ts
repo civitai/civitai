@@ -15,6 +15,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { tagIdsForImagesCache, userCollectionCountCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -407,7 +408,8 @@ export const getUserCollectionsWithPermissions = async <
 
   // Moved to using raw queries because of huge performance issues with Prisma.
   // Now we're doing Unions which makes it faster
-  const collections = await dbRead.$queryRaw<CollectionForPermission[]>`
+  const db = await getDbWithoutLag('userCollections', userId);
+  const collections = await db.$queryRaw<CollectionForPermission[]>`
     ${Prisma.join(queries, ' UNION ')}
   `;
 
@@ -453,7 +455,8 @@ export const getUserCollectionsWithPermissions = async <
 
 export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
   const { id } = input;
-  const collection = await dbRead.collection.findUnique({
+  const db = await getDbWithoutLag('collection', id);
+  const collection = await db.collection.findUnique({
     where: { id },
     select: {
       ...collectionSelect,
@@ -636,6 +639,7 @@ export const saveItemInCollections = async ({
   ).filter(isDefined);
 
   const transactions: Prisma.PrismaPromise<Prisma.BatchPayload | number>[] = [];
+  let removedCount = 0;
 
   if (data.length > 0) {
     transactions.push(
@@ -706,12 +710,23 @@ export const saveItemInCollections = async ({
     ).filter(isDefined);
 
     // if we have items to remove, add a deleteMany mutation to the transaction
-    if (removeAllowedCollectionItemIds.length > 0)
+    if (removeAllowedCollectionItemIds.length > 0) {
+      removedCount = removeAllowedCollectionItemIds.length;
       transactions.push(
         dbWrite.collectionItem.deleteMany({
           where: { id: { in: removeAllowedCollectionItemIds } },
         })
       );
+    }
+  }
+
+  // The user requested at least one add or remove, but every item was filtered
+  // out by permission/existence checks. Surface this so the UI can show an error
+  // instead of a misleading success toast (see ClickUp 868jefmuv).
+  if (transactions.length === 0) {
+    throw throwAuthorizationError(
+      'No changes were made — the selected collection(s) may no longer exist or you may not have permission to modify them.'
+    );
   }
 
   await dbWrite.$transaction(transactions);
@@ -744,7 +759,7 @@ export const saveItemInCollections = async ({
     );
   }
 
-  return data.length > 0 ? 'added' : removeFromCollectionIds?.length > 0 ? 'removed' : null;
+  return data.length > 0 ? 'added' : removedCount > 0 ? 'removed' : null;
 };
 
 export const upsertCollection = async ({
@@ -954,6 +969,8 @@ export const upsertCollection = async ({
     //   }
     // }
 
+    await preventReplicationLag('collection', updated.id);
+
     return updated;
   }
 
@@ -1007,6 +1024,13 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.refresh(userId);
+
+  // Route subsequent reads to primary while the replica catches up so the
+  // post-create redirect to /collections/[id] doesn't 404 on a fresh row.
+  await Promise.all([
+    preventReplicationLag('collection', collection.id),
+    preventReplicationLag('userCollections', userId),
+  ]);
 
   return collection;
 };
@@ -1141,12 +1165,10 @@ export const getCollectionItemsByCollectionId = async ({
   const itemDb = forReview ? dbWrite : dbRead;
 
   const collectionFindArgs = { where: { id: collectionId } } as const;
-  const collection = await itemDb.collection
-    .findUniqueOrThrow(collectionFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'collection', caller: 'getAllCollectionItems' });
-      return dbWrite.collection.findUniqueOrThrow(collectionFindArgs);
-    });
+  const collection = await itemDb.collection.findUniqueOrThrow(collectionFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'collection', caller: 'getAllCollectionItems' });
+    return dbWrite.collection.findUniqueOrThrow(collectionFindArgs);
+  });
 
   const useRandomSort = !forReview && collection.mode === CollectionMode.Contest;
 
@@ -1584,6 +1606,13 @@ export const deleteCollectionById = async ({
       id,
       action: SearchIndexUpdateQueueAction.Delete,
     },
+  ]);
+
+  // Route subsequent reads to primary so the user's collection list and
+  // any cached detail page see the deletion immediately (phantom collection fix).
+  await Promise.all([
+    preventReplicationLag('collection', id),
+    preventReplicationLag('userCollections', userId),
   ]);
 
   return res;
@@ -2596,12 +2625,10 @@ export const getCollectionItemById = ({ id }: GetByIdInput) => {
       collection: true,
     },
   } as const;
-  return dbRead.collectionItem
-    .findUniqueOrThrow(collectionItemFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'collectionItem', caller: 'getCollectionItemById' });
-      return dbWrite.collectionItem.findUniqueOrThrow(collectionItemFindArgs);
-    });
+  return dbRead.collectionItem.findUniqueOrThrow(collectionItemFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'collectionItem', caller: 'getCollectionItemById' });
+    return dbWrite.collectionItem.findUniqueOrThrow(collectionItemFindArgs);
+  });
 };
 
 export async function getCollectionEntryCount({

@@ -116,9 +116,11 @@ export const UserContextMenu = ({ username }: { username: string }) => {
     },
   });
 
+  const canManageUserPayments = !!features.userPaymentConfiguration;
+
   const { data: tipaltiStatus } = trpc.user.getTipaltiStatus.useQuery(
     { id: user?.id as number },
-    { enabled: !!isMod && !!user?.id }
+    { enabled: canManageUserPayments && !!user?.id }
   );
 
   const enableTipaltiMutation = trpc.user.enableTipalti.useMutation({
@@ -352,20 +354,24 @@ export const UserContextMenu = ({ username }: { username: string }) => {
               >
                 {user.muted ? 'Unmute user' : 'Mute user'}
               </Menu.Item>
-              <Menu.Item
-                leftSection={<IconCoin size={14} stroke={1.5} />}
-                onClick={handleEnableTipalti}
-                disabled={tipaltiStatus?.enabled || enableTipaltiMutation.isLoading}
-              >
-                {tipaltiStatus?.enabled ? 'Tipalti Enabled' : 'Enable Tipalti'}
-              </Menu.Item>
-              <Menu.Item
-                leftSection={<IconRefresh size={14} stroke={1.5} />}
-                onClick={handleResetSubscriptionCaches}
-                disabled={resetSubscriptionCachesMutation.isLoading}
-              >
-                Clear Membership Cache
-              </Menu.Item>
+              {canManageUserPayments && (
+                <>
+                  <Menu.Item
+                    leftSection={<IconCoin size={14} stroke={1.5} />}
+                    onClick={handleEnableTipalti}
+                    disabled={tipaltiStatus?.enabled || enableTipaltiMutation.isLoading}
+                  >
+                    {tipaltiStatus?.enabled ? 'Tipalti Enabled' : 'Enable Tipalti'}
+                  </Menu.Item>
+                  <Menu.Item
+                    leftSection={<IconRefresh size={14} stroke={1.5} />}
+                    onClick={handleResetSubscriptionCaches}
+                    disabled={resetSubscriptionCachesMutation.isLoading}
+                  >
+                    Clear Membership Cache
+                  </Menu.Item>
+                </>
+              )}
             </>
           )}
           {!isSameUser && <BlockUserButton userId={user.id} as="menu-item" />}

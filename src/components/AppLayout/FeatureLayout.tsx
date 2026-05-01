@@ -15,7 +15,7 @@ export function FeatureLayout({
   const features = useFeatureFlags();
 
   if (conditional) {
-    if (session.status === 'loading') return <PageLoader />;
+    if (session.status === 'loading' && !session.data) return <PageLoader />;
     else if (!conditional(features)) return <FourOhFour />;
   }
 

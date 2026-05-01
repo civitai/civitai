@@ -468,8 +468,10 @@ const getModelVersionGenerationData = async ({
   );
 
   // Return flat resources array - clients use splitResourcesByType() to route to graph nodes
+  // mapDataToGraphInput returns `ecosystem` (not `baseModel`), so resolve the
+  // media type from the ecosystem key — getBaseModelMediaType accepts both.
   return {
-    type: getBaseModelMediaType(params.baseModel as string) ?? 'image',
+    type: getBaseModelMediaType(params.ecosystem as string) ?? 'image',
     resources: deduped,
     params,
   };

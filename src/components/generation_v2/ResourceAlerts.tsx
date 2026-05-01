@@ -164,7 +164,7 @@ interface ExperimentalModelAlertProps {
  * mark an ecosystem experimental without a code change.
  */
 export function ExperimentalModelAlert({ ecosystem }: ExperimentalModelAlertProps) {
-  const { experimentalEcosystems } = useGenerationConfig();
+  const { experimentalEcosystems = [] } = useGenerationConfig();
   const isExperimental = ecosystem
     ? isEcosystemExperimental(ecosystem) || experimentalEcosystems.includes(ecosystem)
     : false;

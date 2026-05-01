@@ -22,7 +22,13 @@ import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
 import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import {
+  getRequestDomainColor,
+  isAliasHost,
+  oauthProviderIds,
+  resolveOAuthCredentialsForHost,
+  type OAuthProviderId,
+} from '~/server/utils/server-domain';
 import { getRandomInt } from '~/utils/number-helpers';
 import { generateToken } from '~/utils/string-helpers';
 import { civTokenDecrypt } from './civ-token';
@@ -149,7 +155,8 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
     },
     logger: {
       error(code, metadata) {
-        const message = metadata instanceof Error ? metadata.message : (metadata as any).error?.message ?? '';
+        const message =
+          metadata instanceof Error ? metadata.message : (metadata as any).error?.message ?? '';
         if (jwtSessionWarnCodes.has(code)) {
           console.warn(`[next-auth][warn][${code}]`, message);
         } else {
@@ -532,9 +539,29 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       (reqHostname !== 'localhost' ? '.' : '') + reqHostname;
   }
 
+  // Filter providers based on host:
+  // - OAuth providers (discord/github/google/reddit): require credentials
+  //   configured for this host. Alias hosts need an explicit alias-keyed
+  //   credential; primary hosts keep the legacy global fallback.
+  // - Email provider: hidden on alias hosts. The magic-link flow would
+  //   otherwise create a session scoped to the alias and bypass the
+  //   intended sync-from-primary model.
+  // Other providers (account-switch, token-login, testing-login) pass
+  // through unchanged regardless of host.
+  const host = req.headers.host;
+  if (host) {
+    const onAlias = isAliasHost(host);
+    options.providers = options.providers.filter((provider) => {
+      if (provider.id === 'email') return !onAlias;
+      if (!oauthProviderIds.includes(provider.id as OAuthProviderId)) return true;
+      return resolveOAuthCredentialsForHost(provider.id as OAuthProviderId, host) !== null;
+    });
+  }
+
   // Handle domain-specific auth settings
   if (
     domainColor &&
+    host &&
     (req.url?.startsWith('/api/auth/signin') ||
       req.url?.startsWith('/api/auth/signout') ||
       req.url?.startsWith('/api/auth/callback'))
@@ -546,12 +573,13 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       provider.options.authorization.params ??= {};
       provider.options.authorization.params.redirect_uri = `${req.headers.origin}/api/auth/callback/${provider.id}`;
 
-      // Set the correct client id and secret when needed
-      const clientId = process.env[`${provider.id}_CLIENT_ID_${domainColor}`.toUpperCase()];
-      const clientSecret = process.env[`${provider.id}_CLIENT_SECRET_${domainColor}`.toUpperCase()];
-      if (clientId && clientSecret) {
-        provider.options.clientId = clientId;
-        provider.options.clientSecret = clientSecret;
+      // Apply per-host credentials (handles primary color override + alias CSV).
+      if (oauthProviderIds.includes(provider.id as OAuthProviderId)) {
+        const creds = resolveOAuthCredentialsForHost(provider.id as OAuthProviderId, host);
+        if (creds) {
+          provider.options.clientId = creds.clientId;
+          provider.options.clientSecret = creds.clientSecret;
+        }
       }
     }
   }

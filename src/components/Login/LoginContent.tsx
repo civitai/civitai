@@ -44,15 +44,46 @@ export function LoginContent(args: {
   const reason = args.reason ?? query.reason;
   const message = reason ? loginRedirectReasons[reason] : args.message;
 
-  // Show "Login with [green domain]" on any domain that isn't green (.com)
+  // Show "Login with [green domain]" on any domain that isn't green (.com).
+  // Skip if currentHost isn't known — encoding an empty host into the
+  // returnUrl would produce `https:///...` and break the post-login redirect.
   const greenDomain = useServerDomains().green;
-  const isOnGreen = useAppContext().domain.green;
-  const currentHost = typeof window !== 'undefined' ? window.location.host : '';
-  const civitaiLoginHref = !isOnGreen
-    ? `//${greenDomain}/login?returnUrl=${encodeURIComponent(
-        `https://${currentHost}${returnUrl}?sync-account=green`
-      )}`
-    : undefined;
+  const {
+    domain: domainFlags,
+    host: currentHost,
+    serverDomains: serverDomainConfigs,
+    availableOAuthProviders,
+  } = useAppContext();
+  const isOnGreen = domainFlags.green;
+  const civitaiLoginHref =
+    !isOnGreen && currentHost
+      ? `//${greenDomain}/login?returnUrl=${encodeURIComponent(
+          `https://${currentHost}${returnUrl}?sync-account=green`
+        )}`
+      : undefined;
+
+  // Detect alias-host case: current host is registered for a color but is NOT
+  // that color's primary. On alias hosts we suppress every login surface
+  // except the green-bounce button so all auth happens on the canonical
+  // primary and syncs back via sync-account.
+  const isOnAlias = (() => {
+    if (!currentHost) return false;
+    const normalized = currentHost.toLowerCase();
+    for (const cfg of Object.values(serverDomainConfigs)) {
+      if (!cfg) continue;
+      if (cfg.primary === normalized) return false;
+      if (cfg.aliases.includes(normalized)) return true;
+    }
+    return false;
+  })();
+
+  // Filter the static provider list down to providers with credentials
+  // configured for the active host (computed server-side per request).
+  // On alias hosts, suppress entirely so the green-bounce button is the
+  // only login path.
+  const availableProviders = isOnAlias
+    ? []
+    : providers.filter((p) => availableOAuthProviders.includes(p.id));
 
   useEffect(() => {
     if (reason) {
@@ -118,7 +149,7 @@ export function LoginContent(args: {
       )}
       {status !== 'submitted' ? (
         <div className="flex flex-col gap-3">
-          {!isOnGreen && (
+          {civitaiLoginHref && (
             <Button
               component="a"
               href={civitaiLoginHref}
@@ -129,7 +160,7 @@ export function LoginContent(args: {
               {greenDomain}
             </Button>
           )}
-          {providers.map((provider) => (
+          {availableProviders.map((provider) => (
             <SocialButton
               key={provider.name}
               size="md"
@@ -144,8 +175,17 @@ export function LoginContent(args: {
               }}
             />
           ))}
-          <Text className="py-2 text-center text-sm font-semibold">Or continue with Email</Text>
-          <EmailLogin returnUrl={returnUrl} size="md" status={status} onStatusChange={setStatus} />
+          {!isOnAlias && (
+            <>
+              <Text className="py-2 text-center text-sm font-semibold">Or continue with Email</Text>
+              <EmailLogin
+                returnUrl={returnUrl}
+                size="md"
+                status={status}
+                onStatusChange={setStatus}
+              />
+            </>
+          )}
         </div>
       ) : (
         <Alert

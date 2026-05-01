@@ -64,6 +64,9 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     // Keep the 'invalid' state in TOKEN_STATE - it will expire naturally after 30 days
     // This ensures subsequent requests with the same token continue to be rejected
     // Signal client to refresh cookie - when it does, it will get empty session and be logged out
+    console.warn(
+      `[refreshToken] needsCookieRefresh=true reason=invalid userId=${user.id} tokenId=${tokenId}`
+    );
     return { token: null, needsCookieRefresh: true };
   }
 
@@ -82,6 +85,9 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     shouldRefresh = true;
     needsCookieRefresh = true; // Signal that client should refresh their session cookie
     log(`Token ${tokenId} marked for refresh for user ${user.id}`);
+    console.warn(
+      `[refreshToken] needsCookieRefresh=true reason=token-state-refresh userId=${user.id} tokenId=${tokenId}`
+    );
   }
 
   // Check if token exists in tracking hash
@@ -97,6 +103,9 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     if (allInvalidationDate.getTime() > (token.signedAt as number)) {
       shouldRefresh = true;
       needsCookieRefresh = true; // Global refresh also means cookies are stale
+      console.warn(
+        `[refreshToken] needsCookieRefresh=true reason=session-all userId=${user.id} tokenId=${tokenId} asOf=${allInvalidationDateStr} signedAt=${new Date(token.signedAt as number).toISOString()}`
+      );
     }
   }
 

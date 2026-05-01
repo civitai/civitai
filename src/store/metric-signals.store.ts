@@ -25,12 +25,17 @@ export const useMetricSignalsStore = create<MetricSignalsState>()(
 
     applyDelta: (entityType, entityId, updates) => {
       set((state) => {
+        let mutated = false;
         const newDeltas = { ...state.deltas };
         for (const [metricType, delta] of Object.entries(updates) as [MetricType, number][]) {
           if (delta === 0 || delta === undefined) continue;
           const key: MetricKey = `${entityType}:${entityId}:${metricType}`;
           newDeltas[key] = (newDeltas[key] || 0) + delta;
+          mutated = true;
         }
+        // Don't replace `deltas` if nothing actually changed — keeping the
+        // same reference avoids fanning out selector runs to every consumer.
+        if (!mutated) return state;
         return { deltas: newDeltas };
       });
     },

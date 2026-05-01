@@ -303,6 +303,7 @@ const ImageCollection = ({
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                   options={imageCollectionSortOptions.map((x) => ({ label: x, value: x }))}
+                  ignoreNsfwLevel
                 />
                 <MediaFiltersDropdown
                   filterType="images"

@@ -21,7 +21,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useLiveMetricsEnabled } from '~/components/Metrics';
 import { CustomNumberFlow } from '~/components/Metrics/CustomNumberFlow';
 import { Metrics } from '~/components/Metrics/Metrics';
-import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { useSignalTopicsStore } from '~/store/signal-topics.store';
 import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
@@ -117,7 +117,7 @@ function FeatureFlagBanner() {
 }
 
 function SubscriptionStatus() {
-  const { registeredTopics } = useSignalContext();
+  const registeredTopics = useSignalTopicsStore((s) => s.registeredTopics);
   return (
     <Card withBorder p="md">
       <Title order={5}>Registered topics ({registeredTopics.length})</Title>

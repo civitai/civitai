@@ -164,26 +164,64 @@ async function bulkInsertMetrics<T extends readonly string[]>(
     .join(',\n');
   const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
 
+  const PG_INT_MAX = 2147483647;
+  const PG_INT_MIN = -2147483648;
+
   const tasks = chunk(updates, 100).map((batch, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log(`insert ${options.logName}`, i + 1, 'of', tasks.length);
 
-    await executeRefresh(ctx)`
-      -- insert ${options.logName}
-      WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("${idColumn}" INT, ${metricInsertColumns}))
-      INSERT INTO "${options.table}" ("${idColumn}", "updatedAt", ${metricInsertKeys})
-      SELECT
-        d."${idColumn}",
-        NOW() as "updatedAt",
-        ${metricValues}
-      FROM data d
-      LEFT JOIN "${table}" im ON im."${idColumn}" = d."${idColumn}"
-      WHERE EXISTS (SELECT 1 FROM "${table.replace('Metric', '')}" WHERE id = d."${idColumn}")
-      ON CONFLICT ("${idColumn}") DO UPDATE
-        SET
-          ${metricOverrides},
-          "updatedAt" = NOW()
-    `;
+    const offenders: Array<{ id: any; key: string; value: any }> = [];
+    for (const row of batch as any[]) {
+      for (const key of metrics) {
+        const value = row[key];
+        if (value == null) continue;
+        if (
+          typeof value !== 'number' ||
+          !Number.isFinite(value) ||
+          value > PG_INT_MAX ||
+          value < PG_INT_MIN
+        ) {
+          offenders.push({ id: row[idColumn], key, value });
+        }
+      }
+    }
+    if (offenders.length > 0) {
+      log(
+        `⚠️  out-of-range ${options.logName} (${offenders.length}) batch ${i + 1}/${
+          tasks.length
+        }:`,
+        JSON.stringify(offenders)
+      );
+    }
+
+    try {
+      await executeRefresh(ctx)`
+        -- insert ${options.logName}
+        WITH data AS (SELECT * FROM jsonb_to_recordset(${batch}::jsonb) AS x("${idColumn}" INT, ${metricInsertColumns}))
+        INSERT INTO "${options.table}" ("${idColumn}", "updatedAt", ${metricInsertKeys})
+        SELECT
+          d."${idColumn}",
+          NOW() as "updatedAt",
+          ${metricValues}
+        FROM data d
+        LEFT JOIN "${table}" im ON im."${idColumn}" = d."${idColumn}"
+        WHERE EXISTS (SELECT 1 FROM "${table.replace('Metric', '')}" WHERE id = d."${idColumn}")
+        ON CONFLICT ("${idColumn}") DO UPDATE
+          SET
+            ${metricOverrides},
+            "updatedAt" = NOW()
+      `;
+    } catch (err) {
+      const ids = (batch as any[]).map((r) => r[idColumn]);
+      log(
+        `❌ insert ${options.logName} failed batch ${i + 1}/${tasks.length} ids:`,
+        JSON.stringify(ids),
+        'rows:',
+        JSON.stringify(batch)
+      );
+      throw err;
+    }
     log(`insert ${options.logName}`, i + 1, 'of', tasks.length, 'done');
   });
   await limitConcurrency(tasks, 10);
@@ -271,10 +309,15 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
 const injectedVersionIds = allInjectableResourceIds;
 
 async function getGenerationTasks(ctx: ModelMetricContext) {
+  // Guard against corrupt rows in daily_resource_generation_counts: future
+  // dates, ids <= 0, and counts that overflow PG INT4 (2_147_483_647).
   const generated = await ctx.ch.$query<{ modelVersionId: number }>`
     SELECT DISTINCT modelVersionId
     FROM orchestration.daily_resource_generation_counts
     WHERE createdDate >= toDate(${ctx.lastUpdate})
+      AND createdDate <= today()
+      AND modelVersionId > 0
+      AND count <= 2147483647
   `;
   const affected = generated
     .map((x) => x.modelVersionId)
@@ -289,6 +332,8 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
         SUM(count) AS all_time
       FROM orchestration.daily_resource_generation_counts
       WHERE modelVersionId IN (${ids})
+        AND createdDate <= today()
+        AND count <= 2147483647
       GROUP BY modelVersionId;
     `;
 

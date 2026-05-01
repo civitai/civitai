@@ -76,7 +76,24 @@ NEXTAUTH_URL_INTERNAL=http://localhost:3000
 SERVER_DOMAIN_GREEN=civitai-dev.green
 SERVER_DOMAIN_BLUE=civitai-dev.blue
 SERVER_DOMAIN_RED=civitai-dev.red
+
+# Optional alias hosts (comma-separated). Resolve to the same color on inbound
+# requests but never appear in outbound URLs. Use to test multi-host-per-color
+# behavior locally.
+# SERVER_DOMAIN_BLUE_ALIASES=civitai-dev.cyan
 ```
+
+### Testing alias hosts
+
+To exercise the alias-host code path locally:
+
+1. Add a fourth hostname to your hosts file (e.g. `127.0.0.1 civitai-dev.cyan`).
+2. Set `SERVER_DOMAIN_BLUE_ALIASES=civitai-dev.cyan` in `.env`.
+3. Add a matching `proxy.register('civitai-dev.cyan', 'http://localhost:3000', { ssl: { ... } })` entry to `rgb-proxy/index.mjs` (and generate certs if needed).
+4. Restart the proxy and dev server.
+5. `https://civitai-dev.cyan` resolves to color `blue` but uses its own host header — verify the login page hides any provider that lacks an alias-keyed credential, and shows a "Continue on civitai-dev.blue" fallback button.
+
+To test alias-keyed OAuth credentials: set `DISCORD_AUTH_civitai_dev_cyan=clientid,secret` (slug is the host with non-alphanumeric characters replaced by `_`). Providers without an `<UPPER>_AUTH_<slug>` env var are hidden on the alias.
 
 ### 5. Start the proxy
 

@@ -1,4 +1,4 @@
-import { CosmeticType } from '~/shared/utils/prisma/enums';
+import { CosmeticSource, CosmeticType } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { comfylessImageSchema } from '~/server/schema/image.schema';
@@ -22,10 +22,25 @@ export const cosmeticShopItemMeta = z.object({
 });
 
 export type UpsertCosmeticInput = z.infer<typeof upsertCosmeticInput>;
-export const upsertCosmeticInput = z.object({
-  id: z.number().optional(),
-  videoUrl: z.string().nullish(),
-});
+export const upsertCosmeticInput = z
+  .object({
+    id: z.number().optional(),
+    videoUrl: z.string().nullish(),
+    // Fields below are required when creating a new cosmetic (no id provided)
+    name: z.string().min(1).optional(),
+    description: z.string().nullish(),
+    type: z.enum(CosmeticType).optional(),
+    source: z.enum(CosmeticSource).optional(),
+    permanentUnlock: z.boolean().optional(),
+    // Cosmetic-specific config — for image-based types this carries
+    // { url, animated?, type? }; NamePlate carries text styling. Free-form so
+    // moderators can author types we haven't built UI for yet.
+    data: z.record(z.string(), z.unknown()).optional(),
+  })
+  .refine((value) => value.id != null || (value.name && value.type && value.source), {
+    message: 'name, type, and source are required when creating a new cosmetic',
+    path: ['name'],
+  });
 
 export type UpsertCosmeticShopItemInput = z.infer<typeof upsertCosmeticShopItemInput>;
 export const upsertCosmeticShopItemInput = z.object({

@@ -22,6 +22,7 @@ node .claude/skills/postgres-query/query.mjs "SELECT * FROM \"User\" LIMIT 5"
 | `--explain` | Run EXPLAIN ANALYZE on the query |
 | `--writable` | Use primary database instead of read replica (requires user permission) |
 | `--data-packet` | Use the DataPacket replica (`DATABASE_DATA_PACKET_URL`) — read-only |
+| `--notifications` | Query the notifications-db (DataPacket) — read-only via SSH bastion (see setup below) |
 | `--timeout <s>`, `-t` | Query timeout in seconds (default: 30) |
 | `--file`, `-f` | Read query from a file |
 | `--json` | Output results as JSON |
@@ -39,6 +40,9 @@ node .claude/skills/postgres-query/query.mjs --explain "SELECT * FROM \"Model\" 
 # Override default 30s timeout for longer queries
 node .claude/skills/postgres-query/query.mjs --timeout 60 "SELECT ... (complex query)"
 
+# Query the notifications-db
+node .claude/skills/postgres-query/query.mjs --notifications "SELECT count(*) FROM \"Notification\""
+
 # Query from file
 node .claude/skills/postgres-query/query.mjs -f my-query.sql
 
@@ -53,12 +57,78 @@ node .claude/skills/postgres-query/query.mjs --json "SELECT id, username FROM \"
 | (default) | `DATABASE_REPLICA_URL` (falls back to `DATABASE_URL`) | Most queries — read-only main replica |
 | `--writable` | `DATABASE_URL` | Writes against primary; needs user permission |
 | `--data-packet` | `DATABASE_DATA_PACKET_URL` | Querying the DataPacket replica (read-only) |
+| `--notifications` | `NOTIFICATION_DB_REPLICA_URL` | Querying notifications-db (read-only); requires SSH tunnel |
+
+## Querying the notifications-db (DataPacket)
+
+The notifications-db lives on the DataPacket cluster. Direct network access from your laptop isn't allowed — connect via the SSH bastion.
+
+### One-time setup
+
+1. Make sure your SSH public key has been added to the bastion. If you don't have access yet, ask zach to add your `~/.ssh/id_ed25519.pub` to:
+
+   `clusters/production/apps/notifications-db/secrets/bastion-ssh-keys.enc.yaml`
+
+2. Get the bastion host, port, and forward target from zach (or read
+   them out of the `datapacket-talos` repo: bastion deployment is at
+   `clusters/production/apps/notifications-db/bastion.yaml`, public
+   host/port are in `clusters/production/apps/minio/nginx-reverse-proxy.yaml`).
+
+3. Add an SSH config entry (`~/.ssh/config`) so the tunnel is one command:
+
+   ```
+   Host notif-bastion
+     HostName <bastion-host>
+     Port <bastion-port>
+     User bastion
+     IdentityFile ~/.ssh/id_ed25519
+     # Tunnel local 5433 → in-cluster ro pgbouncer pooler
+     LocalForward 5433 <ro-pooler-host>:5432
+     ServerAliveInterval 60
+   ```
+
+4. Add the connection string to your project `.env` (or `.claude/skills/postgres-query/.env`):
+
+   ```
+   NOTIFICATION_DB_REPLICA_URL=postgresql://notifications_readonly:<password>@127.0.0.1:5433/notification_prod?sslmode=disable
+   ```
+
+   Get the password from zach (stored in the `bastion-pg-creds.enc.yaml`
+   secret in the datapacket-talos repo). The same password is also
+   preloaded inside the bastion's `.pgpass` for in-pod use.
+
+### Running queries
+
+```bash
+# 1. Open the SSH tunnel in one terminal (stays open)
+ssh notif-bastion
+
+#    The bastion's MOTD shows the available tables and tools.
+#    You can run ad-hoc psql in this terminal too — `psql` is preloaded
+#    with .pgpass and PGHOST/PGUSER env vars.
+
+# 2. In another terminal, run queries via the skill
+node .claude/skills/postgres-query/query.mjs --notifications \
+  "SELECT count(*) FROM \"Notification\""
+
+node .claude/skills/postgres-query/query.mjs --notifications --explain \
+  "SELECT * FROM \"UserNotification\" WHERE \"userId\" = 12345 ORDER BY \"createdAt\" DESC LIMIT 50"
+```
+
+### Available tables (read-only)
+
+- `Notification` — canonical notifications
+- `UserNotification` — per-user fanout (largest table)
+- `PendingNotification` — processing queue (often empty)
+
+The role `notifications_readonly` only has `SELECT`. Writes are also rejected at the pooler level (replica routing).
 
 ## Safety Features
 
 1. **Read-only by default**: Uses `DATABASE_REPLICA_URL` to prevent accidental writes
 2. **Write protection**: Blocks INSERT/UPDATE/DELETE/DROP unless `--writable` flag is used
-3. **Explicit permission required**: Before using `--writable`, you MUST ask the user for permission
+3. **Notifications is always read-only**: `--notifications` blocks writes client-side AND the database role/pooler reject them
+4. **Explicit permission required**: Before using `--writable`, you MUST ask the user for permission
 
 ## When to Use --writable
 

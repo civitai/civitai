@@ -10,6 +10,7 @@ import type {
   GetShopInput,
   PurchaseCosmeticShopItemInput,
   UpdateCosmeticShopSectionsOrderInput,
+  UpsertCosmeticInput,
   UpsertCosmeticShopItemInput,
   UpsertCosmeticShopSectionInput,
 } from '~/server/schema/cosmetic-shop.schema';
@@ -120,6 +121,15 @@ export const useMutateCosmeticShop = () => {
     },
     onError(error) {
       onError(error, 'Failed to update or create the cosmetic shop item');
+    },
+  });
+
+  const upsertCosmeticMutation = trpc.cosmeticShop.upsertCosmetic.useMutation({
+    async onSuccess() {
+      await queryUtils.cosmetic.getPaged.invalidate();
+    },
+    onError(error) {
+      onError(error, 'Failed to update or create the cosmetic');
     },
   });
 
@@ -234,6 +244,9 @@ export const useMutateCosmeticShop = () => {
   const handlePurchaseShopItemMutation = (data: PurchaseCosmeticShopItemInput) => {
     return purchaseShopItemMutation.mutateAsync(data);
   };
+  const handleUpsertCosmetic = (data: UpsertCosmeticInput) => {
+    return upsertCosmeticMutation.mutateAsync(data);
+  };
 
   return {
     upsertShopItem: handleUpsertShopItem,
@@ -248,6 +261,8 @@ export const useMutateCosmeticShop = () => {
     deletingShopItem: deleteShopItemMutation.isLoading,
     purchaseShopItem: handlePurchaseShopItemMutation,
     purchasingShopItem: purchaseShopItemMutation.isLoading,
+    upsertCosmetic: handleUpsertCosmetic,
+    upsertingCosmetic: upsertCosmeticMutation.isLoading,
   };
 };
 
