@@ -18,6 +18,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
+import { deleteModelFileObject } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
@@ -113,6 +114,7 @@ export async function updateFile({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
     select: {
       id: true,
+      url: true,
       metadata: true,
       modelVersionId: true,
       sizeKB: true,
@@ -120,6 +122,9 @@ export async function updateFile({
     },
   });
   if (!modelFile) throw throwNotFoundError();
+
+  // If URL is changing, capture the old one for S3 cleanup
+  const oldUrl = inputData.url && inputData.url !== modelFile.url ? modelFile.url : undefined;
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
   await dbWrite.modelFile.updateMany({
@@ -130,6 +135,13 @@ export async function updateFile({
     },
   });
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
+
+  // Clean up old S3 object after DB update succeeds (best-effort)
+  if (oldUrl) {
+    deleteModelFileObject(oldUrl).catch((err) =>
+      console.error(`Failed to delete old S3 object for file ${id}:`, err)
+    );
+  }
 
   // Merge committed updates back into the snapshot so the returned record
   // reflects post-update state (e.g. `sizeKB` on a re-upload). `updateMany`
@@ -150,6 +162,7 @@ export async function deleteFile({
   const file = await dbWrite.modelFile.findFirst({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
     select: {
+      url: true,
       type: true,
       modelVersion: {
         select: {
@@ -188,6 +201,13 @@ export async function deleteFile({
 
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
+
+  // Clean up S3 object after DB delete succeeds (best-effort)
+  if (row && file.url) {
+    deleteModelFileObject(file.url).catch((err) =>
+      console.error(`Failed to delete S3 object for file ${id}:`, err)
+    );
+  }
 
   return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;
 }
