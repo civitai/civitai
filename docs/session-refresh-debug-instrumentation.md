@@ -1,20 +1,35 @@
-# Session Refresh Debug Instrumentation
+# Debug Instrumentation Cleanup
 
-Temporary diagnostic logging added to identify the source of unexpected
-`POST /api/auth/session` calls observed during a staged production deploy.
-The instrumentation surfaces the call stack of any `refreshSession()` invocation
-to the browser console via response headers, so it can be diagnosed from
-DevTools without server-log access.
+This doc tracks **temporary diagnostic logs** added during two related
+investigations so they can be cleanly reverted once no longer needed:
 
-Once the source has been identified, **revert all of the following changes**.
-None of them are part of the permanent fix.
+1. **Session-refresh diagnostics** — identifying the source of unexpected
+   `POST /api/auth/session` calls observed during a staged production deploy.
+2. **Signal/metric render diagnostics** — auditing how often signal-driven
+   updates cause React re-renders.
 
-> **Note:** [`src/components/AppLayout/FeatureLayout.tsx`](../src/components/AppLayout/FeatureLayout.tsx)
-> was also touched during this investigation. That change (gating the loader on
-> `status === 'loading' && !data`) is the **real fix** for the page-blanking
-> symptom and should **not** be reverted.
+It also lists the **permanent fixes** that came out of the same investigations,
+so they're not reverted by mistake.
 
-## Files to revert
+---
+
+## Permanent fixes — DO NOT revert
+
+These are real bug/perf fixes that should stay in the codebase. Listed here
+only so they aren't bundled into a "revert all the debug stuff" pass.
+
+| File | What changed | Why it stays |
+| --- | --- | --- |
+| [src/components/AppLayout/FeatureLayout.tsx](../src/components/AppLayout/FeatureLayout.tsx) | Loader gate changed from `status === 'loading'` to `status === 'loading' && !data` | Prevents the page from blanking during in-flight `update()` calls when a session is already loaded. |
+| [src/store/signal-topics.store.ts](../src/store/signal-topics.store.ts) | New Zustand store holding registered signal topics | Moves topic-list state out of `SignalsProvider` so subscription changes don't fan out re-renders to every `useSignalContext` consumer. |
+| [src/components/Signals/SignalsProvider.tsx](../src/components/Signals/SignalsProvider.tsx) | Removed `registeredTopics` `useState` + context exposure; `register/release` now call the store imperatively | Same as above — eliminates the cascade where mounting one `MetricsLive` re-rendered every other one. |
+| [src/components/Auction/AuctionUtils.tsx](../src/components/Auction/AuctionUtils.tsx), [src/components/Auction/AuctionInfo.tsx](../src/components/Auction/AuctionInfo.tsx), [src/pages/testing/metrics-refcount.tsx](../src/pages/testing/metrics-refcount.tsx), [src/pages/testing/live-card-parity.tsx](../src/pages/testing/live-card-parity.tsx) | Read `registeredTopics` from `useSignalTopicsStore` instead of `useSignalContext` | Required follow-through from the `SignalsProvider` refactor above. |
+| [src/components/Signals/MetricSignalsRegistrar.tsx](../src/components/Signals/MetricSignalsRegistrar.tsx) | Skips `applyDelta` when the normalized payload has no truthy values | Server emits empty topic-only notifications; without this, every empty signal triggered selector runs across all `MetricsLive` consumers. |
+| [src/store/metric-signals.store.ts](../src/store/metric-signals.store.ts) | `applyDelta` returns the existing state object when no fields actually changed | Defense-in-depth for the same issue — preserves reference identity so Zustand subscribers don't re-run their selectors. |
+
+---
+
+## Files to revert (diagnostics only)
 
 ### 1. `src/server/auth/session-invalidation.ts`
 
@@ -40,7 +55,9 @@ if (!stack.includes('next-auth-options')) {
       .join(' | ')
       .replace(/[^\x20-\x7E]/g, ' ')
       .slice(0, 1500);
-    await sysRedis.set(`session-refresh-cause:${userId}`, compact, { EX: 60 * 60 });
+    await sysRedis.set(`${REDIS_SYS_KEYS.SESSION.REFRESH_CAUSE}:${userId}`, compact, {
+      EX: 60 * 60,
+    });
   } catch {}
 }
 ```
@@ -79,10 +96,11 @@ Remove the three `console.warn` calls inside `refreshToken()`:
 
 Three changes to undo:
 
-- Remove the `sysRedis` import:
+- Drop `REDIS_SYS_KEYS` from the import (keep `sysRedis` — but if no other
+  references remain after revert, remove the whole import line):
 
   ```ts
-  import { sysRedis } from '~/server/redis/client';
+  import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
   ```
 
 - Revert `checkAndSetSessionHeaders` to its synchronous form (drop the `async`,
@@ -136,12 +154,55 @@ if (cause) console.warn('[session-refresh] cause:', cause);
 The handler should return to its original form starting with
 `sessionRefreshPending = true;`.
 
+### 6. `src/components/Signals/MetricSignalsRegistrar.tsx`
+
+Two diagnostic-only changes (the empty-payload short-circuit itself stays —
+it's a permanent fix listed above):
+
+- Drop the `signalDebug` import added for diagnostics:
+
+  ```ts
+  import { signalDebug } from '~/components/Signals/signalDebug';
+  ```
+
+- Inside `handleMetricUpdate`, drop the diagnostic line and the `hasChange`
+  flag passed to it. Simplify back to:
+
+  ```ts
+  const hasChange = Object.values(updates).some((v) => !!v);
+  if (!hasChange) return;
+  applyDelta(entityType, entityId, updates);
+  ```
+
+  …removing only the `signalDebug('metric:update received', { ... });` line
+  between `hasChange` and the early return. Keep the short-circuit.
+
+### 7. `src/components/Metrics/Metrics.tsx` (optional, recommended)
+
+These render-time debug logs predate this investigation but were exercised
+heavily during it. They're noisy in steady state and good candidates to remove
+once you're done verifying.
+
+- Remove `signalDebug('Metrics render', ...)` and the `renders` ref it depends
+  on at the top of the `Metrics` component.
+- Remove the `signalDebug('MetricsLive mount/unmount', ...)` `useEffect` and
+  the `signalDebug('MetricsLive render', ...)` call in the `MetricsLive`
+  component, plus its `renders` ref.
+- If nothing else in this file calls `signalDebug`, drop the import.
+
+The recommended **keep-set** for ongoing diagnostics — modest volume, useful
+signal — is: `metric:update received` (after the diagnostic line is removed,
+this one specifically is gone too — remove only if you also want to keep the
+short-circuit's silent behavior), `registerTopic` / `releaseTopic` (low-volume
+subscription transitions in [SignalsProvider.tsx](../src/components/Signals/SignalsProvider.tsx)),
+and the `useMetricSubscription effect: subscribe/unsubscribe` lines.
+
 ## Redis cleanup (optional)
 
-The instrumentation writes per-user keys at `session-refresh-cause:{userId}`
-with a 1-hour TTL. They expire on their own; no cleanup is required. If you
-want to flush them immediately after revert:
+The session-refresh instrumentation writes per-user keys at
+`session:refresh-cause:{userId}` with a 1-hour TTL. They expire on their own;
+no cleanup is required. If you want to flush them immediately after revert:
 
 ```bash
-redis-cli --scan --pattern 'session-refresh-cause:*' | xargs redis-cli del
+redis-cli --scan --pattern 'session:refresh-cause:*' | xargs redis-cli del
 ```

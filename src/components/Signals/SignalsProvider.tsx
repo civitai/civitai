@@ -1,15 +1,6 @@
 import type { MantineColor, NotificationProps } from '@mantine/core';
 import { Notification } from '@mantine/core';
-import {
-  createContext,
-  type Dispatch,
-  type SetStateAction,
-  useCallback,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-} from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { SignalMessages } from '~/server/common/enums';
 import type { SignalTopic } from '~/server/common/enums';
 import { useDebouncer } from '~/utils/debouncer';
@@ -19,6 +10,7 @@ import type { SignalStatus } from '~/utils/signals/types';
 import type { SignalWorker, TopicStatusHandler } from '~/utils/signals/useSignalsWorker';
 import { useSignalsWorker } from '~/utils/signals/useSignalsWorker';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
+import { useSignalTopicsStore } from '~/store/signal-topics.store';
 import { trpc } from '~/utils/trpc';
 import { setSignalDebug, signalDebug } from './signalDebug';
 
@@ -65,8 +57,6 @@ type SignalState = {
   connected: boolean;
   status: SignalStatus | null;
   worker: SignalWorker | null;
-  registeredTopics: string[];
-  setRegisteredTopics: Dispatch<SetStateAction<string[]>>;
   /**
    * Increments the refcount for `topic` and registers with the worker on the
    * first subscriber. Safe to call multiple times for the same topic from
@@ -144,7 +134,6 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
 
   const [status, setStatus] = useState<SignalStatus | null>(null);
   prevStatusRef.current = status ?? null;
-  const [registeredTopics, setRegisteredTopics] = useState<string[]>([]);
   // Refcount of active `useSignalTopic` subscribers per topic. Only the
   // 0→1 transition calls `worker.topicRegister`; only the 1→0 transition
   // unsubscribes — so duplicate subscribers don't cause one another to lose
@@ -197,7 +186,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       topicNotify.current!.set(topic, notify);
       worker?.topicRegister(topic, notify);
       if (count === 0) {
-        setRegisteredTopics((prev) => (prev.includes(topic) ? prev : [...prev, topic]));
+        useSignalTopicsStore.getState().addTopic(topic);
       }
       signalDebug('registerTopic', {
         topic,
@@ -219,7 +208,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         topicNotify.current!.delete(topic);
         cancelRetry(topic);
         worker?.topicUnsubscribe(topic);
-        setRegisteredTopics((prev) => prev.filter((t) => t !== topic));
+        useSignalTopicsStore.getState().removeTopic(topic);
         signalDebug('releaseTopic', {
           topic,
           prev: count,
@@ -365,7 +354,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   signalDebug('SignalProvider render', {
     renderCount: renderCount.current,
     status,
-    topicCount: registeredTopics.length,
+    topicCount: topicRefs.current!.size,
   });
 
   const connected = status === 'connected';
@@ -376,8 +365,6 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         connected,
         status,
         worker,
-        registeredTopics,
-        setRegisteredTopics,
         registerTopic,
         releaseTopic,
       }}

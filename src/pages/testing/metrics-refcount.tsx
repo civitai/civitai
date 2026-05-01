@@ -14,8 +14,8 @@ import {
 import { useState } from 'react';
 import { ElementInView, useElementInView } from '~/components/IntersectionObserver/ElementInView';
 import { Metrics } from '~/components/Metrics';
-import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
+import { useSignalTopicsStore } from '~/store/signal-topics.store';
 
 const TEST_ENTITY_TYPE = 'Image' as const;
 const DEFAULT_ENTITY_ID = 999999;
@@ -207,7 +207,7 @@ window.__signals.clearDeltas('Image', ${DEFAULT_ENTITY_ID})`}
 }
 
 function SubscriptionStatus() {
-  const { registeredTopics } = useSignalContext();
+  const registeredTopics = useSignalTopicsStore((s) => s.registeredTopics);
   return (
     <Card withBorder p="md">
       <Title order={4}>Registered topics ({registeredTopics.length})</Title>

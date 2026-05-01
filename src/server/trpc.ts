@@ -32,8 +32,7 @@ const isAcceptableOrigin = t.middleware(({ ctx: { user, acceptableOrigin }, next
   if (!acceptableOrigin)
     throw new TRPCError({
       code: 'UNAUTHORIZED',
-      message:
-        'Please use the public API instead: https://github.com/civitai/civitai/wiki/REST-API-Reference',
+      message: 'Please use the public API instead: https://developer.civitai.com/',
     });
   return next({ ctx: { user, acceptableOrigin } });
 });
