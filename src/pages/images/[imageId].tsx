@@ -15,13 +15,14 @@ export const getServerSideProps = createServerSideProps({
     const id = Number(params.imageId);
     if (!isNumber(id)) return { notFound: true };
 
-    await ssg?.image.get.prefetch({ id });
-
-    if (session) {
-      await ssg?.image.getContestCollectionDetails.prefetch({ id });
-    }
-
-    await ssg?.hiddenPreferences.getHidden.prefetch();
+    await Promise.all(
+      [
+        ssg?.image.get.prefetch({ id }),
+        ssg?.image.getGenerationData.prefetch({ id }),
+        session ? ssg?.image.getContestCollectionDetails.prefetch({ id }) : null,
+        ssg?.hiddenPreferences.getHidden.prefetch(),
+      ].filter(Boolean)
+    );
   },
 });
 

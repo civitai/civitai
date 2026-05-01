@@ -272,7 +272,10 @@ export function ImageDetail2() {
         ogEndpoint: `/api/og?type=image&id=${image.id}`,
         canonical: `/images/${image.id}`,
         schema: imageSchema,
-        deIndex: nsfw || !!image.needsReview || image.availability === Availability.Unsearchable,
+        // Per-image HTML pages are thin/duplicative and drive negligible search
+        // traffic; Google Images still surfaces images via the ImageObject schema.
+        // See docs/seo-thin-page-deindexing-plan.md.
+        deIndex: true,
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
