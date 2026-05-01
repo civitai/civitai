@@ -43,10 +43,8 @@ export function SensitiveShield({
   bypassRating?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const router = useRouter();
   const { canViewNsfw } = useFeatureFlags();
   const { status } = useSession();
-  const redDomain = useServerDomains().red;
   const verifiedBot = useAppContext().verifiedBot;
 
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
@@ -79,7 +77,7 @@ export function SensitiveShield({
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
-        <LoginRequiredCard returnUrl={router.asPath} />
+        <LoginRequiredCard />
       </div>
     );
   }
@@ -90,11 +88,9 @@ export function SensitiveShield({
   if (!canViewNsfw && (nsfw || !meetsAllowedLevel) && !isUnratedOwnerPreview) {
     if (isLoading) return <PageLoader />;
 
-    const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
-
     return (
       <div className="absolute inset-0 flex items-center justify-center">
-        <MatureContentRedirect redUrl={redUrl} />
+        <MatureContentRedirect />
       </div>
     );
   }
@@ -107,7 +103,7 @@ export function SensitiveShield({
 
     return (
       <div className="absolute inset-0 flex items-center justify-center">
-        <LoginRequiredCard returnUrl={router.asPath} />
+        <LoginRequiredCard />
       </div>
     );
   }
@@ -154,7 +150,10 @@ function BotIndexableContent({ children }: { children: React.ReactNode }) {
   );
 }
 
-function MatureContentRedirect({ redUrl }: { redUrl: string }) {
+function MatureContentRedirect() {
+  const router = useRouter();
+  const redDomain = useServerDomains().red;
+  const redUrl = syncAccount(`//${redDomain}${router.asPath}`);
   const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const el = spotlightRef.current;
@@ -375,7 +374,9 @@ function FeatureRow({
   );
 }
 
-function LoginRequiredCard({ returnUrl }: { returnUrl: string }) {
+function LoginRequiredCard() {
+  const router = useRouter();
+  const returnUrl = router.asPath;
   const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const el = spotlightRef.current;
