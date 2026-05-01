@@ -101,7 +101,6 @@ export const getServerSideProps = createServerSideProps({
     if (ssg) {
       // Fetch article to check slug and prefetch for client hydration
       const article = await ssg.article.getById.fetch({ id: result.data.id }).catch(() => null);
-      await ssg.hiddenPreferences.getHidden.prefetch();
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (article) {
@@ -116,6 +115,8 @@ export const getServerSideProps = createServerSideProps({
           };
         }
       }
+
+      await ssg.hiddenPreferences.getHidden.prefetch();
     }
 
     return { props: removeEmpty(result.data) };

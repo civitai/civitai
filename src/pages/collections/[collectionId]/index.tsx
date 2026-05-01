@@ -21,17 +21,21 @@ export const getServerSideProps = createServerSideProps({
       };
     }
 
-    if (ssg) {
-      await ssg.collection.getById.prefetch({ id: collectionId });
-      if (session) {
-        await ssg.collection.getAllUser.prefetch({
-          permission: CollectionContributorPermission.VIEW,
-        });
-        await ssg.hiddenPreferences.getHidden.prefetch();
-      }
-    }
-
     if (!features?.collections) return { notFound: true };
+
+    if (ssg) {
+      await Promise.all([
+        ssg.collection.getById.prefetch({ id: collectionId }),
+        ...(session
+          ? [
+              ssg.collection.getAllUser.prefetch({
+                permission: CollectionContributorPermission.VIEW,
+              }),
+              ssg.hiddenPreferences.getHidden.prefetch(),
+            ]
+          : []),
+      ]);
+    }
 
     return {
       props: {

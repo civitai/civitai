@@ -114,7 +114,6 @@ export const getServerSideProps = createServerSideProps({
     if (ssg) {
       // Fetch bounty to check slug and prefetch for client hydration
       const bounty = await ssg.bounty.getById.fetch({ id: result.data.id }).catch(() => null);
-      await ssg.hiddenPreferences.getHidden.prefetch();
 
       // Redirect to canonical slug URL if slug is missing or incorrect
       if (bounty) {
@@ -129,6 +128,8 @@ export const getServerSideProps = createServerSideProps({
           };
         }
       }
+
+      await ssg.hiddenPreferences.getHidden.prefetch();
     }
 
     return { props: removeEmpty(result.data) };

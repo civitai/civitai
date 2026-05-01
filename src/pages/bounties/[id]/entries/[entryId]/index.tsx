@@ -95,9 +95,11 @@ export const getServerSideProps = createServerSideProps({
     if (!result.success) return { notFound: true };
 
     if (ssg) {
-      await ssg.bounty.getById.prefetch({ id: result.data.id });
-      await ssg.bountyEntry.getById.prefetch({ id: result.data.entryId });
-      await ssg.hiddenPreferences.getHidden.prefetch();
+      await Promise.all([
+        ssg.bounty.getById.prefetch({ id: result.data.id }),
+        ssg.bountyEntry.getById.prefetch({ id: result.data.entryId }),
+        ssg.hiddenPreferences.getHidden.prefetch(),
+      ]);
     }
 
     return { props: removeEmpty(result.data) };
