@@ -44,10 +44,10 @@ export function SensitiveShield({
 }) {
   const currentUser = useCurrentUser();
   const { canViewNsfw } = useFeatureFlags();
-  const { status } = useSession();
+  const { data, status } = useSession();
   const verifiedBot = useAppContext().verifiedBot;
 
-  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
+  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) return null;
 
   // content hasn't been rated yet — only block on the SFW site
   // owners/mods bypass so they can preview their own drafts before publishing

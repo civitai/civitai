@@ -317,8 +317,12 @@ export function createBuzzEvent<T>({
       // Handle award
       if (event.awardAmount > 0) {
         event.status = 'awarded';
-        // Add the award to the prev awards for subsequent processing
-        for (const keys of prevAwardKeys) prevAwards[keys] += event.awardAmount;
+        // Add the award to the prev awards for subsequent processing.
+        // Use (prevAwards[keys] ?? 0) because keys with no prior 30-day awards
+        // are absent from the ClickHouse-seeded map; bare `+=` produced NaN
+        // which then poisoned every subsequent event's cap math.
+        for (const keys of prevAwardKeys)
+          prevAwards[keys] = (prevAwards[keys] ?? 0) + event.awardAmount;
       } else {
         event.status = 'capped';
       }

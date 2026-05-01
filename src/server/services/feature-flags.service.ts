@@ -181,6 +181,10 @@ const featureFlags = createFeatureFlags({
   liveMetrics: { availability: ['mod'], fliptKey: 'live-metrics' },
   strikes: ['dev', 'granted'],
   prepaidBuzzTransactions: { availability: ['mod'], fliptKey: 'prepaid-buzz-transactions' },
+  userPaymentConfiguration: {
+    availability: ['granted'],
+    fliptKey: 'user-payment-configuration',
+  },
   articleImageScanning: ['public'],
   generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
 });

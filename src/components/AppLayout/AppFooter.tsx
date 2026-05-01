@@ -43,7 +43,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   },
   {
     key: 'api',
-    href: '/github/wiki/REST-API-Reference',
+    href: 'https://developer.civitai.com/',
     target: '_blank',
     rel: 'nofollow noreferrer',
     children: 'API',

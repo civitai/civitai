@@ -115,7 +115,7 @@ export function URNExplanation({ size }: { size?: number }) {
             <Text
               component="a"
               td="underline"
-              href="/github/wiki/AIR-‐-Uniform-Resource-Names-for-AI"
+              href="https://developer.civitai.com/site/guide/air"
               target="_blank"
             >
               Check out the specification

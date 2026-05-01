@@ -92,6 +92,7 @@ import {
 } from '~/server/services/email-verification.service';
 import {
   guardedProcedure,
+  isFlagProtected,
   moderatorProcedure,
   protectedProcedure,
   publicProcedure,
@@ -251,7 +252,8 @@ export const userRouter = router({
   updateContentSettings: protectedProcedure
     .input(updateContentSettingsSchema)
     .mutation(({ input, ctx }) => updateContentSettings({ userId: ctx.user.id, ...input })),
-  getTipaltiStatus: moderatorProcedure
+  getTipaltiStatus: protectedProcedure
+    .use(isFlagProtected('userPaymentConfiguration'))
     .input(getByIdSchema)
     .query(async ({ input }) => {
       const config = await dbRead.userPaymentConfiguration.findUnique({
@@ -260,18 +262,22 @@ export const userRouter = router({
       });
       return { enabled: !!config?.tipaltiAccountId };
     }),
-  enableTipalti: moderatorProcedure.input(getByIdSchema).mutation(async ({ input }) => {
-    await createTipaltiPayee({ userId: input.id });
-    await createNotification({
-      userId: input.id,
-      type: 'creators-program-enabled',
-      category: NotificationCategory.System,
-      key: `creators-program-enabled:${input.id}`,
-      details: {},
-    }).catch();
-    await addSystemPermission('creatorsProgram', input.id);
-  }),
-  resetSubscriptionCaches: moderatorProcedure
+  enableTipalti: protectedProcedure
+    .use(isFlagProtected('userPaymentConfiguration'))
+    .input(getByIdSchema)
+    .mutation(async ({ input }) => {
+      await createTipaltiPayee({ userId: input.id });
+      await createNotification({
+        userId: input.id,
+        type: 'creators-program-enabled',
+        category: NotificationCategory.System,
+        key: `creators-program-enabled:${input.id}`,
+        details: {},
+      }).catch();
+      await addSystemPermission('creatorsProgram', input.id);
+    }),
+  resetSubscriptionCaches: protectedProcedure
+    .use(isFlagProtected('userPaymentConfiguration'))
     .input(getByIdSchema)
     .mutation(async ({ input }) => {
       await invalidateSubscriptionCaches(input.id);
