@@ -31,10 +31,9 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { ToggleLockComments } from '~/components/CommentsV2/ToggleLockComments';
 import { Page } from '~/components/AppLayout/Page';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { Meta } from '~/components/Meta/Meta';
+import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { CreatorCardSimple } from '~/components/CreatorCard/CreatorCardSimple';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -298,223 +297,220 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   const isScheduled = challenge.status === ChallengeStatus.Scheduled;
 
   return (
-    <>
-      <Meta
-        title={`${challenge.title} | Civitai Challenges`}
-        description={
-          challenge.description || `Participate in the ${challenge.title} challenge on Civitai`
-        }
-        canonical={`/challenges/${challenge.id}/${slugit(challenge.title)}`}
-        ogEndpoint={`/api/og?type=challenge&id=${challenge.id}`}
-      />
-      <SensitiveShield
-        contentNsfwLevel={challenge.allowedNsfwLevel}
-        bypassRating={currentUser?.isModerator ?? false}
-      >
-        <Container size="xl" mb={{ base: 'md', sm: 32 }}>
-          <Stack gap="xs" mb="xl">
-            {/* Row 1: Title + context menu */}
-            <Group justify="space-between" align="flex-start" wrap="nowrap">
-              <Title fw="bold" lineClamp={2} order={1} fz={{ base: 'h2', sm: 'h1' }}>
-                {challenge.title}
-              </Title>
-              <Group gap={4} wrap="nowrap" className="shrink-0">
-                <ShareButton url={router.asPath} title={challenge.title}>
-                  <ActionIcon variant="light" size="lg" color="gray">
-                    <IconShare3 size={20} />
-                  </ActionIcon>
-                </ShareButton>
-                {currentUser?.isModerator && (
-                  <Menu position="bottom-end" withArrow>
-                    <Menu.Target>
-                      <ActionIcon variant="light" size="lg">
-                        <IconDotsVertical size={20} />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Label>Actions</Menu.Label>
-                      <Menu.Item
-                        leftSection={<IconPencil size={14} stroke={1.5} />}
-                        component={Link}
-                        href={`/moderator/challenges/${challenge.id}/edit`}
-                      >
-                        Edit Challenge
-                      </Menu.Item>
-                      <ToggleLockComments entityId={challenge.id} entityType="challenge">
-                        {({ toggle, locked, isLoading }) => (
-                          <Menu.Item
-                            leftSection={
-                              isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
-                            }
-                            onClick={toggle}
-                            disabled={isLoading}
-                            closeMenuOnClick={false}
-                          >
-                            {locked ? 'Unlock' : 'Lock'} Comments
-                          </Menu.Item>
-                        )}
-                      </ToggleLockComments>
-
-                      {isActive && (
-                        <>
-                          <Menu.Divider />
-                          <Menu.Label>Quick Actions</Menu.Label>
-                          <Menu.Item
-                            leftSection={<IconTrophy size={14} />}
-                            onClick={handleEndAndPickWinners}
-                          >
-                            End & Pick Winners
-                          </Menu.Item>
-                          <Menu.Item
-                            leftSection={<IconX size={14} />}
-                            color="red"
-                            onClick={handleVoidChallenge}
-                          >
-                            Void Challenge
-                          </Menu.Item>
-                        </>
+    <Gated
+      contentNsfwLevel={challenge.allowedNsfwLevel}
+      bypassRating={currentUser?.isModerator ?? false}
+      meta={{
+        title: `${challenge.title} | Civitai Challenges`,
+        description:
+          challenge.description || `Participate in the ${challenge.title} challenge on Civitai`,
+        canonical: `/challenges/${challenge.id}/${slugit(challenge.title)}`,
+        ogEndpoint: `/api/og?type=challenge&id=${challenge.id}`,
+      }}
+    >
+      <Container size="xl" mb={{ base: 'md', sm: 32 }}>
+        <Stack gap="xs" mb="xl">
+          {/* Row 1: Title + context menu */}
+          <Group justify="space-between" align="flex-start" wrap="nowrap">
+            <Title fw="bold" lineClamp={2} order={1} fz={{ base: 'h2', sm: 'h1' }}>
+              {challenge.title}
+            </Title>
+            <Group gap={4} wrap="nowrap" className="shrink-0">
+              <ShareButton url={router.asPath} title={challenge.title}>
+                <ActionIcon variant="light" size="lg" color="gray">
+                  <IconShare3 size={20} />
+                </ActionIcon>
+              </ShareButton>
+              {currentUser?.isModerator && (
+                <Menu position="bottom-end" withArrow>
+                  <Menu.Target>
+                    <ActionIcon variant="light" size="lg">
+                      <IconDotsVertical size={20} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Label>Actions</Menu.Label>
+                    <Menu.Item
+                      leftSection={<IconPencil size={14} stroke={1.5} />}
+                      component={Link}
+                      href={`/moderator/challenges/${challenge.id}/edit`}
+                    >
+                      Edit Challenge
+                    </Menu.Item>
+                    <ToggleLockComments entityId={challenge.id} entityType="challenge">
+                      {({ toggle, locked, isLoading }) => (
+                        <Menu.Item
+                          leftSection={
+                            isLoading ? <Loader size={14} /> : <IconLock size={14} stroke={1.5} />
+                          }
+                          onClick={toggle}
+                          disabled={isLoading}
+                          closeMenuOnClick={false}
+                        >
+                          {locked ? 'Unlock' : 'Lock'} Comments
+                        </Menu.Item>
                       )}
+                    </ToggleLockComments>
 
-                      {isScheduled && (
-                        <>
-                          <Menu.Divider />
-                          <Menu.Label>Quick Actions</Menu.Label>
-                          <Menu.Item
-                            leftSection={<IconX size={14} />}
-                            color="red"
-                            onClick={handleVoidChallenge}
-                          >
-                            Cancel Challenge
-                          </Menu.Item>
-                        </>
-                      )}
+                    {isActive && (
+                      <>
+                        <Menu.Divider />
+                        <Menu.Label>Quick Actions</Menu.Label>
+                        <Menu.Item
+                          leftSection={<IconTrophy size={14} />}
+                          onClick={handleEndAndPickWinners}
+                        >
+                          End & Pick Winners
+                        </Menu.Item>
+                        <Menu.Item
+                          leftSection={<IconX size={14} />}
+                          color="red"
+                          onClick={handleVoidChallenge}
+                        >
+                          Void Challenge
+                        </Menu.Item>
+                      </>
+                    )}
 
-                      <Menu.Divider />
-                      <Menu.Item
-                        leftSection={<IconTrash size={14} />}
-                        color="red"
-                        onClick={handleDelete}
-                      >
-                        Delete
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                )}
-              </Group>
+                    {isScheduled && (
+                      <>
+                        <Menu.Divider />
+                        <Menu.Label>Quick Actions</Menu.Label>
+                        <Menu.Item
+                          leftSection={<IconX size={14} />}
+                          color="red"
+                          onClick={handleVoidChallenge}
+                        >
+                          Cancel Challenge
+                        </Menu.Item>
+                      </>
+                    )}
+
+                    <Menu.Divider />
+                    <Menu.Item
+                      leftSection={<IconTrash size={14} />}
+                      color="red"
+                      onClick={handleDelete}
+                    >
+                      Delete
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
+              )}
             </Group>
+          </Group>
 
-            {/* Row 2: Theme + Status + Stats (inline with dividers) */}
-            <Group gap={8} wrap="wrap">
-              {/* Status badge */}
-              {isCompleted ? (
+          {/* Row 2: Theme + Status + Stats (inline with dividers) */}
+          <Group gap={8} wrap="wrap">
+            {/* Status badge */}
+            {isCompleted ? (
+              <IconBadge
+                size="lg"
+                radius="sm"
+                color="yellow.7"
+                icon={<IconTrophy size={16} fill="currentColor" />}
+              >
+                Completed
+              </IconBadge>
+            ) : isActive ? (
+              <IconBadge size="lg" radius="sm" color="green" icon={<IconSparkles size={16} />}>
+                Live
+              </IconBadge>
+            ) : isScheduled ? (
+              <Badge size="lg" radius="sm" color="blue">
+                Upcoming
+              </Badge>
+            ) : null}
+
+            {/* Countdown (active only) */}
+            {isActive && (
+              <IconBadge size="lg" radius="sm" icon={<IconClockHour4 size={18} />} color="gray">
+                <DaysFromNow date={challenge.endsAt} withoutSuffix />
+              </IconBadge>
+            )}
+
+            {/* Entry count */}
+            <IconBadge size="lg" radius="sm" icon={<IconPhoto size={18} />} color="gray">
+              {abbreviateNumber(challenge.entryCount)}{' '}
+              {challenge.entryCount === 1 ? 'entry' : 'entries'}
+            </IconBadge>
+
+            {challenge.theme && (
+              <>
+                <Divider orientation="vertical" />
                 <IconBadge
                   size="lg"
                   radius="sm"
-                  color="yellow.7"
-                  icon={<IconTrophy size={16} fill="currentColor" />}
+                  icon={<IconBulb size={18} />}
+                  color="violet"
+                  variant="light"
                 >
-                  Completed
+                  {challenge.theme}
                 </IconBadge>
-              ) : isActive ? (
-                <IconBadge size="lg" radius="sm" color="green" icon={<IconSparkles size={16} />}>
-                  Live
-                </IconBadge>
-              ) : isScheduled ? (
-                <Badge size="lg" radius="sm" color="blue">
-                  Upcoming
-                </Badge>
-              ) : null}
+              </>
+            )}
+          </Group>
+        </Stack>
 
-              {/* Countdown (active only) */}
-              {isActive && (
-                <IconBadge size="lg" radius="sm" icon={<IconClockHour4 size={18} />} color="gray">
-                  <DaysFromNow date={challenge.endsAt} withoutSuffix />
-                </IconBadge>
-              )}
-
-              {/* Entry count */}
-              <IconBadge size="lg" radius="sm" icon={<IconPhoto size={18} />} color="gray">
-                {abbreviateNumber(challenge.entryCount)}{' '}
-                {challenge.entryCount === 1 ? 'entry' : 'entries'}
-              </IconBadge>
-
-              {challenge.theme && (
-                <>
-                  <Divider orientation="vertical" />
-                  <IconBadge
-                    size="lg"
-                    radius="sm"
-                    icon={<IconBulb size={18} />}
-                    color="violet"
-                    variant="light"
-                  >
-                    {challenge.theme}
-                  </IconBadge>
-                </>
-              )}
-            </Group>
-          </Stack>
-
-          <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
-            <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
-              <Stack gap="md">
-                {/* Cover Image */}
-                {challenge.coverImage && (
-                  <div className="relative mx-auto max-w-2xl overflow-hidden rounded-lg">
-                    <ImageGuard2 image={challenge.coverImage}>
-                      {(safe) => (
-                        <>
-                          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                          {safe ? (
-                            <EdgeMedia2
-                              src={challenge.coverImage!.url}
-                              type={challenge.coverImage!.type}
-                              className="aspect-[4/3] w-full object-cover"
-                            />
-                          ) : (
-                            <div className="relative aspect-[4/3] w-full overflow-hidden">
-                              <MediaHash {...challenge.coverImage} />
-                            </div>
-                          )}
-                        </>
-                      )}
-                    </ImageGuard2>
-                  </div>
-                )}
-
-                {/* About */}
-                <article>
-                  <Stack gap={4}>
-                    {challenge.description ? (
-                      <RenderHtml html={challenge.description} />
-                    ) : (
-                      <Text c="dimmed">No description provided.</Text>
+        <ContainerGrid2 gutter={{ base: 16, md: 32, lg: 64 }}>
+          <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
+            <Stack gap="md">
+              {/* Cover Image */}
+              {challenge.coverImage && (
+                <div className="relative mx-auto max-w-2xl overflow-hidden rounded-lg">
+                  <ImageGuard2 image={challenge.coverImage}>
+                    {(safe) => (
+                      <>
+                        <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                        {safe ? (
+                          <EdgeMedia2
+                            src={challenge.coverImage!.url}
+                            type={challenge.coverImage!.type}
+                            className="aspect-[4/3] w-full object-cover"
+                          />
+                        ) : (
+                          <div className="relative aspect-[4/3] w-full overflow-hidden">
+                            <MediaHash {...challenge.coverImage} />
+                          </div>
+                        )}
+                      </>
                     )}
-                  </Stack>
-                </article>
+                  </ImageGuard2>
+                </div>
+              )}
 
-                {/* Mobile CTA - shown after description on mobile only */}
-                <MobileCTAInline challenge={challenge} />
-              </Stack>
-            </ContainerGrid2.Col>
-            <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
-              <ChallengeSidebar challenge={challenge} />
-            </ContainerGrid2.Col>
-          </ContainerGrid2>
-        </Container>
+              {/* About */}
+              <article>
+                <Stack gap={4}>
+                  {challenge.description ? (
+                    <RenderHtml html={challenge.description} />
+                  ) : (
+                    <Text c="dimmed">No description provided.</Text>
+                  )}
+                </Stack>
+              </article>
 
-        {/* Winners Section (for completed challenges) */}
-        {isCompleted && challenge.winners.length > 0 && <ChallengeWinners challenge={challenge} />}
+              {/* Mobile CTA - shown after description on mobile only */}
+              <MobileCTAInline challenge={challenge} />
+            </Stack>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+            <ChallengeSidebar challenge={challenge} />
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
+      </Container>
 
-        {/* Discussion Section */}
-        <Container size="xl" id="comments" py={32}>
-          <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
-        </Container>
+      {/* Winners Section (for completed challenges) */}
+      {isCompleted && challenge.winners.length > 0 && <ChallengeWinners challenge={challenge} />}
 
-        {/* Entries Section */}
-        <ChallengeEntries challenge={challenge} />
-      </SensitiveShield>
-    </>
+      {/* Discussion Section */}
+      <Container size="xl" id="comments" py={32}>
+        <ChallengeDiscussion challengeId={challenge.id} userId={challenge.createdBy?.id} />
+      </Container>
+
+      {/* Entries Section */}
+      <ChallengeEntries challenge={challenge} />
+    </Gated>
   );
 }
 

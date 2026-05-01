@@ -72,7 +72,6 @@ import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropd
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -95,7 +94,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { Meta } from '../Meta/Meta';
+import { Gated } from '~/components/Gated/Gated';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 import classes from './Collection.module.scss';
@@ -553,30 +552,25 @@ export function Collection({
   return (
     <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
       <BrowsingSettingsAddonsProvider>
-        {collection && (
-          <Meta
-            title={`${collection.name}${
-              collection.user.username ? ` - collection posted by ${collection.user.username}` : ''
-            } | Civitai`}
-            description={
-              collection.description
-                ? truncate(removeTags(collection.description), { length: 150 })
-                : ''
-            }
-            images={collection.image}
-            canonical={`/collections/${collection.id}`}
-            deIndex={
-              collection.read !== 'Public' || collection.availability === Availability.Unsearchable
-            }
-          />
-        )}
-        <SensitiveShield
+        <Gated
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
           bypassRating={
             permissions?.manage ||
             currentUser?.id === collection.user.id ||
             (currentUser?.isModerator ?? false)
           }
+          meta={{
+            title: `${collection.name}${
+              collection.user.username ? ` - collection posted by ${collection.user.username}` : ''
+            } | Civitai`,
+            description: collection.description
+              ? truncate(removeTags(collection.description), { length: 150 })
+              : '',
+            images: collection.image,
+            canonical: `/collections/${collection.id}`,
+            deIndex:
+              collection.read !== 'Public' || collection.availability === Availability.Unsearchable,
+          }}
         >
           <MasonryProvider
             columnWidth={constants.cardSizes.model}
@@ -890,7 +884,7 @@ export function Collection({
               </Stack>
             </MasonryContainer>
           </MasonryProvider>
-        </SensitiveShield>
+        </Gated>
       </BrowsingSettingsAddonsProvider>
     </BrowsingLevelProvider>
   );

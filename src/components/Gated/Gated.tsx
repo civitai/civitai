@@ -23,129 +23,194 @@ import {
   hasSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { useSession } from 'next-auth/react';
+import type { MediaType } from '~/shared/utils/prisma/enums';
+import { Meta, type MetaProps } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
 import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { syncAccount } from '~/utils/sync-account';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
-export function SensitiveShield({
-  children,
-  nsfw,
+const PAYWALL_SELECTOR_CLASS = 'paywalled-content';
+
+const PAYWALL_HAS_PART = {
+  '@type': 'WebPageElement' as const,
+  isAccessibleForFree: false,
+  cssSelector: `.${PAYWALL_SELECTOR_CLASS}`,
+};
+
+/**
+ * Which view `Gated` will render given the current request.
+ *
+ *   - `loading`  — session is still resolving for non-safe content; render nothing yet
+ *   - `page`     — full content visible (children render). May be a verified-bot
+ *                  bypass of an otherwise-gated page; check `isPaywalled` to know
+ *   - `unrated`  — content hasn't been moderation-rated yet (SFW site only)
+ *   - `login`    — login required (PG13 on SFW or non-safe on .red, logged-out)
+ *   - `redirect` — content moved to civitai.red, redirect prompt shown
+ */
+export type GatedState = 'loading' | 'page' | 'unrated' | 'login' | 'redirect';
+
+export interface UseGatedResult {
+  state: GatedState;
+  /**
+   * True when `state === 'page'` only because a verified search-engine
+   * crawler bypassed what would have otherwise been a login gate. Triggers
+   * paywall structured-data augmentation in `Gated` and the `.paywalled-content`
+   * wrapper around children.
+   */
+  isPaywalled: boolean;
+}
+
+/**
+ * Computes which view `Gated` would render for the current request. Pure
+ * decision — does not call routing or DOM APIs, only reads state from
+ * existing providers (session, feature flags, AppContext). Safe to call
+ * directly when you need the gate decision without rendering the gate UI.
+ */
+export function useGated({
   contentNsfwLevel,
-  isLoading,
+  nsfw,
   bypassRating,
 }: {
-  children: React.ReactNode;
-  nsfw?: boolean;
   contentNsfwLevel: number;
-  isLoading?: boolean;
+  nsfw?: boolean;
   bypassRating?: boolean;
-}) {
+}): UseGatedResult {
   const currentUser = useCurrentUser();
   const { canViewNsfw } = useFeatureFlags();
   const { data, status } = useSession();
   const verifiedBot = useAppContext().verifiedBot;
 
-  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) return null;
-
-  // content hasn't been rated yet — only block on the SFW site
-  // owners/mods bypass so they can preview their own drafts before publishing
-  if (!canViewNsfw && contentNsfwLevel === 0 && !bypassRating) {
-    if (isLoading) return <PageLoader />;
-
-    return (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <UnratedContent />
-      </div>
-    );
+  // Defer the decision while session is loading and we have no cached data.
+  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) {
+    return { state: 'loading', isPaywalled: false };
   }
 
-  // this content is not available on this site — redirect to red
-  // owners/mods previewing still-unrated content (level 0) bypass the redirect too
-  // logged-out sees PG only; logged-in also sees PG13
+  // Unrated content — only block on the SFW site. Owners/mods bypass so
+  // they can preview their own drafts before publishing.
+  if (!canViewNsfw && contentNsfwLevel === 0 && !bypassRating) {
+    return { state: 'unrated', isPaywalled: false };
+  }
+
   const isUnratedOwnerPreview = bypassRating && contentNsfwLevel === 0;
   const isPG13Only =
     hasSafeBrowsingLevel(contentNsfwLevel) && !hasPublicBrowsingLevel(contentNsfwLevel);
 
-  // PG13 on the SFW site requires login — prompt instead of redirecting to red.
-  // Verified bots aren't a special case here: civitai.com is strictly SFW
-  // even for crawlers, so a bot hitting a PG13 page sees the same login
-  // gate (with noindex) any anonymous user would.
+  // PG13 on the SFW site requires login. Verified bots aren't a special
+  // case here — civitai.com is strictly SFW even for crawlers, so a bot
+  // hitting a PG13 page sees the same login gate any anonymous user would.
   if (!canViewNsfw && !currentUser && !nsfw && isPG13Only && !isUnratedOwnerPreview) {
-    if (isLoading) return <PageLoader />;
-
-    return (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <LoginRequiredCard />
-      </div>
-    );
+    return { state: 'login', isPaywalled: false };
   }
 
   const meetsAllowedLevel = currentUser
     ? hasSafeBrowsingLevel(contentNsfwLevel)
     : hasPublicBrowsingLevel(contentNsfwLevel);
+
+  // SFW site, NSFW content — redirect to civitai.red.
   if (!canViewNsfw && (nsfw || !meetsAllowedLevel) && !isUnratedOwnerPreview) {
-    if (isLoading) return <PageLoader />;
-
-    return (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <MatureContentRedirect />
-      </div>
-    );
+    return { state: 'redirect', isPaywalled: false };
   }
-  // Logged-out on civitai.red hitting non-safe content. Same bot bypass as
-  // above: crawlers get full content with paywall structured data; humans
-  // get the login gate.
+
+  // Logged-out on civitai.red hitting non-safe content. Verified bots
+  // bypass: they see the page with paywall structured data so the URL is
+  // indexable. Humans get the login gate.
   if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
-    if (isLoading) return <PageLoader />;
-    if (verifiedBot) return <BotIndexableContent>{children}</BotIndexableContent>;
-
-    return (
-      <div className="absolute inset-0 flex items-center justify-center">
-        <LoginRequiredCard />
-      </div>
-    );
+    if (verifiedBot) return { state: 'page', isPaywalled: true };
+    return { state: 'login', isPaywalled: false };
   }
 
-  return <>{children}</>;
+  return { state: 'page', isPaywalled: false };
 }
 
-const PAYWALL_SELECTOR_CLASS = 'paywalled-content';
-const PAYWALL_SCHEMA = {
-  '@context': 'https://schema.org',
-  '@type': 'WebPage',
-  isAccessibleForFree: false,
-  hasPart: {
-    '@type': 'WebPageElement',
-    isAccessibleForFree: false,
-    cssSelector: `.${PAYWALL_SELECTOR_CLASS}`,
-  },
+type GatedProps<TImage extends { nsfwLevel: number; url: string; type?: MediaType }> = {
+  contentNsfwLevel: number;
+  nsfw?: boolean;
+  bypassRating?: boolean;
+  /**
+   * Meta props for `<head>` tags. Required so the schema (when augmented
+   * with paywall properties for verified bots) and the `.paywalled-content`
+   * wrapper are always emitted from the same component — the cssSelector
+   * in the schema can never point at non-existent DOM.
+   */
+  meta: MetaProps<TImage>;
+  children: React.ReactNode;
 };
 
 /**
- * Wraps a gated subtree for verified search-engine crawlers: emits
- * schema.org paywall structured data and tags the wrapper with the
- * cssSelector that the schema points at. This is Google's sanctioned
- * pattern for serving full content to bots while gating it for humans —
- * the structured data is the contract that makes it not-cloaking.
+ * Combined NSFW-gating + Meta wrapper for content-detail pages. Replaces
+ * the prior pattern of using `<Meta>` and `<SensitiveShield>` as siblings.
  *
- * `display: contents` on the wrapper keeps it transparent for layout, so
- * the gated content renders identically to the non-gated path.
+ * The pairing is mechanically enforced: when the gate is in the bot-bypass
+ * state, both the schema augmentation (via `<Meta>`) and the
+ * `.paywalled-content` wrapper around children come from the same render.
+ * They cannot drift, and the cssSelector always points at real DOM.
+ *
+ * Pages that do not gate content (no NSFW levels involved) should keep
+ * using `<Meta>` directly — `Gated` is for the seven entity-detail
+ * surfaces where SensitiveShield was previously paired with Meta.
  */
-function BotIndexableContent({ children }: { children: React.ReactNode }) {
+export function Gated<TImage extends { nsfwLevel: number; url: string; type?: MediaType }>({
+  contentNsfwLevel,
+  nsfw,
+  bypassRating,
+  meta,
+  children,
+}: GatedProps<TImage>) {
+  const { state, isPaywalled } = useGated({ contentNsfwLevel, nsfw, bypassRating });
+
+  // Co-emit paywall structured data with the `.paywalled-content` wrapper
+  // when we're rendering for a verified bot:
+  //   - If the page provided an entity schema → augment it with paywall props
+  //     (canonical pattern: `Product`, `Article`, etc. with isAccessibleForFree)
+  //   - If no entity schema → emit a standalone WebPage paywall schema so the
+  //     cssSelector → DOM contract still has a structured-data declaration
+  const finalMeta: MetaProps<TImage> = isPaywalled
+    ? {
+        ...meta,
+        schema: meta.schema
+          ? {
+              ...meta.schema,
+              isAccessibleForFree: false,
+              hasPart: PAYWALL_HAS_PART,
+            }
+          : {
+              '@context': 'https://schema.org',
+              '@type': 'WebPage',
+              isAccessibleForFree: false,
+              hasPart: PAYWALL_HAS_PART,
+            },
+      }
+    : meta;
+
   return (
     <>
-      <Head>
-        <script
-          type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: JSON.stringify(PAYWALL_SCHEMA) }}
-          key="paywall-schema"
-        />
-      </Head>
-      <div className={PAYWALL_SELECTOR_CLASS} style={{ display: 'contents' }}>
-        {children}
-      </div>
+      <Meta {...finalMeta} />
+      {state === 'loading' && <PageLoader />}
+      {state === 'page' &&
+        (isPaywalled ? (
+          <div className={PAYWALL_SELECTOR_CLASS} style={{ display: 'contents' }}>
+            {children}
+          </div>
+        ) : (
+          children
+        ))}
+      {state === 'unrated' && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <UnratedContent />
+        </div>
+      )}
+      {state === 'login' && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <LoginRequiredCard />
+        </div>
+      )}
+      {state === 'redirect' && (
+        <div className="absolute inset-0 flex items-center justify-center">
+          <MatureContentRedirect />
+        </div>
+      )}
     </>
   );
 }

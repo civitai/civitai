@@ -44,11 +44,10 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { Meta } from '~/components/Meta/Meta';
+import { Gated } from '~/components/Gated/Gated';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
@@ -240,228 +239,226 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   );
 
   return (
-    <>
-      <Meta
-        title={`${article.title} | Civitai`}
-        description={truncate(removeTags(article.content), { length: 150 })}
-        images={article?.coverImage}
-        ogEndpoint={`/api/og?type=article&id=${article.id}`}
-        canonical={`/articles/${article.id}/${slugit(article.title)}`}
-        alternate={`/articles/${article.id}`}
-        deIndex={
+    <Gated
+      contentNsfwLevel={article.nsfwLevel}
+      bypassRating={isOwner}
+      meta={{
+        title: `${article.title} | Civitai`,
+        description: truncate(removeTags(article.content), { length: 150 }),
+        images: article?.coverImage,
+        ogEndpoint: `/api/og?type=article&id=${article.id}`,
+        canonical: `/articles/${article.id}/${slugit(article.title)}`,
+        alternate: `/articles/${article.id}`,
+        deIndex:
           !article?.publishedAt ||
           article?.availability === Availability.Unsearchable ||
-          (domain === 'green' && !hasSafeBrowsingLevel(article.nsfwLevel))
-        }
-      />
-      <SensitiveShield contentNsfwLevel={article.nsfwLevel} bypassRating={isOwner}>
-        <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
-        <Container size="xl" pos="relative">
-          <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />
-          <Stack gap={8} mb="xl">
-            <Group justify="space-between" wrap="nowrap">
-              <Title fw="bold" className={classes.title} order={1}>
-                {article.title}
-              </Title>
-              <Group align="center" className={classes.titleWrapper} wrap="nowrap">
-                {!mobile && actionButtons}
-                <ArticleContextMenu article={article} />
-              </Group>
+          (domain === 'green' && !hasSafeBrowsingLevel(article.nsfwLevel)),
+      }}
+    >
+      <TrackView entityId={article.id} entityType="Article" type="ArticleView" />
+      <Container size="xl" pos="relative">
+        <LoadingOverlay visible={isRefetching || upsertArticleMutation.isLoading} />
+        <Stack gap={8} mb="xl">
+          <Group justify="space-between" wrap="nowrap">
+            <Title fw="bold" className={classes.title} order={1}>
+              {article.title}
+            </Title>
+            <Group align="center" className={classes.titleWrapper} wrap="nowrap">
+              {!mobile && actionButtons}
+              <ArticleContextMenu article={article} />
             </Group>
-            <Group gap={8}>
-              <UserAvatar user={article.user} withUsername linkToProfile />
-              <Divider orientation="vertical" />
-              <Text c="dimmed" size="sm">
-                {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
-              </Text>
-              {article.publishedAt &&
-                article.updatedAt &&
-                dayjs(article.updatedAt) > dayjs(article.publishedAt).add(1, 'hour') && (
-                  <Tooltip label={formatDate(article.updatedAt, 'MMM D, YYYY hh:mm:ss A')}>
-                    <Text size="sm" c="dimmed" className="cursor-default">
-                      (Updated: {dayjs().to(dayjs(article.updatedAt))})
-                    </Text>
-                  </Tooltip>
-                )}
-              {category && (
-                <>
-                  <Divider orientation="vertical" />
-                  <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
-                    <Badge
-                      component="a"
-                      size="sm"
-                      variant="gradient"
-                      gradient={{ from: 'cyan', to: 'blue' }}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      {category.name}
-                    </Badge>
-                  </Link>
-                </>
-              )}
-              {!!tags.length && (
-                <>
-                  <Divider orientation="vertical" />
-                  <Collection
-                    items={tags}
-                    renderItem={(tag) => (
-                      <Link
-                        legacyBehavior
-                        key={tag.id}
-                        href={`/articles?view=feed&tags=${tag.id}`}
-                        passHref
-                      >
-                        <Badge
-                          component="a"
-                          color="gray"
-                          variant={colorScheme === 'dark' ? 'filled' : undefined}
-                          style={{ cursor: 'pointer' }}
-                        >
-                          {tag.name}
-                        </Badge>
-                      </Link>
-                    )}
-                    grouped
-                  />
-                </>
-              )}
-            </Group>
-            {article.status === ArticleStatus.Unpublished && isOwner && (
-              <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
-                <div>
-                  This article has been unpublished.{' '}
-                  <Anchor component="button" className="inline-flex" onClick={handlePublishArticle}>
-                    Click here
-                  </Anchor>{' '}
-                  to publish it again or make changes to it before publishing.
-                </div>
-              </AlertWithIcon>
-            )}
-            {article.status === ArticleStatus.UnpublishedViolation && (
-              <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
-                <div>
-                  <Text weight={600} size="lg" mb="xs">
-                    This article has been unpublished due to a Terms of Service violation
+          </Group>
+          <Group gap={8}>
+            <UserAvatar user={article.user} withUsername linkToProfile />
+            <Divider orientation="vertical" />
+            <Text c="dimmed" size="sm">
+              {article.publishedAt ? formatDate(article.publishedAt) : 'Draft'}
+            </Text>
+            {article.publishedAt &&
+              article.updatedAt &&
+              dayjs(article.updatedAt) > dayjs(article.publishedAt).add(1, 'hour') && (
+                <Tooltip label={formatDate(article.updatedAt, 'MMM D, YYYY hh:mm:ss A')}>
+                  <Text size="sm" c="dimmed" className="cursor-default">
+                    (Updated: {dayjs().to(dayjs(article.updatedAt))})
                   </Text>
-                  {article.metadata?.unpublishedReason &&
-                    article.metadata.unpublishedReason !== 'other' && (
-                      <Text>
-                        <strong>Reason:</strong>{' '}
-                        {
-                          unpublishReasons[article.metadata.unpublishedReason as UnpublishReason]
-                            ?.notificationMessage
-                        }
-                      </Text>
-                    )}
-                  {article.metadata?.customMessage && (
-                    <Text>
-                      <strong>Additional details:</strong> {article.metadata.customMessage}
-                    </Text>
-                  )}
-                  {!isModerator && (
-                    <Text mt="sm" size="sm">
-                      If you believe this was done in error, please contact support.
-                    </Text>
-                  )}
-                </div>
-              </AlertWithIcon>
-            )}
-            {isOwner &&
-              article.ingestion &&
-              article.ingestion !== ArticleIngestionStatus.Scanned && (
-                <ArticleScanStatus
-                  articleId={article.id}
-                  onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
-                />
+                </Tooltip>
               )}
-          </Stack>
-          <ContainerGrid2 gutter="xl">
-            <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
-              <Stack gap="xs">
-                {image && (
-                  <AspectRatio
-                    ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
+            {category && (
+              <>
+                <Divider orientation="vertical" />
+                <Link legacyBehavior href={`/articles?view=feed&tags=${category.id}`} passHref>
+                  <Badge
+                    component="a"
+                    size="sm"
+                    variant="gradient"
+                    gradient={{ from: 'cyan', to: 'blue' }}
+                    style={{ cursor: 'pointer' }}
                   >
-                    <RoutedDialogLink
-                      name="imageDetail"
-                      state={{ imageId: image.id, withoutPost: true }}
-                      className="block size-full cursor-pointer"
-                    >
-                      <Center className="size-full">
-                        <div className="relative size-full">
-                          <ImageGuard2 image={image} connectType="article" connectId={article.id}>
-                            {(safe) => (
-                              <>
-                                <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                                <ImageContextMenu
-                                  image={image}
-                                  noDelete={true}
-                                  className="absolute right-2 top-2 z-10"
-                                />
-                                {!safe ? (
-                                  <div className="relative h-full overflow-hidden rounded-lg object-cover">
-                                    <MediaHash {...image} />
-                                  </div>
-                                ) : (
-                                  <EdgeMedia
-                                    src={image.url}
-                                    className="h-full rounded-lg object-cover"
-                                    name={image.name}
-                                    alt={article.title}
-                                    type={image.type}
-                                    width={MAX_WIDTH}
-                                    anim={safe}
-                                  />
-                                )}
-                              </>
-                            )}
-                          </ImageGuard2>
-                        </div>
-                      </Center>
-                    </RoutedDialogLink>
-                  </AspectRatio>
-                )}
-
-                {article.contentJson && (
-                  <article>
-                    <RenderRichText content={article.contentJson} />
-                  </article>
-                )}
-                <Divider />
-                <Group justify="space-between">
-                  <Reactions
-                    entityType="article"
-                    reactions={article.reactions}
-                    entityId={article.id}
-                    metrics={{
-                      likeCount: article.stats?.likeCountAllTime,
-                      dislikeCount: article.stats?.dislikeCountAllTime,
-                      heartCount: article.stats?.heartCountAllTime,
-                      laughCount: article.stats?.laughCountAllTime,
-                      cryCount: article.stats?.cryCountAllTime,
-                    }}
-                    targetUserId={article.user.id}
-                  />
-                  {actionButtons}
-                </Group>
-              </Stack>
-            </ContainerGrid2.Col>
-            <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
-              <Sidebar
-                creator={article.user}
-                attachments={article.attachments}
-                articleId={article.id}
-              />
-            </ContainerGrid2.Col>
-          </ContainerGrid2>
-          <div ref={commentsRef}>
-            {commentsInView && (
-              <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+                    {category.name}
+                  </Badge>
+                </Link>
+              </>
             )}
-          </div>
-        </Container>
-      </SensitiveShield>
-    </>
+            {!!tags.length && (
+              <>
+                <Divider orientation="vertical" />
+                <Collection
+                  items={tags}
+                  renderItem={(tag) => (
+                    <Link
+                      legacyBehavior
+                      key={tag.id}
+                      href={`/articles?view=feed&tags=${tag.id}`}
+                      passHref
+                    >
+                      <Badge
+                        component="a"
+                        color="gray"
+                        variant={colorScheme === 'dark' ? 'filled' : undefined}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        {tag.name}
+                      </Badge>
+                    </Link>
+                  )}
+                  grouped
+                />
+              </>
+            )}
+          </Group>
+          {article.status === ArticleStatus.Unpublished && isOwner && (
+            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="yellow" iconColor="yellow">
+              <div>
+                This article has been unpublished.{' '}
+                <Anchor component="button" className="inline-flex" onClick={handlePublishArticle}>
+                  Click here
+                </Anchor>{' '}
+                to publish it again or make changes to it before publishing.
+              </div>
+            </AlertWithIcon>
+          )}
+          {article.status === ArticleStatus.UnpublishedViolation && (
+            <AlertWithIcon size="lg" icon={<IconAlertCircle />} color="red" iconColor="red">
+              <div>
+                <Text weight={600} size="lg" mb="xs">
+                  This article has been unpublished due to a Terms of Service violation
+                </Text>
+                {article.metadata?.unpublishedReason &&
+                  article.metadata.unpublishedReason !== 'other' && (
+                    <Text>
+                      <strong>Reason:</strong>{' '}
+                      {
+                        unpublishReasons[article.metadata.unpublishedReason as UnpublishReason]
+                          ?.notificationMessage
+                      }
+                    </Text>
+                  )}
+                {article.metadata?.customMessage && (
+                  <Text>
+                    <strong>Additional details:</strong> {article.metadata.customMessage}
+                  </Text>
+                )}
+                {!isModerator && (
+                  <Text mt="sm" size="sm">
+                    If you believe this was done in error, please contact support.
+                  </Text>
+                )}
+              </div>
+            </AlertWithIcon>
+          )}
+          {isOwner && article.ingestion && article.ingestion !== ArticleIngestionStatus.Scanned && (
+            <ArticleScanStatus
+              articleId={article.id}
+              onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
+            />
+          )}
+        </Stack>
+        <ContainerGrid2 gutter="xl">
+          <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
+            <Stack gap="xs">
+              {image && (
+                <AspectRatio
+                  ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
+                >
+                  <RoutedDialogLink
+                    name="imageDetail"
+                    state={{ imageId: image.id, withoutPost: true }}
+                    className="block size-full cursor-pointer"
+                  >
+                    <Center className="size-full">
+                      <div className="relative size-full">
+                        <ImageGuard2 image={image} connectType="article" connectId={article.id}>
+                          {(safe) => (
+                            <>
+                              <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                              <ImageContextMenu
+                                image={image}
+                                noDelete={true}
+                                className="absolute right-2 top-2 z-10"
+                              />
+                              {!safe ? (
+                                <div className="relative h-full overflow-hidden rounded-lg object-cover">
+                                  <MediaHash {...image} />
+                                </div>
+                              ) : (
+                                <EdgeMedia
+                                  src={image.url}
+                                  className="h-full rounded-lg object-cover"
+                                  name={image.name}
+                                  alt={article.title}
+                                  type={image.type}
+                                  width={MAX_WIDTH}
+                                  anim={safe}
+                                />
+                              )}
+                            </>
+                          )}
+                        </ImageGuard2>
+                      </div>
+                    </Center>
+                  </RoutedDialogLink>
+                </AspectRatio>
+              )}
+
+              {article.contentJson && (
+                <article>
+                  <RenderRichText content={article.contentJson} />
+                </article>
+              )}
+              <Divider />
+              <Group justify="space-between">
+                <Reactions
+                  entityType="article"
+                  reactions={article.reactions}
+                  entityId={article.id}
+                  metrics={{
+                    likeCount: article.stats?.likeCountAllTime,
+                    dislikeCount: article.stats?.dislikeCountAllTime,
+                    heartCount: article.stats?.heartCountAllTime,
+                    laughCount: article.stats?.laughCountAllTime,
+                    cryCount: article.stats?.cryCountAllTime,
+                  }}
+                  targetUserId={article.user.id}
+                />
+                {actionButtons}
+              </Group>
+            </Stack>
+          </ContainerGrid2.Col>
+          <ContainerGrid2.Col span={{ base: 12, sm: 4 }}>
+            <Sidebar
+              creator={article.user}
+              attachments={article.attachments}
+              articleId={article.id}
+            />
+          </ContainerGrid2.Col>
+        </ContainerGrid2>
+        <div ref={commentsRef}>
+          {commentsInView && (
+            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+          )}
+        </div>
+      </Container>
+    </Gated>
   );
 }
 
