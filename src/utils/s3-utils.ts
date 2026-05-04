@@ -168,18 +168,76 @@ export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client |
 }
 
 /**
+ * Allowlist of civitai-owned buckets that the cleanup helpers are permitted
+ * to delete from. Defense-in-depth: `ModelFile.url` is user-supplied and the
+ * schema only validates `z.url()`, so a malicious user could otherwise point
+ * `url` at an arbitrary R2/B2 bucket reachable by our credentials and trick
+ * the cleanup path into deleting it on next update/delete.
+ *
+ * Composed from:
+ *   1. Configured-bucket env vars (filtered to defined values).
+ *   2. Hardcoded legacy R2 bucket names that hold existing ModelFile rows but
+ *      are no longer referenced by any env var (historical writes).
+ */
+const MODEL_FILE_BUCKET_ALLOWLIST: ReadonlySet<string> = new Set(
+  [
+    env.S3_UPLOAD_BUCKET,
+    env.S3_UPLOAD_B2_BUCKET,
+    env.S3_VAULT_BUCKET,
+    // Default fallback used by getUploadBucket when S3_UPLOAD_B2_BUCKET is unset.
+    'civitai-modelfiles',
+    // Legacy R2 buckets that still hold real ModelFile rows.
+    'civitai-prod',
+    'civitai-prod-settled',
+    'civitai-delivery-worker-prod',
+    'civitai-delivery-worker-prod-2023-05-01',
+    'civitai-delivery-worker-prod-2023-10-01',
+  ].filter((b): b is string => typeof b === 'string' && b.length > 0)
+);
+
+function isAllowedModelFileBucket(bucket: string | undefined): bucket is string {
+  return !!bucket && MODEL_FILE_BUCKET_ALLOWLIST.has(bucket);
+}
+
+/**
  * Delete the S3 object referenced by a ModelFile URL.
  * Resolves the correct backend (R2 vs B2) and bucket from the URL itself —
  * never assumes a single bucket env var, since ModelFile URLs span historical
  * R2 buckets (civitai-delivery-worker-prod, civitai-prod-settled, ...).
  * Best-effort: callers should catch errors and log rather than blocking.
+ *
+ * Gated by MODEL_FILE_BUCKET_ALLOWLIST to prevent a user-supplied url from
+ * pointing the delete at an arbitrary bucket (defense in depth — schema
+ * validation is z.url() only).
  */
 export async function deleteModelFileObject(url: string) {
   if (!url) return;
   const b2 = parseB2Url(url);
-  if (b2) return deleteObject(b2.bucket, b2.key, getB2S3Client());
+  if (b2) {
+    if (!isAllowedModelFileBucket(b2.bucket)) {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        backend: 'b2',
+        bucket: b2.bucket,
+        url,
+      });
+      return;
+    }
+    return deleteObject(b2.bucket, b2.key, getB2S3Client());
+  }
   const { key, bucket } = parseKey(url);
   if (!key || !bucket) return;
+  if (!isAllowedModelFileBucket(bucket)) {
+    logToAxiom({
+      type: 'warn',
+      name: 'model-file-delete-s3-object-blocked',
+      backend: 'r2',
+      bucket,
+      url,
+    });
+    return;
+  }
   await deleteObject(bucket, key);
 }
 
@@ -195,6 +253,18 @@ export async function deleteModelFileObjects(urls: string[]) {
     if (!url) continue;
     const b2 = parseB2Url(url);
     if (b2) {
+      // Drop URLs targeting non-civitai buckets before they enter a group, so
+      // a poisoned ModelFile.url can't piggyback on a legit DeleteObjects call.
+      if (!isAllowedModelFileBucket(b2.bucket)) {
+        logToAxiom({
+          type: 'warn',
+          name: 'model-file-delete-s3-object-blocked',
+          backend: 'b2',
+          bucket: b2.bucket,
+          url,
+        });
+        continue;
+      }
       const groupKey = `b2:${b2.bucket}`;
       let group = groups.get(groupKey);
       if (!group) {
@@ -206,6 +276,16 @@ export async function deleteModelFileObjects(urls: string[]) {
     }
     const { key, bucket } = parseKey(url);
     if (!key || !bucket) continue;
+    if (!isAllowedModelFileBucket(bucket)) {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        backend: 'r2',
+        bucket,
+        url,
+      });
+      continue;
+    }
     const groupKey = `r2:${bucket}`;
     let group = groups.get(groupKey);
     if (!group) {
