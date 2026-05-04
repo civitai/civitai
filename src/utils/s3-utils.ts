@@ -221,17 +221,34 @@ export async function deleteModelFileObjects(urls: string[]) {
   // Track bucket per task so partial-failure logs can attribute Errors back to a group.
   const tasks: { bucket: string; promise: ReturnType<typeof deleteManyObjects> }[] = [];
   for (const group of groups.values()) {
-    try {
-      const client = group.backend === 'b2' ? getB2S3Client() : getS3Client();
-      // S3/R2 DeleteObjects caps each call at 1000 keys — chunk to stay under the limit.
-      for (let i = 0; i < group.keys.length; i += 1000) {
-        tasks.push({
-          bucket: group.bucket,
-          promise: deleteManyObjects(group.bucket, group.keys.slice(i, i + 1000), client),
-        });
+    let client;
+    if (group.backend === 'b2') {
+      try {
+        client = getB2S3Client();
+      } catch {
+        // B2 env not configured in this pod — skip B2 group, keep R2 deletes running.
+        continue;
       }
-    } catch {
-      // B2 env not configured in this pod — skip B2 group, keep R2 deletes running.
+    } else {
+      try {
+        client = getS3Client();
+      } catch (error) {
+        // R2 must be configured in every pod — surface the failure rather than silently skip.
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-s3-objects-client-error',
+          bucket: group.bucket,
+          error,
+        });
+        continue;
+      }
+    }
+    // S3/R2 DeleteObjects caps each call at 1000 keys — chunk to stay under the limit.
+    for (let i = 0; i < group.keys.length; i += 1000) {
+      tasks.push({
+        bucket: group.bucket,
+        promise: deleteManyObjects(group.bucket, group.keys.slice(i, i + 1000), client),
+      });
     }
   }
 
@@ -239,7 +256,15 @@ export async function deleteModelFileObjects(urls: string[]) {
   const results = await Promise.allSettled(tasks.map((t) => t.promise));
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
-    if (result.status !== 'fulfilled') continue;
+    if (result.status === 'rejected') {
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-s3-objects-rejected',
+        bucket: tasks[i].bucket,
+        error: result.reason,
+      });
+      continue;
+    }
     const errors = result.value.Errors;
     if (!errors?.length) continue;
     logToAxiom({
