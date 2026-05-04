@@ -965,6 +965,10 @@ export const comicsRouter = router({
                   imageUrl: true,
                   prompt: true,
                   position: true,
+                  // Pull the underlying Image's nsfwLevel so the reader can
+                  // blur and hide mature panels on a domain that doesn't
+                  // permit them, instead of bypassing the site's NSFW guard.
+                  image: { select: { nsfwLevel: true } },
                 },
               },
             },

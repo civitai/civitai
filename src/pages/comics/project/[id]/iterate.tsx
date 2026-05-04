@@ -22,8 +22,10 @@ import type {
 } from '~/components/IterativeEditor/iterative-editor.types';
 import { Page } from '~/components/AppLayout/Page';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useServerDomains } from '~/providers/AppProvider';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { syncAccount } from '~/utils/sync-account';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -46,11 +48,24 @@ const DEFAULT_MODEL = 'NanoBanana';
 
 function ComicIteratePage() {
   const router = useRouter();
-  const { id, panelId, panelPosition, imageUrl, width, height, chapter } = router.query;
+  const {
+    id,
+    panelId,
+    panelPosition,
+    imageUrl,
+    width,
+    height,
+    chapter,
+    pendingWorkflow,
+    pendingWidth,
+    pendingHeight,
+    pendingPrompt,
+  } = router.query;
   const projectId = Number(id);
   const chapterPosition = Number(chapter) || 0;
   const numericPanelId = panelId ? Number(panelId) : null;
   const numericPanelPosition = Number(panelPosition) || 0;
+  const redDomain = useServerDomains().red;
 
   // ── Fetch project data for references + cost ──
   const { data: project } = trpc.comics.getProject.useQuery(
@@ -173,7 +188,13 @@ function ComicIteratePage() {
 
   const handlePollStatus = useCallback(
     async (params: PollParams) => {
-      return utils.comics.pollIterationStatus.fetch(params);
+      // staleTime/cacheTime 0 — without these, repeat polls of the same params
+      // return the React Query cache and the editor never sees the workflow
+      // transition. Mirrors the bypass `PanelCard` already uses.
+      return utils.comics.pollIterationStatus.fetch(params, {
+        staleTime: 0,
+        cacheTime: 0,
+      });
     },
     [utils]
   );
@@ -212,6 +233,57 @@ function ComicIteratePage() {
   const handleClose = useCallback(() => {
     void router.push(`/comics/project/${projectId}`);
   }, [router, projectId]);
+
+  // ── Mature handoff: build a "same page on civitai.red" URL with the
+  //    workflow ID encoded so the red side resumes polling the same workflow.
+  //    Same panel/source/target params are preserved so the editor opens
+  //    pointing at the same panel.
+  const buildSiteRestrictedUnlockUrl = useCallback(
+    (info: { workflowId: string; width: number; height: number; prompt: string }) => {
+      if (!redDomain) return null;
+      const params = new URLSearchParams();
+      params.set('chapter', String(chapterPosition));
+      params.set('panelPosition', String(numericPanelPosition));
+      if (numericPanelId != null) params.set('panelId', String(numericPanelId));
+      if (typeof imageUrl === 'string') params.set('imageUrl', imageUrl);
+      if (typeof width === 'string') params.set('width', width);
+      if (typeof height === 'string') params.set('height', height);
+      params.set('pendingWorkflow', info.workflowId);
+      params.set('pendingWidth', String(info.width));
+      params.set('pendingHeight', String(info.height));
+      if (info.prompt) params.set('pendingPrompt', info.prompt);
+      const url = `//${redDomain}/comics/project/${projectId}/iterate?${params.toString()}`;
+      return syncAccount(url);
+    },
+    [
+      redDomain,
+      projectId,
+      chapterPosition,
+      numericPanelId,
+      numericPanelPosition,
+      imageUrl,
+      width,
+      height,
+    ]
+  );
+
+  // ── Resume payload for the red-side landing: hand the editor the in-flight
+  //    workflow it should pick up.
+  const initialPendingWorkflow = useMemo(() => {
+    if (typeof pendingWorkflow !== 'string' || !pendingWorkflow) return null;
+    const w =
+      typeof pendingWidth === 'string' ? parseInt(pendingWidth, 10) : initialSource?.width ?? 1024;
+    const h =
+      typeof pendingHeight === 'string'
+        ? parseInt(pendingHeight, 10)
+        : initialSource?.height ?? 1024;
+    return {
+      workflowId: pendingWorkflow,
+      width: Number.isFinite(w) ? w : 1024,
+      height: Number.isFinite(h) ? h : 1024,
+      prompt: typeof pendingPrompt === 'string' ? pendingPrompt : undefined,
+    };
+  }, [pendingWorkflow, pendingWidth, pendingHeight, pendingPrompt, initialSource]);
 
   // ── Render props for comic-specific slots ──
 
@@ -346,6 +418,8 @@ function ComicIteratePage() {
           }}
           onSettingsChange={handleSettingsChange}
           onRetryCost={handleRetryCost}
+          buildSiteRestrictedUnlockUrl={buildSiteRestrictedUnlockUrl}
+          initialPendingWorkflow={initialPendingWorkflow}
           mode="page"
         />
       </div>
