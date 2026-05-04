@@ -381,12 +381,14 @@ export const getArticles = async ({
     const orderBy = Prisma.sql`${sortExprSql} ${Prisma.raw(sortDir)}, a.id DESC`;
 
     if (cursor) {
-      // Keyset predicate: strictly "after" (cursor.v, cursor.id) in the ordering.
-      // Tiebreaker is always id DESC regardless of primary sort direction.
+      // Keyset predicate: include the cursor row itself — it's the lookahead
+      // row from the previous page, intended to anchor this page. Tiebreaker
+      // is always id DESC, so on a sortExpr tie we accept ids <= cursor.id
+      // (rows with id > cursor.id were already returned on the previous page).
       const primaryOp = Prisma.raw(sortDir === 'DESC' ? '<' : '>');
       AND.push(Prisma.sql`(
         ${sortExprSql} ${primaryOp} ${cursor.v}
-        OR (${sortExprSql} = ${cursor.v} AND a.id < ${cursor.id})
+        OR (${sortExprSql} = ${cursor.v} AND a.id <= ${cursor.id})
       )`);
     }
 
