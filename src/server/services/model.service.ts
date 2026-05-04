@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
-import dayjs from '~/shared/utils/dayjs';
 import { isEmpty, uniq } from 'lodash-es';
+import dayjs from '~/shared/utils/dayjs';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
@@ -142,6 +142,7 @@ import {
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
+import { deleteModelFileObjects } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
 import type {
   GetAssociatedResourcesInput,
@@ -1490,8 +1491,19 @@ export const permaDeleteModelById = async ({
 }: GetByIdInput & {
   userId: number;
 }) => {
+  // Populated inside the tx so the snapshot is consistent with the cascade.
+  let modelFileUrls: string[] = [];
+
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
+      // Snapshot ModelFile URLs inside the tx — read before the cascade nukes the rows.
+      modelFileUrls = (
+        await tx.modelFile.findMany({
+          where: { modelVersion: { modelId: id } },
+          select: { url: true },
+        })
+      ).map((f) => f.url);
+
       const model = await tx.model.findUnique({
         where: { id },
         select: {
@@ -1554,6 +1566,19 @@ export const permaDeleteModelById = async ({
         ids: imagesToDelete.map((img) => img.id),
         action: SearchIndexUpdateQueueAction.Delete,
       });
+    }
+    // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
+    if (modelFileUrls.length > 0) {
+      try {
+        await deleteModelFileObjects(modelFileUrls);
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'model-perma-delete-s3-objects',
+          message: `Failed to delete S3 objects for model ${id}`,
+          error,
+        });
+      }
     }
   }
 

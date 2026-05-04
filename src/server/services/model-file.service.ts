@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { CacheTTL } from '~/server/common/constants';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
@@ -18,6 +19,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
+import { deleteModelFileObject } from '~/utils/s3-utils';
 import { prepareFile } from '~/utils/file-helpers';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
@@ -113,6 +115,7 @@ export async function updateFile({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
     select: {
       id: true,
+      url: true,
       metadata: true,
       modelVersionId: true,
       sizeKB: true,
@@ -121,15 +124,42 @@ export async function updateFile({
   });
   if (!modelFile) throw throwNotFoundError();
 
+  // If URL is changing, capture the old one for S3 cleanup
+  const oldUrl = inputData.url && inputData.url !== modelFile.url ? modelFile.url : undefined;
+
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
-  await dbWrite.modelFile.updateMany({
-    where: { id },
+  // CAS guard on URL changes: only apply if the row's url is still what we read.
+  // Prevents two concurrent URL-changing updateFile calls from both scheduling a
+  // delete of the same captured `oldUrl`. Pure-metadata updates skip the guard
+  // so they aren't starved by url-change races.
+  const updateResult = await dbWrite.modelFile.updateMany({
+    where: oldUrl ? { id, url: modelFile.url } : { id },
     data: {
       ...inputData,
       metadata,
     },
   });
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
+
+  // Clean up old S3 object after DB update succeeds (best-effort).
+  // Only fires if our conditional update actually applied — otherwise another
+  // writer owns the oldUrl→newUrl transition and will (or already did) handle it.
+  // Terminal .catch on the chain so an Axiom-side rejection can't leak as
+  // an unhandled rejection in this fire-and-forget path. The refcount check
+  // inside deleteModelFileObject is the load-bearing safety: it skips the
+  // delete if any other ModelFile row still references the URL.
+  if (oldUrl && updateResult.count > 0) {
+    deleteModelFileObject(oldUrl)
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-s3-object',
+          message: `Failed to delete old S3 object for file ${id}`,
+          error,
+        })
+      )
+      .catch(() => {});
+  }
 
   // Merge committed updates back into the snapshot so the returned record
   // reflects post-update state (e.g. `sizeKB` on a re-upload). `updateMany`
@@ -150,6 +180,7 @@ export async function deleteFile({
   const file = await dbWrite.modelFile.findFirst({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
     select: {
+      url: true,
       type: true,
       modelVersion: {
         select: {
@@ -188,6 +219,22 @@ export async function deleteFile({
 
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
+
+  // Clean up S3 object after DB delete succeeds (best-effort).
+  // Terminal .catch on the chain so an Axiom-side rejection can't leak as
+  // an unhandled rejection in this fire-and-forget path.
+  if (row && file.url) {
+    deleteModelFileObject(file.url)
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-s3-object',
+          message: `Failed to delete S3 object for file ${id}`,
+          error,
+        })
+      )
+      .catch(() => {});
+  }
 
   return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;
 }

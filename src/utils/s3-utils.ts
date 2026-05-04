@@ -13,8 +13,10 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -164,6 +166,244 @@ export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client |
       },
     })
   );
+}
+
+/**
+ * Allowlist of civitai-owned buckets that the cleanup helpers are permitted
+ * to delete from. Defense-in-depth: `ModelFile.url` is user-supplied and the
+ * schema only validates `z.url()`, so a malicious user could otherwise point
+ * `url` at an arbitrary R2/B2 bucket reachable by our credentials and trick
+ * the cleanup path into deleting it on next update/delete.
+ *
+ * Composed from:
+ *   1. Configured-bucket env vars (filtered to defined values).
+ *   2. Hardcoded legacy R2 bucket names that hold existing ModelFile rows but
+ *      are no longer referenced by any env var (historical writes).
+ */
+const MODEL_FILE_BUCKET_ALLOWLIST: ReadonlySet<string> = new Set(
+  [
+    env.S3_UPLOAD_BUCKET,
+    env.S3_UPLOAD_B2_BUCKET,
+    env.S3_VAULT_BUCKET,
+    // Default fallback used by getUploadBucket when S3_UPLOAD_B2_BUCKET is unset.
+    'civitai-modelfiles',
+    // Legacy R2 buckets that still hold real ModelFile rows.
+    'civitai-prod',
+    'civitai-prod-settled',
+    'civitai-delivery-worker-prod',
+    'civitai-delivery-worker-prod-2023-05-01',
+    'civitai-delivery-worker-prod-2023-10-01',
+  ].filter((b): b is string => typeof b === 'string' && b.length > 0)
+);
+
+function isAllowedModelFileBucket(bucket: string | undefined): bucket is string {
+  return !!bucket && MODEL_FILE_BUCKET_ALLOWLIST.has(bucket);
+}
+
+/**
+ * Filter `urls` to those that NO live ModelFile row references.
+ *
+ * Why this exists: `ModelFile.url` is validated only as `z.url()` — any URL the
+ * user submits is accepted. Without this check, a user can plant a row whose
+ * `url` matches a victim's S3 object, then delete their own row to hijack the
+ * delete. The bucket allowlist doesn't help here because both rows live in the
+ * same allowlisted bucket.
+ *
+ * Reads from `dbWrite` (primary) — these helpers run after the destructive DB
+ * op has committed, and we need post-commit consistency rather than a stale
+ * replica view (which would over-skip and create orphans).
+ */
+async function urlsSafeToDelete(urls: string[]): Promise<{ safe: string[]; skipped: number }> {
+  const candidates = urls.filter((u): u is string => typeof u === 'string' && u.length > 0);
+  if (candidates.length === 0) return { safe: [], skipped: 0 };
+  const referenced = await dbWrite.modelFile.findMany({
+    where: { url: { in: candidates } },
+    select: { url: true, id: true },
+  });
+  if (referenced.length === 0) return { safe: candidates, skipped: 0 };
+  const referencedSet = new Set<string>();
+  for (const { url } of referenced) referencedSet.add(url);
+  logToAxiom({
+    type: 'warn',
+    name: 'model-file-delete-s3-skipped-still-referenced',
+    skippedCount: referencedSet.size,
+    sample: referenced
+      .slice(0, 10)
+      .map(({ url, id }: { url: string; id: number }) => ({ url, refId: id })),
+  });
+  return {
+    safe: candidates.filter((u) => !referencedSet.has(u)),
+    skipped: referencedSet.size,
+  };
+}
+
+/**
+ * Delete the S3 object referenced by a ModelFile URL.
+ * Resolves the correct backend (R2 vs B2) and bucket from the URL itself —
+ * never assumes a single bucket env var, since ModelFile URLs span historical
+ * R2 buckets (civitai-delivery-worker-prod, civitai-prod-settled, ...).
+ * Best-effort: callers should catch errors and log rather than blocking.
+ *
+ * Gated by MODEL_FILE_BUCKET_ALLOWLIST to prevent a user-supplied url from
+ * pointing the delete at an arbitrary bucket (defense in depth — schema
+ * validation is z.url() only).
+ */
+export async function deleteModelFileObject(url: string) {
+  if (!url) return;
+  // Refcount check: skip if any live ModelFile row still references this URL.
+  // Closes the user-supplied-url hijack: an attacker plants a row with
+  // url=victim's url, then deletes their own row. Without this check, the
+  // S3 cleanup would delete the victim's bytes.
+  const { safe } = await urlsSafeToDelete([url]);
+  if (safe.length === 0) return;
+  const b2 = parseB2Url(url);
+  if (b2) {
+    if (!isAllowedModelFileBucket(b2.bucket)) {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        backend: 'b2',
+        bucket: b2.bucket,
+        url,
+      });
+      return;
+    }
+    return deleteObject(b2.bucket, b2.key, getB2S3Client());
+  }
+  const { key, bucket } = parseKey(url);
+  if (!key || !bucket) return;
+  if (!isAllowedModelFileBucket(bucket)) {
+    logToAxiom({
+      type: 'warn',
+      name: 'model-file-delete-s3-object-blocked',
+      backend: 'r2',
+      bucket,
+      url,
+    });
+    return;
+  }
+  await deleteObject(bucket, key);
+}
+
+/**
+ * Batch-delete S3 objects for multiple ModelFile URLs.
+ * Groups by `(backend, bucket)` and issues one DeleteObjects call per group —
+ * S3 DeleteObjects is per-bucket, so different R2 buckets need separate calls.
+ */
+export async function deleteModelFileObjects(urls: string[]) {
+  // Refcount filter — drop URLs any live ModelFile row still references before
+  // grouping. Same hijack-prevention rationale as deleteModelFileObject.
+  // Done up-front so a poisoned URL can't piggyback on a legit DeleteObjects call.
+  const { safe } = await urlsSafeToDelete(urls);
+  if (safe.length === 0) return;
+
+  const groups = new Map<string, { backend: 'b2' | 'r2'; bucket: string; keys: string[] }>();
+
+  for (const url of safe) {
+    const b2 = parseB2Url(url);
+    if (b2) {
+      // Drop URLs targeting non-civitai buckets before they enter a group, so
+      // a poisoned ModelFile.url can't piggyback on a legit DeleteObjects call.
+      if (!isAllowedModelFileBucket(b2.bucket)) {
+        logToAxiom({
+          type: 'warn',
+          name: 'model-file-delete-s3-object-blocked',
+          backend: 'b2',
+          bucket: b2.bucket,
+          url,
+        });
+        continue;
+      }
+      const groupKey = `b2:${b2.bucket}`;
+      let group = groups.get(groupKey);
+      if (!group) {
+        group = { backend: 'b2', bucket: b2.bucket, keys: [] };
+        groups.set(groupKey, group);
+      }
+      group.keys.push(b2.key);
+      continue;
+    }
+    const { key, bucket } = parseKey(url);
+    if (!key || !bucket) continue;
+    if (!isAllowedModelFileBucket(bucket)) {
+      logToAxiom({
+        type: 'warn',
+        name: 'model-file-delete-s3-object-blocked',
+        backend: 'r2',
+        bucket,
+        url,
+      });
+      continue;
+    }
+    const groupKey = `r2:${bucket}`;
+    let group = groups.get(groupKey);
+    if (!group) {
+      group = { backend: 'r2', bucket, keys: [] };
+      groups.set(groupKey, group);
+    }
+    group.keys.push(key);
+  }
+
+  // Resolve clients up-front so a missing-env throw in getB2S3Client doesn't
+  // skip the R2 group via a synchronous escape from inside .map().
+  // Use allSettled so one group's failure doesn't drop the others.
+  // Track bucket per task so partial-failure logs can attribute Errors back to a group.
+  const tasks: { bucket: string; promise: ReturnType<typeof deleteManyObjects> }[] = [];
+  for (const group of groups.values()) {
+    let client;
+    if (group.backend === 'b2') {
+      try {
+        client = getB2S3Client();
+      } catch {
+        // B2 env not configured in this pod — skip B2 group, keep R2 deletes running.
+        continue;
+      }
+    } else {
+      try {
+        client = getS3Client();
+      } catch (error) {
+        // R2 must be configured in every pod — surface the failure rather than silently skip.
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-s3-objects-client-error',
+          bucket: group.bucket,
+          error,
+        });
+        continue;
+      }
+    }
+    // S3/R2 DeleteObjects caps each call at 1000 keys — chunk to stay under the limit.
+    for (let i = 0; i < group.keys.length; i += 1000) {
+      tasks.push({
+        bucket: group.bucket,
+        promise: deleteManyObjects(group.bucket, group.keys.slice(i, i + 1000), client),
+      });
+    }
+  }
+
+  // DeleteObjects returns 200 even when individual keys fail — surface those via Errors.
+  const results = await Promise.allSettled(tasks.map((t) => t.promise));
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status === 'rejected') {
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-s3-objects-rejected',
+        bucket: tasks[i].bucket,
+        error: result.reason,
+      });
+      continue;
+    }
+    const errors = result.value.Errors;
+    if (!errors?.length) continue;
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-delete-s3-objects-partial-failure',
+      bucket: tasks[i].bucket,
+      errorCount: errors.length,
+      sample: errors.slice(0, 10).map((e) => ({ key: e.Key, code: e.Code, message: e.Message })),
+    });
+  }
 }
 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
