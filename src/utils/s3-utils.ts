@@ -13,6 +13,7 @@ import {
 } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -200,6 +201,43 @@ function isAllowedModelFileBucket(bucket: string | undefined): bucket is string 
 }
 
 /**
+ * Filter `urls` to those that NO live ModelFile row references.
+ *
+ * Why this exists: `ModelFile.url` is validated only as `z.url()` — any URL the
+ * user submits is accepted. Without this check, a user can plant a row whose
+ * `url` matches a victim's S3 object, then delete their own row to hijack the
+ * delete. The bucket allowlist doesn't help here because both rows live in the
+ * same allowlisted bucket.
+ *
+ * Reads from `dbWrite` (primary) — these helpers run after the destructive DB
+ * op has committed, and we need post-commit consistency rather than a stale
+ * replica view (which would over-skip and create orphans).
+ */
+async function urlsSafeToDelete(urls: string[]): Promise<{ safe: string[]; skipped: number }> {
+  const candidates = urls.filter((u): u is string => typeof u === 'string' && u.length > 0);
+  if (candidates.length === 0) return { safe: [], skipped: 0 };
+  const referenced = await dbWrite.modelFile.findMany({
+    where: { url: { in: candidates } },
+    select: { url: true, id: true },
+  });
+  if (referenced.length === 0) return { safe: candidates, skipped: 0 };
+  const referencedSet = new Set<string>();
+  for (const { url } of referenced) referencedSet.add(url);
+  logToAxiom({
+    type: 'warn',
+    name: 'model-file-delete-s3-skipped-still-referenced',
+    skippedCount: referencedSet.size,
+    sample: referenced
+      .slice(0, 10)
+      .map(({ url, id }: { url: string; id: number }) => ({ url, refId: id })),
+  });
+  return {
+    safe: candidates.filter((u) => !referencedSet.has(u)),
+    skipped: referencedSet.size,
+  };
+}
+
+/**
  * Delete the S3 object referenced by a ModelFile URL.
  * Resolves the correct backend (R2 vs B2) and bucket from the URL itself —
  * never assumes a single bucket env var, since ModelFile URLs span historical
@@ -212,6 +250,12 @@ function isAllowedModelFileBucket(bucket: string | undefined): bucket is string 
  */
 export async function deleteModelFileObject(url: string) {
   if (!url) return;
+  // Refcount check: skip if any live ModelFile row still references this URL.
+  // Closes the user-supplied-url hijack: an attacker plants a row with
+  // url=victim's url, then deletes their own row. Without this check, the
+  // S3 cleanup would delete the victim's bytes.
+  const { safe } = await urlsSafeToDelete([url]);
+  if (safe.length === 0) return;
   const b2 = parseB2Url(url);
   if (b2) {
     if (!isAllowedModelFileBucket(b2.bucket)) {
@@ -247,10 +291,15 @@ export async function deleteModelFileObject(url: string) {
  * S3 DeleteObjects is per-bucket, so different R2 buckets need separate calls.
  */
 export async function deleteModelFileObjects(urls: string[]) {
+  // Refcount filter — drop URLs any live ModelFile row still references before
+  // grouping. Same hijack-prevention rationale as deleteModelFileObject.
+  // Done up-front so a poisoned URL can't piggyback on a legit DeleteObjects call.
+  const { safe } = await urlsSafeToDelete(urls);
+  if (safe.length === 0) return;
+
   const groups = new Map<string, { backend: 'b2' | 'r2'; bucket: string; keys: string[] }>();
 
-  for (const url of urls) {
-    if (!url) continue;
+  for (const url of safe) {
     const b2 = parseB2Url(url);
     if (b2) {
       // Drop URLs targeting non-civitai buckets before they enter a group, so

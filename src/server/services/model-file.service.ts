@@ -128,8 +128,12 @@ export async function updateFile({
   const oldUrl = inputData.url && inputData.url !== modelFile.url ? modelFile.url : undefined;
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
-  await dbWrite.modelFile.updateMany({
-    where: { id },
+  // CAS guard on URL changes: only apply if the row's url is still what we read.
+  // Prevents two concurrent URL-changing updateFile calls from both scheduling a
+  // delete of the same captured `oldUrl`. Pure-metadata updates skip the guard
+  // so they aren't starved by url-change races.
+  const updateResult = await dbWrite.modelFile.updateMany({
+    where: oldUrl ? { id, url: modelFile.url } : { id },
     data: {
       ...inputData,
       metadata,
@@ -138,9 +142,13 @@ export async function updateFile({
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
   // Clean up old S3 object after DB update succeeds (best-effort).
+  // Only fires if our conditional update actually applied — otherwise another
+  // writer owns the oldUrl→newUrl transition and will (or already did) handle it.
   // Terminal .catch on the chain so an Axiom-side rejection can't leak as
-  // an unhandled rejection in this fire-and-forget path.
-  if (oldUrl) {
+  // an unhandled rejection in this fire-and-forget path. The refcount check
+  // inside deleteModelFileObject is the load-bearing safety: it skips the
+  // delete if any other ModelFile row still references the URL.
+  if (oldUrl && updateResult.count > 0) {
     deleteModelFileObject(oldUrl)
       .catch((error) =>
         logToAxiom({
