@@ -54,6 +54,9 @@ export function BrowsingLevelProvider({
   //   anonymous (any domain)     → publicBrowsingLevelsFlag (PG)
   //   logged-in on green domain  → sfwBrowsingLevelsFlag    (PG + PG-13)
   //   logged-in on blue/red      → no forced cap, use saved preference
+  // Verified bots aren't a special case here — on green they're treated as
+  // any public user (PG only); on blue/red their session settings express
+  // allBrowsingLevelsFlag and pass through unchecked.
   const domainForcedLevel = !canViewNsfw
     ? currentUser
       ? sfwBrowsingLevelsFlag

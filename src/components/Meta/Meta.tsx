@@ -53,7 +53,7 @@ type MetaBaseProps<TImage> = {
   keywords?: string | string[];
 };
 
-type MetaProps<TImage> = MetaBaseProps<TImage> &
+export type MetaProps<TImage> = MetaBaseProps<TImage> &
   (
     | { deIndex: boolean; canonical?: string; alternate?: string }
     | { deIndex?: never; canonical: string; alternate?: string }

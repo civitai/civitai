@@ -48,7 +48,7 @@ export const RankBadge = ({
           color={badgeColor}
           // @ts-ignore
           variant={withTitle ? 'transparent' : badgeColor === 'gray' ? 'filled' : undefined}
-          href={`/leaderboard/${rank.leaderboardId}?position=${rank.leaderboardRank}`}
+          href={`/leaderboard/${rank.leaderboardId}#${rank.leaderboardRank}`}
           icon={!hasLeaderboardCosmetic ? <IconCrown size={iconSize} /> : undefined}
           style={
             hasLeaderboardCosmetic

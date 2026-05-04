@@ -6,6 +6,7 @@ import { useAppContext } from '~/providers/AppProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { isRegionRestricted } from '~/server/utils/region-blocking';
 import {
+  allBrowsingLevelsFlag,
   browsingModeDefaults,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -25,8 +26,7 @@ export function CivitaiSessionProvider({
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
-  const { allowMatureContent } = useAppContext();
-  const { region } = useAppContext();
+  const { allowMatureContent, region, verifiedBot } = useAppContext();
   const isRestricted = isRegionRestricted(region) && !user?.isModerator;
   useDomainSync(data?.user as SessionUser, status);
   const { data: settings } = trpc.user.getSettings.useQuery();
@@ -41,11 +41,22 @@ export function CivitaiSessionProvider({
   const settingsAutoplayGifs = settings?.autoplayGifs;
 
   const sessionUser = useMemo(() => {
-    if (!user)
-      return {
-        type: 'unauthed',
-        settings: publicContentSettings,
-      } as UnauthedUser;
+    if (!user) {
+      // On the SFW site (civitai.com), a verified bot is treated as a
+      // regular public user — no special browsing-level expansion. On
+      // mature-allowed domains, the bot expresses max preferences so child
+      // components surface the gated content the bot is here to index.
+      const settings =
+        verifiedBot && allowMatureContent
+          ? {
+              ...publicContentSettings,
+              browsingLevel: allBrowsingLevelsFlag,
+              showNsfw: true,
+              blurNsfw: false,
+            }
+          : publicContentSettings;
+      return { type: 'unauthed', settings } as UnauthedUser;
+    }
 
     const isMember = user.tier != null;
     const isPaidMember = !!user.tier && user.tier !== 'free';
@@ -84,6 +95,7 @@ export function CivitaiSessionProvider({
     settingsShowNsfw,
     settingsBlurNsfw,
     settingsAutoplayGifs,
+    verifiedBot,
   ]);
 
   useEffect(() => {

@@ -144,7 +144,7 @@ export function NotificationList({
                     <IconAward stroke={1.5} />
                   </ThemeIcon>
                 ) : notificationDetails?.actor ? (
-                  <UserAvatar user={notificationDetails.actor} size="md" />
+                  <UserAvatar user={notificationDetails.actor} size="md" linkToProfile />
                 ) : (
                   <ThemeIcon variant="light" size="xl" radius="xl" color="yellow">
                     <IconBell stroke={1.5} />

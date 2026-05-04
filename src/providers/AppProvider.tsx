@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState } from 'react';
 import type { UserContentSettings } from '~/server/schema/user.schema';
 import type { RegionInfo } from '~/server/utils/region-blocking';
+import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
 import { setServerDomains } from '~/utils/sync-account';
 import { trpc } from '~/utils/trpc';
@@ -15,6 +16,7 @@ type AppProviderProps = {
   host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
+  verifiedBot: VerifiedBot | null;
 };
 
 type AppContext = {
@@ -26,6 +28,7 @@ type AppContext = {
   host: string;
   serverDomains: ServerDomains;
   availableOAuthProviders: string[];
+  verifiedBot: VerifiedBot | null;
 };
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
@@ -33,6 +36,7 @@ export function useAppContext() {
   if (!context) throw new Error('missing AppProvider in tree');
   return context;
 }
+
 
 /**
  * Returns the canonical (primary) host for each color. Use this for outbound
@@ -53,6 +57,7 @@ export function AppProvider({
   host,
   serverDomains,
   availableOAuthProviders,
+  verifiedBot,
   ...appContext
 }: AppProviderProps) {
   trpc.user.getSettings.useQuery(undefined, { initialData: settings });
@@ -70,6 +75,7 @@ export function AppProvider({
     host,
     serverDomains,
     availableOAuthProviders,
+    verifiedBot,
   }));
 
   return <Context.Provider value={state}>{children}</Context.Provider>;

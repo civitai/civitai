@@ -21,7 +21,7 @@ import { IconInfoCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react
 import clsx from 'clsx';
 import dayjs from '~/shared/utils/dayjs';
 import { useRouter } from 'next/router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import * as z from 'zod';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 
@@ -35,7 +35,6 @@ import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { numericString } from '~/utils/zod-helpers';
 import classes from './[id].module.css';
 
 const excludeLegendsRegex = /Donors|Knights/i;
@@ -43,7 +42,9 @@ const excludeLegendsRegex = /Donors|Knights/i;
 const leaderboardQuerySchema = z.object({
   id: z.string().default('overall'),
   date: z.coerce.date().optional(),
-  position: numericString().optional(),
+  // Position lives in the URL fragment (e.g. /leaderboard/flux#93), not the
+  // query string. Fragments aren't separate URLs in Google's eyes — keeps
+  // shareable position links without polluting the alternate-canonical bucket.
   board: z.enum(['season', 'legend']).default('season'),
 });
 
@@ -56,8 +57,42 @@ export const getServerSideProps = createServerSideProps({
 
 export default function Leaderboard() {
   const { query, replace } = useRouter();
-  const { id, date, position, board } = leaderboardQuerySchema.parse(query);
+  const { id, date, board } = leaderboardQuerySchema.parse(query);
   const currentUser = useCurrentUser();
+
+  // Track the position currently reflected in the URL fragment. Updated on
+  // mount from the hash (or from a legacy `?position=` query param, which we
+  // also migrate into the hash for old shared links).
+  const [urlPosition, setUrlPosition] = useState<number | null>(null);
+  useEffect(() => {
+    const readHash = () => {
+      const hash = window.location.hash.replace(/^#/, '');
+      const hashNum = Number(hash);
+      return Number.isFinite(hashNum) && hashNum > 0 ? hashNum : null;
+    };
+
+    const initial = readHash();
+    if (initial !== null) {
+      setUrlPosition(initial);
+    } else {
+      // Backward compat: old `?position=` URLs still scroll/highlight, but
+      // get rewritten to fragment form so the alternate-canonical issue is
+      // resolved going forward.
+      const legacy = new URLSearchParams(window.location.search).get('position');
+      const legacyNum = Number(legacy);
+      if (Number.isFinite(legacyNum) && legacyNum > 0) {
+        setUrlPosition(legacyNum);
+        const u = new URL(window.location.href);
+        u.searchParams.delete('position');
+        u.hash = `#${legacyNum}`;
+        window.history.replaceState({}, '', u.toString());
+      }
+    }
+
+    const onHashChange = () => setUrlPosition(readHash());
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
   const isDisabled = id === 'images-rater';
   // const isDisabled = false;
 
@@ -111,22 +146,23 @@ export default function Leaderboard() {
 
   if (
     (selectedLeaderboard && selectedLeaderboard.id !== id) ||
-    (selectedPosition && selectedPosition !== position) ||
+    (selectedPosition && selectedPosition !== urlPosition) ||
     (!hasLegends && board === 'legend')
   ) {
-    const shallow = selectedLeaderboard?.id === id && selectedPosition !== position;
+    const shallow = selectedLeaderboard?.id === id && selectedPosition !== urlPosition;
 
     replace(
       {
         pathname: `/leaderboard/${selectedLeaderboard?.id}`,
+        hash: selectedPosition ? `${selectedPosition}` : undefined,
         query: removeEmpty({
-          position: selectedPosition ? String(selectedPosition) : undefined,
           board: board === 'season' || (!hasLegends && board === 'legend') ? undefined : board,
         }),
       },
       undefined,
       { shallow }
     );
+    setUrlPosition(selectedPosition);
   }
 
   const endTime = useMemo(() => dayjs().utc().endOf('day').toDate(), []);

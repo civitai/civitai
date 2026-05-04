@@ -1,28 +1,36 @@
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { GetServerSideProps } from 'next';
-import type { ISitemapField } from 'next-sitemap';
-import { getServerSideSitemapLegacy } from 'next-sitemap';
 import { ArticleSort } from '~/server/common/enums';
 import { getArticles } from '~/server/services/article.service';
+import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { respondWithSitemap, type SitemapField } from '~/server/utils/sitemap';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  publicBrowsingLevelsFlag,
+  sitemapNsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { slugit } from '~/utils/string-helpers';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
+  const color = getRequestDomainColor(ctx.req) ?? 'green';
+  const browsingLevel =
+    color === 'green' ? publicBrowsingLevelsFlag : sitemapNsfwBrowsingLevelsFlag;
+
   const data = await getArticles({
     limit: 1000,
     period: MetricTimeframe.AllTime,
     sort: ArticleSort.MostBookmarks,
     periodMode: 'published',
-    browsingLevel: publicBrowsingLevelsFlag,
+    browsingLevel,
   }).catch(() => ({ items: [] }));
 
-  const fields: ISitemapField[] = data.items.map((article) => ({
-    loc: `${getBaseUrl()}/articles/${article.id}/${slugit(article.title)}`,
+  const baseUrl = getBaseUrl(color);
+  const fields: SitemapField[] = data.items.map((article) => ({
+    loc: `${baseUrl}/articles/${article.id}/${slugit(article.title)}`,
     lastmod: article.publishedAt?.toISOString() ?? new Date().toISOString(),
   }));
 
-  return getServerSideSitemapLegacy(ctx, fields);
+  return respondWithSitemap(ctx, fields);
 };
 
 // eslint-disable-next-line @typescript-eslint/no-empty-function

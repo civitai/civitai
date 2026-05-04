@@ -194,6 +194,9 @@ export type EdgeCacheItProps = {
 };
 export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps = {}) {
   return middleware(async ({ next, ctx, input, path }) => {
+    // SSG prefetch path: no HTTP response to decorate with cache headers.
+    // ctx.cache is null when the call comes through createServerSideHelpers.
+    if (!ctx.cache) return await next();
     if (!!ctx.req?.query?.batch) {
       const message = `Content not cached: ${path}`;
       if (!isProd) console.log(message);

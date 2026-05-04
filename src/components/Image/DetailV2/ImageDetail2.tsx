@@ -34,6 +34,8 @@ import {
 } from '@tabler/icons-react';
 import { useRef } from 'react';
 import clsx from 'clsx';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -63,13 +65,12 @@ import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { Meta } from '~/components/Meta/Meta';
+import { Gated } from '~/components/Gated/Gated';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
@@ -239,321 +240,343 @@ export function ImageDetail2() {
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
-  return (
-    <>
-      <Meta
-        title={title}
-        images={image}
-        ogEndpoint={`/api/og?type=image&id=${image.id}`}
-        canonical={`/images/${image.id}`}
-        deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
-      />
-      <SensitiveShield
-        contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
-        bypassRating={isOwner || !!currentUser?.isModerator}
-      >
-        <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
-        <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
-          <BrowsingSettingsAddonsProvider>
-            <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
-              <div className="relative flex flex-1 overflow-hidden">
-                <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
-                  <ImageGuard2 image={image} explain={false}>
-                    {() => (
-                      <>
-                        {/* HEADER */}
-                        <div className="flex justify-between gap-8 p-3">
-                          <CloseButton
-                            onClick={close}
-                            variant="filled"
-                            className="size-9 rounded-full"
-                          />
-                          <div className="flex flex-1 flex-wrap justify-between gap-1">
-                            {/* Placeholder */}
-                            <div className="@md:hidden" />
-                            <div className="flex items-center gap-1 @max-md:hidden">
-                              <ImageGuard2.BlurToggle {...sharedBadgeProps} />
-                              {LeftImageControls}
-                            </div>
+  const imageSchema = {
+    '@context': 'https://schema.org',
+    '@type': 'ImageObject',
+    contentUrl: getEdgeUrl(image.url),
+    thumbnailUrl: getEdgeUrl(image.url, { width: 450 }),
+    caption: image.user.username ? `Image by ${image.user.username}` : 'Image on Civitai',
+    width: image.width ?? undefined,
+    height: image.height ?? undefined,
+    creator:
+      image.user.username && !image.user.deletedAt
+        ? {
+            '@type': 'Person',
+            name: image.user.username,
+            url: env.NEXT_PUBLIC_BASE_URL
+              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
+              : undefined,
+          }
+        : undefined,
+    uploadDate: image.createdAt,
+    datePublished: image.createdAt,
+  };
 
-                            <div className="flex items-center gap-1">
-                              <ImageGuard2.BlurToggle
-                                {...sharedBadgeProps}
-                                className={clsx('@md:hidden', sharedBadgeProps.className)}
-                              />
-                              {/* Disable view count  */}
-                              {/* <Badge {...sharedBadgeProps}>
+  return (
+    <Gated
+      contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
+      bypassRating={isOwner || !!currentUser?.isModerator}
+      meta={{
+        title,
+        images: image,
+        ogEndpoint: `/api/og?type=image&id=${image.id}`,
+        canonical: `/images/${image.id}`,
+        schema: imageSchema,
+        // Per-image HTML pages are thin/duplicative and drive negligible search
+        // traffic; Google Images still surfaces images via the ImageObject schema.
+        // See docs/seo-thin-page-deindexing-plan.md.
+        deIndex: true,
+      }}
+    >
+      <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
+      <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
+        <BrowsingSettingsAddonsProvider>
+          <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
+            <div className="relative flex flex-1 overflow-hidden">
+              <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
+                <ImageGuard2 image={image} explain={false}>
+                  {() => (
+                    <>
+                      {/* HEADER */}
+                      <div className="flex justify-between gap-8 p-3">
+                        <CloseButton
+                          onClick={close}
+                          variant="filled"
+                          className="size-9 rounded-full"
+                        />
+                        <div className="flex flex-1 flex-wrap justify-between gap-1">
+                          {/* Placeholder */}
+                          <div className="@md:hidden" />
+                          <div className="flex items-center gap-1 @max-md:hidden">
+                            <ImageGuard2.BlurToggle {...sharedBadgeProps} />
+                            {LeftImageControls}
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <ImageGuard2.BlurToggle
+                              {...sharedBadgeProps}
+                              className={clsx('@md:hidden', sharedBadgeProps.className)}
+                            />
+                            {/* Disable view count  */}
+                            {/* <Badge {...sharedBadgeProps}>
                         <IconEye {...sharedIconProps} />
                         <Text size="xs" align="center" fw={500}>
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}
-                              <DownloadImage src={image.url} type={image.type} name={image.name}>
-                                {({ onClick, isLoading, progress }) => (
-                                  <LegacyActionIcon
-                                    {...sharedActionIconProps}
-                                    onClick={onClick}
-                                    loading={isLoading && progress === 0}
-                                  >
-                                    {isLoading && progress > 0 && (
-                                      <RingProgress
-                                        size={36}
-                                        sections={[{ value: progress, color: 'blue' }]}
-                                        thickness={4}
-                                      />
-                                    )}
-                                    {!isLoading && <IconDownload {...sharedIconProps} />}
-                                  </LegacyActionIcon>
-                                )}
-                              </DownloadImage>
-                              <ShareButton
-                                url={shareUrl}
-                                title={title}
-                                collect={{ type: CollectionType.Image, imageId: image.id }}
-                              >
-                                <LegacyActionIcon {...sharedActionIconProps}>
-                                  <IconShare3 {...sharedIconProps} />
-                                </LegacyActionIcon>
-                              </ShareButton>
-                              <LoginRedirect reason={'report-content'}>
+                            <DownloadImage src={image.url} type={image.type} name={image.name}>
+                              {({ onClick, isLoading, progress }) => (
                                 <LegacyActionIcon
                                   {...sharedActionIconProps}
-                                  onClick={handleReportClick}
+                                  onClick={onClick}
+                                  loading={isLoading && progress === 0}
                                 >
-                                  <IconFlag {...sharedIconProps} />
+                                  {isLoading && progress > 0 && (
+                                    <RingProgress
+                                      size={36}
+                                      sections={[{ value: progress, color: 'blue' }]}
+                                      thickness={4}
+                                    />
+                                  )}
+                                  {!isLoading && <IconDownload {...sharedIconProps} />}
                                 </LegacyActionIcon>
-                              </LoginRedirect>
-                              <ImageContextMenu image={image}>
-                                <LegacyActionIcon {...sharedActionIconProps}>
-                                  <IconDotsVertical {...sharedIconProps} />
-                                </LegacyActionIcon>
-                              </ImageContextMenu>
-                            </div>
-                          </div>
-                          <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
-                            <LegacyActionIcon
-                              {...sharedActionIconProps}
-                              onClick={handleSidebarToggle}
+                              )}
+                            </DownloadImage>
+                            <ShareButton
+                              url={shareUrl}
+                              title={title}
+                              collect={{ type: CollectionType.Image, imageId: image.id }}
                             >
-                              <IconLayoutSidebarRight {...sharedIconProps} />
-                            </LegacyActionIcon>
+                              <LegacyActionIcon {...sharedActionIconProps}>
+                                <IconShare3 {...sharedIconProps} />
+                              </LegacyActionIcon>
+                            </ShareButton>
+                            <LoginRedirect reason={'report-content'}>
+                              <LegacyActionIcon
+                                {...sharedActionIconProps}
+                                onClick={handleReportClick}
+                              >
+                                <IconFlag {...sharedIconProps} />
+                              </LegacyActionIcon>
+                            </LoginRedirect>
+                            <ImageContextMenu image={image}>
+                              <LegacyActionIcon {...sharedActionIconProps}>
+                                <IconDotsVertical {...sharedIconProps} />
+                              </LegacyActionIcon>
+                            </ImageContextMenu>
                           </div>
                         </div>
+                        <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
+                          <LegacyActionIcon
+                            {...sharedActionIconProps}
+                            onClick={handleSidebarToggle}
+                          >
+                            <IconLayoutSidebarRight {...sharedIconProps} />
+                          </LegacyActionIcon>
+                        </div>
+                      </div>
 
-                        {/* IMAGE CAROUSEL */}
-                        <ImageDetailCarousel
-                          images={images}
-                          videoRef={videoRef}
-                          connect={connect}
-                          {...carouselNavigation}
-                        />
-                        {/* FOOTER */}
-                        <div className="flex flex-col gap-3 p-3">
-                          <div className="flex justify-center">
-                            <ReactionSettingsProvider
-                              settings={{
-                                hideReactionCount: false,
-                                hideReactions:
-                                  hideReactions ||
-                                  collectionItems.some((ci) =>
-                                    contestCollectionReactionsHidden(ci.collection)
-                                  ),
-                                buttonStyling: (reaction, hasReacted) => ({
-                                  radius: 'xl',
-                                  variant: 'light',
-                                  px: undefined,
-                                  pl: 4,
-                                  pr: 8,
-                                  h: 30,
-                                  style: {
-                                    color: 'white',
-                                    background: hasReacted
-                                      ? rgba(theme.colors.blue[4], 0.4)
-                                      : rgba(theme.colors.gray[8], 0.4),
-                                    // backdropFilter: 'blur(7px)',
-                                  },
-                                }),
-                              }}
-                            >
-                              <ImageDetailReactions image={image} />
-                            </ReactionSettingsProvider>
-                          </div>
-                          <CarouselIndicators {...carouselNavigation} />
-                          {/* {viewportHeight >= 1050 && (
+                      {/* IMAGE CAROUSEL */}
+                      <ImageDetailCarousel
+                        images={images}
+                        videoRef={videoRef}
+                        connect={connect}
+                        {...carouselNavigation}
+                      />
+                      {/* FOOTER */}
+                      <div className="flex flex-col gap-3 p-3">
+                        <div className="flex justify-center">
+                          <ReactionSettingsProvider
+                            settings={{
+                              hideReactionCount: false,
+                              hideReactions:
+                                hideReactions ||
+                                collectionItems.some((ci) =>
+                                  contestCollectionReactionsHidden(ci.collection)
+                                ),
+                              buttonStyling: (reaction, hasReacted) => ({
+                                radius: 'xl',
+                                variant: 'light',
+                                px: undefined,
+                                pl: 4,
+                                pr: 8,
+                                h: 30,
+                                style: {
+                                  color: 'white',
+                                  background: hasReacted
+                                    ? rgba(theme.colors.blue[4], 0.4)
+                                    : rgba(theme.colors.gray[8], 0.4),
+                                  // backdropFilter: 'blur(7px)',
+                                },
+                              }),
+                            }}
+                          >
+                            <ImageDetailReactions image={image} />
+                          </ReactionSettingsProvider>
+                        </div>
+                        <CarouselIndicators {...carouselNavigation} />
+                        {/* {viewportHeight >= 1050 && (
                       <AdUnitImageDetailBanner />
                     )} */}
-                        </div>
-                      </>
-                    )}
-                  </ImageGuard2>
+                      </div>
+                    </>
+                  )}
+                </ImageGuard2>
+              </div>
+              <div
+                className={`@max-md:absolute @max-md:inset-0 ${
+                  !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
+                } @md:w-[450px] @md:min-w-[450px] ${
+                  !sidebarOpen ? '@md:hidden' : ''
+                } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
+                style={{ wordBreak: 'break-word' }}
+              >
+                <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
+                  <div className="flex gap-1">{LeftImageControls}</div>
+                  <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
+                    <IconChevron {...sharedIconProps} />
+                  </LegacyActionIcon>
                 </div>
-                <div
-                  className={`@max-md:absolute @max-md:inset-0 ${
-                    !active
-                      ? '@max-md:translate-y-[calc(100%-60px)]'
-                      : '@max-md:transition-transform'
-                  } @md:w-[450px] @md:min-w-[450px] ${
-                    !sidebarOpen ? '@md:hidden' : ''
-                  } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
-                  style={{ wordBreak: 'break-word' }}
-                >
-                  <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
-                    <div className="flex gap-1">{LeftImageControls}</div>
-                    <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
-                      <IconChevron {...sharedIconProps} />
-                    </LegacyActionIcon>
-                  </div>
-                  <ScrollArea className="flex-1 p-3 py-0">
-                    <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
-                      <SmartCreatorCard
-                        user={image.user}
-                        subText={
-                          <Text size="xs" c="dimmed">
-                            {image.publishedAt || image.sortAt ? (
-                              <>
-                                Uploaded <DaysFromNow date={image.publishedAt || image.sortAt} />
-                              </>
-                            ) : (
-                              'Not published'
-                            )}
-                          </Text>
-                        }
-                        tipBuzzEntityId={image.id}
-                        tipBuzzEntityType="Image"
-                        className="rounded-xl"
-                        tipsEnabled={!image.poi}
-                      />
-                      {image.postId && (
-                        <EntityCollaboratorList
-                          entityId={image.postId}
-                          entityType={EntityType.Post}
-                          creatorCardProps={{
-                            className: 'rounded-xl',
-                            withActions: true,
-                            tipsEnabled: !image.poi,
-                          }}
-                        />
-                      )}
-                      {image.needsReview && isOwner && (
-                        <AlertWithIcon
-                          icon={<IconAlertTriangle />}
-                          color="yellow"
-                          iconColor="yellow"
-                          title={
-                            image.needsReview === 'appeal' ? 'Under appeal' : 'Flagged for review'
-                          }
-                          radius={0}
-                          px="md"
-                        >
-                          {image.needsReview === 'appeal'
-                            ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our moderators.`
-                            : `This image won't be visible to other users until it's reviewed by our moderators.`}
-                        </AlertWithIcon>
-                      )}
-                      {['AiNotVerified'].includes(image.blockedFor ?? '') && (
-                        <AlertWithIcon
-                          icon={<IconAlertTriangle />}
-                          color="yellow"
-                          iconColor="yellow"
-                          title="Unable to verify AI generation"
-                          radius={0}
-                          px="md"
-                        >
-                          This image has been blocked because it is has received a NSFW rating and
-                          we could not verify that it was generated using AI. To restore the image,
-                          please update your post with metadata detailing the generation process
-                          &ndash; such as the prompt, tools, and resources used.
-                        </AlertWithIcon>
-                      )}
-                      {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
-                        !image.needsReview &&
-                        isOwner && (
-                          <AlertWithIcon
-                            icon={<IconAlertTriangle />}
-                            color="yellow"
-                            iconColor="yellow"
-                            title="Blocked by moderators"
-                            radius={0}
-                            px="md"
-                          >
-                            This image has been blocked by our moderators. We can make mistakes, if
-                            you believe this was done in error,{' '}
-                            <Anchor
-                              type="button"
-                              onClick={() =>
-                                dialogStore.trigger({
-                                  component: AppealDialog,
-                                  props: { entityId: image.id, entityType: EntityType.Image },
-                                })
-                              }
-                            >
-                              appeal this removal
-                            </Anchor>
-                          </AlertWithIcon>
-                        )}
-                      {image.poi && (
-                        <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
-                          <Text>
-                            This image was generated with AI and is based on the likeness of a real
-                            person. It is not a photo, but because it depicts a real individual, it
-                            cannot be monetized, used to display non-PG content, or shown alongside
-                            X or XXX material. For more information, see our{' '}
-                            <Anchor href="/safety">Content Policies</Anchor>
-                          </Text>
-                        </AlertWithIcon>
-                      )}
-                      {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
-                      {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
-                      <VotableTags
-                        entityType="image"
-                        entityId={image.id}
-                        canAdd
-                        collapsible
-                        nsfwLevel={image.nsfwLevel}
-                      />
-                      {post && (post.title || post.detail) && (
-                        <Card className="flex flex-col gap-3 rounded-xl">
-                          <Text className="flex items-center gap-2 text-xl font-semibold">
-                            <IconLayoutList />
-                            <span>{post.title}</span>
-                          </Text>
-                          {post.detail && (
-                            <ContentClamp maxHeight={75}>
-                              <RenderHtml html={post.detail} />
-                            </ContentClamp>
+                <ScrollArea className="flex-1 p-3 py-0">
+                  <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
+                    <SmartCreatorCard
+                      user={image.user}
+                      subText={
+                        <Text size="xs" c="dimmed">
+                          {image.publishedAt || image.sortAt ? (
+                            <>
+                              Uploaded <DaysFromNow date={image.publishedAt || image.sortAt} />
+                            </>
+                          ) : (
+                            'Not published'
                           )}
-                        </Card>
+                        </Text>
+                      }
+                      tipBuzzEntityId={image.id}
+                      tipBuzzEntityType="Image"
+                      className="rounded-xl"
+                      tipsEnabled={!image.poi}
+                    />
+                    {image.postId && (
+                      <EntityCollaboratorList
+                        entityId={image.postId}
+                        entityType={EntityType.Post}
+                        creatorCardProps={{
+                          className: 'rounded-xl',
+                          withActions: true,
+                          tipsEnabled: !image.poi,
+                        }}
+                      />
+                    )}
+                    {image.needsReview && isOwner && (
+                      <AlertWithIcon
+                        icon={<IconAlertTriangle />}
+                        color="yellow"
+                        iconColor="yellow"
+                        title={
+                          image.needsReview === 'appeal' ? 'Under appeal' : 'Flagged for review'
+                        }
+                        radius={0}
+                        px="md"
+                      >
+                        {image.needsReview === 'appeal'
+                          ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our moderators.`
+                          : `This image won't be visible to other users until it's reviewed by our moderators.`}
+                      </AlertWithIcon>
+                    )}
+                    {['AiNotVerified'].includes(image.blockedFor ?? '') && (
+                      <AlertWithIcon
+                        icon={<IconAlertTriangle />}
+                        color="yellow"
+                        iconColor="yellow"
+                        title="Unable to verify AI generation"
+                        radius={0}
+                        px="md"
+                      >
+                        This image has been blocked because it is has received a NSFW rating and we
+                        could not verify that it was generated using AI. To restore the image,
+                        please update your post with metadata detailing the generation process
+                        &ndash; such as the prompt, tools, and resources used.
+                      </AlertWithIcon>
+                    )}
+                    {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
+                      !image.needsReview &&
+                      isOwner && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="yellow"
+                          iconColor="yellow"
+                          title="Blocked by moderators"
+                          radius={0}
+                          px="md"
+                        >
+                          This image has been blocked by our moderators. We can make mistakes, if
+                          you believe this was done in error,{' '}
+                          <Anchor
+                            type="button"
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: AppealDialog,
+                                props: { entityId: image.id, entityType: EntityType.Image },
+                              })
+                            }
+                          >
+                            appeal this removal
+                          </Anchor>
+                        </AlertWithIcon>
                       )}
-                      <ImageProcess imageId={image.id} />
-                      <ImageGenerationData imageId={image.id} />
-                      {/* <ImageRemixOfDetails imageId={image.id} />
-                    <ImageRemixesDetails imageId={image.id} /> */}
-                      {/* {!hideAds && <AdUnitSide_3 />} */}
+                    {image.poi && (
+                      <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
+                        <Text>
+                          This image was generated with AI and is based on the likeness of a real
+                          person. It is not a photo, but because it depicts a real individual, it
+                          cannot be monetized, used to display non-PG content, or shown alongside X
+                          or XXX material. For more information, see our{' '}
+                          <Anchor href="/safety">Content Policies</Anchor>
+                        </Text>
+                      </AlertWithIcon>
+                    )}
+                    {!hideAds && image.id !== 97016897 && <AdUnitSide_2 />}
+                    {!hideAds && image.id === 97016897 && <AdUnitOutstream />}
+                    <VotableTags
+                      entityType="image"
+                      entityId={image.id}
+                      canAdd
+                      collapsible
+                      nsfwLevel={image.nsfwLevel}
+                    />
+                    {post && (post.title || post.detail) && (
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
-                          <IconBrandWechat />
-                          <span>Discussion</span>
+                          <IconLayoutList />
+                          <span>{post.title}</span>
                         </Text>
-                        <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                        {post.detail && (
+                          <ContentClamp maxHeight={75}>
+                            <RenderHtml html={post.detail} />
+                          </ContentClamp>
+                        )}
                       </Card>
-                      <ImageContestCollectionDetails
-                        key={currentUser?.id}
-                        image={image}
-                        isOwner={isOwner}
-                        isModerator={currentUser?.isModerator}
-                        userId={currentUser?.id}
-                      />
-                      <ImageExternalMeta imageId={image.id} />
-                    </div>
-                  </ScrollArea>
-                </div>
+                    )}
+                    <ImageProcess imageId={image.id} />
+                    <ImageGenerationData imageId={image.id} />
+                    {/* <ImageRemixOfDetails imageId={image.id} />
+                    <ImageRemixesDetails imageId={image.id} /> */}
+                    {/* {!hideAds && <AdUnitSide_3 />} */}
+                    <Card className="flex flex-col gap-3 rounded-xl">
+                      <Text className="flex items-center gap-2 text-xl font-semibold">
+                        <IconBrandWechat />
+                        <span>Discussion</span>
+                      </Text>
+                      <ImageDetailComments imageId={image.id} userId={image.user.id} />
+                    </Card>
+                    <ImageContestCollectionDetails
+                      key={currentUser?.id}
+                      image={image}
+                      isOwner={isOwner}
+                      isModerator={currentUser?.isModerator}
+                      userId={currentUser?.id}
+                    />
+                    <ImageExternalMeta imageId={image.id} />
+                  </div>
+                </ScrollArea>
               </div>
-              {!hideAds && <AdhesiveAd closeable={false} preserveLayout />}
             </div>
-          </BrowsingSettingsAddonsProvider>
-        </BrowsingLevelProvider>
-      </SensitiveShield>
-    </>
+            {!hideAds && <AdhesiveAd closeable={false} preserveLayout />}
+          </div>
+        </BrowsingSettingsAddonsProvider>
+      </BrowsingLevelProvider>
+    </Gated>
   );
 }
 

@@ -1,16 +1,9 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
 import { Stack } from '@mantine/core';
-// import * as z from 'zod';
 
 import { CreatorCard } from '~/components/Leaderboard/CreatorCard';
-import { numericString } from '~/utils/zod-helpers';
 import type { LeaderboardGetModel } from '~/types/router';
-
-// const schema = z.object({
-//   position: numericString().optional(),
-//   id: z.string().default('overall'),
-// });
 
 export function CreatorList({ data }: { data: LeaderboardGetModel[] }) {
   return <Stack>{data.map((item, index) => createRenderElement(CreatorCard, index, item))}</Stack>;

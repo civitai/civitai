@@ -26,6 +26,7 @@ export const getServerSideProps = createServerSideProps({
       await Promise.all([
         ssg?.user.getCreator.prefetch({ username }),
         ssg?.userProfile.get.prefetch({ username }),
+        ssg?.userProfile.overview.prefetch({ username }),
       ]);
     }
 

@@ -7,14 +7,16 @@ import {
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 
 // Edge runtime can't import the env module — read raw process.env here.
-function parseGreenHosts(): string[] {
-  const primary = process.env.SERVER_DOMAIN_GREEN?.toLowerCase();
+// Parsed once at module init since env vars don't change at runtime.
+const GREEN_DOMAIN_PRIMARY = process.env.SERVER_DOMAIN_GREEN;
+const GREEN_HOSTS: string[] = (() => {
+  const primary = GREEN_DOMAIN_PRIMARY?.toLowerCase();
   const aliases = (process.env.SERVER_DOMAIN_GREEN_ALIASES ?? '')
     .split(',')
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
   return [primary, ...aliases].filter(Boolean) as string[];
-}
+})();
 
 export const regionRestrictionMiddleware = createMiddleware({
   matcher: regionMiddlewareMatcher,
@@ -24,7 +26,7 @@ export const regionRestrictionMiddleware = createMiddleware({
 
     // Don't run if we're already on the green domain (primary or any alias).
     const host = request.headers.get('host')?.toLowerCase();
-    if (host && parseGreenHosts().includes(host)) {
+    if (host && GREEN_HOSTS.includes(host)) {
       return false;
     }
 
@@ -41,15 +43,16 @@ export const regionRestrictionMiddleware = createMiddleware({
     // Check if the user is from a restricted region
     if (isRegionRestricted(region)) {
       // Always redirect to the canonical green primary, never an alias.
-      const greenDomain = process.env.SERVER_DOMAIN_GREEN;
-
-      if (!greenDomain) {
+      if (!GREEN_DOMAIN_PRIMARY) {
         console.warn('SERVER_DOMAIN_GREEN is not configured');
         return;
       }
 
       // Construct the redirect URL with the same path and query parameters
-      const redirectUrl = new URL(nextUrl.pathname + nextUrl.search, `https://${greenDomain}`);
+      const redirectUrl = new URL(
+        nextUrl.pathname + nextUrl.search,
+        `https://${GREEN_DOMAIN_PRIMARY}`
+      );
 
       // Add a query parameter to help the frontend detect the redirect
       redirectUrl.searchParams.set('region-redirect', 'true');

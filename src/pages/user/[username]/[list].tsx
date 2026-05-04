@@ -117,7 +117,10 @@ export const getServerSideProps = createServerSideProps({
         redirect: { destination: `/user/${username}`, permanent: true },
       };
 
-    await ssg?.userProfile.get.prefetch({ username });
+    await Promise.all([
+      ssg?.userProfile.get.prefetch({ username }),
+      ssg?.userProfile.overview.prefetch({ username }),
+    ]);
   },
 });
 

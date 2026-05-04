@@ -135,13 +135,6 @@ export default function Safety({
                     depicting nudity or sexual themes.
                   </li>
                 </ul>
-                <Title order={4}>Real People</Title>
-                <ul>
-                  <li>
-                    Resources that are trained for the purpose of generating the likeness of a
-                    specific individual must be non-commercial and non-sexual in nature.
-                  </li>
-                </ul>
                 <Title order={4}>Extreme or Illegal Conduct</Title>
                 <ul>
                   <li>

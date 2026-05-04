@@ -74,10 +74,12 @@ export const getServerSideProps = createServerSideProps({
 
     const { event } = result.data;
     if (ssg) {
-      await ssg.event.getTeamScores.prefetch({ event });
-      await ssg.event.getTeamScoreHistory.prefetch({ event });
-      await ssg.event.getCosmetic.prefetch({ event });
-      await ssg.event.getData.prefetch({ event });
+      await Promise.all([
+        ssg.event.getTeamScores.prefetch({ event }),
+        ssg.event.getTeamScoreHistory.prefetch({ event }),
+        ssg.event.getCosmetic.prefetch({ event }),
+        ssg.event.getData.prefetch({ event }),
+      ]);
     }
 
     return { props: { event } };
