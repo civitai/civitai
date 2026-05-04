@@ -25,7 +25,7 @@ export function ImportReferencesModal({
 
   const addMutation = trpc.comics.addReferenceToProject.useMutation({
     onSuccess: () => {
-      utils.comics.getProject.invalidate({ id: projectId });
+      utils.comics.getProjectShell.invalidate({ id: projectId });
       utils.comics.getImportableReferences.invalidate({ projectId });
     },
     onError: (err) => {

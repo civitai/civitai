@@ -384,6 +384,14 @@ const getProjectSchema = z.object({
   id: z.number().int(),
 });
 
+const getChapterSchema = z.object({
+  projectId: z.number().int(),
+  // `position` defaults to 0 in the schema, so a negative value can never
+  // match a real row. Reject it at the boundary so the client's `?? -1`
+  // sentinel (used to disable the query) can never accidentally hit the DB.
+  chapterPosition: z.number().int().nonnegative(),
+});
+
 // Reference (character/location/item) creation — optionally scoped to a project
 const createReferenceSchema = z.object({
   name: z
@@ -858,85 +866,120 @@ export const comicsRouter = router({
     });
   }),
 
-  getProject: comicProtectedProcedure.input(getProjectSchema).query(async ({ ctx, input }) => {
-    // Use dbWrite for read-after-write consistency — this is a single-user workspace
-    // query that is frequently refetched immediately after mutations.
-    const project = await dbWrite.comicProject.findUnique({
-      where: { id: input.id },
-      include: {
-        coverImage: { select: { id: true, url: true, nsfwLevel: true } },
-        heroImage: { select: { id: true, url: true, nsfwLevel: true } },
-        chapters: {
-          orderBy: { position: 'asc' },
-          include: {
-            panels: {
-              orderBy: { position: 'asc' },
-              include: {
-                references: {
-                  select: { referenceId: true },
-                },
-                image: {
-                  select: { nsfwLevel: true, width: true, height: true },
-                },
-              },
+  // Lightweight project shell — project metadata + references + chapter list
+  // with precomputed `panelCount` / `hasInProgressPanels`, but NO full panel
+  // rows. Use this when the page only needs the chapter list (sidebar, model
+  // info, references) and will load actual panels through `getChapter`.
+  getProjectShell: comicProtectedProcedure
+    .input(getProjectSchema)
+    .query(async ({ ctx, input }) => {
+      const project = await dbWrite.comicProject.findUnique({
+        where: { id: input.id },
+        include: {
+          coverImage: { select: { id: true, url: true, nsfwLevel: true } },
+          heroImage: { select: { id: true, url: true, nsfwLevel: true } },
+          chapters: {
+            orderBy: { position: 'asc' },
+            include: {
+              // Pull only `status` per panel so we can derive `panelCount`
+              // and `hasInProgressPanels` on the server. Even at 100 panels
+              // per chapter this is dramatically smaller than the full
+              // include used by `getProject`.
+              panels: { select: { status: true } },
             },
           },
         },
-      },
-    });
+      });
 
-    if (!project) {
-      throw throwNotFoundError();
-    }
+      if (!project) throw throwNotFoundError();
+      if (project.userId !== ctx.user.id) throw throwAuthorizationError();
 
-    if (project.userId !== ctx.user.id) {
-      throw throwAuthorizationError();
-    }
-
-    // Fetch only project-scoped references via junction table
-    // Use dbWrite for read-after-write consistency (same as project query above)
-    const projectRefs = await dbWrite.comicProjectReference.findMany({
-      where: { projectId: project.id },
-      select: { referenceId: true },
-    });
-
-    const refIds = projectRefs.map((pr) => pr.referenceId);
-    const references =
-      refIds.length > 0
-        ? await dbWrite.comicReference.findMany({
-            where: { id: { in: refIds }, userId: ctx.user.id },
-            orderBy: { createdAt: 'asc' },
-            include: {
-              images: {
-                orderBy: { position: 'asc' },
-                include: {
-                  image: { select: { id: true, url: true, width: true, height: true, nsfwLevel: true } },
+      const projectRefs = await dbWrite.comicProjectReference.findMany({
+        where: { projectId: project.id },
+        select: { referenceId: true },
+      });
+      const refIds = projectRefs.map((pr) => pr.referenceId);
+      const references =
+        refIds.length > 0
+          ? await dbWrite.comicReference.findMany({
+              where: { id: { in: refIds }, userId: ctx.user.id },
+              orderBy: { createdAt: 'asc' },
+              include: {
+                images: {
+                  orderBy: { position: 'asc' },
+                  include: {
+                    image: {
+                      select: { id: true, url: true, width: true, height: true, nsfwLevel: true },
+                    },
+                  },
                 },
               },
-            },
-          })
-        : [];
+            })
+          : [];
 
-    // On green, strip NSFW reference images so they appear blocked.
-    // This procedure is protected so the viewer is always logged in — allow PG + PG13.
-    if (ctx.features.isGreen) {
-      for (const ref of references) {
-        ref.images = ref.images.filter(
-          (ri: any) => !ri.image.nsfwLevel || hasSafeBrowsingLevel(ri.image.nsfwLevel)
-        );
+      if (ctx.features.isGreen) {
+        for (const ref of references) {
+          ref.images = ref.images.filter(
+            (ri: any) => !ri.image.nsfwLevel || hasSafeBrowsingLevel(ri.image.nsfwLevel)
+          );
+        }
       }
-    }
 
-    // On green, strip imageUrl from NSFW panels so they appear blocked.
-    if (ctx.features.isGreen) {
-      stripNsfwPanelImages(project.chapters, true);
-    }
+      const chapters = project.chapters.map((chapter) => {
+        const panelCount = chapter.panels.length;
+        const hasInProgressPanels = chapter.panels.some(
+          (p) => p.status !== ComicPanelStatus.Ready && p.status !== ComicPanelStatus.Failed
+        );
+        // Strip the panel array from the returned shape — callers that need
+        // panel data should use `getChapter`. The derived flags above are
+        // all the sidebar needs.
+        const { panels: _panels, ...rest } = chapter;
+        return { ...rest, panelCount, hasInProgressPanels };
+      });
 
-    return {
-      ...project,
-      references,
-    };
-  }),
+      const { chapters: _chapters, ...projectRest } = project;
+      return { ...projectRest, chapters, references };
+    }),
+
+  // Full panel data for a single chapter. Pair with `getProjectShell`.
+  getChapter: comicProtectedProcedure
+    .input(getChapterSchema)
+    .query(async ({ ctx, input }) => {
+      // Owner check via the parent project — chapters don't store userId.
+      const project = await dbWrite.comicProject.findUnique({
+        where: { id: input.projectId },
+        select: { id: true, userId: true },
+      });
+      if (!project) throw throwNotFoundError();
+      if (project.userId !== ctx.user.id) throw throwAuthorizationError();
+
+      const chapter = await dbWrite.comicChapter.findUnique({
+        where: {
+          projectId_position: {
+            projectId: input.projectId,
+            position: input.chapterPosition,
+          },
+        },
+        include: {
+          panels: {
+            orderBy: { position: 'asc' },
+            include: {
+              references: { select: { referenceId: true } },
+              image: { select: { nsfwLevel: true, width: true, height: true } },
+            },
+          },
+        },
+      });
+
+      if (!chapter) throw throwNotFoundError();
+
+      // Same green-domain mature-content stripping as `getProject`.
+      if (ctx.features.isGreen) {
+        stripNsfwPanelImages([chapter], true);
+      }
+
+      return chapter;
+    }),
 
   getProjectForReader: comicProtectedProcedure
     .input(getProjectSchema)

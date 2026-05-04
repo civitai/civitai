@@ -132,7 +132,49 @@ function ProjectWorkspace() {
   const [generationModel, setGenerationModel] = useState<
     'NanoBanana' | 'Flux2' | 'Seedream' | 'SeedreamLite' | 'OpenAI' | 'Qwen' | 'Grok' | null
   >(null);
-  const [activeChapterPosition, setActiveChapterPosition] = useState<number | null>(null);
+
+  // Active chapter is driven by the URL path: `/comics/project/{id}/chapter/{position}`.
+  // The browser back-button, deep links, and shares all land on the same
+  // chapter the user last had open, instead of always snapping to the first
+  // one. The bare `/comics/project/{id}` URL falls back to the first chapter
+  // and (once data loads) redirects to the canonical chapter URL so the URL
+  // bar always reflects the selection.
+  const chapterPositionRaw = Array.isArray(router.query.chapterPosition)
+    ? router.query.chapterPosition[0]
+    : router.query.chapterPosition;
+  const urlChapterPosition = (() => {
+    if (typeof chapterPositionRaw !== 'string') return null;
+    const parsed = Number(chapterPositionRaw);
+    return Number.isFinite(parsed) ? parsed : null;
+  })();
+  const goToChapter = useCallback(
+    (position: number | null, options: { history?: 'push' | 'replace' } = {}) => {
+      // `replace` is the default — the silent bare-URL → canonical promotion,
+      // post-mutation redirects, and recovery from deleted chapters all want
+      // to overwrite the URL without leaving a history entry.
+      // `push` is opt-in for explicit user navigation (sidebar clicks) so the
+      // browser back-button cycles through chapters the user actually visited.
+      const navigate = options.history === 'push' ? router.push : router.replace;
+      if (position == null) {
+        void navigate(
+          { pathname: '/comics/project/[id]', query: { id: String(projectId) } },
+          undefined,
+          { shallow: true, scroll: false }
+        );
+        return;
+      }
+      void navigate(
+        {
+          pathname: '/comics/project/[id]/chapter/[chapterPosition]',
+          query: { id: String(projectId), chapterPosition: String(position) },
+        },
+        undefined,
+        { shallow: true, scroll: false }
+      );
+    },
+    [router, projectId]
+  );
+
   const [regeneratingPanelId, setRegeneratingPanelId] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [insertAtPosition, setInsertAtPosition] = useState<number | null>(null);
@@ -160,11 +202,18 @@ function ProjectWorkspace() {
   );
 
   // ── tRPC queries ──
+  // Shell carries project meta + references + chapter list with derived
+  // counts. The active chapter's full panel data is loaded separately via
+  // `getChapter` so we don't drag every chapter's panels along on every
+  // mount. Mutations route their cache writes to whichever query owns the
+  // affected data; in most cases we just invalidate both.
   const {
     data: project,
     isLoading,
-    refetch,
-  } = trpc.comics.getProject.useQuery({ id: projectId }, { enabled: projectId > 0 });
+  } = trpc.comics.getProjectShell.useQuery(
+    { id: projectId },
+    { enabled: projectId > 0 }
+  );
 
   const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana';
   const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana;
@@ -182,18 +231,62 @@ function ProjectWorkspace() {
   const planCost = planCostEstimate?.cost ?? null;
 
   // ── Active chapter ──
-  useEffect(() => {
-    if (project?.chapters?.length && activeChapterPosition == null) {
-      setActiveChapterPosition(project.chapters[0].position);
+  // Resolve which chapter is "active":
+  //   1. The chapterPosition path segment if it matches a real chapter.
+  //   2. The first chapter (silent fallback).
+  // If the URL points at a chapter that no longer exists, the effect below
+  // redirects to the first remaining chapter.
+  const activeShellChapter = useMemo(() => {
+    const chapters = project?.chapters ?? [];
+    if (chapters.length === 0) return undefined;
+    if (urlChapterPosition != null) {
+      const match = chapters.find((ch) => ch.position === urlChapterPosition);
+      if (match) return match;
     }
-  }, [project?.chapters, activeChapterPosition]);
+    return chapters[0];
+  }, [project?.chapters, urlChapterPosition]);
 
-  const activeChapter = useMemo(
-    () =>
-      project?.chapters?.find((ch) => ch.position === activeChapterPosition) ??
-      project?.chapters?.[0],
-    [project?.chapters, activeChapterPosition]
+  const activeChapterPosition = activeShellChapter?.position ?? null;
+
+  const {
+    data: activeChapterData,
+    isLoading: isActiveChapterLoading,
+  } = trpc.comics.getChapter.useQuery(
+    {
+      projectId,
+      chapterPosition: activeChapterPosition ?? -1,
+    },
+    {
+      enabled: projectId > 0 && activeChapterPosition != null,
+    }
   );
+
+  // Combine the shell's chapter metadata with the `getChapter` query's full
+  // panel data. Components that need panels read `.panels`; components that
+  // need chapter metadata read everything else. Until panels load, present
+  // an empty array so renders don't crash — the panel grid shows its own
+  // loader from `isActiveChapterLoading`.
+  const activeChapter = useMemo(() => {
+    if (!activeShellChapter) return undefined;
+    return {
+      ...activeShellChapter,
+      panels: activeChapterData?.panels ?? [],
+    };
+  }, [activeShellChapter, activeChapterData]);
+
+  // Promote the bare `/comics/project/{id}` URL to its canonical chapter URL
+  // once data loads, and recover from a stale URL that points at a deleted
+  // chapter by falling back to the first remaining chapter.
+  useEffect(() => {
+    const chapters = project?.chapters;
+    if (!chapters || chapters.length === 0) return;
+    if (urlChapterPosition == null) {
+      goToChapter(chapters[0].position);
+      return;
+    }
+    const exists = chapters.some((ch) => ch.position === urlChapterPosition);
+    if (!exists) goToChapter(chapters[0].position);
+  }, [urlChapterPosition, project?.chapters, goToChapter]);
 
   // ── References ──
   const allReferences = useMemo(() => project?.references ?? [], [project?.references]);
@@ -333,21 +426,47 @@ function ProjectWorkspace() {
 
   const utils = trpc.useUtils();
 
-  // Stable ref for refetch — used by PanelCard callbacks and signal handlers
-  const refetchRef = useRef(refetch);
-  refetchRef.current = refetch;
+  // Most chapter/panel mutations affect both the shell (chapter list,
+  // counts) and the active chapter's panel data. This helper keeps the
+  // mutation success handlers from forgetting to do both — the cost of an
+  // extra invalidate is small compared to the cost of stale data.
+  const invalidateProjectQueries = useCallback(() => {
+    void utils.comics.getProjectShell.invalidate({ id: projectId });
+    if (activeChapterPosition != null) {
+      void utils.comics.getChapter.invalidate({
+        projectId,
+        chapterPosition: activeChapterPosition,
+      });
+    }
+  }, [utils, projectId, activeChapterPosition]);
 
-  // Listen for ComicPanelUpdate signals for background job transitions (Enqueued → Generating).
-  // Terminal transitions (Ready/Failed) are handled by each PanelCard's own cache patch.
+  // Stable ref for refetch — used by PanelCard callbacks and signal handlers
+  const refetchRef = useRef(invalidateProjectQueries);
+  refetchRef.current = invalidateProjectQueries;
+
+  // Listen for ComicPanelUpdate signals.
+  //   - Ready/Failed in the active chapter: PanelCard's own listener patches its cache.
+  //   - Ready/Failed in a different chapter: PanelCard isn't mounted for non-active
+  //     chapters, so we have to invalidate that chapter's cache here. React Query
+  //     treats `getChapter` invalidation without `chapterPosition` as "any cached
+  //     chapter for this project" — perfect for that case. Shell counts shift too.
+  //   - Non-terminal (Enqueued → Generating): bump the shell+active cache so the
+  //     sidebar's `hasInProgressPanels` flag updates immediately.
   useSignalConnection(
     SignalMessages.ComicPanelUpdate,
     useCallback(
       (data: { panelId: number; projectId: number; status: string }) => {
         if (data.projectId !== projectId) return;
-        if (data.status === 'Ready' || data.status === 'Failed') return; // PanelCard handles these
+        if (data.status === 'Ready' || data.status === 'Failed') {
+          void utils.comics.getProjectShell.invalidate({ id: projectId });
+          // Without `chapterPosition`, this matches every cached chapter
+          // for the project — covers the not-currently-mounted case.
+          void utils.comics.getChapter.invalidate({ projectId });
+          return;
+        }
         refetchRef.current();
       },
-      [projectId]
+      [projectId, utils]
     )
   );
 
@@ -365,14 +484,14 @@ function ProjectWorkspace() {
             utils.comics.pollReferenceStatus.fetch({ referenceId: cid })
           )
         );
-        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) refetch();
+        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) invalidateProjectQueries();
       } catch {
         /* ignore */
       }
     }, 5000);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [processingReferenceIds.join(','), utils, refetch]);
+  }, [processingReferenceIds.join(','), utils, invalidateProjectQueries]);
 
   // ── Mutations ──
   const handleMutationError = (error: any) => {
@@ -385,7 +504,7 @@ function ProjectWorkspace() {
       setPrompt('');
       setRegeneratingPanelId(null);
       setInsertAtPosition(null);
-      refetch();
+      invalidateProjectQueries();
     },
     onError: handleMutationError,
   });
@@ -395,54 +514,69 @@ function ProjectWorkspace() {
       closePanelModal();
       setPrompt('');
       setInsertAtPosition(null);
-      refetch();
+      invalidateProjectQueries();
     },
     onError: handleMutationError,
   });
 
   const updatePanelMutation = trpc.comics.updatePanel.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const replacePanelImageMutation = trpc.comics.replacePanelImage.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const deletePanelMutation = trpc.comics.deletePanel.useMutation({
     onMutate: async ({ panelId }) => {
-      await utils.comics.getProject.cancel({ id: projectId });
-      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      // We render only the active chapter's panels — every delete originates
+      // there. Drop the panel from the chapter cache, and decrement the
+      // shell's panelCount so the sidebar count stays in sync.
+      if (activeChapterPosition == null) return;
+      await utils.comics.getChapter.cancel({
+        projectId,
+        chapterPosition: activeChapterPosition,
+      });
+      utils.comics.getChapter.setData(
+        { projectId, chapterPosition: activeChapterPosition },
+        (prev) => {
+          if (!prev) return prev;
+          return { ...prev, panels: prev.panels.filter((p) => p.id !== panelId) };
+        }
+      );
+      utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
         if (!prev) return prev;
         return {
           ...prev,
-          chapters: prev.chapters.map((ch) => ({
-            ...ch,
-            panels: ch.panels.filter((p) => p.id !== panelId),
-          })),
+          chapters: prev.chapters.map((ch) =>
+            ch.position === activeChapterPosition
+              ? { ...ch, panelCount: Math.max(0, ch.panelCount - 1) }
+              : ch
+          ),
         };
       });
     },
     onSuccess: () => {
-      refetch();
+      invalidateProjectQueries();
       setDetailPanelId(null);
     },
-    onError: () => refetch(),
+    onError: () => invalidateProjectQueries(),
   });
 
   const reorderPanelsMutation = trpc.comics.reorderPanels.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: (err) => {
       handleMutationError(err);
-      refetch();
+      invalidateProjectQueries();
     },
   });
 
   const createChapterMutation = trpc.comics.createChapter.useMutation({
     onMutate: async () => {
-      await utils.comics.getProject.cancel({ id: projectId });
-      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      await utils.comics.getProjectShell.cancel({ id: projectId });
+      utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
         if (!prev) return prev;
         const nextPosition = prev.chapters.length > 0
           ? Math.max(...prev.chapters.map((ch) => ch.position)) + 1
@@ -452,9 +586,9 @@ function ProjectWorkspace() {
           name: 'New Chapter',
           position: nextPosition,
           status: ComicChapterStatus.Draft,
-          panels: [],
+          panelCount: 0,
+          hasInProgressPanels: false,
           earlyAccessConfig: null,
-          scheduledAt: null,
           availability: 'Public',
           nsfwLevel: 0,
           earlyAccessEndsAt: null,
@@ -467,50 +601,50 @@ function ProjectWorkspace() {
       });
     },
     onSuccess: (data) => {
-      setActiveChapterPosition(data.position);
-      refetch();
+      goToChapter(data.position);
+      invalidateProjectQueries();
     },
-    onError: () => refetch(),
+    onError: () => invalidateProjectQueries(),
   });
 
   const updateChapterMutation = trpc.comics.updateChapter.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const updateChapterEaMutation = trpc.comics.updateChapterEarlyAccess.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const deleteChapterMutation = trpc.comics.deleteChapter.useMutation({
     onMutate: async ({ chapterPosition }) => {
-      await utils.comics.getProject.cancel({ id: projectId });
-      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      await utils.comics.getProjectShell.cancel({ id: projectId });
+      utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
         if (!prev) return prev;
         const filtered = prev.chapters.filter((ch) => ch.position !== chapterPosition);
         return { ...prev, chapters: filtered };
       });
     },
-    onSuccess: () => refetch(),
-    onError: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
+    onError: () => invalidateProjectQueries(),
   });
 
   const updateProjectMutation = trpc.comics.updateProject.useMutation({
     onSuccess: () => {
       closeSettings();
-      refetch();
+      invalidateProjectQueries();
     },
     onError: handleMutationError,
   });
 
   const deleteReferenceMutation = trpc.comics.deleteReference.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const removeReferenceFromProjectMutation = trpc.comics.removeReferenceFromProject.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
@@ -523,25 +657,25 @@ function ProjectWorkspace() {
   });
 
   const publishChapterMutation = trpc.comics.publishChapter.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const unpublishChapterMutation = trpc.comics.unpublishChapter.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const planPanelsMutation = trpc.comics.planChapterPanels.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const smartCreateMutation = trpc.comics.smartCreateChapter.useMutation({
     onSuccess: (data) => {
       closeSmartModal();
-      setActiveChapterPosition(data.position);
-      refetch();
+      goToChapter(data.position);
+      invalidateProjectQueries();
     },
     onError: handleMutationError,
   });
@@ -550,28 +684,28 @@ function ProjectWorkspace() {
     onSuccess: () => {
       closePanelModal();
       setInsertAtPosition(null);
-      refetch();
+      invalidateProjectQueries();
     },
     onError: handleMutationError,
   });
 
   const reorderChaptersMutation = trpc.comics.reorderChapters.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: (err) => {
       handleMutationError(err);
-      refetch();
+      invalidateProjectQueries();
     },
   });
 
   const duplicatePanelMutation = trpc.comics.duplicatePanel.useMutation({
-    onSuccess: () => refetch(),
+    onSuccess: () => invalidateProjectQueries(),
     onError: handleMutationError,
   });
 
   const duplicateChapterMutation = trpc.comics.duplicateChapter.useMutation({
     onSuccess: (data) => {
-      setActiveChapterPosition(data.position);
-      refetch();
+      goToChapter(data.position);
+      invalidateProjectQueries();
     },
     onError: handleMutationError,
   });
@@ -734,18 +868,15 @@ function ProjectWorkspace() {
     if (oldIndex === -1 || newIndex === -1) return;
     const reordered = arrayMove(panels, oldIndex, newIndex);
 
-    // Optimistic update
-    utils.comics.getProject.setData({ id: projectId }, (prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        chapters: prev.chapters.map((ch) =>
-          ch.position === activeChapter.position
-            ? { ...ch, panels: reordered.map((p, i) => ({ ...p, position: i })) }
-            : ch
-        ),
-      };
-    });
+    // Optimistic update — only the active chapter's panel order changed,
+    // so we patch the chapter cache directly.
+    utils.comics.getChapter.setData(
+      { projectId, chapterPosition: activeChapter.position },
+      (prev) => {
+        if (!prev) return prev;
+        return { ...prev, panels: reordered.map((p, i) => ({ ...p, position: i })) };
+      }
+    );
 
     reorderPanelsMutation.mutate({
       projectId,
@@ -764,8 +895,8 @@ function ProjectWorkspace() {
     const reorderedChapters = arrayMove(chapters, oldIndex, newIndex);
     const newOrder = reorderedChapters.map((ch) => ch.position);
 
-    // Optimistic update
-    utils.comics.getProject.setData({ id: projectId }, (prev) => {
+    // Optimistic update — only chapter positions change, panels untouched.
+    utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
       if (!prev) return prev;
       return {
         ...prev,
@@ -840,7 +971,7 @@ function ProjectWorkspace() {
         deleteChapterMutation.mutate({ projectId, chapterPosition });
         if (activeChapterPosition === chapterPosition) {
           const remaining = project.chapters.filter((ch) => ch.position !== chapterPosition);
-          setActiveChapterPosition(remaining[0]?.position ?? null);
+          goToChapter(remaining[0]?.position ?? null);
         }
       },
     });
@@ -867,7 +998,7 @@ function ProjectWorkspace() {
         },
       });
     } else {
-      setActiveChapterPosition(chapterPosition);
+      goToChapter(chapterPosition);
       setPublishEaInitial(false);
       openPublishModal();
     }
@@ -1027,15 +1158,19 @@ function ProjectWorkspace() {
     );
   }
 
-  const hasReadyPanelsWithImages = project.chapters.some((ch) =>
-    ch.panels.some((p) => p.status === 'Ready' && p.imageUrl)
-  );
+  const totalPanelCount = project.chapters.reduce((sum, ch) => sum + ch.panelCount, 0);
 
-  const totalPanelCount = project.chapters.reduce((sum, ch) => sum + ch.panels.length, 0);
+  // The shell doesn't carry per-panel status / imageUrl so we can't tell
+  // "has any ready panel with an image" without re-fetching panels. Treat
+  // any panels at all as "worth showing the Read button" — the public read
+  // page already handles the no-renderable-panels case.
+  const hasReadyPanelsWithImages = totalPanelCount > 0;
 
-  // Detail drawer data
+  // Detail drawer is opened from the active chapter's panel grid, so we
+  // only need to look there. Chapters other than the active one don't have
+  // their panels loaded into the cache.
   const detailPanel = detailPanelId
-    ? project.chapters.flatMap((ch) => ch.panels).find((p) => p.id === detailPanelId)
+    ? activeChapter?.panels.find((p) => p.id === detailPanelId) ?? null
     : null;
   const detailPanelIndex =
     detailPanel && activeChapter
@@ -1248,7 +1383,8 @@ function ProjectWorkspace() {
                       const isActive =
                         (activeChapterPosition ?? project.chapters[0]?.position) ===
                         chapter.position;
-                      const panelCount = chapter.panels.length;
+                      const panelCount = chapter.panelCount;
+                      const hasInProgressPanels = chapter.hasInProgressPanels;
                       const eaConfig = chapter.earlyAccessConfig as {
                         buzzPrice: number;
                         timeframe: number;
@@ -1281,7 +1417,7 @@ function ProjectWorkspace() {
                             style={
                               isDeleting ? { opacity: 0.5, pointerEvents: 'none' } : undefined
                             }
-                            onClick={() => setActiveChapterPosition(chapter.position)}
+                            onClick={() => goToChapter(chapter.position, { history: 'push' })}
                           >
                             <span className={styles.chapterItemNumber}>
                               {isBusy ? (
@@ -1350,10 +1486,7 @@ function ProjectWorkspace() {
                             <span className={styles.chapterItemActions}>
                               <Tooltip
                                 label={
-                                  chapter.panels.some(
-                                    (p) =>
-                                      p.status !== 'Ready' && p.status !== 'Failed'
-                                  )
+                                  hasInProgressPanels
                                     ? 'Wait for all panels to complete before duplicating'
                                     : 'Duplicate chapter'
                                 }
@@ -1365,10 +1498,7 @@ function ProjectWorkspace() {
                                   size="xs"
                                   c="dimmed"
                                   disabled={
-                                    chapter.panels.some(
-                                      (p) =>
-                                        p.status !== 'Ready' && p.status !== 'Failed'
-                                    ) ||
+                                    hasInProgressPanels ||
                                     (duplicateChapterMutation.isPending &&
                                       duplicateChapterMutation.variables?.chapterPosition === chapter.position)
                                   }
@@ -1505,7 +1635,7 @@ function ProjectWorkspace() {
                             variant="light"
                             leftSection={<IconEye size={14} />}
                             component={Link}
-                            href={`/comics/project/${projectId}/read`}
+                            href={`/comics/project/${projectId}/read?chapter=${activeChapter.position}`}
                             target="_blank"
                             rel="noopener noreferrer"
                           >
@@ -1522,7 +1652,7 @@ function ProjectWorkspace() {
                               disabled={activeChapter.panels.length === 0}
                               loading={isPublishing}
                               onClick={() => {
-                                setActiveChapterPosition(activeChapter.position);
+                                goToChapter(activeChapter.position);
                                 setPublishEaInitial(true);
                                 openPublishModal();
                               }}
@@ -1556,19 +1686,25 @@ function ProjectWorkspace() {
                   );
                 })()}
 
-              {activeChapter && activeChapter.panels.length === 0 && (
-                <div className="flex flex-col items-center py-12 text-center">
-                  <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
-                  <Text size="sm" c="dimmed" mb="md">
-                    No panels yet. Create your first panel!
-                  </Text>
-                  <Text c="dimmed" size="xs" maw={360}>
-                    Use <b>Generate</b> to create panels from a text prompt, or <b>Enhance</b> to
-                    transform an existing image into a comic panel. Add <b>References</b> to
-                    maintain character consistency across panels.
-                  </Text>
-                </div>
-              )}
+              {activeChapter &&
+                activeChapter.panels.length === 0 &&
+                (isActiveChapterLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader color="yellow" />
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center py-12 text-center">
+                    <IconPhoto size={48} style={{ color: '#605e6e', marginBottom: 16 }} />
+                    <Text size="sm" c="dimmed" mb="md">
+                      No panels yet. Create your first panel!
+                    </Text>
+                    <Text c="dimmed" size="xs" maw={360}>
+                      Use <b>Generate</b> to create panels from a text prompt, or{' '}
+                      <b>Enhance</b> to transform an existing image into a comic panel. Add{' '}
+                      <b>References</b> to maintain character consistency across panels.
+                    </Text>
+                  </div>
+                ))}
 
               {/* Panel grid */}
               <DndContext
@@ -1586,6 +1722,7 @@ function ProjectWorkspace() {
                         <PanelCard
                           panel={panel}
                           projectId={projectId}
+                          chapterPosition={activeChapter?.position ?? 0}
                           position={index + 1}
                           referenceNames={
                             (panel.references ?? [])
@@ -1652,6 +1789,7 @@ function ProjectWorkspace() {
         detailPanelId={detailPanelId}
         setDetailPanelId={setDetailPanelId}
         projectId={project.id}
+        chapterPosition={activeChapter?.position ?? 0}
         detailPanel={detailPanel as any}
         detailPanelIndex={detailPanelIndex}
         referenceNameMap={referenceNameMap}

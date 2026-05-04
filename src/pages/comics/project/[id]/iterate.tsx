@@ -68,7 +68,9 @@ function ComicIteratePage() {
   const redDomain = useServerDomains().red;
 
   // ── Fetch project data for references + cost ──
-  const { data: project } = trpc.comics.getProject.useQuery(
+  // Iterate.tsx only needs `baseModel`, `references`, and `name` — no
+  // chapter/panel data — so use the lightweight shell instead of `getProject`.
+  const { data: project } = trpc.comics.getProjectShell.useQuery(
     { id: projectId },
     { enabled: !!projectId && !isNaN(projectId) }
   );
@@ -217,7 +219,14 @@ function ComicIteratePage() {
         });
       }
       showSuccessNotification({ message: 'Panel committed successfully!' });
-      void utils.comics.getProject.invalidate({ id: projectId });
+      // Commit either replaced an existing panel's image or created a new
+      // one. Invalidate the chapter (panels changed) and the shell (panel
+      // counts / hasInProgress flags may shift).
+      void utils.comics.getProjectShell.invalidate({ id: projectId });
+      void utils.comics.getChapter.invalidate({
+        projectId,
+        chapterPosition,
+      });
     },
     [
       numericPanelId,
@@ -231,8 +240,11 @@ function ComicIteratePage() {
   );
 
   const handleClose = useCallback(() => {
-    void router.push(`/comics/project/${projectId}`);
-  }, [router, projectId]);
+    // Land back on the same chapter the user was iterating in. The
+    // chapter URL exists as soon as a chapter does, so this is safe even
+    // when chapterPosition is 0 (the default).
+    void router.push(`/comics/project/${projectId}/chapter/${chapterPosition}`);
+  }, [router, projectId, chapterPosition]);
 
   // ── Mature handoff: build a "same page on civitai.red" URL with the
   //    workflow ID encoded so the red side resumes polling the same workflow.
@@ -303,15 +315,25 @@ function ComicIteratePage() {
 
   const { isGreen } = useFeatureFlags();
 
-  // Block iterative editing of NSFW panels on green domain
-  const sourcePanel = numericPanelId
-    ? project?.chapters
-        .flatMap((ch: any) => ch.panels)
-        .find((p: any) => p.id === numericPanelId)
-    : null;
+  // Block iterative editing of NSFW panels on green domain. The shell query
+  // doesn't carry panel data, so we look the source panel up in the chapter
+  // it belongs to (we already have `chapterPosition` from the URL). Skip the
+  // fetch entirely when there's no panelId on the URL — that's the
+  // "iterate from a free-form image" case, no source panel to gate on.
+  const { data: sourceChapter } = trpc.comics.getChapter.useQuery(
+    { projectId, chapterPosition },
+    {
+      enabled:
+        projectId > 0 && Number.isFinite(chapterPosition) && numericPanelId != null,
+    }
+  );
+  const sourcePanel =
+    numericPanelId != null
+      ? sourceChapter?.panels.find((p) => p.id === numericPanelId)
+      : null;
   const isNsfwBlocked =
     isGreen &&
-    sourcePanel?.image &&
+    !!sourcePanel?.image &&
     !hasSafeBrowsingLevel(sourcePanel.image.nsfwLevel);
 
   if (!project) {

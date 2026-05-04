@@ -9,7 +9,7 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
@@ -60,7 +60,6 @@ function ComicReader() {
   );
 
   const chapters = useMemo(() => project?.chapters ?? [], [project?.chapters]);
-  const [activeChapterIdx, setActiveChapterIdx] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   // Mature-content gating: on the green domain, hide panels that aren't in
@@ -70,22 +69,55 @@ function ComicReader() {
   const { isGreen } = useFeatureFlags();
   const redDomain = useServerDomains().red;
 
-  const redHandoffUrl = useMemo(() => {
-    if (!redDomain) return null;
-    if (!Number.isFinite(projectId) || projectId <= 0) return null;
-    return syncAccount(`//${redDomain}/comics/project/${projectId}/read`);
-  }, [redDomain, projectId]);
+  // Active chapter is driven by `?chapter={position}` so refresh / share /
+  // back-button all land on the same chapter. We pick first-with-panels as
+  // the silent fallback so an empty new chapter doesn't render a "no panels
+  // yet" landing when there's a populated chapter sitting next to it.
+  const chapterQueryParam = Array.isArray(router.query.chapter)
+    ? router.query.chapter[0]
+    : router.query.chapter;
+  const urlChapterPosition = (() => {
+    if (typeof chapterQueryParam !== 'string') return null;
+    const parsed = Number(chapterQueryParam);
+    return Number.isFinite(parsed) ? parsed : null;
+  })();
 
-  // Reset to first chapter with panels when data loads
-  useEffect(() => {
-    if (chapters.length > 0) {
-      const firstWithPanels = chapters.findIndex((ch) => ch.panels.length > 0);
-      if (firstWithPanels >= 0) setActiveChapterIdx(firstWithPanels);
+  const activeChapterIdx = useMemo(() => {
+    if (chapters.length === 0) return -1;
+    if (urlChapterPosition != null) {
+      const idx = chapters.findIndex((ch) => ch.position === urlChapterPosition);
+      if (idx >= 0) return idx;
     }
-  }, [chapters]);
+    const firstWithPanels = chapters.findIndex((ch) => ch.panels.length > 0);
+    return firstWithPanels >= 0 ? firstWithPanels : 0;
+  }, [chapters, urlChapterPosition]);
 
   const activeChapter = chapters[activeChapterIdx];
   const panels = activeChapter?.panels ?? [];
+
+  const goToChapter = useCallback(
+    (idx: number) => {
+      const target = chapters[idx];
+      if (!target) return;
+      const nextQuery = { ...router.query, chapter: String(target.position) };
+      void router.replace(
+        { pathname: router.pathname, query: nextQuery },
+        undefined,
+        { shallow: true, scroll: false }
+      );
+      scrollRef.current?.scrollTo({ top: 0 });
+    },
+    [router, chapters]
+  );
+
+  const redHandoffUrl = useMemo(() => {
+    if (!redDomain) return null;
+    if (!Number.isFinite(projectId) || projectId <= 0) return null;
+    const params = activeChapter
+      ? `?chapter=${activeChapter.position}`
+      : '';
+    return syncAccount(`//${redDomain}/comics/project/${projectId}/read${params}`);
+  }, [redDomain, projectId, activeChapter]);
 
   const chapterOptions = useMemo(
     () =>
@@ -98,11 +130,6 @@ function ComicReader() {
 
   const hasPrev = activeChapterIdx > 0;
   const hasNext = activeChapterIdx < chapters.length - 1;
-
-  const goToChapter = (idx: number) => {
-    setActiveChapterIdx(idx);
-    scrollRef.current?.scrollTo({ top: 0 });
-  };
 
   if (isLoading) {
     return (
@@ -119,8 +146,6 @@ function ComicReader() {
       </Container>
     );
   }
-
-  console.log(panels);
 
   return (
     <>
@@ -192,7 +217,6 @@ function ComicReader() {
 
         {/* Panel content */}
         <Container size="sm" p={0}>
-        aodoasd
           {panels.length === 0 ? (
             <Stack align="center" gap="md" py={80}>
               <IconPhotoOff size={48} style={{ color: 'var(--mantine-color-dark-3)' }} />

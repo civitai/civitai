@@ -251,8 +251,7 @@ export function IterationMessage({
                 Mature content
               </Text>
               <Text size="xs" ta="center" px="xs">
-                Your Buzz paid for this — open it on civitai.red to view it and
-                use it as source.
+                The resulting image was rated mature and cannot be viewed on this site. Open it on civitai.red to view it
               </Text>
               {unlockOnRedUrl ? (
                 <Button
