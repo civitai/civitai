@@ -5,6 +5,7 @@ import {
   subscriptionProductMetadataSchema,
   type GetUserSubscriptionInput,
   type SubscriptionMetadata,
+  type SubscriptionProductMetadata,
   type PrepaidToken,
 } from '~/server/schema/subscriptions.schema';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
@@ -373,9 +374,19 @@ export const deliverMonthlyCosmetics = async ({
 /**
  * Manually sync a user's membership tier to Freshdesk
  */
-export const syncFreshdeskMembership = async ({ userId }: { userId: number }) => {
-  const user = await dbWrite.user.findUnique({
-    where: { id: userId },
+export const syncFreshdeskMembership = async ({
+  userId,
+  customerId,
+}: {
+  userId?: number;
+  customerId?: string;
+}) => {
+  if (!userId && !customerId) {
+    throw new Error('syncFreshdeskMembership requires userId or customerId');
+  }
+
+  const user = await dbWrite.user.findFirst({
+    where: userId ? { id: userId } : { customerId },
     select: { id: true, username: true, email: true },
   });
 
@@ -387,8 +398,8 @@ export const syncFreshdeskMembership = async ({ userId }: { userId: number }) =>
     throw new Error('User has no email address');
   }
 
-  const subscription = await getHighestTierSubscription(userId);
-  const tier = subscription?.tier;
+  const subscription = await getHighestTierSubscription(user.id);
+  const tier = subscription?.tier ?? null;
 
   await upsertContact({
     id: user.id,
@@ -397,7 +408,7 @@ export const syncFreshdeskMembership = async ({ userId }: { userId: number }) =>
     tier,
   });
 
-  return { success: true, userId, tier };
+  return { success: true, userId: user.id, tier };
 };
 
 export const claimPrepaidToken = async ({
@@ -435,8 +446,7 @@ export const claimPrepaidToken = async ({
       throw new Error('No active prepaid membership found');
     }
 
-    const meta = (subscription.metadata ??
-      {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+    const meta = (subscription.metadata ?? {}) as SubscriptionMetadata;
     const tokens = getPrepaidTokens({ metadata: meta });
     const tokenIndex = tokens.findIndex((t) => t.id === tokenId);
 
@@ -452,8 +462,7 @@ export const claimPrepaidToken = async ({
       );
     }
 
-    const productMeta = subscription.product
-      .metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+    const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
     const now = new Date().toISOString();
     const dateKey = now.split('T')[0];
@@ -543,8 +552,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       throw new Error('No active prepaid membership found');
     }
 
-    const meta = (subscription.metadata ??
-      {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
+    const meta = (subscription.metadata ?? {}) as SubscriptionMetadata;
     const tokens = getPrepaidTokens({ metadata: meta });
     const unlockedTokens = tokens.filter((t) => t.status === 'unlocked');
 
@@ -552,8 +560,7 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
       throw new Error('No unlocked tokens to claim');
     }
 
-    const productMeta = subscription.product
-      .metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+    const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
     const buzzType = productMeta.buzzType ?? 'yellow';
     const now = new Date().toISOString();
     const dateKey = now.split('T')[0];
@@ -672,10 +679,8 @@ export const unlockTokensForUser = async ({
     throw new Error('No active prepaid membership found');
   }
 
-  const meta = (subscription.metadata ??
-    {}) as import('~/server/schema/subscriptions.schema').SubscriptionMetadata;
-  const productMeta = subscription.product
-    .metadata as import('~/server/schema/subscriptions.schema').SubscriptionProductMetadata;
+  const meta = (subscription.metadata ?? {}) as SubscriptionMetadata;
+  const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
   const currentTier = productMeta.tier;
 
   if (!currentTier || currentTier === 'free') {

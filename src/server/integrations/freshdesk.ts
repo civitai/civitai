@@ -171,14 +171,16 @@ export async function updateServiceTier({
   const tier = serviceTier ? capitalize(serviceTier) : null;
   if (tier && !supportedTiers.includes(tier)) return;
 
-  if (!email) {
-    ({ email } =
-      (await dbWrite.user.findUnique({
+  const user = userId
+    ? await dbWrite.user.findUnique({
         where: { id: userId },
-        select: { email: true },
-      })) ?? {});
-  }
-  if (!email) return;
+        select: { id: true, username: true, email: true },
+      })
+    : await dbWrite.user.findFirst({
+        where: { email },
+        select: { id: true, username: true, email: true },
+      });
+  if (!user?.id || !user.username || !user.email) return;
 
-  return upsertContact({ email, tier });
+  return upsertContact({ id: user.id, username: user.username, email: user.email, tier });
 }

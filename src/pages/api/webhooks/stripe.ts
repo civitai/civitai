@@ -19,6 +19,7 @@ import { notifyAir } from '~/server/services/integration.service';
 import { isDev } from '~/env/other';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
+import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
 import {
   recordBuzzPurchaseKickback,
   recordMembershipPaymentReward,
@@ -108,15 +109,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             break;
           case 'customer.subscription.created':
           case 'customer.subscription.updated':
-          case 'customer.subscription.deleted':
+          case 'customer.subscription.deleted': {
             const subscription = event.data.object as Stripe.Subscription;
+            const customerId = subscription.customer as string;
             await upsertSubscription(
               subscription,
-              subscription.customer as string,
+              customerId,
               toDateTime(event.created),
               event.type
             );
+
+            await syncFreshdeskMembership({ customerId }).catch((err) =>
+              log({
+                type: 'error',
+                stage: 'freshdesk-sync',
+                message: 'failed to sync Freshdesk service tier',
+                error: err instanceof Error ? err.message : String(err),
+              })
+            );
             break;
+          }
           case 'checkout.session.completed':
             const checkoutSession = event.data.object as Stripe.Checkout.Session;
             if (checkoutSession.mode === 'subscription') {
