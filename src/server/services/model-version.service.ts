@@ -573,15 +573,18 @@ export const upsertModelVersion = async ({
 };
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
-  // Snapshot URLs before the cascade nukes ModelFile rows — we lose them otherwise.
-  const modelFileUrls = (
-    await dbWrite.modelFile.findMany({
-      where: { modelVersionId: id },
-      select: { url: true },
-    })
-  ).map((f) => f.url);
+  // Populated inside the tx so the snapshot is consistent with the cascade.
+  let modelFileUrls: string[] = [];
 
   const version = await dbWrite.$transaction(async (tx) => {
+    // Snapshot URLs inside the tx — must read before the cascade nukes ModelFile rows.
+    modelFileUrls = (
+      await tx.modelFile.findMany({
+        where: { modelVersionId: id },
+        select: { url: true },
+      })
+    ).map((f) => f.url);
+
     const data = await tx.modelVersion.findFirstOrThrow({
       where: { id },
       select: {
@@ -2065,15 +2068,9 @@ export const mergeVersions = async ({
     }
   }
 
-  // Defensive snapshot: the merge moves files to the target before deleting source
-  // versions, so this should normally be empty — but if a file slipped past the
-  // updateMany (or a race added one), the cascade would orphan its S3 object.
-  const sourceFileUrls = (
-    await dbWrite.modelFile.findMany({
-      where: { modelVersionId: { in: sourceVersionIds } },
-      select: { url: true },
-    })
-  ).map((f) => f.url);
+  // Populated inside the tx after files are moved to the target — captures any
+  // file row that slipped past the move and would be orphaned by the cascade.
+  let sourceFileUrls: string[] = [];
 
   await dbWrite.$transaction(
     async (tx) => {
@@ -2106,6 +2103,16 @@ export const mergeVersions = async ({
         where: { modelVersionId: { in: sourceVersionIds } },
         data: { modelVersionId: targetVersionId },
       });
+
+      // Capture any file rows that slipped past the move — those are the ones the
+      // cascade in step 12 will actually orphan. Read inside the tx so the snapshot
+      // is consistent with the cascade.
+      sourceFileUrls = (
+        await tx.modelFile.findMany({
+          where: { modelVersionId: { in: sourceVersionIds } },
+          select: { url: true },
+        })
+      ).map((f) => f.url);
 
       // 3. Aggregate ModelVersionMetric stats
       const sourceMetrics = await tx.modelVersionMetric.findMany({

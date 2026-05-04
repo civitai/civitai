@@ -1491,19 +1491,19 @@ export const permaDeleteModelById = async ({
 }: GetByIdInput & {
   userId: number;
 }) => {
-  // Collect ModelFile URLs before the cascade delete — read-only, no need to
-  // run inside the transaction. Doing this outside shrinks the 30s tx window.
-  // Use dbWrite (primary) so we don't miss recently-added rows due to CDC lag;
-  // this only runs once per admin-triggered perma-delete.
-  const modelFileUrls = (
-    await dbWrite.modelFile.findMany({
-      where: { modelVersion: { modelId: id } },
-      select: { url: true },
-    })
-  ).map((f) => f.url);
+  // Populated inside the tx so the snapshot is consistent with the cascade.
+  let modelFileUrls: string[] = [];
 
   const deletionResult = await dbWrite.$transaction(
     async (tx) => {
+      // Snapshot ModelFile URLs inside the tx — read before the cascade nukes the rows.
+      modelFileUrls = (
+        await tx.modelFile.findMany({
+          where: { modelVersion: { modelId: id } },
+          select: { url: true },
+        })
+      ).map((f) => f.url);
+
       const model = await tx.model.findUnique({
         where: { id },
         select: {
