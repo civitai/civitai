@@ -651,12 +651,12 @@ describe('model-file-scan.service', () => {
             {
               $type: 'modelHash',
               output: {
-                shA256: 'sha',
+                sha256: 'sha',
                 autoV1: 'av1',
                 autoV2: 'av2',
                 autoV3: 'av3',
                 blake3: 'b3',
-                crC32: 'crc',
+                crc32: 'crc',
               },
             },
           ],
@@ -686,7 +686,7 @@ describe('model-file-scan.service', () => {
           steps: [
             {
               $type: 'modelHash',
-              output: { shA256: 'sha', autoV1: null, autoV2: '', autoV3: undefined },
+              output: { sha256: 'sha', autoV1: null, autoV2: '', autoV3: undefined },
             },
           ],
         },
@@ -700,6 +700,149 @@ describe('model-file-scan.service', () => {
       expect(createManyCall.data).toEqual([
         { fileId: 1, type: ModelHashType.SHA256, hash: 'sha' },
       ]);
+    });
+
+    it('maps clamScan status "clean" to virusScan.Success even when exitCode is null', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            {
+              $type: 'modelClamScan',
+              output: {
+                exitCode: null,
+                output: 'scan summary text',
+                status: 'clean',
+                infected: false,
+              },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+      );
+
+      const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Success);
+      expect(updateCall.data.virusScanMessage).toBeNull();
+    });
+
+    it('maps clamScan infected=true to virusScan.Danger and surfaces output message', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            {
+              $type: 'modelClamScan',
+              output: {
+                exitCode: null,
+                output: 'EICAR signature detected',
+                status: 'infected',
+                infected: true,
+              },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+      );
+
+      const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(updateCall.data.virusScanResult).toBe(ScanResultCode.Danger);
+      expect(updateCall.data.virusScanMessage).toBe('EICAR signature detected');
+    });
+
+    it('treats pickleScan skipped=true (safetensors) as Success with null message', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            {
+              $type: 'modelPickleScan',
+              output: {
+                exitCode: null,
+                output: 'safetensors',
+                globalImports: [],
+                dangerousImports: [],
+                status: 'skippedSafetensors',
+                dangerousImportsFound: false,
+                skipped: true,
+                skipReason: 'safetensors-extension',
+              },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+      );
+
+      const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+      expect(updateCall.data.pickleScanMessage).toBeNull();
+    });
+
+    it('forces pickleScan to Danger when dangerousImportsFound is true', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            {
+              $type: 'modelPickleScan',
+              output: {
+                exitCode: null,
+                status: 'dangerous',
+                dangerousImportsFound: true,
+                skipped: false,
+                dangerousImports: ['os,system'],
+                globalImports: [],
+              },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+      );
+
+      const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Danger);
+      expect(updateCall.data.pickleScanMessage).toContain('Dangerous import detected');
+    });
+
+    it('maps pickleScan status "clean" to Success with examined imports message', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1 },
+          steps: [
+            {
+              $type: 'modelPickleScan',
+              output: {
+                exitCode: null,
+                status: 'clean',
+                dangerousImportsFound: false,
+                skipped: false,
+                dangerousImports: [],
+                globalImports: [],
+              },
+            },
+          ],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-1', type: 'workflow', status: 'succeeded' })
+      );
+
+      const updateCall = mockDbWrite.modelFile.update.mock.calls[0][0];
+      expect(updateCall.data.pickleScanResult).toBe(ScanResultCode.Success);
+      expect(updateCall.data.pickleScanMessage).toBe('No Pickle imports');
     });
 
     it('parses metadata JSON and stores it in headerData', async () => {

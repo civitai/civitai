@@ -272,7 +272,15 @@ async function notifyHashFix(modelVersionId: number, fileId: number) {
 
 type ModelClamScanStep = {
   $type: 'modelClamScan';
-  output?: { exitCode?: number | null; output?: string | null };
+  output?: {
+    exitCode?: number | null;
+    output?: string | null;
+    /** Orchestrator status enum, e.g. "clean" | "infected" | "error" | etc. */
+    status?: string | null;
+    infected?: boolean | null;
+    infectedFileCount?: number | null;
+    scannedFileCount?: number | null;
+  };
 };
 
 type ModelPickleScanStep = {
@@ -282,18 +290,26 @@ type ModelPickleScanStep = {
     output?: string | null;
     globalImports?: string[] | null;
     dangerousImports?: string[] | null;
+    /** Orchestrator status enum, e.g. "clean" | "dangerous" | "skippedSafetensors" | etc. */
+    status?: string | null;
+    dangerousImportsFound?: boolean | null;
+    skipped?: boolean | null;
+    skipReason?: string | null;
+    scannedFileCount?: number | null;
+    infectedFileCount?: number | null;
+    dangerousGlobalCount?: number | null;
   };
 };
 
 type ModelHashStep = {
   $type: 'modelHash';
   output?: {
-    shA256?: string | null;
+    sha256?: string | null;
     autoV1?: string | null;
     autoV2?: string | null;
     autoV3?: string | null;
     blake3?: string | null;
-    crC32?: string | null;
+    crc32?: string | null;
   };
 };
 
@@ -309,13 +325,44 @@ type ModelScanStep =
   | ModelParseMetadataStep;
 
 const orchestratorHashFieldMap: Record<string, ModelHashType> = {
-  shA256: ModelHashType.SHA256,
+  sha256: ModelHashType.SHA256,
   autoV1: ModelHashType.AutoV1,
   autoV2: ModelHashType.AutoV2,
   autoV3: ModelHashType.AutoV3,
   blake3: ModelHashType.BLAKE3,
-  crC32: ModelHashType.CRC32,
+  crc32: ModelHashType.CRC32,
 };
+
+// Orchestrator now reports scan outcomes via a `status` enum (and explicit
+// boolean flags) instead of POSIX exit codes. Map the known status strings,
+// fall through to the legacy exitCode path to remain compatible with any
+// in-flight workflows that pre-date the orchestrator update.
+function deriveClamScanResult(output: NonNullable<ModelClamScanStep['output']>): ScanResultCode {
+  if (output.infected === true) return ScanResultCode.Danger;
+  const status = output.status?.toLowerCase();
+  if (status) {
+    if (status === 'clean') return ScanResultCode.Success;
+    if (status.includes('infect') || status.includes('danger')) return ScanResultCode.Danger;
+    if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
+    return ScanResultCode.Pending;
+  }
+  return exitCodeToScanResult(output.exitCode);
+}
+
+function derivePickleScanResult(
+  output: NonNullable<ModelPickleScanStep['output']>
+): ScanResultCode {
+  if (output.dangerousImportsFound === true) return ScanResultCode.Danger;
+  if (output.skipped === true) return ScanResultCode.Success;
+  const status = output.status?.toLowerCase();
+  if (status) {
+    if (status === 'clean' || status.startsWith('skipped')) return ScanResultCode.Success;
+    if (status.includes('danger') || status.includes('infect')) return ScanResultCode.Danger;
+    if (status.includes('error') || status.includes('fail')) return ScanResultCode.Error;
+    return ScanResultCode.Pending;
+  }
+  return exitCodeToScanResult(output.exitCode);
+}
 
 export async function processModelFileScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
@@ -364,22 +411,35 @@ export async function processModelFileScanResult(req: NextApiRequest) {
   };
 
   if (clamScan?.output) {
+    const result = deriveClamScanResult(clamScan.output);
     outcome.virusScan = {
-      result: exitCodeToScanResult(clamScan.output.exitCode),
-      message: clamScan.output.exitCode !== 0 ? clamScan.output.output ?? null : null,
+      result,
+      message: result !== ScanResultCode.Success ? clamScan.output.output ?? null : null,
     };
   }
 
   if (pickleScan?.output) {
-    const { pickleScanMessage, hasDanger } = examinePickleImports({
-      exitCode: pickleScan.output.exitCode,
-      dangerousImports: pickleScan.output.dangerousImports,
-      globalImports: pickleScan.output.globalImports,
-    });
+    const pickleOut = pickleScan.output;
+    // Skipped (e.g. safetensors) means picklescan never inspected imports —
+    // don't synthesize a "No Pickle imports" message; the Success result code
+    // is the source of truth.
+    const { pickleScanMessage, hasDanger: importsDanger } = pickleOut.skipped
+      ? { pickleScanMessage: null, hasDanger: false }
+      : examinePickleImports({
+          // exitCode is no longer reported by the orchestrator; pass 0 to opt
+          // examinePickleImports out of its null/-1 short-circuit and let it
+          // build the imports list as it always has.
+          exitCode: 0,
+          dangerousImports: pickleOut.dangerousImports,
+          globalImports: pickleOut.globalImports,
+        });
+
+    const baseResult = derivePickleScanResult(pickleOut);
+    const hasDanger = pickleOut.dangerousImportsFound === true || importsDanger;
     outcome.pickleScan = {
-      result: hasDanger ? ScanResultCode.Danger : exitCodeToScanResult(pickleScan.output.exitCode),
+      result: hasDanger ? ScanResultCode.Danger : baseResult,
       message: pickleScanMessage,
-      dangerousImports: pickleScan.output.dangerousImports ?? undefined,
+      dangerousImports: pickleOut.dangerousImports ?? undefined,
     };
   }
 
