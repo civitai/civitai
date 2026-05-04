@@ -1,6 +1,6 @@
 ##### DEPENDENCIES
 
-FROM node:20-alpine3.16 AS deps
+FROM node:20-alpine3.20 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -23,7 +23,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
 
 ##### BUILDER
 
-FROM node:20-alpine3.16 AS builder
+FROM node:20-alpine3.20 AS builder
 ARG NEXT_PUBLIC_IMAGE_LOCATION
 ARG NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION
 ARG NEXT_PUBLIC_MAINTENANCE_MODE
@@ -44,7 +44,7 @@ RUN --mount=type=cache,target=/app/.next/cache \
 
 ##### RUNNER
 
-FROM node:20-alpine3.16 AS runner
+FROM node:20-alpine3.20 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
