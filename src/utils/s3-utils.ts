@@ -15,6 +15,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
 import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+import { logToAxiom } from '~/server/logging/client';
 
 const missingEnvs = (): string[] => {
   const keys = [];
@@ -188,10 +189,7 @@ export async function deleteModelFileObject(url: string) {
  * S3 DeleteObjects is per-bucket, so different R2 buckets need separate calls.
  */
 export async function deleteModelFileObjects(urls: string[]) {
-  const groups = new Map<
-    string,
-    { backend: 'b2' | 'r2'; bucket: string; keys: string[] }
-  >();
+  const groups = new Map<string, { backend: 'b2' | 'r2'; bucket: string; keys: string[] }>();
 
   for (const url of urls) {
     if (!url) continue;
@@ -220,16 +218,38 @@ export async function deleteModelFileObjects(urls: string[]) {
   // Resolve clients up-front so a missing-env throw in getB2S3Client doesn't
   // skip the R2 group via a synchronous escape from inside .map().
   // Use allSettled so one group's failure doesn't drop the others.
-  const tasks: Promise<unknown>[] = [];
+  // Track bucket per task so partial-failure logs can attribute Errors back to a group.
+  const tasks: { bucket: string; promise: ReturnType<typeof deleteManyObjects> }[] = [];
   for (const group of groups.values()) {
     try {
       const client = group.backend === 'b2' ? getB2S3Client() : getS3Client();
-      tasks.push(deleteManyObjects(group.bucket, group.keys, client));
+      // S3/R2 DeleteObjects caps each call at 1000 keys — chunk to stay under the limit.
+      for (let i = 0; i < group.keys.length; i += 1000) {
+        tasks.push({
+          bucket: group.bucket,
+          promise: deleteManyObjects(group.bucket, group.keys.slice(i, i + 1000), client),
+        });
+      }
     } catch {
       // B2 env not configured in this pod — skip B2 group, keep R2 deletes running.
     }
   }
-  await Promise.allSettled(tasks);
+
+  // DeleteObjects returns 200 even when individual keys fail — surface those via Errors.
+  const results = await Promise.allSettled(tasks.map((t) => t.promise));
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    if (result.status !== 'fulfilled') continue;
+    const errors = result.value.Errors;
+    if (!errors?.length) continue;
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-delete-s3-objects-partial-failure',
+      bucket: tasks[i].bucket,
+      errorCount: errors.length,
+      sample: errors.slice(0, 10).map((e) => ({ key: e.Key, code: e.Code, message: e.Message })),
+    });
+  }
 }
 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
