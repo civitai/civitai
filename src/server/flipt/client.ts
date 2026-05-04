@@ -55,6 +55,23 @@ export enum FLIPT_FEATURE_FLAGS {
 const FLIPT_INIT_TIMEOUT_MS = 5000;
 const FLIPT_FAILURE_COOLDOWN_MS = 30_000;
 
+// Dev-only local overrides. Set FLIPT_LOCAL_OVERRIDES in .env to short-circuit
+// flag evaluation without touching shared Flipt state (GitOps overwrites it).
+// Format: comma-separated `flagKey=variantKey` pairs. Use `on`/`off` for booleans.
+// Example: FLIPT_LOCAL_OVERRIDES=bitdex-image-search=primary,my-bool-flag=on
+function parseLocalOverrides(): Record<string, string> {
+  if (process.env.NODE_ENV === 'production') return {};
+  const raw = process.env.FLIPT_LOCAL_OVERRIDES;
+  if (!raw) return {};
+  const out: Record<string, string> = {};
+  for (const pair of raw.split(',')) {
+    const [k, v] = pair.split('=').map((s) => s.trim());
+    if (k && v) out[k] = v;
+  }
+  return out;
+}
+const localOverrides = parseLocalOverrides();
+
 class FliptSingleton {
   private static instance: FliptClient | null = null;
   private static initializing: Promise<FliptClient | null> | null = null;
@@ -141,6 +158,7 @@ export async function isFlipt(
   entityId = 'global',
   context: Record<string, string> = {}
 ) {
+  if (localOverrides[flag] !== undefined) return localOverrides[flag] === 'on';
   const fliptClient = await FliptSingleton.getInstance();
   if (!fliptClient) return false;
 
@@ -163,6 +181,7 @@ export async function getFliptVariant(
   entityId = 'global',
   context: Record<string, string> = {}
 ): Promise<string | null> {
+  if (localOverrides[flag] !== undefined) return localOverrides[flag];
   const fliptClient = await FliptSingleton.getInstance();
   if (!fliptClient) return null;
 
@@ -190,6 +209,7 @@ export function isFliptSync(
   entityId = 'global',
   context: Record<string, string> = {}
 ): boolean | null {
+  if (localOverrides[flag] !== undefined) return localOverrides[flag] === 'on';
   const fliptClient = FliptSingleton.getInstanceSync();
   if (!fliptClient) return null;
 
