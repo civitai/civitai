@@ -50,6 +50,12 @@ export enum FLIPT_FEATURE_FLAGS {
   // incident so RAW reads (e.g. reaction toggles) stay consistent without
   // paying the per-flag Redis write/read cost.
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
+  // Routes model-file scans through the orchestrator workflow instead of the
+  // legacy HTTP scanner. When ON: createFileHandler triggers
+  // createModelFileScanRequest inline, scanFilesFallbackJob handles retries,
+  // and rescanModel/clean-up dispatch to the orchestrator. When OFF: legacy
+  // scanFilesJob + requestScannerTasks path. See docs/features/model-file-scanning.md.
+  MODEL_FILE_SCAN_ORCHESTRATOR = 'model-file-scan-orchestrator',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;
@@ -102,7 +108,7 @@ class FliptSingleton {
 
         // Attach a no-op catch to prevent unhandled rejection if timeout wins
         // but initPromise later rejects
-        initPromise.catch(() => {});
+        initPromise.catch(() => null);
 
         const timeoutPromise = new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('Flipt init timeout')), FLIPT_INIT_TIMEOUT_MS)

@@ -1,269 +1,22 @@
-import { Prisma } from '@prisma/client';
-import type { ModelFile } from '~/shared/utils/prisma/models';
-import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
-import { env } from '~/env/server';
-import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbWrite } from '~/server/db/client';
+import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { ScannerTasks } from '~/server/jobs/scan-files';
-import { dataForModelsCache } from '~/server/redis/caches';
-import type { ModelMeta } from '~/server/schema/model.schema';
-import { modelsSearchIndex } from '~/server/search-index';
-import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { isModelHashBlocked, unpublishModelById } from '~/server/services/model.service';
-import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  applyScanOutcome,
+  examinePickleImports,
+  type ScanOutcome,
+} from '~/server/services/model-file-scan.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-export default WebhookEndpoint(async (req, res) => {
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
-
-  const { fileId, ...query } = querySchema.parse(req.query);
-  const tasks = query.tasks ?? ['Import', 'Scan', 'Hash', 'ParseMetadata'];
-  const { metadata, ...scanResult }: ScanResult = req.body;
-
-  logToAxiom(
-    {
-      type: 'info',
-      name: 'scan-result',
-      message: `Received scan result for file ${fileId}`,
-      fileId,
-      tasks,
-    },
-    'webhooks'
-  ).catch();
-
-  const where: Prisma.ModelFileFindUniqueArgs['where'] = { id: fileId };
-  const file = await dbWrite.modelFile.findUnique({ where });
-  if (!file) {
-    logToAxiom(
-      { type: 'warning', name: 'scan-result', message: `File not found: ${fileId}`, fileId },
-      'webhooks'
-    ).catch();
-    return res.status(404).json({ error: 'File not found' });
-  }
-
-  const data: Prisma.ModelFileUpdateInput = {};
-
-  // Update scan result
-  if (tasks.includes('Scan')) {
-    data.scannedAt = new Date();
-    data.rawScanResult = scanResult;
-    data.virusScanResult = resultCodeMap[scanResult.clamscanExitCode];
-    data.virusScanMessage =
-      scanResult.clamscanExitCode != ScanExitCode.Success ? scanResult.clamscanOutput : null;
-    data.pickleScanResult = resultCodeMap[scanResult.picklescanExitCode];
-
-    const { hasDanger, pickleScanMessage } = examinePickleScanMessage(scanResult);
-    data.pickleScanMessage = pickleScanMessage;
-    if (hasDanger) scanResult.picklescanExitCode = ScanExitCode.Danger;
-  }
-
-  if (tasks.includes('ParseMetadata') && metadata?.__metadata__) {
-    const headerData = metadata?.__metadata__ as MixedObject;
-    try {
-      if (typeof headerData?.ss_tag_frequency === 'string')
-        headerData.ss_tag_frequency = JSON.parse(headerData.ss_tag_frequency);
-    } catch {}
-    data.headerData = headerData;
-  }
-
-  // Update url if we imported/moved the file
-  if (tasks.includes('Import')) {
-    data.exists = scanResult.fileExists === 1;
-    const bucket = env.S3_UPLOAD_BUCKET;
-    const scannerImportedFile = !file.url.includes(bucket) && scanResult.url.includes(bucket);
-    if (data.exists && scannerImportedFile) data.url = scanResult.url;
-    if (!data.exists) await unpublish(file.modelVersionId);
-  }
-
-  // Update if we made changes...
-  let updatedFile: ModelFile | undefined;
-  if (Object.keys(data).length > 0) {
-    updatedFile = await dbWrite.modelFile.update({ where, data });
-    logToAxiom(
-      {
-        type: 'info',
-        name: 'scan-result',
-        message: `Updated file ${fileId}`,
-        fileId,
-        virusScanResult: data.virusScanResult,
-        pickleScanResult: data.pickleScanResult,
-        exists: data.exists,
-      },
-      'webhooks'
-    ).catch();
-  }
-
-  // Update hashes
-  if (tasks.includes('Hash') && scanResult.hashes) {
-    // Capture existing SHA256 hash BEFORE deletion to prevent false positives on rescans
-    const existingHash = await dbWrite.modelFileHash.findFirst({
-      where: {
-        fileId,
-        type: ModelHashType.SHA256,
-      },
-      select: { hash: true },
-    });
-
-    await dbWrite.$transaction([
-      dbWrite.modelFileHash.deleteMany({ where: { fileId } }),
-      dbWrite.modelFileHash.createMany({
-        data: Object.entries(scanResult.hashes)
-          .filter(([type, val]) => hashTypeMap[type.toLowerCase()] && val)
-          .map(([type, hash]) => ({
-            fileId,
-            type: hashTypeMap[type.toLowerCase()] as ModelHashType,
-            hash,
-          })),
-      }),
-    ]);
-
-    const sha256Hash = scanResult.hashes.SHA256;
-    // Only check blocking if this is a NEW or CHANGED hash (not a rescan of existing file)
-    const hashChanged = !existingHash || existingHash.hash !== sha256Hash;
-
-    // if (sha256Hash && hashChanged && (await isModelHashBlocked(sha256Hash))) {
-    //   await unpublishBlockedModel(file.modelVersionId);
-    // }
-  }
-
-  // Hanlde file conversion
-  if (tasks.includes('Convert') && scanResult.conversions) {
-    const [format, { url, hashes, sizeKB }] = Object.entries(scanResult.conversions)[0];
-    const baseUrl = url.split('?')[0];
-    const convertedName = baseUrl.split('/').pop();
-    if (convertedName) {
-      const existingFile = updatedFile ?? file;
-      await dbWrite.modelFile.create({
-        data: {
-          name: convertedName,
-          sizeKB,
-          modelVersionId: existingFile.modelVersionId,
-          url: baseUrl,
-          type: existingFile.type,
-          metadata: { format: format === 'safetensors' ? 'SafeTensor' : 'PickleTensor' },
-          hashes: {
-            create: Object.entries(hashes).map(([type, hash]) => ({
-              type: hashTypeMap[type.toLowerCase()] as ModelHashType,
-              hash,
-            })),
-          },
-          scannedAt: existingFile.scannedAt,
-          rawScanResult: existingFile.rawScanResult ?? Prisma.JsonNull,
-          virusScanResult: existingFile.virusScanResult,
-          virusScanMessage: existingFile.virusScanMessage,
-          pickleScanResult: existingFile.pickleScanResult,
-          pickleScanMessage: existingFile.pickleScanMessage,
-        },
-      });
-    }
-  }
-
-  // Update search index
-  const version = await dbWrite.modelVersion.findUnique({
-    where: { id: file.modelVersionId },
-    select: { modelId: true },
-  });
-  if (version?.modelId) {
-    await modelsSearchIndex.queueUpdate([
-      {
-        id: version.modelId,
-        action: SearchIndexUpdateQueueAction.Update,
-      },
-    ]);
-    await dataForModelsCache.refresh(version.modelId);
-  }
-  await deleteFilesForModelVersionCache(file.modelVersionId);
-
-  if (scanResult.fixed?.includes('sshs_hash')) {
-    const version = await dbWrite.modelVersion.findUnique({
-      where: { id: file.modelVersionId },
-      select: { id: true, name: true, model: { select: { userId: true, id: true, name: true } } },
-    });
-
-    if (version?.model?.userId) {
-      await createNotification({
-        category: NotificationCategory.System,
-        type: 'model-hash-fix',
-        key: `model-hash-fix:${version.model.id}:${file.id}`,
-        details: {
-          modelId: version.model.id,
-          versionId: version.id,
-          modelName: version.model.name,
-          versionName: version.name,
-        },
-        userId: version.model.userId,
-      });
-    }
-  }
-
-  logToAxiom(
-    {
-      type: 'info',
-      name: 'scan-result',
-      message: `Completed scan result processing for file ${fileId}`,
-      fileId,
-    },
-    'webhooks'
-  ).catch();
-
-  res.status(200).json({ ok: true });
-});
-
-const hashTypeMap: Record<string, string> = {};
-for (const t of Object.keys(ModelHashType)) hashTypeMap[t.toLowerCase()] = t;
-
-export async function unpublishBlockedModel(modelVersionId: number) {
-  const { model } = (await dbWrite.modelVersion.findUnique({
-    where: { id: modelVersionId },
-    select: { id: true, model: true },
-  })) ?? { model: { id: null, meta: null } };
-  if (!model.id) return;
-
-  const meta = (model.meta as ModelMeta | null) || {};
-  await unpublishModelById({
-    id: model.id,
-    reason: 'duplicate',
-    meta,
-    customMessage: 'Model has been unpublished due to matching a blocked hash',
-    userId: -1,
-    isModerator: true,
-  });
-}
-
-async function unpublish(modelVersionId: number) {
-  await dbWrite.modelVersion.update({
-    where: { id: modelVersionId },
-    data: { status: ModelStatus.Draft, publishedAt: null },
-  });
-
-  const { modelId } =
-    (await dbWrite.modelVersion.findUnique({
-      where: { id: modelVersionId },
-      select: { modelId: true },
-    })) ?? {};
-  if (modelId) {
-    const modelVersionCount = await dbWrite.model.findUnique({
-      where: { id: modelId },
-      select: {
-        _count: {
-          select: {
-            modelVersions: {
-              where: { status: ModelStatus.Published },
-            },
-          },
-        },
-      },
-    });
-
-    if (modelVersionCount?._count.modelVersions === 0)
-      await dbWrite.model.update({
-        where: { id: modelId },
-        data: { status: ModelStatus.Unpublished, publishedAt: null },
-      });
-  }
-}
+// Legacy scanner adapter. The legacy HTTP scanner POSTs ScanResult here; we
+// translate it into a normalized ScanOutcome and let applyScanOutcome() do the
+// DB work. Phase 3 deletes this endpoint once MODEL_FILE_SCAN_ORCHESTRATOR has
+// been at 100% for ≥1 week.
+//
+// Note: `Import` and `Convert` tasks are dropped from the adapter — confirmed
+// dead by callsite audit (no caller passes them as `tasks=`). The unpublish-on-
+// missing-file path tied to Import never fires in production today.
 
 enum ScanExitCode {
   Pending = -1,
@@ -272,7 +25,7 @@ enum ScanExitCode {
   Error = 2,
 }
 
-const resultCodeMap = {
+const resultCodeMap: Record<ScanExitCode, ScanResultCode> = {
   [ScanExitCode.Pending]: ScanResultCode.Pending,
   [ScanExitCode.Success]: ScanResultCode.Success,
   [ScanExitCode.Danger]: ScanResultCode.Danger,
@@ -290,15 +43,8 @@ type ScanResult = {
   clamscanOutput: string;
   hashes: Record<ModelHashType, string>;
   metadata: MixedObject;
-  conversions: Record<'safetensors' | 'ckpt', ConversionResult>;
+  conversions: Record<'safetensors' | 'ckpt', unknown>;
   fixed?: string[];
-};
-
-type ConversionResult = {
-  url: string;
-  hashes: Record<ModelHashType, string>;
-  sizeKB: number;
-  conversionOutput: string;
 };
 
 const querySchema = z.object({
@@ -308,53 +54,107 @@ const querySchema = z.object({
     .optional(),
 });
 
-function processImport(importStr: string) {
-  importStr = decodeURIComponent(importStr);
-  const importParts = importStr.split(',').map((x) => x.replace(/'/g, '').trim());
-  return importParts.join('.');
+// Lower-cased lookup so legacy hash keys (e.g. `SHA256`, `AutoV2`) round-trip
+// safely into ModelHashType regardless of payload casing.
+const hashTypeMap: Record<string, ModelHashType> = {};
+for (const t of Object.keys(ModelHashType)) {
+  hashTypeMap[t.toLowerCase()] = ModelHashType[t as keyof typeof ModelHashType];
 }
 
-const specialImports: string[] = ['pytorch_lightning.callbacks.model_checkpoint.ModelCheckpoint'];
+export default WebhookEndpoint(async (req, res) => {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-function examinePickleScanMessage({
-  picklescanExitCode,
-  picklescanDangerousImports,
-  picklescanGlobalImports,
-}: Omit<ScanResult, 'metadata'>) {
-  if (picklescanExitCode === ScanExitCode.Pending) return {};
-  picklescanDangerousImports ??= [];
-  picklescanGlobalImports ??= [];
+  const { fileId, ...query } = querySchema.parse(req.query);
+  const tasks = query.tasks ?? ['Scan', 'Hash', 'ParseMetadata'];
+  const scanResult: ScanResult = req.body;
 
-  const importCount =
-    (picklescanDangerousImports?.length ?? 0) + (picklescanGlobalImports?.length ?? 0);
-  if (importCount === 0 || (!picklescanDangerousImports && !picklescanGlobalImports))
-    return {
-      pickleScanMessage: 'No Pickle imports',
-      hasDanger: false,
-    };
+  logToAxiom(
+    {
+      type: 'info',
+      name: 'scan-result',
+      message: `Received scan result for file ${fileId}`,
+      fileId,
+      tasks,
+    },
+    'webhooks'
+  ).catch();
 
-  // Check for special imports...
-  const dangerousGlobals = picklescanGlobalImports.filter((x) =>
-    specialImports.includes(processImport(x))
-  );
-  for (const imp of dangerousGlobals) {
-    picklescanDangerousImports.push(imp);
-    picklescanGlobalImports.splice(picklescanDangerousImports.indexOf(imp), 1);
+  try {
+    const outcome: ScanOutcome = { fileId, rawScanResult: { source: 'legacy', ...scanResult } };
+
+    if (tasks.includes('Scan')) {
+      // Match the orchestrator adapter: only surface scanner output as a message
+      // when the scan resolved to a non-success state (Danger/Error). For Pending
+      // the output is typically empty/irrelevant and would confuse the UI.
+      const clamFailed =
+        scanResult.clamscanExitCode === ScanExitCode.Danger ||
+        scanResult.clamscanExitCode === ScanExitCode.Error;
+      outcome.virusScan = {
+        result: resultCodeMap[scanResult.clamscanExitCode] ?? ScanResultCode.Pending,
+        message: clamFailed ? scanResult.clamscanOutput : null,
+      };
+
+      const { pickleScanMessage, hasDanger } = examinePickleImports({
+        exitCode: scanResult.picklescanExitCode,
+        dangerousImports: scanResult.picklescanDangerousImports,
+        globalImports: scanResult.picklescanGlobalImports,
+      });
+      outcome.pickleScan = {
+        result: hasDanger
+          ? ScanResultCode.Danger
+          : resultCodeMap[scanResult.picklescanExitCode] ?? ScanResultCode.Pending,
+        message: pickleScanMessage,
+        dangerousImports: scanResult.picklescanDangerousImports,
+      };
+    }
+
+    if (tasks.includes('Hash') && scanResult.hashes) {
+      const hashes: Partial<Record<ModelHashType, string>> = {};
+      for (const [key, value] of Object.entries(scanResult.hashes)) {
+        const type = hashTypeMap[key.toLowerCase()];
+        if (type && typeof value === 'string' && value) hashes[type] = value;
+      }
+      if (Object.keys(hashes).length > 0) outcome.hashes = hashes;
+    }
+
+    if (tasks.includes('ParseMetadata') && scanResult.metadata?.__metadata__) {
+      const headerData = scanResult.metadata.__metadata__ as MixedObject;
+      if (typeof headerData?.ss_tag_frequency === 'string') {
+        try {
+          headerData.ss_tag_frequency = JSON.parse(headerData.ss_tag_frequency);
+        } catch {
+          // leave as string if inner parse fails
+        }
+      }
+      outcome.headerData = headerData;
+    }
+
+    await applyScanOutcome(outcome);
+
+    logToAxiom(
+      {
+        type: 'info',
+        name: 'scan-result',
+        message: `Completed scan result processing for file ${fileId}`,
+        fileId,
+      },
+      'webhooks'
+    ).catch();
+
+    return res.status(200).json({ ok: true });
+  } catch (error) {
+    // Mirrors the orchestrator webhook so failures from both paths are visible
+    // under the same Axiom query shape during canary skew comparison.
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'scan-result',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        fileId,
+      },
+      'webhooks'
+    ).catch();
+    return res.status(500).json({ error: 'Internal server error' });
   }
-
-  // Write message header...
-  const lines: string[] = [`**Detected Pickle imports (${importCount})**`];
-  const hasDanger = picklescanDangerousImports.length > 0;
-  if (hasDanger) lines.push('*Dangerous import detected*');
-
-  // Pre block with imports
-  lines.push('```');
-  for (const imp of picklescanDangerousImports) lines.push(`*${processImport(imp)}*`);
-  for (const imp of picklescanGlobalImports) lines.push(processImport(imp));
-  lines.push('```');
-
-  return {
-    pickleScanMessage: lines.join('\n'),
-    hasDanger,
-  };
-}
+});

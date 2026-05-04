@@ -12,6 +12,8 @@ import {
   getFilesForModelVersionCache,
   updateFile,
 } from '~/server/services/model-file.service';
+import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { parseB2Url } from '~/utils/s3-utils';
@@ -111,7 +113,9 @@ export const createFileHandler = async ({
           select: {
             id: true,
             modelId: true,
+            baseModel: true,
             status: true,
+            model: { select: { type: true } },
             _count: { select: { posts: { where: { publishedAt: { not: null } } } } },
           },
         },
@@ -136,6 +140,37 @@ export const createFileHandler = async ({
     ctx.track
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);
+
+    // Submit model file scan workflow to orchestrator. Gated behind the
+    // MODEL_FILE_SCAN_ORCHESTRATOR flag — when OFF, the legacy scanFilesJob
+    // cron picks up the file via its Pending poll instead.
+    //
+    // Failures here are non-fatal: scanFilesFallbackJob will retry the file
+    // within 5 minutes since scanRequestedAt is still null. We DO want them in
+    // Axiom though — the inline path is the happy case, and a sustained spike
+    // here is the earliest signal the orchestrator is unreachable.
+    if (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR)) {
+      await createModelFileScanRequest({
+        fileId: file.id,
+        modelVersionId: file.modelVersion.id,
+        modelId: file.modelVersion.modelId,
+        modelType: file.modelVersion.model.type,
+        baseModel: file.modelVersion.baseModel,
+      }).catch((err) => {
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'model-file-scan',
+            message: 'inline scan submission failed in createFileHandler',
+            fileId: file.id,
+            modelVersionId: file.modelVersion.id,
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          },
+          'webhooks'
+        ).catch();
+      });
+    }
 
     // Mark this version as recently mutated so subsequent reads route to the
     // primary DB instead of the lagging replica.

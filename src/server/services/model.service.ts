@@ -29,7 +29,6 @@ import {
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
@@ -1191,39 +1190,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   }
 
   return { items, isPrivate };
-};
-
-export const rescanModel = async ({ id }: GetByIdInput) => {
-  const modelFiles = await dbRead.modelFile.findMany({
-    where: { modelVersion: { modelId: id } },
-    select: { id: true, url: true },
-  });
-
-  if (modelFiles.length === 0) return { sent: 0, failed: 0 };
-
-  const sent: number[] = [];
-  const failed: number[] = [];
-
-  const tasks = modelFiles.map((file) => async () => {
-    const result = await requestScannerTasks({
-      file,
-      tasks: ['Hash', 'Scan', 'ParseMetadata'],
-      lowPriority: true,
-    });
-    if (result === 'sent') sent.push(file.id);
-    else failed.push(file.id);
-  });
-
-  await limitConcurrency(tasks, 10);
-
-  if (sent.length > 0) {
-    await dbWrite.modelFile.updateMany({
-      where: { id: { in: sent } },
-      data: { scanRequestedAt: new Date() },
-    });
-  }
-
-  return { sent: sent.length, failed: failed.length };
 };
 
 export type GetModelsWithImagesAndModelVersions = AsyncReturnType<

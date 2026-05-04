@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
 import dayjs from '~/shared/utils/dayjs';
 
@@ -12,8 +13,15 @@ import {
   isStorageResolverEnabled,
 } from '~/utils/delivery-worker';
 import { logToAxiom } from '~/server/logging/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
+  // When the orchestrator path is enabled, the new scanFilesFallbackJob handles
+  // pending files. Skip the legacy poll to avoid double-submitting.
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR)) return;
+
   const scanCutOff = dayjs().subtract(1, 'day').toDate();
   const where: Prisma.ModelFileWhereInput = {
     virusScanResult: ScanResultCode.Pending,
@@ -186,3 +194,96 @@ type FileScanRequest = {
 
 export const ScannerTasks = ['Import', 'Hash', 'Scan', 'Convert', 'ParseMetadata'] as const;
 export type ScannerTask = (typeof ScannerTasks)[number];
+
+// Fallback job: resubmits orchestrator scan workflows for files that were missed
+// or whose scans stalled. Runs every 5 minutes, picks up files where:
+// - virusScanResult is still Pending
+// - scanRequestedAt is null (never submitted) or older than 1 day (stalled)
+const SCAN_FALLBACK_CONCURRENCY = 10;
+const SCAN_FALLBACK_BATCH_SIZE = 200;
+
+export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * *', async () => {
+  // Mirrors the legacy scanFilesJob gate, inverted: this is the orchestrator
+  // path and only runs when the flag is ON.
+  if (!(await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR))) return;
+
+  const scanCutOff = dayjs().subtract(1, 'day').toDate();
+
+  const files = await dbWrite.modelFile.findMany({
+    where: {
+      virusScanResult: ScanResultCode.Pending,
+      AND: [
+        { OR: [{ exists: null }, { exists: true }] },
+        { OR: [{ scanRequestedAt: null }, { scanRequestedAt: { lt: scanCutOff } }] },
+      ],
+    },
+    select: {
+      id: true,
+      modelVersion: {
+        select: {
+          id: true,
+          baseModel: true,
+          model: { select: { id: true, type: true } },
+        },
+      },
+    },
+    take: SCAN_FALLBACK_BATCH_SIZE,
+  });
+
+  if (files.length === 0) return { submitted: 0 };
+
+  // Mark batch as requested upfront so overlapping runs won't re-process
+  await dbWrite.modelFile.updateMany({
+    where: { id: { in: files.map((f) => f.id) } },
+    data: { scanRequestedAt: new Date() },
+  });
+
+  let submitted = 0;
+  let failed = 0;
+  await limitConcurrency(
+    files.map((file) => async () => {
+      // Defensive: a soft-deleted ModelVersion would null this out and crash
+      // the whole batch. Skip and count as failed instead.
+      if (!file.modelVersion) {
+        failed++;
+        await dbWrite.modelFile
+          .update({ where: { id: file.id }, data: { scanRequestedAt: null } })
+          .catch(() => null);
+        return;
+      }
+      try {
+        await createModelFileScanRequest({
+          fileId: file.id,
+          modelVersionId: file.modelVersion.id,
+          modelId: file.modelVersion.model.id,
+          modelType: file.modelVersion.model.type as ModelType,
+          baseModel: file.modelVersion.baseModel,
+          priority: 'low',
+        });
+        submitted++;
+      } catch (err) {
+        failed++;
+        // Reset scanRequestedAt so the next 5-min tick retries this file.
+        // Without this, the upfront updateMany above would leave it Pending
+        // for the 24h stale-cutoff window — too long for transient
+        // orchestrator outages, which are the common case for submission
+        // failures (vs. workflow-level failures handled by D4).
+        await dbWrite.modelFile
+          .update({ where: { id: file.id }, data: { scanRequestedAt: null } })
+          .catch(() => null);
+        logToAxiom(
+          {
+            type: 'error',
+            name: 'scan-files-fallback',
+            message: `Failed to submit scan workflow for file ${file.id}`,
+            error: err instanceof Error ? err.message : String(err),
+          },
+          'webhooks'
+        ).catch();
+      }
+    }),
+    SCAN_FALLBACK_CONCURRENCY
+  );
+
+  return { submitted, failed };
+});

@@ -1,4 +1,4 @@
-import { unpublishBlockedModel } from '~/pages/api/webhooks/scan-result';
+import { unpublishBlockedModel } from '~/server/services/model-file-scan.service';
 import { dbWrite } from '~/server/db/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createJob } from './job';
