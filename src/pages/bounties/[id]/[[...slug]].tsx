@@ -199,6 +199,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
   return (
     <Gated
       contentNsfwLevel={bounty.nsfwLevel}
+      nsfw={bounty.nsfw}
       bypassRating={isOwnerOrMod}
       meta={{
         title: `Civitai | ${bounty?.name}`,

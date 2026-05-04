@@ -13,9 +13,6 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
     `${baseUrl}/sitemap-articles.xml`,
   ];
 
-  // Tools live on the SFW canonical only.
-  if (color === 'green') sitemaps.push(`${baseUrl}/sitemap-tools.xml`);
-
   return respondWithSitemapIndex(ctx, sitemaps);
 };
 

@@ -73,7 +73,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // `adsBlocked` alone. Disable ads entirely when the browser is known to
   // silently block — no Snigel script, no interleaved slots.
   const adsEnabled = isDev
-    ? true
+    ? false
     : !browserBlocked &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&

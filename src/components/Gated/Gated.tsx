@@ -12,7 +12,6 @@ import {
   IconSparkles,
   IconUserCheck,
 } from '@tabler/icons-react';
-import Head from 'next/head';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -159,6 +158,27 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   children,
 }: GatedProps<TImage>) {
   const { state, isPaywalled } = useGated({ contentNsfwLevel, nsfw, bypassRating });
+  const { allowMatureContent } = useAppContext();
+
+  // Whether the content is canonically SFW for the purpose of the deindex
+  // decision. Some entities (e.g. `Model`) carry a coarse `nsfw` boolean
+  // override — when truthy, force-treat the content as NSFW regardless of
+  // its bitwise level. Otherwise the bitwise `nsfwLevel` is the source of
+  // truth.
+  const isSafeForCanonical = nsfw !== true && hasSafeBrowsingLevel(contentNsfwLevel);
+
+  // Default deindex decision per gate state.
+  //   - redirect / login / unrated  → no real content visible to crawlers
+  //   - page on a non-green host, content is SFW → green is the canonical
+  //     for SFW; red shouldn't compete in search results.
+  // The bot-bypass case (`state === 'page' && isPaywalled`) only fires for
+  // non-safe content (R+), so `isSafeForCanonical` is false there and the URL
+  // stays indexable with paywall structured data.
+  const shouldDefaultDeIndex =
+    state === 'redirect' ||
+    state === 'login' ||
+    state === 'unrated' ||
+    (state === 'page' && allowMatureContent && isSafeForCanonical);
 
   // Co-emit paywall structured data with the `.paywalled-content` wrapper
   // when we're rendering for a verified bot:
@@ -166,23 +186,28 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
   //     (canonical pattern: `Product`, `Article`, etc. with isAccessibleForFree)
   //   - If no entity schema → emit a standalone WebPage paywall schema so the
   //     cssSelector → DOM contract still has a structured-data declaration
-  const finalMeta: MetaProps<TImage> = isPaywalled
-    ? {
-        ...meta,
-        schema: meta.schema
-          ? {
-              ...meta.schema,
-              isAccessibleForFree: false,
-              hasPart: PAYWALL_HAS_PART,
-            }
-          : {
-              '@context': 'https://schema.org',
-              '@type': 'WebPage',
-              isAccessibleForFree: false,
-              hasPart: PAYWALL_HAS_PART,
-            },
-      }
-    : meta;
+  // Use `||` (not `??`) so the Gated default fires whenever the caller's
+  // expression is also falsy. Most callers pass `deIndex: <some boolean
+  // expression>` that resolves to `false` for the common "published &
+  // searchable" case — `??` would let that `false` mask the default.
+  const finalMeta: MetaProps<TImage> = {
+    ...meta,
+    deIndex: meta.deIndex || shouldDefaultDeIndex,
+    schema: isPaywalled
+      ? meta.schema
+        ? {
+            ...meta.schema,
+            isAccessibleForFree: false,
+            hasPart: PAYWALL_HAS_PART,
+          }
+        : {
+            '@context': 'https://schema.org',
+            '@type': 'WebPage',
+            isAccessibleForFree: false,
+            hasPart: PAYWALL_HAS_PART,
+          }
+      : meta.schema,
+  };
 
   return (
     <>
@@ -235,87 +260,79 @@ function MatureContentRedirect() {
   }, []);
 
   return (
-    <>
-      <Head>
-        <meta name="robots" content="noindex,nofollow" />
-      </Head>
+    <div
+      className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
+      style={outerCardStyle}
+    >
+      {/* Left panel — visual anchor with spotlight */}
       <div
-        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
-        style={outerCardStyle}
+        className="relative flex w-full flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-b from-red-9/30 via-red-9/15 to-red-9/5 px-10 py-12 md:w-2/5 md:bg-gradient-to-br"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
       >
-        {/* Left panel — visual anchor with spotlight */}
         <div
-          className="relative flex w-full flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-b from-red-9/30 via-red-9/15 to-red-9/5 px-10 py-12 md:w-2/5 md:bg-gradient-to-br"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
+          ref={spotlightRef}
+          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+          style={{ opacity: 0 }}
+        />
+        <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-red-9/10 blur-3xl" />
+        <div className="bg-orange-9/8 pointer-events-none absolute -right-12 -top-12 size-36 rounded-full blur-3xl" />
+
+        <ThemeIcon
+          variant="filled"
+          color="red"
+          size={72}
+          radius="xl"
+          className="relative shadow-lg shadow-red-9/40"
         >
-          <div
-            ref={spotlightRef}
-            className="pointer-events-none absolute inset-0 transition-opacity duration-500"
-            style={{ opacity: 0 }}
-          />
-          <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-red-9/10 blur-3xl" />
-          <div className="bg-orange-9/8 pointer-events-none absolute -right-12 -top-12 size-36 rounded-full blur-3xl" />
+          <IconPepper size={36} />
+        </ThemeIcon>
 
-          <ThemeIcon
-            variant="filled"
-            color="red"
-            size={72}
-            radius="xl"
-            className="relative shadow-lg shadow-red-9/40"
-          >
-            <IconPepper size={36} />
-          </ThemeIcon>
+        <Text
+          fw={800}
+          className="font-display relative text-center text-2xl leading-tight tracking-tight text-gray-0"
+        >
+          This content
+          <br />
+          has a new home
+        </Text>
+      </div>
 
-          <Text
-            fw={800}
-            className="font-display relative text-center text-2xl leading-tight tracking-tight text-gray-0"
-          >
-            This content
-            <br />
-            has a new home
+      {/* Right panel — information and CTA */}
+      <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 md:border-l md:border-t-0 md:px-10 dark:border-white/5">
+        <div className="flex flex-col gap-1">
+          <Text size="lg" fw={600} className="text-gray-1">
+            Mature content now lives on{' '}
+            <Text component="span" inherit fw={700} className="text-red-4">
+              civitai.red
+            </Text>
+          </Text>
+          <Text size="sm" className="text-dimmed">
+            We split things up so everyone gets a better experience. The page you are looking for is
+            waiting for you on our mature-content site.
           </Text>
         </div>
 
-        {/* Right panel — information and CTA */}
-        <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 md:border-l md:border-t-0 md:px-10 dark:border-white/5">
-          <div className="flex flex-col gap-1">
-            <Text size="lg" fw={600} className="text-gray-1">
-              Mature content now lives on{' '}
-              <Text component="span" inherit fw={700} className="text-red-4">
-                civitai.red
-              </Text>
-            </Text>
-            <Text size="sm" className="text-dimmed">
-              We split things up so everyone gets a better experience. The page you are looking for
-              is waiting for you on our mature-content site.
-            </Text>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <FeatureRow icon={<IconUserCheck size={18} />} text="Same account" />
-            <FeatureRow icon={<IconBolt size={18} />} text="Your Yellow Buzz carries over" />
-            <FeatureRow
-              icon={<IconArrowsShuffle size={18} />}
-              text="Switch between sites any time"
-            />
-          </div>
-
-          <Button
-            component="a"
-            href={redUrl}
-            rel="noreferrer nofollow"
-            color="red"
-            size="lg"
-            radius="md"
-            rightSection={<IconArrowRight size={18} />}
-            className="mt-1 w-full shadow-md shadow-red-9/25 md:w-auto md:self-start"
-          >
-            Continue on civitai.red
-          </Button>
+        <div className="flex flex-col gap-3">
+          <FeatureRow icon={<IconUserCheck size={18} />} text="Same account" />
+          <FeatureRow icon={<IconBolt size={18} />} text="Your Yellow Buzz carries over" />
+          <FeatureRow icon={<IconArrowsShuffle size={18} />} text="Switch between sites any time" />
         </div>
+
+        <Button
+          component="a"
+          href={redUrl}
+          rel="noreferrer nofollow"
+          color="red"
+          size="lg"
+          radius="md"
+          rightSection={<IconArrowRight size={18} />}
+          className="mt-1 w-full shadow-md shadow-red-9/25 md:w-auto md:self-start"
+        >
+          Continue on civitai.red
+        </Button>
       </div>
-    </>
+    </div>
   );
 }
 
@@ -458,86 +475,81 @@ function LoginRequiredCard() {
   }, []);
 
   return (
-    <>
-      <Head>
-        <meta name="robots" content="noindex,nofollow" />
-      </Head>
+    <div
+      className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
+      style={outerCardStyle}
+    >
+      {/* Left panel — visual anchor with spotlight */}
       <div
-        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
-        style={outerCardStyle}
+        className="relative flex w-full flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-b from-blue-9/30 via-blue-9/15 to-blue-9/5 px-10 py-12 md:w-2/5 md:bg-gradient-to-br"
+        onMouseMove={handleMouseMove}
+        onMouseLeave={handleMouseLeave}
       >
-        {/* Left panel — visual anchor with spotlight */}
         <div
-          className="relative flex w-full flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-b from-blue-9/30 via-blue-9/15 to-blue-9/5 px-10 py-12 md:w-2/5 md:bg-gradient-to-br"
-          onMouseMove={handleMouseMove}
-          onMouseLeave={handleMouseLeave}
+          ref={spotlightRef}
+          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+          style={{ opacity: 0 }}
+        />
+        <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-blue-9/10 blur-3xl" />
+        <div className="bg-indigo-9/10 pointer-events-none absolute -right-12 -top-12 size-36 rounded-full blur-3xl" />
+
+        <ThemeIcon
+          variant="filled"
+          color="blue"
+          size={72}
+          radius="xl"
+          className="relative shadow-lg shadow-blue-9/40"
         >
-          <div
-            ref={spotlightRef}
-            className="pointer-events-none absolute inset-0 transition-opacity duration-500"
-            style={{ opacity: 0 }}
-          />
-          <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-blue-9/10 blur-3xl" />
-          <div className="bg-indigo-9/10 pointer-events-none absolute -right-12 -top-12 size-36 rounded-full blur-3xl" />
+          <IconLock size={36} />
+        </ThemeIcon>
 
-          <ThemeIcon
-            variant="filled"
-            color="blue"
-            size={72}
-            radius="xl"
-            className="relative shadow-lg shadow-blue-9/40"
-          >
-            <IconLock size={36} />
-          </ThemeIcon>
+        <Text
+          fw={800}
+          className="font-display relative text-center text-2xl leading-tight tracking-tight text-gray-0"
+        >
+          Log in to
+          <br />
+          continue
+        </Text>
+      </div>
 
-          <Text
-            fw={800}
-            className="font-display relative text-center text-2xl leading-tight tracking-tight text-gray-0"
-          >
-            Log in to
-            <br />
-            continue
+      {/* Right panel — information and CTA */}
+      <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 md:border-l md:border-t-0 md:px-10 dark:border-white/5">
+        <div className="flex flex-col gap-1">
+          <Text size="lg" fw={600} className="text-gray-1">
+            This content requires an account
+          </Text>
+          <Text size="sm" className="text-dimmed">
+            Sign in to keep exploring. It only takes a moment, and your account unlocks more of the
+            site right away.
           </Text>
         </div>
 
-        {/* Right panel — information and CTA */}
-        <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 md:border-l md:border-t-0 md:px-10 dark:border-white/5">
-          <div className="flex flex-col gap-1">
-            <Text size="lg" fw={600} className="text-gray-1">
-              This content requires an account
-            </Text>
-            <Text size="sm" className="text-dimmed">
-              Sign in to keep exploring. It only takes a moment, and your account unlocks more of
-              the site right away.
-            </Text>
-          </div>
-
-          <div className="flex flex-col gap-3">
-            <FeatureRow color="blue" icon={<IconUserCheck size={18} />} text="Free account" />
-            <FeatureRow color="blue" icon={<IconSparkles size={18} />} text="Unlock more content" />
-            <FeatureRow color="blue" icon={<IconBolt size={18} />} text="Earn and spend Buzz" />
-          </div>
-
-          <Button
-            color="blue"
-            size="lg"
-            radius="md"
-            leftSection={<IconKey size={18} />}
-            rightSection={<IconArrowRight size={18} />}
-            className="mt-1 w-full shadow-md shadow-blue-9/25 md:w-auto md:self-start"
-            onClick={(e: React.MouseEvent) =>
-              requireLogin({
-                uiEvent: e,
-                reason: 'view-content',
-                returnUrl,
-                cb: () => undefined,
-              })
-            }
-          >
-            Log in to view
-          </Button>
+        <div className="flex flex-col gap-3">
+          <FeatureRow color="blue" icon={<IconUserCheck size={18} />} text="Free account" />
+          <FeatureRow color="blue" icon={<IconSparkles size={18} />} text="Unlock more content" />
+          <FeatureRow color="blue" icon={<IconBolt size={18} />} text="Earn and spend Buzz" />
         </div>
+
+        <Button
+          color="blue"
+          size="lg"
+          radius="md"
+          leftSection={<IconKey size={18} />}
+          rightSection={<IconArrowRight size={18} />}
+          className="mt-1 w-full shadow-md shadow-blue-9/25 md:w-auto md:self-start"
+          onClick={(e: React.MouseEvent) =>
+            requireLogin({
+              uiEvent: e,
+              reason: 'view-content',
+              returnUrl,
+              cb: () => undefined,
+            })
+          }
+        >
+          Log in to view
+        </Button>
       </div>
-    </>
+    </div>
   );
 }

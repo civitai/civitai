@@ -71,8 +71,6 @@ export const getServerSideProps: GetServerSideProps = async (ctx) => {
   lines.push(`Sitemap: ${baseUrl}/sitemap-pages.xml`);
   lines.push(`Sitemap: ${baseUrl}/sitemap-articles.xml`);
   lines.push(`Sitemap: ${baseUrl}/sitemap-models.xml`);
-  // Tools live on the SFW canonical only.
-  if (color === 'green') lines.push(`Sitemap: ${baseUrl}/sitemap-tools.xml`);
 
   return respondWithText(ctx, lines.join('\n') + '\n');
 };
