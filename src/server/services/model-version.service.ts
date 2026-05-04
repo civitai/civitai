@@ -83,6 +83,7 @@ import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { filesForModelVersionCache } from './model-file.service';
 import { getBuzzTransactionSupportedAccountTypes } from '~/utils/buzz';
+import { deleteModelFileObjects } from '~/utils/s3-utils';
 import type { BaseModel, BaseModelGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
@@ -572,6 +573,14 @@ export const upsertModelVersion = async ({
 };
 
 export const deleteVersionById = async ({ id }: GetByIdInput) => {
+  // Snapshot URLs before the cascade nukes ModelFile rows — we lose them otherwise.
+  const modelFileUrls = (
+    await dbWrite.modelFile.findMany({
+      where: { modelVersionId: id },
+      select: { url: true },
+    })
+  ).map((f) => f.url);
+
   const version = await dbWrite.$transaction(async (tx) => {
     const data = await tx.modelVersion.findFirstOrThrow({
       where: { id },
@@ -604,6 +613,20 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
   // that never happened.
   await preventModelVersionLag(version.modelId, version.id);
   await bustMvCache(version.id, version.modelId);
+
+  // Post-commit S3 cleanup — only after Postgres confirms the delete stuck.
+  if (modelFileUrls.length > 0) {
+    try {
+      await deleteModelFileObjects(modelFileUrls);
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-version-delete-s3-objects',
+        message: `Failed to delete S3 objects for model version ${id}`,
+        error,
+      });
+    }
+  }
 
   return version;
 };
@@ -2042,6 +2065,16 @@ export const mergeVersions = async ({
     }
   }
 
+  // Defensive snapshot: the merge moves files to the target before deleting source
+  // versions, so this should normally be empty — but if a file slipped past the
+  // updateMany (or a race added one), the cascade would orphan its S3 object.
+  const sourceFileUrls = (
+    await dbWrite.modelFile.findMany({
+      where: { modelVersionId: { in: sourceVersionIds } },
+      select: { url: true },
+    })
+  ).map((f) => f.url);
+
   await dbWrite.$transaction(
     async (tx) => {
       // 1. Remap file types and metadata if provided
@@ -2247,4 +2280,20 @@ export const mergeVersions = async ({
     preventReplicationLag('model', modelId),
     preventReplicationLag('modelVersion', targetVersionId),
   ]);
+
+  // Post-commit S3 cleanup for any stragglers the move missed.
+  if (sourceFileUrls.length > 0) {
+    try {
+      await deleteModelFileObjects(sourceFileUrls);
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-version-merge-s3-objects',
+        message: `Failed to delete S3 objects for merged source versions ${sourceVersionIds.join(
+          ', '
+        )}`,
+        error,
+      });
+    }
+  }
 };
