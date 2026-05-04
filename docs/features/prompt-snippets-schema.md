@@ -158,8 +158,10 @@ model WildcardSetCategory {
   name              String                  @db.Citext // e.g. "character" — citext makes comparisons and the unique constraint case-insensitive; original filename casing is preserved for display
 
   // Values are an ordered array of strings — one entry per non-empty line in the source .txt.
-  // Each string preserves Dynamic Prompts syntax literally (`{a|b|c}`, `__nested__`, weights);
-  // the resolver expands that syntax at generation time.
+  // Each string preserves Dynamic Prompts alternation/weight syntax literally
+  // (`{a|b|c}`, `{1-2$$a|b}`, `N.0::name`); the resolver expands those at generation time.
+  // Nested references are normalized at import: source-file `__name__` is rewritten to `#name`
+  // so the stored values use a single reference syntax everywhere in our system.
   values            Json                    @db.JsonB
 
   // Denormalized count for fast displays ("24 values") without parsing the JSON.
@@ -303,10 +305,11 @@ BEGIN
     )
     FOR each .txt file:
       lines = read non-empty lines from file
+      lines = normalizeNestedRefs(lines)   -- rewrite source-file `__name__` to `#name`
       INSERT WildcardSetCategory (
         wildcardSetId,
         name,                      -- citext, preserves source filename casing
-        values = jsonb(lines),     -- JSONB array of strings
+        values = jsonb(lines),     -- JSONB array of strings, normalized to `#name`
         valueCount = length(lines),
         displayOrder,
         auditStatus = 'Pending',

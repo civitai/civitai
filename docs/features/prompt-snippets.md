@@ -13,7 +13,7 @@ Planning. Not yet implemented.
 - **WildcardSet** — the unified content table. Every set has a `kind`:
   - **System-kind:** content imported from a wildcard-type model. Globally cached, shared across all users who subscribe.
   - **User-kind:** owned by one user. Their personal collection, e.g. the default "My snippets" set.
-- **WildcardSetCategory** — categories within a set (e.g. `character`, `setting`). Each category holds a JSONB array of plain string values. Values can be plain text or use Dynamic Prompts syntax (`{a|b}`, `__nested__`, weights).
+- **WildcardSetCategory** — categories within a set (e.g. `character`, `setting`). Each category holds a JSONB array of plain string values. Values can be plain text, use Dynamic Prompts alternation/weight syntax (`{a|b}`, `{1-2$$a|b}`, `N.0::name`), or contain nested `#name` references to other categories within the same set.
 - **UserWildcardSet** — per-user activation pointer. Decides which sets contribute to the user's current picker. Used for both kinds: subscription pointer for System-kind, auto-created owner pointer for User-kind. `isActive` flag governs picker visibility.
 - **Reference syntax:**
   - `#category` — batch mode. Selecting multiple values fans out into combinations.
@@ -69,7 +69,9 @@ const snippetReferencePattern = /(#\??)([a-zA-Z][a-zA-Z0-9_]*)/g;
 
 **Slot-counting:** `"#character fights #character"` contains two batch slots for `character`. The no-repeat rule ensures the two slots within a single combination hold different values.
 
-**Nested resolution:** values within a category may contain `__name__` references to other categories. These resolve at generation time within the source set's scope (System-kind nested refs stay inside the same WildcardSet; User-kind nested refs stay inside the same User-kind set). Recursion is bounded with a hard depth limit and cycle detection.
+**Nested resolution:** values within a category may contain `#name` references to other categories. These resolve at generation time within the source set's scope (System-kind nested refs stay inside the same WildcardSet; User-kind nested refs stay inside the same User-kind set). Recursion is bounded with a hard depth limit and cycle detection. See [prompt-snippets-nested-resolution.md](./prompt-snippets-nested-resolution.md) for the full algorithm.
+
+**Import-time normalization:** wildcard model files written for A1111 / Dynamic Prompts use `__name__` for nested references. At import we rewrite every `__name__` token to `#name` so the stored values, the resolver, and the user-facing UI all use a single reference syntax. Alternation/weight syntax (`{a|b}`, `N.0::name`, `{1-2$$...}`) is preserved literally.
 
 ---
 
@@ -169,7 +171,7 @@ async function expandSnippetsToPrompts(
   //    If total > 10: Fisher-Yates shuffle keyed by seed, take first 10.
   // 4. For random-pick refs (#?): pick one value per workflow step using PRNG keyed by
   //    (seed, stepIndex, refPosition).
-  // 5. Substitute values into template; recursively resolve any nested __name__ refs within source set scope.
+  // 5. Substitute values into template; recursively resolve any nested #name refs within source set scope.
   // 6. Return one expanded prompt + assignment per combination.
 }
 ```
@@ -287,7 +289,7 @@ First end-to-end working slice.
 
 ### Phase 8 — nested wildcard resolution
 
-- Recursive `__name__` expansion within source-set scope (max depth + cycle detection)
+- Recursive `#name` expansion within source-set scope (max depth + cycle detection)
 - Transitive `Dirty` propagation: if a category references another `Dirty` category, mark this one `Dirty` too
 
 ---
