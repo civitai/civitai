@@ -232,21 +232,42 @@ function ComicReader() {
           ) : (
             <Stack gap={0}>
               {panels.map((panel: ReaderPanel) => {
+                // Two ways a panel can be blocked:
+                //   - Server stripped `imageUrl` to null on green when the
+                //     panel's nsfwLevel is mature (the authoritative gate).
+                //   - Image record is mature but the URL slipped through
+                //     (defense-in-depth client-side check).
                 const isNsfwBlocked =
-                  isGreen &&
-                  (panel.image ? !hasSafeBrowsingLevel(panel.image.nsfwLevel) : true);
+                  panel.imageUrl == null ||
+                  (isGreen &&
+                    (panel.image ? !hasSafeBrowsingLevel(panel.image.nsfwLevel) : true));
                 return (
-                  <div key={panel.id} style={{ position: 'relative', width: '100%' }}>
-                    <img
-                      src={getEdgeUrl(panel.imageUrl!, { original: true })}
-                      alt={isNsfwBlocked ? 'Mature panel' : panel.prompt}
-                      loading="lazy"
-                      style={{
-                        width: '100%',
-                        display: 'block',
-                        filter: isNsfwBlocked ? 'blur(40px)' : undefined,
-                      }}
-                    />
+                  <div
+                    key={panel.id}
+                    style={{
+                      position: 'relative',
+                      width: '100%',
+                      // When the URL was stripped server-side there's no
+                      // image to size against — pin a minimum so the
+                      // overlay has a canvas to sit on.
+                      minHeight: isNsfwBlocked && !panel.imageUrl ? 320 : undefined,
+                      background: isNsfwBlocked && !panel.imageUrl
+                        ? 'var(--mantine-color-dark-7)'
+                        : undefined,
+                    }}
+                  >
+                    {panel.imageUrl && (
+                      <img
+                        src={getEdgeUrl(panel.imageUrl, { original: true })}
+                        alt={isNsfwBlocked ? 'Mature panel' : panel.prompt}
+                        loading="lazy"
+                        style={{
+                          width: '100%',
+                          display: 'block',
+                          filter: isNsfwBlocked ? 'blur(40px)' : undefined,
+                        }}
+                      />
+                    )}
                     {isNsfwBlocked && (
                       <div
                         style={{

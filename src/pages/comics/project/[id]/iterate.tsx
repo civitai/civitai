@@ -320,13 +320,13 @@ function ComicIteratePage() {
   // it belongs to (we already have `chapterPosition` from the URL). Skip the
   // fetch entirely when there's no panelId on the URL — that's the
   // "iterate from a free-form image" case, no source panel to gate on.
-  const { data: sourceChapter } = trpc.comics.getChapter.useQuery(
-    { projectId, chapterPosition },
-    {
-      enabled:
-        projectId > 0 && Number.isFinite(chapterPosition) && numericPanelId != null,
-    }
-  );
+  const sourcePanelGateNeeded =
+    isGreen && numericPanelId != null && projectId > 0 && Number.isFinite(chapterPosition);
+  const { data: sourceChapter, isLoading: isSourceChapterLoading } =
+    trpc.comics.getChapter.useQuery(
+      { projectId, chapterPosition },
+      { enabled: sourcePanelGateNeeded }
+    );
   const sourcePanel =
     numericPanelId != null
       ? sourceChapter?.panels.find((p) => p.id === numericPanelId)
@@ -336,7 +336,16 @@ function ComicIteratePage() {
     !!sourcePanel?.image &&
     !hasSafeBrowsingLevel(sourcePanel.image.nsfwLevel);
 
-  if (!project) {
+  // Closes a brief leak window: on green, when a panelId is on the URL, we
+  // need the chapter query to resolve before we can know whether the
+  // source image is mature. Without this gate the editor would render with
+  // `initialSource` (built from URL params) for the few hundred ms the
+  // query takes — long enough to display a restricted image and feed it
+  // back into a generation. We only block the *gate* path; if the chapter
+  // happens to be cached, this resolves instantly.
+  const isAwaitingNsfwGate = sourcePanelGateNeeded && isSourceChapterLoading;
+
+  if (!project || isAwaitingNsfwGate) {
     return (
       <div
         style={{

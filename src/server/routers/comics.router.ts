@@ -997,6 +997,9 @@ export const comicsRouter = router({
               projectId: true,
               name: true,
               position: true,
+              // Needed by `stripNsfwPanelImages` as a fallback when a panel
+              // has an `imageUrl` but no associated Image record.
+              nsfwLevel: true,
               panels: {
                 where: {
                   status: ComicPanelStatus.Ready,
@@ -1021,6 +1024,14 @@ export const comicsRouter = router({
 
       if (!project || (project.userId !== ctx.user.id && !ctx.user.isModerator)) {
         throw throwAuthorizationError();
+      }
+
+      // Server-side gate: on green, strip mature panels' `imageUrl` so the
+      // raw CDN URL never reaches the client. Client-side blur on its own
+      // leaves the URL in the response, which means a determined user
+      // could fetch the original or trigger the export-to-CBZ button.
+      if (ctx.features.isGreen) {
+        stripNsfwPanelImages(project.chapters, true);
       }
 
       return {
@@ -3889,21 +3900,24 @@ export const comicsRouter = router({
   setProjectNsfwLevel: comicModeratorProcedure
     .input(z.object({ id: z.number().int(), nsfwLevel: z.number().refine((n) => [1, 2, 4, 8, 16, 32].includes(n), 'Invalid NSFW level') }))
     .mutation(async ({ ctx, input }) => {
-      // Cap any panel image whose level exceeds the chosen cap. Lower-rated
-      // images (and unprocessed/0) are left alone — the action is "no higher
-      // than this", not "set everything to this".
+      // Stamp every panel image with the moderator's chosen level. The
+      // schema accepts only single-bit values (PG / PG-13 / R / X / XXX /
+      // Blocked), so this is a "set" — it both lowers content above the
+      // chosen level AND raises content below it. The previous cap-only
+      // form left a regression where a mod selecting R on a PG-rated
+      // project couldn't move the rating up, because the recompute below
+      // aggregates from the (unchanged) images.
       await dbWrite.$executeRaw`
         UPDATE "Image" i
         SET "nsfwLevel" = ${input.nsfwLevel}
         FROM "ComicPanel" p
         WHERE p."imageId" = i.id
           AND p."projectId" = ${input.id}
-          AND i."nsfwLevel" > ${input.nsfwLevel}
+          AND i."nsfwLevel" <> ${input.nsfwLevel}
       `;
 
-      // Recompute chapter levels from the (now-capped) images, then bubble up
-      // to the project level. The bit_or aggregate naturally falls below the
-      // cap once images have been capped.
+      // Recompute chapter levels from the (now-stamped) images, then bubble
+      // up to the project level.
       await updateComicChapterNsfwLevels([input.id]);
       await updateComicProjectNsfwLevels([input.id]);
 
@@ -3929,9 +3943,10 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Cap any panel image in this chapter whose level exceeds the cap.
-      // Lower-rated images are left alone — the action is "no higher than
-      // this", not "set everything to this".
+      // Stamp every panel image in this chapter with the moderator's chosen
+      // level. Schema accepts single-bit values only, so this works in both
+      // directions (lower content above and lift content below). See the
+      // matching note on `setProjectNsfwLevel` for why "set" beats "cap".
       await dbWrite.$executeRaw`
         UPDATE "Image" i
         SET "nsfwLevel" = ${input.nsfwLevel}
@@ -3939,11 +3954,11 @@ export const comicsRouter = router({
         WHERE p."imageId" = i.id
           AND p."projectId" = ${input.projectId}
           AND p."chapterPosition" = ${input.chapterPosition}
-          AND i."nsfwLevel" > ${input.nsfwLevel}
+          AND i."nsfwLevel" <> ${input.nsfwLevel}
       `;
 
-      // Recompute the chapter level from its (capped) images, then bubble up
-      // to the project level.
+      // Recompute the chapter level from its (now-stamped) images, then
+      // bubble up to the project level.
       await updateComicChapterNsfwLevels([input.projectId]);
       await updateComicProjectNsfwLevels([input.projectId]);
 

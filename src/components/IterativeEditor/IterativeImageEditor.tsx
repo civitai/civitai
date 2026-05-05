@@ -32,9 +32,9 @@ import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { Flags } from '~/shared/utils/flags';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -257,18 +257,18 @@ export function IterativeImageEditor({
   const stableInitialSource = useRef(initialSource ?? null);
 
   // ── NSFW blur ──
-  // Mature outputs are blurred per the user's blur-level preference and stay
-  // that way on this domain — they cannot be unblurred or used as source for
-  // free. The only path forward is the same red-domain handoff used for
-  // `siteRestricted` results: the user clicks "Unlock on civitai.red" and the
-  // editor on red resumes their workflow with mature content allowed.
-  const { blurLevels } = useBrowsingLevelContext();
+  // Hard-block mature outputs on green only. On blue/red the user is allowed
+  // to view their own generated mature content — they paid for it, the domain
+  // permits it, and the previous user-blur-preference gate forbade reuse even
+  // for users who explicitly opted in. The block-on-green path still routes
+  // through the red-domain handoff (same flow as `siteRestricted`).
+  const { isGreen } = useFeatureFlags();
   const isImageBlurred = useCallback(
     (img: SourceImage | null | undefined) => {
       if (!img?.nsfwLevel) return false;
-      return Flags.hasFlag(blurLevels, img.nsfwLevel);
+      return isGreen && !hasSafeBrowsingLevel(img.nsfwLevel);
     },
-    [blurLevels]
+    [isGreen]
   );
   // Stable ref so handlePollResult (a useCallback that doesn't depend on the
   // blurLevels closure) can read the latest predicate without rebuilding.
@@ -501,10 +501,18 @@ export function IterativeImageEditor({
     [clearActiveWorkflow]
   );
 
+  // In-flight guard. The 20s fallback interval and the signal-driven poll
+  // can otherwise race after a workflow finishes — and `pollIterationWorkflow`
+  // is non-idempotent on success (re-downloads the output and creates new
+  // Image rows on every call), so two concurrent polls would duplicate
+  // uploads + Image records for one workflow.
+  const isPollingRef = useRef(false);
   const doPollOnce = useCallback(async () => {
     const workflowId = activeWorkflowIdRef.current;
     const iterationId = activeIterationIdRef.current;
     if (!workflowId || !iterationId) return;
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
 
     try {
       const result = await onPollStatus({
@@ -516,6 +524,8 @@ export function IterativeImageEditor({
       handlePollResult(result, iterationId);
     } catch {
       // Ignore poll errors — signal will retry
+    } finally {
+      isPollingRef.current = false;
     }
   }, [onPollStatus, handlePollResult]);
 
