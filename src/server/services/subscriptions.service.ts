@@ -377,9 +377,13 @@ export const deliverMonthlyCosmetics = async ({
 export const syncFreshdeskMembership = async ({
   userId,
   customerId,
+  fallbackTier,
 }: {
   userId?: number;
   customerId?: string;
+  // Used when there's no active sub but the caller knows a tier to apply
+  // (e.g. Paddle Buzz purchases mark the user as 'Buzz Purchaser').
+  fallbackTier?: string | null;
 }) => {
   if (!userId && !customerId) {
     throw new Error('syncFreshdeskMembership requires userId or customerId');
@@ -399,7 +403,7 @@ export const syncFreshdeskMembership = async ({
   }
 
   const subscription = await getHighestTierSubscription(user.id);
-  const tier = subscription?.tier ?? null;
+  const tier = subscription?.tier ?? fallbackTier ?? null;
 
   await upsertContact({
     id: user.id,

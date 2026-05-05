@@ -5,7 +5,6 @@ import type { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { trackWebhookEvent } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
-import { updateServiceTier } from '~/server/integrations/freshdesk';
 import { getPaddle } from '~/server/paddle/client';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { getUserCapCache } from '~/server/services/creator-program.service';
@@ -18,8 +17,8 @@ import {
   upsertSubscription,
 } from '~/server/services/paddle.service';
 import {
-  getUserSubscription,
   paddleTransactionContainsSubscriptionItem,
+  syncFreshdeskMembership,
 } from '~/server/services/subscriptions.service';
 
 // Stripe requires the raw body to construct the event.
@@ -63,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     let event: EventEntity | null;
 
     // Track to ClickHouse (fire and forget, never throws)
-    trackWebhookEvent('paddle', rawPayload).catch(() => {});
+    trackWebhookEvent('paddle', rawPayload).catch(() => null);
 
     try {
       if (!sig || !webhookSecret) {
@@ -159,11 +158,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           });
 
           if (user) {
-            const subscription = await getUserSubscription({ userId: user.id });
-            await updateServiceTier({
-              userId: user.id,
-              serviceTier: subscription?.tier ?? serviceTier ?? null,
-            });
+            await syncFreshdeskMembership({ userId: user.id, fallbackTier: serviceTier });
 
             getUserCapCache()?.bust(user.id);
           }

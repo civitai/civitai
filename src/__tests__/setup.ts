@@ -133,7 +133,7 @@ vi.mock('~/server/auth/session-invalidation', () => ({
 
 // Mock Freshdesk integration
 vi.mock('~/server/integrations/freshdesk', () => ({
-  updateServiceTier: vi.fn().mockResolvedValue(undefined),
+  upsertContact: vi.fn().mockResolvedValue(undefined),
 }));
 
 // Mock subscription cache invalidation

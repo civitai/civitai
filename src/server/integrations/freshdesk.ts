@@ -1,7 +1,5 @@
-import { capitalize } from 'instantsearch.js/es/lib/utils';
 import jwt from 'jsonwebtoken';
 import { env } from '~/env/server';
-import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { toBase64 } from '~/utils/string-base64-helpers';
@@ -151,36 +149,15 @@ export async function updateContact(user: FreshdeskUserInput & { contactId: numb
   }
 }
 
-export async function upsertContact(user: FreshdeskUserInput) {
-  const contactId = await createContact(user);
-  if (contactId) await updateContact({ ...user, contactId });
+// Freshdesk's `sla` custom field is a dropdown — values must match exact case.
+const FRESHDESK_TIER_VALUES = ['Supporter', 'Bronze', 'Silver', 'Gold', 'Buzz Purchaser', 'Free'];
+function normalizeTier(tier: string | null | undefined) {
+  if (!tier) return null;
+  return FRESHDESK_TIER_VALUES.find((t) => t.toLowerCase() === tier.toLowerCase()) ?? null;
 }
 
-export async function updateServiceTier({
-  userId,
-  email,
-  serviceTier,
-}: {
-  userId?: number;
-  email?: string | null;
-  serviceTier: string | null;
-}) {
-  if (!userId && !email) return;
-
-  const supportedTiers = ['Supporter', 'Bronze', 'Silver', 'Gold', 'Buzz Purchaser'];
-  const tier = serviceTier ? capitalize(serviceTier) : null;
-  if (tier && !supportedTiers.includes(tier)) return;
-
-  const user = userId
-    ? await dbWrite.user.findUnique({
-        where: { id: userId },
-        select: { id: true, username: true, email: true },
-      })
-    : await dbWrite.user.findFirst({
-        where: { email },
-        select: { id: true, username: true, email: true },
-      });
-  if (!user?.id || !user.username || !user.email) return;
-
-  return upsertContact({ id: user.id, username: user.username, email: user.email, tier });
+export async function upsertContact(user: FreshdeskUserInput) {
+  const normalized = { ...user, tier: normalizeTier(user.tier) };
+  const contactId = await createContact(normalized);
+  if (contactId) await updateContact({ ...normalized, contactId });
 }

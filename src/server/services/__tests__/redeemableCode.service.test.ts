@@ -85,10 +85,6 @@ vi.mock('~/server/auth/session-invalidation', () => ({
   refreshSession: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('~/server/integrations/freshdesk', () => ({
-  updateServiceTier: vi.fn().mockResolvedValue(undefined),
-}));
-
 vi.mock('~/server/utils/subscription.utils', () => {
   const TIER_BUZZ: Record<string, number> = { bronze: 10000, silver: 25000, gold: 50000 };
   return {
@@ -126,6 +122,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 
 vi.mock('~/server/services/subscriptions.service', () => ({
   deliverMonthlyCosmetics: mockDeliverMonthlyCosmetics,
+  syncFreshdeskMembership: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/utils/errorHandling', () => ({
