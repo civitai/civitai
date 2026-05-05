@@ -212,9 +212,9 @@ Use EdgeImage component for optimized image loading with CDN support.
 
 ## Debug Endpoints (`src/pages/api/testing/*`)
 
-`src/pages/api/testing/*.ts` is the convention for hidden debug endpoints. Each endpoint is guarded by the `WEBHOOK_TOKEN` header (via `WebhookEndpoint(...)`) and exposes a handful of POST actions for experimenting with a feature without paying real money or hand-editing the DB.
+`src/pages/api/testing/*.ts` is the convention for hidden debug endpoints. Each endpoint is guarded by `WEBHOOK_TOKEN` (via `WebhookEndpoint(...)`, which checks the `?token=` query param) and exposes a handful of POST actions for experimenting with a feature without paying real money or hand-editing the DB.
 
-**To use one**: read the endpoint's source file directly — the top-of-file comment documents the available actions and required params, and the zod schema is the authoritative contract. Agents should never need a wrapper skill; cURL with `Authorization: Bearer $WEBHOOK_TOKEN` is enough.
+**To use one**: read the endpoint's source file directly — the top-of-file comment documents the available actions and required params, and the zod schema is the authoritative contract. Agents should never need a wrapper skill; cURL with `?token=$WEBHOOK_TOKEN` appended to the URL is enough.
 
 **When adding a new debug endpoint**:
 1. Drop it at `src/pages/api/testing/<feature>.ts`

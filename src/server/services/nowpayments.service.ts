@@ -201,6 +201,32 @@ export const processDeposit = async (
           });
         }
       }
+
+      // Referral kickback — pay the referrer 10% Blue Buzz on the buzz the
+      // referee just bought. Mirrors the Stripe payment_intent.succeeded path.
+      // Idempotent on (kind, sourceEventId), so reconciliation reruns and
+      // webhook retries can't double-grant. Fire-and-forget so a referral DB
+      // hiccup never holds up confirming the deposit.
+      if (!buzzGrantFailed && transactionId && transactionId !== 'already_granted') {
+        const { recordBuzzPurchaseKickback } = await import(
+          '~/server/services/referral.service'
+        );
+        await recordBuzzPurchaseKickback({
+          refereeId: userId,
+          buzzAmount,
+          sourceEventId: `np-deposit-${paymentId}`,
+          payment: {
+            paymentProvider: 'NowPayments',
+          },
+        }).catch(async (err) => {
+          await log({
+            message: 'Referral kickback failed for nowpayments deposit',
+            paymentId,
+            userId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
     }
   }
 

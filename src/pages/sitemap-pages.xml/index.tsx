@@ -38,8 +38,11 @@ const greenPaths: string[] = [
   '/product/vault',
 ];
 
-// Utility/commercial pages stay canonical on green; only content-browse routes
-// appear on the red sitemap.
+// Utility/commercial pages mostly stay canonical on green; the red sitemap
+// includes content-browse routes plus the two pages that have a distinct
+// red-canonical value: `/pricing` (red has its own pricing) and `/generate`
+// (red supports both SFW and NSFW generation, a different value prop than
+// green's SFW-only generator).
 const redPaths: string[] = [
   '/',
   '/models',
@@ -50,6 +53,8 @@ const redPaths: string[] = [
   '/comics',
   '/comics/browse',
   '/collections',
+  '/pricing',
+  '/generate',
 ];
 
 const pathsByColor: Record<ColorDomain, string[]> = {

@@ -330,6 +330,59 @@ $border-color: light-dark(var(--mantine-color-gray-3), #373a40);
   gap: 4px;
 }
 
+.siteRestrictedBox {
+  background: rgba(250, 176, 5, 0.08);
+  border: 1px solid rgba(250, 176, 5, 0.3);
+  border-radius: 6px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #fab005;
+  max-width: 320px;
+}
+
+// Mature-content blur for iteration images. Mirrors the blur intensity used
+// elsewhere in the app — strong enough to obscure detail, light enough to
+// preview the composition.
+.blurredImage {
+  filter: blur(28px);
+}
+
+.singleImageWrapper {
+  position: relative;
+  display: inline-block;
+}
+
+// Overlay sits on top of a blurred image and contains the unlock CTA.
+// Click anywhere on the overlay unblurs and (for the selected image) promotes
+// it to current source.
+.unlockOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fab005;
+  cursor: pointer;
+  border-radius: inherit;
+  padding: 8px;
+  text-align: center;
+
+  &:hover {
+    background: rgba(0, 0, 0, 0.65);
+  }
+}
+
+.multiImageThumbBlurred {
+  // The thumb itself is still selectable; the overlay handles the unlock.
+  cursor: pointer;
+}
+
 .generatingSkeleton {
   display: flex;
   align-items: center;

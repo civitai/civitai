@@ -25,7 +25,7 @@ export function ImportReferencesModal({
 
   const addMutation = trpc.comics.addReferenceToProject.useMutation({
     onSuccess: () => {
-      utils.comics.getProject.invalidate({ id: projectId });
+      utils.comics.getProjectShell.invalidate({ id: projectId });
       utils.comics.getImportableReferences.invalidate({ projectId });
     },
     onError: (err) => {
@@ -98,11 +98,15 @@ export function ImportReferencesModal({
                     onClick={() => handleToggle(ref.id)}
                     style={{ userSelect: 'none' }}
                   >
-                    <Checkbox
-                      checked={selected.has(ref.id)}
-                      onChange={() => handleToggle(ref.id)}
-                      size="sm"
-                    />
+                    {/* Wrapper stops the click from bubbling to the parent row,
+                        which would re-toggle and cancel out the checkbox change. */}
+                    <span onClick={(e) => e.stopPropagation()}>
+                      <Checkbox
+                        checked={selected.has(ref.id)}
+                        onChange={() => handleToggle(ref.id)}
+                        size="sm"
+                      />
+                    </span>
 
                     <div
                       className="flex-shrink-0 overflow-hidden rounded"

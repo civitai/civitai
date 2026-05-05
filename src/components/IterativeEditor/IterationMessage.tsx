@@ -1,8 +1,12 @@
-import { Button, Loader, Text } from '@mantine/core';
+import { Button, Loader, Text, Tooltip } from '@mantine/core';
 import {
   IconBolt,
   IconCheck,
+  IconExternalLink,
+  IconEyeOff,
+  IconLock,
   IconPencil,
+  IconPlayerStop,
   IconRefresh,
   IconWand,
   IconZoomIn,
@@ -20,7 +24,22 @@ interface IterationMessageProps {
   onUseAsSource: () => void;
   onSelectImage?: (image: SourceImage) => void;
   onRetry?: () => void;
+  /** When set, the generating iteration shows an "Abort" control. */
+  onAbort?: () => void;
   onZoomImage?: (url: string) => void;
+  /**
+   * Returns true when the given image should be blurred for the current user
+   * per their `blurLevels` preference. Blurred images cannot be used as
+   * source on this domain — they must be unlocked on civitai.red.
+   */
+  isImageBlurred?: (image: SourceImage) => boolean;
+  /**
+   * Handoff URL to civitai.red for this iteration's workflow. Used both for
+   * the `siteRestricted` status and for any blurred result image — clicking
+   * it lands the user on the red-side iterative editor with the same
+   * workflow context, where mature content is allowed.
+   */
+  unlockOnRedUrl?: string | null;
 }
 
 export function IterationMessage({
@@ -29,7 +48,10 @@ export function IterationMessage({
   onUseAsSource,
   onSelectImage,
   onRetry,
+  onAbort,
   onZoomImage,
+  isImageBlurred,
+  unlockOnRedUrl,
 }: IterationMessageProps) {
   const hasMultipleImages = iteration.resultImages.length > 1;
   const selectedUrl = iteration.resultImage?.url;
@@ -38,6 +60,9 @@ export function IterationMessage({
     ? getEdgeUrl(iteration.resultImage.previewUrl, { width: 400 }) ??
       iteration.resultImage.previewUrl
     : null;
+
+  const selectedBlurred =
+    !!iteration.resultImage && !!isImageBlurred?.(iteration.resultImage);
 
   return (
     <div
@@ -68,6 +93,17 @@ export function IterationMessage({
             <Text size="xs" c="dimmed" className={styles.generatingText}>
               Generating...
             </Text>
+            {onAbort && (
+              <Button
+                size="compact-xs"
+                variant="subtle"
+                color="gray"
+                leftSection={<IconPlayerStop size={12} />}
+                onClick={onAbort}
+              >
+                Stop waiting
+              </Button>
+            )}
           </div>
         </div>
       ) : iteration.status === 'error' ? (
@@ -86,6 +122,32 @@ export function IterationMessage({
             </Button>
           )}
         </div>
+      ) : iteration.status === 'siteRestricted' ? (
+        <div className={styles.siteRestrictedBox}>
+          <IconEyeOff size={20} />
+          <Text size="xs" fw={600} c="yellow">
+            Mature Content
+          </Text>
+          <Text size="xs" c="dimmed" ta="center">
+            This image was rated mature and cannot be viewed on this site. Your Buzz still
+            paid for it — open it on civitai.red to add it to your panel.
+          </Text>
+          {unlockOnRedUrl && (
+            <Button
+              component="a"
+              href={unlockOnRedUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              size="compact-sm"
+              variant="light"
+              color="red"
+              leftSection={<IconExternalLink size={12} />}
+              mt={4}
+            >
+              Unlock on civitai.red
+            </Button>
+          )}
+        </div>
       ) : hasMultipleImages ? (
         // Multi-image grid: show all results, highlight selected
         <div className={styles.multiImageGrid}>
@@ -93,23 +155,64 @@ export function IterationMessage({
             const thumbUrl =
               getEdgeUrl(img.previewUrl, { width: 200 }) ?? img.previewUrl;
             const isSelected = img.url === selectedUrl;
+            const blurred = !!isImageBlurred?.(img);
             return (
               <button
                 key={idx}
                 className={clsx(
                   styles.multiImageThumb,
-                  isSelected && styles.multiImageThumbSelected
+                  isSelected && styles.multiImageThumbSelected,
+                  blurred && styles.multiImageThumbBlurred
                 )}
                 onClick={() => onSelectImage?.(img)}
                 type="button"
               >
-                <img src={thumbUrl} alt={`Option ${idx + 1}`} />
-                {isSelected && (
+                <img
+                  src={thumbUrl}
+                  alt={`Option ${idx + 1}`}
+                  className={blurred ? styles.blurredImage : undefined}
+                />
+                {blurred && (
+                  // The whole overlay is the trigger: click anywhere in the
+                  // thumb to land on civitai.red with this workflow's context.
+                  // We render a non-link container and an inner anchor so the
+                  // button styling stays consistent with everything else; the
+                  // anchor stops propagation to avoid double-firing the
+                  // parent's `onSelectImage`.
+                  <div
+                    className={styles.unlockOverlay}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <IconLock size={16} />
+                    <Text size="xs" fw={600}>
+                      Mature
+                    </Text>
+                    {unlockOnRedUrl ? (
+                      <Button
+                        component="a"
+                        href={unlockOnRedUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        size="compact-xs"
+                        variant="light"
+                        color="red"
+                        leftSection={<IconExternalLink size={10} />}
+                      >
+                        Unlock on red
+                      </Button>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        Mature content
+                      </Text>
+                    )}
+                  </div>
+                )}
+                {!blurred && isSelected && (
                   <div className={styles.multiImageCheck}>
                     <IconCheck size={14} />
                   </div>
                 )}
-                {onZoomImage && (
+                {!blurred && onZoomImage && (
                   <button
                     type="button"
                     className={styles.zoomButton}
@@ -126,19 +229,52 @@ export function IterationMessage({
           })}
         </div>
       ) : iteration.resultImage && imageUrl ? (
-        <ImageWithLoader
-          src={imageUrl}
-          alt={`Result: ${iteration.prompt.slice(0, 80)}`}
-          onZoom={
-            onZoomImage
-              ? () =>
-                  onZoomImage(
-                    getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200 }) ??
-                      iteration.resultImage!.previewUrl
-                  )
-              : undefined
-          }
-        />
+        <div className={styles.singleImageWrapper}>
+          <ImageWithLoader
+            src={imageUrl}
+            alt={`Result: ${iteration.prompt.slice(0, 80)}`}
+            blurred={selectedBlurred}
+            onZoom={
+              !selectedBlurred && onZoomImage
+                ? () =>
+                    onZoomImage(
+                      getEdgeUrl(iteration.resultImage!.previewUrl, { width: 1200 }) ??
+                        iteration.resultImage!.previewUrl
+                    )
+                : undefined
+            }
+          />
+          {selectedBlurred && (
+            <div className={styles.unlockOverlay}>
+              <IconLock size={20} />
+              <Text size="sm" fw={600}>
+                Mature content
+              </Text>
+              <Text size="xs" ta="center" px="xs">
+                The resulting image was rated mature and cannot be viewed on this site. Open it on civitai.red to view it
+              </Text>
+              {unlockOnRedUrl ? (
+                <Button
+                  component="a"
+                  href={unlockOnRedUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  size="compact-sm"
+                  variant="light"
+                  color="red"
+                  leftSection={<IconExternalLink size={12} />}
+                  mt={4}
+                >
+                  Unlock on civitai.red
+                </Button>
+              ) : (
+                <Text size="xs" c="dimmed">
+                  Open the Generator queue to manage this workflow.
+                </Text>
+              )}
+            </div>
+          )}
+        </div>
       ) : null}
 
       {/* Footer: cost badge, annotation badge, use-as-source button */}
@@ -163,9 +299,30 @@ export function IterationMessage({
         )}
         <div className="flex-1" />
         {iteration.status === 'ready' && iteration.resultImage && !isCurrentSource && (
-          <Button size="compact-xs" variant="light" color="yellow" onClick={onUseAsSource}>
-            Use as source
-          </Button>
+          selectedBlurred ? (
+            <Tooltip
+              label="Mature image — unlock on civitai.red to use it as source"
+              withArrow
+              position="top"
+            >
+              <Button
+                component={unlockOnRedUrl ? 'a' : 'button'}
+                {...(unlockOnRedUrl
+                  ? { href: unlockOnRedUrl, target: '_blank', rel: 'noopener noreferrer' }
+                  : { disabled: true })}
+                size="compact-xs"
+                variant="light"
+                color="red"
+                leftSection={<IconExternalLink size={12} />}
+              >
+                Unlock on red
+              </Button>
+            </Tooltip>
+          ) : (
+            <Button size="compact-xs" variant="light" color="yellow" onClick={onUseAsSource}>
+              Use as source
+            </Button>
+          )
         )}
       </div>
     </div>
@@ -176,10 +333,12 @@ function ImageWithLoader({
   src,
   alt,
   onZoom,
+  blurred,
 }: {
   src: string;
   alt: string;
   onZoom?: () => void;
+  blurred?: boolean;
 }) {
   const [loaded, setLoaded] = useState(false);
 
@@ -201,9 +360,10 @@ function ImageWithLoader({
         src={src}
         alt={alt}
         onLoad={() => setLoaded(true)}
+        className={blurred ? styles.blurredImage : undefined}
         style={loaded ? undefined : { position: 'absolute', opacity: 0 }}
       />
-      {loaded && onZoom && (
+      {loaded && !blurred && onZoom && (
         <button type="button" className={styles.zoomButton} onClick={onZoom}>
           <IconZoomIn size={12} />
         </button>

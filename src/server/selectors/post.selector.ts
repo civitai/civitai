@@ -57,6 +57,7 @@ const postImage = Prisma.validator<Prisma.ImageDefaultArgs>()({ select: editPost
 
 export const postSelect = Prisma.validator<Prisma.PostSelect>()({
   id: true,
+  nsfw: true,
   nsfwLevel: true,
   title: true,
   detail: true,

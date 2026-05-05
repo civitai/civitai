@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { upsertContact } from '~/server/integrations/freshdesk';
+import { syncFreshdeskMembership } from '~/server/services/subscriptions.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { JobEndpoint } from '~/server/utils/endpoint-helpers';
 
@@ -15,33 +15,27 @@ export default JobEndpoint(async function freshdeskServiceTierRefresh(
 ) {
   const { start } = schema.parse(req.query);
 
-  const members = await dbWrite.$queryRawUnsafe<
-    { id: number; username: string; email: string; tier: string }[]
-  >(`
-    SELECT
-      u.id,
-      u.username,
-      u.email,
-      REPLACE(p.name, ' Tier', '') as tier
+  const rows = await dbWrite.$queryRawUnsafe<{ userId: number }[]>(`
+    SELECT DISTINCT cs."userId"
     FROM "CustomerSubscription" cs
-    JOIN "Product" p ON p.id = cs."productId"
-    JOIN "User" u on u.id = cs."userId"
-    WHERE status = 'active'
-    AND p.name != 'Save Card Details'
+    JOIN "User" u ON u.id = cs."userId"
+    WHERE cs.status NOT IN ('canceled', 'incomplete_expired', 'past_due', 'unpaid')
     AND u.email IS NOT NULL
     ${start ? `AND cs."userId" > ${start}` : ''}
     ORDER BY cs."userId" ASC
   `);
 
   let processed = 0;
-  const tasks = members.map((data) => async () => {
+  const tasks = rows.map(({ userId }) => async () => {
     processed++;
-    const consoleKey = `${data.id}: updateServiceTier ${processed} of ${members.length}`;
+    const consoleKey = `${userId}: syncFreshdeskMembership ${processed} of ${rows.length}`;
     console.time(consoleKey);
-    await upsertContact(data);
+    await syncFreshdeskMembership({ userId }).catch((err) => {
+      console.error(`Failed to sync userId=${userId}:`, (err as Error).message);
+    });
     console.timeEnd(consoleKey);
   });
   await limitConcurrency(tasks, 5);
 
-  return res.status(200).json({ count: members.length });
+  return res.status(200).json({ count: rows.length });
 });

@@ -28,6 +28,8 @@ interface PanelDetailDrawerProps {
   detailPanelId: number | null;
   setDetailPanelId: (id: number | null) => void;
   projectId: number;
+  /** Active chapter position — needed so cache invalidations target the right `getChapter` query. */
+  chapterPosition: number;
   detailPanel: {
     id: number;
     imageId?: number | null;
@@ -54,6 +56,7 @@ export function PanelDetailDrawer({
   detailPanelId,
   setDetailPanelId,
   projectId,
+  chapterPosition,
   detailPanel,
   detailPanelIndex,
   referenceNameMap,
@@ -186,7 +189,14 @@ export function PanelDetailDrawer({
                           imageId: detailPanel.imageId!,
                           nsfwLevel: detailPanel.image!.nsfwLevel as NsfwLevel,
                           onSubmit: () => {
-                            void utils.comics.getProject.invalidate({ id: projectId });
+                            // Rating change shifts the panel's nsfwLevel,
+                            // which feeds both the chapter NSFW aggregate
+                            // (shell) and the per-panel render (chapter).
+                            void utils.comics.getProjectShell.invalidate({ id: projectId });
+                            void utils.comics.getChapter.invalidate({
+                              projectId,
+                              chapterPosition,
+                            });
                           },
                         });
                       }}

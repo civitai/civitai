@@ -554,6 +554,7 @@ export function Collection({
       <BrowsingSettingsAddonsProvider>
         <Gated
           contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
+          nsfw={collection.nsfw ?? undefined}
           bypassRating={
             permissions?.manage ||
             currentUser?.id === collection.user.id ||

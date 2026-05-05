@@ -3,6 +3,12 @@ export interface SourceImage {
   previewUrl: string;
   width: number;
   height: number;
+  /**
+   * Bitwise NSFW level reported by the orchestrator for the generation
+   * output. Used to decide whether to blur the result against the user's
+   * `blurLevels` preference before the Image record's nsfwLevel is finalized.
+   */
+  nsfwLevel?: number;
 }
 
 export interface IterationEntry {
@@ -18,8 +24,17 @@ export interface IterationEntry {
   resultImages: SourceImage[];
   cost: number;
   timestamp: Date;
-  status: 'generating' | 'ready' | 'error';
+  status: 'generating' | 'ready' | 'error' | 'siteRestricted';
   errorMessage?: string;
+  /**
+   * Set when the workflow succeeded but the output is mature content the
+   * current site can't display. The IDE keeps the workflow ID so the user
+   * can be handed off to a domain that allows mature content.
+   */
+  workflowId?: string;
+  /** The width/height the workflow was generated at — needed for handoff URLs. */
+  width?: number;
+  height?: number;
 }
 
 export interface IterativeEditorConfig {
@@ -93,11 +108,15 @@ export interface GenerateResult {
 }
 
 export interface PollResult {
-  status: 'succeeded' | 'failed' | 'processing';
+  status: 'succeeded' | 'failed' | 'processing' | 'siteRestricted';
   imageUrl: string | null;
   imageId?: number;
   /** Multiple images when quantity > 1 */
-  images?: { url: string; id?: number }[];
+  images?: { url: string; id?: number; nsfwLevel?: number }[];
+  /** Returned with `siteRestricted` so the client can build a handoff URL. */
+  workflowId?: string;
+  /** Optional, status-specific message — e.g. "unlock with yellow Buzz". */
+  errorMessage?: string;
 }
 
 /** Context exposed to render props so plugins can read/write editor state */

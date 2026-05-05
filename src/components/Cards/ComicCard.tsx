@@ -19,6 +19,11 @@ export const ComicCard = memo(function ComicCard({ data }: { data: ComicItem }) 
         ...data.coverImage,
         type: data.coverImage.type ?? ('image' as const),
         metadata: (data.coverImage.metadata as MixedObject) ?? null,
+        // ImageGuard2 blurs based on `image.nsfwLevel`, but a comic's cover may
+        // be PG while inner chapters are mature (or vice versa). Use the higher
+        // of the two so the card reflects the worst content reachable by
+        // clicking through, matching the level used for feed-level filtering.
+        nsfwLevel: Math.max(data.coverImage.nsfwLevel ?? 0, data.nsfwLevel ?? 0),
       }
     : undefined;
 

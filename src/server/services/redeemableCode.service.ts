@@ -21,8 +21,10 @@ import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { PaymentProvider, RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
-import { deliverMonthlyCosmetics } from './subscriptions.service';
-import { updateServiceTier } from '~/server/integrations/freshdesk';
+import {
+  deliverMonthlyCosmetics,
+  syncFreshdeskMembership,
+} from '~/server/services/subscriptions.service';
 import { invalidateSubscriptionCaches, getPrepaidTokens } from '~/server/utils/subscription.utils';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
 import { dbRead } from '~/server/db/client';
@@ -437,8 +439,7 @@ export async function consumeRedeemableCode({
               consumedProductMetadata.tier
             );
 
-            const subscriptionMeta = (activeUserMembership.metadata ??
-              {}) as SubscriptionMetadata;
+            const subscriptionMeta = (activeUserMembership.metadata ?? {}) as SubscriptionMetadata;
             // Use getPrepaidTokens to migrate legacy prepaids → tokens on redemption
             const existingTokens = getPrepaidTokens({ metadata: subscriptionMeta });
             const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
@@ -476,9 +477,10 @@ export async function consumeRedeemableCode({
               const now = dayjs();
               const proratedDays =
                 dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
-                (existingTokens.filter(
+                existingTokens.filter(
                   (t) => t.tier === membershipProductMetadata.tier && t.status !== 'claimed'
-                ).length) * 30;
+                ).length *
+                  30;
 
               const newTokens = createPrepaidTokens({
                 count: consumedCode.unitValue,
@@ -590,16 +592,7 @@ export async function consumeRedeemableCode({
 
   if (consumedCode.type === RedeemableCodeType.Membership) {
     await invalidateSubscriptionCaches(userId);
-
-    const consumedProductMetadata = consumedCode.price?.product
-      .metadata as SubscriptionProductMetadata;
-
-    if (consumedProductMetadata) {
-      await updateServiceTier({
-        userId,
-        serviceTier: consumedProductMetadata.tier ?? null,
-      });
-    }
+    await syncFreshdeskMembership({ userId });
   }
 
   // Calculate Buzz value and get matching gift notices

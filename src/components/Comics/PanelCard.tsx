@@ -61,6 +61,11 @@ export interface PanelCardProps {
     image?: { nsfwLevel: number } | null;
   };
   projectId: number;
+  /**
+   * Chapter the panel belongs to. Needed for `getChapter` cache writes when
+   * patching panel state from polling / selection responses.
+   */
+  chapterPosition: number;
   position: number;
   referenceNames: string[];
   onDelete: () => void;
@@ -76,6 +81,7 @@ export interface PanelCardProps {
 export function PanelCard({
   panel,
   projectId,
+  chapterPosition,
   position,
   referenceNames,
   onDelete,
@@ -109,16 +115,17 @@ export function PanelCard({
   const [candidateImages, setCandidateImages] = useState<string[] | null>(initialCandidates);
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
 
-  // Patch this panel's data directly in the getProject cache (no full refetch needed)
+  // Patch this panel's data directly in the chapter cache (no full refetch
+  // needed). Panels live on `getChapter` keyed by `{ projectId, chapterPosition }`.
   const patchPanel = useCallback(
     (update: { status: string; imageUrl?: string | null; errorMessage?: string | null }) => {
-      utils.comics.getProject.setData({ id: projectId }, (prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          chapters: prev.chapters.map((ch) => ({
-            ...ch,
-            panels: ch.panels.map((p) =>
+      utils.comics.getChapter.setData(
+        { projectId, chapterPosition },
+        (prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            panels: prev.panels.map((p) =>
               p.id === panel.id
                 ? {
                     ...p,
@@ -128,11 +135,11 @@ export function PanelCard({
                   }
                 : p
             ),
-          })),
-        };
-      });
+          };
+        }
+      );
     },
-    [utils, projectId, panel.id]
+    [utils, projectId, chapterPosition, panel.id]
   );
 
   const selectPanelImageMutation = trpc.comics.selectPanelImage.useMutation({

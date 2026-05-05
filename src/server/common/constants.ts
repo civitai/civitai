@@ -33,7 +33,7 @@ export const constants = {
   galleryFilterDefaults: {
     sort: ImageSort.MostReactions,
     period: MetricTimeframe.AllTime,
-    limit: 50,
+    limit: 100,
   },
   postFilterDefaults: {
     sort: PostSort.MostReactions,

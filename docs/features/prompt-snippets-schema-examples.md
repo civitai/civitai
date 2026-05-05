@@ -191,9 +191,9 @@ Each row's `values` is a JSONB array of strings (one per non-empty line in the s
 
 | id | wildcardSetId | name | values (preview) | valueCount | auditStatus | nsfwLevel |
 |----|----|----|----|----|----|----|
-| 601 | 17 | character | `["__character_f__", "__character_m__"]` | 2 | Pending | 0 |
-| 602 | 17 | character_f | `["1girl, solo, __booru_looks_hair_length__, __booru_looks_hair_style__, __booru_looks_hair_color__, {__booru_looks_hair_accessories__\|}, __booru_looks_eye_color__"]` | 1 | Pending | 0 |
-| 603 | 17 | character_m | `["1boy, man, (muscular_male:0.6), (masculine:0.8), male_focus, solo, __booru_looks_hair_male__, __booru_looks_hair_color__, __booru_looks_eye_color__,"]` | 1 | Pending | 0 |
+| 601 | 17 | character | `["#character_f", "#character_m"]` | 2 | Pending | 0 |
+| 602 | 17 | character_f | `["1girl, solo, #booru_looks_hair_length, #booru_looks_hair_style, #booru_looks_hair_color, {#booru_looks_hair_accessories\|}, #booru_looks_eye_color"]` | 1 | Pending | 0 |
+| 603 | 17 | character_m | `["1boy, man, (muscular_male:0.6), (masculine:0.8), male_focus, solo, #booru_looks_hair_male, #booru_looks_hair_color, #booru_looks_eye_color,"]` | 1 | Pending | 0 |
 | 620 | 17 | color | `["blackbluebrowndark_blue..."]` | 1 | Pending | 0 |
 | 631 | 17 | elemental_types | `["fire", "water", "earth", "wind", "ice", "lightning", "nature", "light", "shadow", "lava", "storm", "crystal", "metal", "void", "cosmic", "arcane"]` | 16 | Pending | 0 |
 | 635 | 17 | expressions | `["{3.0::serious\|3.0::determined\|2.5::smirk\|...}"]` | 1 | Pending | 0 |
@@ -204,7 +204,7 @@ Observations:
 
 - Most categories contain a single line with internal Dynamic Prompts syntax (alternation/weights) → 1-element JSONB array. Resolver expands the syntax at gen time.
 - `elemental_types.txt` is the simple-list outlier — 16 distinct values.
-- Nested references (`__character_f__`, `__booru_looks_hair_color__`) are preserved literally and resolved at generation time within set 17's scope.
+- Source-file `__character_f__` style refs are normalized to `#character_f` at import. The stored values shown above already reflect this. Resolution at generation time stays within set 17's scope.
 - `color.txt` is malformed at source (no delimiters); audit won't reject this since it's not a policy violation, but it will produce a bad single value.
 
 ### `UserWildcardSet` — Alice's new pointer at fullFeatureFantasy
@@ -290,19 +290,19 @@ WHERE uws."userId" = 1001
 Returns 2 rows for `#character`:
 
 - `categoryId: 700`, `setId: 30`, `setKind: User` — Alice's personal snippet (1 value: "blonde hair, green tunic...")
-- `categoryId: 601`, `setId: 17`, `setKind: System` — fullFeatureFantasy's character category (2 values: `__character_f__`, `__character_m__`). Note `__character_f__` will fail nested resolution at gen time because category 602 is Dirty — only `__character_m__` will produce content.
+- `categoryId: 601`, `setId: 17`, `setKind: System` — fullFeatureFantasy's character category (2 values: `#character_f`, `#character_m`). Note `#character_f` will fail nested resolution at gen time because category 602 is Dirty — only `#character_m` will produce content.
 
 ### Merged pools per category (after applying defaults = full pool)
 
 | Reference | From My Snippets (set 30) | From fullFeatureFantasy v3.0 (set 17) | Total clean values |
 |----|----|----|----|
-| `#character` | 1 (Alice's Zelda) | 2 (`__character_f__`*, `__character_m__`) | 3 |
+| `#character` | 1 (Alice's Zelda) | 2 (`#character_f`*, `#character_m`) | 3 |
 | `#weapons_melee` | 0 | 1 (weighted alternation) | 1 |
 | `#expressions` | 0 | 1 | 1 |
 | `#weather_time` | 0 | 1 | 1 |
 | `#elemental_types` | 0 | 16 | 16 |
 
-\* `__character_f__` resolves to nothing at gen time (category 602 is Dirty) but the value is still in the pool — the dirtiness only matters when the nested ref tries to expand. Implementation may want to surface this proactively in audit.
+\* `#character_f` resolves to nothing at gen time (category 602 is Dirty) but the value is still in the pool — the dirtiness only matters when the nested ref tries to expand. Implementation may want to surface this proactively in audit.
 
 Cartesian: `3 × 1 × 1 × 1 × 16 = 48 combinations` → over the 10-cap → seeded random sampling down to 10.
 
@@ -415,7 +415,7 @@ Zero re-extraction, zero re-audit. Content sharing pays off.
 
 ### Dirty category excluded automatically
 
-Category 602 (`character_f`) is `Dirty`. The resolver's `auditStatus = 'Clean'` filter excludes it transparently. When `__character_f__` is encountered during nested resolution at gen time, it fails to find a clean source and emits the literal text (or skips, depending on resolver policy). Alice's prompts skew toward `__character_m__`.
+Category 602 (`character_f`) is `Dirty`. The resolver's `auditStatus = 'Clean'` filter excludes it transparently. When `#character_f` is encountered during nested resolution at gen time, it fails to find a clean source and emits the literal text (or skips, depending on resolver policy). Alice's prompts skew toward `#character_m`.
 
 ### Set invalidation
 

@@ -54,15 +54,6 @@ export const browsingLevelDescriptions = {
 export const publicBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG];
 export const publicBrowsingLevelsFlag = flagifyBrowsingLevel(publicBrowsingLevelsArray);
 
-// browsing levels surfaced in per-host sitemaps. Excludes PG/PG-13 on non-green
-// so a model only appears in one canonical sitemap (avoids duplicate-content
-// signals between civitai.com and civitai.red).
-export const sitemapNsfwBrowsingLevelsFlag = flagifyBrowsingLevel([
-  NsfwLevel.R,
-  NsfwLevel.X,
-  NsfwLevel.XXX,
-]);
-
 export const sfwBrowsingLevelsArray: BrowsingLevel[] = [NsfwLevel.PG, NsfwLevel.PG13];
 export const sfwBrowsingLevelsFlag = flagifyBrowsingLevel(sfwBrowsingLevelsArray);
 

@@ -161,6 +161,7 @@ export function PostDetailContent({ postId }: Props) {
   return (
     <Gated
       contentNsfwLevel={forcedBrowsingLevel || post.nsfwLevel}
+      nsfw={post.nsfw}
       bypassRating={isOwnerOrMod}
       meta={{
         title: (post?.title ?? `Image post by ${post?.user.username ?? 'civitai'}`) + ' | Civitai',

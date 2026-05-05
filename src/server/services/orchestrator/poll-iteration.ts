@@ -72,21 +72,70 @@ export async function pollIterationWorkflow({
 
   const steps = workflow.steps ?? [];
   const firstStep = steps[0] as any;
-  const outputImages: string[] =
-    firstStep?.output?.images?.map((img: any) => img.url).filter(Boolean) ??
-    firstStep?.output?.blobs?.map((blob: any) => blob.url).filter(Boolean) ??
-    [];
+  const rawImages: any[] = firstStep?.output?.images ?? firstStep?.output?.blobs ?? [];
+  const outputImages: string[] = rawImages.map((img) => img?.url).filter(Boolean) as string[];
 
-  if (workflow.status === 'succeeded' && outputImages.length > 0) {
+  // Mirror the queue item's `errored` logic: any terminal status (succeeded /
+  // failed / expired / canceled) where the worker finished without producing a
+  // usable blob is a hard failure, not a "still working". Without these
+  // checks the editor sits on the spinner forever.
+  const TERMINAL_STATUSES = ['succeeded', 'failed', 'expired', 'canceled'] as const;
+  const stepStatus = firstStep?.status as string | undefined;
+  const workflowStatus = workflow.status as string | undefined;
+  const stepReachedTerminal = !!stepStatus && TERMINAL_STATUSES.includes(stepStatus as any);
+  const workflowReachedTerminal =
+    !!workflowStatus && TERMINAL_STATUSES.includes(workflowStatus as any);
+
+  // On the SFW domain, mature outputs come back with `available: false` and a
+  // `siteRestricted` blocked reason — the URL is suppressed. Hand off to a
+  // mature-content domain so the user can use the workflow they already paid
+  // for.
+  if (
+    (workflowStatus === 'succeeded' || stepStatus === 'succeeded') &&
+    outputImages.length === 0 &&
+    rawImages.some((img) => img?.blockedReason === 'siteRestricted')
+  ) {
+    return {
+      status: 'siteRestricted' as const,
+      workflowId: workflow.id as string,
+      imageUrl: null,
+      images: [],
+    };
+  }
+
+  // Look for a non-siteRestricted blocked reason on the output. We surface a
+  // tailored failure message so the user knows whether the Buzz was refunded
+  // or is simply held pending an unlock action they can take in the queue.
+  const blockedReason = rawImages.find((img) => img?.blockedReason)?.blockedReason as
+    | string
+    | undefined;
+
+  if (workflowStatus === 'succeeded' && outputImages.length > 0) {
     const imgWidth = width ?? 512;
     const imgHeight = height ?? 512;
 
-    // Download and upload all images in parallel
+    // Pair each raw orchestrator image with its nsfwLevel so the client can
+    // blur mature outputs immediately, before our async ingestion has had a
+    // chance to recompute it on the Image record.
+    const rawByUrl = new Map(rawImages.filter((img) => img?.url).map((img) => [img.url, img]));
+
     const results = await Promise.all(
-      outputImages.map((url) => downloadAndUploadImage(url, userId, imgWidth, imgHeight, prompt))
+      outputImages.map(async (url) => {
+        const uploaded = await downloadAndUploadImage(url, userId, imgWidth, imgHeight, prompt);
+        if (!uploaded) return null;
+        return {
+          ...uploaded,
+          nsfwLevel:
+            (rawByUrl.get(url)?.nsfwLevel as number | undefined) ?? undefined,
+        };
+      })
     );
 
-    const uploaded = results.filter(Boolean) as { s3Key: string; imageId: number }[];
+    const uploaded = results.filter(Boolean) as {
+      s3Key: string;
+      imageId: number;
+      nsfwLevel?: number;
+    }[];
     if (uploaded.length === 0) {
       return { status: 'failed' as const, imageUrl: null, images: [] };
     }
@@ -95,14 +144,62 @@ export async function pollIterationWorkflow({
       status: 'succeeded' as const,
       imageUrl: uploaded[0].s3Key,
       imageId: uploaded[0].imageId,
-      images: uploaded.map((u) => ({ url: u.s3Key, id: u.imageId })),
+      images: uploaded.map((u) => ({ url: u.s3Key, id: u.imageId, nsfwLevel: u.nsfwLevel })),
     };
   }
 
-  if (workflow.status === 'failed' || workflow.status === 'canceled') {
-    return { status: 'failed' as const, imageUrl: null, images: [] };
+  // Hard failure: workflow itself terminated without success.
+  if (
+    workflowStatus === 'failed' ||
+    workflowStatus === 'canceled' ||
+    workflowStatus === 'expired'
+  ) {
+    return {
+      status: 'failed' as const,
+      imageUrl: null,
+      images: [],
+      errorMessage: blockedReasonToMessage(blockedReason),
+    };
+  }
+
+  // Soft failure: the step reached a terminal state but no blob ever became
+  // available. The queue item shows the same "errored" / blocked card in this
+  // situation; without this branch the iterative editor would hang on the
+  // spinner. Surface a tailored message based on any blockedReason present.
+  if ((stepReachedTerminal || workflowReachedTerminal) && outputImages.length === 0) {
+    return {
+      status: 'failed' as const,
+      imageUrl: null,
+      images: [],
+      errorMessage: blockedReasonToMessage(blockedReason),
+    };
   }
 
   // Still processing
   return { status: 'processing' as const, imageUrl: null, images: [] };
+}
+
+/**
+ * Map an output's blockedReason to something useful for the iterative editor.
+ * Mirrors the queue's blocked-reason cards but as plain text — the editor
+ * doesn't yet have a full unlock-in-place UI, so we point users at the queue
+ * for the actions that need to happen there.
+ */
+function blockedReasonToMessage(blockedReason: string | undefined): string | undefined {
+  if (!blockedReason) return undefined;
+  switch (blockedReason) {
+    case 'canUpgrade':
+      return 'Mature content was generated. Open the Generator queue to unlock it with yellow Buzz — your Buzz is held, not lost.';
+    case 'membershipRequired':
+      return 'This image requires a membership upgrade to view. Upgrade your membership to unlock it.';
+    case 'enableNsfw':
+      return 'This image was rated mature. Enable mature content in your settings to view it.';
+    case 'NsfwLevel':
+    case 'NSFWLevel':
+      return 'One or more resources used here cannot generate mature content. Try a different model or a tamer prompt.';
+    case 'NSFWLevelSourceImageRestricted':
+      return 'Source image lacks valid metadata, so generation is restricted to PG / PG-13. Use a clean source image to lift the restriction.';
+    default:
+      return `Generation failed: ${blockedReason}.`;
+  }
 }

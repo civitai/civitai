@@ -69,7 +69,12 @@ export default function SetBrowsingLevelModal({
     dialog.onClose();
   };
 
-  const reasons = isModerator ? browsingLevelReasons[selectedNsfwLevel] : [];
+  // selectedNsfwLevel can be a combined bitmask (e.g. project.nsfwLevel = bit_or of chapters);
+  // browsingLevelReasons is keyed by single bits, so the lookup may be undefined.
+  const reasons =
+    (isModerator
+      ? (browsingLevelReasons as Record<number, string[] | undefined>)[selectedNsfwLevel]
+      : undefined) ?? [];
 
   return (
     <Modal title={isModerator ? 'Image ratings' : 'Vote for image rating'} {...dialog}>
