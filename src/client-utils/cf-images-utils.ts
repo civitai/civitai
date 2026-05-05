@@ -33,6 +33,35 @@ const typeExtensions: Record<MediaType, string> = {
   audio: '.mp3',
 };
 
+// Discrete width ladder mirroring civitai-image-cacher's `ImageCacherOptions.CommonSizes`
+// (see appsettings.json in civitai-image-cacher). The cacher already snaps requested
+// widths up to the next ladder value server-side, but only AFTER admitting the unique
+// URL into its cache — costing one B2 Class C HEAD per unique width. By snapping
+// client-side to the same ladder we collapse cache cardinality before emission.
+//
+// Must stay in sync with the deployed cacher's CommonSizes. If the values diverge,
+// the snap simply becomes less effective (no correctness impact) — the cacher's
+// server-side snap remains the source of truth.
+export const COMMON_IMAGE_WIDTHS = [96, 320, 450, 512, 800, 1200, 1600, 2200] as const;
+
+/**
+ * Snap a requested width up to the next value in `COMMON_IMAGE_WIDTHS`.
+ *
+ * Behavior matches `ServeImageMiddleware.cs` in civitai-image-cacher:
+ *  - If the width is already in the ladder, leave it alone.
+ *  - Otherwise, return the first ladder value strictly greater than `width`.
+ *  - If no ladder value is greater (i.e. the request exceeds the ladder top),
+ *    return the original width unchanged so callers that explicitly oversized
+ *    aren't capped here. The existing 1800 cap in `getEdgeUrl` still applies.
+ */
+export function snapWidthToCommonSize(width: number): number {
+  for (const size of COMMON_IMAGE_WIDTHS) {
+    if (size === width) return width;
+    if (size > width) return size;
+  }
+  return width;
+}
+
 export function getEdgeUrl(
   src: string,
   {
@@ -62,6 +91,10 @@ export function getEdgeUrl(
     height = undefined;
   }
   // if(width && height) // TODO
+  // Snap width to the cacher's CommonSizes ladder *before* the 1800 cap so the cap
+  // remains the final word for over-ladder values. Height is not snapped — the
+  // cacher only snaps width.
+  if (width) width = snapWidthToCommonSize(width);
   if (width && width > 1800) width = 1800;
   if (height && height > 1000) height = 1000;
 
