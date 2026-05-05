@@ -5,6 +5,7 @@ import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { withSpan } from '~/server/utils/otel-helpers';
 import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
 const HIDDEN_CACHE_EXPIRY_BASE = 60 * 60 * 4; // 4 hours
@@ -263,6 +264,30 @@ const getAllHiddenForUsersCached = async ({
 }: {
   userId?: number;
 }) => {
+  // Batch the 8 cache reads through the documented `packed.mGet` API instead
+  // of 8 individual `redis.packed.get()` calls in `Promise.all`, and wrap in
+  // a span so spanmetrics can attribute the actual fan-out latency vs.
+  // post-processing / cache-miss DB fallbacks.
+  //
+  // Why mGet (not pipeline / cluster MULTI):
+  //   This is a Redis CLUSTER. The 7 user-preference keys do NOT share a hash
+  //   tag, and the 8th (SYSTEM.MODERATED_TAGS) is on a different shard, so a
+  //   real Redis MGET or cluster MULTI(routing) across them would CROSSSLOT
+  //   or require cross-shard coordination. `redis.packed.mGet` is the
+  //   cluster-safe wrapper (see redis/client.ts): it issues per-key GETs
+  //   internally and benefits from node-redis' per-shard cork/uncork TCP
+  //   pipelining. Functionally equivalent to the prior Promise.all, but
+  //   centralises future per-shard slot-grouping optimizations on one path.
+  const cacheKeys: RedisKeyTemplateCache[] = [
+    REDIS_KEYS.SYSTEM.MODERATED_TAGS,
+    HiddenTags.getKey({ userId }),
+    HiddenImages.getKey({ userId }),
+    HiddenModels.getKey({ userId }),
+    HiddenUsers.getKey({ userId }),
+    ImplicitHiddenImages.getKey({ userId }),
+    BlockedUsers.getKey({ userId }),
+    BlockedByUsers.getKey({ userId }),
+  ];
   const [
     cachedSystemHiddenTags,
     cachedHiddenTags,
@@ -272,16 +297,11 @@ const getAllHiddenForUsersCached = async ({
     cachedImplicitHiddenImages,
     cachedBlockedUsers,
     cachedBlockedByUsers,
-  ] = await Promise.all([
-    redis.packed.get(REDIS_KEYS.SYSTEM.MODERATED_TAGS),
-    redis.packed.get(HiddenTags.getKey({ userId })),
-    redis.packed.get(HiddenImages.getKey({ userId })),
-    redis.packed.get(HiddenModels.getKey({ userId })),
-    redis.packed.get(HiddenUsers.getKey({ userId })),
-    redis.packed.get(ImplicitHiddenImages.getKey({ userId })),
-    redis.packed.get(BlockedUsers.getKey({ userId })),
-    redis.packed.get(BlockedByUsers.getKey({ userId })),
-  ]);
+  ] = await withSpan(
+    'user-preferences:getAllHidden:redisFetch',
+    { keyCount: cacheKeys.length },
+    () => redis.packed.mGet(cacheKeys)
+  );
 
   const getModerationTags = async () =>
     (cachedSystemHiddenTags as AsyncReturnType<typeof getModeratedTags>) ??
@@ -323,16 +343,21 @@ const getAllHiddenForUsersCached = async ({
     (cachedBlockedByUsers as AsyncReturnType<typeof BlockedByUsers.get>) ??
     (await BlockedByUsers.get({ userId }));
 
+  // Resolve the 7 base preferences — each is a no-op if cached, otherwise
+  // hits the DB. Wrapped so we can attribute the cache-miss DB fallback
+  // latency separately from the redis fan-out above.
   const [moderatedTags, hiddenTags, images, models, users, blockedUsers, blockedByUsers] =
-    await Promise.all([
-      getModerationTags(),
-      getHiddenTags({ userId }),
-      getHiddenImages({ userId }),
-      getHiddenModels({ userId }),
-      getHiddenUsers({ userId }),
-      getBlockedUsers({ userId }),
-      getBlockedByUsers({ userId }),
-    ]);
+    await withSpan('user-preferences:getAllHidden:resolve', () =>
+      Promise.all([
+        getModerationTags(),
+        getHiddenTags({ userId }),
+        getHiddenImages({ userId }),
+        getHiddenModels({ userId }),
+        getHiddenUsers({ userId }),
+        getBlockedUsers({ userId }),
+        getBlockedByUsers({ userId }),
+      ])
+    );
 
   const [implicitImages] = await Promise.all([
     getHiddenImplicitImages({
