@@ -64,6 +64,48 @@ export async function planChapterPanels(input: {
     throw new Error('LLM returned invalid panel breakdown');
   }
 
+  // The LLM occasionally invents @CharName tokens for characters not in the
+  // provided list. Strip the @ from any mention that isn't a real character so
+  // the user-visible plan and downstream generation don't reference ghosts.
+  //
+  // Mirror `resolveReferenceMentions`'s name-matching: reference names can
+  // contain spaces and punctuation (e.g. "Mary Jane", "Dr. Smith"), and the
+  // boundary at the end of a mention is a punctuation/whitespace lookahead.
+  // The previous regex `@([\w\p{L}'-]+)` only matched a contiguous token, so
+  // `@Mary Jane` was mis-flagged as a ghost and lost its `@`.
+  const sortedAllowed = [...input.characterNames].sort((a, b) => b.length - a.length);
+  const stripGhostMentions = (text: string) => {
+    // Pass 1: collect the start index of every `@` that begins a real
+    // reference mention. Walk allowed names longest-first so
+    // "Mary Jane Watson" beats "Mary"; the resolver matches the same way.
+    const keepAtPositions = new Set<number>();
+    for (const name of sortedAllowed) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`@${escaped}(?=$|[\\s.,!?;:\\)\\]])`, 'gi');
+      let match: RegExpExecArray | null;
+      while ((match = pattern.exec(text)) !== null) {
+        keepAtPositions.add(match.index);
+      }
+    }
+    // Pass 2: rebuild the string, dropping `@` chars that don't start a real
+    // mention but DO appear to start a token. Email-like `me@example.com`
+    // is left alone — the `@` there is preceded by a non-space char.
+    let result = '';
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      const isGhostAt =
+        ch === '@' &&
+        !keepAtPositions.has(i) &&
+        (i === 0 || /\s/.test(text[i - 1])) &&
+        i + 1 < text.length &&
+        !/\s/.test(text[i + 1]);
+      if (isGhostAt) continue;
+      result += ch;
+    }
+    return result;
+  };
+  parsed.panels = parsed.panels.map((p) => ({ ...p, prompt: stripGhostMentions(p.prompt) }));
+
   return parsed;
 }
 

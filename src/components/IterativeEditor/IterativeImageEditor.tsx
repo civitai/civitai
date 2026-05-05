@@ -18,6 +18,7 @@ import {
   IconMessages,
   IconPencil,
   IconPhotoPlus,
+  IconPlayerStop,
   IconRefresh,
   IconRestore,
   IconSend,
@@ -32,6 +33,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import type { DrawingElement } from '~/components/Generation/Input/DrawingEditor/drawing.types';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -75,6 +78,31 @@ const ImageSelectModal = dynamic(
   { ssr: false }
 );
 
+/** Show the "taking longer than usual" alert after this long. Matches the
+ *  Generator queue's threshold (5 minutes). */
+const DELAYED_WARNING_MS = 5 * 60 * 1000;
+/** Hard timeout — match the orchestrator's ~21 min step expiry plus a buffer. */
+const HARD_TIMEOUT_MS = 25 * 60 * 1000;
+
+/** Pick the model aspect-ratio whose w:h is closest to the source image's. */
+function pickClosestAspectRatio(
+  source: SourceImage | null | undefined,
+  sizes: { label: string; width: number; height: number }[] | undefined
+): string | null {
+  if (!source || !sizes?.length) return null;
+  const sourceRatio = source.width / source.height;
+  let closest = sizes[0];
+  let minDiff = Math.abs(sizes[0].width / sizes[0].height - sourceRatio);
+  for (const s of sizes.slice(1)) {
+    const diff = Math.abs(s.width / s.height - sourceRatio);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = s;
+    }
+  }
+  return closest.label;
+}
+
 export interface IterativeImageEditorProps {
   initialSource?: SourceImage | null;
   config: IterativeEditorConfig;
@@ -110,6 +138,30 @@ export interface IterativeImageEditorProps {
   onSettingsChange?: (params: CostEstimateParams) => void;
   /** Called when user clicks retry after cost estimation failure. */
   onRetryCost?: () => void;
+
+  /**
+   * Builds a handoff URL to the same iterative editor on a domain that allows
+   * mature content (typically civitai.red). When provided, siteRestricted
+   * iterations show an "Unlock on civitai.red" button. Return null to hide it.
+   */
+  buildSiteRestrictedUnlockUrl?: (info: {
+    workflowId: string;
+    width: number;
+    height: number;
+    prompt: string;
+  }) => string | null;
+
+  /**
+   * Resume polling an in-flight workflow on mount — used after a domain
+   * handoff. The editor inserts a "generating" iteration and starts polling
+   * immediately, picking up the result without a fresh Buzz charge.
+   */
+  initialPendingWorkflow?: {
+    workflowId: string;
+    width: number;
+    height: number;
+    prompt?: string;
+  } | null;
 
   mode?: 'page' | 'modal';
 }
@@ -182,6 +234,8 @@ export function IterativeImageEditor({
   enhanceInPlace,
   onSettingsChange,
   onRetryCost,
+  buildSiteRestrictedUnlockUrl,
+  initialPendingWorkflow,
   mode = 'page',
 }: IterativeImageEditorProps) {
   // ── Queue status ──
@@ -202,11 +256,37 @@ export function IterativeImageEditor({
   // Keep stable reference to initialSource for "Reset to original"
   const stableInitialSource = useRef(initialSource ?? null);
 
+  // ── NSFW blur ──
+  // Hard-block mature outputs on green only. On blue/red the user is allowed
+  // to view their own generated mature content — they paid for it, the domain
+  // permits it, and the previous user-blur-preference gate forbade reuse even
+  // for users who explicitly opted in. The block-on-green path still routes
+  // through the red-domain handoff (same flow as `siteRestricted`).
+  const { isGreen } = useFeatureFlags();
+  const isImageBlurred = useCallback(
+    (img: SourceImage | null | undefined) => {
+      if (!img?.nsfwLevel) return false;
+      return isGreen && !hasSafeBrowsingLevel(img.nsfwLevel);
+    },
+    [isGreen]
+  );
+  // Stable ref so handlePollResult (a useCallback that doesn't depend on the
+  // blurLevels closure) can read the latest predicate without rebuilding.
+  const isImageBlurredRef = useRef(isImageBlurred);
+  isImageBlurredRef.current = isImageBlurred;
+
   // ── Controls state ──
   const [prompt, setPrompt] = useState('');
   // Legacy enhance toggle — only shown when enhanceInPlace is not provided (non-comic usage)
   const [enhancePromptToggle, setEnhancePromptToggle] = useState(true);
-  const [aspectRatio, setAspectRatio] = useState(config.defaultAspectRatio);
+  // Default the aspect ratio to whatever best matches the source image being
+  // edited — falling back to the config default when there's no source. Picking
+  // 3:4 regardless of input would silently squash/expand the image on first
+  // generation, which catches users out.
+  const [aspectRatio, setAspectRatio] = useState(() =>
+    pickClosestAspectRatio(initialSource, config.modelSizes[config.defaultModel]) ??
+    config.defaultAspectRatio
+  );
   const [generationModel, setGenerationModel] = useState<string | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
   const [quantity, setQuantity] = useState(1);
@@ -336,12 +416,14 @@ export function IterativeImageEditor({
         const w = activeDimsRef.current.width;
         const h = activeDimsRef.current.height;
 
-        // Build all result images
+        // Build all result images, carrying the orchestrator-reported nsfwLevel
+        // so the UI can blur mature outputs before ingestion catches up.
         const allImages: SourceImage[] = (result.images ?? []).map((img) => ({
           url: img.url,
           previewUrl: getEdgeUrl(img.url, { width: 400 }) ?? img.url,
           width: w,
           height: h,
+          nsfwLevel: img.nsfwLevel,
         }));
 
         // Fallback: if images array is empty, use the single imageUrl
@@ -367,9 +449,16 @@ export function IterativeImageEditor({
               : it
           )
         );
-        setCurrentSource(firstImage);
-        setAnnotationElements([]);
-        setOriginalSourceUrl(null);
+        // Don't auto-promote a blurred image to "current source": the user
+        // can't generate from an image they haven't unlocked, so we'd just be
+        // teeing up an instant rejection on their next send. Once they unlock
+        // it, `handleUnlockImage` promotes it to source.
+        const blurred = isImageBlurredRef.current(firstImage);
+        if (!blurred) {
+          setCurrentSource(firstImage);
+          setAnnotationElements([]);
+          setOriginalSourceUrl(null);
+        }
         setIsGenerating(false);
         isGeneratingRef.current = false;
       } else if (result.status === 'failed') {
@@ -380,7 +469,27 @@ export function IterativeImageEditor({
               ? {
                   ...it,
                   status: 'error' as const,
-                  errorMessage: 'Generation failed. Buzz has been refunded.',
+                  errorMessage:
+                    result.errorMessage ?? 'Generation failed. Buzz has been refunded.',
+                }
+              : it
+          )
+        );
+        setIsGenerating(false);
+        isGeneratingRef.current = false;
+      } else if (result.status === 'siteRestricted') {
+        // The workflow succeeded but the output is mature — we can't show it
+        // here. Stop polling and surface a handoff card so the user can unlock
+        // it on a mature-content domain. The Buzz already paid for the
+        // workflow; the user just needs to view it elsewhere.
+        clearActiveWorkflow();
+        setIterations((prev) =>
+          prev.map((it) =>
+            it.id === iterationId
+              ? {
+                  ...it,
+                  status: 'siteRestricted' as const,
+                  workflowId: result.workflowId ?? it.workflowId,
                 }
               : it
           )
@@ -392,10 +501,18 @@ export function IterativeImageEditor({
     [clearActiveWorkflow]
   );
 
+  // In-flight guard. The 20s fallback interval and the signal-driven poll
+  // can otherwise race after a workflow finishes — and `pollIterationWorkflow`
+  // is non-idempotent on success (re-downloads the output and creates new
+  // Image rows on every call), so two concurrent polls would duplicate
+  // uploads + Image records for one workflow.
+  const isPollingRef = useRef(false);
   const doPollOnce = useCallback(async () => {
     const workflowId = activeWorkflowIdRef.current;
     const iterationId = activeIterationIdRef.current;
     if (!workflowId || !iterationId) return;
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
 
     try {
       const result = await onPollStatus({
@@ -407,6 +524,8 @@ export function IterativeImageEditor({
       handlePollResult(result, iterationId);
     } catch {
       // Ignore poll errors — signal will retry
+    } finally {
+      isPollingRef.current = false;
     }
   }, [onPollStatus, handlePollResult]);
 
@@ -420,7 +539,55 @@ export function IterativeImageEditor({
     []
   );
 
-  // Signal-based updates: when orchestrator signals completion, poll to download image
+  // Resume an in-flight workflow from a domain handoff (e.g. user was bounced
+  // from civitai.green to civitai.red after a siteRestricted result). Insert a
+  // placeholder iteration and poll the existing workflow ID instead of firing
+  // a fresh `onGenerate` — the user already paid for it.
+  const resumedWorkflowRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!initialPendingWorkflow) return;
+    if (resumedWorkflowRef.current === initialPendingWorkflow.workflowId) return;
+    resumedWorkflowRef.current = initialPendingWorkflow.workflowId;
+
+    const iterationId = `resume-${initialPendingWorkflow.workflowId}`;
+    setIterations((prev) =>
+      prev.some((it) => it.id === iterationId)
+        ? prev
+        : [
+            ...prev,
+            {
+              id: iterationId,
+              prompt: initialPendingWorkflow.prompt ?? '',
+              annotated: false,
+              sourceImage: currentSource,
+              resultImage: null,
+              resultImages: [],
+              cost: 0,
+              timestamp: new Date(),
+              status: 'generating',
+              workflowId: initialPendingWorkflow.workflowId,
+              width: initialPendingWorkflow.width,
+              height: initialPendingWorkflow.height,
+            },
+          ]
+    );
+    setIsGenerating(true);
+    isGeneratingRef.current = true;
+    startWorkflow(
+      initialPendingWorkflow.workflowId,
+      iterationId,
+      initialPendingWorkflow.width,
+      initialPendingWorkflow.height,
+      initialPendingWorkflow.prompt ?? ''
+    );
+    void doPollOnce();
+    // currentSource intentionally excluded — capturing the value at handoff time is fine
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialPendingWorkflow, doPollOnce, startWorkflow]);
+
+  // Signal-based updates: when orchestrator signals completion, poll to download image.
+  // Trigger on every terminal status — expired/canceled also need a poll so the server
+  // can convert them into a failed PollResult instead of leaving the editor spinning.
   useSignalConnection(
     SignalMessages.TextToImageUpdate,
     useCallback(
@@ -428,12 +595,96 @@ export function IterativeImageEditor({
         if (data.$type !== 'step') return;
         if (!activeWorkflowIdRef.current || data.workflowId !== activeWorkflowIdRef.current)
           return;
-        if (data.status === 'succeeded' || data.status === 'failed') {
+        if (
+          data.status === 'succeeded' ||
+          data.status === 'failed' ||
+          data.status === 'expired' ||
+          data.status === 'canceled'
+        ) {
           void doPollOnce();
         }
       },
       [doPollOnce]
     )
+  );
+
+  // Fallback interval polling. Signals can be missed (websocket drop, server
+  // didn't fire it) — without this the editor would hang on the spinner even
+  // after the workflow completes. Mirrors the panel-card polling cadence.
+  useEffect(() => {
+    if (!isGenerating) return;
+    const interval = setInterval(() => void doPollOnce(), 20_000);
+    return () => clearInterval(interval);
+  }, [isGenerating, doPollOnce]);
+
+  // Hard timeout: stop the editor from spinning forever even if both signals
+  // and polling fail to detect a terminal state. Generation-step timeout on
+  // the orchestrator side is ~21min, so 25min is a comfortable upper bound.
+  useEffect(() => {
+    if (!isGenerating) return;
+    const timeout = setTimeout(() => {
+      const iterationId = activeIterationIdRef.current;
+      clearActiveWorkflow();
+      if (iterationId) {
+        setIterations((prev) =>
+          prev.map((it) =>
+            it.id === iterationId
+              ? {
+                  ...it,
+                  status: 'error' as const,
+                  errorMessage:
+                    it.errorMessage ??
+                    'Generation timed out. If the image actually completed, find it in the Generator queue.',
+                }
+              : it
+          )
+        );
+      }
+      setIsGenerating(false);
+      isGeneratingRef.current = false;
+    }, HARD_TIMEOUT_MS);
+    return () => clearTimeout(timeout);
+  }, [isGenerating, clearActiveWorkflow]);
+
+  // After ~5 minutes of waiting, show a "this is taking longer than usual"
+  // alert with a Stop-waiting button — same pattern the Generator queue uses.
+  // Resets every time generation flips on, so a fresh send hides the alert.
+  const [showDelayedWarning, setShowDelayedWarning] = useState(false);
+  useEffect(() => {
+    if (!isGenerating) {
+      setShowDelayedWarning(false);
+      return;
+    }
+    const timeout = setTimeout(() => setShowDelayedWarning(true), DELAYED_WARNING_MS);
+    return () => clearTimeout(timeout);
+  }, [isGenerating]);
+
+  // Manual abort — bail out of a stuck "generating" iteration. Doesn't try to
+  // cancel the orchestrator workflow (the user can grab the result from the
+  // Generator queue if it does eventually complete); just unsticks the UI.
+  const handleAbort = useCallback(
+    (iterationId: string) => {
+      // Only abort if the iteration is still the active one — older ones are
+      // already terminal.
+      if (activeIterationIdRef.current === iterationId) {
+        clearActiveWorkflow();
+        setIsGenerating(false);
+        isGeneratingRef.current = false;
+      }
+      setIterations((prev) =>
+        prev.map((it) =>
+          it.id === iterationId && it.status === 'generating'
+            ? {
+                ...it,
+                status: 'error' as const,
+                errorMessage:
+                  'Stopped waiting on this generation. If it completes later, find it in the Generator queue.',
+              }
+            : it
+        )
+      );
+    },
+    [clearActiveWorkflow]
   );
 
   // ── Generation cost (whatIf only — no fallback) ──
@@ -493,20 +744,25 @@ export function IterativeImageEditor({
 
       const result = await onGenerate(generateParams);
 
-      // Update iteration with actual cost and enhanced prompt from server
-      if ((result.cost != null && result.cost !== estimatedCost) || result.enhancedPrompt) {
-        setIterations((prev) =>
-          prev.map((it) =>
-            it.id === iterationId
-              ? {
-                  ...it,
-                  ...(result.cost != null ? { cost: result.cost } : {}),
-                  ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}),
-                }
-              : it
-          )
-        );
-      }
+      // Update iteration with the workflow ID, generated dimensions, and any
+      // server-side overrides for cost / enhanced prompt. The dims+workflowId
+      // are what siteRestricted handoff URLs need later.
+      setIterations((prev) =>
+        prev.map((it) =>
+          it.id === iterationId
+            ? {
+                ...it,
+                workflowId: result.workflowId,
+                width: result.width,
+                height: result.height,
+                ...(result.cost != null && result.cost !== estimatedCost
+                  ? { cost: result.cost }
+                  : {}),
+                ...(result.enhancedPrompt ? { enhancedPrompt: result.enhancedPrompt } : {}),
+              }
+            : it
+        )
+      );
 
       startWorkflow(result.workflowId, iterationId, result.width, result.height, currentPrompt);
     } catch (error) {
@@ -854,11 +1110,59 @@ export function IterativeImageEditor({
                 onRetry={
                   iteration.status === 'error' ? () => handleRetry(iteration) : undefined
                 }
+                onAbort={
+                  iteration.status === 'generating' ? () => handleAbort(iteration.id) : undefined
+                }
                 onZoomImage={setLightboxUrl}
+                isImageBlurred={isImageBlurred}
+                unlockOnRedUrl={
+                  // Build the handoff URL for any iteration that has a workflow
+                  // ID — covers both the explicit `siteRestricted` status and
+                  // results that came back blurred for the current user. On
+                  // red, the page resumes the same workflow and the user sees
+                  // / uses the image without blur restrictions.
+                  iteration.workflowId
+                    ? buildSiteRestrictedUnlockUrl?.({
+                        workflowId: iteration.workflowId,
+                        width: iteration.width ?? activeDimsRef.current.width,
+                        height: iteration.height ?? activeDimsRef.current.height,
+                        prompt: iteration.prompt,
+                      }) ?? null
+                    : null
+                }
               />
             ))
           )}
         </div>
+
+        {/* ── "Taking longer than usual" notice — appears after 5 min and
+              gives the user an explicit out so they aren't stuck waiting on a
+              stalled signal. ── */}
+        {isGenerating && showDelayedWarning && (
+          <Alert color="yellow" icon={<IconClock size={16} />} mx="sm" mb={0} p="xs">
+            <Text size="xs" lh={1.3}>
+              <Text span fw={600}>
+                This is taking longer than usual.
+              </Text>{' '}
+              Don&apos;t want to wait? Stop waiting now and try again — your in-flight job
+              will keep running, and if it eventually completes you can find it in the
+              Generator queue.
+            </Text>
+            <Button
+              size="compact-xs"
+              variant="light"
+              color="yellow"
+              leftSection={<IconPlayerStop size={12} />}
+              mt={6}
+              onClick={() => {
+                const id = activeIterationIdRef.current;
+                if (id) handleAbort(id);
+              }}
+            >
+              Stop waiting
+            </Button>
+          </Alert>
+        )}
 
         {/* ── Queue / generation status warnings ── */}
         {queueFull && (

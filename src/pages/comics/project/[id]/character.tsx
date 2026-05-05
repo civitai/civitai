@@ -105,7 +105,7 @@ function ReferenceUpload() {
   const [uploadProgress, setUploadProgress] = useState(0);
   const { uploadToCF: uploadImageToCF } = useCFImageUpload();
 
-  const { data: project, refetch: refetchProject } = trpc.comics.getProject.useQuery(
+  const { data: project, refetch: refetchProject } = trpc.comics.getProjectShell.useQuery(
     { id: projectId },
     { enabled: projectId > 0 }
   );
@@ -114,7 +114,7 @@ function ReferenceUpload() {
   const createReferenceMutation = trpc.comics.createReference.useMutation();
   const addImagesMutation = trpc.comics.addReferenceImages.useMutation({
     onSuccess: () => {
-      utils.comics.getProject.invalidate({ id: projectId });
+      utils.comics.getProjectShell.invalidate({ id: projectId });
       router.push(`/comics/project/${projectId}`);
     },
   });
@@ -209,8 +209,8 @@ function ReferenceUpload() {
 
   const addMoreImagesMutation = trpc.comics.addReferenceImages.useMutation({
     onMutate: async ({ referenceId, images: newImages }) => {
-      await utils.comics.getProject.cancel({ id: projectId });
-      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      await utils.comics.getProjectShell.cancel({ id: projectId });
+      utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
         if (!prev) return prev;
         return {
           ...prev,
@@ -243,8 +243,8 @@ function ReferenceUpload() {
   const [deletingImageId, setDeletingImageId] = useState<number | null>(null);
   const deleteRefImageMutation = trpc.comics.deleteReferenceImage.useMutation({
     onMutate: async ({ referenceId, imageId }) => {
-      await utils.comics.getProject.cancel({ id: projectId });
-      utils.comics.getProject.setData({ id: projectId }, (prev) => {
+      await utils.comics.getProjectShell.cancel({ id: projectId });
+      utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
         if (!prev) return prev;
         return {
           ...prev,
@@ -276,7 +276,7 @@ function ReferenceUpload() {
   const updateReferenceMutation = trpc.comics.updateReference.useMutation({
     onSuccess: () => {
       setIsEditingName(false);
-      utils.comics.getProject.invalidate({ id: projectId });
+      utils.comics.getProjectShell.invalidate({ id: projectId });
     },
   });
 
@@ -316,7 +316,7 @@ function ReferenceUpload() {
     const newOrder = reorderedImages.map((ri) => ri.image.id);
 
     // Optimistic update
-    utils.comics.getProject.setData({ id: projectId }, (prev) => {
+    utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
       if (!prev) return prev;
       return {
         ...prev,
