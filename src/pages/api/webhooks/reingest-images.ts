@@ -14,7 +14,9 @@ const schema = z.object({
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
 
-  const { imageIds, lowPriority } = schema.parse(req.body);
+  const result = schema.safeParse(req.body);
+  if (!result.success) return res.status(400).json({ error: result.error });
+  const { imageIds, lowPriority } = result.data;
 
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt
