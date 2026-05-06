@@ -1109,7 +1109,6 @@ export const getDailyCompensationRewardByUser = async ({
   const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
 
   const versionIds = modelVersions.map((v) => v.id);
-  const sourceClause = source === 'license' ? `source = 'license'` : `source != 'license'`;
   const generationData = await clickhouse.$query<Row>`
     SELECT
       date,
@@ -1119,7 +1118,7 @@ export const getDailyCompensationRewardByUser = async ({
     WHERE date BETWEEN ${minDate} AND ${maxDate}
       AND modelVersionId IN (${versionIds})
       AND amount > 0
-      AND ${sourceClause}
+      AND source ${source === 'license' ? '=' : '!='} 'license'
       -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
       AND ${
         accountType
