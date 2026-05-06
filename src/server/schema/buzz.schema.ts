@@ -183,11 +183,15 @@ export const clubTransactionSchema = z.object({
 
 export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
 
+export const compensationSources = ['compensation', 'license'] as const;
+export type CompensationSource = (typeof compensationSources)[number];
+
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
 export const getDailyBuzzCompensationInput = z.object({
   userId: z.number().optional(),
   date: z.coerce.date(),
   accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes)).optional(),
+  source: z.enum(compensationSources).default('compensation'),
 });
 
 export type ClaimWatchedAdRewardInput = z.infer<typeof claimWatchedAdRewardSchema>;

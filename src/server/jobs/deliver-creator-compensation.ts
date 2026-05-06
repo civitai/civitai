@@ -83,6 +83,7 @@ export async function runPayout(lastUpdate: Date) {
 	    SUM(FLOOR(amount))::int AS amount
     FROM orchestration.resourceCompensations
     WHERE date = ${date}
+      AND source != 'license'
     GROUP BY modelVersionId, accountType
     HAVING amount > 0;
   `;
