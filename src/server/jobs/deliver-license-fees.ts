@@ -3,10 +3,7 @@ import dayjs from 'dayjs';
 import { chunk, isEmpty } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
-import {
-  licenseFeeAmountPaidCounter,
-  licenseFeeCreatorsPaidCounter,
-} from '~/server/prom/client';
+import { licenseFeeAmountPaidCounter, licenseFeeCreatorsPaidCounter } from '~/server/prom/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
