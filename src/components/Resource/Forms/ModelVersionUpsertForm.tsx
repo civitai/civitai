@@ -221,8 +221,11 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const earlyAccessConfig = form.watch('earlyAccessConfig');
   const usageControl = form.watch('usageControl');
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
+  const hasExistingLicensingFee = (version?.licensingFee ?? 0) > 0;
   const showLicensingFeeBlock =
-    !!features.licensingFee || existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash;
+    !!features.licensingFee ||
+    hasExistingLicensingFee ||
+    existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash;
   const showLicensingFeeSettlementCurrency =
     existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
     !!currentUser?.isModerator;
