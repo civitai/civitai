@@ -5,6 +5,7 @@ import {
   Group,
   Paper,
   ScrollArea,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -79,13 +80,21 @@ export function DailyCreatorCompReward({
   const mobile = useIsMobile({ breakpoint: 'sm' });
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
+  const [source, setSource] = useState<'compensation' | 'license'>('compensation');
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
-    { date: selectedDate, accountType: buzzAccountType },
+    { date: selectedDate, accountType: buzzAccountType, source },
     { enabled: features.buzz }
   );
+
+  // Peek at license earnings so the segment only renders when the creator has any.
+  const { data: licenseProbe = [] } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+    { date: selectedDate, source: 'license' },
+    { enabled: features.buzz && source === 'compensation' }
+  );
+  const hasLicenseEarnings = licenseProbe.length > 0 || source === 'license';
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
@@ -206,18 +215,37 @@ export function DailyCreatorCompReward({
             {/* Header — always padded */}
             <Stack gap={0} p="md" pb={0}>
               <Group gap={8} justify="space-between">
-                <h3 className="text-xl font-bold">Generation Buzz Earned</h3>
-                <Select
-                  data={dateOptions}
-                  defaultValue={dateOptions[0].value}
-                  onChange={(value) => {
-                    setSelectedDate(
-                      dateOptions.find((x) => x.value === value)?.value ?? selectedDate
-                    );
-                    setSearch('');
-                    setFilteredVersionIds([]);
-                  }}
-                />
+                <h3 className="text-xl font-bold">
+                  {source === 'license' ? 'License Fees Earned' : 'Generation Buzz Earned'}
+                </h3>
+                <Group gap={8} wrap="nowrap">
+                  {hasLicenseEarnings && (
+                    <SegmentedControl
+                      value={source}
+                      onChange={(value) => {
+                        setSource(value as 'compensation' | 'license');
+                        setSearch('');
+                        setFilteredVersionIds([]);
+                      }}
+                      data={[
+                        { value: 'compensation', label: 'Compensation' },
+                        { value: 'license', label: 'License Fees' },
+                      ]}
+                      size="xs"
+                    />
+                  )}
+                  <Select
+                    data={dateOptions}
+                    defaultValue={dateOptions[0].value}
+                    onChange={(value) => {
+                      setSelectedDate(
+                        dateOptions.find((x) => x.value === value)?.value ?? selectedDate
+                      );
+                      setSearch('');
+                      setFilteredVersionIds([]);
+                    }}
+                  />
+                </Group>
               </Group>
               {!isLoading && resources.length > 0 && (
                 <Group justify="flex-start" gap={4}>
