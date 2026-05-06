@@ -129,6 +129,9 @@ const loadModelVersion = async ({
         trainingStatus: true,
         uploadType: true,
         usageControl: true,
+        licensingFee: true,
+        licensingFeeType: true,
+        licensingFeeSettlementCurrency: true,
         model: {
           select: {
             id: true,
