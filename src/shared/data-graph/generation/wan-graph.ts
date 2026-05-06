@@ -25,7 +25,10 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   seedNode,
+  negativePromptGraph,
   negativePromptNode,
+  promptGraph,
+  triggerWordsGraph,
   aspectRatioNode,
   sliderNode,
   enumNode,
@@ -267,6 +270,9 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
   )
   .node('duration', enumNode({ options: wanDurations, defaultValue: 5 }))
   .merge(createResourcesGraph())
+  // Prompt + triggerWords — wan2.1 has no negativePrompt
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
   // Effect: Sync I2V ecosystem based on resolution when in img2vid mode.
   // T2V switching is handled by the parent wanGraph effect.
   // Only sets ecosystem — model resets to correct default via discriminator switch.
@@ -295,7 +301,9 @@ const wan21Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
  * - Flag OFF: Single-step FAL generation. Exposes interpolatorModel and draft.
  */
 const wan22Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
-  .node('negativePrompt', negativePromptNode())
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
   .node('resolution', {
     input: z.enum(['480p', '720p']).optional(),
     output: z.enum(['480p', '720p']),
@@ -369,7 +377,9 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
     }),
     ['images']
   )
-  .node('negativePrompt', negativePromptNode())
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
   .node('resolution', {
     input: z.enum(['580p', '720p']).optional(),
     output: z.enum(['580p', '720p']),
@@ -398,7 +408,9 @@ const wan225bGraph = new DataGraph<WanVersionCtx, GenerationCtx>()
  * can update based on the selected resolution (480p/720p/1080p).
  */
 const wan25Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
-  .node('negativePrompt', negativePromptNode())
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
   .node('resolution', {
     input: z.enum(['480p', '720p', '1080p']).optional(),
     output: z.enum(['480p', '720p', '1080p']),
@@ -469,7 +481,10 @@ const wan27Graph = new DataGraph<WanVersionCtx, GenerationCtx>()
     }),
     ['workflow']
   )
-  // Negative prompt (supported on txt2vid, img2vid, ref2vid — not on edit-video)
+  // Prompt + triggerWords + negativePrompt (negativePrompt supported on txt2vid,
+  // img2vid, ref2vid — not on edit-video, hence the conditional `when`)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
   .node(
     'negativePrompt',
     (ctx) => ({

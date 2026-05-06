@@ -1,8 +1,12 @@
 # Prompt Snippets — Nested Wildcard Resolution (Walkthrough)
 
-**Status:** draft for review
+**Status:** **Post-v1 / future work.** Nested wildcard resolution is *deferred* from v1 — the v1 implementation expands only top-level `#category` references and leaves any `#name` (or `__name__`) tokens that appear *inside* a category's value text alone. This doc captures the design for the future iteration that lands nested resolution. See [prompt-snippets-v1.md](./prompt-snippets-v1.md) for what actually ships first.
+
+When nested resolution does land, the resolver will accept **both** `#name` (the normalized form used everywhere else in the system) and `__name__` (the source-file Dynamic Prompts form) inside category values, so authors of wildcard model files don't have to change their conventions.
+
 **Companion docs:**
 
+- [prompt-snippets-v1.md](./prompt-snippets-v1.md) (v1 scope — what actually ships)
 - [prompt-snippets.md](./prompt-snippets.md) (product/UX plan)
 - [prompt-snippets-schema.md](./prompt-snippets-schema.md) (schema spec)
 - [prompt-snippets-schema-examples.md](./prompt-snippets-schema-examples.md) (populated tables)
@@ -11,9 +15,9 @@ A walkthrough doc to make nested-wildcard resolution concrete. Uses a small inve
 
 ---
 
-## Syntax — one symbol everywhere
+## Syntax — both `#` and `__…__` accepted in nested values
 
-Our system uses **`#category`** as the only reference syntax, both in user-typed prompts and inside category values. Real wildcard model files (e.g., fullFeatureFantasy) use the older Dynamic Prompts convention `__name__` for nested references — we transform `__name__` → `#name` at import time. The stored JSONB values, the resolver, and the user-facing UI all see `#` only.
+In **user-typed prompts**, our system uses **`#category`** as the only top-level reference syntax. Inside category values (the post-v1 nested-resolution layer) the resolver accepts **both** `#name` and the source-file Dynamic Prompts form `__name__`, treating them identically. This way authors of wildcard model files don't need to rewrite their packs to fit our convention; we meet them where they are.
 
 What's preserved literally on import:
 
@@ -21,18 +25,15 @@ What's preserved literally on import:
 - Weighted alternation: `{3.0::a|2.5::b|...}`
 - Multi-pick: `{1-2$$a|b|c}`
 - SD attention syntax: `(weight:1.2)`
+- Nested references in *both* forms: `__some_name__` and `#some_name` are stored as-is
 
-What's transformed on import:
-
-- `__some_name__` → `#some_name` (every nested reference)
-
-The semantics are unchanged; only the reference syntax is normalized.
+The resolver normalizes the two forms into a single token type at expansion time.
 
 ---
 
 ## The example wildcard pack
 
-Imagine a System-kind WildcardSet called **"MyFantasyPack v1.0"** with 7 categories. Their `values` JSONB arrays after import (already normalized to `#`):
+Imagine a System-kind WildcardSet called **"MyFantasyPack v1.0"** with 7 categories. Their `values` arrays after import (already normalized to `#`):
 
 | Category name | values |
 |----|----|
@@ -208,56 +209,61 @@ The resolver returns this composed prompt for the workflow step. (The awkward "A
 
 **Workflow step 2** would do the same with `#villain` → `#sorcerer_type` and `#weapon`, producing a different prompt.
 
-### Step metadata records the path
+### Where the data lives — workflow vs step
 
-Each workflow step's metadata captures the resolution chain so we can reconstruct what happened:
+Snippet metadata lives on the **workflow** (the parent of all steps in the submission), recorded once. Steps themselves are vanilla — each step's `params.prompt` and `params.negativePrompt` already contain the fully substituted text after server-side resolution. The orchestrator processes them identically to no-snippet steps.
+
+**Workflow metadata** captures the user's selections so the picker can reload state on a re-edit and result cards can show what fed the batch. Suppose for this run the user explicitly picked only `#hero` for `#character` (skipping `#villain`), and left `#setting` at the full-pool default:
 
 ```jsonc
 {
-  "snippetReferences": [
-    {
-      "category": "character",
-      "referencePosition": 0,
-      "resolvedValues": [
-        {
-          "wildcardSetId": 21,
-          "categoryId": 401,    // 'character'
-          "valueIndex": 0,      // picked #hero
-          "value": "#hero",
-          "nestedExpansion": {
-            "category": "hero",
-            "categoryId": 402,
-            "valueIndex": 1,    // picked the paladin one
-            "value": "a noble paladin with a #weapon",
-            "nested": [
-              { "category": "weapon", "categoryId": 405, "valueIndex": 0, "value": "{cursed|bloodied} sword", "alternationPick": "bloodied" }
+  // workflow.metadata
+  "params": {
+    "prompt": "A #character emerges from the shadows of #setting",   // existing — graph form data
+    /* ... other graph form fields ... */
+    "snippets": {
+      "wildcardSetIds": [201],              // MyFantasyPack v1.0 was the only active set
+      "mode": "batch",
+      "batchCount": 2,
+      "targets": {
+        "prompt": [
+          {
+            "category": "character",
+            "selections": [
+              { "categoryId": 401, "values": ["#hero"] }  // parent value; nested expansion not stored
             ]
+          },
+          {
+            "category": "setting",
+            "selections": []                              // empty = full-pool default
           }
-        }
-      ]
-    },
-    {
-      "category": "setting",
-      "referencePosition": 1,
-      "resolvedValues": [
-        {
-          "wildcardSetId": 21, "categoryId": 406, "valueIndex": 0,
-          "value": "a {misty|dusty} #location",
-          "alternationPick": "misty",
-          "nested": [
-            { "category": "location", "categoryId": 407, "valueIndex": 1, "value": "ruined temple" }
-          ]
-        }
-      ]
+        ],
+        "negativePrompt": []
+      }
     }
-  ],
-  "samplingSeed": 42,
-  "cartesianTotal": 2,
-  "sampledTo": 2
+  },
+  "tags": [..., "wildcards"]
 }
 ```
 
-Captures everything needed to re-run this exact step (same seed → same result tree).
+`snippets` lives under `workflow.metadata.params` — same place as the prompt template and other graph form data. `categoryId` is the canonical pointer to the source `WildcardSetCategory` row; `wildcardSetId` is reachable through that row's FK, so we don't duplicate it. `values` is the array of picked value strings for that source category; for re-edit and display without a lookup. Nested expansion (`#hero` → paladin → `#weapon` → bloodied sword) is recoverable from the seed; not duplicated here.
+
+`mode` is a per-submission choice (set by the form's mode toggle) — `"batch"` runs unique combinations, `"random"` runs independent random samples. `batchCount` is the number of workflow steps to fan out into. References are organized by target (here just `prompt`; `negativePrompt` is empty `[]` in this example, future editors would add their own keys). Cartesian totals and sample stats aren't stored — they're computable from `params.snippets.targets[*]` + the corresponding template strings at display time.
+
+On the client, the entire `snippets` payload lives on a dedicated node in the existing generation graph used by `GenerationForm`. Each editor node (prompt, negativePrompt, future targets) reads its slice via `snippets.targets[<editorNodeName>]`. The node updates as the user adds/removes references and adjusts mode/count, then serializes into the workflow metadata at submit time.
+
+**Step metadata (per image)** — vanilla, no snippet content:
+
+```jsonc
+{
+  "params": {
+    "prompt": "A a noble paladin with a bloodied sword emerges from the shadows of a misty ruined temple",
+    "negativePrompt": "..."
+  }
+}
+```
+
+The full nested expansion tree we just walked through is *not* stored anywhere. It's reproducible on demand from `(seed, prompt template, snippetSelections)` — the seed deterministically drives both the cap sampling and the per-step picks.
 
 ---
 
@@ -376,7 +382,7 @@ function expandValue(
 
 The seed-driven `pickWeighted` and `expandAlternation` keep determinism intact — same submission seed produces byte-identical expansions.
 
-> **Parser note:** `#?category` (random-pick mode) is only valid at the top level of the user's prompt, not inside a value. Nested refs are always batch-style `#name`. If a wildcard model's source file used `#?` inside a value, our import would either reject it or treat it as `#` — to confirm during implementation.
+The mode (`batch` vs `random`) governs only the *top-level* expansion of the user's prompt — that is, how `batchCount` workflow steps are produced from the references. Nested `#name` resolution inside values is always a single random pick per occurrence, regardless of mode.
 
 ---
 
@@ -407,12 +413,12 @@ The seed-driven `pickWeighted` and `expandAlternation` keep determinism intact �
    Recommendation: **port to TS ourselves**. The grammar is simple enough (alternation, weights, multi-pick, nested refs) and we want the resolver in our generation pipeline without subprocess hops.
 
 5. **Nested-ref parsing for the audit dependency graph.** At audit time, we need to extract `#refs` from each category's values to build the dependency graph. Two approaches:
-   - Regex over the JSONB strings at audit time — straightforward, parse-on-demand.
+   - Regex over the array entries at audit time — straightforward, parse-on-demand.
    - Cache parsed refs as a separate column (e.g., `parsedRefs Json`) populated at import — faster audit, more storage.
 
    Recommendation: **regex at audit time** for v1. Audit isn't latency-sensitive; categories are small. Add cached-refs column only if we measure a problem.
 
-6. **Step metadata depth.** The example in Diagram 3 shows full nested expansion captured in step metadata. Useful for reproduction and debugging, but JSONB grows with depth. Cap the recorded depth (e.g., only 2–3 levels of nesting in metadata, summarized after that)?
+6. **Step metadata depth.** The example in Diagram 3 shows full nested expansion captured in step metadata. Useful for reproduction and debugging, but the metadata blob grows with depth. Cap the recorded depth (e.g., only 2–3 levels of nesting in metadata, summarized after that)?
 
    Recommendation: **record full depth for now**. Expansion trees are bounded by `MAX_DEPTH = 10`, so worst case is 10 levels — bounded and small. Revisit if real wildcard packs produce huge expansion trees.
 

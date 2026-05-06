@@ -54,7 +54,7 @@ export function GenerateImageModal({
 }: GenerateImageModalProps) {
   const availableBuzzTypes = useAvailableBuzz(['blue']);
   const [prompt, setPrompt] = useState('');
-  const [model, setModel] = useState('NanoBanana');
+  const [model, setModel] = useState('NanoBanana2');
   const [quantity, setQuantity] = useState(4);
   const [resultImages, setResultImages] = useState<{ url: string; id?: number }[]>([]);
   const [selectedIdx, setSelectedIdx] = useState(0);
@@ -75,32 +75,48 @@ export function GenerateImageModal({
     },
   });
 
-  const { data: costEstimate } = trpc.comics.getGenerationCostEstimate.useQuery(
-    {
-      baseModel: model,
-      aspectRatio,
-      quantity,
-      userReferenceImages: references.map((r) => ({
-        url: r.url,
-        width: r.width,
-        height: r.height,
-      })),
-    },
-    { staleTime: 30_000, enabled: opened }
-  );
+  const { data: costEstimate, isFetching: isCostFetching } =
+    trpc.comics.getGenerationCostEstimate.useQuery(
+      {
+        baseModel: model,
+        aspectRatio,
+        quantity,
+        userReferenceImages: references.map((r) => ({
+          url: r.url,
+          width: r.width,
+          height: r.height,
+        })),
+      },
+      { staleTime: 30_000, enabled: opened, keepPreviousData: true }
+    );
+
+  // In-flight guard. The fallback interval and the signal-driven poll can
+  // overlap after a workflow finishes — `pollIterationWorkflow` is
+  // non-idempotent on success (re-downloads the output and creates new
+  // Image rows on every call), so two concurrent polls would duplicate
+  // uploads + Image records for a single generation.
+  const isPollingRef = useRef(false);
 
   // Poll once to fetch and persist the result image
   const doPollOnce = useCallback(async () => {
     const wfId = activeWorkflowId.current;
     if (!wfId) return;
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
 
     try {
-      const result = await utils.comics.pollIterationStatus.fetch({
-        workflowId: wfId,
-        width: pollDims.current.width,
-        height: pollDims.current.height,
-        prompt,
-      });
+      const result = await utils.comics.pollIterationStatus.fetch(
+        {
+          workflowId: wfId,
+          width: pollDims.current.width,
+          height: pollDims.current.height,
+          prompt,
+        },
+        // Bypass any cached "processing" response — every poll must reflect
+        // current orchestrator state, otherwise stale cache hides
+        // completion from us indefinitely.
+        { staleTime: 0, cacheTime: 0 }
+      );
 
       if (result.status === 'succeeded' && result.images && result.images.length > 0) {
         setResultImages(result.images);
@@ -115,9 +131,11 @@ export function GenerateImageModal({
           error: new Error('The image generator returned an error. Please try again.'),
         });
       }
-      // If still processing, signal will fire again
+      // If still processing, the next interval tick (or signal) will retry.
     } catch {
-      // Transient error — signal will re-trigger
+      // Transient error — next tick will retry.
+    } finally {
+      isPollingRef.current = false;
     }
   }, [utils, prompt]);
 
@@ -136,11 +154,22 @@ export function GenerateImageModal({
     )
   );
 
-  // Fallback polling in case signal is missed
+  // Fallback polling in case the websocket signal is missed.
+  //
+  // Critical: do NOT short-circuit on `!activeWorkflowId.current` here.
+  // `setIsGenerating(true)` fires the render that runs this effect, but the
+  // workflow ID isn't set on the ref until `mutateAsync` resolves a tick
+  // later. Returning early would mean the timer never starts at all, and
+  // if the signal misses we'd hang forever. `doPollOnce` already
+  // short-circuits if the ref is still null, so it's safe to start the
+  // interval immediately — the first few ticks are no-ops until the
+  // workflow ID lands.
   useEffect(() => {
-    if (!isGenerating || !activeWorkflowId.current) return;
-    const pollTimer = setInterval(() => void doPollOnce(), 10_000);
-    // Auto-timeout after 90s — gives the user a clear failure instead of infinite spinner
+    if (!isGenerating) return;
+    const pollTimer = setInterval(() => void doPollOnce(), 5_000);
+    // Auto-timeout after 3 min — gives the user a clear failure instead
+    // of an infinite spinner. Some models (gpt-image-2, nano-banana-2)
+    // can take longer than the previous 90s budget.
     const timeoutTimer = setTimeout(() => {
       if (activeWorkflowId.current) {
         activeWorkflowId.current = null;
@@ -150,7 +179,7 @@ export function GenerateImageModal({
           error: new Error('The image took too long to generate. Please try again.'),
         });
       }
-    }, 90_000);
+    }, 180_000);
     return () => {
       clearInterval(pollTimer);
       clearTimeout(timeoutTimer);
@@ -175,6 +204,10 @@ export function GenerateImageModal({
 
     activeWorkflowId.current = result.workflowId;
     pollDims.current = { width: result.width, height: result.height };
+    // Kick off an immediate poll so we don't wait a full interval tick
+    // before the first check — useful when a model finishes faster than
+    // the 5s cadence.
+    void doPollOnce();
   };
 
   const selectedUrl = resultImages[selectedIdx]?.url ?? null;
@@ -448,9 +481,21 @@ export function GenerateImageModal({
             <BuzzTransactionButton
               buzzAmount={cost}
               accountTypes={availableBuzzTypes}
-              label={isGenerating ? 'Generating...' : 'Generate'}
-              loading={isGenerating}
-              disabled={!prompt.trim() || isGenerating || costEstimate == null}
+              label={
+                isGenerating
+                  ? 'Generating...'
+                  : isCostFetching
+                  ? 'Calculating cost...'
+                  : 'Generate'
+              }
+              // Reflect cost recalc as a loading state on the button so
+              // users get a visible signal when prompt / quantity / model /
+              // references change. Without this the button just goes
+              // disabled silently while we wait for the new cost.
+              loading={isGenerating || isCostFetching}
+              disabled={
+                !prompt.trim() || isGenerating || isCostFetching || costEstimate == null
+              }
               onPerformTransaction={handleGenerate}
               showPurchaseModal
             />

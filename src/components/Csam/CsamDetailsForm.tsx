@@ -31,6 +31,7 @@ import {
   csamContentsDictionary,
   csamReportDetails,
 } from '~/server/schema/csam.schema';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -207,7 +208,7 @@ function ModelVersionSelectList({
               <Badge leftSection={<IconPhoto size={14} />}>{associatedCount}</Badge>
               <Text
                 component="a"
-                href={`/models/${modelId}/${modelName}?modelVersionId=${modelVersionId}`}
+                href={modelId ? getModelUrl({ modelId, modelName, modelVersionId }) : '#'}
                 target="_blank"
                 style={{ lineHeight: 1 }}
               >

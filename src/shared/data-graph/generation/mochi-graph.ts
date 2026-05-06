@@ -12,7 +12,7 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, createCheckpointGraph } from './common';
+import { seedNode, createCheckpointGraph, promptGraph, triggerWordsGraph } from './common';
 
 // =============================================================================
 // Mochi Graph
@@ -39,4 +39,8 @@ export const mochiGraph = new DataGraph<MochiCtx, GenerationCtx>()
     input: z.boolean().optional(),
     output: z.boolean(),
     defaultValue: true,
-  });
+  })
+
+  // Prompt + triggerWords (no negativePrompt for Mochi)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);

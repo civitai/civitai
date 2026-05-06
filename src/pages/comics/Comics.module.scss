@@ -390,6 +390,13 @@
   background: light-dark(var(--mantine-color-gray-0), #1a1b1e);
   border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   border-image: linear-gradient(90deg, #fab005, #fd7e14, transparent) 1;
+
+  /* Mobile: don't pin the header to the viewport. The chapter controls */
+  /* don't need to follow the user as they read — they sit at the top of */
+  /* the document and scroll away with the rest of the content. */
+  @media (max-width: 768px) {
+    position: static;
+  }
 }
 
 .readerHeaderInner {
@@ -398,17 +405,37 @@
   align-items: center;
   padding: 10px 0;
   gap: 12px;
+
+  /* On mobile the header has too many right-side actions to share a */
+  /* single row with the title — wrap onto two rows so the title gets */
+  /* row 1 and the action group gets row 2 (full width). */
+  @media (max-width: 768px) {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
 }
 
 .readerHeaderLeft {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   min-width: 0;
+
+  /* Mobile: claim the full width but stay left-aligned so back / avatar / */
+  /* title read in their natural order — that's where the eye expects them. */
+  @media (max-width: 768px) {
+    width: 100%;
+  }
 }
 
 .readerTitleGroup {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  /* Stack title and creator link with no extra gap so the two lines feel */
+  /* like a single tight unit next to the avatar. */
+  gap: 0;
+  line-height: 1.15;
 }
 
 .readerTitle {
@@ -428,6 +455,8 @@
   text-decoration: none;
   transition: color 0.2s ease;
   display: block;
+  margin: 0;
+  line-height: 1.2;
 
   &:hover {
     color: #fab005;
@@ -439,6 +468,16 @@
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+
+  /* Mobile: action cluster fills row 2 and centers itself. Title row */
+  /* above stays left-aligned for the natural reading order, but the */
+  /* lone chapter Select on its own row reads better centered. */
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
 }
 
 /* ── Reader panel display ─────────────────────────── */
@@ -541,6 +580,11 @@
   justify-content: center;
   align-items: center;
   gap: 12px;
+
+  @media (max-width: 768px) {
+    padding: 16px 0 24px;
+    gap: 8px;
+  }
 }
 
 .readerNavBtn {
@@ -557,6 +601,14 @@
   align-items: center;
   gap: 8px;
   font-family: inherit;
+
+  /* Mobile: tighter padding + smaller text. The previous 10×20 paired */
+  /* with 14px font produced buttons that visually dominated phone widths. */
+  @media (max-width: 768px) {
+    padding: 6px 12px;
+    font-size: 12px;
+    gap: 4px;
+  }
 
   &:hover:not(:disabled) {
     border-color: #fab005;

@@ -13,7 +13,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { useInView } from '~/hooks/useInView';
 import { getBaseModelColor, getModelTypeColor } from '~/shared/constants/badge-color.constants';
 import type { DownloadHistoryItem } from '~/server/services/download.service';
@@ -34,7 +34,11 @@ export function DownloadCard({ download, onHide }: Props) {
   const dateDisplay = isWithinMonth ? downloadDate.fromNow() : downloadDate.format('MMM D, YYYY');
 
   // Link to specific model version
-  const modelUrl = `/models/${model.id}/${slugit(model.name)}?modelVersionId=${modelVersion.id}`;
+  const modelUrl = getModelUrl({
+    modelId: model.id,
+    modelName: model.name,
+    modelVersionId: modelVersion.id,
+  });
   const modelTypeColor = getModelTypeColor(model.type);
   const baseModelColor = getBaseModelColor(modelVersion.baseModel);
 

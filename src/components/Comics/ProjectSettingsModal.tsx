@@ -91,7 +91,7 @@ export function ProjectSettingsModal({
       setEditName(project.name);
       setEditDescription(project.description ?? '');
       setEditGenre(project.genre ?? null);
-      setEditBaseModel(project.baseModel ?? 'NanoBanana');
+      setEditBaseModel(project.baseModel ?? 'NanoBanana2');
       setEditCoverUrl(project.coverImage?.url ?? null);
       setEditCoverImageId(project.coverImage?.id ?? null);
       setEditHeroUrl(project.heroImage?.url ?? null);
@@ -207,11 +207,13 @@ export function ProjectSettingsModal({
           label="Generation Model"
           description="Choose the AI model for panel generation"
           data={[
-            { value: 'NanoBanana', label: 'Nano Banana Pro (Default)' },
+            { value: 'NanoBanana2', label: 'Nano Banana 2 (Default)' },
+            { value: 'NanoBanana', label: 'Nano Banana Pro' },
             { value: 'Flux2', label: 'Flux.2' },
             { value: 'Seedream', label: 'Seedream v4.5' },
             { value: 'SeedreamLite', label: 'Seedream 5 Lite' },
             { value: 'OpenAI', label: 'OpenAI GPT-Image' },
+            { value: 'OpenAI2', label: 'OpenAI GPT-Image 2' },
             { value: 'Qwen', label: 'Qwen' },
             { value: 'Grok', label: 'Grok Imagine' },
           ]}

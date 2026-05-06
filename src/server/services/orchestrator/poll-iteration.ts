@@ -5,6 +5,25 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+
+/**
+ * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
+ * into the numeric `NsfwLevel` bitfield the rest of the app uses.
+ *
+ * Critical: without this mapping, `hasSafeBrowsingLevel("pg13")` does
+ * bitwise math on a string, which coerces to NaN, and PG-13 outputs get
+ * mis-classified as mature on the client (showing the "rated mature,
+ * open on civitai.red" overlay for safe images).
+ */
+function normalizeOrchestratorNsfwLevel(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return orchestratorNsfwLevelMap[normalized];
+  }
+  return undefined;
+}
 
 interface PollIterationArgs {
   workflowId: string;
@@ -125,8 +144,7 @@ export async function pollIterationWorkflow({
         if (!uploaded) return null;
         return {
           ...uploaded,
-          nsfwLevel:
-            (rawByUrl.get(url)?.nsfwLevel as number | undefined) ?? undefined,
+          nsfwLevel: normalizeOrchestratorNsfwLevel(rawByUrl.get(url)?.nsfwLevel),
         };
       })
     );

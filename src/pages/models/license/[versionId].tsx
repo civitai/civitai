@@ -7,6 +7,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString } from '~/utils/zod-helpers';
 
@@ -42,7 +43,13 @@ export default function ModelLicensePage({
       <Container size="md" p="xl">
         <Stack>
           <Group>
-            <BackButton url={`/models/${data.model.id}?modelVersionId=${data.id}`} />
+            <BackButton
+              url={getModelUrl({
+                modelId: data.model.id,
+                modelName: data.model.name,
+                modelVersionId: data.id,
+              })}
+            />
             <Title>{data.model.name} License</Title>
           </Group>
           {data.license.content && (

@@ -788,15 +788,6 @@ export async function createWorkflowStepsFromGraph({
       'seed' in data && data.seed != null ? data.seed : Math.floor(Math.random() * maxRandomSeed),
   };
 
-  // Audio (ACE Audio) workflows use musicDescription/lyrics rather than the shared
-  // prompt/negativePrompt nodes. Strip those fields here so they don't bleed into
-  // stored workflow metadata (where they would otherwise persist a stale value carried
-  // over from an image/video workflow via the global localStorage scope).
-  if ('ecosystem' in resolvedData && resolvedData.ecosystem === 'Ace') {
-    delete (resolvedData as Record<string, unknown>).prompt;
-    delete (resolvedData as Record<string, unknown>).negativePrompt;
-  }
-
   // Calculate timeout: base 20 minutes + 1 minute per additional resource
   const timeSpan = new TimeSpan(0, 20, 0);
   timeSpan.addMinutes(Math.max(0, enrichedResources.length - 1));
@@ -907,8 +898,7 @@ export async function generateFromGraph({
     'musicDescription' in data && typeof data.musicDescription === 'string'
       ? data.musicDescription
       : undefined;
-  const lyrics =
-    'lyrics' in data && typeof data.lyrics === 'string' ? data.lyrics : undefined;
+  const lyrics = 'lyrics' in data && typeof data.lyrics === 'string' ? data.lyrics : undefined;
   if ((musicDescription && musicDescription.trim()) || (lyrics && lyrics.trim())) {
     await auditPromptServer({
       prompt: [musicDescription, lyrics].filter((v) => v && v.trim()).join('\n'),

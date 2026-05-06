@@ -15,7 +15,15 @@
 
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { aspectRatioNode, createCheckpointGraph, imagesNode, seedNode, sliderNode } from './common';
+import {
+  aspectRatioNode,
+  createCheckpointGraph,
+  imagesNode,
+  promptGraph,
+  seedNode,
+  sliderNode,
+  triggerWordsGraph,
+} from './common';
 
 // =============================================================================
 // Flux Kontext Mode Constants
@@ -90,6 +98,8 @@ export const fluxKontextGraph = new DataGraph<
       }),
     []
   )
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
   .node('aspectRatio', aspectRatioNode({ options: fluxKontextAspectRatios, defaultValue: '1:1' }))
   .node('cfgScale', sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5 }))
   .node('seed', seedNode());

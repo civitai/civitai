@@ -743,135 +743,162 @@ export function GenerationForm() {
               )}
             />
 
-            {/* Prompt with Trigger Words (hidden for audio workflows which use musicDescription) */}
-            {snapshot.workflow !== 'txt2music' && (
-              <Controller
-                graph={graph}
-                name="prompt"
-                render={({ value, onChange, meta, error }) => (
-                  <Input.Wrapper
-                    styles={{ label: { width: '100%' } }}
-                    label={
-                      <Group justify="space-between" wrap="nowrap" className="w-full">
-                        <ControllerLabel
-                          label="Prompt"
-                          info="Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
-                          required={meta.required}
-                        />
-                        {value && (
-                          <Button
-                            variant="subtle"
-                            size="compact-xs"
-                            leftSection={<IconSparkles size={14} />}
-                            onClick={() => {
-                              const snap = graph.getSnapshot() as {
-                                ecosystem?: string;
-                                negativePrompt?: string;
-                                resources?: {
-                                  id: number;
-                                  model: { type: string };
-                                  trainedWords?: string[];
-                                  strength?: number;
-                                }[];
-                              };
-                              triggerPromptEnhance(
-                                {
-                                  prompt: value as string,
-                                  negativePrompt: snap.negativePrompt,
-                                  ecosystem: snap.ecosystem ?? '',
-                                  resources: snap.resources,
-                                },
-                                (wf) =>
-                                  graph.set({
-                                    workflow: wf,
-                                  } as Parameters<typeof graph.set>[0])
-                              );
-                            }}
-                          >
-                            Enhance
-                          </Button>
-                        )}
-                      </Group>
+            {/* ACE Audio mode picker (simple | custom) — only renders for Ace ecosystem */}
+            <Controller
+              graph={graph}
+              name="aceAudioMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Mode</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={
+                      meta.options?.map((o: { label: string; value: string }) => ({
+                        label: o.label,
+                        value: o.value,
+                      })) ?? []
                     }
-                    error={error?.message}
+                  />
+                </div>
+              )}
+            />
+
+            {/* Prompt with Trigger Words. Each ecosystem subgraph defines its
+                own prompt node (or omits it — e.g. ace custom mode), so the
+                Controller auto-hides when the node isn't in the active graph. */}
+            <Controller
+              graph={graph}
+              name="prompt"
+              render={({ value, onChange, meta, error }) => (
+                <Input.Wrapper
+                  styles={{ label: { width: '100%' } }}
+                  label={
+                    <Group justify="space-between" wrap="nowrap" className="w-full">
+                      <ControllerLabel
+                        label="Prompt"
+                        info={
+                          (meta as { info?: string }).info ??
+                          "Type out what you'd like to generate in the prompt, add aspects you'd like to avoid in the negative prompt."
+                        }
+                        required={meta.required}
+                      />
+                      {value && (
+                        <Button
+                          variant="subtle"
+                          size="compact-xs"
+                          leftSection={<IconSparkles size={14} />}
+                          onClick={() => {
+                            const snap = graph.getSnapshot() as {
+                              ecosystem?: string;
+                              negativePrompt?: string;
+                              resources?: {
+                                id: number;
+                                model: { type: string };
+                                trainedWords?: string[];
+                                strength?: number;
+                              }[];
+                            };
+                            triggerPromptEnhance(
+                              {
+                                prompt: value as string,
+                                negativePrompt: snap.negativePrompt,
+                                ecosystem: snap.ecosystem ?? '',
+                                resources: snap.resources,
+                              },
+                              (wf) =>
+                                graph.set({
+                                  workflow: wf,
+                                } as Parameters<typeof graph.set>[0])
+                            );
+                          }}
+                        >
+                          Enhance
+                        </Button>
+                      )}
+                    </Group>
+                  }
+                  error={error?.message}
+                >
+                  <Paper
+                    radius="md"
+                    withBorder
+                    data-tour="gen:prompt"
+                    className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
                   >
-                    <Paper
-                      radius="md"
-                      withBorder
-                      data-tour="gen:prompt"
-                      className="bg-white focus-within:border-blue-6 dark:bg-dark-6 dark:focus-within:border-blue-8"
-                    >
-                      <PromptInput
-                        px="sm"
-                        name="prompt"
-                        value={value}
-                        onChange={onChange}
-                        onFillForm={(metadata) => {
-                          const { resources, ...data } = metadata;
-                          graph.set(data as Parameters<typeof graph.set>[0]);
-                        }}
-                        placeholder="Your prompt goes here..."
-                        autosize
-                        minRows={2}
-                        variant="unstyled"
-                        styles={(theme) => ({
-                          input: {
-                            padding: '10px 0',
-                            backgroundColor: 'transparent',
-                            lineHeight: theme.lineHeights.sm,
-                          },
-                          error: { display: 'none' },
-                          wrapper: { margin: 0 },
-                        })}
-                      />
-                      {/* Nested trigger words controller */}
-                      <Controller
-                        graph={graph}
-                        name="triggerWords"
-                        render={({ value }) => {
-                          const triggerWords = value as string[] | undefined;
-                          if (!triggerWords || triggerWords.length === 0) return null;
-                          return (
-                            <div className="mb-1 flex flex-col gap-2">
-                              <Divider />
-                              <Text c="dimmed" className="text-xs font-semibold">
-                                Trigger words
-                              </Text>
-                              <div className="mb-2 flex items-center gap-1">
-                                <TrainedWords
-                                  type="LORA"
-                                  trainedWords={triggerWords}
-                                  badgeProps={{
-                                    style: {
-                                      textTransform: 'none',
-                                      height: 'auto',
-                                      cursor: 'pointer',
-                                    },
-                                  }}
-                                />
-                                <CopyButton value={triggerWords.join(', ')}>
-                                  {({ copied, copy, Icon, color }) => (
-                                    <Button
-                                      variant="subtle"
-                                      color={color ?? 'blue.5'}
-                                      onClick={copy}
-                                      size="compact-xs"
-                                      classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
-                                    >
-                                      {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
-                                    </Button>
-                                  )}
-                                </CopyButton>
-                              </div>
+                    <PromptInput
+                      px="sm"
+                      name="prompt"
+                      value={value}
+                      onChange={onChange}
+                      onFillForm={(metadata) => {
+                        const { resources, ...data } = metadata;
+                        graph.set(data as Parameters<typeof graph.set>[0]);
+                      }}
+                      placeholder={
+                        (meta as { placeholder?: string }).placeholder ??
+                        'Your prompt goes here...'
+                      }
+                      autosize
+                      minRows={2}
+                      variant="unstyled"
+                      styles={(theme) => ({
+                        input: {
+                          padding: '10px 0',
+                          backgroundColor: 'transparent',
+                          lineHeight: theme.lineHeights.sm,
+                        },
+                        error: { display: 'none' },
+                        wrapper: { margin: 0 },
+                      })}
+                    />
+                    {/* Nested trigger words controller */}
+                    <Controller
+                      graph={graph}
+                      name="triggerWords"
+                      render={({ value }) => {
+                        const triggerWords = value as string[] | undefined;
+                        if (!triggerWords || triggerWords.length === 0) return null;
+                        return (
+                          <div className="mb-1 flex flex-col gap-2">
+                            <Divider />
+                            <Text c="dimmed" className="text-xs font-semibold">
+                              Trigger words
+                            </Text>
+                            <div className="mb-2 flex items-center gap-1">
+                              <TrainedWords
+                                type="LORA"
+                                trainedWords={triggerWords}
+                                badgeProps={{
+                                  style: {
+                                    textTransform: 'none',
+                                    height: 'auto',
+                                    cursor: 'pointer',
+                                  },
+                                }}
+                              />
+                              <CopyButton value={triggerWords.join(', ')}>
+                                {({ copied, copy, Icon, color }) => (
+                                  <Button
+                                    variant="subtle"
+                                    color={color ?? 'blue.5'}
+                                    onClick={copy}
+                                    size="compact-xs"
+                                    classNames={{ root: 'shrink-0', inner: 'flex gap-1' }}
+                                  >
+                                    {copied ? 'Copied' : 'Copy All'} <Icon size={14} />
+                                  </Button>
+                                )}
+                              </CopyButton>
                             </div>
-                          );
-                        }}
-                      />
-                    </Paper>
-                  </Input.Wrapper>
-                )}
-              />
-            )}
+                          </div>
+                        );
+                      }}
+                    />
+                  </Paper>
+                </Input.Wrapper>
+              )}
+            />
 
             {/* Negative prompt (SD only) */}
             <Controller

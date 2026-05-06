@@ -9,6 +9,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import { getModelUrl } from '~/utils/string-helpers';
 
 export function GenericImageCard({
   image,
@@ -26,7 +27,7 @@ export function GenericImageCard({
 
     switch (entityType) {
       case 'Model': {
-        return `/models/${entityId}`;
+        return getModelUrl({ modelId: entityId });
       }
       case 'Collection': {
         return `/collections/${entityId}`;

@@ -13,10 +13,12 @@ import {
   createResourcesGraph,
   createVaeGraph,
   imagesNode,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
   samplerNode,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
 } from './common';
 
 // =============================================================================
@@ -89,7 +91,9 @@ export const stableDiffusionGraph = new DataGraph<
     },
     ['ecosystem', 'images']
   )
-  .node('negativePrompt', negativePromptNode())
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
   .node('sampler', samplerNode())
   .node(
     'cfgScale',

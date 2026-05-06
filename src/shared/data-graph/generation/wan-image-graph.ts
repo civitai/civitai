@@ -18,7 +18,9 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   seedNode,
-  negativePromptNode,
+  createTextEditorGraph,
+  promptGraph,
+  triggerWordsGraph,
   aspectRatioNode,
   sliderNode,
   imagesNode,
@@ -93,7 +95,7 @@ type WanImageVersionCtx = {
  * Controls: negativePrompt, aspectRatio, enablePromptEnhancer
  */
 const wan27Graph = new DataGraph<WanImageVersionCtx, GenerationCtx>()
-  .node('negativePrompt', negativePromptNode({ maxLength: 500 }))
+  .merge(createTextEditorGraph({ name: 'negativePrompt', maxLength: 500 }))
   .node(
     'aspectRatio',
     (ctx) => ({
@@ -168,7 +170,10 @@ export const wanImageGraph = new DataGraph<WanImageCtx, GenerationCtx>()
   // Version-specific controls via discriminator
   .discriminator('wanImageVersion', {
     'v2.7': wan27Graph,
-  });
+  })
+  // Prompt + triggerWords are common to all wan-image versions.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export constants for use in components
 export {

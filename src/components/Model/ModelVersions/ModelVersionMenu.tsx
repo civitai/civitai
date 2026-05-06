@@ -22,6 +22,7 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
+import { getModelUrl } from '~/utils/string-helpers';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -91,9 +92,16 @@ export function ModelVersionMenu({
       return { previousData };
     },
     async onSuccess() {
-      const nextLatestVersion = queryUtils.model.getById.getData({ id: modelId })?.modelVersions[0];
+      const modelData = queryUtils.model.getById.getData({ id: modelId });
+      const nextLatestVersion = modelData?.modelVersions[0];
       if (nextLatestVersion)
-        router.replace(`/models/${modelId}?modelVersionId=${nextLatestVersion.id}`);
+        router.replace(
+          getModelUrl({
+            modelId,
+            modelName: modelData?.name,
+            modelVersionId: nextLatestVersion.id,
+          })
+        );
       dialogStore.closeById('delete-version');
     },
     onError(error, _variables, context) {

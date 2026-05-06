@@ -32,7 +32,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { PostSort } from '~/server/common/enums';
 import type { ResourceReviewDetailModel } from '~/server/services/resourceReview.service';
 import { formatDate } from '~/utils/date-helpers';
-import { removeTags, slugit } from '~/utils/string-helpers';
+import { getModelUrl, removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
@@ -54,10 +54,12 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === data?.user.id);
 
-  const getModelUrl = (data: ResourceReviewDetailModel) =>
-    `/models/${data.model.id}/${slugit(data.model.name)}`;
   const getModelWithVersionUrl = (data: ResourceReviewDetailModel) =>
-    `${getModelUrl(data)}?modelVersionId=${data.modelVersion.id}`;
+    getModelUrl({
+      modelId: data.model.id,
+      modelName: data.model.name,
+      modelVersionId: data.modelVersion.id,
+    });
 
   if (isLoading)
     return (

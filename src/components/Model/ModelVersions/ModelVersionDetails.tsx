@@ -129,7 +129,7 @@ import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { componentTypeConfig, getFileIconConfig } from '~/utils/file-display-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { getDisplayName, removeTags } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ModelVersionDetails.module.scss';
 
@@ -1044,7 +1044,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                                   <Group gap={6}>
                                     <Text
                                       component={Link}
-                                      href={`/models/${lc.modelId}`}
+                                      href={getModelUrl({
+                                        modelId: lc.modelId,
+                                        modelName: lc.modelName,
+                                      })}
                                       size="sm"
                                       fw={500}
                                       td="underline"
@@ -1447,7 +1450,11 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                       <Card
                         key={resource.id}
                         component={Link}
-                        href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
+                        href={getModelUrl({
+                          modelId: resource.model.id,
+                          modelName: resource.model.name,
+                          modelVersionId: resource.id,
+                        })}
                         radius={0}
                         py="xs"
                         style={{

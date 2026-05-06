@@ -1646,7 +1646,9 @@ export const getAllImages = async (
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
   // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
 
-  const { rows: rawImages } = await imageDb.query<GetAllImagesRaw>(query);
+  const { rows: rawImages } = await withSpan('image:getAllImages:rawQuery', () =>
+    imageDb.query<GetAllImagesRaw>(query)
+  );
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);

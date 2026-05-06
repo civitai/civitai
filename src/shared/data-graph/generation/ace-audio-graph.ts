@@ -4,39 +4,63 @@
  * Controls for ACE Audio 1.5 music generation ecosystem.
  * Supports txt2music workflow — generates music from text description and structured lyrics.
  *
+ * Modes (top-level discriminator on `aceAudioMode`):
+ * - simple: User provides a prompt + duration. Handler emits a chatCompletion step that
+ *   produces lyrics/musicDescription/bpm/key, then references those in aceStepAudio.
+ * - custom: Full control surface — adds lyrics, musicDescription, cfg, steps, bpm, weights.
+ *
+ * Shared nodes (parent level — visible in both modes):
+ * - aceAudioMode: tabs picker (simple | custom)
+ * - model: Version selector (5 options)
+ * - generateCover: Toggle to auto-generate a cover image via Flux2 Klein
+ * - images: Optional cover image (hidden when generateCover is true)
+ * - seed: Optional seed for reproducibility
+ * - duration: Audio duration in seconds
+ *
+ * Custom-only nodes (in the custom subgraph):
+ * - cfgScale, steps: Variant-dependent (different defaults per turbo/base, range differs for steps)
+ * - title: Display-only label for the generated track (not used in generation)
+ * - musicDescription: Music style/genre description
+ * - lyrics: Structured lyrics input
+ * - bpm: Beats per minute
+ * - instrumentalWeight: Instrumental element weight
+ * - vocalWeight: Vocal element weight
+ *
  * Five model versions discriminated by aceAudioVariant (computed from model.id):
  * - turbo (v1.5 XL Turbo, v1.5 Turbo): cfgScale 1, steps 8, range 1-20
  * - base (v1.5 XL SFT, v1.5 XL Base, v1.5 Base): cfgScale 4, steps 50, range 1-100
  *
- * Cover Image Modes:
- * - generateCover=true: Multi-step workflow (imageGen → aceStepAudio with $ref to generated cover)
+ * Cover Image Modes (handler):
+ * - generateCover=true: Multi-step (imageGen → aceStepAudio with $ref to generated cover)
  * - images provided: Single-step aceStepAudio with user-supplied cover image URL
  * - Neither: Single-step aceStepAudio with no cover, output type is 'audio'
- *
- * Nodes:
- * - model: Version selector (5 options)
- * - cfgScale, steps: Variant-dependent (different defaults per turbo/base, range differs for steps)
- * - title: Display-only label for the generated track (not used in generation)
- * - musicDescription: Music style/genre description
- * - seed: Optional seed for reproducibility
- * - generateCover: Toggle to auto-generate a cover image via Flux2 Klein
- * - images: Optional cover image (hidden when generateCover is true)
- * - lyrics: Structured lyrics input
- * - duration: Audio duration in seconds
- * - bpm: Beats per minute
- * - instrumentalWeight: Instrumental element weight
- * - vocalWeight: Vocal element weight
  */
 
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import type { ResourceData } from './common';
-import { createCheckpointGraph, imagesNode, seedNode, sliderNode } from './common';
+import {
+  createCheckpointGraph,
+  createTextEditorGraph,
+  imagesNode,
+  seedNode,
+  sliderNode,
+  triggerWordsGraph,
+} from './common';
 
 // =============================================================================
 // Constants
 // =============================================================================
+
+/** ACE Audio mode type */
+export type AceAudioMode = 'simple' | 'custom';
+
+/** ACE Audio mode options (used by the tabs picker in the UI) */
+const aceAudioModeOptions = [
+  { label: 'Simple', value: 'simple' as const },
+  { label: 'Custom', value: 'custom' as const },
+];
 
 /** ACE Audio model version IDs */
 export const aceAudioVersionIds = {
@@ -84,23 +108,45 @@ const ACE_AUDIO_DEFAULT_BPM = 120;
 const MAX_DESCRIPTION_LENGTH = 1000;
 
 // =============================================================================
-// ACE Audio Graph
+// Subgraph context
 // =============================================================================
 
-/** Context shape for ace-audio graph */
-type AceAudioCtx = { ecosystem: string; workflow: string; model: ResourceData };
+/**
+ * Context shape inherited by ace-audio mode subgraphs. Both modes share
+ * model, generateCover, images, seed, and duration — defined at the parent
+ * level before the discriminator.
+ */
+type AceAudioModeCtx = {
+  ecosystem: string;
+  workflow: string;
+  aceAudioMode: AceAudioMode;
+  model: ResourceData;
+};
 
-export const aceAudioGraph = new DataGraph<AceAudioCtx, GenerationCtx>()
-  // Model version selector (5 options)
-  .merge(
-    () =>
-      createCheckpointGraph({
-        versions: { options: aceAudioVersionOptions },
-        defaultModelId: aceAudioVersionIds.xlTurbo,
-      }),
-    []
-  )
+// =============================================================================
+// Simple Mode Subgraph
+// =============================================================================
 
+/**
+ * Simple mode adds the prompt editor — the user's input drives the chatCompletion
+ * step in the handler. Custom mode does not include prompt (uses musicDescription
+ * instead). Override placeholder/info so the form makes the chatCompletion role
+ * obvious to the user.
+ */
+const aceAudioSimpleGraph = new DataGraph<AceAudioModeCtx, GenerationCtx>().merge(
+  createTextEditorGraph({
+    name: 'prompt',
+    required: true,
+    placeholder: 'Describe the song you want to generate...',
+    info: 'In simple mode, your prompt is sent to a chat model that drafts the lyrics, music description, BPM, and key for you. Describe the song concept in plain English.',
+  })
+);
+
+// =============================================================================
+// Custom Mode Subgraph (full controls)
+// =============================================================================
+
+const aceAudioCustomGraph = new DataGraph<AceAudioModeCtx, GenerationCtx>()
   // cfgScale — same range, variant-dependent default
   .node(
     'cfgScale',
@@ -136,53 +182,28 @@ export const aceAudioGraph = new DataGraph<AceAudioCtx, GenerationCtx>()
   })
 
   // Music description — style, genre, mood, instruments, etc.
-  .node('musicDescription', {
-    input: z.string().optional(),
-    output: z
-      .string()
-      .trim()
-      .max(MAX_DESCRIPTION_LENGTH, 'Description is too long')
-      .nonempty('Music description is required'),
-    defaultValue: '',
-  })
-
-  // Seed node
-  .node('seed', seedNode())
-
-  // Generate cover toggle — when true, an imageGen step is prepended to generate a cover image
-  .node('generateCover', {
-    input: z.boolean().optional(),
-    output: z.boolean(),
-    defaultValue: false,
-  })
-
-  // Optional cover image — hidden when generateCover is true
-  .node(
-    'images',
-    (ctx) => ({
-      ...imagesNode({ min: 0, max: 1, aspectRatios: ['1:1'] }),
-      when: !('generateCover' in ctx && ctx.generateCover),
-    }),
-    ['generateCover']
+  // Delivered via the text-editor factory so it carries snippet-target metadata
+  // and stays consistent with prompt/negativePrompt/lyrics editors.
+  .merge(
+    () =>
+      createTextEditorGraph({
+        name: 'musicDescription',
+        required: true,
+        emptyMessage: 'Music description is required',
+        maxLength: MAX_DESCRIPTION_LENGTH,
+      }),
+    []
   )
 
-  // Lyrics input — structured lyrics with section markers like [Verse], [Chorus], etc.
-  .node('lyrics', {
-    input: z.string().optional(),
-    output: z.string(),
-    defaultValue: '',
-  })
-
-  // Duration in seconds (1-190)
-  .node('duration', {
-    input: z.coerce.number().optional(),
-    output: z.number().min(ACE_AUDIO_MIN_DURATION).max(ACE_AUDIO_MAX_DURATION),
-    defaultValue: ACE_AUDIO_DEFAULT_DURATION,
-    meta: {
-      min: ACE_AUDIO_MIN_DURATION,
-      max: ACE_AUDIO_MAX_DURATION,
-    },
-  })
+  // Lyrics — structured input with section markers like [Verse], [Chorus], etc.
+  .merge(
+    () =>
+      createTextEditorGraph({
+        name: 'lyrics',
+        required: false,
+      }),
+    []
+  )
 
   // BPM (40-200)
   .node('bpm', {
@@ -223,6 +244,75 @@ export const aceAudioGraph = new DataGraph<AceAudioCtx, GenerationCtx>()
     ['model']
   );
 
+// =============================================================================
+// ACE Audio Graph (top-level)
+// =============================================================================
+
+/** Context shape for ace-audio graph */
+type AceAudioCtx = { ecosystem: string; workflow: string };
+
+export const aceAudioGraph = new DataGraph<AceAudioCtx, GenerationCtx>()
+  // Model version selector — shared by both modes
+  .merge(
+    () =>
+      createCheckpointGraph({
+        versions: { options: aceAudioVersionOptions },
+        defaultModelId: aceAudioVersionIds.xlTurbo,
+      }),
+    []
+  )
+
+  // triggerWords — derived from the model's trainedWords. Placed before the
+  // discriminator so both simple- and custom-mode editors see it in ctx.
+  .merge(triggerWordsGraph)
+
+  // Generate-cover toggle — shared by both modes
+  .node('generateCover', {
+    input: z.boolean().optional(),
+    output: z.boolean(),
+    defaultValue: false,
+  })
+
+  // Optional cover image — hidden when generateCover is true
+  .node(
+    'images',
+    (ctx) => ({
+      ...imagesNode({ min: 0, max: 1, aspectRatios: ['1:1'] }),
+      when: !('generateCover' in ctx && ctx.generateCover),
+    }),
+    ['generateCover']
+  )
+
+  // Seed — shared by both modes
+  .node('seed', seedNode())
+
+  // Duration — shared by both modes
+  .node('duration', {
+    input: z.coerce.number().optional(),
+    output: z.number().min(ACE_AUDIO_MIN_DURATION).max(ACE_AUDIO_MAX_DURATION),
+    defaultValue: ACE_AUDIO_DEFAULT_DURATION,
+    meta: {
+      min: ACE_AUDIO_MIN_DURATION,
+      max: ACE_AUDIO_MAX_DURATION,
+    },
+  })
+
+  // Mode selector — surfaced as tabs in the UI (simple | custom)
+  .node('aceAudioMode', {
+    input: z.enum(['simple', 'custom']).optional(),
+    output: z.enum(['simple', 'custom']),
+    defaultValue: 'simple',
+    meta: {
+      options: aceAudioModeOptions,
+    },
+  })
+
+  // Discriminate subgraph by mode
+  .discriminator('aceAudioMode', {
+    simple: aceAudioSimpleGraph,
+    custom: aceAudioCustomGraph,
+  });
+
 // Export constants for use in components
 export {
   ACE_AUDIO_MIN_DURATION,
@@ -231,4 +321,5 @@ export {
   ACE_AUDIO_MIN_BPM,
   ACE_AUDIO_MAX_BPM,
   ACE_AUDIO_DEFAULT_BPM,
+  aceAudioModeOptions,
 };

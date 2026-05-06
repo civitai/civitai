@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import React from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { constants } from '~/server/common/constants';
+import { getModelUrl } from '~/utils/string-helpers';
 
 export const getLinkHref = (href: string | undefined) => {
   if (!href) return;
@@ -14,7 +15,7 @@ export const getLinkHref = (href: string | undefined) => {
   const airMatch = href.match(constants.chat.airRegex);
   if (airMatch && airMatch.groups) {
     const { mId, mvId } = airMatch.groups;
-    newHref = `/models/${mId}?modelVersionId=${mvId}`;
+    newHref = getModelUrl({ modelId: Number(mId), modelVersionId: Number(mvId) });
   } else {
     newHref = href.replace(constants.chat.civRegex, '') || '/';
   }

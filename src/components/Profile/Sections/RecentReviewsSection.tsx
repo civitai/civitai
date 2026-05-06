@@ -24,6 +24,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { useQueryResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { getModelUrl } from '~/utils/string-helpers';
 import sectionClasses from './RecentReviewsSection.module.scss';
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
@@ -115,7 +116,11 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                   px={4}
                                   py={2}
                                   component="a"
-                                  href={`/models/${review.model.id}?modelVersionId=${review.modelVersion.id}`}
+                                  href={getModelUrl({
+                                    modelId: review.model.id,
+                                    modelName: review.model.name,
+                                    modelVersionId: review.modelVersion.id,
+                                  })}
                                   color="blue"
                                   size="xs"
                                   style={{ height: '26px' }}

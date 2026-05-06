@@ -66,6 +66,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type ModelData = GetAuctionBySlugReturn['bids'][number];
@@ -314,7 +315,15 @@ const SectionModelInfo = ({
 
   return (
     <Link
-      href={!!entityData ? `/models/${entityData.model.id}?modelVersionId=${entityData.id}` : '/'}
+      href={
+        !!entityData
+          ? getModelUrl({
+              modelId: entityData.model.id,
+              modelName: entityData.model.name,
+              modelVersionId: entityData.id,
+            })
+          : '/'
+      }
     >
       {El}
     </Link>

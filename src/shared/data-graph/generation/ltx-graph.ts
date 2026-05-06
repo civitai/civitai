@@ -29,7 +29,9 @@ import type { AspectRatioOption, VersionGroup } from './common';
 import {
   seedNode,
   aspectRatioNode,
+  promptGraph,
   sliderNode,
+  triggerWordsGraph,
   enumNode,
   imagesNode,
   videoNode,
@@ -438,7 +440,11 @@ export const ltxGraph = new DataGraph<LTXCtx, GenerationCtx>()
   .discriminator('ltxVersion', {
     v2: ltxv2SubGraph,
     v23: ltxv23SubGraph,
-  });
+  })
+
+  // Prompt + triggerWords are common to all LTX versions (no negativePrompt for LTX).
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // =============================================================================
 // Exports

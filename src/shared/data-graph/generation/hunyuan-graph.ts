@@ -18,7 +18,9 @@ import type { GenerationCtx } from './context';
 import {
   seedNode,
   aspectRatioNode,
+  promptGraph,
   sliderNode,
+  triggerWordsGraph,
   enumNode,
   imagesNode,
   createResourcesGraph,
@@ -112,7 +114,11 @@ export const hunyuanGraph = new DataGraph<HunyuanCtx, GenerationCtx>()
   )
 
   // Resources node (LoRAs)
-  .merge(createResourcesGraph());
+  .merge(createResourcesGraph())
+
+  // Prompt + triggerWords (no negativePrompt for Hunyuan)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export constants for use in components
 export { hunyuanAspectRatios, hunyuanDurations };

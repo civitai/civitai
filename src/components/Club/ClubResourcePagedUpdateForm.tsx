@@ -5,7 +5,7 @@ import React from 'react';
 import { IconCheck, IconTrash } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useMutateClub } from '~/components/Club/club.utils';
-import { getDisplayName } from '../../utils/string-helpers';
+import { getDisplayName, getModelUrl } from '../../utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 type Props = {
@@ -21,7 +21,11 @@ const getResourceDetails = (
     case 'ModelVersion':
       return {
         label: `${resource.data.name} - ${resource.data.modelVersion.name}`,
-        url: `/models/${resource.data.id}?modelVersionId=${resource.data.modelVersion.id}`,
+        url: getModelUrl({
+          modelId: resource.data.id,
+          modelName: resource.data.name,
+          modelVersionId: resource.data.modelVersion.id,
+        }),
       };
     case 'Article':
       return {

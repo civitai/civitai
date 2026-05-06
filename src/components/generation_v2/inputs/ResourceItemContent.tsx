@@ -19,6 +19,7 @@ import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { useAppContext } from '~/providers/AppProvider';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { getModelUrl } from '~/utils/string-helpers';
 
 // =============================================================================
 // Types
@@ -173,7 +174,11 @@ export function ResourceItemContent({
     onStrengthChange;
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
 
-  const modelUrl = `/models/${resource.model.id}?modelVersionId=${resource.id}`;
+  const modelUrl = getModelUrl({
+    modelId: resource.model.id,
+    modelName: resource.model.name,
+    modelVersionId: resource.id,
+  });
   const showLink = (showLinkProp ?? true) && shouldShowModelLink(resource);
 
   return (

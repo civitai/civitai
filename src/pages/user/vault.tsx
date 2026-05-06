@@ -52,7 +52,7 @@ import type {
   VaultItemMetadataSchema,
 } from '~/server/schema/vault.schema';
 import { formatDate } from '~/utils/date-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { isEqual, uniqBy } from 'lodash-es';
 import { useDebouncedValue } from '@mantine/hooks';
 import { VaultItemsFiltersDropdown } from '~/components/Vault/VaultItemsFiltersDropdown';
@@ -502,7 +502,13 @@ const MobileVault = () => {
             {items.map((item) => {
               return (
                 <Grid.Col span={6} key={item.id}>
-                  <Anchor href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}>
+                  <Anchor
+                    href={getModelUrl({
+                      modelId: item.modelId,
+                      modelName: item.modelName,
+                      modelVersionId: item.modelVersionId,
+                    })}
+                  >
                     <AspectRatio ratio={1} className={styles.mobileCard}>
                       {item.coverImageUrl && (
                         <Image
@@ -787,7 +793,11 @@ export default function CivitaiVault() {
                             <Stack gap={0}>
                               <Anchor
                                 component={Link}
-                                href={`/models/${item.modelId}?modelVersionId=${item.modelVersionId}`}
+                                href={getModelUrl({
+                                  modelId: item.modelId,
+                                  modelName: item.modelName,
+                                  modelVersionId: item.modelVersionId,
+                                })}
                                 lineClamp={2}
                                 size="sm"
                               >

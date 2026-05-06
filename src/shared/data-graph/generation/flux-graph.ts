@@ -23,8 +23,10 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
+  promptGraph,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
   type ResourceData,
 } from './common';
 
@@ -255,7 +257,10 @@ export const fluxGraph = new DataGraph<
     krea: standardModeWithResourcesGraph,
     pro: proModeGraph,
     ultra: ultraModeGraph,
-  });
+  })
+  // Prompt + triggerWords are common to all flux modes.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export flux mode options for use in components that need to render a mode selector
 export { fluxModeVersionOptions, fluxVersionIds };

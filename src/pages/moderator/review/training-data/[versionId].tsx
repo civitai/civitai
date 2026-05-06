@@ -22,6 +22,7 @@ import { EdgeVideoBase } from '~/components/EdgeMedia/EdgeVideoBase';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { showSuccessNotification } from '~/utils/notifications';
+import { getModelUrl } from '~/utils/string-helpers';
 
 function ReviewTrainingData() {
   const router = useRouter();
@@ -116,7 +117,11 @@ function ReviewTrainingData() {
       <div className="container flex max-w-lg justify-end gap-3 p-3">
         <LegacyActionIcon
           component={NextLink}
-          href={`/models/${data?.modelId}?modelVersionId=${versionId}`}
+          href={
+            data?.modelId
+              ? getModelUrl({ modelId: data.modelId, modelVersionId: versionId })
+              : '#'
+          }
           target="_blank"
         >
           <IconExternalLink />

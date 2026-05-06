@@ -12,11 +12,13 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
   samplerNode,
   schedulerNode,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
 } from './common';
 
 // =============================================================================
@@ -87,4 +89,6 @@ export const animaGraph = new DataGraph<{ ecosystem: string; workflow: string },
     samplerNode({ options: animaSamplers, defaultValue: 'euler_a', presets: animaSamplerPresets })
   )
   .node('scheduler', schedulerNode({ options: animaSchedules, defaultValue: 'simple' }))
-  .node('negativePrompt', negativePromptNode());
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph);

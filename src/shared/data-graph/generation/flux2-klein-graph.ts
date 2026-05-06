@@ -20,11 +20,13 @@ import {
   createCheckpointGraph,
   createResourcesGraph,
   imagesNode,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
   samplerNode,
   schedulerNode,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
 } from './common';
 
 // =============================================================================
@@ -103,7 +105,7 @@ type Flux2KleinModeCtx = {
 const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
-  .node('negativePrompt', negativePromptNode())
+  .merge(negativePromptGraph)
   .node('steps', sliderNode({ min: 4, max: 12, defaultValue: 8 }))
   .node('seed', seedNode());
 
@@ -114,7 +116,7 @@ const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
 const baseModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: flux2KleinAspectRatios, defaultValue: '1:1' }))
-  .node('negativePrompt', negativePromptNode())
+  .merge(negativePromptGraph)
   .node('sampler', samplerNode({ options: flux2KleinSamplers, defaultValue: 'euler' }))
   .node('scheduler', schedulerNode({ options: flux2KleinSchedules, defaultValue: 'simple' }))
   .node('cfgScale', sliderNode({ min: 2, max: 20, defaultValue: 7, step: 0.5 }))
@@ -178,7 +180,10 @@ export const flux2KleinGraph = new DataGraph<
   .groupedDiscriminator('flux2KleinMode', [
     { values: ['9b', '4b'] as const, graph: distilledModeGraph },
     { values: ['9b-base', '4b-base'] as const, graph: baseModeGraph },
-  ]);
+  ])
+  // Prompt + triggerWords are common to all flux2Klein variants.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export mode options for use in components
 export { flux2KleinModeVersionOptions, flux2KleinVersionIds };

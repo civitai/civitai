@@ -9,7 +9,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const LIMIT = 3;
@@ -59,9 +59,11 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <ul className="flex list-none flex-col gap-0.5">
           {(showAll ? resourcesSorted : resourcesSorted.slice(0, LIMIT)).map((resource) => {
             const href = resource.modelId
-              ? `/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
-                  resource.versionId
-                }`
+              ? getModelUrl({
+                  modelId: resource.modelId,
+                  modelName: resource.modelName,
+                  modelVersionId: resource.versionId,
+                })
               : undefined;
             return (
               <li key={`${resource.imageId}_${resource.modelVersionId}`} className="flex flex-col">
@@ -128,9 +130,11 @@ const Wrapper = ({
   if (!resource.modelId) return children;
   return (
     <Link
-      href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
-        resource.versionId
-      }`}
+      href={getModelUrl({
+        modelId: resource.modelId,
+        modelName: resource.modelName,
+        modelVersionId: resource.versionId,
+      })}
     >
       {children}
     </Link>

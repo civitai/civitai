@@ -154,6 +154,25 @@ export function slugit(value: string) {
 }
 
 /**
+ * Build a canonical model detail URL. Includes the slugified name when
+ * provided so links match the canonical form Google indexes; falls back
+ * gracefully when the name is missing/null/empty.
+ */
+export function getModelUrl({
+  modelId,
+  modelName,
+  modelVersionId,
+}: {
+  modelId: number;
+  modelName?: string | null;
+  modelVersionId?: number | null;
+}): string {
+  const slug = modelName ? slugit(modelName) : null;
+  const path = slug ? `/models/${modelId}/${slug}` : `/models/${modelId}`;
+  return modelVersionId ? `${path}?modelVersionId=${modelVersionId}` : path;
+}
+
+/**
  * @see https://www.geeksforgeeks.org/how-to-strip-out-html-tags-from-a-string-using-javascript/
  */
 export function removeTags(str: string) {

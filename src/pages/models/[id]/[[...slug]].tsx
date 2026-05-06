@@ -648,8 +648,9 @@ export default function ModelDetailsV2({
 
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
-  const totalRatingCount =
-    (model.rank?.thumbsUpCountAllTime ?? 0) + (model.rank?.thumbsDownCountAllTime ?? 0);
+  const thumbsUpCount = model.rank?.thumbsUpCountAllTime ?? 0;
+  const thumbsDownCount = model.rank?.thumbsDownCountAllTime ?? 0;
+  const totalRatingCount = thumbsUpCount + thumbsDownCount;
   const metaSchema = {
     '@context': 'https://schema.org',
     '@type': 'SoftwareApplication',
@@ -669,16 +670,15 @@ export default function ModelDetailsV2({
           }
         : undefined,
     datePublished: model.publishedAt,
-    aggregateRating: {
-      '@type': 'AggregateRating',
-      ratingValue: Math.min(
-        Math.ceil((model.rank?.thumbsUpCountAllTime ?? 0 / totalRatingCount) * 5),
-        5
-      ),
-      reviewCount: totalRatingCount,
-      bestRating: 5,
-      worstRating: 0,
-    },
+    ...(totalRatingCount > 0 && {
+      aggregateRating: {
+        '@type': 'AggregateRating',
+        ratingValue: Math.min(Math.ceil((thumbsUpCount / totalRatingCount) * 5), 5),
+        reviewCount: totalRatingCount,
+        bestRating: 5,
+        worstRating: 1,
+      },
+    }),
   };
 
   const published = model.status === ModelStatus.Published;

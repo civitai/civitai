@@ -32,7 +32,9 @@ import {
   aspectRatioNode,
   enumNode,
   imagesNode,
+  promptGraph,
   sliderNode,
+  triggerWordsGraph,
   createCheckpointGraph,
 } from './common';
 import type { AspectRatioOption } from './common';
@@ -348,7 +350,11 @@ export const viduGraph = new DataGraph<ViduCtx, GenerationCtx>()
       };
     },
     ['model']
-  );
+  )
+
+  // Prompt + triggerWords (no negativePrompt for Vidu)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export constants for use in components
 export {

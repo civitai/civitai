@@ -23,6 +23,7 @@ import type { ModelById, ModelVersionById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { showErrorNotification } from '~/utils/notifications';
+import { getModelUrl } from '~/utils/string-helpers';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
 const MAX_STEPS = 3;
@@ -155,7 +156,13 @@ const TrainSteps = ({
       utils.modelVersion.getByIdForEdit.invalidate({ id: modelVersion.id });
       utils.model.getById.invalidate({ id: modelData.id });
 
-      router.replace(`/models/${modelData.id}?modelVersionId=${modelVersion.id}`);
+      router.replace(
+        getModelUrl({
+          modelId: modelData.id,
+          modelName: modelData.name,
+          modelVersionId: modelVersion.id,
+        })
+      );
     } catch (error) {
       showErrorNotification({
         title: 'Failed to publish private model',
@@ -330,7 +337,15 @@ export function ModelVersionWizard({ data }: Props) {
         }
       />
       <div className="container max-w-sm pb-4">
-        <Link legacyBehavior href={`/models/${modelData?.id}`} passHref>
+        <Link
+          legacyBehavior
+          href={
+            modelData?.id
+              ? getModelUrl({ modelId: modelData.id, modelName: modelData.name })
+              : '#'
+          }
+          passHref
+        >
           <Anchor size="xs">
             <Group gap={4} wrap="nowrap">
               <IconArrowLeft size={12} />

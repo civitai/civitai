@@ -16,6 +16,7 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import type { CollectionByIdModel, ImageGetInfinite } from '~/types/router';
 import { QS } from '~/utils/qs';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type ImageDetailState = {
@@ -239,8 +240,7 @@ const getReturnUrl = ({
   username?: string;
 }) => {
   if (modelId) {
-    const url = `/models/${modelId}`;
-    return modelVersionId ? `${url}?modelVersionId=${modelVersionId}` : url;
+    return getModelUrl({ modelId, modelVersionId });
   } else if (postId) {
     return `/posts/${postId}`;
   } else if (username) {

@@ -4,6 +4,7 @@ import { isNumber } from '~/utils/type-guards';
 import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWizard';
 import type { InferGetServerSidePropsType } from 'next';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { getModelUrl } from '~/utils/string-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -12,7 +13,7 @@ export const getServerSideProps = createServerSideProps({
     if (!session)
       return {
         redirect: {
-          destination: `/models/${id}`,
+          destination: getModelUrl({ modelId: Number(id) }),
           permanent: false,
         },
       };
@@ -33,7 +34,7 @@ export const getServerSideProps = createServerSideProps({
     if (!isOwner || unpublished)
       return {
         redirect: {
-          destination: `/models/${id}`,
+          destination: getModelUrl({ modelId: model.id, modelName: model.name }),
           permanent: false,
         },
       };

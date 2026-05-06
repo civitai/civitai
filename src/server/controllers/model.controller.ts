@@ -291,9 +291,7 @@ export const getModelHandler = async ({
           user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
           unavailableResources: unavailableGenResources,
           ecosystemConfig,
-        }) &&
-        isBaseModelGenerationSupported(version.baseModel, model.type) &&
-        (entityAccessForVersion?.hasAccess ?? false);
+        }) && isBaseModelGenerationSupported(version.baseModel, model.type);
 
       // sort version files by file type, 'Model' type goes first
       // Note: VAE files from linked components are NOT pushed into version.files here

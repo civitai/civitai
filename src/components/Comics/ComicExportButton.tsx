@@ -24,7 +24,13 @@ async function fetchWithRetry(url: string, retries = 2): Promise<Response> {
 }
 
 async function fetchPanelBlobs(panels: { imageUrl: string | null }[]) {
+  // Mature panels arrive with `imageUrl: null` on green — the server strips
+  // the URL in `getProjectForReader` so the CDN URL never reaches the
+  // client. We surface a separate notice for these so the user knows the
+  // download is incomplete and where to view the full chapter.
   const validPanels = panels.filter((p) => p.imageUrl);
+  const nsfwSkipped = panels.length - validPanels.length;
+
   const settled = await Promise.allSettled(
     validPanels.map(async (panel) => {
       const url = getEdgeUrl(panel.imageUrl!, { original: true });
@@ -40,19 +46,27 @@ async function fetchPanelBlobs(panels: { imageUrl: string | null }[]) {
   );
 
   const results: { blob: Blob; ext: string }[] = [];
-  let skipped = 0;
+  let fetchFailed = 0;
   for (const result of settled) {
     if (result.status === 'fulfilled') {
       results.push(result.value);
     } else {
-      skipped++;
+      fetchFailed++;
     }
   }
 
-  if (skipped > 0) {
+  if (nsfwSkipped > 0) {
+    showErrorNotification({
+      title: 'Mature panels excluded from download',
+      error: new Error(
+        `${nsfwSkipped} mature panel(s) can't be downloaded on this site. Open the chapter on civitai.red to download the full set.`
+      ),
+    });
+  }
+  if (fetchFailed > 0) {
     showErrorNotification({
       title: 'Some panels could not be downloaded',
-      error: new Error(`${skipped} panel(s) were skipped due to fetch errors`),
+      error: new Error(`${fetchFailed} panel(s) were skipped due to fetch errors`),
     });
   }
 
@@ -71,7 +85,12 @@ function safeName(name: string) {
     .toLowerCase();
 }
 
-export function ChapterExportButton({
+/**
+ * Hook form of the chapter export logic. Lets callers (the inline icon
+ * button + the mobile kebab menu items) share a single implementation
+ * instead of replicating the fetch/zip/pdf machinery.
+ */
+export function useChapterExport({
   projectName,
   chapterName,
   panels,
@@ -80,7 +99,7 @@ export function ChapterExportButton({
 
   const filename = `${safeName(projectName)}_${safeName(chapterName)}`;
 
-  const handleExportCBZ = async () => {
+  const exportCBZ = async () => {
     try {
       setExporting(true);
       const JSZip = (await import('jszip')).default;
@@ -88,6 +107,9 @@ export function ChapterExportButton({
       const zip = new JSZip();
 
       const images = await fetchPanelBlobs(panels);
+      if (images.length === 0) {
+        return;
+      }
       for (let i = 0; i < images.length; i++) {
         zip.file(`${String(i + 1).padStart(3, '0')}.${images[i].ext}`, images[i].blob);
       }
@@ -105,7 +127,7 @@ export function ChapterExportButton({
     }
   };
 
-  const handleExportPDF = async () => {
+  const exportPDF = async () => {
     try {
       setExporting(true);
       const { pdf, Document, Page, Image, StyleSheet } = await import(
@@ -124,7 +146,6 @@ export function ChapterExportButton({
         panelImage: { objectFit: 'contain', maxWidth: '100%', maxHeight: '100%' },
       });
 
-      // Fetch all images as data URLs for react-pdf (reuses fetchPanelBlobs with retry logic)
       const images = await fetchPanelBlobs(panels);
       const dataUrls: string[] = [];
       for (const { blob } of images) {
@@ -170,6 +191,20 @@ export function ChapterExportButton({
     }
   };
 
+  return { exporting, exportCBZ, exportPDF };
+}
+
+export function ChapterExportButton({
+  projectName,
+  chapterName,
+  panels,
+}: ChapterExportButtonProps) {
+  const { exporting, exportCBZ, exportPDF } = useChapterExport({
+    projectName,
+    chapterName,
+    panels,
+  });
+
   return (
     <Menu position="bottom-end" withinPortal>
       <Menu.Target>
@@ -183,14 +218,14 @@ export function ChapterExportButton({
         <Menu.Label>Download as</Menu.Label>
         <Menu.Item
           leftSection={<IconFileTypePdf size={16} />}
-          onClick={handleExportPDF}
+          onClick={exportPDF}
           disabled={exporting}
         >
           PDF
         </Menu.Item>
         <Menu.Item
           leftSection={<IconFileZip size={16} />}
-          onClick={handleExportCBZ}
+          onClick={exportCBZ}
           disabled={exporting}
         >
           CBZ (Comic Book Archive)

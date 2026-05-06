@@ -17,7 +17,7 @@ import { getPrimaryFileTypes, primaryFileTypesByModelType } from '~/utils/file-d
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB } from '~/utils/number-helpers';
-import { getFileExtension } from '~/utils/string-helpers';
+import { getFileExtension, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -278,7 +278,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           </Text>
           <Link
             legacyBehavior
-            href={`/models/${modelId}?modelVersionId=${modelVersionId}`}
+            href={getModelUrl({ modelId, modelName: model?.name, modelVersionId })}
             passHref
           >
             <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
@@ -403,7 +403,11 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                   All files finished uploading.
                 </Text>
                 <Link
-                  href={`/models/${model?.id}?modelVersionId=${result.modelVersion.id}`}
+                  href={getModelUrl({
+                    modelId: model?.id ?? 0,
+                    modelName: model?.name,
+                    modelVersionId: result.modelVersion.id,
+                  })}
                   passHref
                   legacyBehavior
                 >
@@ -700,8 +704,7 @@ export type DropzoneOptions = {
 
 const modelExts = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin'];
 const ggufExts = [...modelExts, '.gguf'];
-const configExts = ['.yaml', '.yml', '.json'];
-const wildcardExts = ['.txt', ...configExts];
+const configExts = ['.yaml', '.yml', '.json', '.txt'];
 const archiveExts = ['.zip'];
 
 const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
@@ -929,7 +932,7 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
   },
   Wildcards: {
     primary: {
-      extensions: [...archiveExts, ...wildcardExts],
+      extensions: [...archiveExts, ...configExts],
       fileTypes: [...primaryFileTypesByModelType.Wildcards],
       maxFiles: 1,
     },

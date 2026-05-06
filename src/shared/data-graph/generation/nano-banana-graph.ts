@@ -19,8 +19,10 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   imagesNode,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
   seedNode,
+  triggerWordsGraph,
   type AspectRatioOption,
   type ResourceData,
 } from './common';
@@ -103,7 +105,7 @@ const standardModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>().node
 
 /** Pro mode subgraph: negativePrompt, aspectRatio, resolution, seed */
 const proModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
-  .node('negativePrompt', negativePromptNode())
+  .merge(negativePromptGraph)
   .node('resolution', {
     input: z.enum(resolutionOptions).optional(),
     output: z.enum(resolutionOptions),
@@ -206,7 +208,11 @@ export const nanoBananaGraph = new DataGraph<
     standard: standardModeGraph,
     pro: proModeGraph,
     v2: v2ModeGraph,
-  });
+  })
+  // Prompt + triggerWords are common to all variants. Placed at the parent
+  // (after the discriminator) so model from the active branch is in ctx.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export mode options for use in components
 export { nanoBananaModeVersionOptions, nanoBananaVersionIds };

@@ -9,6 +9,7 @@ import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { showErrorNotification } from '~/utils/notifications';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function PostUpsertForm2({
@@ -41,7 +42,7 @@ export function PostUpsertForm2({
 
   // #region [mutations]
   async function onSuccess() {
-    await router.replace(`/models/${modelId}?modelVersionId=${modelVersionId}`);
+    await router.replace(getModelUrl({ modelId, modelVersionId }));
   }
 
   function onError(error: any) {

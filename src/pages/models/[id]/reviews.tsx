@@ -42,6 +42,7 @@ import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.sch
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { ResourceReviewPagedModel } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './review.module.scss';
 
@@ -129,7 +130,13 @@ export default function ModelReviews() {
     <Skeleton height={44} />
   ) : model ? (
     <Group gap="xs" wrap="nowrap">
-      <BackButton url={`/models/${model.id}?modelVersionId=${modelVersionId}`} />
+      <BackButton
+        url={getModelUrl({
+          modelId: model.id,
+          modelName: model.name,
+          modelVersionId,
+        })}
+      />
       <Title lineClamp={1}>{model.name} Reviews</Title>
     </Group>
   ) : null;

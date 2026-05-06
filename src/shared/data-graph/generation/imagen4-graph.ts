@@ -10,7 +10,14 @@
 
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { aspectRatioNode, createCheckpointGraph, negativePromptNode, seedNode } from './common';
+import {
+  aspectRatioNode,
+  createCheckpointGraph,
+  negativePromptGraph,
+  promptGraph,
+  seedNode,
+  triggerWordsGraph,
+} from './common';
 
 // =============================================================================
 // Constants
@@ -52,6 +59,8 @@ export const imagen4Graph = new DataGraph<{ ecosystem: string; workflow: string 
       }),
     []
   )
-  .node('negativePrompt', negativePromptNode())
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
   .node('aspectRatio', aspectRatioNode({ options: imagen4AspectRatios, defaultValue: '1:1' }))
   .node('seed', seedNode());

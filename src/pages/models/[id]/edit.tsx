@@ -18,6 +18,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 
 import { ModelUpsertForm } from '~/components/Resource/Forms/ModelUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
@@ -35,7 +36,7 @@ export default function ModelEditPage() {
   );
 
   const handleSubmit = () => {
-    router.push(`/models/${modelId}`);
+    router.push(getModelUrl({ modelId, modelName: model?.name }));
   };
 
   const isModerator = currentUser?.isModerator ?? false;
@@ -58,7 +59,11 @@ export default function ModelEditPage() {
               "Civitai is currently in read-only mode and you won't be able to edit your model. Please try again later."
             }
           />
-          <Link legacyBehavior href={`/models/${modelId}`} passHref>
+          <Link
+            legacyBehavior
+            href={getModelUrl({ modelId, modelName: model.name })}
+            passHref
+          >
             <Anchor size="xs">
               <Group gap={4}>
                 <IconArrowLeft size={12} />

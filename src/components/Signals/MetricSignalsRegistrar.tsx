@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
-import { signalDebug } from '~/components/Signals/signalDebug';
 import { SignalMessages } from '~/server/common/enums';
 import { useMetricSignalsStore } from '~/store/metric-signals.store';
 import type { MetricEntityType, MetricType, MetricUpdatePayload } from './metric-signals.types';
@@ -47,7 +46,6 @@ export function useMetricSignalsListener() {
       // produce a fresh `deltas` object reference that fans out a selector
       // run to every subscribed consumer.
       const hasChange = Object.values(updates).some((v) => !!v);
-      signalDebug('metric:update received', { entityType, entityId, updates, hasChange });
       if (!hasChange) return;
       applyDelta(entityType, entityId, updates);
     },

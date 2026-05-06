@@ -194,6 +194,17 @@ export const ECO = {
   PonyV7: 200,
 } as const;
 
+// Guard against duplicate ids — `ecosystemById` is keyed by id, so collisions
+// silently overwrite earlier entries and cause cross-ecosystem mis-routing.
+(() => {
+  const seen = new Map<number, string>();
+  for (const [k, v] of Object.entries(ECO)) {
+    const prior = seen.get(v);
+    if (prior !== undefined) throw new Error(`Duplicate ECO id ${v}: ${prior} and ${k}`);
+    seen.set(v, k);
+  }
+})();
+
 // =============================================================================
 // Ecosystems
 // =============================================================================
@@ -1697,13 +1708,24 @@ export const BM = {
   Anima: 77,
   Grok: 78,
   Qwen2: 79,
-  WanImage27: 80,
+  WanImage27: 86,
   WanVideo27: 81,
   Upscaler: 82,
   Ernie: 83,
   AceAudio: 84,
   HappyHorse: 85,
 } as const;
+
+// Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
+// silently overwrite earlier entries and cause cross-ecosystem mis-routing.
+(() => {
+  const seen = new Map<number, string>();
+  for (const [k, v] of Object.entries(BM)) {
+    const prior = seen.get(v);
+    if (prior !== undefined) throw new Error(`Duplicate BM id ${v}: ${prior} and ${k}`);
+    seen.set(v, k);
+  }
+})();
 
 export const supportOverrides: SupportOverride[] = [
   // NOTE: Models with `disabled: true` on BaseModelRecord don't need entries here.

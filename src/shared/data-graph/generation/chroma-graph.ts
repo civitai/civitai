@@ -17,8 +17,10 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
+  promptGraph,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
 } from './common';
 
 // =============================================================================
@@ -70,6 +72,8 @@ export const chromaGraph = new DataGraph<{ ecosystem: string; workflow: string }
     []
   )
   .merge(createResourcesGraph())
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
   .node('aspectRatio', aspectRatioNode({ options: chromaAspectRatios, defaultValue: '1:1' }))
   .node(
     'cfgScale',

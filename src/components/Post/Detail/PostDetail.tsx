@@ -56,7 +56,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { toStringList } from '~/utils/array-helpers';
-import { removeTags } from '~/utils/string-helpers';
+import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Fragment, useEffect } from 'react';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
@@ -208,7 +208,11 @@ export function PostDetailContent({ postId }: Props) {
                       Posted to{' '}
                       <Anchor
                         component={Link}
-                        href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
+                        href={getModelUrl({
+                          modelId: relatedResource.modelId,
+                          modelName: relatedResource.modelName,
+                          modelVersionId: relatedResource.modelVersionId,
+                        })}
                         inherit
                       >
                         {relatedResource.modelName} - {relatedResource.modelVersionName}

@@ -20,7 +20,14 @@ import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import type { ResourceData } from './common';
-import { aspectRatioNode, createCheckpointGraph, imagesNode, seedNode } from './common';
+import {
+  aspectRatioNode,
+  createCheckpointGraph,
+  imagesNode,
+  promptGraph,
+  seedNode,
+  triggerWordsGraph,
+} from './common';
 
 // =============================================================================
 // OpenAI Model Constants
@@ -153,7 +160,11 @@ export const openaiGraph = new DataGraph<
   .discriminator('openaiVariant', {
     gpt1: openaiGpt1Graph,
     gpt2: openaiGpt2Graph,
-  });
+  })
+
+  // Prompt + triggerWords are common to all OpenAI variants (no negativePrompt for OpenAI).
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export for use in components / handler
 export { openaiModeVersionOptions, openaiVersionIds, qualityOptions };

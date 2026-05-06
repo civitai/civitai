@@ -15,7 +15,15 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, enumNode, imagesNode, createCheckpointGraph } from './common';
+import {
+  seedNode,
+  aspectRatioNode,
+  enumNode,
+  imagesNode,
+  createCheckpointGraph,
+  promptGraph,
+  triggerWordsGraph,
+} from './common';
 
 // =============================================================================
 // Constants
@@ -96,7 +104,11 @@ export const soraGraph = new DataGraph<SoraCtx, GenerationCtx>()
   })
 
   // Duration node
-  .node('duration', enumNode({ options: soraDurations, defaultValue: 4 }));
+  .node('duration', enumNode({ options: soraDurations, defaultValue: 4 }))
+
+  // Prompt + triggerWords (no negativePrompt for Sora)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export constants for use in components
 export { soraAspectRatios, soraResolutions, soraDurations };

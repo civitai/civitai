@@ -3,6 +3,7 @@ import { ModelVersionWizard } from '~/components/Resource/Wizard/ModelVersionWiz
 import { dbRead } from '~/server/db/client';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { isNumber } from '~/utils/type-guards';
 
 export const getServerSideProps = createServerSideProps({
@@ -13,7 +14,7 @@ export const getServerSideProps = createServerSideProps({
     if (!session)
       return {
         redirect: {
-          destination: `/models/${params.id}`,
+          destination: getModelUrl({ modelId: Number(params.id) }),
           permanent: false,
         },
       };
@@ -37,7 +38,7 @@ export const getServerSideProps = createServerSideProps({
     if (!isModerator && (!isOwner || unpublished))
       return {
         redirect: {
-          destination: `/models/${params.id}?modelVersionId=${versionId}`,
+          destination: getModelUrl({ modelId: Number(params.id), modelVersionId: versionId }),
           permanent: false,
         },
       };
@@ -57,7 +58,7 @@ export const getServerSideProps = createServerSideProps({
     if (version.status !== ModelStatus.Draft && !isOwner)
       return {
         redirect: {
-          destination: `/models/${params.id}?modelVersionId=${versionId}`,
+          destination: getModelUrl({ modelId: Number(params.id), modelVersionId: versionId }),
           permanent: false,
         },
       };

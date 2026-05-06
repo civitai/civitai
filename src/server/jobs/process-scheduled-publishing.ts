@@ -8,10 +8,7 @@ import {
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
-import {
-  updateComicChapterNsfwLevels,
-  updateComicProjectNsfwLevels,
-} from '~/server/services/nsfwLevels.service';
+import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
 
@@ -106,12 +103,10 @@ export const processScheduledPublishing = createJob(
           data: { publishedAt: now },
         });
 
-        // Update NSFW levels
-        updateComicChapterNsfwLevels([projectId]).catch((e) =>
-          console.error(`Failed to update chapter NSFW for project ${projectId}:`, e)
-        );
-        updateComicProjectNsfwLevels([projectId]).catch((e) =>
-          console.error(`Failed to update project NSFW for project ${projectId}:`, e)
+        // Update NSFW levels — chapter recompute must complete before project
+        // recompute or the project reads stale chapter levels.
+        await updateComicNsfwLevels([projectId]).catch((e) =>
+          console.error(`Failed to update NSFW levels for project ${projectId}:`, e)
         );
       }
 

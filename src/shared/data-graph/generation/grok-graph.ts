@@ -20,7 +20,15 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { seedNode, aspectRatioNode, imagesNode, videoNode, createCheckpointGraph } from './common';
+import {
+  seedNode,
+  aspectRatioNode,
+  createTextEditorGraph,
+  imagesNode,
+  triggerWordsGraph,
+  videoNode,
+  createCheckpointGraph,
+} from './common';
 
 // =============================================================================
 // Constants
@@ -177,7 +185,12 @@ export const grokGraph = new DataGraph<GrokCtx, GenerationCtx>()
   .discriminator('output', {
     image: grokImageGraph,
     video: grokVideoGraph,
-  });
+  })
+
+  // Prompt + triggerWords — Grok is text-driven across both image and video
+  // workflows, so prompt is always required (no negativePrompt for Grok).
+  .merge(triggerWordsGraph)
+  .merge(createTextEditorGraph({ name: 'prompt', required: true }));
 
 // Export constants for use in components
 export { grokImageAspectRatios, grokVideoAspectRatiosByResolution, grokResolutions };

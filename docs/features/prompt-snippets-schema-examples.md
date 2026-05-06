@@ -6,7 +6,7 @@
 - [prompt-snippets.md](./prompt-snippets.md) (product/UX plan)
 - [prompt-snippets-schema.md](./prompt-snippets-schema.md) (schema spec — authoritative)
 
-Concrete walkthrough of the unified wildcard schema, populated with real content from [fullFeatureFantasy v3.0](https://civitai.com/models?type=Wildcards). Row IDs are illustrative. Three tables: `WildcardSet`, `WildcardSetCategory`, `UserWildcardSet`. No separate `PromptSnippet` table — user personal content lives in User-kind `WildcardSet`s alongside imported System-kind content.
+Concrete walkthrough of the unified wildcard schema, populated with real content from [fullFeatureFantasy v3.0](https://civitai.com/models?type=Wildcards). Row IDs are illustrative. Two tables: `WildcardSet`, `WildcardSetCategory`. No separate `PromptSnippet` table — user personal content lives in User-kind `WildcardSet`s alongside imported System-kind content. No DB join table for "user has loaded this set" — load state lives in the form's localStorage and is snapshotted into workflow metadata at submit time.
 
 ---
 
@@ -14,8 +14,8 @@ Concrete walkthrough of the unified wildcard schema, populated with real content
 
 Three actors:
 
-- **Alice** (`userId: 1001`). New to the snippet system. Will create personal snippets and subscribe to a wildcard model.
-- **Bob** (`userId: 2042`). Power user, already subscribed to other wildcard models. Will subscribe to `fullFeatureFantasy v3.0` after Alice imports it.
+- **Alice** (`userId: 1001`). New to the snippet system. Will create personal snippets and load a wildcard model.
+- **Bob** (`userId: 2042`). Power user, already loads other wildcard models. Will load `fullFeatureFantasy v3.0` after Alice imports it.
 - **`fullFeatureFantasy v3.0`** (`ModelVersion.id: 458231`, type `Wildcard`). 59 `.txt` files, ~1,850 values total.
 
 For tractable examples we focus on a handful of representative categories from fullFeatureFantasy.
@@ -45,15 +45,9 @@ Three System-kind sets imported by other users earlier. No User-kind sets shown 
 
 `nsfwLevel` values follow the existing Civitai bitwise convention. `1` is a placeholder for "SFW only" — actual bit values are defined elsewhere.
 
-### `UserWildcardSet` (Bob's existing pointers)
+### Bob's loaded sets (client-side only)
 
-| id | userId | wildcardSetId | nickname | isActive | sortOrder | addedAt |
-|----|----|----|----|----|----|----|
-| 88 | 2042 | 3 | null | true | 0 | 2026-02-14 09:12:00 |
-| 89 | 2042 | 12 | "Medieval env" | false | 1 | 2026-02-20 14:08:22 |
-| 104 | 2042 | 16 | null | true | 2 | 2026-03-10 19:44:01 |
-
-Alice has no rows yet.
+Bob's form has `wildcardSetIds: [3, 12, 16]` in localStorage (the list of System-kind sets he's loaded via "create" buttons on wildcard model pages). No DB rows track this — the sets are public, server-side authorization is implicit. Alice's form has no localStorage list yet (she'll get one when her User-kind set is created in Stage 2).
 
 ---
 
@@ -78,12 +72,11 @@ await prisma.$transaction(async (tx) => {
         totalValueCount: 0,
       }
     });
-    await tx.userWildcardSet.create({
-      data: { userId: 1001, wildcardSetId: userSet.id, isActive: true }
-    });
+    // No DB join table — the user's User-kind set is always implicitly loaded.
+    // The form discovers it on mount via getMySnippetSet().
   }
 
-  // 2. Create a new category with the saved value (categories are immutable; this is always a new category)
+  // 2. Create a new category with the saved value (or append to an existing category — User-kind values are mutable)
   await tx.wildcardSetCategory.create({
     data: {
       wildcardSetId: userSet.id,
@@ -114,34 +107,25 @@ await prisma.$transaction(async (tx) => {
 |----|----|----|----|----|----|----|
 | 700 | 30 | character | `["blonde hair, green tunic, pointed ears, pointed cap, determined expression"]` | 1 | Pending | 0 |
 
-### `UserWildcardSet` — new row 490 (Alice's auto-pointer at her own set)
+The user's User-kind set is implicitly loaded — the form discovers it on mount and treats it as always present in the resolver's set pool. No row written to a join table. Alice's form has no other localStorage `wildcardSetIds` yet.
 
-| id | userId | wildcardSetId | nickname | isActive | sortOrder | addedAt |
-|----|----|----|----|----|----|----|
-| 490 | 1001 | 30 | null | true | 0 | 2026-04-24 12:00:00 |
-
-If Alice later saves more `character` values, the service creates new categories (e.g. `character-2`) rather than mutating row 700 — categories are immutable.
+If Alice later saves more `character` values, the service appends to row 700's `values` array (User-kind categories are mutable). Each mutation triggers a per-category re-audit.
 
 After audit (next stage of background work), category 700 transitions to `Clean` with an `nsfwLevel` set, and `WildcardSet 30` rolls up to `Clean`.
 
 ---
 
-## Stage 3 — Alice subscribes to fullFeatureFantasy v3.0 (first-import)
+## Stage 3 — Alice loads fullFeatureFantasy v3.0 (first-import)
 
-Alice clicks "Add set" → fullFeatureFantasy v3.0. Nobody has imported this version before, so the service does the full extraction.
+Alice clicks "create" on the fullFeatureFantasy v3.0 wildcard model page. Nobody has imported this version before, so the service does the full extraction. The returned `WildcardSet.id` goes into her form's localStorage `wildcardSetIds`.
 
 ```ts
-await prisma.$transaction(async (tx) => {
+const setId = await prisma.$transaction(async (tx) => {
   const existing = await tx.wildcardSet.findUnique({
     where: { modelVersionId: 458231 }
   });
 
-  if (existing) {
-    await tx.userWildcardSet.create({
-      data: { userId: 1001, wildcardSetId: existing.id, isActive: true }
-    });
-    return;
-  }
+  if (existing) return existing.id;   // No DB write — client adds to localStorage
 
   const files = await extractWildcardZip(458231);
   const totalValueCount = files.reduce((n, f) => n + f.lines.length, 0);
@@ -163,7 +147,7 @@ await prisma.$transaction(async (tx) => {
       data: {
         wildcardSetId: set.id,
         name: f.name.replace(/\.txt$/, ''),
-        values: f.lines,                  // JSONB string[]
+        values: f.lines,                  // text[]
         valueCount: f.lines.length,
         displayOrder: i,
         auditStatus: 'Pending',
@@ -172,11 +156,9 @@ await prisma.$transaction(async (tx) => {
     });
   }
 
-  await tx.userWildcardSet.create({
-    data: { userId: 1001, wildcardSetId: set.id, isActive: true }
-  });
+  return set.id;
 });
-// Post-commit: enqueue audit job for set.id
+// Post-commit: enqueue audit job for setId; client updates localStorage wildcardSetIds.
 ```
 
 ### `WildcardSet` — new row 17 (System-kind)
@@ -187,7 +169,7 @@ await prisma.$transaction(async (tx) => {
 
 ### `WildcardSetCategory` — 59 new rows (representative sample)
 
-Each row's `values` is a JSONB array of strings (one per non-empty line in the source `.txt`). `auditStatus` is `Pending` until the audit job runs.
+Each row's `values` is a Postgres `text[]` (one entry per non-empty line in the source `.txt`). `auditStatus` is `Pending` until the audit job runs.
 
 | id | wildcardSetId | name | values (preview) | valueCount | auditStatus | nsfwLevel |
 |----|----|----|----|----|----|----|
@@ -202,18 +184,14 @@ Each row's `values` is a JSONB array of strings (one per non-empty line in the s
 
 Observations:
 
-- Most categories contain a single line with internal Dynamic Prompts syntax (alternation/weights) → 1-element JSONB array. Resolver expands the syntax at gen time.
+- Most categories contain a single line with internal Dynamic Prompts syntax (alternation/weights) → 1-element `text[]`. Resolver expands the syntax at gen time.
 - `elemental_types.txt` is the simple-list outlier — 16 distinct values.
 - Source-file `__character_f__` style refs are normalized to `#character_f` at import. The stored values shown above already reflect this. Resolution at generation time stays within set 17's scope.
 - `color.txt` is malformed at source (no delimiters); audit won't reject this since it's not a policy violation, but it will produce a bad single value.
 
-### `UserWildcardSet` — Alice's new pointer at fullFeatureFantasy
+### Alice's localStorage update
 
-| id | userId | wildcardSetId | nickname | isActive | sortOrder | addedAt |
-|----|----|----|----|----|----|----|
-| 491 | 1001 | 17 | null | true | 1 | 2026-04-24 12:33:08 |
-
-Alice now has two active sets: her own User-kind set (id 30) and the new System-kind set (id 17).
+The form's localStorage now reads `wildcardSetIds: [17]` (the new System-kind set). Alice's User-kind set 30 is implicitly loaded by the form on mount, so the resolver sees the union `{30, 17}` for this submission. No DB write was needed to track this.
 
 ---
 
@@ -255,14 +233,14 @@ with #expressions expression in #weather_time weather,
 featuring #elemental_types magic — dramatic composition, 8k
 ```
 
-She doesn't make explicit selections — defaults apply. Active sets contributing to her prompt:
+She doesn't make explicit selections — defaults apply. Loaded sets contributing to her prompt:
 
-- **Set 30** (User-kind, "My snippets") — has category `character` (Alice's saved Zelda value)
-- **Set 17** (System-kind, fullFeatureFantasy v3.0) — has all the referenced categories
+- **Set 30** (User-kind, "My snippets") — implicitly loaded; has category `character` (Alice's saved Zelda value)
+- **Set 17** (System-kind, fullFeatureFantasy v3.0) — loaded via "create" button; has all the referenced categories
 
 ### Resolver query for `#character`
 
-Single unified query (no separate path for personal snippets):
+Single unified query (no separate path for personal snippets); authorization happens inline via `kind`/`ownerUserId`:
 
 ```sql
 SELECT wsc.id           AS "categoryId",
@@ -276,11 +254,10 @@ SELECT wsc.id           AS "categoryId",
        ws."versionName",
        ws.name          AS "userSetName",
        ws."ownerUserId"
-FROM "UserWildcardSet" uws
-  JOIN "WildcardSet" ws           ON uws."wildcardSetId" = ws.id
+FROM "WildcardSet" ws
   JOIN "WildcardSetCategory" wsc  ON wsc."wildcardSetId" = ws.id
-WHERE uws."userId" = 1001
-  AND uws."isActive" = true
+WHERE ws.id = ANY(ARRAY[30, 17])         -- the wildcardSetIds from submission
+  AND (ws.kind = 'System' OR ws."ownerUserId" = 1001)   -- inline authorization
   AND ws."isInvalidated" = false
   AND wsc.name = 'character'
   AND wsc."auditStatus" = 'Clean'
@@ -308,106 +285,119 @@ Cartesian: `3 × 1 × 1 × 1 × 16 = 48 combinations` → over the 10-cap → se
 
 ### Submission payload (client → server)
 
-```jsonc
-{
-  "promptDoc": { /* Tiptap doc JSON */ },
-  "promptTemplate": "A #character wearing armor, wielding #weapons_melee, with #expressions expression in #weather_time weather, featuring #elemental_types magic — dramatic composition, 8k",
-  "snippets": {
-    "references": [
-      { "category": "character",        "kind": "batch", "selections": [] },
-      { "category": "weapons_melee",    "kind": "batch", "selections": [] },
-      { "category": "expressions",      "kind": "batch", "selections": [] },
-      { "category": "weather_time",     "kind": "batch", "selections": [] },
-      { "category": "elemental_types",  "kind": "batch", "selections": [] }
-    ]
-  },
-  "input": { "seed": 847291, "quantity": 4 /* ... other graph params */ }
-}
-```
-
-`selections: []` means "use full pool" — the default.
-
-### Workflow step metadata (one of the 10 sampled steps)
+Alice has nothing in her negative prompt for this submission, so `negativePrompt` is an empty array. The `snippets` data is a node inside the generation-graph (carried by `input` alongside prompt, negativePrompt, resources, etc.), not a sibling of `input`. `mode` and `batchCount` default to `"random"` and `1` and can be omitted; she's left them at the defaults:
 
 ```jsonc
 {
-  "snippetReferences": [
-    {
-      "category": "character",
-      "referencePosition": 0,
-      "resolvedValues": [
-        { "wildcardSetId": 30, "categoryId": 700, "valueIndex": 0, "value": "blonde hair, green tunic, pointed ears..." }
-      ]
-    },
-    {
-      "category": "weapons_melee",
-      "referencePosition": 1,
-      "resolvedValues": [
-        { "wildcardSetId": 17, "categoryId": 654, "valueIndex": 0, "value": "{3.0::sword|3.0::dagger|..." }
-      ]
-    },
-    {
-      "category": "expressions",
-      "referencePosition": 2,
-      "resolvedValues": [
-        { "wildcardSetId": 17, "categoryId": 635, "valueIndex": 0, "value": "{3.0::serious|3.0::determined|..." }
-      ]
-    },
-    {
-      "category": "weather_time",
-      "referencePosition": 3,
-      "resolvedValues": [
-        { "wildcardSetId": 17, "categoryId": 656, "valueIndex": 0, "value": "{1-2$$3.0::day|3.0::night|..." }
-      ]
-    },
-    {
-      "category": "elemental_types",
-      "referencePosition": 4,
-      "resolvedValues": [
-        { "wildcardSetId": 17, "categoryId": 631, "valueIndex": 5, "value": "lightning" }
-      ]
+  "input": {
+    "seed": 847291,
+    "quantity": 4,
+    "prompt": "A #character wearing armor, wielding #weapons_melee, with #expressions expression in #weather_time weather, featuring #elemental_types magic — dramatic composition, 8k",
+    "negativePrompt": "low quality, blurry",
+    /* ... other graph nodes (resources, sampler, etc.) ... */
+    "snippets": {
+      "wildcardSetIds": [30, 17],
+      // mode and batchCount omitted — defaults to "random" / 1
+      "targets": {
+        "prompt": [
+          { "category": "character",        "selections": [] },
+          { "category": "weapons_melee",    "selections": [] },
+          { "category": "expressions",      "selections": [] },
+          { "category": "weather_time",     "selections": [] },
+          { "category": "elemental_types",  "selections": [] }
+        ],
+        "negativePrompt": []
+      }
     }
-  ],
-  "samplingSeed": 847291,
-  "cartesianTotal": 48,
-  "sampledTo": 10
+  },
+  /* ... existing top-level fields like civitaiTip, tags, remixOfId, buzzType ... */
 }
 ```
 
-Source identifier `(wildcardSetId, categoryId, valueIndex)` is uniform across User-kind and System-kind. The Dynamic Prompts expansion (`{3.0::sword|...}` → `sword`) happens later in the generation pipeline, downstream of this metadata.
+`selections: []` means "use full pool" — the default. On the client, the `snippets` object is the serialized form of a dedicated node in the generation-graph; each editor node (prompt, negativePrompt) has a dependency on the snippets node and re-renders its chips by reading `input.snippets.targets[<ownNodeName>]`.
+
+### Workflow metadata (one record for the whole batch)
+
+```jsonc
+{
+  // workflow.metadata
+  "params": {
+    "prompt": "A #character wearing armor, ...",     // existing — graph form data
+    "negativePrompt": "low quality, blurry",         // existing
+    "seed": 847291,                                  // existing
+    /* ... other graph form fields ... */
+    "snippets": {
+      "wildcardSetIds": [30, 17],                    // Alice's User-kind set + fullFeatureFantasy load
+      // mode and batchCount omitted — defaults: "random" / 1
+      "targets": {
+        "prompt": [
+          { "category": "character",       "selections": [] },   // [] = full pool default
+          { "category": "weapons_melee",   "selections": [] },
+          { "category": "expressions",     "selections": [] },
+          { "category": "weather_time",    "selections": [] },
+          { "category": "elemental_types", "selections": [] }
+        ],
+        "negativePrompt": []
+      }
+    }
+  },
+  "tags": [..., "wildcards"]              // workflow.tags gets the 'wildcards' marker
+}
+```
+
+`snippets` lives at `workflow.metadata.params.snippets` — same place as the prompt, negativePrompt, seed, and other graph form data. `wildcardSetIds` snapshots which sets contributed to the default pools. Without it, re-resolving this submission later would consult Alice's *current* loaded sets, which may have changed.
+
+With defaults (`mode: "random"`, `batchCount: 1`), Alice's submission produces a single step with one random draw per reference from the merged pools. Had she switched `mode` to `"batch"` and bumped `batchCount` to `10`, the resolver would compute the cartesian total (3 × 1 × 1 × 1 × 16 = 48) and sample 10 of the 48 combinations using the form's seed.
+
+Alice didn't make explicit picks (defaults applied) so every `selections` array is empty. Had she explicitly included, say, just her saved Zelda value for `#character`, that entry's `selections` would read `[{ "categoryId": 700, "in": ["blonde hair, green tunic, ..."], "ex": [] }]`. Conversely, if she wanted to *exclude* `#character_f` from the fullFeatureFantasy pool while keeping the rest of the default behavior, she would record `[{ "categoryId": 601, "in": [], "ex": ["#character_f"] }]`. `categoryId` is the canonical source pointer (the parent `wildcardSetId` is reachable through the FK on `WildcardSetCategory`).
+
+The `wildcards` tag on `workflow.tags` lets analytics/admin queries filter for snippet-using submissions without parsing the metadata blob.
+
+### Step metadata (per image, one of the 10 sampled steps)
+
+Vanilla — looks identical to a no-snippet step. The snippet substitution has already happened server-side.
+
+```jsonc
+{
+  "params": {
+    "prompt": "A blonde hair, green tunic, pointed ears, pointed cap, determined expression wearing armor, wielding sword, with serious expression in day weather, featuring lightning magic — dramatic composition, 8k",
+    "negativePrompt": "..."
+  }
+}
+```
+
+The orchestrator processes this step as it would any other — no awareness of where the prompt came from.
 
 ---
 
 ## Stage 6 — Alice saves a preset
 
-`GenerationPreset.values` gains a key recording active sets:
+`GenerationPreset.values` gains a key recording loaded sets:
 
 ```jsonc
 {
   "prompt": "A #character wearing armor, ...",
   "seed": -1,
   "quantity": 4,
-  "activeWildcardSetIds": [490, 491]
+  "wildcardSetIds": [30, 17]
 }
 ```
 
 Loading the preset:
 
-1. Set all `UserWildcardSet WHERE userId = 1001` to `isActive = false`.
-2. Set rows with `id IN (490, 491)` to `isActive = true`.
-3. If any IDs no longer exist, surface a warning + "re-add fullFeatureFantasy v3.0" shortcut.
+1. Form's snippets node hydrates `wildcardSetIds: [30, 17]` from the preset values into its localStorage state.
+2. Form fetches `getWildcardSets({ ids: [30, 17] })` to validate authorization (System sets are public; User sets must match the requester) and get set details for the picker.
+3. Any IDs not authorized (e.g., a User-kind set that's been deleted, or a System-kind set since invalidated) are silently dropped from the form state and surfaced as a warning chip in the picker.
+
+Crucially, no DB rows are mutated by preset load — only form state changes.
 
 ---
 
-## Stage 7 — Bob subscribes to fullFeatureFantasy
+## Stage 7 — Bob loads fullFeatureFantasy
 
-Bob clicks "Add set" → fullFeatureFantasy v3.0. The transaction finds existing `WildcardSet 17` and just adds a pointer:
+Bob clicks "create" on the fullFeatureFantasy v3.0 wildcard model page. The lookup finds existing `WildcardSet 17` and returns its ID — no DB write needed. Bob's form's localStorage moves from `wildcardSetIds: [3, 12, 16]` to `[3, 12, 16, 17]`.
 
-| id | userId | wildcardSetId | nickname | isActive | sortOrder | addedAt |
-|----|----|----|----|----|----|----|
-| 492 | 2042 | 17 | "FFv3" | true | 3 | 2026-04-25 08:17:33 |
-
-Zero re-extraction, zero re-audit. Content sharing pays off.
+Zero re-extraction, zero re-audit, zero new rows. Content sharing pays off.
 
 ---
 
@@ -429,7 +419,7 @@ SET "isInvalidated" = true,
 WHERE id = 17;
 ```
 
-Resolver filter `ws."isInvalidated" = false` excludes the set immediately. Alice and Bob keep their pointers; the picker shows a warning badge.
+Resolver filter `ws."isInvalidated" = false` excludes the set immediately. Alice and Bob still have ID 17 in their localStorage `wildcardSetIds`; the picker shows a warning badge until they remove it.
 
 ### Audit rule version bump
 
@@ -449,9 +439,8 @@ DELETE FROM "WildcardSet" WHERE id = 30 AND "ownerUserId" = 1001;
 Cascades through:
 
 - `WildcardSetCategory` (Alice's `character` category, id 700) — deleted
-- `UserWildcardSet` (Alice's pointer, id 490) — deleted
 
-Other users are unaffected. Generation history still references the deleted IDs in step metadata; consumers should handle missing references gracefully ("snippet no longer available").
+Other users are unaffected. Workflow metadata for past submissions still references the deleted set ID; consumers should handle missing references gracefully ("snippet source no longer available"). Step prompts already contain the substituted text, so they continue to render fine.
 
 ---
 
@@ -461,17 +450,16 @@ Other users are unaffected. Generation history still references the deleted IDs 
 |----|----|
 | `WildcardSet` | 5 (3 pre-existing System + 1 new System + 1 Alice User-kind) |
 | `WildcardSetCategory` | ~104 (44 pre-existing + 59 fullFeatureFantasy + 1 Alice's "character") |
-| `UserWildcardSet` | 6 (3 Bob existing + 1 Alice's own + 1 Alice subscription + 1 Bob subscription) |
 
-At projected year-one scale (§7 of schema spec): ~5k System sets, ~100k–500k User sets, ~500k–1M categories, ~500k–2M activation pointers.
+At projected year-one scale (§7 of schema spec): ~5k System sets, ~100k–500k User sets, ~500k–1M categories. No join table.
 
 ---
 
 ## Takeaways for DB review
 
 1. **Single content table for both kinds.** System-kind and User-kind sets share `WildcardSet` and `WildcardSetCategory` schemas. The `kind` discriminator + nullable `(modelVersionId, ownerUserId)` distinguishes them. CHECK constraint enforces the invariant.
-2. **Values inline as JSONB string arrays.** `WildcardSetCategory.values` is a JSONB array of plain strings. No separate value table. Per-category audit; the category is the atomic unit of allow/deny.
-3. **Resolver is a single query** across `UserWildcardSet → WildcardSet → WildcardSetCategory`. No app-side merging of separate sources.
+2. **Values inline as Postgres `text[]`.** `WildcardSetCategory.values` is a `text[]` column. No separate value table, no JSONB. Per-category audit; the category is the atomic unit of allow/deny.
+3. **Resolver is a single query** across `WildcardSet → WildcardSetCategory`. Authorization is inline (`kind = 'System' OR ownerUserId = ?`). No DB join table; loaded-set tracking lives in the form's localStorage and is snapshotted into workflow metadata.
 4. **Most write pressure is at System-kind first-import** (one bulk transaction per imported model version). User-kind writes are infrequent (one row per user save). Steady-state writes negligible.
-5. **Step metadata uses uniform source identifier** `(wildcardSetId, categoryId, valueIndex)` for both kinds, making historical generation reproducibility traceable without JOINs.
-6. **Categories are immutable post-create** — both kinds. User snippet workflow is "save creates a new category"; iterative growth means new categories (e.g. `character-2`) rather than mutating existing ones.
+5. **Snippet metadata lives on the workflow, not the step.** One `snippetSelections` record per submission captures the user's picks. Each step's metadata is vanilla — just the substituted prompt — so the orchestrator processes snippet-driven steps identically to ordinary steps. Reproduction is anchored on `(seed, prompt template, snippetSelections)`.
+6. **System-kind categories are immutable; User-kind categories are mutable.** Source-zip-derived content never changes; user-owned categories support full CRUD on values with each mutation triggering a per-category re-audit. Selections are identified by `value` text (stable under reorder, breaks only on edit/delete — handled gracefully via picker orphan state).

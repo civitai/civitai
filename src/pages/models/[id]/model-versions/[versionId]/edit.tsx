@@ -7,6 +7,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
@@ -30,7 +31,13 @@ export default function ModelVersionEditPage() {
   if (!modelVersion || isError || (!isOwner && !isModerator)) return <NotFound />;
 
   const handleClose = () => {
-    router.push(`/models/${modelId}?modelVersionId=${modelVersionId}`);
+    router.push(
+      getModelUrl({
+        modelId,
+        modelName: modelVersion?.model?.name,
+        modelVersionId,
+      })
+    );
   };
 
   return (
@@ -41,7 +48,15 @@ export default function ModelVersionEditPage() {
             "Civitai is currently in read-only mode and you won't be able to edit your model version. Please try again later."
           }
         />
-        <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
+        <Link
+          legacyBehavior
+          href={getModelUrl({
+            modelId: modelVersion.model.id,
+            modelName: modelVersion.model.name,
+          })}
+          passHref
+          shallow
+        >
           <Anchor size="xs">
             <Group gap={4}>
               <IconArrowLeft size={18} strokeWidth={1.5} />

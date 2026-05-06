@@ -37,7 +37,7 @@ import { useReviewedModelIds } from '~/hooks/useReviewedModelIds';
 import { constants } from '~/server/common/constants';
 import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { aDayAgo } from '~/utils/date-helpers';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 
 function ModFlagBadge({ labels }: { labels: string[] }) {
   return (
@@ -95,10 +95,15 @@ function ModelCardContent({ data }: Props) {
   );
 
   const { useModelVersionRedirect } = useModelCardContext();
-  const href = useMemo(() => {
-    const base = `/models/${data.id}/${slugit(data.name)}`;
-    return useModelVersionRedirect ? `${base}?modelVersionId=${data.version.id}` : base;
-  }, [data.id, data.name, data.version.id, useModelVersionRedirect]);
+  const href = useMemo(
+    () =>
+      getModelUrl({
+        modelId: data.id,
+        modelName: data.name,
+        modelVersionId: useModelVersionRedirect ? data.version.id : null,
+      }),
+    [data.id, data.name, data.version.id, useModelVersionRedirect]
+  );
 
   return (
     <AspectRatioImageCard

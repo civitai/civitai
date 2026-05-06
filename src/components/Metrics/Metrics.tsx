@@ -1,6 +1,5 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { MetricEntityType, MetricType } from '~/components/Signals/metric-signals.types';
-import { signalDebug } from '~/components/Signals/signalDebug';
 import { useLiveMetrics } from './useLiveMetrics';
 import { useMetricSubscription } from './useMetricSubscription';
 
@@ -46,14 +45,6 @@ export function Metrics<T extends MetricsInput>({
   useLive = true,
   children,
 }: MetricsProps<T>) {
-  const renders = useRef(0);
-  renders.current += 1;
-  signalDebug('Metrics render', {
-    entityType,
-    entityId,
-    useLive,
-    renderCount: renders.current,
-  });
   if (!useLive) return <>{children(initial)}</>;
   return (
     <MetricsLive entityType={entityType} entityId={entityId} initial={initial}>
@@ -73,18 +64,7 @@ function MetricsLive<T extends MetricsInput>({
   initial: T;
   children: (metrics: T) => ReactNode;
 }) {
-  const renders = useRef(0);
-  renders.current += 1;
-  useEffect(() => {
-    signalDebug('MetricsLive mount', { entityType, entityId });
-    return () => signalDebug('MetricsLive unmount', { entityType, entityId });
-  }, [entityType, entityId]);
   useMetricSubscription(entityType, entityId);
   const metrics = useLiveMetrics(entityType, entityId, initial);
-  signalDebug('MetricsLive render', {
-    entityType,
-    entityId,
-    renderCount: renders.current,
-  });
   return <>{children(metrics)}</>;
 }

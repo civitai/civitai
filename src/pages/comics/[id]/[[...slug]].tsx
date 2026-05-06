@@ -13,10 +13,13 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { useMediaQuery } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowLeft,
   IconBan,
+  IconFileTypePdf,
+  IconFileZip,
   IconBell,
   IconBellOff,
   IconBolt,
@@ -25,10 +28,13 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconColumns,
+  IconDotsVertical,
   IconFlag,
   IconLayoutList,
   IconLock,
   IconLink,
+  IconMessage,
+  IconMessageOff,
   IconPencil,
   IconPhoto,
   IconPhotoOff,
@@ -48,7 +54,11 @@ import {
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { ChapterComments } from '~/components/Comics/ChapterComments';
-import { ChapterExportButton, ChapterDownloadButton } from '~/components/Comics/ComicExportButton';
+import {
+  ChapterExportButton,
+  ChapterDownloadButton,
+  useChapterExport,
+} from '~/components/Comics/ComicExportButton';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { useChapterPermission } from '~/components/Comics/comic-chapter.utils';
@@ -59,6 +69,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -701,7 +712,12 @@ function ComicOverview({ project }: { project: Project }) {
 
 // ─── Chapter Reader ──────────────────────────────────────────────────────────
 
-const READER_MODE_KEY = 'civitai-comic-reader-mode';
+// Versioned key — the previous key may hold 'scroll' or a removed mode.
+// Bumping the suffix lets new readers land on the rebuilt 'pages' mode
+// (fill-viewport, edge nav, floating counter); users who pick 'scroll' or
+// 'pages' under the new key keep their pref.
+const READER_MODE_KEY = 'civitai-comic-reader-mode-v3';
+const READER_COMMENTS_KEY = 'civitai-comic-reader-comments';
 type ReaderMode = 'scroll' | 'pages';
 
 function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbPos: number }) {
@@ -722,11 +738,18 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   });
   const lastScrollTop = useRef(0);
 
-  // Reader mode: scroll (default) or pages (bifold page-flip)
+  // Reader mode: pages (default — bifold 2-panel spread filling the
+  // viewport, edge-anchored nav) or scroll (long-form vertical scroll).
+  // On mobile we force scroll regardless of the saved preference: a 2-panel
+  // spread on a phone-sized screen renders unreadably small and the
+  // edge-anchored arrows fight the OS gesture areas.
+  const isMobile = useMediaQuery('(max-width: 768px)');
   const [readerMode, setReaderMode] = useState<ReaderMode>(() => {
-    if (typeof window === 'undefined') return 'scroll';
-    return (localStorage.getItem(READER_MODE_KEY) as ReaderMode) || 'scroll';
+    if (typeof window === 'undefined') return 'pages';
+    const saved = localStorage.getItem(READER_MODE_KEY) as ReaderMode | null;
+    return saved && ['scroll', 'pages'].includes(saved) ? saved : 'pages';
   });
+  const effectiveReaderMode: ReaderMode = isMobile ? 'scroll' : readerMode;
   const [pageIndex, setPageIndex] = useState(0);
   const PANELS_PER_PAGE = 2;
   const handleModeChange = (mode: string) => {
@@ -736,10 +759,35 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     localStorage.setItem(READER_MODE_KEY, m);
   };
 
+  // Comments visibility — togglable from the header. Persisted so the user's
+  // choice survives chapter navigation and refreshes.
+  const [commentsVisible, setCommentsVisible] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return true;
+    return localStorage.getItem(READER_COMMENTS_KEY) !== 'false';
+  });
+  const toggleComments = useCallback(() => {
+    setCommentsVisible((prev) => {
+      const next = !prev;
+      localStorage.setItem(READER_COMMENTS_KEY, String(next));
+      return next;
+    });
+  }, []);
+
+  // Chapter export — used both by the desktop inline icon and by the
+  // mobile kebab menu's "Download" items so the format choice gets
+  // proper text labels there instead of an iconbutton-in-menu hack.
+  const exportPanels = activeChapter?.panels ?? [];
+  const exportChapterName = activeChapter?.name ?? '';
+  const { exporting: isExporting, exportCBZ, exportPDF } = useChapterExport({
+    projectName: project.name,
+    chapterName: exportChapterName,
+    panels: exportPanels,
+  });
+
   // Pages mode: compute page spreads (pairs of panels)
   const totalPages = Math.ceil(panels.length / PANELS_PER_PAGE);
   const visiblePanels =
-    readerMode === 'pages'
+    effectiveReaderMode === 'pages'
       ? panels.slice(pageIndex * PANELS_PER_PAGE, (pageIndex + 1) * PANELS_PER_PAGE)
       : panels;
   const hasPagePrev = pageIndex > 0;
@@ -759,6 +807,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       goToChapter(safeIdx - 1, lastPage);
     }
   };
+
 
   // Connection key for ImageGuard2 — all panels in a chapter share the same key
   const chapterConnectId = `${project.id}-${activeChapter?.position ?? 0}`;
@@ -807,7 +856,13 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const queryUtils = trpc.useUtils();
   const purchaseAccessMutation = trpc.comics.purchaseChapterAccess.useMutation({
     onSuccess: () => {
-      queryUtils.comics.getPublicProjectForReader.invalidate({ id: project.id });
+      // Refetch the project to pick up any chapter-level changes...
+      void queryUtils.comics.getPublicProjectForReader.invalidate({ id: project.id });
+      // ...AND the EntityAccess record that `useChapterPermission` reads
+      // to compute `canRead`. Without this, the user pays successfully but
+      // the paywall stays up because `getEntityAccess` returns the cached
+      // pre-purchase state until the user navigates away.
+      void queryUtils.common.getEntityAccess.invalidate();
     },
   });
 
@@ -824,7 +879,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-      if (readerMode === 'pages') {
+      if (effectiveReaderMode === 'pages') {
         // In pages mode, arrow keys navigate pages (not chapters)
         if (e.key === 'ArrowLeft') goPage(-1);
         else if (e.key === 'ArrowRight') goPage(1);
@@ -835,11 +890,14 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasPrev, hasNext, safeIdx, readerMode, pageIndex, totalPages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasPrev, hasNext, safeIdx, effectiveReaderMode, pageIndex, totalPages]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Hide reader header on scroll down, show on scroll up (scroll mode only)
+  // Hide reader header on scroll down, show on scroll up (scroll mode only).
+  // Mobile bails out — the header is non-sticky there (`position: static`)
+  // so it scrolls away naturally; running translate-Y on top of that just
+  // wastes work.
   const handleScroll = useCallback(() => {
-    if (!headerRef.current || readerMode === 'pages') return;
+    if (!headerRef.current || effectiveReaderMode === 'pages' || isMobile) return;
     const scrollTop = window.scrollY;
     if (scrollTop > lastScrollTop.current && scrollTop > 80) {
       headerRef.current.style.transform = 'translateY(-100%)';
@@ -847,7 +905,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       headerRef.current.style.transform = 'translateY(0)';
     }
     lastScrollTop.current = scrollTop;
-  }, [readerMode]);
+  }, [effectiveReaderMode, isMobile]);
 
   useEffect(() => {
     window.addEventListener('scroll', handleScroll, { passive: true });
@@ -856,10 +914,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
 
   // Ensure header is visible in pages mode
   useEffect(() => {
-    if (readerMode === 'pages' && headerRef.current) {
+    if (effectiveReaderMode === 'pages' && headerRef.current) {
       headerRef.current.style.transform = 'translateY(0)';
     }
-  }, [readerMode]);
+  }, [effectiveReaderMode]);
 
   // Render a single panel with ImageGuard2 support
   const renderPanel = (panel: (typeof panels)[number]) => {
@@ -944,31 +1002,6 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     </div>
   );
 
-  // Page navigation for bifold mode
-  const PageNav = () => (
-    <div className={styles.readerBottomNav}>
-      <button
-        className={styles.readerNavBtn}
-        disabled={!hasPagePrev && !hasPrev}
-        onClick={() => goPage(-1)}
-      >
-        <IconChevronLeft size={16} />
-        {hasPagePrev ? 'Previous Page' : 'Previous Chapter'}
-      </button>
-      <span className="text-sm text-gray-400">
-        {pageIndex + 1} / {totalPages}
-      </span>
-      <button
-        className={styles.readerNavBtn}
-        disabled={!hasPageNext && !hasNext}
-        onClick={() => goPage(1)}
-      >
-        {hasPageNext ? 'Next Page' : 'Next Chapter'}
-        <IconChevronRight size={16} />
-      </button>
-    </div>
-  );
-
   return (
     <>
       <Meta title={`${activeChapter?.name ?? 'Chapter'} - ${project.name} - Civitai Comics`} deIndex={true} />
@@ -990,6 +1023,29 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                 >
                   <IconArrowLeft size={20} />
                 </ActionIcon>
+                {/* Avatar only — username text rides below the title via */}
+                {/* the existing `by {username}` link so we don't duplicate. */}
+                {project.user.profilePicture && (
+                  <Link
+                    href={`/user/${project.user.username}`}
+                    aria-label={`Visit ${project.user.username}'s profile`}
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: '50%',
+                      overflow: 'hidden',
+                      flexShrink: 0,
+                      display: 'inline-block',
+                    }}
+                  >
+                    <UserAvatarProfilePicture
+                      id={project.user.id}
+                      username={project.user.username}
+                      image={project.user.profilePicture}
+                      width={64}
+                    />
+                  </Link>
+                )}
                 <div className={styles.readerTitleGroup}>
                   <p className={styles.readerTitle}>{project.name}</p>
                   {project.user.username && (
@@ -1004,123 +1060,249 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
               </div>
 
               <div className={styles.readerChapterNav}>
-                <SegmentedControl
-                  size="xs"
-                  aria-label="Reading mode"
-                  value={readerMode}
-                  onChange={handleModeChange}
-                  data={[
-                    {
-                      value: 'scroll',
-                      label: (
-                        <Tooltip label="Scroll view">
-                          <span role="img" aria-label="Scroll view">
-                            <IconLayoutList size={16} />
-                          </span>
-                        </Tooltip>
-                      ),
-                    },
-                    {
-                      value: 'pages',
-                      label: (
-                        <Tooltip label="Page view">
-                          <span role="img" aria-label="Page view">
-                            <IconColumns size={16} />
-                          </span>
-                        </Tooltip>
-                      ),
-                    },
-                  ]}
-                />
-                <ActionIcon
-                  variant="subtle"
-                  disabled={!hasPrev}
-                  onClick={() => goToChapter(safeIdx - 1)}
-                >
-                  <IconChevronLeft size={18} />
-                </ActionIcon>
+                {/* Mode toggle hidden on mobile — pages mode is forced off */}
+                {/* there since a 2-panel spread is unreadable on a phone, */}
+                {/* so there's nothing meaningful to switch to. */}
+                {!isMobile && (
+                  <SegmentedControl
+                    size="xs"
+                    aria-label="Reading mode"
+                    value={readerMode}
+                    onChange={handleModeChange}
+                    data={[
+                      {
+                        value: 'pages',
+                        label: (
+                          <Tooltip label="Page view">
+                            <span role="img" aria-label="Page view">
+                              <IconColumns size={16} />
+                            </span>
+                          </Tooltip>
+                        ),
+                      },
+                      {
+                        value: 'scroll',
+                        label: (
+                          <Tooltip label="Scroll view">
+                            <span role="img" aria-label="Scroll view">
+                              <IconLayoutList size={16} />
+                            </span>
+                          </Tooltip>
+                        ),
+                      },
+                    ]}
+                  />
+                )}
+                <Tooltip label={commentsVisible ? 'Hide comments' : 'Show comments'}>
+                  <ActionIcon
+                    variant="subtle"
+                    color={commentsVisible ? 'gray' : 'yellow'}
+                    onClick={toggleComments}
+                    aria-label={commentsVisible ? 'Hide comments' : 'Show comments'}
+                  >
+                    {commentsVisible ? (
+                      <IconMessage size={16} />
+                    ) : (
+                      <IconMessageOff size={16} />
+                    )}
+                  </ActionIcon>
+                </Tooltip>
+                {/* Chapter prev/next chevrons are redundant with the Select */}
+                {/* and crowd the mobile header — desktop-only. */}
+                {!isMobile && (
+                  <ActionIcon
+                    variant="subtle"
+                    disabled={!hasPrev}
+                    onClick={() => goToChapter(safeIdx - 1)}
+                  >
+                    <IconChevronLeft size={18} />
+                  </ActionIcon>
+                )}
                 <Select
                   size="xs"
                   data={chapterOptions}
                   value={String(safeIdx)}
                   onChange={(v) => v !== null && goToChapter(Number(v))}
-                  styles={{ input: { width: 160 } }}
+                  styles={{ input: { width: isMobile ? 130 : 160 } }}
                   allowDeselect={false}
                 />
-                <ActionIcon
-                  variant="subtle"
-                  disabled={!hasNext}
-                  onClick={() => goToChapter(safeIdx + 1)}
-                >
-                  <IconChevronRight size={18} />
-                </ActionIcon>
-                <CopyButton value={typeof window !== 'undefined' ? window.location.href : ''}>
-                  {({ copied, copy }) => (
-                    <Tooltip label={copied ? 'Copied!' : 'Copy link'}>
-                      <ActionIcon variant="subtle" color={copied ? 'green' : 'gray'} onClick={copy}>
-                        {copied ? <IconCheck size={16} /> : <IconLink size={16} />}
-                      </ActionIcon>
-                    </Tooltip>
-                  )}
-                </CopyButton>
-                {activeChapter &&
-                  canDownload &&
-                  (projectMeta?.allowDownload || currentUser?.id === project.user.id || currentUser?.isModerator) && (
-                    <ChapterExportButton
-                      projectName={project.name}
-                      chapterName={activeChapter.name}
-                      panels={activeChapter.panels}
-                    />
-                  )}
-                {currentUser && currentUser.id !== project.user.id && (
-                  <LoginRedirect reason="report-comic">
-                    <Tooltip label="Report comic">
-                      <ActionIcon
-                        variant="subtle"
-                        color="gray"
-                        onClick={() =>
-                          openReportModal({
-                            entityType: ReportEntity.ComicProject,
-                            entityId: project.id,
-                          })
-                        }
-                      >
-                        <IconFlag size={16} />
-                      </ActionIcon>
-                    </Tooltip>
-                  </LoginRedirect>
+                {!isMobile && (
+                  <ActionIcon
+                    variant="subtle"
+                    disabled={!hasNext}
+                    onClick={() => goToChapter(safeIdx + 1)}
+                  >
+                    <IconChevronRight size={18} />
+                  </ActionIcon>
                 )}
-                {isMod && activeChapter?.status === ComicChapterStatus.Published && (
+                {/* Desktop: secondary actions inline. */}
+                {!isMobile && (
+                  <>
+                    <CopyButton
+                      value={typeof window !== 'undefined' ? window.location.href : ''}
+                    >
+                      {({ copied, copy }) => (
+                        <Tooltip label={copied ? 'Copied!' : 'Copy link'}>
+                          <ActionIcon
+                            variant="subtle"
+                            color={copied ? 'green' : 'gray'}
+                            onClick={copy}
+                          >
+                            {copied ? <IconCheck size={16} /> : <IconLink size={16} />}
+                          </ActionIcon>
+                        </Tooltip>
+                      )}
+                    </CopyButton>
+                    {activeChapter &&
+                      canDownload &&
+                      (projectMeta?.allowDownload ||
+                        currentUser?.id === project.user.id ||
+                        currentUser?.isModerator) && (
+                        <ChapterExportButton
+                          projectName={project.name}
+                          chapterName={activeChapter.name}
+                          panels={activeChapter.panels}
+                        />
+                      )}
+                    {currentUser && currentUser.id !== project.user.id && (
+                      <LoginRedirect reason="report-comic">
+                        <Tooltip label="Report comic">
+                          <ActionIcon
+                            variant="subtle"
+                            color="gray"
+                            onClick={() =>
+                              openReportModal({
+                                entityType: ReportEntity.ComicProject,
+                                entityId: project.id,
+                              })
+                            }
+                          >
+                            <IconFlag size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </LoginRedirect>
+                    )}
+                    {isMod && activeChapter?.status === ComicChapterStatus.Published && (
+                      <Menu position="bottom-end" withinPortal>
+                        <Menu.Target>
+                          <Tooltip label="Moderator actions">
+                            <ActionIcon variant="subtle" color="yellow">
+                              <IconBan size={18} />
+                            </ActionIcon>
+                          </Tooltip>
+                        </Menu.Target>
+                        <Menu.Dropdown>
+                          <Menu.Label>Moderator</Menu.Label>
+                          <Menu.Item
+                            leftSection={<IconBan size={14} stroke={1.5} />}
+                            color="red"
+                            onClick={() =>
+                              openConfirmModal({
+                                title: 'Unpublish Chapter',
+                                children:
+                                  'This will unpublish the chapter and revert it to draft. The creator will be notified.',
+                                labels: { confirm: 'Unpublish', cancel: 'Cancel' },
+                                confirmProps: { color: 'red' },
+                                onConfirm: () =>
+                                  modUnpublishMutation.mutate({
+                                    projectId: project.id,
+                                    chapterPosition: activeChapter.position,
+                                  }),
+                              })
+                            }
+                          >
+                            Unpublish Chapter
+                          </Menu.Item>
+                        </Menu.Dropdown>
+                      </Menu>
+                    )}
+                  </>
+                )}
+                {/* Mobile: collapse Copy / Export / Report / Mod into a */}
+                {/* single kebab menu so the header stays a clean two rows */}
+                {/* (title above, Select + comments + kebab below). */}
+                {isMobile && (
                   <Menu position="bottom-end" withinPortal>
                     <Menu.Target>
-                      <Tooltip label="Moderator actions">
-                        <ActionIcon variant="subtle" color="yellow">
-                          <IconBan size={18} />
-                        </ActionIcon>
-                      </Tooltip>
+                      <ActionIcon variant="subtle" color="gray" aria-label="More actions">
+                        <IconDotsVertical size={18} />
+                      </ActionIcon>
                     </Menu.Target>
                     <Menu.Dropdown>
-                      <Menu.Label>Moderator</Menu.Label>
                       <Menu.Item
-                        leftSection={<IconBan size={14} stroke={1.5} />}
-                        color="red"
-                        onClick={() =>
-                          openConfirmModal({
-                            title: 'Unpublish Chapter',
-                            children:
-                              'This will unpublish the chapter and revert it to draft. The creator will be notified.',
-                            labels: { confirm: 'Unpublish', cancel: 'Cancel' },
-                            confirmProps: { color: 'red' },
-                            onConfirm: () =>
-                              modUnpublishMutation.mutate({
-                                projectId: project.id,
-                                chapterPosition: activeChapter.position,
-                              }),
-                          })
-                        }
+                        leftSection={<IconLink size={14} />}
+                        onClick={() => {
+                          if (typeof window !== 'undefined' && navigator?.clipboard) {
+                            void navigator.clipboard.writeText(window.location.href);
+                          }
+                        }}
                       >
-                        Unpublish Chapter
+                        Copy link
                       </Menu.Item>
+                      {activeChapter &&
+                        canDownload &&
+                        (projectMeta?.allowDownload ||
+                          currentUser?.id === project.user.id ||
+                          currentUser?.isModerator) && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Download</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconFileZip size={14} />}
+                              onClick={exportCBZ}
+                              disabled={isExporting}
+                            >
+                              Download CBZ
+                            </Menu.Item>
+                            <Menu.Item
+                              leftSection={<IconFileTypePdf size={14} />}
+                              onClick={exportPDF}
+                              disabled={isExporting}
+                            >
+                              Download PDF
+                            </Menu.Item>
+                          </>
+                        )}
+                      {currentUser && currentUser.id !== project.user.id && (
+                        <Menu.Item
+                          leftSection={<IconFlag size={14} />}
+                          onClick={() =>
+                            openReportModal({
+                              entityType: ReportEntity.ComicProject,
+                              entityId: project.id,
+                            })
+                          }
+                        >
+                          Report
+                        </Menu.Item>
+                      )}
+                      {isMod &&
+                        activeChapter?.status === ComicChapterStatus.Published && (
+                          <>
+                            <Menu.Divider />
+                            <Menu.Label>Moderator</Menu.Label>
+                            <Menu.Item
+                              leftSection={<IconBan size={14} stroke={1.5} />}
+                              color="red"
+                              onClick={() =>
+                                openConfirmModal({
+                                  title: 'Unpublish Chapter',
+                                  children:
+                                    'This will unpublish the chapter and revert it to draft. The creator will be notified.',
+                                  labels: { confirm: 'Unpublish', cancel: 'Cancel' },
+                                  confirmProps: { color: 'red' },
+                                  onConfirm: () =>
+                                    modUnpublishMutation.mutate({
+                                      projectId: project.id,
+                                      chapterPosition: activeChapter.position,
+                                    }),
+                                })
+                              }
+                            >
+                              Unpublish Chapter
+                            </Menu.Item>
+                          </>
+                        )}
                     </Menu.Dropdown>
                   </Menu>
                 )}
@@ -1175,16 +1357,26 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
           </Container>
         ) : (
           <>
-            {/* Top nav */}
-            {panels.length > 0 && (
+            {/* Top nav — Pages mode owns its own edge-anchored arrows + */}
+            {/* floating counter, so the redundant button bar is hidden. */}
+            {/* Scroll mode keeps the chapter prev/next bar at the top, but */}
+            {/* only on desktop — on mobile it's redundant with the bottom */}
+            {/* row that appears after the user scrolls through the chapter. */}
+            {panels.length > 0 && effectiveReaderMode === 'scroll' && !isMobile && (
               <Container size="sm">
-                {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
+                <ChapterNav />
               </Container>
             )}
 
             {/* Panel content */}
-            <Container size={readerMode === 'pages' ? 'lg' : 'md'} p={0}>
-              {panels.length === 0 ? (
+            {effectiveReaderMode === 'pages' ? (
+              // ── Pages mode (default) ──
+              // The current spread (1–2 panels) fills the viewport.
+              // Edge-anchored prev/next + top-center floating counter +
+              // arrow-key nav. Comments live below the fold; users can
+              // scroll past the spread to see them or hide them via the
+              // header toggle.
+              panels.length === 0 ? (
                 <div className={styles.readerEmpty}>
                   <IconPhotoOff size={48} />
                   <p>No panels in this chapter</p>
@@ -1196,26 +1388,111 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     Back to overview
                   </Link>
                 </div>
-              ) : readerMode === 'pages' ? (
-                <div className={styles.readerPagesSpread}>
-                  {visiblePanels.map((panel) => renderPanel(panel))}
-                </div>
               ) : (
-                <div className={styles.readerPanels}>
-                  {visiblePanels.map((panel) => renderPanel(panel))}
-                </div>
-              )}
-            </Container>
+                // The spread already manages its own size via
+                // `.readerPagesSpread` SCSS (`height: calc(100dvh - 140px);
+                // overflow: hidden`), so this wrapper is just the
+                // positioning context for the floating counter / arrows.
+                <div style={{ position: 'relative' }}>
+                  {/* Floating page counter */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 16,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      zIndex: 5,
+                      padding: '4px 12px',
+                      background: 'rgba(0,0,0,0.6)',
+                      color: 'white',
+                      borderRadius: 999,
+                      fontSize: 13,
+                      fontWeight: 600,
+                    }}
+                  >
+                    {pageIndex + 1} / {totalPages}
+                  </div>
 
-            {/* Bottom nav */}
-            {panels.length > 0 && (
-              <Container size="sm">
-                {readerMode === 'pages' ? <PageNav /> : <ChapterNav />}
+                  {/* Edge-anchored prev/next. Wraps to prev/next chapter */}
+                  {/* at boundaries, matching the existing `goPage` logic. */}
+                  <ActionIcon
+                    variant="filled"
+                    color="dark"
+                    size="xl"
+                    radius="xl"
+                    disabled={!hasPagePrev && !hasPrev}
+                    onClick={() => goPage(-1)}
+                    aria-label={hasPagePrev ? 'Previous page' : 'Previous chapter'}
+                    style={{
+                      position: 'absolute',
+                      left: 16,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      zIndex: 5,
+                      opacity: hasPagePrev || hasPrev ? 0.85 : 0.3,
+                    }}
+                  >
+                    <IconChevronLeft size={28} />
+                  </ActionIcon>
+                  <ActionIcon
+                    variant="filled"
+                    color="dark"
+                    size="xl"
+                    radius="xl"
+                    disabled={!hasPageNext && !hasNext}
+                    onClick={() => goPage(1)}
+                    aria-label={hasPageNext ? 'Next page' : 'Next chapter'}
+                    style={{
+                      position: 'absolute',
+                      right: 16,
+                      top: '50%',
+                      transform: 'translateY(-50%)',
+                      zIndex: 5,
+                      opacity: hasPageNext || hasNext ? 0.85 : 0.3,
+                    }}
+                  >
+                    <IconChevronRight size={28} />
+                  </ActionIcon>
+
+                  <div className={styles.readerPagesSpread}>
+                    {visiblePanels.map((panel) => renderPanel(panel))}
+                  </div>
+                </div>
+              )
+            ) : (
+              <Container size="md" p={0}>
+                {panels.length === 0 ? (
+                  <div className={styles.readerEmpty}>
+                    <IconPhotoOff size={48} />
+                    <p>No panels in this chapter</p>
+                    <Link
+                      href={`/comics/${project.id}/${projectSlug}`}
+                      className={styles.notFoundLink}
+                    >
+                      <IconArrowLeft size={16} />
+                      Back to overview
+                    </Link>
+                  </div>
+                ) : (
+                  <div className={styles.readerPanels}>
+                    {visiblePanels.map((panel) => renderPanel(panel))}
+                  </div>
+                )}
               </Container>
             )}
 
-            {/* Comments section */}
-            {activeChapter && (
+            {/* Bottom nav — only for scroll mode; pages mode uses its */}
+            {/* edge-anchored arrows for navigation. */}
+            {panels.length > 0 && effectiveReaderMode === 'scroll' && (
+              <Container size="sm">
+                <ChapterNav />
+              </Container>
+            )}
+
+            {/* Comments section — togglable from header. Hidden when */}
+            {/* `commentsVisible` is false; the toggle button preserves the */}
+            {/* user's choice across navigation via localStorage. */}
+            {activeChapter && commentsVisible && (
               <Container size="sm" py="xl">
                 <ChapterComments
                   projectId={project.id}

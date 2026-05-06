@@ -535,11 +535,31 @@ function formatWorkflowStep(args: {
     case 'videoEnhancement':
     case 'videoInterpolation':
       return formatVideoGenStep(args);
+    case 'chatCompletion':
+      // Internal scaffolding step (e.g. ace-audio simple mode). Always suppressed —
+      // formatted as a stub so the steps array stays well-formed for the UI filter.
+      return formatChatCompletionStep(args);
     default:
       throw new Error(
         `failed to extract generation resources: unsupported workflow type ${step.$type}`
       );
   }
+}
+
+function formatChatCompletionStep({ step }: { step: WorkflowStep }) {
+  const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+  return {
+    $type: 'chatCompletion' as const,
+    timeout: step.timeout,
+    name: step.name,
+    params: (metadata.params ?? {}) as GeneratedImageStepMetadata['params'],
+    status: step.status,
+    metadata,
+    resources: [] as GenerationResource[],
+    completedAt: step.completedAt,
+    queuePosition: step.jobs?.[0].queuePosition,
+    output: [] as NormalizedWorkflowStepOutput[],
+  };
 }
 
 function formatImageGenStep({

@@ -30,7 +30,7 @@ import {
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { quantityNode, promptNode, enhancedCompatibilityNode } from './common';
+import { quantityNode, enhancedCompatibilityNode } from './common';
 import { fluxGraph } from './flux-graph';
 import { stableDiffusionGraph } from './stable-diffusion-graph';
 import { qwenGraph } from './qwen-graph';
@@ -46,7 +46,7 @@ import { hiDreamGraph } from './hi-dream-graph';
 import { ponyV7Graph } from './pony-v7-graph';
 import { viduGraph } from './vidu-graph';
 import { openaiGraph } from './openai-graph';
-import { klingGraph, klingVersionIds } from './kling-graph';
+import { klingGraph } from './kling-graph';
 import { wanGraph } from './wan-graph';
 import { wanImageGraph } from './wan-image-graph';
 import { hunyuanGraph } from './hunyuan-graph';
@@ -315,31 +315,10 @@ export const ecosystemGraph = new DataGraph<
       };
     },
     ['workflow', 'output', 'ecosystem', 'model', 'enhancedCompatibility']
-  )
-  .node(
-    'prompt',
-    (ctx) => {
-      const isAudio = ctx.ecosystem === 'Ace';
-      const images = 'images' in ctx ? (ctx.images as unknown[]) : undefined;
-      // const multiShot = 'multiShot' in ctx ? (ctx.multiShot as boolean) : false;
-      const isKlingV3 = ctx.ecosystem === 'Kling' && ctx.model?.id === klingVersionIds.v3;
-      const isGrok = ctx.ecosystem === 'Grok';
-      // Audio workflows use musicDescription — prompt stays in the graph (so handler types
-      // remain non-optional) but is non-required and stripped from stored metadata in
-      // orchestration-new.service.ts before persistence.
-      return {
-        ...promptNode({ required: isAudio ? false : !images?.length || isKlingV3 || isGrok }),
-      };
-    },
-    ['images', 'multiShot', 'ecosystem']
-  )
-  .computed(
-    'triggerWords',
-    (ctx) => {
-      const resources = ('resources' in ctx ? ctx.resources : undefined) ?? [];
-      const model = 'model' in ctx ? ctx.model : undefined;
-      const allResources = model ? [model, ...resources] : resources;
-      return allResources.flatMap((r) => r.trainedWords ?? []);
-    },
-    ['model', 'resources']
   );
+
+// Prompt + triggerWords are now defined per-ecosystem inside each subgraph
+// (see common.ts: promptGraph, negativePromptGraph, triggerWordsGraph,
+// createTextEditorGraph). Each ecosystem owns its own validation rule and
+// merges triggerWordsGraph after model/resources so the dep system propagates
+// correctly.

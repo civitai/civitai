@@ -46,6 +46,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatBytes } from '~/utils/number-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
@@ -652,7 +653,11 @@ export default function TrainingModerationFeedPage() {
                                   color="blue"
                                   leftSection={<IconEye size={14} />}
                                   component={Link}
-                                  href={`/models/${model.id}?modelVersionId=${version.id}`}
+                                  href={getModelUrl({
+                                    modelId: model.id,
+                                    modelName: model.name,
+                                    modelVersionId: version.id,
+                                  })}
                                 >
                                   View
                                 </Button>

@@ -37,6 +37,7 @@ import {
 } from '~/utils/file-display-helpers';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 
 type FileType = ModelById['modelVersions'][number]['files'][number];
 
@@ -260,7 +261,7 @@ export function RequiredComponentsSection({
                       <Group gap={6}>
                         <Text
                           component={Link}
-                          href={`/models/${lc.modelId}`}
+                          href={getModelUrl({ modelId: lc.modelId, modelName: lc.modelName })}
                           size="sm"
                           fw={500}
                           td="underline"

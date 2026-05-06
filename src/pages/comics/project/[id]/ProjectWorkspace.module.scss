@@ -228,6 +228,13 @@
   min-width: 0;
 }
 
+.chapterItemNameRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
 .chapterItemName {
   font-size: 13px;
   font-weight: 500;
@@ -236,6 +243,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
   margin: 0;
+  flex: 1;
+  min-width: 0;
 }
 
 .chapterItemCount {
@@ -762,6 +771,14 @@
   gap: 0;
   border-bottom: 1px solid light-dark(var(--mantine-color-gray-3), #373a40);
   margin-bottom: 16px;
+  // Pin the tab bar so the body scrolls underneath. Modal body owns the
+  // scroll container in Mantine v7, and sticky on a direct child glues
+  // here. Background must match the modal surface so content doesn't
+  // bleed through during scroll.
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: light-dark(var(--mantine-color-white), var(--mantine-color-dark-7));
 }
 
 .panelModeTab {

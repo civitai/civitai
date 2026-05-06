@@ -17,10 +17,12 @@ import type { ResourceData } from './common';
 import {
   aspectRatioNode,
   createCheckpointGraph,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
   resourcesNode,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
 } from './common';
 
 // =============================================================================
@@ -126,5 +128,7 @@ export const ernieGraph = new DataGraph<
     ['ernieVariant']
   )
   .node('aspectRatio', aspectRatioNode({ options: ernieAspectRatios, defaultValue: '1:1' }))
-  .node('negativePrompt', negativePromptNode())
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
   .node('seed', seedNode());

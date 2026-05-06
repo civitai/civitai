@@ -25,7 +25,9 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   seedNode,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
+  triggerWordsGraph,
   aspectRatioNode,
   imagesNode,
   createCheckpointGraph,
@@ -160,8 +162,10 @@ export const veo3Graph = new DataGraph<Veo3Ctx, GenerationCtx>()
     defaultValue: false,
   })
 
-  // Negative prompt node
-  .node('negativePrompt', negativePromptNode())
+  // Prompt + triggerWords + negativePrompt
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
 
   // Aspect ratio node - for txt2vid and ref2vid workflows (img2vid derives from source image)
   .node(

@@ -30,6 +30,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { removeDuplicates } from '~/utils/array-helpers';
@@ -92,9 +93,10 @@ export default Page(
       [collectionId, ...(collectionIds ?? [])].filter(isDefined)
     );
 
-    let backButtonUrl = modelId ? `/models/${modelId}` : '/';
+    let backButtonUrl = modelId
+      ? getModelUrl({ modelId, modelName: version?.model.name, modelVersionId })
+      : '/';
 
-    if (modelVersionId) backButtonUrl += `?modelVersionId=${modelVersionId}`;
     if (tagId) backButtonUrl = `/posts?tags=${tagId}&view=feed`;
     if (clubId) backButtonUrl = `/clubs/${clubId}`;
     if (collectionIds?.length)

@@ -7,6 +7,7 @@ import * as z from 'zod';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { Form, InputRTE, useForm } from '~/libs/form';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './EditResourceReview.module.scss';
 
@@ -108,7 +109,10 @@ export function EditResourceReview({
         {modelId && modelVersionId ? (
           <Stack gap={4}>
             <Group align="center" justify="space-between">
-              <Link href={`/models/${modelId}?modelVersionId=${modelVersionId}`} target="_blank">
+              <Link
+                href={getModelUrl({ modelId, modelName, modelVersionId })}
+                target="_blank"
+              >
                 <Stack gap={0} style={{ cursor: 'pointer' }}>
                   {modelName && <Text lineClamp={1}>{modelName}</Text>}
                   {modelVersionName && (

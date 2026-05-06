@@ -63,9 +63,12 @@
 
 .heroPickerWrap {
   max-height: 160px;
-  overflow: hidden;
 
-  /* Constrain the inner frame to match */
+  /* Constrain the inner frame to match. The picker's internal frame
+     already clips the draggable image with its own overflow:hidden, so
+     this wrapper does NOT clip — the remove (X) button sits at
+     top:-8 right:-8, just outside the frame, and any wrapper-level
+     overflow:hidden chops it off (visible on the create page only). */
   > div {
     max-height: 160px;
   }

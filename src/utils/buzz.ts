@@ -7,7 +7,7 @@ import {
   type BuzzSpendType,
 } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { capitalize } from '~/utils/string-helpers';
+import { capitalize, getModelUrl } from '~/utils/string-helpers';
 import { getCurrencyConfig } from '~/shared/constants/currency.constants';
 
 export const parseBuzzTransactionDetails = (
@@ -65,7 +65,7 @@ export const parseBuzzTransactionDetails = (
       label: detailsUrl ? 'Details' : 'User',
     },
     Model: {
-      url: `/models/${entityId}`,
+      url: getModelUrl({ modelId: entityId }),
       notification: `${baseNotification} on one of your models!`,
       label: 'Model',
     },

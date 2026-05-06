@@ -18,6 +18,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Files } from '~/components/Resource/Files';
 import { FilesProvider, useFilesContext } from '~/components/Resource/FilesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 function SaveButton() {
@@ -60,7 +61,15 @@ export default function FilesEditModal({ modelVersionId }: { modelVersionId: num
             <Stack gap="xl">
               <Group justify="space-between" align="flex-start" wrap="nowrap">
                 <Stack gap={8}>
-                  <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
+                  <Link
+                    legacyBehavior
+                    href={getModelUrl({
+                      modelId: modelVersion.model.id,
+                      modelName: modelVersion.model.name,
+                    })}
+                    passHref
+                    shallow
+                  >
                     <Anchor size="xs">
                       <Group gap={4}>
                         <IconArrowLeft size={12} />

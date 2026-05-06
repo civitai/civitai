@@ -81,7 +81,7 @@ import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
 import { showErrorNotification } from '~/utils/notifications';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
@@ -531,7 +531,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         </Tooltip>
       )}
       <Link
-        href={`/models/${modelId}?modelVersionId=${modelVersionId}`}
+        href={getModelUrl({ modelId, modelName, modelVersionId })}
         target="_blank"
         className="grow"
       >

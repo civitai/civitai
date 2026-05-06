@@ -30,7 +30,7 @@ import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import type { ModelGetAllPagedSimple } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type State = {
@@ -178,9 +178,11 @@ export default function ModeratorModels() {
                             </Button>
                           </Group>
                           <Link
-                            href={`/models/${model.id}/${slugit(model.name)}${
-                              model.modelVersion ? `?modelVersionId=${model.modelVersion.id}` : ''
-                            }`}
+                            href={getModelUrl({
+                              modelId: model.id,
+                              modelName: model.name,
+                              modelVersionId: model.modelVersion?.id,
+                            })}
                             passHref
                             legacyBehavior
                           >

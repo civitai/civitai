@@ -38,6 +38,7 @@ import { getGenerationBaseModelResourceOptions } from '~/shared/constants/basemo
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { getModelUrl } from '~/utils/string-helpers';
 
 /**
  * Determine if a link to the model page should be shown for this resource.
@@ -155,7 +156,11 @@ function CheckpointInfo({
                 component={Link}
                 className="cursor-pointer text-black dark:text-white"
                 style={{ overflowWrap: 'anywhere' }}
-                href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
+                href={getModelUrl({
+                  modelId: resource.model.id,
+                  modelName: resource.model.name,
+                  modelVersionId: resource.id,
+                })}
                 rel="nofollow noindex"
                 lineClamp={1}
                 fw={590}
@@ -289,7 +294,11 @@ function ResourceInfoCard({
               <Text
                 component={Link}
                 style={{ cursor: 'pointer' }}
-                href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
+                href={getModelUrl({
+                  modelId: resource.model.id,
+                  modelName: resource.model.name,
+                  modelVersionId: resource.id,
+                })}
                 onClick={() => generationGraphPanel.close()}
                 rel="nofollow noindex"
                 size="sm"

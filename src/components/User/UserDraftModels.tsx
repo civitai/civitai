@@ -20,7 +20,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { getModelWizardUrl } from '~/server/common/model-helpers';
 import { formatDate } from '~/utils/date-helpers';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getModelUrl, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import styles from './UserModelsTable.module.scss';
 import clsx from 'clsx';
@@ -109,7 +109,11 @@ export function UserDraftModels() {
                             </Group>
                           </Anchor>
                         </Link>
-                        <Link legacyBehavior href={`/models/${model.id}`} passHref>
+                        <Link
+                          legacyBehavior
+                          href={getModelUrl({ modelId: model.id, modelName: model.name })}
+                          passHref
+                        >
                           <Anchor target="_blank" lineClamp={2}>
                             <Group gap="xs" wrap="nowrap">
                               <Text size="xs">Go to model page</Text>

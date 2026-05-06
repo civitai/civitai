@@ -1,6 +1,7 @@
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { getModelUrl } from '~/utils/string-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -19,7 +20,10 @@ export const getServerSideProps = createServerSideProps({
 
     return {
       redirect: {
-        destination: `/models/${modelVersion.modelId}?modelVersionId=${modelVersion.id}`,
+        destination: getModelUrl({
+          modelId: modelVersion.modelId,
+          modelVersionId: modelVersion.id,
+        }),
         permanent: true,
       },
     };

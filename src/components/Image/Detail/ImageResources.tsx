@@ -22,7 +22,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import classes from './ImageResources.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -263,9 +263,11 @@ const Wrapper = ({
   if (!resource.modelId) return children;
   return (
     <Link
-      href={`/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
-        resource.modelVersionId
-      }`}
+      href={getModelUrl({
+        modelId: resource.modelId,
+        modelName: resource.modelName,
+        modelVersionId: resource.modelVersionId,
+      })}
     >
       {cloneElement(children, { component: 'a' })}
     </Link>

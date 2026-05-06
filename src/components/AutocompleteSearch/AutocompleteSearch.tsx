@@ -25,7 +25,7 @@ import React, {
 import type { InstantSearchProps, SearchBoxProps } from 'react-instantsearch';
 import { Configure, InstantSearch, useInstantSearch, useSearchBox } from 'react-instantsearch';
 import { ClearableAutoComplete } from '~/components/ClearableAutoComplete/ClearableAutoComplete';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { env } from '~/env/client';
 import { ModelSearchItem } from '~/components/AutocompleteSearch/renderItems/models';
@@ -722,7 +722,7 @@ function checkAIR(index: string, query: string) {
 
     if (!modelId || !modelVersionId) return null;
 
-    return `/models/${modelId}?modelVersionId=${modelVersionId}`;
+    return getModelUrl({ modelId: Number(modelId), modelVersionId: Number(modelVersionId) });
   }
 
   return null;

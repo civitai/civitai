@@ -51,7 +51,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { QS } from '~/utils/qs';
-import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl, splitUppercase } from '~/utils/string-helpers';
 
 import { trpc } from '~/utils/trpc';
 
@@ -439,7 +439,8 @@ function ReportDetails({ report }: { report: ReportDetail }) {
 }
 
 const getReportLink = (report: ReportDetail) => {
-  if (report.model) return `/models/${report.model.id}`;
+  if (report.model)
+    return getModelUrl({ modelId: report.model.id, modelName: report.model.name });
   else if (report.resourceReview) return `/reviews/${report.resourceReview.id}`;
   else if (report.comment)
     return `/models/${report.comment.modelId}/?dialog=commentThread&commentId=${

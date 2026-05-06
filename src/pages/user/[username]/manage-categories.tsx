@@ -30,7 +30,7 @@ import { TagSort } from '~/server/common/enums';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { postgresSlugify, slugit, titleCase } from '~/utils/string-helpers';
+import { getModelUrl, postgresSlugify, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '~/components/Meta/Meta';
 import styles from './manage-categories.module.scss';
@@ -151,7 +151,11 @@ export default function ManageCategories({
                     <IconExclamationMark />
                   </ThemeIcon>
                 )}
-                <Link legacyBehavior href={`/models/${model.id}/${slugit(model.name)}`} passHref>
+                <Link
+                  legacyBehavior
+                  href={getModelUrl({ modelId: model.id, modelName: model.name })}
+                  passHref
+                >
                   <Anchor size="sm" target="_blank" lineClamp={2}>
                     {model.name} <IconExternalLink size={16} stroke={1.5} />
                   </Anchor>

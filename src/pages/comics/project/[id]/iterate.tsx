@@ -44,7 +44,7 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const DEFAULT_MODEL = 'NanoBanana';
+const DEFAULT_MODEL = 'NanoBanana2';
 
 function ComicIteratePage() {
   const router = useRouter();

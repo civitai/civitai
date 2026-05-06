@@ -18,11 +18,13 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
+  negativePromptGraph,
+  promptGraph,
   samplerNode,
   schedulerNode,
   seedNode,
   sliderNode,
-  negativePromptNode,
+  triggerWordsGraph,
 } from './common';
 
 // =============================================================================
@@ -93,7 +95,7 @@ const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
  */
 const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
-  .node('negativePrompt', negativePromptNode())
+  .merge(negativePromptGraph)
   .node('aspectRatio', aspectRatioNode({ options: zImageAspectRatios, defaultValue: '1:1' }))
   .node('sampler', samplerNode({ options: zImageSamplers, defaultValue: 'euler' }))
   .node('scheduler', schedulerNode({ options: zImageSchedules, defaultValue: 'simple' }))
@@ -140,7 +142,10 @@ export const zImageGraph = new DataGraph<{ ecosystem: string; workflow: string }
   .groupedDiscriminator('zImageMode', [
     { values: ['turbo'] as const, graph: turboModeGraph },
     { values: ['base'] as const, graph: baseModeGraph },
-  ]);
+  ])
+  // Prompt + triggerWords are common to both turbo and base.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export mode options for use in components
 export { zImageModeVersionOptions, zImageVersionIds };

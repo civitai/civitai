@@ -75,7 +75,7 @@ import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -1176,7 +1176,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                     className="flex items-center gap-3 px-3 py-2 hover:bg-gray-1 dark:hover:bg-dark-5"
                   >
                     <Link
-                      href={`/models/${m.id}?modelVersionId=${m.versionId}`}
+                      href={getModelUrl({
+                        modelId: m.id,
+                        modelName: m.name,
+                        modelVersionId: m.versionId,
+                      })}
                       className="flex min-w-0 flex-1 items-center gap-3 no-underline"
                       target="_blank"
                     >

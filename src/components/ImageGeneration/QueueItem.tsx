@@ -73,6 +73,7 @@ import {
 import { getGenerationSnapshotCache } from '~/components/generation_v2/utils/generation-snapshot-cache';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { workflowConfigs } from '~/shared/data-graph/generation/config/workflows';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
@@ -391,7 +392,7 @@ function ResourceRow({ resource }: { resource: GenerationResource }) {
         size="compact-sm"
         variant="default"
         component={Link}
-        href={`/models/${model.id}?modelVersionId=${id}`}
+        href={getModelUrl({ modelId: model.id, modelName: model.name, modelVersionId: id })}
         onClick={() => generationGraphPanel.close()}
         leftSection={
           unstable ? (

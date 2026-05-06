@@ -28,7 +28,7 @@ import type { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { AnimatedCount, Metrics } from '~/components/Metrics';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export function CollectionShowcase({ modelId, loading }: Props) {
@@ -93,7 +93,7 @@ function ShowcaseItem({ id, name, images, rank, type, version }: ShowcaseItemPro
         'hover:bg-gray-1 dark:hover:bg-dark-5',
         activeItem && 'bg-gray-1 dark:bg-dark-5'
       )}
-      href={`/models/${id}/${slugit(name)}`}
+      href={getModelUrl({ modelId: id, modelName: name })}
       passHref
     >
       <ImageGuard2 image={image} explain={false}>

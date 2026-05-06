@@ -43,7 +43,7 @@ import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation-graph.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ResourceSelectSource } from '../resource-select.types';
 import { TopRightIcons } from './TopRightIcons';
@@ -144,7 +144,11 @@ export function ResourceSelectCard({
                     <div className="relative overflow-hidden aspect-portrait">
                       {safe ? (
                         <Link
-                          href={`/models/${data.id}?modelVersionId=${selectedVersion.id}`}
+                          href={getModelUrl({
+                            modelId: data.id,
+                            modelName: data.name,
+                            modelVersionId: selectedVersion.id,
+                          })}
                           target="_blank"
                         >
                           <EdgeMedia

@@ -22,10 +22,12 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
   samplerNode,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
   type VersionGroup,
   type ResourceData,
 } from './common';
@@ -77,7 +79,7 @@ const fastDevModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
 const fullModeGraph = new DataGraph<HiDreamVariantCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .node('aspectRatio', aspectRatioNode({ options: hiDreamAspectRatios, defaultValue: '1:1' }))
-  .node('negativePrompt', negativePromptNode())
+  .merge(negativePromptGraph)
   .node(
     'sampler',
     samplerNode({
@@ -167,4 +169,9 @@ export const hiDreamGraph = new DataGraph<
     fast: fastDevModeGraph,
     dev: fastDevModeGraph,
     full: fullModeGraph,
-  });
+  })
+  // Prompt + triggerWords are common to all variants. Placed at the parent
+  // (after the discriminator) so model/resources from the active branch are
+  // already in ctx by the time these run.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);

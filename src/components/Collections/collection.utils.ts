@@ -34,6 +34,7 @@ import type { CollectionByIdModel } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -102,7 +103,10 @@ export const getCollectionItemReviewData = (collectionItem: CollectionItemExpand
         type: collectionItem.type,
         image: collectionItem.data.images?.[0], // TODO.frontend filters
         user: collectionItem.data.user,
-        url: `/models/${collectionItem.data.id}`,
+        url: getModelUrl({
+          modelId: collectionItem.data.id,
+          modelName: collectionItem.data.name,
+        }),
         itemAddedAt: collectionItem.createdAt,
         dataCreatedAt: collectionItem.data.createdAt,
       };

@@ -42,7 +42,7 @@ import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/Hidd
 import { constants } from '~/server/common/constants';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { isFutureDate } from '~/utils/date-helpers';
-import { getDisplayName, slugit } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
@@ -269,7 +269,7 @@ function ModelCategoryCardContent({
         withBorder
       >
         <Link
-          href={`/models/${id}/${slugit(name)}`}
+          href={getModelUrl({ modelId: id, modelName: name })}
           className={classes.link}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
             if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);

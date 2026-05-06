@@ -17,6 +17,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
+  getMaxEarlyAccessDays,
+  getMaxEarlyAccessModels,
+} from '~/server/utils/early-access-helpers';
+import {
   Availability,
   ComicReferenceStatus,
   ComicChapterStatus,
@@ -35,10 +39,7 @@ import { createImageGenStep } from '~/server/services/orchestrator/imageGen/imag
 import { enhanceComicPrompt } from '~/server/services/comics/prompt-enhance';
 import { orchestratorChatCompletionCost } from '~/server/services/comics/orchestrator-chat';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
-import {
-  updateComicChapterNsfwLevels,
-  updateComicProjectNsfwLevels,
-} from '~/server/services/nsfwLevels.service';
+import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { createImage, ingestImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
@@ -56,6 +57,7 @@ import { signalClient } from '~/utils/signal-client';
 import { comicsSearchIndex } from '~/server/search-index';
 import {
   publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
   hasPublicBrowsingLevel,
   hasSafeBrowsingLevel,
   nsfwBrowsingLevelsFlag,
@@ -67,6 +69,7 @@ import {
   seedreamSizes,
   qwenSizes,
   grokSizes,
+  EARLY_ACCESS_CONFIG,
 } from '~/server/common/constants';
 import { hasEntityAccess } from '~/server/services/common.service';
 import {
@@ -101,6 +104,16 @@ const COMIC_MODEL_CONFIG: Record<
     sizes: { label: string; width: number; height: number }[];
   }
 > = {
+  NanoBanana2: {
+    // V2 is dispatched via the ecosystem handler at
+    // `src/server/services/orchestrator/ecosystems/nano-banana.handler.ts`,
+    // which keys off the resource versionId to produce the v2 input shape.
+    engine: 'gemini',
+    baseModel: 'NanoBanana',
+    versionId: 2725610,
+    maxReferenceImages: 7,
+    sizes: nanoBananaProSizes,
+  },
   NanoBanana: {
     engine: 'gemini',
     baseModel: 'NanoBanana',
@@ -133,6 +146,21 @@ const COMIC_MODEL_CONFIG: Record<
       { label: '2:3', width: 1024, height: 1536 },
     ],
   },
+  OpenAI2: {
+    // gpt-image-2 — different API shape than v1/v1.5 (width/height, no
+    // background/seed). The ecosystem handler at
+    // `src/server/services/orchestrator/ecosystems/openai.handler.ts`
+    // resolves to that shape based on the resource versionId.
+    engine: 'openai',
+    baseModel: 'OpenAI',
+    versionId: 2880272,
+    maxReferenceImages: 7,
+    sizes: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
+  },
   Qwen: {
     engine: 'qwen',
     baseModel: 'Qwen',
@@ -157,7 +185,7 @@ const COMIC_MODEL_CONFIG: Record<
   },
 };
 
-const DEFAULT_COMIC_MODEL = 'NanoBanana';
+const DEFAULT_COMIC_MODEL = 'NanoBanana2';
 const DEFAULT_ASPECT_RATIO = '3:4';
 
 function getComicModelConfig(baseModel?: string | null) {
@@ -418,7 +446,17 @@ const addReferenceImagesSchema = z.object({
     .max(10),
 });
 
-const comicModelEnum = z.enum(['NanoBanana', 'Flux2', 'Seedream', 'SeedreamLite', 'OpenAI', 'Qwen', 'Grok']);
+const comicModelEnum = z.enum([
+  'NanoBanana2',
+  'NanoBanana',
+  'Flux2',
+  'Seedream',
+  'SeedreamLite',
+  'OpenAI',
+  'OpenAI2',
+  'Qwen',
+  'Grok',
+]);
 
 const createPanelSchema = z.object({
   projectId: z.number().int(),
@@ -600,12 +638,83 @@ const updateReferenceSchema = z.object({
     .refine((v) => !v.includes('@'), 'Name cannot contain @ character'),
 });
 
+// Mirror the model-version EA constraints: timeframe is one of the
+// allowed discrete values (3 / 5 / 7 / 9 / 12 / 15 / 30 days), and the
+// minimum buzz price matches the model `downloadPrice` floor (100). The
+// upper-bound `timeframe` cap and concurrent-EA-chapter cap are enforced
+// at the mutation level since they depend on the user's score.
 const chapterEarlyAccessConfigSchema = z
   .object({
-    buzzPrice: z.number().int().min(1).max(10000),
-    timeframe: z.number().int().min(1).max(30),
+    buzzPrice: z.number().int().min(100).max(10000),
+    timeframe: z
+      .number()
+      .int()
+      .refine(
+        (v) => EARLY_ACCESS_CONFIG.timeframeValues.includes(v),
+        `Timeframe must be one of: ${EARLY_ACCESS_CONFIG.timeframeValues.join(', ')} days.`
+      ),
   })
   .nullable();
+
+/** Active EA chapters for a user — counterpart to `getUserEarlyAccessModelVersions`. */
+async function getUserEarlyAccessChapters(userId: number) {
+  return dbRead.comicChapter.findMany({
+    where: {
+      earlyAccessEndsAt: { gt: new Date() },
+      project: { userId, status: ComicProjectStatus.Active },
+    },
+    select: { id: true },
+  });
+}
+
+/**
+ * Apply the same gating model versions use:
+ *   - `timeframe` cannot exceed the user's score-based cap
+ *   - cannot have more than the score-based cap of EA chapters active at once
+ *
+ * Pass `excludeChapterId` when re-publishing / updating a chapter that's
+ * already in EA, so the chapter doesn't count against its own quota.
+ */
+async function assertCanGrantEarlyAccess({
+  ctx,
+  timeframe,
+  excludeChapterId,
+}: {
+  ctx: { user: SessionUser; features: any };
+  timeframe: number;
+  excludeChapterId?: number;
+}) {
+  if (ctx.user.isModerator) return;
+  const maxDays = getMaxEarlyAccessDays({
+    userMeta: ctx.user.meta as any,
+    features: ctx.features,
+  });
+  if (maxDays === 0) {
+    throw throwBadRequestError(
+      'Your creator score is not high enough to put a chapter in early access yet.'
+    );
+  }
+  if (timeframe > maxDays) {
+    throw throwBadRequestError(
+      `Early access timeframe exceeds your current limit of ${maxDays} day${maxDays === 1 ? '' : 's'}.`
+    );
+  }
+  const active = await getUserEarlyAccessChapters(ctx.user.id);
+  const maxActive = getMaxEarlyAccessModels({
+    userMeta: ctx.user.meta as any,
+    features: ctx.features,
+  });
+  const otherActive = excludeChapterId
+    ? active.filter((c) => c.id !== excludeChapterId)
+    : active;
+  if (otherActive.length >= maxActive) {
+    throw throwBadRequestError(
+      `You already have ${otherActive.length} chapter${
+        otherActive.length === 1 ? '' : 's'
+      } in early access — that's the cap for your current creator score.`
+    );
+  }
+}
 
 // Shared helper: resolve a reference's images for generation
 async function getReferenceImages(referenceId: number) {
@@ -1079,14 +1188,21 @@ export const comicsRouter = router({
       if (genre) where.genre = genre;
       if (userId) where.userId = userId;
 
-      // NSFW browsing level filter — compute allowed nsfwLevel values using bitwise match
-      // On green domain, enforce PG-only even if browsingLevel not passed
-      const effectiveBrowsingLevel =
-        browsingLevel != null && browsingLevel > 0
-          ? browsingLevel
-          : ctx.features.isGreen
-            ? publicBrowsingLevelsFlag
-            : null;
+      // NSFW browsing level filter — compute allowed nsfwLevel values using bitwise match.
+      //
+      // Green domain cap mirrors `BrowsingLevelProvider`'s domain-forced
+      // level: anonymous viewers can see PG only, logged-in viewers can
+      // see PG + PG13. Anything the client requests is bitwise-AND'd
+      // against this cap, so a hand-crafted request with a higher level
+      // can't bypass the domain rule.
+      const greenCap = ctx.user ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
+      const requested =
+        browsingLevel != null && browsingLevel > 0 ? browsingLevel : null;
+      const effectiveBrowsingLevel = ctx.features.isGreen
+        ? requested != null
+          ? requested & greenCap
+          : greenCap
+        : requested;
 
       if (effectiveBrowsingLevel != null) {
         // Comic project nsfwLevel is a bit_or aggregate of all chapter levels.
@@ -1957,7 +2073,7 @@ export const comicsRouter = router({
       });
 
       // Recalculate project NSFW level after chapter removal
-      updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
+      await updateComicNsfwLevels([input.projectId]).catch((e) =>
         console.error(`Failed to update project NSFW after chapter delete:`, e)
       );
 
@@ -2635,8 +2751,7 @@ export const comicsRouter = router({
       ingestImageById({ id: image.id }).catch((e) =>
         console.error(`Failed to ingest sketch edit image ${image.id}:`, e)
       );
-      updateComicChapterNsfwLevels([panel.chapter.project.id]).catch(() => {});
-      updateComicProjectNsfwLevels([panel.chapter.project.id]).catch(() => {});
+      updateComicNsfwLevels([panel.chapter.project.id]).catch(() => {});
 
       return updated;
     }),
@@ -2657,10 +2772,9 @@ export const comicsRouter = router({
     });
 
     // Recalculate NSFW levels after panel removal
-    // Project NSFW is derived from chapter NSFW, so chapter must update first
-    updateComicChapterNsfwLevels([panel.projectId])
-      .then(() => updateComicProjectNsfwLevels([panel.projectId]))
-      .catch((e) => console.error(`Failed to update NSFW levels after panel delete:`, e));
+    await updateComicNsfwLevels([panel.projectId]).catch((e) =>
+      console.error(`Failed to update NSFW levels after panel delete:`, e)
+    );
 
     return { success: true };
   }),
@@ -3568,6 +3682,17 @@ export const comicsRouter = router({
         throw throwAuthorizationError();
       }
 
+      // Gate early access by the same rules model versions use: score-based
+      // max days + concurrent-EA cap. Without this, anyone could lock any
+      // chapter behind a paywall regardless of creator standing.
+      if (input.earlyAccessConfig) {
+        await assertCanGrantEarlyAccess({
+          ctx: ctx as any,
+          timeframe: input.earlyAccessConfig.timeframe,
+          excludeChapterId: chapter.id,
+        });
+      }
+
       // Re-trigger ingestion for any panel images still pending scan, and recalculate nsfwLevels
       const panelsWithImages = await dbRead.comicPanel.findMany({
         where: {
@@ -3587,11 +3712,34 @@ export const comicsRouter = router({
           );
         }
       }
-      await updateComicChapterNsfwLevels([input.projectId]);
-      await updateComicProjectNsfwLevels([input.projectId]);
+      await updateComicNsfwLevels([input.projectId]);
 
       const isScheduled = input.scheduledAt && input.scheduledAt > new Date();
       const isFirstPublish = chapter.status === ComicChapterStatus.Draft;
+
+      // Compute the EA window. Without an explicit `earlyAccessEndsAt` the
+      // purchase mutation short-circuits ("not in early access") even when
+      // a config is set, so we have to write both this AND `availability`
+      // — otherwise the paywall is invisible from the buyer's side.
+      const eaActivatesAt = isScheduled ? input.scheduledAt! : new Date();
+      const earlyAccessEndsAt =
+        input.earlyAccessConfig
+          ? new Date(eaActivatesAt.getTime() + input.earlyAccessConfig.timeframe * 24 * 60 * 60 * 1000)
+          : null;
+
+      // Compute the next `availability`. When EA is being added we move
+      // to `EarlyAccess`. When EA is being removed we revert to `Public`
+      // ONLY if the chapter was previously `EarlyAccess` — otherwise
+      // (e.g. a chapter that was made `Private` by a moderator) we leave
+      // the existing availability alone.
+      let nextAvailability: Availability | undefined;
+      if (input.earlyAccessConfig !== undefined) {
+        if (input.earlyAccessConfig) {
+          nextAvailability = Availability.EarlyAccess;
+        } else if (chapter.availability === Availability.EarlyAccess) {
+          nextAvailability = Availability.Public;
+        }
+      }
 
       const updated = await dbWrite.comicChapter.update({
         where: {
@@ -3601,7 +3749,11 @@ export const comicsRouter = router({
           status: isScheduled ? ComicChapterStatus.Scheduled : ComicChapterStatus.Published,
           publishedAt: isScheduled ? input.scheduledAt : new Date(),
           ...(input.earlyAccessConfig !== undefined
-            ? { earlyAccessConfig: input.earlyAccessConfig ?? undefined }
+            ? {
+                earlyAccessConfig: input.earlyAccessConfig ?? undefined,
+                earlyAccessEndsAt,
+                ...(nextAvailability !== undefined ? { availability: nextAvailability } : {}),
+              }
             : {}),
         },
       });
@@ -3683,6 +3835,13 @@ export const comicsRouter = router({
           status: ComicChapterStatus.Draft,
           // Clear publishedAt when canceling a schedule (it was set to the future date)
           ...(isScheduled ? { publishedAt: null } : {}),
+          // Reset EA fields so a stale `availability=EarlyAccess` /
+          // `earlyAccessEndsAt` from the prior publish doesn't linger and
+          // make the chapter look paywalled while it's back in Draft.
+          // `purchaseChapterAccess` already blocks an unpublish with
+          // outstanding purchases, so we never strand a paid user.
+          earlyAccessEndsAt: null,
+          availability: Availability.Public,
         },
       });
 
@@ -3810,8 +3969,12 @@ export const comicsRouter = router({
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
         select: {
+          id: true,
           status: true,
+          publishedAt: true,
           earlyAccessConfig: true,
+          earlyAccessEndsAt: true,
+          availability: true,
           project: { select: { userId: true } },
         },
       });
@@ -3838,12 +4001,44 @@ export const comicsRouter = router({
         }
       }
 
+      // Same score-based gating applies when (re-)setting EA. Skip the
+      // active-count check when the config is just shrinking (covered by
+      // the `excludeChapterId` arg).
+      if (input.earlyAccessConfig && !currentConfig) {
+        await assertCanGrantEarlyAccess({
+          ctx: ctx as any,
+          timeframe: input.earlyAccessConfig.timeframe,
+          excludeChapterId: chapter.id,
+        });
+      }
+
+      // Recompute the EA window. The window is anchored at the chapter's
+      // publish date, NOT the time of this edit — shrinking the timeframe
+      // shrinks the deadline backward, but doesn't restart the clock.
+      // For Published chapters `publishedAt` is always set; the fallback
+      // is paranoia for direct-DB-edit edge cases.
+      const anchor = chapter.publishedAt ?? new Date();
+      const earlyAccessEndsAt = input.earlyAccessConfig
+        ? new Date(anchor.getTime() + input.earlyAccessConfig.timeframe * 24 * 60 * 60 * 1000)
+        : null;
+
+      // Only change `availability` on a real EA transition — don't clobber
+      // a Private/etc state that a moderator may have set.
+      let nextAvailability: Availability | undefined;
+      if (input.earlyAccessConfig) {
+        nextAvailability = Availability.EarlyAccess;
+      } else if (chapter.availability === Availability.EarlyAccess) {
+        nextAvailability = Availability.Public;
+      }
+
       return dbWrite.comicChapter.update({
         where: {
           projectId_position: { projectId: input.projectId, position: input.chapterPosition },
         },
         data: {
           earlyAccessConfig: input.earlyAccessConfig ?? undefined,
+          earlyAccessEndsAt,
+          ...(nextAvailability !== undefined ? { availability: nextAvailability } : {}),
         },
       });
     }),
@@ -3918,8 +4113,7 @@ export const comicsRouter = router({
 
       // Recompute chapter levels from the (now-stamped) images, then bubble
       // up to the project level.
-      await updateComicChapterNsfwLevels([input.id]);
-      await updateComicProjectNsfwLevels([input.id]);
+      await updateComicNsfwLevels([input.id]);
 
       await trackModActivity(ctx.user.id, {
         entityType: 'comicProject',
@@ -3959,8 +4153,7 @@ export const comicsRouter = router({
 
       // Recompute the chapter level from its (now-stamped) images, then
       // bubble up to the project level.
-      await updateComicChapterNsfwLevels([input.projectId]);
-      await updateComicProjectNsfwLevels([input.projectId]);
+      await updateComicNsfwLevels([input.projectId]);
 
       await trackModActivity(ctx.user.id, {
         entityType: 'comicProject',
@@ -4498,11 +4691,8 @@ export const comicsRouter = router({
             },
           });
 
-          updateComicChapterNsfwLevels([input.projectId]).catch((e) =>
-            console.error(`Failed to update chapter NSFW for project ${input.projectId}:`, e)
-          );
-          updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
-            console.error(`Failed to update project NSFW for project ${input.projectId}:`, e)
+          await updateComicNsfwLevels([input.projectId]).catch((e) =>
+            console.error(`Failed to update NSFW levels for project ${input.projectId}:`, e)
           );
 
           createdPanels.push(panel);
@@ -4804,11 +4994,8 @@ export const comicsRouter = router({
       });
 
       // Update NSFW levels — image is already scanned so update directly
-      updateComicChapterNsfwLevels([input.projectId]).catch((e) =>
-        console.error(`Failed to update chapter NSFW for project ${input.projectId}:`, e)
-      );
-      updateComicProjectNsfwLevels([input.projectId]).catch((e) =>
-        console.error(`Failed to update project NSFW for project ${input.projectId}:`, e)
+      await updateComicNsfwLevels([input.projectId]).catch((e) =>
+        console.error(`Failed to update NSFW levels for project ${input.projectId}:`, e)
       );
 
       return panel;

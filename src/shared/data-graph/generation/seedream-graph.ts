@@ -13,7 +13,15 @@
 import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import { aspectRatioNode, createCheckpointGraph, imagesNode, seedNode, sliderNode } from './common';
+import {
+  aspectRatioNode,
+  createCheckpointGraph,
+  imagesNode,
+  promptGraph,
+  seedNode,
+  sliderNode,
+  triggerWordsGraph,
+} from './common';
 
 // =============================================================================
 // Seedream Version Constants
@@ -100,7 +108,11 @@ export const seedreamGraph = new DataGraph<{ ecosystem: string; workflow: string
     ['model']
   )
   .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
-  .node('seed', seedNode());
+  .node('seed', seedNode())
+
+  // Prompt + triggerWords (no negativePrompt for Seedream)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export version options for use in components
 export { seedreamVersionOptions, seedreamVersionIds };

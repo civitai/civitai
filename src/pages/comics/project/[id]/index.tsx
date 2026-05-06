@@ -130,7 +130,16 @@ function ProjectWorkspace() {
     try { localStorage.setItem(`comic-aspect-ratio-${projectId}`, val); } catch {}
   };
   const [generationModel, setGenerationModel] = useState<
-    'NanoBanana' | 'Flux2' | 'Seedream' | 'SeedreamLite' | 'OpenAI' | 'Qwen' | 'Grok' | null
+    | 'NanoBanana2'
+    | 'NanoBanana'
+    | 'Flux2'
+    | 'Seedream'
+    | 'SeedreamLite'
+    | 'OpenAI'
+    | 'OpenAI2'
+    | 'Qwen'
+    | 'Grok'
+    | null
   >(null);
 
   // Active chapter is driven by the URL path: `/comics/project/{id}/chapter/{position}`.
@@ -180,7 +189,6 @@ function ProjectWorkspace() {
   const [insertAtPosition, setInsertAtPosition] = useState<number | null>(null);
   const [detailPanelId, setDetailPanelId] = useState<number | null>(null);
   const [selectedImageIds, setSelectedImageIds] = useState<number[] | null>(null);
-  const [publishEaInitial, setPublishEaInitial] = useState(false);
   const [enhanceExistingSource, setEnhanceExistingSource] = useState<{
     url: string;
     previewUrl: string;
@@ -193,6 +201,13 @@ function ProjectWorkspace() {
     status: string;
     earlyAccessConfig: { buzzPrice: number; timeframe: number } | null;
   } | null>(null);
+
+  // Chapter reorder is opt-in. The previous always-on drag was easy to
+  // trigger by accident (the entire card was the drag handle, and a stray
+  // pointer-down on the wrong axis would commit a reorder to the server
+  // immediately). Toggle this on via the "Reorder" button at the top of
+  // the chapter list; off by default, drag handlers fall back to clicks.
+  const [chapterReorderMode, setChapterReorderMode] = useState(false);
 
   const panelSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
@@ -215,8 +230,8 @@ function ProjectWorkspace() {
     { enabled: projectId > 0 }
   );
 
-  const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana';
-  const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana;
+  const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana2';
+  const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana2;
 
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
@@ -714,8 +729,8 @@ function ProjectWorkspace() {
   const handleModelChange = (value: string | null) => {
     setGenerationModel(value as typeof generationModel);
     const newSizes =
-      COMIC_MODEL_SIZES[value ?? project?.baseModel ?? 'NanoBanana'] ??
-      COMIC_MODEL_SIZES.NanoBanana;
+      COMIC_MODEL_SIZES[value ?? project?.baseModel ?? 'NanoBanana2'] ??
+      COMIC_MODEL_SIZES.NanoBanana2;
     const defaultLabel =
       newSizes.find((s) => s.label === '3:4' || s.label === 'Portrait' || s.label === '2:3')
         ?.label ?? newSizes[0].label;
@@ -999,7 +1014,6 @@ function ProjectWorkspace() {
       });
     } else {
       goToChapter(chapterPosition);
-      setPublishEaInitial(false);
       openPublishModal();
     }
   };
@@ -1368,8 +1382,32 @@ function ProjectWorkspace() {
 
             {/* ── Sidebar: Chapters ───────────────── */}
             <div id="chapters-sidebar" className={styles.sidebarSection}>
-              <div className={styles.sidebarTitle}>
+              <div
+                className={styles.sidebarTitle}
+                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              >
                 <span>Chapters</span>
+                {project.chapters.length > 1 && (
+                  <Tooltip
+                    label={
+                      chapterReorderMode
+                        ? 'Done — click a chapter to open it'
+                        : 'Reorder chapters'
+                    }
+                    withArrow
+                    position="top"
+                  >
+                    <ActionIcon
+                      variant={chapterReorderMode ? 'filled' : 'subtle'}
+                      color={chapterReorderMode ? 'yellow' : 'gray'}
+                      size="sm"
+                      onClick={() => setChapterReorderMode((v) => !v)}
+                      aria-label={chapterReorderMode ? 'Exit reorder mode' : 'Reorder chapters'}
+                    >
+                      <IconGripVertical size={14} />
+                    </ActionIcon>
+                  </Tooltip>
+                )}
               </div>
 
               <div className={styles.chapterSidebar}>
@@ -1379,7 +1417,7 @@ function ProjectWorkspace() {
                   onDragEnd={handleChapterDragEnd}
                 >
                   <SortableContext items={project.chapters.map((ch) => ch.position)}>
-                    {project.chapters.map((chapter) => {
+                    {project.chapters.map((chapter, chapterIdx) => {
                       const isActive =
                         (activeChapterPosition ?? project.chapters[0]?.position) ===
                         chapter.position;
@@ -1408,6 +1446,7 @@ function ProjectWorkspace() {
                         <SortableChapter
                           key={`${chapter.projectId}-${chapter.position}`}
                           id={chapter.position}
+                          disabled={!chapterReorderMode}
                         >
                           <div
                             className={clsx(
@@ -1415,31 +1454,106 @@ function ProjectWorkspace() {
                               isActive && styles.chapterItemActive
                             )}
                             style={
-                              isDeleting ? { opacity: 0.5, pointerEvents: 'none' } : undefined
+                              isDeleting
+                                ? { opacity: 0.5, pointerEvents: 'none' }
+                                : chapterReorderMode
+                                ? { cursor: 'grab' }
+                                : undefined
                             }
-                            onClick={() => goToChapter(chapter.position, { history: 'push' })}
+                            onClick={
+                              // In reorder mode, the entire card is the drag
+                              // handle — don't switch chapters on click.
+                              chapterReorderMode
+                                ? undefined
+                                : () => goToChapter(chapter.position, { history: 'push' })
+                            }
                           >
                             <span className={styles.chapterItemNumber}>
                               {isBusy ? (
                                 <Loader size={12} />
-                              ) : (
+                              ) : chapterReorderMode ? (
                                 <IconGripVertical size={12} />
+                              ) : (
+                                <span style={{ fontSize: 11, fontWeight: 600 }}>
+                                  {chapterIdx + 1}
+                                </span>
                               )}
                             </span>
                             <div className={styles.chapterItemInfo}>
-                              <p className={styles.chapterItemName}>
-                                {chapter.name}
-                                {isEarlyAccess && (
-                                  <IconLock
-                                    size={11}
-                                    className="inline-block ml-1 opacity-60"
-                                    style={{
-                                      verticalAlign: 'middle',
-                                      color: 'var(--mantine-color-yellow-5)',
+                              {/* Row 1: chapter name + inline action icons. Putting */}
+                              {/* actions next to the title (not stretched down the */}
+                              {/* whole card) gives the metadata row below full width */}
+                              {/* so panel count + NSFW badge don't get crunched. */}
+                              <div className={styles.chapterItemNameRow}>
+                                <p className={styles.chapterItemName}>
+                                  {chapter.name}
+                                  {isEarlyAccess && (
+                                    <IconLock
+                                      size={11}
+                                      className="inline-block ml-1 opacity-60"
+                                      style={{
+                                        verticalAlign: 'middle',
+                                        color: 'var(--mantine-color-yellow-5)',
+                                      }}
+                                    />
+                                  )}
+                                </p>
+                                <span className={styles.chapterItemActions}>
+                                  <Tooltip
+                                    label={
+                                      hasInProgressPanels
+                                        ? 'Wait for all panels to complete before duplicating'
+                                        : 'Duplicate chapter'
+                                    }
+                                    withArrow
+                                    position="top"
+                                  >
+                                    <ActionIcon
+                                      variant="transparent"
+                                      size="xs"
+                                      c="dimmed"
+                                      disabled={
+                                        hasInProgressPanels ||
+                                        (duplicateChapterMutation.isPending &&
+                                          duplicateChapterMutation.variables?.chapterPosition === chapter.position)
+                                      }
+                                      onClick={(e: React.MouseEvent) => {
+                                        e.stopPropagation();
+                                        openConfirmModal({
+                                          title: 'Duplicate chapter',
+                                          children: `This will create a copy of "${chapter.name}" with all its panels. Continue?`,
+                                          labels: { confirm: 'Duplicate', cancel: 'Cancel' },
+                                          onConfirm: () =>
+                                            duplicateChapterMutation.mutate({
+                                              projectId,
+                                              chapterPosition: chapter.position,
+                                            }),
+                                        });
+                                      }}
+                                    >
+                                      {duplicateChapterMutation.isPending &&
+                                      duplicateChapterMutation.variables?.chapterPosition === chapter.position ? (
+                                        <Loader size={12} />
+                                      ) : (
+                                        <IconCopy size={12} />
+                                      )}
+                                    </ActionIcon>
+                                  </Tooltip>
+                                  <ActionIcon
+                                    variant="transparent"
+                                    size="xs"
+                                    c="dimmed"
+                                    onClick={(e: React.MouseEvent) => {
+                                      e.stopPropagation();
+                                      handleOpenChapterSettings(chapter);
                                     }}
-                                  />
-                                )}
-                              </p>
+                                  >
+                                    <IconSettings size={12} />
+                                  </ActionIcon>
+                                </span>
+                              </div>
+                              {/* Row 2: status dot + panel count + NSFW badge. */}
+                              {/* Full-width now that actions sit on row 1. */}
                               <div
                                 className={styles.chapterItemCount}
                                 style={{ display: 'flex', alignItems: 'center', gap: 4 }}
@@ -1483,59 +1597,6 @@ function ProjectWorkspace() {
                                 })()}
                               </div>
                             </div>
-                            <span className={styles.chapterItemActions}>
-                              <Tooltip
-                                label={
-                                  hasInProgressPanels
-                                    ? 'Wait for all panels to complete before duplicating'
-                                    : 'Duplicate chapter'
-                                }
-                                withArrow
-                                position="top"
-                              >
-                                <ActionIcon
-                                  variant="transparent"
-                                  size="xs"
-                                  c="dimmed"
-                                  disabled={
-                                    hasInProgressPanels ||
-                                    (duplicateChapterMutation.isPending &&
-                                      duplicateChapterMutation.variables?.chapterPosition === chapter.position)
-                                  }
-                                  onClick={(e: React.MouseEvent) => {
-                                    e.stopPropagation();
-                                    openConfirmModal({
-                                      title: 'Duplicate chapter',
-                                      children: `This will create a copy of "${chapter.name}" with all its panels. Continue?`,
-                                      labels: { confirm: 'Duplicate', cancel: 'Cancel' },
-                                      onConfirm: () =>
-                                        duplicateChapterMutation.mutate({
-                                          projectId,
-                                          chapterPosition: chapter.position,
-                                        }),
-                                    });
-                                  }}
-                                >
-                                  {duplicateChapterMutation.isPending &&
-                                  duplicateChapterMutation.variables?.chapterPosition === chapter.position ? (
-                                    <Loader size={12} />
-                                  ) : (
-                                    <IconCopy size={12} />
-                                  )}
-                                </ActionIcon>
-                              </Tooltip>
-                              <ActionIcon
-                                variant="transparent"
-                                size="xs"
-                                c="dimmed"
-                                onClick={(e: React.MouseEvent) => {
-                                  e.stopPropagation();
-                                  handleOpenChapterSettings(chapter);
-                                }}
-                              >
-                                <IconSettings size={12} />
-                              </ActionIcon>
-                            </span>
                           </div>
                         </SortableChapter>
                       );
@@ -1618,6 +1679,21 @@ function ProjectWorkspace() {
                               ? <IconLock size={10} />
                               : undefined
                           }
+                          rightSection={
+                            isActiveEarlyAccess ? (
+                              <Tooltip label="Edit Early Access" withArrow>
+                                <ActionIcon
+                                  variant="transparent"
+                                  size="xs"
+                                  c="yellow"
+                                  onClick={() => handleOpenChapterSettings(activeChapter)}
+                                  aria-label="Edit Early Access"
+                                >
+                                  <IconSettings size={12} />
+                                </ActionIcon>
+                              </Tooltip>
+                            ) : undefined
+                          }
                         >
                           {isScheduled
                             ? `Scheduled · ${activeChapter.publishedAt ? new Date(activeChapter.publishedAt).toLocaleDateString() : ''}`
@@ -1641,25 +1717,6 @@ function ProjectWorkspace() {
                           >
                             Preview
                           </Button>
-                        )}
-                        {isDraft && (
-                          <Tooltip label="Publish with Early Access pricing">
-                            <Button
-                              size="xs"
-                              variant="light"
-                              color="yellow"
-                              leftSection={<IconLock size={14} />}
-                              disabled={activeChapter.panels.length === 0}
-                              loading={isPublishing}
-                              onClick={() => {
-                                goToChapter(activeChapter.position);
-                                setPublishEaInitial(true);
-                                openPublishModal();
-                              }}
-                            >
-                              Early Access
-                            </Button>
-                          </Tooltip>
                         )}
                         <Tooltip
                           label="Add panels before publishing"
@@ -1907,7 +1964,6 @@ function ProjectWorkspace() {
         onClose={closePublishModal}
         onPublish={handleConfirmPublish}
         isLoading={publishChapterMutation.isLoading}
-        initialEaEnabled={publishEaInitial}
       />
 
       <ProjectSettingsModal

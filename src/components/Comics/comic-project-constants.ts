@@ -3,6 +3,13 @@ import { formatGenreLabel } from '~/utils/comic-helpers';
 
 export const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; height: number }[]> =
   {
+    NanoBanana2: [
+      { label: '16:9', width: 2560, height: 1440 },
+      { label: '4:3', width: 2304, height: 1728 },
+      { label: '1:1', width: 2048, height: 2048 },
+      { label: '3:4', width: 1728, height: 2304 },
+      { label: '9:16', width: 1440, height: 2560 },
+    ],
     NanoBanana: [
       { label: '16:9', width: 2560, height: 1440 },
       { label: '4:3', width: 2304, height: 1728 },
@@ -34,6 +41,11 @@ export const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; h
       { label: '3:2', width: 1536, height: 1024 },
       { label: '2:3', width: 1024, height: 1536 },
     ],
+    OpenAI2: [
+      { label: '1:1', width: 1024, height: 1024 },
+      { label: '3:2', width: 1536, height: 1024 },
+      { label: '2:3', width: 1024, height: 1536 },
+    ],
     Qwen: [
       { label: '16:9', width: 1664, height: 928 },
       { label: '4:3', width: 1472, height: 1104 },
@@ -51,21 +63,27 @@ export const COMIC_MODEL_SIZES: Record<string, { label: string; width: number; h
   };
 
 export const COMIC_MODEL_MAX_IMAGES: Record<string, number> = {
+  NanoBanana2: 7,
   NanoBanana: 7,
   Flux2: 4,
   Seedream: 7,
   SeedreamLite: 7,
   OpenAI: 7,
+  OpenAI2: 7,
   Qwen: 3,
   Grok: 7,
 };
 
+// NanoBanana 2 is the default — listed first so it's what new users land on
+// when no project preference is saved.
 export const COMIC_MODEL_OPTIONS = [
+  { value: 'NanoBanana2', label: 'Nano Banana 2' },
   { value: 'NanoBanana', label: 'Nano Banana Pro' },
   { value: 'Flux2', label: 'Flux.2' },
   { value: 'Seedream', label: 'Seedream v4.5' },
   { value: 'SeedreamLite', label: 'Seedream 5 Lite' },
   { value: 'OpenAI', label: 'OpenAI GPT-Image' },
+  { value: 'OpenAI2', label: 'OpenAI GPT-Image 2' },
   { value: 'Qwen', label: 'Qwen' },
   { value: 'Grok', label: 'Grok Imagine' },
 ];

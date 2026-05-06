@@ -44,7 +44,10 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   seedNode,
-  negativePromptNode,
+  createTextEditorGraph,
+  negativePromptGraph,
+  promptGraph,
+  triggerWordsGraph,
   aspectRatioNode,
   sliderNode,
   enumNode,
@@ -173,8 +176,10 @@ const klingLegacyGraph = new DataGraph<KlingVersionCtx, GenerationCtx>()
     defaultValue: true,
   })
 
-  // Negative prompt node
-  .node('negativePrompt', negativePromptNode())
+  // Prompt + triggerWords + negativePrompt — standard rule (required when no images)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph)
+  .merge(negativePromptGraph)
 
   // Aspect ratio node - only for txt2vid workflow
   .node(
@@ -358,7 +363,12 @@ const klingV3Graph = new DataGraph<KlingVersionCtx, GenerationCtx>()
     input: z.boolean().optional(),
     output: z.boolean(),
     defaultValue: false,
-  });
+  })
+
+  // Prompt + triggerWords — V3 prompt is always required (V3 is text-driven even
+  // in img2vid; the start image guides motion, not subject).
+  .merge(triggerWordsGraph)
+  .merge(createTextEditorGraph({ name: 'prompt', required: true }));
 
 // TODO: Add keepAudio node when vid2vid workflows are available
 // keepAudio: boolean toggle to preserve source audio in vid2vid operations

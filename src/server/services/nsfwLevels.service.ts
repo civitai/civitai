@@ -623,6 +623,17 @@ export async function updateComicProjectNsfwLevels(projectIds: number[]) {
   `);
 }
 
+// Project nsfwLevel is bit_or'd from chapter nsfwLevels, which are bit_or'd from
+// panel image nsfwLevels — so the chapter recompute MUST finish before the project
+// recompute runs, otherwise the project reads stale (often 0) chapter levels and
+// stays unrated. Use this helper at every callsite instead of firing the two
+// underlying functions side-by-side.
+export async function updateComicNsfwLevels(projectIds: number[]) {
+  if (!projectIds.length) return;
+  await updateComicChapterNsfwLevels(projectIds);
+  await updateComicProjectNsfwLevels(projectIds);
+}
+
 export async function updateComicNsfwLevelsForImage(imageId: number) {
   const panels = await dbRead.comicPanel.findMany({
     where: { imageId },
@@ -630,6 +641,5 @@ export async function updateComicNsfwLevelsForImage(imageId: number) {
   });
   if (!panels.length) return;
   const projectIds = [...new Set(panels.map((p) => p.projectId))];
-  await updateComicChapterNsfwLevels(projectIds);
-  await updateComicProjectNsfwLevels(projectIds);
+  await updateComicNsfwLevels(projectIds);
 }

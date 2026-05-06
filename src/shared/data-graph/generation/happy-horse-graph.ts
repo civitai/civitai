@@ -30,8 +30,10 @@ import {
   createCheckpointGraph,
   enumNode,
   imagesNode,
+  promptGraph,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
   videoNode,
 } from './common';
 import { isWorkflowOrVariant } from './config/workflows';
@@ -134,7 +136,11 @@ export const happyHorseGraph = new DataGraph<HappyHorseCtx, GenerationCtx>()
   )
 
   // Seed
-  .node('seed', seedNode());
+  .node('seed', seedNode())
+
+  // Prompt + triggerWords (no negativePrompt for happyHorse)
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export constants for use in components
 export { happyHorseAspectRatios, happyHorseResolutions, happyHorseAudioSettings };

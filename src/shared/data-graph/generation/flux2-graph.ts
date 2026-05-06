@@ -20,8 +20,10 @@ import {
   createCheckpointGraph,
   createResourcesGraph,
   imagesNode,
+  promptGraph,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
   type ResourceData,
 } from './common';
 
@@ -169,7 +171,10 @@ export const flux2Graph = new DataGraph<
     flex: noResourcesModeGraph,
     pro: noResourcesModeGraph,
     max: noResourcesModeGraph,
-  });
+  })
+  // Prompt + triggerWords are common to all flux2 modes.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export mode options for use in components
 export { flux2ModeVersionOptions, flux2VersionIds };

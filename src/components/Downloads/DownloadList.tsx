@@ -6,7 +6,7 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import type { DownloadGetAll } from '~/types/router';
-import { slugit } from '~/utils/string-helpers';
+import { getModelUrl } from '~/utils/string-helpers';
 
 export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
   return (
@@ -17,9 +17,10 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
         return (
           <Group key={download.modelVersion.id} wrap="nowrap">
             <Link
-              href={`/models/${download.modelVersion.model.id}/${slugit(
-                download.modelVersion.model.name
-              )}`}
+              href={getModelUrl({
+                modelId: download.modelVersion.model.id,
+                modelName: download.modelVersion.model.name,
+              })}
               passHref
               legacyBehavior
             >

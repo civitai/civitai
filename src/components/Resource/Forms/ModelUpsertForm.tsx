@@ -60,7 +60,7 @@ import {
 import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
-import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
+import { getDisplayName, getModelUrl, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
@@ -730,7 +730,7 @@ export const PrivateModelAutomaticSetup = ({
 
       if (form.id) {
         await router.replace(
-          `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
+          getModelUrl({ modelId: form.id, modelName: form.name, modelVersionId })
         );
       }
 

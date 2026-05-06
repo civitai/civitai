@@ -20,10 +20,12 @@ import {
   aspectRatioNode,
   createCheckpointGraph,
   imagesNode,
-  negativePromptNode,
+  negativePromptGraph,
+  promptGraph,
   resourcesNode,
   seedNode,
   sliderNode,
+  triggerWordsGraph,
 } from './common';
 
 // =============================================================================
@@ -121,7 +123,7 @@ const qwenSubGraph = new DataGraph<QwenCtx, GenerationCtx>()
 const qwen2SubGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .merge(() => createCheckpointGraph(), [])
   .node('aspectRatio', aspectRatioNode({ options: qwen2AspectRatios, defaultValue: '1:1' }))
-  .node('negativePrompt', negativePromptNode());
+  .merge(negativePromptGraph);
 
 // =============================================================================
 // Qwen Family Graph
@@ -151,7 +153,10 @@ export const qwenGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .discriminator('ecosystem', {
     Qwen: qwenSubGraph,
     Qwen2: qwen2SubGraph,
-  });
+  })
+  // Prompt + triggerWords are common to both Qwen and Qwen 2.
+  .merge(triggerWordsGraph)
+  .merge(promptGraph);
 
 // Export constants for use in components and handlers
 export { qwenAspectRatios, qwen2AspectRatios };
