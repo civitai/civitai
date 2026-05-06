@@ -2008,6 +2008,12 @@ export const publishModelById = async ({
           });
         }
 
+        // Only restore posts that were unpublished alongside the model. Without
+        // the `p."publishedAt" IS NULL` guard, calling publish on an
+        // already-published model overwrites every attached post's publishedAt
+        // (and clears their prevPublishedAt metadata), letting an owner script
+        // repeated publish calls to keep bumping their old posts to the top of
+        // feeds. Mirrors the unpublish path's `WHERE "publishedAt" IS NOT NULL`.
         await tx.$executeRaw`
           UPDATE "Post" p
           SET "publishedAt" = CASE
@@ -2020,6 +2026,7 @@ export const publishModelById = async ({
           WHERE mv.id = p."modelVersionId"
             AND p."userId" = ${model.userId}
             AND p."modelVersionId" IN (${Prisma.join(versionIds, ',')})
+            AND p."publishedAt" IS NULL
         `;
       }
       if (!republishing && !meta?.unpublishedBy) await updateModelLastVersionAt({ id, tx });
