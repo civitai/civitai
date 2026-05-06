@@ -265,6 +265,19 @@ export const ModelVersionMonetizationType = {
 
 export type ModelVersionMonetizationType = (typeof ModelVersionMonetizationType)[keyof typeof ModelVersionMonetizationType];
 
+export const LicensingFeeType = {
+  PerImageBuzz: 'PerImageBuzz',
+} as const;
+
+export type LicensingFeeType = (typeof LicensingFeeType)[keyof typeof LicensingFeeType];
+
+export const LicensingFeeSettlementCurrency = {
+  Buzz: 'Buzz',
+  Cash: 'Cash',
+} as const;
+
+export type LicensingFeeSettlementCurrency = (typeof LicensingFeeSettlementCurrency)[keyof typeof LicensingFeeSettlementCurrency];
+
 export const ModelVersionEngagementType = {
   Notify: 'Notify',
 } as const;

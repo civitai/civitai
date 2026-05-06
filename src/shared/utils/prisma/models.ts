@@ -52,6 +52,10 @@ export type ModelVersionSponsorshipSettingsType = "FixedPrice" | "Bidding";
 
 export type ModelVersionMonetizationType = "PaidAccess" | "PaidEarlyAccess" | "PaidGeneration" | "CivitaiClubOnly" | "MySubscribersOnly" | "Sponsored";
 
+export type LicensingFeeType = "PerImageBuzz";
+
+export type LicensingFeeSettlementCurrency = "Buzz" | "Cash";
+
 export type ModelVersionEngagementType = "Notify";
 
 export type ModelHashType = "AutoV1" | "AutoV2" | "AutoV3" | "SHA256" | "CRC32" | "BLAKE3";
@@ -862,6 +866,9 @@ export interface ModelVersion {
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
+  licensingFee: number | null;
+  licensingFeeType: LicensingFeeType | null;
+  licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   monetization?: ModelVersionMonetization | null;
   metrics?: ModelVersionMetric[];
   files?: ModelFile[];
