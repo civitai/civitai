@@ -10,6 +10,7 @@ import type { RouterOutput } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { formatGenreLabel } from '~/utils/comic-helpers';
 import { slugit } from '~/utils/string-helpers';
+import { getHighestBrowsingLevelBit } from '~/shared/constants/browsingLevel.constants';
 
 type ComicItem = RouterOutput['comics']['getPublicProjects']['items'][number];
 
@@ -19,11 +20,18 @@ export const ComicCard = memo(function ComicCard({ data }: { data: ComicItem }) 
         ...data.coverImage,
         type: data.coverImage.type ?? ('image' as const),
         metadata: (data.coverImage.metadata as MixedObject) ?? null,
-        // ImageGuard2 blurs based on `image.nsfwLevel`, but a comic's cover may
-        // be PG while inner chapters are mature (or vice versa). Use the higher
-        // of the two so the card reflects the worst content reachable by
-        // clicking through, matching the level used for feed-level filtering.
-        nsfwLevel: Math.max(data.coverImage.nsfwLevel ?? 0, data.nsfwLevel ?? 0),
+        // A comic cover may be PG while chapters are mature (or vice versa),
+        // so we want the card to gate by the worst content reachable by
+        // clicking through. We can't pass the bit_or composite directly:
+        // ImageGuard2 blurs via `Flags.hasFlag(blurLevels, nsfwLevel)`,
+        // which requires every bit of `nsfwLevel` to be present in
+        // `blurLevels` — so PG | R = 5 fails the check (PG isn't a blur
+        // level) and the card never blurs. Reduce to the highest single
+        // bit instead: that's both a valid label key and a value the blur
+        // gate accepts as expected.
+        nsfwLevel: getHighestBrowsingLevelBit(
+          (data.coverImage.nsfwLevel ?? 0) | (data.nsfwLevel ?? 0)
+        ),
       }
     : undefined;
 

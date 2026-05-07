@@ -77,6 +77,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Flags } from '~/shared/utils/flags';
 import {
   getBrowsingLevelLabel,
+  getHighestBrowsingLevelBit,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -370,8 +371,20 @@ function ComicOverview({ project }: { project: Project }) {
 
   const projectSlug = slugit(project.name);
 
-  // Guard image for hero — use heroImage/coverImage if available, otherwise project-level
-  const heroGuardImage = heroImage ?? { id: project.id, nsfwLevel: project.nsfwLevel };
+  // Guard image for hero — use heroImage/coverImage if available, otherwise project-level.
+  // Combine the underlying hero image's nsfwLevel with the project composite
+  // so the worst content reachable by clicking through governs the gate, then
+  // reduce to the highest single bit: ImageGuard2's blur check
+  // (`Flags.hasFlag(blurLevels, nsfwLevel)`) requires every bit of the level
+  // to be in the user's blur set. A composite like PG | R = 5 has a PG bit
+  // that's NOT in `blurLevels` (which only contains R/X/XXX/Blocked), so
+  // the check returns false and the hero never blurs. The single-bit
+  // reduction gives the gate a value it accepts and the badge a key it can
+  // label.
+  const heroBaseNsfwLevel = (heroImage?.nsfwLevel ?? 0) | (project.nsfwLevel ?? 0);
+  const heroGuardImage = heroImage
+    ? { ...heroImage, nsfwLevel: getHighestBrowsingLevelBit(heroBaseNsfwLevel) }
+    : { id: project.id, nsfwLevel: getHighestBrowsingLevelBit(project.nsfwLevel ?? 0) };
 
   return (
     <>

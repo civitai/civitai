@@ -1007,6 +1007,7 @@ export const addPostImage = async ({
   const post = await dbRead.post.findFirst({
     where: { id: props.postId },
     select: {
+      userId: true,
       collection: {
         select: {
           metadata: true,
@@ -1014,6 +1015,9 @@ export const addPostImage = async ({
       },
     },
   });
+
+  if (!post) throw throwNotFoundError(`No post with id ${props.postId}`);
+  if (post.userId !== user.id) throw throwAuthorizationError();
 
   const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
 
@@ -1073,9 +1077,7 @@ export const addPostImage = async ({
           where: { id: { in: modelVersionIds } },
           select: { modelId: true },
         })
-        .then((mvs) =>
-          Promise.all(mvs.map((mv) => bustCacheTag(`images-model:${mv.modelId}`)))
-        )
+        .then((mvs) => Promise.all(mvs.map((mv) => bustCacheTag(`images-model:${mv.modelId}`))))
         .then(() => undefined)
     );
   }

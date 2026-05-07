@@ -13,11 +13,14 @@ export const negativePromptSchema = z
   .default('');
 
 export type SourceImageProps = z.input<typeof sourceImageSchema>;
+
 export const sourceImageSchema = z.object({
   url: z
     .string()
     .startsWith('https://orchestration')
     .includes('.civitai.com')
+    .or(z.string().includes('.civitai.red'))
+    .or(z.string().includes('image.civitai.red'))
     .or(z.string().includes('image.civitai.com')),
   width: z.number(),
   height: z.number(),

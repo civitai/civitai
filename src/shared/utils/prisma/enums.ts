@@ -960,6 +960,7 @@ export const ComicPanelStatus = {
   Enqueued: 'Enqueued',
   Generating: 'Generating',
   AwaitingSelection: 'AwaitingSelection',
+  RequireUnlock: 'RequireUnlock',
   Ready: 'Ready',
   Failed: 'Failed',
 } as const;

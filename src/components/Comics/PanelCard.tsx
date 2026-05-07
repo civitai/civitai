@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Loader, Menu, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Badge, Button, Loader, Menu, Text, Tooltip } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconCopy,
@@ -22,10 +22,13 @@ import { NsfwLevel, SignalMessages } from '~/server/common/enums';
 import { ComicPanelStatus } from '~/shared/utils/prisma/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useServerDomains } from '~/providers/AppProvider';
+import { syncAccount } from '~/utils/sync-account';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { trpc } from '~/utils/trpc';
+import { showErrorNotification } from '~/utils/notifications';
 import { CandidateImageModal } from '~/components/Comics/CandidateImageModal';
-import { IconEyeOff } from '@tabler/icons-react';
+import { IconEyeOff, IconExternalLink } from '@tabler/icons-react';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
 
 const nsfwBadgeColors: Record<number, string> = {
@@ -105,15 +108,79 @@ export function PanelCard({
     status === 'Ready' &&
     (panel.image ? !hasSafeBrowsingLevel(panel.image.nsfwLevel) : true);
 
-  const isActive = status === 'Generating' || status === 'Pending' || status === 'Enqueued';
+  // `RequireUnlock` is a non-terminal "owner action required" state, set by
+  // the poll endpoint whenever `BlobData` derived a `blockedReason` on the
+  // generation output. The CTA picks between two flows based purely on
+  // the *current viewer's* domain — NOT the persisted `blockedReason`,
+  // which only reflects whichever domain the last poll happened on:
+  //  * On green (SFW): always redirect to civitai.red. Mature content
+  //    cannot be lifted in place here. The server-side unlock mutation
+  //    also rejects on green as a defense in depth.
+  //  * On red: in-place yellow-Buzz unlock (mirrors QueueItem's
+  //    `CanUpgradeBlock`). Workflow's `allowMatureContent` is flipped to
+  //    true and the result is downloaded into S3 inline.
+  const requiresUnlock = status === 'RequireUnlock';
+  const redDomain = useServerDomains().red;
+  const unlockHref =
+    isGreen && redDomain
+      ? syncAccount(`//${redDomain}/comics/project/${projectId}/chapter/${chapterPosition}`)
+      : null;
 
-  // Initialize candidates from panel metadata (persists across page loads for Ready panels)
-  const metaCandidates = panel.metadata?.candidateImages;
-  const initialCandidates = Array.isArray(metaCandidates)
-    ? metaCandidates.map((c: any) => (typeof c === 'string' ? c : c.key))
+
+  // Build the per-candidate slot list from persisted metadata. Each slot is
+  // either downloaded (`{ key }`) or locked (`{ requiresUnlock, blockedReason }`,
+  // no URL persisted). `nsfwLevel` is the orchestrator-derived level for
+  // the slot — the picker uses it to blur clean-but-mature candidates so
+  // mature results don't render uncensored just because they made it past
+  // the `blockedReason` gate.
+  type CandidateSlot =
+    | { key: string; requiresUnlock?: false; nsfwLevel?: number | null }
+    | {
+        key?: undefined;
+        requiresUnlock: true;
+        blockedReason: string;
+        blurredPreviewUrl?: string | null;
+        nsfwLevel?: number | null;
+      };
+
+  const metaCandidates = panel.metadata?.candidateImages as
+    | Array<{
+        key?: string;
+        requiresUnlock?: boolean;
+        blockedReason?: string;
+        nsfwLevel?: number | null;
+      }>
+    | undefined;
+  const initialSlots: CandidateSlot[] | null = Array.isArray(metaCandidates)
+    ? metaCandidates.map((c) =>
+        c?.requiresUnlock
+          ? {
+              requiresUnlock: true as const,
+              blockedReason: c.blockedReason ?? 'canUpgrade',
+              nsfwLevel: c.nsfwLevel ?? null,
+            }
+          : {
+              key: typeof c === 'string' ? (c as unknown as string) : (c?.key ?? ''),
+              nsfwLevel: typeof c === 'string' ? null : (c?.nsfwLevel ?? null),
+            }
+      )
     : null;
-  const [candidateImages, setCandidateImages] = useState<string[] | null>(initialCandidates);
+  const [candidateSlots, setCandidateSlots] = useState<CandidateSlot[] | null>(
+    initialSlots && initialSlots.length > 0 ? initialSlots : null
+  );
   const [candidateModalOpen, setCandidateModalOpen] = useState(false);
+  const hasLockedCandidate = !!candidateSlots?.some((s) => s.requiresUnlock);
+
+  // Polling continues for `RequireUnlock` (single-image blocked) AND for
+  // `AwaitingSelection` panels that still have at least one locked candidate
+  // — both states need transient preview-URL refreshes that we deliberately
+  // never persist.
+  const isActive =
+    status === 'Generating' ||
+    status === 'Pending' ||
+    status === 'Enqueued' ||
+    status === 'RequireUnlock' ||
+    (status === 'AwaitingSelection' && hasLockedCandidate);
 
   // Patch this panel's data directly in the chapter cache (no full refetch
   // needed). Panels live on `getChapter` keyed by `{ projectId, chapterPosition }`.
@@ -152,6 +219,12 @@ export function PanelCard({
     },
   });
 
+  // Transient blurred preview from the orchestrator for blocked panels. We
+  // deliberately keep this in component state ONLY — it must never round-trip
+  // through panel.imageUrl or any other persisted field. On page refresh the
+  // initial-fetch effect below pulls a fresh URL from the orchestrator.
+  const [blurredPreviewUrl, setBlurredPreviewUrl] = useState<string | null>(null);
+
   // Poll server to check orchestrator status and download image when ready
   const isPollingRef = useRef(false);
   const pollOnce = useCallback(async () => {
@@ -161,12 +234,34 @@ export function PanelCard({
       const result = await utils.comics.pollPanelStatus.fetch({ panelId: panel.id }, {
         cacheTime: 0,
       }) as any;
-      if (result.candidateImages && result.candidateImages.length > 1) {
-        setCandidateImages(result.candidateImages);
-        patchPanel({ status: 'AwaitingSelection' });
+      // New shape: per-candidate slots (clean OR locked, in stable order).
+      if (Array.isArray(result.candidates) && result.candidates.length > 1) {
+        setCandidateSlots(
+          result.candidates.map((c: any) =>
+            c?.requiresUnlock
+              ? {
+                  requiresUnlock: true as const,
+                  blockedReason: c.blockedReason ?? 'canUpgrade',
+                  blurredPreviewUrl: c.blurredPreviewUrl ?? null,
+                  nsfwLevel: c.nsfwLevel ?? null,
+                }
+              : { key: c.key, nsfwLevel: c.nsfwLevel ?? null }
+          )
+        );
+        if (status !== 'AwaitingSelection') {
+          patchPanel({ status: 'AwaitingSelection' });
+        }
         return;
       }
-      if (result.status === 'Ready' || result.status === 'Failed') {
+      // Refresh the transient blurred preview if the server returned one.
+      if (typeof result.blurredPreviewUrl === 'string') {
+        setBlurredPreviewUrl(result.blurredPreviewUrl);
+      }
+      if (
+        result.status === 'Ready' ||
+        result.status === 'Failed' ||
+        result.status === 'RequireUnlock'
+      ) {
         patchPanel({
           status: result.status,
           imageUrl: result.imageUrl,
@@ -178,11 +273,61 @@ export function PanelCard({
     } finally {
       isPollingRef.current = false;
     }
-  }, [utils, panel.id, patchPanel]);
+  }, [utils, panel.id, patchPanel, status]);
+
+  const unlockMutation = trpc.comics.unlockPanelGeneration.useMutation({
+    onSuccess: (data: any) => {
+      // Invalidate so the next render reads the freshly-written metadata
+      // (with new S3 keys backfilled into previously-locked slots).
+      void utils.comics.getChapter.invalidate({ projectId, chapterPosition });
+
+      // Multi-image: server now returns the inline-downloaded candidates
+      // array directly. Push it into local state so the picker reflects
+      // the unlocked state without waiting for a poll round-trip.
+      if (Array.isArray(data?.candidates) && data.candidates.length > 1) {
+        setCandidateSlots(
+          data.candidates.map((c: any) =>
+            c?.requiresUnlock
+              ? {
+                  requiresUnlock: true as const,
+                  blockedReason: c.blockedReason ?? 'canUpgrade',
+                  blurredPreviewUrl: c.blurredPreviewUrl ?? null,
+                  nsfwLevel: c.nsfwLevel ?? null,
+                }
+              : { key: c.key, nsfwLevel: c.nsfwLevel ?? null }
+          )
+        );
+        return;
+      }
+
+      // Single-image: status came back `Ready` (or fallback `Generating`);
+      // patch the cache so the panel re-renders with the unlocked image.
+      patchPanel({
+        status: data.status,
+        imageUrl: data.imageUrl ?? null,
+        errorMessage: null,
+      });
+    },
+    // Without an explicit error handler, a failed orchestrator update (no
+    // Buzz, network error, etc.) silently no-ops — the user clicks Unlock
+    // and "nothing happens". Surface the error so they know what to do.
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Unlock failed',
+        error: new Error(
+          error.message || 'Could not unlock this generation. Please try again.'
+        ),
+      });
+    },
+  });
 
   // Self-contained polling: when this panel is actively generating, poll periodically.
-  // Stop once candidates are available (user needs to pick) or panel reaches terminal state.
-  const hasCandidates = candidateImages != null && candidateImages.length > 1;
+  // Stop once *all* candidates are clean (user needs to pick) or panel reaches terminal state.
+  // For AwaitingSelection with locked candidates we keep polling so the
+  // ephemeral blurred-preview URLs stay fresh and we can pick up
+  // newly-clean URLs after an unlock.
+  const hasCandidates =
+    candidateSlots != null && candidateSlots.length > 1 && !hasLockedCandidate;
   useEffect(() => {
     if (!isActive || hasCandidates) return;
     void pollOnce();
@@ -196,8 +341,10 @@ export function PanelCard({
     useCallback(
       (data: { panelId: number; projectId: number; status: string; imageUrl?: string }) => {
         if (data.panelId !== panel.id) return;
-        if (data.status === 'AwaitingSelection') {
-          // Candidates are ready — poll once to get the image keys, then stop
+        if (data.status === 'AwaitingSelection' || data.status === 'RequireUnlock') {
+          // Owner action required — re-poll so we pick up candidates or the
+          // transient blurred preview (Blocked never carries an imageUrl in
+          // the signal because we deliberately don't persist one).
           void pollOnce();
           return;
         }
@@ -325,7 +472,7 @@ export function PanelCard({
                         Iterative Edit
                       </Menu.Item>
                     )}
-                    {status === 'Ready' && candidateImages && candidateImages.length > 1 && (
+                    {status === 'Ready' && candidateSlots && candidateSlots.length > 1 && (
                       <Menu.Item
                         leftSection={<IconPhotoSearch size={14} />}
                         onClick={(e: React.MouseEvent) => {
@@ -401,7 +548,7 @@ export function PanelCard({
             </div>
           </div>
         </>
-      ) : candidateImages && candidateImages.length > 1 ? (
+      ) : candidateSlots && candidateSlots.length > 1 ? (
         <>
           <div
             className={styles.panelEmpty}
@@ -413,10 +560,10 @@ export function PanelCard({
           >
             <IconPhotoSearch size={28} />
             <Text size="xs" fw={600} c="yellow">
-              {candidateImages.length} images ready
+              {candidateSlots.length} images ready
             </Text>
-            <Text size="xs" c="dimmed">
-              Click to choose
+            <Text size="xs" c="dimmed" ta="center">
+              {hasLockedCandidate ? 'Some need unlock — click to view' : 'Click to choose'}
             </Text>
           </div>
           <div className="absolute top-2 left-2">
@@ -429,6 +576,88 @@ export function PanelCard({
             <div className={styles.panelEmpty}>
               <div className={styles.spinner} />
               <Text size="xs">{status === 'Pending' || status === 'Enqueued' ? 'Queued' : 'Generating...'}</Text>
+            </div>
+          ) : requiresUnlock ? (
+            <div className={styles.panelFailed} style={{ position: 'relative', overflow: 'hidden' }}>
+              {/* Show the orchestrator's blurred preview to the OWNER only.
+                  This URL is delivered transiently via the poll response and
+                  is never persisted on the panel — that's intentional, so
+                  the CDN link can't be discovered through any public
+                  surface that reads `panel.imageUrl`. */}
+              {blurredPreviewUrl && (
+                <>
+                  <img
+                    src={blurredPreviewUrl}
+                    alt=""
+                    className="absolute inset-0 w-full h-full object-cover"
+                  />
+                  <div
+                    className="absolute inset-0"
+                    style={{ background: 'rgba(0,0,0,0.55)' }}
+                  />
+                </>
+              )}
+              <div className="relative flex flex-col items-center gap-1 px-2 py-3">
+                <Text size="xs" c="yellow" fw={700} ta="center">
+                  Mature Content
+                </Text>
+                {isGreen ? (
+                  <>
+                    <Text size="xs" c="dimmed" ta="center" px="xs">
+                      This generation can only be viewed on civitai.red.
+                    </Text>
+                    {unlockHref ? (
+                      <Button
+                        component="a"
+                        href={unlockHref}
+                        target="_blank"
+                        rel="noreferrer nofollow"
+                        size="compact-xs"
+                        color="red"
+                        variant="light"
+                        radius="xl"
+                        leftSection={<IconExternalLink size={12} />}
+                        onClick={(e: React.MouseEvent) => e.stopPropagation()}
+                      >
+                        Unlock on civitai.red
+                      </Button>
+                    ) : null}
+                  </>
+                ) : (
+                  <>
+                    <Text size="xs" c="dimmed" ta="center" px="xs">
+                      Unlock this content with{' '}
+                      <Text component="span" c="yellow" inherit>
+                        yellow
+                      </Text>{' '}
+                      Buzz!
+                    </Text>
+                    <Button
+                      size="compact-xs"
+                      color="yellow"
+                      variant="light"
+                      radius="xl"
+                      loading={unlockMutation.isPending}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        unlockMutation.mutate({ panelId: panel.id });
+                      }}
+                    >
+                      Unlock
+                    </Button>
+                  </>
+                )}
+                <button
+                  className="mt-1 px-3 py-1 rounded text-xs bg-dark-6 hover:bg-dark-5 text-gray-300 flex items-center gap-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onRegenerate();
+                  }}
+                >
+                  <IconRefreshDot size={12} />
+                  Regenerate
+                </button>
+              </div>
             </div>
           ) : status === 'Failed' ? (
             <div className={styles.panelFailed}>
@@ -513,15 +742,27 @@ export function PanelCard({
       )}
     </div>
     </Tooltip>
-    {candidateImages && candidateImages.length > 1 && (
+    {candidateSlots && candidateSlots.length > 1 && (
       <CandidateImageModal
         opened={candidateModalOpen}
         onClose={() => setCandidateModalOpen(false)}
-        candidates={candidateImages}
+        candidates={candidateSlots}
         currentImageUrl={imageUrl}
         onConfirm={(key) =>
           selectPanelImageMutation.mutate({ panelId: panel.id, selectedImageKey: key })
         }
+        // CTA selection is purely domain-based: green → redirect, red →
+        // in-place unlock. We never expose `onUnlock` on green because the
+        // server-side mutation rejects there as well. `unlockHref` is also
+        // forwarded for clean-but-mature tiles on green so the per-tile
+        // redirect button can render even when no slot is `requiresUnlock`.
+        onUnlock={
+          hasLockedCandidate && !isGreen
+            ? () => unlockMutation.mutate({ panelId: panel.id })
+            : undefined
+        }
+        isUnlocking={unlockMutation.isPending}
+        unlockHref={isGreen ? unlockHref : null}
         isSelecting={selectPanelImageMutation.isPending}
       />
     )}

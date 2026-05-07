@@ -65,8 +65,35 @@ export const nsfwBrowsingLevelsArray: NsfwLevel[] = [
   NsfwLevel.Blocked,
 ];
 
+// Order matters: highest-severity bit first. `getHighestBrowsingLevelBit`
+// returns the most severe single-bit value contained in a composite, which
+// is what `getBrowsingLevelLabel` uses to label aggregate levels (e.g.
+// comic projects bit_or all chapter levels — a composite of PG | R = 5
+// has no direct entry in `browsingLevelLabels`).
+const browsingLevelBitsBySeverity: NsfwLevel[] = [
+  NsfwLevel.Blocked,
+  NsfwLevel.XXX,
+  NsfwLevel.X,
+  NsfwLevel.R,
+  NsfwLevel.PG13,
+  NsfwLevel.PG,
+];
+
+export function getHighestBrowsingLevelBit(value: number): NsfwLevel | 0 {
+  for (const bit of browsingLevelBitsBySeverity) {
+    if ((value & bit) !== 0) return bit;
+  }
+  return 0;
+}
+
 export function getBrowsingLevelLabel(value: number) {
-  return browsingLevelLabels[value as keyof typeof browsingLevelLabels] ?? '?';
+  // Fast path: single-bit values (or 0) hit the table directly.
+  const direct = browsingLevelLabels[value as keyof typeof browsingLevelLabels];
+  if (direct) return direct;
+  // Composite (e.g. comic projects): label by the most severe bit
+  // present, otherwise fall back to '?' for truly unrated.
+  const highest = getHighestBrowsingLevelBit(value);
+  return highest ? browsingLevelLabels[highest] : '?';
 }
 export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
 

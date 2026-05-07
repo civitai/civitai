@@ -1,0 +1,11 @@
+-- Add `RequireUnlock` to ComicPanelStatus.
+--
+-- Used by `pollPanelStatus` when the orchestrator returns a *blurred preview*
+-- for mature output on the SFW domain. We refuse to persist that URL on the
+-- panel (doing so would expose the CDN link through any surface that reads
+-- `panel.imageUrl`); instead the panel sits in `RequireUnlock` until the
+-- owner unlocks the workflow with yellow Buzz, at which point it transitions
+-- back to `Generating` and the standard poll loop downloads the now-unblocked
+-- output. Mirrors the role of `AwaitingSelection` — a non-terminal state
+-- representing "owner action required".
+ALTER TYPE "ComicPanelStatus" ADD VALUE 'RequireUnlock';

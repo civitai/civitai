@@ -13,7 +13,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import {
-  browsingLevelLabels,
+  getBrowsingLevelLabel,
   getIsSafeBrowsingLevel,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -186,7 +186,7 @@ function ImageGuardContentInner({
                 classNames={{ root: getBrowsingLevelClass(classes.root, browsingLevel) }}
                 className="min-w-[32px] text-center shadow shadow-black/30"
               >
-                {browsingLevelLabels[browsingLevel as NsfwLevel]}
+                {getBrowsingLevelLabel(browsingLevel)}
               </Badge>
               <Button className={classes.showButton} onClick={toggle} radius="xl">
                 Show
@@ -285,7 +285,7 @@ function BlurToggle({
           styles={imageFlagStyles}
           {...badgeProps}
         >
-          {browsingLevelLabels[browsingLevel]}
+          {getBrowsingLevelLabel(browsingLevel)}
         </Badge>
       );
     }
@@ -299,7 +299,7 @@ function BlurToggle({
           styles={imageFlagStyles}
           {...badgeProps}
         >
-          {browsingLevelLabels[browsingLevel]}
+          {getBrowsingLevelLabel(browsingLevel)}
         </Badge>
       );
     }

@@ -107,7 +107,6 @@ export const postRouter = router({
     .mutation(deletePostHandler),
   addImage: guardedProcedure
     .input(imageSchema.extend({ postId: z.number() }))
-    .use(isOwnerOrModerator)
     .mutation(({ ctx, input }) => addPostImage({ ...input, user: ctx.user })),
   updateImage: verifiedProcedure
     .input(updatePostImageSchema)

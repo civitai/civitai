@@ -5181,6 +5181,7 @@ enum ComicPanelStatus {
   Enqueued
   Generating
   AwaitingSelection
+  RequireUnlock
   Ready
   Failed
 }

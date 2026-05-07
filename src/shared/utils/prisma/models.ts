@@ -202,7 +202,7 @@ export type ComicProjectStatus = "Active" | "Deleted";
 
 export type ComicReferenceStatus = "Pending" | "Ready" | "Failed";
 
-export type ComicPanelStatus = "Pending" | "Enqueued" | "Generating" | "AwaitingSelection" | "Ready" | "Failed";
+export type ComicPanelStatus = "Pending" | "Enqueued" | "Generating" | "AwaitingSelection" | "RequireUnlock" | "Ready" | "Failed";
 
 export type ComicChapterStatus = "Draft" | "Published" | "Scheduled";
 

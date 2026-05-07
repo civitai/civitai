@@ -1,7 +1,7 @@
 import type { BadgeProps } from '@mantine/core';
 import { Badge } from '@mantine/core';
 import {
-  browsingLevelLabels,
+  getBrowsingLevelLabel,
   getIsSafeBrowsingLevel,
   nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -19,7 +19,11 @@ export function BrowsingLevelBadge({
 }: {
   browsingLevel?: number;
 } & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
-  const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel ?? NsfwLevel.XXX);
+  // Use `intersects` instead of `hasFlag` so composite levels (e.g. comic
+  // projects with `nsfwLevel = PG | R`) still flag as NSFW. `hasFlag` would
+  // require every bit of the input to be in the NSFW mask — a sfw bit like
+  // PG would short-circuit it to false even when an NSFW bit was also set.
+  const nsfw = Flags.intersects(nsfwBrowsingLevelsFlag, browsingLevel ?? NsfwLevel.XXX);
 
   const badgeClass = clsx(className, {
     [sfwClassName ? sfwClassName : '']: !nsfw,
@@ -32,7 +36,7 @@ export function BrowsingLevelBadge({
       className={badgeClass}
       {...badgeProps}
     >
-      {browsingLevelLabels[browsingLevel as NsfwLevel] ?? '?'}
+      {getBrowsingLevelLabel(browsingLevel ?? 0)}
     </Badge>
   );
 }
