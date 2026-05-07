@@ -1033,6 +1033,9 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
+  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the controller — pass-through
+  // to avoid a second Flipt evaluation inside getImagesFromSearch.
+  bitdexMode?: string | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -2097,6 +2100,9 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   entry?: number;
   blockedFor?: string[];
   signal?: AbortSignal;
+  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the caller (controller).
+  // When provided, getImagesFromSearch skips its own Flipt evaluation.
+  bitdexMode?: string | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -2330,15 +2336,20 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   // Check BitDex mode (off / shadow / primary)
   // Use buildFliptContext (same as comics) so both 'moderators' (isModerator=true)
   // and 'testers' (userId in list) segments match correctly.
-  const bitdexMode = await getFliptVariant(
-    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    input.currentUserId?.toString() || 'anonymous',
-    buildFliptContext(
-      input.currentUserId
-        ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
-        : undefined
-    )
-  );
+  // Reuse the controller's pre-evaluated value when present (it queries the same
+  // flag with the same entityId+context) to avoid a duplicate Flipt round-trip.
+  const bitdexMode =
+    input.bitdexMode !== undefined
+      ? input.bitdexMode
+      : await getFliptVariant(
+          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+          input.currentUserId?.toString() || 'anonymous',
+          buildFliptContext(
+            input.currentUserId
+              ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
+              : undefined
+          )
+        );
   console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
   // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
