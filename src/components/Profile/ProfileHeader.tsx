@@ -73,7 +73,7 @@ export function ProfileHeader({ username }: { username: string }) {
                     name={image.name ?? image.id.toString()}
                     alt={image.name ?? undefined}
                     type={image.type}
-                    width={Math.min(image.width ?? 1920, 1920)}
+                    width={1600}
                     style={{ maxWidth: '100%' }}
                     className="w-full max-w-full absolute-center"
                   />
