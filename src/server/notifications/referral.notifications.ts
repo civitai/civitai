@@ -4,7 +4,7 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 export const referralNotifications = createNotificationProcessor({
   'referral-reward-settled': {
     displayName: 'Referral Reward Settled',
-    category: NotificationCategory.Buzz,
+    category: NotificationCategory.Referral,
     prepareMessage: ({ details }) => {
       const tokens = Number(details.tokens ?? 0);
       const blueBuzz = Number(details.blueBuzz ?? 0);
@@ -20,7 +20,7 @@ export const referralNotifications = createNotificationProcessor({
   },
   'referral-milestone-hit': {
     displayName: 'Referral Milestone Reached',
-    category: NotificationCategory.Buzz,
+    category: NotificationCategory.Referral,
     prepareMessage: ({ details }) => {
       const threshold = Number(details.threshold ?? 0).toLocaleString();
       const bonus = Number(details.bonusAmount ?? 0).toLocaleString();
@@ -32,7 +32,7 @@ export const referralNotifications = createNotificationProcessor({
   },
   'referral-token-expiring': {
     displayName: 'Referral Tokens Expiring Soon',
-    category: NotificationCategory.Buzz,
+    category: NotificationCategory.Referral,
     prepareMessage: ({ details }) => {
       const tokens = Number(details.tokens ?? 0);
       return {
@@ -45,7 +45,7 @@ export const referralNotifications = createNotificationProcessor({
   },
   'referral-welcome-bonus': {
     displayName: 'Welcome Bonus from Referral',
-    category: NotificationCategory.Buzz,
+    category: NotificationCategory.Referral,
     toggleable: false,
     prepareMessage: ({ details }) => {
       const blueBuzz = Number(details.blueBuzz ?? 0).toLocaleString();

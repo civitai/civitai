@@ -12,6 +12,8 @@ import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
+  LicensingFeeSettlementCurrency,
+  LicensingFeeType,
   ModelStatus,
   ModelType,
   ModelUploadType,
@@ -274,6 +276,8 @@ const recommendedResourceSchema = z.object({
 
 export type ModelVersionUpsertInput = z.infer<typeof modelVersionUpsertSchema2>;
 
+export const MAX_LICENSING_FEE = 100;
+
 export type ModelVersionEarlyAccessConfig = z.infer<typeof modelVersionEarlyAccessConfigSchema>;
 export const modelVersionEarlyAccessConfigSchema = z.object({
   timeframe: z.number(),
@@ -337,6 +341,9 @@ export const modelVersionUpsertSchema2 = z.object({
     .nullish(),
   uploadType: z.enum(ModelUploadType).optional(),
   usageControl: z.enum(ModelUsageControl).optional(),
+  licensingFee: z.number().int().min(0).max(MAX_LICENSING_FEE).nullish(),
+  licensingFeeType: z.enum(LicensingFeeType).nullish(),
+  licensingFeeSettlementCurrency: z.enum(LicensingFeeSettlementCurrency).nullish(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;

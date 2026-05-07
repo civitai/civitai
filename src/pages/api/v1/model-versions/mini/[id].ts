@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { lowerFirst } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Session } from 'next-auth';
 import * as z from 'zod';
@@ -15,7 +16,13 @@ import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getEpochJobAndFileName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import type { ModelType, ModelHashType, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import type {
+  LicensingFeeSettlementCurrency,
+  LicensingFeeType,
+  ModelType,
+  ModelHashType,
+  ModelUsageControl,
+} from '~/shared/utils/prisma/enums';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 
@@ -46,6 +53,9 @@ type VersionRow = {
   sfwOnly: boolean;
   usageControl: ModelUsageControl;
   modelUserId: number;
+  licensingFee: number | null;
+  licensingFeeType: LicensingFeeType | null;
+  licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
 };
 type FileRow = {
   id: number;
@@ -90,6 +100,9 @@ export default MixedAuthEndpoint(async function handler(
       mv."earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
+      mv."licensingFee",
+      mv."licensingFeeType",
+      mv."licensingFeeSettlementCurrency",
       (
         (
             mv."earlyAccessEndsAt" > NOW()
@@ -231,6 +244,15 @@ export default MixedAuthEndpoint(async function handler(
     .map((fm) => fm.modelId)
     .includes(modelVersion.modelId);
 
+  const fee =
+    modelVersion.licensingFee != null && modelVersion.licensingFee > 0
+      ? {
+          amount: modelVersion.licensingFee,
+          type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
+          settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
+        }
+      : undefined;
+
   const data = {
     air,
     versionName: modelVersion.versionName,
@@ -254,6 +276,7 @@ export default MixedAuthEndpoint(async function handler(
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
+    fee,
   };
   res.status(200).json(data);
 });

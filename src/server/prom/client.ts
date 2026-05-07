@@ -126,6 +126,19 @@ export const creatorCompAmountPaidCounter = registerCounterWithLabels({
   labelNames: ['account_type'] as const,
 });
 
+// License fee payout metrics
+export const licenseFeeCreatorsPaidCounter = registerCounterWithLabels({
+  name: 'license_fee_creators_paid_total',
+  help: 'Total number of creators who received license fee payouts',
+  labelNames: ['account_type'] as const,
+});
+
+export const licenseFeeAmountPaidCounter = registerCounterWithLabels({
+  name: 'license_fee_amount_paid_total',
+  help: 'Total amount paid to creators for license fees',
+  labelNames: ['account_type'] as const,
+});
+
 // User update tracking metrics
 export const userUpdateCounter = registerCounterWithLabels({
   name: 'user_update_total',

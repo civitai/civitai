@@ -519,7 +519,7 @@ async function settleRewardRow(reward: SettleableReward) {
     await createNotification({
       type: 'referral-welcome-bonus',
       userId: reward.userId,
-      category: NotificationCategory.Buzz,
+      category: NotificationCategory.Referral,
       key: `referral-welcome-bonus:${reward.id}`,
       details: { blueBuzz: reward.buzzAmount },
     }).catch(() => undefined);
@@ -533,7 +533,7 @@ async function settleRewardRow(reward: SettleableReward) {
     await createNotification({
       type: 'referral-reward-settled',
       userId: reward.userId,
-      category: NotificationCategory.Buzz,
+      category: NotificationCategory.Referral,
       key: `referral-reward-settled:${reward.id}`,
       details: {
         tokens: reward.tokenAmount,
@@ -667,7 +667,7 @@ export async function awardMilestones(userId: number) {
         await createNotification({
           type: 'referral-milestone-hit',
           userId,
-          category: NotificationCategory.Buzz,
+          category: NotificationCategory.Referral,
           key: `referral-milestone-hit:${userId}:${m.threshold}`,
           details: { threshold: m.threshold, bonusAmount: m.bonus },
         }).catch(() => undefined);
@@ -726,7 +726,7 @@ export async function expireSettledTokens(now: Date = new Date()) {
     await createNotification({
       type: 'referral-token-expiring',
       userId: row.userId,
-      category: NotificationCategory.Buzz,
+      category: NotificationCategory.Referral,
       key: `referral-token-expiring:${row.userId}:${expiresAtKey}`,
       details: {
         tokens: row._sum.tokenAmount ?? 0,

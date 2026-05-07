@@ -17,6 +17,7 @@ const categoryNameMap: Partial<Record<NotificationCategory, string>> = {
   [NotificationCategory.Milestone]: 'Milestones',
   [NotificationCategory.Update]: 'Updates',
   [NotificationCategory.Bounty]: 'Bounties',
+  [NotificationCategory.Referral]: 'Referrals',
   [NotificationCategory.Other]: 'Others',
 };
 export const getCategoryDisplayName = (category: string) =>

@@ -5,6 +5,7 @@ import {
   Group,
   Paper,
   ScrollArea,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -79,73 +80,85 @@ export function DailyCreatorCompReward({
   const mobile = useIsMobile({ breakpoint: 'sm' });
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
+  const [source, setSource] = useState<'compensation' | 'license'>('compensation');
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
   const { data: resources = [], isLoading } = trpc.buzz.getDailyBuzzCompensation.useQuery(
-    { date: selectedDate, accountType: buzzAccountType },
+    { date: selectedDate, accountType: buzzAccountType, source },
     { enabled: features.buzz }
   );
+
+  // Peek at license earnings so the segment only renders when the creator has any.
+  const { data: licenseProbe = [] } = trpc.buzz.getDailyBuzzCompensation.useQuery(
+    { date: selectedDate, source: 'license' },
+    { enabled: features.buzz && source === 'compensation' }
+  );
+  const hasLicenseEarnings = licenseProbe.length > 0 || source === 'license';
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
   const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
   const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
 
-  const options = useMemo<ChartOptions<'bar'>>(
-    () => {
-      return {
-        responsive: true,
-        aspectRatio: mobile ? 1 : 1.4,
-        scales: {
-          y: {
-            stacked: true,
-            beginAtZero: true,
-            ticks: {
-              color: labelColor,
-              callback: abbreviateValue,
-            },
-            grid: { color: 'rgba(128, 128, 128, 0.1)' },
+  const options = useMemo<ChartOptions<'bar'>>(() => {
+    return {
+      responsive: true,
+      aspectRatio: mobile ? 1 : 1.4,
+      scales: {
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          ticks: {
+            color: labelColor,
+            callback: abbreviateValue,
           },
-          x: {
-            stacked: true,
-            type: 'time' as const,
-            min: minSelectedDate.valueOf(),
-            max: maxSelectedDate.valueOf(),
-            time: { tooltipFormat: 'YYYY-MM-DD' },
-            ticks: {
-              color: labelColor,
-              maxTicksLimit: mobile ? 5 : 8,
-              autoSkip: true,
-            },
-            grid: { display: false },
-          },
+          grid: { color: 'rgba(128, 128, 128, 0.1)' },
         },
-        plugins: {
-          legend: { display: false },
-          tooltip: {
-            ...chartTooltipDefaults({
-              accentColor: buzzConfig.color,
-              formatValue: (val) => formatCurrencyForDisplay(val, 'BUZZ'),
-            }),
-            callbacks: {
-              title(tooltipItems) {
-                if (!filteredVersionIds.length) return '';
-                return tooltipItems[0].dataset.label;
-              },
-              footer(tooltipItems) {
-                return `${formatDate(tooltipItems[0].parsed.x)}`;
-              },
-              label(tooltipItem) {
-                return `${formatCurrencyForDisplay(tooltipItem.parsed.y ?? 0, 'BUZZ')}`;
-              },
+        x: {
+          stacked: true,
+          type: 'time' as const,
+          min: minSelectedDate.valueOf(),
+          max: maxSelectedDate.valueOf(),
+          time: { tooltipFormat: 'YYYY-MM-DD' },
+          ticks: {
+            color: labelColor,
+            maxTicksLimit: mobile ? 5 : 8,
+            autoSkip: true,
+          },
+          grid: { display: false },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...chartTooltipDefaults({
+            accentColor: buzzConfig.color,
+            formatValue: (val) => formatCurrencyForDisplay(val, 'BUZZ'),
+          }),
+          callbacks: {
+            title(tooltipItems) {
+              if (!filteredVersionIds.length) return '';
+              return tooltipItems[0].dataset.label;
+            },
+            footer(tooltipItems) {
+              return `${formatDate(tooltipItems[0].parsed.x)}`;
+            },
+            label(tooltipItem) {
+              return `${formatCurrencyForDisplay(tooltipItem.parsed.y ?? 0, 'BUZZ')}`;
             },
           },
         },
-      };
-    },
-    [filteredVersionIds.length, labelColor, mobile, maxSelectedDate, minSelectedDate, buzzConfig.color]
-  );
+      },
+    };
+  }, [
+    filteredVersionIds.length,
+    labelColor,
+    mobile,
+    maxSelectedDate,
+    minSelectedDate,
+    buzzConfig.color,
+  ]);
 
   const datasets = useMemo(() => {
     if (filteredVersionIds.length > 0) {
@@ -196,17 +209,46 @@ export function DailyCreatorCompReward({
     <>
       <div
         className={classes.dashboardGrid}
-        style={{
-          '--grid-cols': !isLoading && resources.length > 0
-            ? 'minmax(0, 8fr) minmax(0, 4fr)'
-            : 'minmax(0, 1fr)',
-        } as React.CSSProperties}
+        style={
+          {
+            '--grid-cols':
+              !isLoading && resources.length > 0
+                ? 'minmax(0, 8fr) minmax(0, 4fr)'
+                : 'minmax(0, 1fr)',
+          } as React.CSSProperties
+        }
       >
-          <Paper className={classes.tileCard} style={{ overflow: 'hidden', display: 'grid', gridTemplateRows: 'auto 1fr', minHeight: 0 }}>
-            {/* Header — always padded */}
-            <Stack gap={0} p="md" pb={0}>
-              <Group gap={8} justify="space-between">
-                <h3 className="text-xl font-bold">Generation Buzz Earned</h3>
+        <Paper
+          className={classes.tileCard}
+          style={{
+            overflow: 'hidden',
+            display: 'grid',
+            gridTemplateRows: 'auto 1fr',
+            minHeight: 0,
+          }}
+        >
+          {/* Header — always padded */}
+          <Stack gap={0} p="md" pb={0}>
+            <Group gap={8} justify="space-between">
+              <h3 className="text-xl font-bold">
+                {source === 'license' ? 'License Fees Earned' : 'Generation Buzz Earned'}
+              </h3>
+              <Group gap={8} wrap="nowrap">
+                {hasLicenseEarnings && (
+                  <SegmentedControl
+                    value={source}
+                    onChange={(value) => {
+                      setSource(value as 'compensation' | 'license');
+                      setSearch('');
+                      setFilteredVersionIds([]);
+                    }}
+                    data={[
+                      { value: 'compensation', label: 'Compensation' },
+                      { value: 'license', label: 'License Fees' },
+                    ]}
+                    size="xs"
+                  />
+                )}
                 <Select
                   data={dateOptions}
                   defaultValue={dateOptions[0].value}
@@ -219,165 +261,172 @@ export function DailyCreatorCompReward({
                   }}
                 />
               </Group>
-              {!isLoading && resources.length > 0 && (
-                <Group justify="flex-start" gap={4}>
-                  <CurrencyIcon currency={Currency.BUZZ} size={24} type={buzzAccountType} />
-                  <Text
-                    size="xl"
-                    c={buzzConfig.color}
-                    fw="bold"
-                    style={{ fontVariant: 'tabular-nums' }}
-                  >
-                    {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
-                  </Text>
-                </Group>
-              )}
-            </Stack>
-            {/* Content */}
-            {!isLoading && resources.length > 0 ? (
-              <div style={{ position: 'relative', width: '100%', minHeight: 300, padding: 'var(--mantine-spacing-md)' }}>
-                <Bar
-                  key={filteredVersionIds.join('-')}
-                  options={options}
-                  data={{
-                    // labels,
-                    datasets,
-                  }}
-                />
-              </div>
-            ) : (
-              <GenerationBuzzEmptyState
-                buzzColor={buzzConfig.color}
-                buzzLabel={getAccountTypeLabel(buzzAccountType)}
-                loading={isLoading}
-              />
+            </Group>
+            {!isLoading && resources.length > 0 && (
+              <Group justify="flex-start" gap={4}>
+                <CurrencyIcon currency={Currency.BUZZ} size={24} type={buzzAccountType} />
+                <Text
+                  size="xl"
+                  c={buzzConfig.color}
+                  fw="bold"
+                  style={{ fontVariant: 'tabular-nums' }}
+                >
+                  {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
+                </Text>
+              </Group>
             )}
-          </Paper>
-        {!isLoading && resources.length > 0 && (
-            <Paper
-              className={classes.tileCard}
-              h="100%"
-              radius="md"
+          </Stack>
+          {/* Content */}
+          {!isLoading && resources.length > 0 ? (
+            <div
               style={{
-                display: 'grid',
-                gridTemplateRows: 'auto 1fr',
-                overflow: 'hidden',
-                padding: 'var(--mantine-spacing-lg) var(--mantine-spacing-lg) 0',
+                position: 'relative',
+                width: '100%',
+                minHeight: 300,
+                padding: 'var(--mantine-spacing-md)',
               }}
             >
-              <Stack gap={8} pb="sm">
-                <h3 className="text-xl font-bold">
-                  Top Earning Resources
-                </h3>
-                <ClearableTextInput
-                  placeholder="Search your resources"
-                  value={search}
-                  onChange={(e) => setSearch(e.currentTarget.value)}
-                />
-              </Stack>
-                {filteredResources.length > 0 ? (
-                  <div
-                    className={classes.transactionsScrollWrapper}
+              <Bar
+                key={filteredVersionIds.join('-')}
+                options={options}
+                data={{
+                  // labels,
+                  datasets,
+                }}
+              />
+            </div>
+          ) : (
+            <GenerationBuzzEmptyState
+              buzzColor={buzzConfig.color}
+              buzzLabel={getAccountTypeLabel(buzzAccountType)}
+              loading={isLoading}
+            />
+          )}
+        </Paper>
+        {!isLoading && resources.length > 0 && (
+          <Paper
+            className={classes.tileCard}
+            h="100%"
+            radius="md"
+            style={{
+              display: 'grid',
+              gridTemplateRows: 'auto 1fr',
+              overflow: 'hidden',
+              padding: 'var(--mantine-spacing-lg) var(--mantine-spacing-lg) 0',
+            }}
+          >
+            <Stack gap={8} pb="sm">
+              <h3 className="text-xl font-bold">Top Earning Resources</h3>
+              <ClearableTextInput
+                placeholder="Search your resources"
+                value={search}
+                onChange={(e) => setSearch(e.currentTarget.value)}
+              />
+            </Stack>
+            {filteredResources.length > 0 ? (
+              <div
+                className={classes.transactionsScrollWrapper}
+                style={{
+                  position: 'relative',
+                  marginLeft: 'calc(-1 * var(--mantine-spacing-lg))',
+                  marginRight: 'calc(-1 * var(--mantine-spacing-lg))',
+                  borderTop:
+                    '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+                }}
+              >
+                {filteredVersionIds.length > 0 && (
+                  <Button
+                    variant="filled"
+                    color="dark"
+                    radius="xl"
+                    size="compact-xs"
+                    onClick={() => setFilteredVersionIds([])}
                     style={{
-                      position: 'relative',
-                      marginLeft: 'calc(-1 * var(--mantine-spacing-lg))',
-                      marginRight: 'calc(-1 * var(--mantine-spacing-lg))',
-                      borderTop: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+                      position: 'absolute',
+                      top: 8,
+                      left: '50%',
+                      transform: 'translateX(-50%)',
+                      zIndex: 2,
+                      boxShadow: 'var(--mantine-shadow-sm)',
                     }}
+                    px="md"
                   >
-                    {filteredVersionIds.length > 0 && (
-                      <Button
-                        variant="filled"
-                        color="dark"
-                        radius="xl"
-                        size="compact-xs"
-                        onClick={() => setFilteredVersionIds([])}
-                        style={{
-                          position: 'absolute',
-                          top: 8,
-                          left: '50%',
-                          transform: 'translateX(-50%)',
-                          zIndex: 2,
-                          boxShadow: 'var(--mantine-shadow-sm)',
-                        }}
-                        px="md"
-                      >
-                        Clear selection
-                      </Button>
-                    )}
-                    <ScrollArea.Autosize
-                      mah={400}
-                      style={{ width: '100%', overflow: 'hidden' }}
-                      type="auto"
-                      className="[&>*]:w-full"
-                    >
-                      <div style={{ paddingBottom: 'var(--mantine-spacing-lg)' }}>
-                        {filteredResources.map((version) => {
-                          const isSelected = filteredVersionIds.includes(version.id);
-
-                          return (
-                            <UnstyledButton
-                              key={version.id}
-                              py="xs"
-                              px="lg"
-                              style={{
-                                backgroundColor: isSelected ? rgba(buzzConfig.color, 0.1) : undefined,
-                                borderBottom: '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
-                              }}
-                              onClick={() => {
-                                setFilteredVersionIds((ids) =>
-                                  isSelected
-                                    ? ids.filter((id) => id !== version.id)
-                                    : [...ids, version.id]
-                                );
-                                setSearch('');
-                              }}
-                              w="100%"
-                            >
-                              <Group justify="space-between" gap={8} wrap="nowrap">
-                                <Stack gap={0}>
-                                  <Text size="sm" fw="bold" lineClamp={1}>
-                                    {version.modelName}
-                                  </Text>
-                                  <Text size="xs" c="dimmed" lineClamp={1}>
-                                    {version.name}
-                                  </Text>
-                                </Stack>
-                                <Group gap={4} wrap="nowrap">
-                                  <CurrencyIcon
-                                    currency={Currency.BUZZ}
-                                    size={16}
-                                    type={buzzAccountType}
-                                  />
-                                  <Text
-                                    size="sm"
-                                    c={buzzConfig.color}
-                                    fw="bold"
-                                    style={{ fontVariant: 'tabular-nums' }}
-                                  >
-                                    {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
-                                  </Text>
-                                </Group>
-                              </Group>
-                            </UnstyledButton>
-                          );
-                        })}
-                      </div>
-                    </ScrollArea.Autosize>
-                  </div>
-                ) : (
-                  <Center px="lg" pb="lg">
-                    <Text c="dimmed">
-                      {debouncedSearch && !filteredResources.length
-                        ? 'No resources found. Try changing your search terms'
-                        : 'No earning resources yet'}
-                    </Text>
-                  </Center>
+                    Clear selection
+                  </Button>
                 )}
-            </Paper>
+                <ScrollArea.Autosize
+                  mah={400}
+                  style={{ width: '100%', overflow: 'hidden' }}
+                  type="auto"
+                  className="[&>*]:w-full"
+                >
+                  <div style={{ paddingBottom: 'var(--mantine-spacing-lg)' }}>
+                    {filteredResources.map((version) => {
+                      const isSelected = filteredVersionIds.includes(version.id);
+
+                      return (
+                        <UnstyledButton
+                          key={version.id}
+                          py="xs"
+                          px="lg"
+                          style={{
+                            backgroundColor: isSelected ? rgba(buzzConfig.color, 0.1) : undefined,
+                            borderBottom:
+                              '1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4))',
+                          }}
+                          onClick={() => {
+                            setFilteredVersionIds((ids) =>
+                              isSelected
+                                ? ids.filter((id) => id !== version.id)
+                                : [...ids, version.id]
+                            );
+                            setSearch('');
+                          }}
+                          w="100%"
+                        >
+                          <Group justify="space-between" gap={8} wrap="nowrap">
+                            <Stack gap={0}>
+                              <Text size="sm" fw="bold" lineClamp={1}>
+                                {version.modelName}
+                              </Text>
+                              <Text size="xs" c="dimmed" lineClamp={1}>
+                                {version.name}
+                              </Text>
+                            </Stack>
+                            <Group gap={4} wrap="nowrap">
+                              <CurrencyIcon
+                                currency={Currency.BUZZ}
+                                size={16}
+                                type={buzzAccountType}
+                              />
+                              <Text
+                                size="sm"
+                                c={buzzConfig.color}
+                                fw="bold"
+                                style={{ fontVariant: 'tabular-nums' }}
+                              >
+                                {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
+                              </Text>
+                            </Group>
+                          </Group>
+                        </UnstyledButton>
+                      );
+                    })}
+                  </div>
+                </ScrollArea.Autosize>
+              </div>
+            ) : (
+              <Center px="lg" pb="lg">
+                <Text c="dimmed">
+                  {debouncedSearch && !filteredResources.length
+                    ? 'No resources found. Try changing your search terms'
+                    : 'No earning resources yet'}
+                </Text>
+              </Center>
+            )}
+          </Paper>
         )}
       </div>
     </>
   );
 }
-

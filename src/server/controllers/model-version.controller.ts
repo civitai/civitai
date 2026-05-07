@@ -64,6 +64,8 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   Availability,
+  LicensingFeeSettlementCurrency,
+  LicensingFeeType,
   ModelStatus,
   ModelUsageControl,
   TrainingStatus,
@@ -127,6 +129,9 @@ const loadModelVersion = async ({
         trainingStatus: true,
         uploadType: true,
         usageControl: true,
+        licensingFee: true,
+        licensingFeeType: true,
+        licensingFeeSettlementCurrency: true,
         model: {
           select: {
             id: true,
@@ -371,6 +376,29 @@ export const upsertModelVersionHandler = async ({
       throw throwBadRequestError(
         'Cannot charge for download if downloads are disabled for this model version'
       );
+    }
+
+    if (input.licensingFee != null && input.licensingFee > 0) {
+      const existing = input.id
+        ? await dbRead.modelVersion.findUnique({
+            where: { id: input.id },
+            select: { licensingFee: true, licensingFeeSettlementCurrency: true },
+          })
+        : null;
+      const hadExistingFee = !!existing?.licensingFee && existing.licensingFee > 0;
+      if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
+        throw throwBadRequestError('License fees are not enabled for your account.');
+      }
+      if (
+        input.licensingFeeSettlementCurrency === LicensingFeeSettlementCurrency.Cash &&
+        !ctx.user.isModerator &&
+        existing?.licensingFeeSettlementCurrency !== LicensingFeeSettlementCurrency.Cash
+      ) {
+        throw throwBadRequestError('Cash settlement is restricted; please contact support.');
+      }
+      if (!input.licensingFeeType) input.licensingFeeType = LicensingFeeType.PerImageBuzz;
+      if (!input.licensingFeeSettlementCurrency)
+        input.licensingFeeSettlementCurrency = LicensingFeeSettlementCurrency.Buzz;
     }
 
     const version = await upsertModelVersion({

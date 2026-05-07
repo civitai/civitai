@@ -52,6 +52,12 @@ class FreshdeskCaller extends HttpCaller {
     return this.put<FreshdeskTicket>(`/tickets/${ticketId}`, { payload: data });
   }
 
+  async closeAsSpam(ticketId: number) {
+    return this.put<FreshdeskTicket>(`/tickets/${ticketId}`, {
+      payload: { status: 5, spam: true },
+    });
+  }
+
   async searchTickets(query: string) {
     return this.get<{ results: FreshdeskTicket[]; total: number }>(`/search/tickets`, {
       queryParams: { query: `"${query}"` },
@@ -136,6 +142,7 @@ export type FreshdeskTicketUpdate = {
   group_id?: number;
   responder_id?: number;
   custom_fields?: Record<string, unknown>;
+  spam?: boolean;
 };
 
 export type FreshdeskConversation = {

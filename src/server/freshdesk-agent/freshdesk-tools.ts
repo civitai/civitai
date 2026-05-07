@@ -117,6 +117,27 @@ const updateTicketTool: ToolDefinitionJson = {
   },
 };
 
+const closeTicketAsSpamTool: ToolDefinitionJson = {
+  type: 'function',
+  function: {
+    name: 'close_ticket_as_spam',
+    description:
+      'Mark a ticket as spam and close it. ONLY use this in triage when the ticket is clearly spam, phishing, an unrelated marketing pitch, a scam, automated junk, or otherwise not a legitimate support request. When in doubt, do NOT use this — let a human decide. This is the only situation where the AI is permitted to change ticket status.',
+    parameters: {
+      type: 'object',
+      properties: {
+        ticket_id: { type: 'number', description: 'The Freshdesk ticket ID' },
+        reason: {
+          type: 'string',
+          description:
+            'Short justification for the spam classification (e.g., "promotional email unrelated to Civitai", "phishing attempt", "automated bounce/auto-reply").',
+        },
+      },
+      required: ['ticket_id', 'reason'],
+    },
+  },
+};
+
 const searchKBTool: ToolDefinitionJson = {
   type: 'function',
   function: {
@@ -393,6 +414,7 @@ function formatResponse(res: { ok: boolean; status: number; data?: unknown; mess
 const MUTATION_TOOLS = new Set([
   'add_note',
   'update_ticket',
+  'close_ticket_as_spam',
   'create_kb_article',
   'update_kb_article',
 ]);
@@ -443,6 +465,11 @@ export async function executeToolCall(
       case 'update_ticket': {
         const { ticket_id, ...data } = args;
         const res = await freshdeskCaller.updateTicket(ticket_id as number, data);
+        result = formatResponse(res);
+        break;
+      }
+      case 'close_ticket_as_spam': {
+        const res = await freshdeskCaller.closeAsSpam(args.ticket_id as number);
         result = formatResponse(res);
         break;
       }
@@ -572,7 +599,7 @@ export function getToolsForPhase(phase: FreshdeskWebhookPhase): ToolDefinitionJs
     case 'kb-article':
       return [...COMMON_TOOLS, ...KB_TOOLS, queryDatabaseTool];
     case 'triage':
-      return [...COMMON_TOOLS];
+      return [...COMMON_TOOLS, closeTicketAsSpamTool];
     case 'investigation':
       return [...COMMON_TOOLS, ...INVESTIGATION_TOOLS, queryDatabaseTool];
   }

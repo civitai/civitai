@@ -28,6 +28,7 @@ export enum TransactionType {
   Extract = 24,
   Fee = 25,
   Bid = 26,
+  LicenseFee = 27,
 }
 
 export type BuzzApiAccountType = (typeof buzzApiAccountTypes)[number];

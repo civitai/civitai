@@ -990,6 +990,10 @@ model ModelVersion {
   usageControl         ModelUsageControl @default(Download)
   earlyAccessTimeFrame Int               @default(0)
 
+  licensingFee                   Int?
+  licensingFeeType               LicensingFeeType?               @default(PerImageBuzz)
+  licensingFeeSettlementCurrency LicensingFeeSettlementCurrency? @default(Buzz)
+
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
   files                   ModelFile[]
@@ -1012,6 +1016,15 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
 
   @@index([modelId], type: Hash)
+}
+
+enum LicensingFeeType {
+  PerImageBuzz
+}
+
+enum LicensingFeeSettlementCurrency {
+  Buzz
+  Cash
 }
 
 enum ModelVersionEngagementType {

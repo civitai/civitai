@@ -317,6 +317,7 @@ export enum NotificationCategory {
   Bounty = 'Bounty',
   Buzz = 'Buzz',
   Creator = 'Creator',
+  Referral = 'Referral',
   System = 'System',
   Other = 'Other',
 }

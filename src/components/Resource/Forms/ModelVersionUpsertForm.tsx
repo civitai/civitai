@@ -57,6 +57,7 @@ import type {
 import {
   baseModelToTraningDetailsBaseModelMap,
   earlyAccessConfigInput,
+  MAX_LICENSING_FEE,
   modelVersionUpsertSchema2,
   recommendedSettingsSchema,
 } from '~/server/schema/model-version.schema';
@@ -65,7 +66,12 @@ import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
-import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  LicensingFeeSettlementCurrency,
+  ModelType,
+  ModelUsageControl,
+} from '~/shared/utils/prisma/enums';
 import type { MyRecentlyRecommended } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -190,6 +196,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     clipSkip: version?.clipSkip ?? null,
     useMonetization: !!version?.monetization,
     monetization: version?.monetization ?? null,
+    licensingFee: version?.licensingFee ?? 0,
+    licensingFeeType: version?.licensingFeeType ?? null,
+    licensingFeeSettlementCurrency: version?.licensingFeeSettlementCurrency ?? null,
     requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
     // Being extra safe here and ensuring this value exists.
@@ -211,6 +220,15 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const { isDirty } = form.formState;
   const earlyAccessConfig = form.watch('earlyAccessConfig');
   const usageControl = form.watch('usageControl');
+  const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
+  const hasExistingLicensingFee = (version?.licensingFee ?? 0) > 0;
+  const showLicensingFeeBlock =
+    !!features.licensingFee ||
+    hasExistingLicensingFee ||
+    existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash;
+  const showLicensingFeeSettlementCurrency =
+    existingSettlementCurrency === LicensingFeeSettlementCurrency.Cash ||
+    !!currentUser?.isModerator;
 
   // handle mismatched baseModels in training data
   useEffect(() => {
@@ -744,6 +762,32 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   Also, your payment for early access will be lost. Please consider this before
                   removing early access.
                 </Text>
+              )}
+              <Divider my="md" />
+            </Stack>
+          )}
+          {showLicensingFeeBlock && (
+            <Stack gap="xs">
+              <InputNumber
+                name="licensingFee"
+                label="License Fee per Image"
+                description={`Charge a per-image fee for generations using this version. Set to 0 to disable. Max ${MAX_LICENSING_FEE} Buzz per image.`}
+                min={0}
+                max={MAX_LICENSING_FEE}
+                step={1}
+                leftSection={<CurrencyIcon currency="BUZZ" size={16} />}
+              />
+              {showLicensingFeeSettlementCurrency && (
+                <InputSelect
+                  name="licensingFeeSettlementCurrency"
+                  label="Settlement Currency"
+                  description="Currency used to pay you out for license fees. Cash settlement is restricted; contact support to enable."
+                  data={[
+                    { value: LicensingFeeSettlementCurrency.Buzz, label: 'Buzz' },
+                    { value: LicensingFeeSettlementCurrency.Cash, label: 'Cash' },
+                  ]}
+                  allowDeselect={false}
+                />
               )}
               <Divider my="md" />
             </Stack>
