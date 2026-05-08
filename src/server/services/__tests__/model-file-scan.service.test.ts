@@ -11,9 +11,23 @@ const {
   mockIsFlipt,
   mockRequestScannerTasks,
   mockCreateModelFileScanRequest,
+  mockModelFileScanSubmissionError,
   mockLimitConcurrency,
   mockUnpublishModelById,
 } = vi.hoisted(() => {
+  // Test-local copy of the real error class so rescanModel's instanceof
+  // check resolves without importing the real orchestrator module.
+  class MockModelFileScanSubmissionError extends Error {
+    constructor(
+      message: string,
+      public readonly code: 'not-found' | 'transient',
+      public readonly status?: number,
+      public readonly orchestratorMessages?: string[]
+    ) {
+      super(message);
+      this.name = 'ModelFileScanSubmissionError';
+    }
+  }
   const mockModelFile = {
     findUnique: vi.fn(),
     update: vi.fn(),
@@ -47,6 +61,7 @@ const {
     mockIsFlipt: vi.fn(),
     mockRequestScannerTasks: vi.fn(),
     mockCreateModelFileScanRequest: vi.fn(),
+    mockModelFileScanSubmissionError: MockModelFileScanSubmissionError,
     // sequential runner so per-file effects assert deterministically
     mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
       for (const t of tasks) await t();
@@ -106,6 +121,7 @@ vi.mock('~/server/jobs/scan-files', () => ({
 
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createModelFileScanRequest: mockCreateModelFileScanRequest,
+  ModelFileScanSubmissionError: mockModelFileScanSubmissionError,
 }));
 
 vi.mock('~/server/utils/concurrency-helpers', () => ({
@@ -1031,6 +1047,7 @@ describe('model-file-scan.service', () => {
           modelId: 100,
           modelType: 'Checkpoint',
           baseModel: 'SD 1.5',
+          url: 's3://k1',
           priority: 'low',
         });
         expect(result).toEqual({ sent: 2, failed: 0 });
