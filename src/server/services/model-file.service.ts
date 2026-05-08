@@ -139,16 +139,27 @@ export async function updateFile({
       metadata,
     },
   });
+
+  // CAS lost: another writer swapped the URL between findUnique and updateMany.
+  // Surface the conflict instead of silently returning success — the caller
+  // needs to know their write did NOT apply. Skip the cache bust too, since
+  // we didn't change anything that would invalidate it.
+  if (oldUrl && updateResult.count === 0) {
+    throw throwBadRequestError(
+      'ModelFile URL was modified concurrently; retry your update'
+    );
+  }
+
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
   // Clean up old S3 object after DB update succeeds (best-effort).
-  // Only fires if our conditional update actually applied — otherwise another
-  // writer owns the oldUrl→newUrl transition and will (or already did) handle it.
-  // Terminal .catch on the chain so an Axiom-side rejection can't leak as
-  // an unhandled rejection in this fire-and-forget path. The refcount check
-  // inside deleteModelFileObject is the load-bearing safety: it skips the
-  // delete if any other ModelFile row still references the URL.
-  if (oldUrl && updateResult.count > 0) {
+  // Only fires when we actually swapped the URL on this call — pure-metadata
+  // updates have no oldUrl to clean up. Terminal .catch on the chain so an
+  // Axiom-side rejection can't leak as an unhandled rejection in this
+  // fire-and-forget path. The refcount check inside deleteModelFileObject is
+  // the load-bearing safety: it skips the delete if any other ModelFile row
+  // still references the URL.
+  if (oldUrl) {
     deleteModelFileObject(oldUrl)
       .catch((error) =>
         logToAxiom({
