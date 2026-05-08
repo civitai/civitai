@@ -360,8 +360,18 @@ export async function deleteModelFileObjects(urls: string[]) {
     if (group.backend === 'b2') {
       try {
         client = getB2S3Client();
-      } catch {
-        // B2 env not configured in this pod — skip B2 group, keep R2 deletes running.
+      } catch (error) {
+        // B2 env not configured in this pod (or partial config / SDK init bug).
+        // Skip the B2 group so R2 deletes keep running, but warn-log so we can
+        // distinguish "B2 disabled in this pod" (expected) from "B2 broken"
+        // (page-worthy) without grepping for silence.
+        logToAxiom({
+          type: 'warn',
+          name: 'model-file-delete-s3-b2-client-unavailable',
+          bucket: group.bucket,
+          keyCount: group.keys.length,
+          error,
+        });
         continue;
       }
     } else {
