@@ -349,7 +349,10 @@ export const orchestratorRouter = router({
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
-      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features);
+      const { externalCtx, status } = await buildGenerationContext(userTier, ctx.features, {
+        id: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
 
       // Check generation status early
       if (!status.available && !ctx.user.isModerator) {

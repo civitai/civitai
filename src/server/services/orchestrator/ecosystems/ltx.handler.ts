@@ -11,7 +11,15 @@
  * - LTXV23 / vid2vid:extend → ltx2.3 extendVideo
  */
 
-import type { VideoGenStepTemplate } from '@civitai/client';
+import type {
+  ComfyLtx23CreateVideoInput,
+  ComfyLtx23EditVideoInput,
+  ComfyLtx23ExtendVideoInput,
+  ComfyLtx23FirstLastFrameToVideoInput,
+  ComfyLtx2CreateVideoInput,
+  ComfyLtx2FirstLastFrameToVideoInput,
+  VideoGenStepTemplate,
+} from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -23,6 +31,8 @@ import {
   LTXV23_DISTILLED_ID,
 } from '~/shared/data-graph/generation/ltx-graph';
 import { defineHandler } from './handler-factory';
+import type { StepInput } from '.';
+import { createChainedPromptEnhancementStep } from '~/server/services/orchestrator/promptEnhancement';
 
 // Types derived from generation graph.
 // Use Extract (a distributive conditional) rather than `& { ecosystem: ... }`
@@ -68,9 +78,36 @@ function resolveImageDimensions(
 
 /**
  * Creates videoGen input for LTX (v2 and v2.3) ecosystems.
+ * When `enablePromptEnhancer` is on, prepends a promptEnhancement step and
+ * wires its `output.enhancedPrompt` into the videoGen step's `prompt` via $ref.
+ * Reference images (img2vid / ref2vid) are passed to the enhancer so the
+ * vision-capable LLM can ground the rewrite in the input frames.
  */
-export const createLTXInput = defineHandler<LTXCtx, [VideoGenStepTemplate]>((data, ctx) => {
+export const createLTXInput = defineHandler<LTXCtx, StepInput[]>((data, ctx) => {
   const loras = buildLoras(data, ctx);
+
+  const steps: StepInput[] = [];
+  let prompt: string = data.prompt;
+  if (data.enablePromptEnhancer) {
+    // Pull image URLs off `data.images` when present (img2vid + ref2vid carry
+    // them; vid2vid uses `data.video` and has no images).
+    const enhancerImages =
+      'images' in data
+        ? data.images?.map((img) => img.url).filter((u): u is string => !!u)
+        : undefined;
+
+    const { step, prompt: promptRef } = createChainedPromptEnhancementStep(
+      {
+        ecosystem: data.ecosystem.toLowerCase(),
+        prompt: data.prompt,
+        preserveTriggerWords: data.triggerWords,
+        images: enhancerImages?.length ? enhancerImages : undefined,
+      },
+      { stepIndex: steps.length, suppressOutput: true }
+    );
+    steps.push(step);
+    prompt = promptRef;
+  }
 
   if (data.ltxVersion === 'v23') {
     const distilled = data.model?.id === LTXV23_DISTILLED_ID;
@@ -79,8 +116,9 @@ export const createLTXInput = defineHandler<LTXCtx, [VideoGenStepTemplate]>((dat
     const aspectRatios =
       ltxv23AspectRatiosByResolution[resolution] ?? ltxv23AspectRatiosByResolution['720p'];
     const guidanceScale = distilled ? 1 : data.cfgScale;
-    const steps = distilled ? 8 : data.steps;
+    const stepCount = distilled ? 8 : data.steps;
 
+    let videoStep: VideoGenStepTemplate;
     switch (data.workflow) {
       case 'img2vid': {
         const images = data.images;
@@ -89,110 +127,109 @@ export const createLTXInput = defineHandler<LTXCtx, [VideoGenStepTemplate]>((dat
           aspectRatios,
           data.aspectRatio
         );
-        return [
-          {
-            $type: 'videoGen',
-            input: removeEmpty({
-              engine: 'ltx2.3',
-              operation: 'firstLastFrameToVideo',
-              prompt: data.prompt,
-              width,
-              height,
-              model,
-              guidanceScale,
-              steps,
-              duration: data.duration,
-              firstFrame: images?.[0]?.url,
-              lastFrame: images && images.length > 1 ? images[1]?.url : undefined,
-              frameGuideStrength: data.frameGuideStrength,
-              seed: data.seed,
-              generateAudio: data.generateAudio,
-              loras,
-            }),
-          },
-        ];
+        videoStep = {
+          $type: 'videoGen',
+          input: removeEmpty({
+            engine: 'ltx2.3',
+            operation: 'firstLastFrameToVideo',
+            prompt,
+            width,
+            height,
+            model,
+            guidanceScale,
+            steps: stepCount,
+            duration: data.duration,
+            firstFrame: images?.[0]?.url,
+            lastFrame: images && images.length > 1 ? images[1]?.url : undefined,
+            frameGuideStrength: data.frameGuideStrength,
+            seed: data.seed,
+            generateAudio: data.generateAudio,
+            loras,
+          }) as ComfyLtx23FirstLastFrameToVideoInput,
+        };
+        break;
       }
 
       case 'vid2vid:edit': {
-        return [
-          {
-            $type: 'videoGen',
-            input: removeEmpty({
-              engine: 'ltx2.3',
-              operation: 'editVideo',
-              prompt: data.prompt,
-              width: 'video' in data ? data.video?.metadata?.width : undefined,
-              height: 'video' in data ? data.video?.metadata?.height : undefined,
-              model,
-              guidanceScale,
-              steps,
-              duration: data.duration,
-              sourceVideo: 'video' in data ? data.video?.url : undefined,
-              cannyLowThreshold: data.cannyLowThreshold,
-              cannyHighThreshold: data.cannyHighThreshold,
-              guideStrength: data.guideStrength,
-              seed: data.seed,
-              generateAudio: data.generateAudio,
-              loras,
-            }),
-          },
-        ];
+        videoStep = {
+          $type: 'videoGen',
+          input: removeEmpty({
+            engine: 'ltx2.3',
+            operation: 'editVideo',
+            prompt,
+            width: 'video' in data ? data.video?.metadata?.width : undefined,
+            height: 'video' in data ? data.video?.metadata?.height : undefined,
+            model,
+            guidanceScale,
+            steps: stepCount,
+            duration: data.duration,
+            sourceVideo: 'video' in data ? data.video?.url : undefined,
+            cannyLowThreshold: data.cannyLowThreshold,
+            cannyHighThreshold: data.cannyHighThreshold,
+            guideStrength: data.guideStrength,
+            seed: data.seed,
+            generateAudio: data.generateAudio,
+            loras,
+          }) as ComfyLtx23EditVideoInput,
+        };
+        break;
       }
 
       case 'vid2vid:extend': {
-        return [
-          {
-            $type: 'videoGen',
-            input: removeEmpty({
-              engine: 'ltx2.3',
-              operation: 'extendVideo',
-              prompt: data.prompt,
-              width: data.video?.metadata?.width,
-              height: data.video?.metadata?.height,
-              model,
-              guidanceScale,
-              steps,
-              sourceVideo: data.video?.url,
-              numFrames: data.numFrames,
-              seed: data.seed,
-              generateAudio: data.generateAudio,
-              loras,
-            }),
-          },
-        ];
+        videoStep = {
+          $type: 'videoGen',
+          input: removeEmpty({
+            engine: 'ltx2.3',
+            operation: 'extendVideo',
+            prompt,
+            width: data.video?.metadata?.width,
+            height: data.video?.metadata?.height,
+            model,
+            guidanceScale,
+            steps: stepCount,
+            sourceVideo: data.video?.url,
+            numFrames: data.numFrames,
+            seed: data.seed,
+            generateAudio: data.generateAudio,
+            loras,
+          }) as ComfyLtx23ExtendVideoInput,
+        };
+        break;
       }
 
       // txt2vid and img2vid:ref2vid both use createVideo
       default: {
-        return [
-          {
-            $type: 'videoGen',
-            input: removeEmpty({
-              engine: 'ltx2.3',
-              operation: 'createVideo',
-              prompt: data.prompt,
-              width: data.aspectRatio?.width,
-              height: data.aspectRatio?.height,
-              model,
-              guidanceScale,
-              steps,
-              duration: data.duration,
-              seed: data.seed,
-              images: data.images?.map((x) => x.url),
-              generateAudio: data.generateAudio,
-              loras,
-            }),
-          },
-        ];
+        videoStep = {
+          $type: 'videoGen',
+          input: removeEmpty({
+            engine: 'ltx2.3',
+            operation: 'createVideo',
+            prompt,
+            width: data.aspectRatio?.width,
+            height: data.aspectRatio?.height,
+            model,
+            guidanceScale,
+            steps: stepCount,
+            duration: data.duration,
+            seed: data.seed,
+            images: data.images?.map((x) => x.url),
+            generateAudio: data.generateAudio,
+            loras,
+          }) as ComfyLtx23CreateVideoInput,
+        };
       }
     }
+
+    steps.push(videoStep);
+    return steps;
   }
 
   // LTXV2
   const distilled = data.model?.id === LTXV2_DISTILLED_ID;
   const guidanceScale = distilled ? 1 : data.cfgScale;
-  const steps = distilled ? 8 : data.steps;
+  const stepCount = distilled ? 8 : data.steps;
 
+  let videoStep: VideoGenStepTemplate;
   if (data.workflow === 'img2vid') {
     const images = data.images;
     const { width, height } = resolveImageDimensions(
@@ -200,46 +237,45 @@ export const createLTXInput = defineHandler<LTXCtx, [VideoGenStepTemplate]>((dat
       ltxv2AspectRatios,
       data.aspectRatio
     );
-    return [
-      {
-        $type: 'videoGen',
-        input: removeEmpty({
-          engine: 'ltx2',
-          operation: 'firstLastFrameToVideo',
-          prompt: data.prompt,
-          width,
-          height,
-          guidanceScale,
-          steps,
-          duration: data.duration,
-          firstFrame: images?.[0]?.url,
-          lastFrame: images && images.length > 1 ? images[1]?.url : undefined,
-          frameGuideStrength: data.frameGuideStrength,
-          quantity: data.quantity ?? 1,
-          seed: data.seed,
-          loras,
-        }),
-      },
-    ];
-  }
-
-  return [
-    {
+    videoStep = {
+      $type: 'videoGen',
+      input: removeEmpty({
+        engine: 'ltx2',
+        operation: 'firstLastFrameToVideo',
+        prompt,
+        width,
+        height,
+        guidanceScale,
+        steps: stepCount,
+        duration: data.duration,
+        firstFrame: images?.[0]?.url,
+        lastFrame: images && images.length > 1 ? images[1]?.url : undefined,
+        frameGuideStrength: data.frameGuideStrength,
+        quantity: data.quantity ?? 1,
+        seed: data.seed,
+        loras,
+      }) as ComfyLtx2FirstLastFrameToVideoInput,
+    };
+  } else {
+    videoStep = {
       $type: 'videoGen',
       input: removeEmpty({
         engine: 'ltx2',
         operation: 'createVideo',
-        prompt: data.prompt,
+        prompt,
         width: data.aspectRatio?.width,
         height: data.aspectRatio?.height,
         guidanceScale,
-        steps,
+        steps: stepCount,
         duration: data.duration,
         quantity: data.quantity ?? 1,
         seed: data.seed,
         images: data.images?.map((x) => x.url),
         loras,
-      }),
-    },
-  ];
+      }) as ComfyLtx2CreateVideoInput,
+    };
+  }
+
+  steps.push(videoStep);
+  return steps;
 });

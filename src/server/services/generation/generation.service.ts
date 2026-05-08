@@ -535,9 +535,6 @@ export async function setGenerationEcosystemConfig(input: GenerationEcosystemCon
 
 export type GenerationConfig = {
   unstableResources: number[];
-  modOnlyEcosystems: string[];
-  disabledEcosystems: string[];
-  testingEcosystems: string[];
   /**
    * Ecosystem keys that should display the "experimental build" alert in
    * the generator UI. Surfaced to the client so `ExperimentalModelAlert`
@@ -545,37 +542,65 @@ export type GenerationConfig = {
    */
   experimentalEcosystems: string[];
   /**
-   * Whether the requesting user has access to ecosystems listed in
-   * `testingEcosystems` (mods always do, plus users matched by the
-   * `generation-testing` Flipt flag).
+   * Ecosystem keys hidden from the current user — already filtered to what
+   * this user shouldn't see (`disabledEcosystems` for everyone, plus
+   * `modOnlyEcosystems` for non-mods and `testingEcosystems` for users
+   * without testing access). Server-resolved so the granular lists and the
+   * Flipt evaluation never leave the server.
    */
-  hasTestingAccess: boolean;
+  gatedEcosystems: string[];
+  /**
+   * Model version IDs hidden from the current user — same per-user
+   * resolution as `gatedEcosystems`, but for ID-level overrides which take
+   * precedence over ecosystem-level rules. Server still enforces the same
+   * gate in `getResourceCanGenerate`.
+   */
+  gatedVersionIds: number[];
 };
 
 /**
- * Composed config returned to clients in a single round-trip.
- * Bundles unstable resources (set programmatically by the
- * `resource-gen-availability` cron) with operator-controlled ecosystem
- * gating, so the generator only needs one query to get all of it.
- *
- * User-scoped: `hasTestingAccess` is resolved per-request so the client
- * can hide testing ecosystems from non-testers without exposing the ID
- * lists (those stay server-side).
+ * Resolves the operator-controlled gating to per-user lists. Folds in the
+ * `hasTestingAccess` Flipt evaluation so callers (the public API endpoint
+ * and `buildGenerationContext`) get a single source of truth and clients
+ * never see the granular `modOnly*` / `testing*` lists.
+ */
+export async function getGatedListsForUser(
+  user: { id?: number; isModerator?: boolean } = {}
+): Promise<{ gatedEcosystems: string[]; gatedVersionIds: number[] }> {
+  const config = await getGenerationEcosystemConfig(user);
+  const isModerator = !!user.isModerator;
+
+  const gatedEcosystems = [...config.disabledEcosystems];
+  if (!isModerator) gatedEcosystems.push(...config.modOnlyEcosystems);
+  if (!config.hasTestingAccess) gatedEcosystems.push(...config.testingEcosystems);
+
+  const gatedVersionIds = [...config.disabledIds];
+  if (!isModerator) gatedVersionIds.push(...config.modOnlyIds);
+  if (!config.hasTestingAccess) gatedVersionIds.push(...config.testingIds);
+
+  return { gatedEcosystems, gatedVersionIds };
+}
+
+/**
+ * Composed config returned to clients in a single round-trip. Bundles
+ * unstable resources (set programmatically by the
+ * `resource-gen-availability` cron) with the per-user resolved gating
+ * lists, so the generator only needs one query to get everything it
+ * needs to filter the UI.
  */
 export async function getGenerationConfig(
   user: { id?: number; isModerator?: boolean } = {}
 ): Promise<GenerationConfig> {
-  const [unstableResources, ecosystemConfig] = await Promise.all([
+  const [unstableResources, ecosystemConfig, gated] = await Promise.all([
     getUnstableResources(),
     getGenerationEcosystemConfig(user),
+    getGatedListsForUser(user),
   ]);
   return {
     unstableResources,
-    modOnlyEcosystems: ecosystemConfig.modOnlyEcosystems,
-    disabledEcosystems: ecosystemConfig.disabledEcosystems,
-    testingEcosystems: ecosystemConfig.testingEcosystems,
     experimentalEcosystems: ecosystemConfig.experimentalEcosystems,
-    hasTestingAccess: ecosystemConfig.hasTestingAccess,
+    gatedEcosystems: gated.gatedEcosystems,
+    gatedVersionIds: gated.gatedVersionIds,
   };
 }
 

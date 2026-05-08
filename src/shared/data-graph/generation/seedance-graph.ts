@@ -27,6 +27,10 @@ import {
   triggerWordsGraph,
 } from './common';
 import { isWorkflowOrVariant } from './config/workflows';
+import {
+  getAspectRatioOptions,
+  type GenerationAspectRatio,
+} from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Constants
@@ -48,14 +52,13 @@ const seedanceVersionOptions = [
 // Aspect Ratios
 // =============================================================================
 
-/** Seedance aspect ratios */
-const seedanceAspectRatios = [
-  { label: '21:9', value: '21:9', width: 2016, height: 864 },
-  { label: '16:9', value: '16:9', width: 1280, height: 720 },
-  { label: '4:3', value: '4:3', width: 960, height: 720 },
-  { label: '1:1', value: '1:1', width: 720, height: 720 },
-  { label: '3:4', value: '3:4', width: 720, height: 960 },
-  { label: '9:16', value: '9:16', width: 720, height: 1280 },
+const seedanceAspectRatioList: GenerationAspectRatio[] = [
+  '21:9',
+  '16:9',
+  '4:3',
+  '1:1',
+  '3:4',
+  '9:16',
 ];
 
 // =============================================================================
@@ -65,6 +68,13 @@ const seedanceAspectRatios = [
 const seedanceResolutions = [
   { label: '480p', value: '480p' },
   { label: '720p', value: '720p' },
+] as const;
+
+// v2-fast does not support 1080p
+const seedanceResolutionsV2 = [
+  { label: '480p', value: '480p' },
+  { label: '720p', value: '720p' },
+  { label: '1080p', value: '1080p' },
 ] as const;
 
 // =============================================================================
@@ -96,13 +106,24 @@ export const seedanceGraph = new DataGraph<{ ecosystem: string; workflow: string
       }),
     []
   )
-  .node('aspectRatio', aspectRatioNode({ options: seedanceAspectRatios, defaultValue: '16:9' }))
   .node(
     'resolution',
-    enumNode({
-      options: seedanceResolutions,
-      defaultValue: '720p',
-    })
+    (ctx) => {
+      const supports1080p = ctx.model?.id === seedanceVersionIds.v2;
+      const options = supports1080p ? seedanceResolutionsV2 : seedanceResolutions;
+      return enumNode({ options, defaultValue: '720p' });
+    },
+    ['model']
+  )
+  // Aspect ratio dimensions are scaled to match the selected resolution
+  .node(
+    'aspectRatio',
+    (ctx) =>
+      aspectRatioNode({
+        options: getAspectRatioOptions(ctx.resolution, seedanceAspectRatioList),
+        defaultValue: '16:9',
+      }),
+    ['resolution']
   )
   .node('duration', sliderNode({ min: 4, max: 15, defaultValue: 5 }))
   .node(

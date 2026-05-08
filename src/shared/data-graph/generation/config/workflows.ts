@@ -299,6 +299,9 @@ export const workflowConfigs: WorkflowConfigs = {
     ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
   },
 
+  // Disabled — LTXV23 extendVideo is producing poor results. Re-enable once
+  // generation quality improves. Graph branches and handler case are left in
+  // place so re-enabling is just uncommenting this entry.
   // 'vid2vid:extend': {
   //   label: 'Extend Video',
   //   description: 'Extend a video with new content',

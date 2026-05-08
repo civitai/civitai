@@ -1,4 +1,4 @@
-import type { PromptEnhancementStep } from '@civitai/client';
+import type { PromptEnhancementStepTemplate } from '@civitai/client';
 import type { PromptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
 import { MAX_PROMPT_LENGTH } from '~/shared/data-graph/generation/common';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -8,7 +8,71 @@ import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants
 
 const PROMPT_ENHANCEMENT_STEP_NAME = 'prompt-enhancement';
 
-function buildInstruction(input: PromptEnhancementSchema): string | undefined {
+/**
+ * Build a `promptEnhancement` step suitable for inclusion in a workflow.
+ * Use this in any handler that wants to chain prompt enhancement before a
+ * generation step — the step's `output.enhancedPrompt` can then be referenced
+ * by the downstream step via `{ $ref: '$N', path: 'output.enhancedPrompt' }`.
+ *
+ * Pass `suppressOutput: true` to keep the enhancement off user-visible
+ * results (typical when the enhancement is an intermediate step).
+ */
+export function createPromptEnhancementStep(
+  input: PromptEnhancementSchema,
+  options?: { name?: string; suppressOutput?: boolean }
+): PromptEnhancementStepTemplate {
+  const instruction = buildInstruction(input);
+  return {
+    $type: 'promptEnhancement',
+    name: options?.name,
+    input: {
+      ecosystem: input.ecosystem,
+      prompt: input.prompt,
+      negativePrompt: input.negativePrompt ?? undefined,
+      temperature: input.temperature ?? undefined,
+      instruction: instruction || undefined,
+      images: input.images?.length ? input.images : undefined,
+    },
+    metadata: options?.suppressOutput ? { suppressOutput: true } : undefined,
+  };
+}
+
+/**
+ * Like {@link createPromptEnhancementStep}, but also returns ready-to-wire
+ * `$ref` objects for the enhanced prompt + negative prompt outputs. Use this
+ * when chaining enhancement before a generation step so the downstream step
+ * can read `output.enhancedPrompt` / `output.enhancedNegativePrompt` without
+ * the caller having to compute the `$N` index or cast the refs to `string`.
+ *
+ * @example
+ * const { step, prompt: promptRef, negativePrompt: negativePromptRef } =
+ *   createChainedPromptEnhancementStep(input, { stepIndex: steps.length });
+ * steps.push(step);
+ * // pass promptRef / negativePromptRef into the next step's input
+ */
+export function createChainedPromptEnhancementStep(
+  input: PromptEnhancementSchema,
+  options: { stepIndex: number; name?: string; suppressOutput?: boolean }
+): {
+  step: PromptEnhancementStepTemplate;
+  /** $ref to `output.enhancedPrompt`, typed as string for direct use in step inputs. */
+  prompt: string;
+  /** $ref to `output.enhancedNegativePrompt`, typed as string for direct use in step inputs. */
+  negativePrompt: string;
+} {
+  const step = createPromptEnhancementStep(input, {
+    name: options.name,
+    suppressOutput: options.suppressOutput,
+  });
+  const ref = `$${options.stepIndex}`;
+  return {
+    step,
+    prompt: { $ref: ref, path: 'output.enhancedPrompt' } as unknown as string,
+    negativePrompt: { $ref: ref, path: 'output.enhancedNegativePrompt' } as unknown as string,
+  };
+}
+
+export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem'>): string {
   const parts: string[] = [];
 
   if (input.preserveTriggerWords?.length) {
@@ -43,11 +107,11 @@ function buildInstruction(input: PromptEnhancementSchema): string | undefined {
     parts.push(
       'Organize the enhanced prompt into thematic segments (such as subject, setting, style, lighting, composition). Separate each segment with a blank line. Do not use bullet points or lists.'
     );
-  } else {
+  } else if (input.prompt.includes('\n')) {
     parts.push('If possible, try to maintain the original formatting.');
   }
 
-  return parts.length ? parts.join('\n') : undefined;
+  return parts.length ? parts.join('\n') : '';
 }
 
 export async function enhancePrompt({
@@ -65,7 +129,7 @@ export async function enhancePrompt({
   isModerator?: boolean;
   currencies: BuzzSpendType[];
 }) {
-  const { ecosystem, prompt, negativePrompt, temperature } = input;
+  const { prompt, negativePrompt } = input;
 
   // Audit prompt before enhancement
   await auditPromptServer({
@@ -86,8 +150,6 @@ export async function enhancePrompt({
     });
   }
 
-  const instruction = buildInstruction(input);
-
   const workflow = await submitWorkflow({
     token,
     body: {
@@ -96,19 +158,7 @@ export async function enhancePrompt({
         userInstruction: input.instruction ?? undefined,
         preserveTriggerWords: input.preserveTriggerWords ?? undefined,
       },
-      steps: [
-        {
-          $type: 'promptEnhancement',
-          name: PROMPT_ENHANCEMENT_STEP_NAME,
-          input: {
-            ecosystem,
-            prompt,
-            negativePrompt: negativePrompt ?? undefined,
-            temperature: temperature ?? undefined,
-            instruction,
-          },
-        } as PromptEnhancementStep,
-      ],
+      steps: [createPromptEnhancementStep(input, { name: PROMPT_ENHANCEMENT_STEP_NAME })],
       callbacks: getWorkflowCallbacks(userId),
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: BuzzTypes.toOrchestratorType(currencies),

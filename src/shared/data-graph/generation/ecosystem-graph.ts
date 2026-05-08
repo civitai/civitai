@@ -114,13 +114,18 @@ export const ecosystemGraph = new DataGraph<
   // ecosystem depends on workflow to filter compatible ecosystems
   .node(
     'ecosystem',
-    (ctx) => {
-      // Get ecosystems compatible with the selected workflow (as IDs, convert to keys)
+    (ctx, ext) => {
+      // Get ecosystems compatible with the selected workflow (as IDs, convert to keys),
+      // then drop any keys gated for the current user. Server enforces the same
+      // gate via getResourceCanGenerate, but filtering here keeps the UI honest
+      // and prevents validated submissions from referencing a gated ecosystem.
+      const gated = ext.gatedEcosystems;
       const compatibleEcosystemIds = getEcosystemsForWorkflow(ctx.workflow);
       const compatibleEcosystems = compatibleEcosystemIds
         .map((id) => ecosystemById.get(id)?.key)
-        .filter((key): key is string => !!key);
-      // Default ecosystem by output type
+        .filter((key): key is string => !!key && !gated?.includes(key));
+      // Default ecosystem by output type — fall through to first compatible if
+      // the type-default is gated/incompatible, then to SDXL as ultimate fallback.
       const outputDefault =
         ctx.output === 'audio' ? 'Ace' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
       const defaultValue = compatibleEcosystems.includes(outputDefault)
@@ -131,8 +136,18 @@ export const ecosystemGraph = new DataGraph<
         input: z
           .string()
           .optional()
-          .transform((v) => (v ? v : undefined)),
-        output: z.string(),
+          .transform((v) => {
+            if (!v) return undefined;
+            // Drop gated values at the input boundary so a stale stored ecosystem
+            // (e.g. localStorage from before it was gated) falls back to default.
+            if (gated?.includes(v)) return undefined;
+            return v;
+          }),
+        output: gated?.length
+          ? z.string().refine((v) => !gated.includes(v), {
+              message: 'Ecosystem is currently unavailable',
+            })
+          : z.string(),
         defaultValue,
         meta: {
           compatibleEcosystems,

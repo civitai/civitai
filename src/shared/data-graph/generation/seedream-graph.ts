@@ -16,12 +16,17 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  enumNode,
   imagesNode,
   promptGraph,
   seedNode,
   sliderNode,
   triggerWordsGraph,
 } from './common';
+import {
+  getAspectRatioOptions,
+  type GenerationAspectRatio,
+} from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Seedream Version Constants
@@ -50,23 +55,25 @@ const seedreamVersionOptions = [
 // Aspect Ratios
 // =============================================================================
 
-/** Standard Seedream aspect ratios */
-const seedreamSizes = [
-  { label: '16:9', value: '16:9', width: 2560, height: 1440 },
-  { label: '4:3', value: '4:3', width: 2304, height: 1728 },
-  { label: '1:1', value: '1:1', width: 2048, height: 2048 },
-  { label: '3:4', value: '3:4', width: 1728, height: 2304 },
-  { label: '9:16', value: '9:16', width: 1440, height: 2560 },
-];
+const seedreamAspectRatioList: GenerationAspectRatio[] = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
-/** 4K Seedream aspect ratios (v4.5 only) */
-const seedreamSizes4K = [
-  { label: '16:9', value: '16:9', width: 4096, height: 2304 },
-  { label: '4:3', value: '4:3', width: 4096, height: 3072 },
-  { label: '1:1', value: '1:1', width: 4096, height: 4096 },
-  { label: '3:4', value: '3:4', width: 3072, height: 4096 },
-  { label: '9:16', value: '9:16', width: 2304, height: 4096 },
-];
+// =============================================================================
+// Resolution Tier
+// =============================================================================
+
+const seedreamResolutionOptions = [
+  { label: '2K', value: '2K' },
+  { label: '4K', value: '4K' },
+] as const;
+
+/** Versions that support the 2K/4K resolution toggle */
+const versionsWithResolutionToggle = new Set<number>([
+  seedreamVersionIds['v4.5'],
+  seedreamVersionIds['v5.0-lite'],
+]);
+
+const supportsResolutionToggle = (modelId?: number) =>
+  modelId !== undefined && versionsWithResolutionToggle.has(modelId);
 
 // =============================================================================
 // Seedream Graph V2
@@ -97,15 +104,25 @@ export const seedreamGraph = new DataGraph<{ ecosystem: string; workflow: string
       }),
     []
   )
-  // Aspect ratio depends on model version - 4K sizes for v4.5, standard for others
+  // Resolution toggle (2K/4K) - only shown for versions that support it (v4.5, v5.0-lite)
+  .node(
+    'resolution',
+    (ctx) => ({
+      ...enumNode({ options: seedreamResolutionOptions, defaultValue: '4K' }),
+      when: supportsResolutionToggle(ctx.model?.id),
+    }),
+    ['model']
+  )
+  // Aspect ratio dimensions follow the selected resolution tier (defaults to 2K
+  // for versions without a 4K toggle, where ctx.resolution is undefined).
   .node(
     'aspectRatio',
-    (ctx) => {
-      const is4K = ctx.model?.id === seedreamVersionIds['v4.5'];
-      const options = is4K ? seedreamSizes4K : seedreamSizes;
-      return aspectRatioNode({ options, defaultValue: '1:1' });
-    },
-    ['model']
+    (ctx) =>
+      aspectRatioNode({
+        options: getAspectRatioOptions(ctx.resolution ?? '2K', seedreamAspectRatioList),
+        defaultValue: '1:1',
+      }),
+    ['resolution']
   )
   .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
   .node('seed', seedNode())

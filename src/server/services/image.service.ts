@@ -1033,6 +1033,9 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
+  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the controller — pass-through
+  // to avoid a second Flipt evaluation inside getImagesFromSearch.
+  bitdexMode?: string | null;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -1907,13 +1910,15 @@ export const getAllImagesIndex = async (
     data: searchResults,
     nextCursor: searchNextCursor,
     source: searchSource,
-  } = await getImagesFromSearch({
-    ...input,
-    currentUserId,
-    isModerator: user?.isModerator,
-    offset,
-    entry,
-  });
+  } = await withSpan('image:getAllImagesIndex:search', () =>
+    getImagesFromSearch({
+      ...input,
+      currentUserId,
+      isModerator: user?.isModerator,
+      offset,
+      entry,
+    })
+  );
 
   if (!searchResults.length) {
     return {
@@ -1949,87 +1954,95 @@ export const getAllImagesIndex = async (
     thumbnails,
     imageMetrics,
     tagIdsVar,
-  ] = await Promise.all([
-    await getBasicDataForUsers(userIds),
-    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
-    include?.includes('cosmetics')
-      ? await getCosmeticsForEntity({
-          ids: imageIds,
-          entity: 'Image',
-        })
-      : undefined,
-    include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
-    await getMetadataForImages(videoIds), // Only need this for videos
-    await getThumbnailsForImages(videoIds), // Only need this for videos
-    getImageMetricsObject(searchResults),
-    // Fetch tagIds from cache so client-side hidden-tag filtering works.
-    // Search results from BitDex don't include tagIds (too expensive to store),
-    // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
-    include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
-  ]);
+  ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
+    Promise.all([
+      // NOTE: original code uses `await` on each element below, which causes
+      // sequential evaluation. Preserving that behavior to keep this PR
+      // observability-only — see follow-up to actually parallelize.
+      await getBasicDataForUsers(userIds),
+      include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+      include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+      include?.includes('cosmetics')
+        ? await getCosmeticsForEntity({
+            ids: imageIds,
+            entity: 'Image',
+          })
+        : undefined,
+      include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
+      await getMetadataForImages(videoIds), // Only need this for videos
+      await getThumbnailsForImages(videoIds), // Only need this for videos
+      getImageMetricsObject(searchResults),
+      // Fetch tagIds from cache so client-side hidden-tag filtering works.
+      // Search results from BitDex don't include tagIds (too expensive to store),
+      // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
+      include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
+    ])
+  );
 
-  const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
-    const thisUser = userDatas[sr.userId] ?? {};
-    const reactions =
-      userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
-    const meta = imageMeta?.[sr.id]?.meta ?? null;
-    const metadata = imageMetadata[sr.id]?.metadata ?? null;
-    const thumbnail = thumbnails[sr.id] ?? null;
-    const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
-    const metrics = imageMetrics[sr.id];
+  const mergedData = withSpan('image:getAllImagesIndex:transform', () =>
+    searchResults.map(({ publishedAtUnix, ...sr }) => {
+      const thisUser = userDatas[sr.userId] ?? {};
+      const reactions =
+        userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ??
+        [];
+      const meta = imageMeta?.[sr.id]?.meta ?? null;
+      const metadata = imageMetadata[sr.id]?.metadata ?? null;
+      const thumbnail = thumbnails[sr.id] ?? null;
+      const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
+      const metrics = imageMetrics[sr.id];
 
-    return {
-      ...sr,
-      // Override tagIds from authoritative cache when available.
-      // This ensures client-side hidden-tag filtering works even when
-      // the search engine (BitDex) doesn't return tagIds.
-      tagIds: tagIdsVar?.[sr.id]?.tags ?? sr.tagIds,
-      modelVersionId: sr.postedToId,
-      type: sr.type as MediaType,
-      createdAt: sr.sortAt,
-      metadata: { ...metadata, width: sr.width ?? 0, height: sr.height ?? 0 },
-      publishedAt: publishedAtUnix ? sr.sortAt : undefined,
-      //
-      user: {
-        id: sr.userId,
-        username: thisUser.username,
-        image: thisUser.image,
-        deletedAt: thisUser.deletedAt,
-        cosmetics: userCosmetics?.[sr.userId] ?? [],
-        profilePicture: profilePictures?.[sr.userId] ?? null,
-      },
-      stats: {
-        likeCountAllTime: metrics?.reactionLike ?? 0,
-        laughCountAllTime: metrics?.reactionLaugh ?? 0,
-        heartCountAllTime: metrics?.reactionHeart ?? 0,
-        cryCountAllTime: metrics?.reactionCry ?? 0,
-        commentCountAllTime: metrics?.comment ?? 0,
-        collectedCountAllTime: metrics?.collection ?? 0,
-        tippedAmountCountAllTime: metrics?.buzz ?? 0,
-        dislikeCountAllTime: 0,
-        viewCountAllTime: 0,
-      },
-      reactions,
-      cosmetic: imageCosmetics?.[sr.id] ?? null,
-      // TODO fix below
-      availability: Availability.Public,
-      tags: [], // needed?
-      name: null, // leave
-      scannedAt: null, // remove
-      mimeType: null, // need?
-      ingestion:
-        nsfwLevel === NsfwLevel.Blocked
-          ? ImageIngestionStatus.Blocked
-          : nsfwLevel === 0
-          ? ImageIngestionStatus.NotFound
-          : ImageIngestionStatus.Scanned, // add? maybe remove
-      postTitle: null, // remove
-      meta,
-      nsfwLevel,
-      thumbnailUrl: thumbnail?.url,
-    };
-  });
+      return {
+        ...sr,
+        // Override tagIds from authoritative cache when available.
+        // This ensures client-side hidden-tag filtering works even when
+        // the search engine (BitDex) doesn't return tagIds.
+        tagIds: tagIdsVar?.[sr.id]?.tags ?? sr.tagIds,
+        modelVersionId: sr.postedToId,
+        type: sr.type as MediaType,
+        createdAt: sr.sortAt,
+        metadata: { ...metadata, width: sr.width ?? 0, height: sr.height ?? 0 },
+        publishedAt: publishedAtUnix ? sr.sortAt : undefined,
+        //
+        user: {
+          id: sr.userId,
+          username: thisUser.username,
+          image: thisUser.image,
+          deletedAt: thisUser.deletedAt,
+          cosmetics: userCosmetics?.[sr.userId] ?? [],
+          profilePicture: profilePictures?.[sr.userId] ?? null,
+        },
+        stats: {
+          likeCountAllTime: metrics?.reactionLike ?? 0,
+          laughCountAllTime: metrics?.reactionLaugh ?? 0,
+          heartCountAllTime: metrics?.reactionHeart ?? 0,
+          cryCountAllTime: metrics?.reactionCry ?? 0,
+          commentCountAllTime: metrics?.comment ?? 0,
+          collectedCountAllTime: metrics?.collection ?? 0,
+          tippedAmountCountAllTime: metrics?.buzz ?? 0,
+          dislikeCountAllTime: 0,
+          viewCountAllTime: 0,
+        },
+        reactions,
+        cosmetic: imageCosmetics?.[sr.id] ?? null,
+        // TODO fix below
+        availability: Availability.Public,
+        tags: [], // needed?
+        name: null, // leave
+        scannedAt: null, // remove
+        mimeType: null, // need?
+        ingestion:
+          nsfwLevel === NsfwLevel.Blocked
+            ? ImageIngestionStatus.Blocked
+            : nsfwLevel === 0
+            ? ImageIngestionStatus.NotFound
+            : ImageIngestionStatus.Scanned, // add? maybe remove
+        postTitle: null, // remove
+        meta,
+        nsfwLevel,
+        thumbnailUrl: thumbnail?.url,
+      };
+    })
+  );
 
   // For single-post queries, re-sort by image index to preserve manual ordering.
   // Search engines sort by sortAt/reactions, but posts need index-based ordering.
@@ -2087,6 +2100,9 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   entry?: number;
   blockedFor?: string[];
   signal?: AbortSignal;
+  // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the caller (controller).
+  // When provided, getImagesFromSearch skips its own Flipt evaluation.
+  bitdexMode?: string | null;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -2320,15 +2336,20 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   // Check BitDex mode (off / shadow / primary)
   // Use buildFliptContext (same as comics) so both 'moderators' (isModerator=true)
   // and 'testers' (userId in list) segments match correctly.
-  const bitdexMode = await getFliptVariant(
-    FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
-    input.currentUserId?.toString() || 'anonymous',
-    buildFliptContext(
-      input.currentUserId
-        ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
-        : undefined
-    )
-  );
+  // Reuse the controller's pre-evaluated value when present (it queries the same
+  // flag with the same entityId+context) to avoid a duplicate Flipt round-trip.
+  const bitdexMode =
+    input.bitdexMode !== undefined
+      ? input.bitdexMode
+      : await getFliptVariant(
+          FLIPT_FEATURE_FLAGS.BITDEX_IMAGE_SEARCH,
+          input.currentUserId?.toString() || 'anonymous',
+          buildFliptContext(
+            input.currentUserId
+              ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
+              : undefined
+          )
+        );
   console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
   // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
@@ -2856,19 +2877,17 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
     // underlying Meili request. The meilisearch-js client on 0.33/0.34 doesn't
     // expose signal on getDocuments.
-    const { results } = input.signal
-      ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
-          METRICS_SEARCH_INDEX,
-          request,
-          {
+    const { results } = await withSpan('image:meili:getDocuments', () =>
+      input.signal
+        ? fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
             host: env.METRICS_SEARCH_HOST as string,
             apiKey: env.METRICS_SEARCH_API_KEY,
             signal: input.signal,
-          }
-        )
-      : await metricsSearchClient
-          .index(METRICS_SEARCH_INDEX)
-          .getDocuments<ImageMetricsSearchIndexRecord>(request);
+          })
+        : metricsSearchClient!
+            .index(METRICS_SEARCH_INDEX)
+            .getDocuments<ImageMetricsSearchIndexRecord>(request)
+    );
 
     let nextCursor: number | undefined;
     if (results.length > limit) {

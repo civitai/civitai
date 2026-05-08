@@ -319,6 +319,9 @@ export const getInfiniteImagesHandler = async ({
         include: [...input.include, 'tagIds'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
         signal,
+        // Forward pre-evaluated variant so getImagesFromSearch can skip a
+        // duplicate Flipt evaluation. `null` means "skipBitdex" path.
+        bitdexMode,
       });
     } else {
       return await getAllImages({
@@ -446,6 +449,9 @@ export const getImagesAsPostsInfiniteHandler = async ({
         headers: { src: 'getImagesAsPostsInfiniteHandler' },
         include: [...input.include, 'tagIds', 'profilePictures'],
         dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+        // Forward pre-evaluated variant — getImagesFromSearch ignores it on the
+        // DB path (getAllImages doesn't read it).
+        bitdexMode,
       });
 
       // Merge images by postId

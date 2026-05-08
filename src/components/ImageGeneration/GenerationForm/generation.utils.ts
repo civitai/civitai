@@ -42,26 +42,22 @@ export const useGenerationStatus = () => {
 
 const DEFAULT_GENERATION_CONFIG = {
   unstableResources: [] as number[],
-  modOnlyEcosystems: [] as string[],
-  disabledEcosystems: [] as string[],
-  testingEcosystems: [] as string[],
   experimentalEcosystems: [] as string[],
-  hasTestingAccess: false,
+  gatedEcosystems: [] as string[],
+  gatedVersionIds: [] as number[],
 };
 
 /**
  * Returns the dynamic, Redis-backed generator config:
  * - `unstableResources`: model version IDs flagged unstable by the
  *   `resource-gen-availability` cron
- * - `modOnlyEcosystems`: ecosystem keys hidden from non-mods
- * - `disabledEcosystems`: ecosystem keys disabled for everyone
- * - `testingEcosystems`: ecosystem keys hidden from users without the
- *   `generation-testing` Flipt flag (mods always see them)
  * - `experimentalEcosystems`: ecosystem keys that should show the
  *   "experimental build" alert in the generator UI (unioned with the
  *   static `isEcosystemExperimental` check)
- * - `hasTestingAccess`: whether the current user passes the
- *   `generation-testing` Flipt flag (resolved server-side per user)
+ * - `gatedEcosystems`: ecosystem keys hidden for the current user
+ *   (server folds in mod-only / testing rules + Flipt evaluation)
+ * - `gatedVersionIds`: model version IDs hidden for the current user
+ *   (same per-user resolution as `gatedEcosystems`, ID-level overrides)
  *
  * Single tRPC query — every generator component that needs any of these
  * fields should call this hook so React Query dedupes the request.

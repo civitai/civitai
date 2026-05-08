@@ -8,6 +8,10 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import {
+  useGatedEcosystems,
+  useGatedVersionIds,
+} from '~/components/generation_v2/hooks/useGatedEcosystems';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
@@ -44,10 +48,7 @@ import { WhatIfProvider } from './WhatIfProvider';
 import { needsHydration, type PartialResourceValue } from './inputs/resource-select.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { type VersionGroup, getAllVersionIds } from '~/shared/data-graph/generation/common';
-import {
-  decodeGenerationHandoff,
-  GENERATION_HANDOFF_PARAM,
-} from './utils/generation-url-handoff';
+import { decodeGenerationHandoff, GENERATION_HANDOFF_PARAM } from './utils/generation-url-handoff';
 import { setGenerationSnapshotCache } from './utils/generation-snapshot-cache';
 
 // =============================================================================
@@ -221,6 +222,8 @@ function InnerProvider({
   const status = useGenerationStatus();
   const currentUser = useCurrentUser();
   const featureFlags = useFeatureFlags();
+  const gatedEcosystems = useGatedEcosystems();
+  const gatedVersionIds = useGatedVersionIds();
   const { registerResourceId, unregisterResourceId } = useResourceDataContext();
 
   const isModerator = !!currentUser?.isModerator;
@@ -237,8 +240,18 @@ function InnerProvider({
         tier: status.tier,
       },
       flags: featureFlags,
+      gatedEcosystems,
+      gatedVersionIds,
     }),
-    [status.limits.quantity, status.limits.resources, status.tier, isModerator, featureFlags]
+    [
+      status.limits.quantity,
+      status.limits.resources,
+      status.tier,
+      isModerator,
+      featureFlags,
+      gatedEcosystems,
+      gatedVersionIds,
+    ]
   );
 
   // Initialize the DataGraph (clone, attach storage, init once)

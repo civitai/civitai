@@ -89,6 +89,7 @@ export {
   type CheckpointModelMeta,
   type WorkflowVersionConfig,
   getAllVersionIds,
+  filterVersionGroup,
   type VideoMetadata,
   type VideoValue,
   type ImagesNodeConfig,

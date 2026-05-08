@@ -836,8 +836,7 @@ export function GenerationForm() {
                         graph.set(data as Parameters<typeof graph.set>[0]);
                       }}
                       placeholder={
-                        (meta as { placeholder?: string }).placeholder ??
-                        'Your prompt goes here...'
+                        (meta as { placeholder?: string }).placeholder ?? 'Your prompt goes here...'
                       }
                       autosize
                       minRows={2}

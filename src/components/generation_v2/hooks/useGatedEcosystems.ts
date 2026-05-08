@@ -1,48 +1,33 @@
 /**
- * useGatedEcosystems
+ * Hooks for reading the per-user gating lists from `useGenerationConfig`.
  *
- * Returns the set of ecosystem keys that should be hidden from the
- * generator UI for the current user, based on the operator-controlled
- * Redis config returned by `useGenerationConfig`.
- *
- * No code changes are needed to gate a new ecosystem — operators set
- * `modOnlyEcosystems` / `disabledEcosystems` / `testingEcosystems` in the
- * `generation:ecosystem-config` Redis hash field and the change
- * propagates to every consumer through this hook.
- *
- * Mod-only and testing ecosystems are server-resolved per user:
- * `useGenerationConfig` returns `hasTestingAccess` (true for mods and
- * users who pass the `generation-testing` Flipt flag) so the client can
- * mirror the same gate without exposing the Flipt evaluation.
+ * The server resolves the operator-controlled `disabled*` / `modOnly*` /
+ * `testing*` lists into a single per-user `gatedEcosystems` /
+ * `gatedVersionIds` pair (folding in the `generation-testing` Flipt flag
+ * and `isModerator`). The granular lists never leave the server, so these
+ * hooks are thin typed wrappers — they exist so callers depend on a
+ * stable name rather than reaching into `useGenerationConfig` directly.
  */
 
-import { useMemo } from 'react';
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 /**
- * Returns ecosystem keys that should be excluded from the generator UI
- * for the current user. Pass the result to `BaseModelInput`'s
- * `excludeEcosystems` prop (or any other consumer of ecosystem lists).
+ * Returns ecosystem keys hidden from the generator UI for the current user.
+ * Pass to `BaseModelInput`'s `excludeEcosystems` prop or any other consumer.
  */
 export function useGatedEcosystems(): string[] {
-  // `?? []` guards against stale React Query caches from before any of these
-  // fields were added to `getGenerationConfig` — without it, a returning user
-  // with cached data crashes on `[...undefined]` or `.push(...undefined)`.
-  const {
-    disabledEcosystems = [],
-    modOnlyEcosystems = [],
-    testingEcosystems = [],
-    hasTestingAccess: hasTestingAccessRaw = false,
-  } = useGenerationConfig();
-  const currentUser = useCurrentUser();
-  const isModerator = !!currentUser?.isModerator;
-  const hasTestingAccess = hasTestingAccessRaw || isModerator;
+  // `?? []` guards against stale React Query caches from before this field
+  // existed — without it, a returning user with cached data crashes on spread.
+  const { gatedEcosystems = [] } = useGenerationConfig();
+  return gatedEcosystems;
+}
 
-  return useMemo(() => {
-    const gated = [...disabledEcosystems];
-    if (!isModerator) gated.push(...modOnlyEcosystems);
-    if (!hasTestingAccess) gated.push(...testingEcosystems);
-    return gated;
-  }, [disabledEcosystems, modOnlyEcosystems, testingEcosystems, isModerator, hasTestingAccess]);
+/**
+ * Returns model version IDs hidden from the generator UI for the current
+ * user. Used to filter `VersionGroup.options` so gated versions don't
+ * appear in graph-driven model selectors.
+ */
+export function useGatedVersionIds(): number[] {
+  const { gatedVersionIds = [] } = useGenerationConfig();
+  return gatedVersionIds;
 }

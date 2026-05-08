@@ -15,13 +15,19 @@ export const negativePromptSchema = z
 export type SourceImageProps = z.input<typeof sourceImageSchema>;
 
 export const sourceImageSchema = z.object({
+  // Allow any Civitai-controlled host — orchestrator subdomain, the image
+  // CDN, and the apex domains across every TLD (`civitai.com`, `.red`,
+  // `.green`, etc). The apex branch is needed for static assets served by
+  // Next from the apex domain (e.g. comic layout PNGs at
+  // `/images/comics/layouts/...`).
   url: z
     .string()
     .startsWith('https://orchestration')
     .includes('.civitai.com')
     .or(z.string().includes('.civitai.red'))
     .or(z.string().includes('image.civitai.red'))
-    .or(z.string().includes('image.civitai.com')),
+    .or(z.string().includes('image.civitai.com'))
+    .or(z.string().startsWith('https://civitai.')),
   width: z.number(),
   height: z.number(),
   upscaleWidth: z.number().max(maxUpscaleSize).optional(),

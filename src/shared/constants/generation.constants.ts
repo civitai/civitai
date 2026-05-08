@@ -548,6 +548,88 @@ export const fluxModeOptions = [
 
 // #region [workflows]
 
+// =============================================================================
+// Aspect Ratio Dimensions by Resolution Tier
+// =============================================================================
+
+/**
+ * Resolution tiers used across generation ecosystems.
+ * - 480p / 720p / 1080p: video tiers (short side ≈ named pixels)
+ * - 2K / 4K: image tiers (long side ≈ 2560 / 4096)
+ */
+export type GenerationResolution = '480p' | '720p' | '1080p' | '2K' | '4K';
+
+export type GenerationAspectRatio = '21:9' | '16:9' | '4:3' | '1:1' | '3:4' | '9:16';
+
+export type AspectRatioDimensions = { width: number; height: number };
+
+/**
+ * Canonical width/height for each (resolution, aspect ratio) pair, shared across
+ * generation ecosystems so the form displays consistent dimensions.
+ *
+ * 2K / 4K values match the dimensions Seedream's API expects; video-tier values
+ * are display-only (the orchestrator derives actual dimensions from the
+ * aspectRatio + resolution pair sent in the payload).
+ */
+export const aspectRatioDimensions: Record<
+  GenerationResolution,
+  Partial<Record<GenerationAspectRatio, AspectRatioDimensions>>
+> = {
+  '480p': {
+    '21:9': { width: 1344, height: 576 },
+    '16:9': { width: 848, height: 480 },
+    '4:3': { width: 640, height: 480 },
+    '1:1': { width: 480, height: 480 },
+    '3:4': { width: 480, height: 640 },
+    '9:16': { width: 480, height: 848 },
+  },
+  '720p': {
+    '21:9': { width: 2016, height: 864 },
+    '16:9': { width: 1280, height: 720 },
+    '4:3': { width: 960, height: 720 },
+    '1:1': { width: 720, height: 720 },
+    '3:4': { width: 720, height: 960 },
+    '9:16': { width: 720, height: 1280 },
+  },
+  '1080p': {
+    '21:9': { width: 3024, height: 1296 },
+    '16:9': { width: 1920, height: 1080 },
+    '4:3': { width: 1440, height: 1080 },
+    '1:1': { width: 1080, height: 1080 },
+    '3:4': { width: 1080, height: 1440 },
+    '9:16': { width: 1080, height: 1920 },
+  },
+  '2K': {
+    '16:9': { width: 2560, height: 1440 },
+    '4:3': { width: 2304, height: 1728 },
+    '1:1': { width: 2048, height: 2048 },
+    '3:4': { width: 1728, height: 2304 },
+    '9:16': { width: 1440, height: 2560 },
+  },
+  '4K': {
+    '16:9': { width: 4096, height: 2304 },
+    '4:3': { width: 4096, height: 3072 },
+    '1:1': { width: 4096, height: 4096 },
+    '3:4': { width: 3072, height: 4096 },
+    '9:16': { width: 2304, height: 4096 },
+  },
+};
+
+/**
+ * Returns aspect ratio options (label/value/width/height) for the given
+ * resolution tier, restricted to the requested ratios in their listed order.
+ * Ratios that aren't defined for the resolution are skipped. Accepts a plain
+ * string for `resolution` so callers don't need to narrow ctx values; unknown
+ * resolutions yield an empty list.
+ */
+export function getAspectRatioOptions(resolution: string, ratios: GenerationAspectRatio[]) {
+  const dims = aspectRatioDimensions[resolution as GenerationResolution] ?? {};
+  return ratios.flatMap((ratio) => {
+    const d = dims[ratio];
+    return d ? [{ label: ratio, value: ratio, width: d.width, height: d.height }] : [];
+  });
+}
+
 /** Standard Flux aspect ratios (1024px based) */
 export const fluxAspectRatios = [
   { label: '2:3', width: 832, height: 1216 },

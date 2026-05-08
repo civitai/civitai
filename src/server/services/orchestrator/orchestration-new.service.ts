@@ -32,7 +32,10 @@ import {
 } from '~/shared/data-graph/generation/config/workflows';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import { resourceSchema, type ResourceData } from '~/shared/data-graph/generation/common';
-import { getResourceData } from '~/server/services/generation/generation.service';
+import {
+  getGatedListsForUser,
+  getResourceData,
+} from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
@@ -196,16 +199,24 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
 
 /**
  * Builds the GenerationCtx from user tier information.
- * Fetches generation status to get tier-based limits.
+ * Fetches generation status (tier-based limits) and the per-user gated
+ * version IDs (so the graph filters dropdowns and validates submissions
+ * against the same gate that `getResourceCanGenerate` enforces).
  *
  * @param userTier - The user's subscription tier
- * @returns GenerationCtx with limits and user info, plus status for availability checks
+ * @param flags - Feature access flags
+ * @param user - User info used to resolve mod-only / testing gating
+ * @returns GenerationCtx with limits, user info, and gated IDs, plus status for availability checks
  */
 export async function buildGenerationContext(
   userTier: GenerationCtx['user']['tier'] = 'free',
-  flags?: Partial<FeatureAccess>
+  flags?: Partial<FeatureAccess>,
+  user?: { id?: number; isModerator?: boolean }
 ): Promise<GenerationContextResult> {
-  const status = await getGenerationStatus();
+  const [status, gated] = await Promise.all([
+    getGenerationStatus(),
+    getGatedListsForUser(user ?? {}),
+  ]);
   const limits = status.limits[userTier];
 
   return {
@@ -219,6 +230,8 @@ export async function buildGenerationContext(
         tier: userTier,
       },
       flags,
+      gatedEcosystems: gated.gatedEcosystems,
+      gatedVersionIds: gated.gatedVersionIds,
     },
     status: {
       available: status.available,
@@ -419,6 +432,10 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
 /**
  * Validates input using the generation graph and returns the validated output.
  * The output type is discriminated by the workflow property.
+ *
+ * Also returns the set of computed-node keys active for this branch so callers
+ * can strip them from anything that gets persisted as form-input metadata
+ * (computed values like `triggerWords` are derived, not user input).
  */
 function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
   const result = generationGraph.safeParse(normalizeInput(input), externalCtx);
@@ -430,7 +447,12 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
     throw new Error(`Validation failed: ${errorMessages}`);
   }
 
-  return result.data;
+  const computedKeys = new Set<string>();
+  for (const node of Object.values(result.nodes)) {
+    if (node.kind === 'computed') computedKeys.add(node.key);
+  }
+
+  return { data: result.data, computedKeys };
 }
 
 // =============================================================================
@@ -556,6 +578,21 @@ async function createImageRemoveBackgroundInput(
 // Main Router
 // =============================================================================
 
+/**
+ * Step types whose orchestrator input schemas don't accept `imageMetadata`.
+ * These run as intermediate (non-generation) steps inside multi-step workflows;
+ * injecting imageMetadata into their input pollutes the request payload.
+ */
+const STEP_TYPES_WITHOUT_IMAGE_METADATA: readonly string[] = [
+  'promptEnhancement',
+  'chatCompletion',
+];
+
+function withImageMetadata(input: object, type: string, imageMetadata: string): object {
+  if (STEP_TYPES_WITHOUT_IMAGE_METADATA.includes(type)) return input;
+  return { ...input, imageMetadata };
+}
+
 /** Context for step-level metadata (imageMetadata, params/resources, source lineage) */
 type StepMetadataCtx = {
   stepMetadata: { params?: Record<string, unknown>; resources?: Array<Record<string, unknown>> };
@@ -617,7 +654,7 @@ async function createStepInputs(
     if (resolvedSource) {
       return {
         ...rest,
-        input: { ...(rest.input as object), imageMetadata: resolvedSource.imageMetadata },
+        input: withImageMetadata(rest.input as object, rest.$type, resolvedSource.imageMetadata),
         metadata: resolvedSource.metadata,
       };
     }
@@ -642,7 +679,7 @@ async function createStepInputs(
       if (resolved) {
         return {
           ...rest,
-          input: { ...(rest.input as object), imageMetadata: resolved.imageMetadata },
+          input: withImageMetadata(rest.input as object, rest.$type, resolved.imageMetadata),
           metadata: resolved.metadata,
         };
       }
@@ -659,10 +696,11 @@ async function createStepInputs(
         : {};
     return {
       ...rest,
-      input: {
-        ...(rest.input as object),
-        imageMetadata: buildImageMetadata(mergedMeta.params, mergedMeta.resources),
-      },
+      input: withImageMetadata(
+        rest.input as object,
+        rest.$type,
+        buildImageMetadata(mergedMeta.params, mergedMeta.resources)
+      ),
       metadata: handlerMeta,
     };
   });
@@ -745,6 +783,7 @@ function buildResolvedSource(
  */
 export async function createWorkflowStepsFromGraph({
   data,
+  computedKeys,
   isWhatIf = false,
   user,
   sourceMetadata,
@@ -752,6 +791,12 @@ export async function createWorkflowStepsFromGraph({
   remixOfId,
 }: {
   data: GenerationGraphOutput;
+  /**
+   * Computed-node keys from the generation-graph branch. Stripped from
+   * `stepMetadata.params` so derived values (e.g. `triggerWords`) don't
+   * leak into workflow.metadata or imageMetadata as if they were form input.
+   */
+  computedKeys?: Set<string>;
   isWhatIf?: boolean;
   user?: { id?: number; isModerator?: boolean };
   sourceMetadata?: SourceMetadataInput;
@@ -801,6 +846,16 @@ export async function createWorkflowStepsFromGraph({
       vae?: { id: number; model: { type: string } };
     }
   );
+
+  // Strip computed-node values (e.g. triggerWords) from params — they're
+  // derived from inputs at runtime, not form input, and shouldn't be persisted
+  // to workflow.metadata or imageMetadata.
+  if (computedKeys && computedKeys.size > 0) {
+    const params = stepMetadata.params as Record<string, unknown>;
+    for (const key of computedKeys) {
+      if (key in params) delete params[key];
+    }
+  }
 
   const needsSourceMetadata = workflowConfigByKey.get(data.workflow)?.enhancement === true;
 
@@ -876,7 +931,7 @@ export async function generateFromGraph({
   remixOfId,
   track,
 }: GenerateOptions) {
-  const data = validateInput(input, externalCtx);
+  const { data, computedKeys } = validateInput(input, externalCtx);
 
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
@@ -911,6 +966,7 @@ export async function generateFromGraph({
 
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
     data,
+    computedKeys,
     user: { id: userId, isModerator },
     sourceMetadata,
     sourceMetadataMap,
@@ -995,9 +1051,10 @@ export async function whatIfFromGraph({
     lyrics: '',
     ...input,
   };
-  const data = validateInput(whatIfInput, externalCtx);
+  const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
   const { steps } = await createWorkflowStepsFromGraph({
     data,
+    computedKeys,
     isWhatIf: true,
     user: userId ? { id: userId, isModerator } : undefined,
   });

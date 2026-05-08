@@ -513,6 +513,35 @@ export function getAllVersionIds(group: VersionGroup): Set<number> {
 }
 
 /**
+ * Returns a copy of `group` with any option whose `value` is in `hiddenIds`
+ * removed. Recurses into `children`; a parent option is dropped when all of
+ * its children are hidden, and a parent whose own `value` is hidden is
+ * rewritten to point at the first remaining child so selecting the parent
+ * doesn't land on a gated ID.
+ *
+ * Returns `undefined` when every option in the group is gated.
+ */
+export function filterVersionGroup(
+  group: VersionGroup,
+  hiddenIds: number[]
+): VersionGroup | undefined {
+  if (hiddenIds.length === 0) return group;
+  const options: VersionOption[] = [];
+  for (const opt of group.options) {
+    if (opt.children) {
+      const filteredChildren = filterVersionGroup(opt.children, hiddenIds);
+      if (!filteredChildren) continue;
+      const value = hiddenIds.includes(opt.value) ? filteredChildren.options[0].value : opt.value;
+      options.push({ ...opt, value, children: filteredChildren });
+    } else if (!hiddenIds.includes(opt.value)) {
+      options.push(opt);
+    }
+  }
+  if (options.length === 0) return undefined;
+  return { ...group, options };
+}
+
+/**
  * Model node meta type for checkpoint graphs.
  * Kept in sync with the model node factory in createCheckpointGraph via return type annotation.
  */
@@ -736,7 +765,15 @@ export function createCheckpointGraph(
         const modelVersionId = defaultModelId ?? ecosystemDefaults?.model?.id;
         const modelLocked = options?.modelLocked ?? ecosystemDefaults?.modelLocked ?? false;
 
-        const validVersionIds = versions ? getAllVersionIds(versions) : undefined;
+        // Drop gated version IDs (operator-controlled disabled/mod-only/testing)
+        // from the version selector so users never see versions they can't use.
+        // Server enforces the same gate in `getResourceCanGenerate`.
+        const visibleVersions =
+          versions && ext.gatedVersionIds?.length
+            ? filterVersionGroup(versions, ext.gatedVersionIds)
+            : versions;
+
+        const validVersionIds = visibleVersions ? getAllVersionIds(visibleVersions) : undefined;
 
         const checkpointInputSchema = z
           .union([
@@ -779,7 +816,7 @@ export function createCheckpointGraph(
               excludeIds: value ? [value.id] : [],
             },
             modelLocked,
-            versions,
+            versions: visibleVersions,
             defaultModelId: modelVersionId,
           }),
           // Transform model when ecosystem or workflow changes
