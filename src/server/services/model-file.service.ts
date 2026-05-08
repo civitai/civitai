@@ -176,11 +176,13 @@ export async function deleteFile({
   userId,
   isModerator,
 }: GetByIdInput & { userId: number; isModerator?: boolean }) {
-  // Check if deleting a training file for a model still in draft/training state
+  // Check if deleting a training file for a model still in draft/training state.
+  // Don't pull `url` here — it could change between this read and the DELETE
+  // below if a concurrent updateFile lands. We RETURN the url from DELETE
+  // instead, so the S3 cleanup always targets the URL that actually got removed.
   const file = await dbWrite.modelFile.findFirst({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
     select: {
-      url: true,
       type: true,
       modelVersion: {
         select: {
@@ -205,7 +207,9 @@ export async function deleteFile({
     );
   }
 
-  const rows = await dbWrite.$queryRaw<{ modelVersionId: number; modelId: number }[]>`
+  const rows = await dbWrite.$queryRaw<
+    { modelVersionId: number; modelId: number; url: string }[]
+  >`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
@@ -214,17 +218,22 @@ export async function deleteFile({
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
     RETURNING
       mv.id as "modelVersionId",
-      m.id as "modelId"
+      m.id as "modelId",
+      mf.url as "url"
   `;
 
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
 
   // Clean up S3 object after DB delete succeeds (best-effort).
+  // Use `row.url` (RETURNING from DELETE) — not the pre-DELETE snapshot — so a
+  // concurrent updateFile that swapped the URL doesn't cause us to delete the
+  // old (still-referenced) object while the row at the new URL is the one
+  // that actually got removed.
   // Terminal .catch on the chain so an Axiom-side rejection can't leak as
   // an unhandled rejection in this fire-and-forget path.
-  if (row && file.url) {
-    deleteModelFileObject(file.url)
+  if (row?.url) {
+    deleteModelFileObject(row.url)
       .catch((error) =>
         logToAxiom({
           type: 'error',
