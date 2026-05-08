@@ -12,7 +12,10 @@ import {
   getFilesForModelVersionCache,
   updateFile,
 } from '~/server/services/model-file.service';
-import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createModelFileScanRequest,
+  ModelFileScanSubmissionError,
+} from '~/server/services/orchestrator/orchestrator.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -156,7 +159,22 @@ export const createFileHandler = async ({
         modelId: file.modelVersion.modelId,
         modelType: file.modelVersion.model.type,
         baseModel: file.modelVersion.baseModel,
+        url: createInput.url,
+        // Skip pre-flight on inline submission: the file just landed and
+        // storage-resolver may not have finished propagating, so the
+        // pre-flight's 60s retry would block the upload response. If the
+        // file truly is missing, scanFilesFallbackJob will catch it 5 min
+        // later via its own pre-flight and tombstone properly.
+        preflight: false,
       }).catch((err) => {
+        // Inline path is log-only on failure regardless of code: never
+        // tombstone here. A 'not-found' would only happen if pre-flight had
+        // run, which it didn't. 'transient' is the expected case (orchestrator
+        // outage); fallback job will retry. Inline-path errors stay visible
+        // in Axiom so a sustained spike still surfaces as the earliest
+        // signal the orchestrator is unreachable.
+        const submissionErrorCode =
+          err instanceof ModelFileScanSubmissionError ? err.code : 'transient';
         logToAxiom(
           {
             type: 'error',
@@ -164,6 +182,10 @@ export const createFileHandler = async ({
             message: 'inline scan submission failed in createFileHandler',
             fileId: file.id,
             modelVersionId: file.modelVersion.id,
+            submissionErrorCode,
+            responseStatus: err instanceof ModelFileScanSubmissionError ? err.status : undefined,
+            orchestratorMessages:
+              err instanceof ModelFileScanSubmissionError ? err.orchestratorMessages : undefined,
             error: err instanceof Error ? err.message : String(err),
             stack: err instanceof Error ? err.stack : undefined,
           },

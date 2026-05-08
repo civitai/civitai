@@ -4,27 +4,46 @@ const {
   mockDbWrite,
   mockIsFlipt,
   mockCreateModelFileScanRequest,
+  mockModelFileScanSubmissionError,
   mockLogToAxiom,
   mockLimitConcurrency,
-} = vi.hoisted(() => ({
-  mockDbWrite: {
-    modelFile: {
-      findMany: vi.fn(),
-      updateMany: vi.fn(),
-      update: vi.fn(),
+} = vi.hoisted(() => {
+  // Test-local copy of the real error class so we can construct one in mock
+  // rejections without importing the real orchestrator module (which would
+  // pull in env validation). The shape only needs to match what scan-files.ts
+  // branches on: `instanceof ModelFileScanSubmissionError && code`.
+  class MockModelFileScanSubmissionError extends Error {
+    constructor(
+      message: string,
+      public readonly code: 'not-found' | 'transient',
+      public readonly status?: number,
+      public readonly orchestratorMessages?: string[]
+    ) {
+      super(message);
+      this.name = 'ModelFileScanSubmissionError';
+    }
+  }
+  return {
+    mockDbWrite: {
+      modelFile: {
+        findMany: vi.fn(),
+        updateMany: vi.fn(),
+        update: vi.fn(),
+      },
+      modelFileHash: {
+        create: vi.fn(),
+      },
     },
-    modelFileHash: {
-      create: vi.fn(),
-    },
-  },
-  mockIsFlipt: vi.fn(),
-  mockCreateModelFileScanRequest: vi.fn(),
-  mockLogToAxiom: vi.fn(),
-  // Run all tasks sequentially so we can assert on their effects deterministically.
-  mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
-    for (const t of tasks) await t();
-  }),
-}));
+    mockIsFlipt: vi.fn(),
+    mockCreateModelFileScanRequest: vi.fn(),
+    mockModelFileScanSubmissionError: MockModelFileScanSubmissionError,
+    mockLogToAxiom: vi.fn(),
+    // Run all tasks sequentially so we can assert on their effects deterministically.
+    mockLimitConcurrency: vi.fn(async (tasks: Array<() => Promise<unknown>>) => {
+      for (const t of tasks) await t();
+    }),
+  };
+});
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 
@@ -35,6 +54,7 @@ vi.mock('~/server/flipt/client', () => ({
 
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createModelFileScanRequest: mockCreateModelFileScanRequest,
+  ModelFileScanSubmissionError: mockModelFileScanSubmissionError,
 }));
 
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
@@ -214,6 +234,82 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
         type: 'error',
         name: 'scan-files-fallback',
         error: 'orchestrator down',
+      }),
+      'webhooks'
+    );
+    expect(result).toEqual({ submitted: 0, failed: 1 });
+  });
+
+  it('on ModelFileScanSubmissionError code=not-found, tombstones via exists=false (no scanRequestedAt reset)', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.modelFile.findMany.mockResolvedValue([
+      {
+        id: 7,
+        modelVersion: { id: 70, baseModel: 'SD 1.5', model: { id: 700, type: 'Checkpoint' } },
+      },
+    ]);
+    mockCreateModelFileScanRequest.mockRejectedValue(
+      new mockModelFileScanSubmissionError(
+        'Failed to submit model file scan workflow for file 7 (status 400)',
+        'not-found',
+        400,
+        ['Resource urn:air:... does not exist or is not valid.']
+      )
+    );
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    // Tombstone fires.
+    expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: { exists: false },
+    });
+    // And the scanRequestedAt-reset path does NOT fire — the file exits the
+    // scan poll permanently via the WHERE-clause `exists` filter.
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
+      where: { id: 7 },
+      data: { scanRequestedAt: null },
+    });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        submissionErrorCode: 'not-found',
+        tombstoned: true,
+      }),
+      'webhooks'
+    );
+    expect(result).toEqual({ submitted: 0, failed: 1 });
+  });
+
+  it('on ModelFileScanSubmissionError code=transient, resets scanRequestedAt (no tombstone)', async () => {
+    mockIsFlipt.mockResolvedValue(true);
+    mockDbWrite.modelFile.findMany.mockResolvedValue([
+      {
+        id: 8,
+        modelVersion: { id: 80, baseModel: 'SDXL', model: { id: 800, type: 'LORA' } },
+      },
+    ]);
+    mockCreateModelFileScanRequest.mockRejectedValue(
+      new mockModelFileScanSubmissionError(
+        'Failed to submit model file scan workflow for file 8 (status 503)',
+        'transient',
+        503
+      )
+    );
+
+    const result = await runJob(scanFilesFallbackJob);
+
+    expect(mockDbWrite.modelFile.update).toHaveBeenCalledWith({
+      where: { id: 8 },
+      data: { scanRequestedAt: null },
+    });
+    expect(mockDbWrite.modelFile.update).not.toHaveBeenCalledWith({
+      where: { id: 8 },
+      data: { exists: false },
+    });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        submissionErrorCode: 'transient',
+        tombstoned: false,
       }),
       'webhooks'
     );

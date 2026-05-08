@@ -14,7 +14,10 @@ import {
 } from '~/utils/delivery-worker';
 import { logToAxiom } from '~/server/logging/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createModelFileScanRequest,
+  ModelFileScanSubmissionError,
+} from '~/server/services/orchestrator/orchestrator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 export const scanFilesJob = createJob('scan-files', '*/5 * * * *', async () => {
@@ -219,6 +222,7 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
     },
     select: {
       id: true,
+      url: true,
       modelVersion: {
         select: {
           id: true,
@@ -258,24 +262,40 @@ export const scanFilesFallbackJob = createJob('scan-files-fallback', '*/5 * * * 
           modelId: file.modelVersion.model.id,
           modelType: file.modelVersion.model.type as ModelType,
           baseModel: file.modelVersion.baseModel,
+          url: file.url,
           priority: 'low',
         });
         submitted++;
       } catch (err) {
         failed++;
-        // Reset scanRequestedAt so the next 5-min tick retries this file.
-        // Without this, the upfront updateMany above would leave it Pending
-        // for the 24h stale-cutoff window — too long for transient
-        // orchestrator outages, which are the common case for submission
-        // failures (vs. workflow-level failures handled by D4).
-        await dbWrite.modelFile
-          .update({ where: { id: file.id }, data: { scanRequestedAt: null } })
-          .catch(() => null);
+        const isNotFound = err instanceof ModelFileScanSubmissionError && err.code === 'not-found';
+        if (isNotFound) {
+          // Orchestrator says the AIR can't be resolved — file is genuinely
+          // gone. Tombstone via exists=false so both scan jobs' WHERE clauses
+          // skip it. Mirrors legacy scanFilesJob's `not-found → exists=false`
+          // path (parity restored after orchestrator started returning 400 on
+          // unresolvable AIRs).
+          await dbWrite.modelFile
+            .update({ where: { id: file.id }, data: { exists: false } })
+            .catch(() => null);
+        } else {
+          // Reset scanRequestedAt so the next 5-min tick retries this file.
+          // Without this, the upfront updateMany above would leave it Pending
+          // for the 24h stale-cutoff window — too long for transient
+          // orchestrator outages, which are the common case for submission
+          // failures (vs. workflow-level failures handled by D4).
+          await dbWrite.modelFile
+            .update({ where: { id: file.id }, data: { scanRequestedAt: null } })
+            .catch(() => null);
+        }
         logToAxiom(
           {
             type: 'error',
             name: 'scan-files-fallback',
             message: `Failed to submit scan workflow for file ${file.id}`,
+            submissionErrorCode:
+              err instanceof ModelFileScanSubmissionError ? err.code : 'transient',
+            tombstoned: isNotFound,
             error: err instanceof Error ? err.message : String(err),
           },
           'webhooks'

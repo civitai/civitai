@@ -1,10 +1,11 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const {
   mockDbWrite,
   mockSubmitWorkflow,
   mockLogToAxiom,
   mockStringifyAIR,
+  mockResolveDownloadUrl,
   mockIsProd,
 } = vi.hoisted(() => ({
   mockDbWrite: {
@@ -14,6 +15,9 @@ const {
   mockSubmitWorkflow: vi.fn(),
   mockLogToAxiom: vi.fn(),
   mockStringifyAIR: vi.fn().mockReturnValue('urn:air:sd1:checkpoint:civitai:100@10'),
+  // Pre-flight resolver. Default success so the existing happy-path tests
+  // don't regress; failure-path tests reset to mockRejectedValue.
+  mockResolveDownloadUrl: vi.fn().mockResolvedValue({ url: 'https://cdn.example/file' }),
   mockIsProd: { value: true },
 }));
 
@@ -33,6 +37,10 @@ vi.mock('~/server/services/orchestrator/client', () => ({
 vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 vi.mock('~/shared/utils/air', () => ({ stringifyAIR: mockStringifyAIR }));
+
+vi.mock('~/utils/delivery-worker', () => ({
+  resolveDownloadUrl: mockResolveDownloadUrl,
+}));
 
 // Use a getter so tests can flip isProd between cases.
 vi.mock('~/env/other', () => ({
@@ -55,7 +63,10 @@ vi.mock('~/client-utils/cf-images-utils', () => ({
   getEdgeUrl: (url: string) => url,
 }));
 
-import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createModelFileScanRequest,
+  ModelFileScanSubmissionError,
+} from '~/server/services/orchestrator/orchestrator.service';
 
 const baseInput = {
   fileId: 1,
@@ -63,6 +74,7 @@ const baseInput = {
   modelId: 100,
   modelType: 'Checkpoint' as const,
   baseModel: 'SD 1.5',
+  url: 's3://bucket/key.safetensors',
 };
 
 beforeEach(() => {
@@ -71,7 +83,16 @@ beforeEach(() => {
   mockSubmitWorkflow.mockReset();
   mockLogToAxiom.mockReset();
   mockStringifyAIR.mockClear();
+  // Reset to success default — failure-path tests opt into mockRejectedValue
+  mockResolveDownloadUrl.mockReset().mockResolvedValue({ url: 'https://cdn.example/file' });
   mockIsProd.value = true; // default: prod
+  // Avoid burning the real 60s sleep inside the pre-flight retry path. Tests
+  // that hit the not-found path can spy on this to assert the wait happened.
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('createModelFileScanRequest', () => {
@@ -271,20 +292,22 @@ describe('createModelFileScanRequest', () => {
     });
   });
 
-  describe('failure path', () => {
-    it('throws when submitWorkflow returns no data, with the response status in the message', async () => {
+  describe('submitWorkflow failure path (transient)', () => {
+    it('throws ModelFileScanSubmissionError with code=transient and status when submitWorkflow returns no data', async () => {
       mockSubmitWorkflow.mockResolvedValue({
         data: null,
         error: { message: 'bad request' },
         response: { status: 400 },
       });
 
-      await expect(createModelFileScanRequest(baseInput)).rejects.toThrow(
-        /Failed to submit model file scan workflow for file 1.*status 400/
-      );
+      const err = await createModelFileScanRequest(baseInput).catch((e) => e);
+      expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
+      expect(err.code).toBe('transient');
+      expect(err.status).toBe(400);
+      expect(err.message).toMatch(/Failed to submit model file scan workflow for file 1.*status 400/);
     });
 
-    it('logs to Axiom with file context before throwing', async () => {
+    it('logs to Axiom with file context + submissionErrorCode=transient before throwing', async () => {
       mockSubmitWorkflow.mockResolvedValue({
         data: null,
         error: { message: 'bad' },
@@ -300,6 +323,7 @@ describe('createModelFileScanRequest', () => {
           fileId: 1,
           modelVersionId: 10,
           responseStatus: 500,
+          submissionErrorCode: 'transient',
         })
       );
     });
@@ -315,6 +339,80 @@ describe('createModelFileScanRequest', () => {
 
       // Only the post-success update would write scanRequestedAt; verify it didn't run.
       expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pre-flight URL resolution (not-found path)', () => {
+    it('proceeds to submitWorkflow when resolveDownloadUrl succeeds on first try', async () => {
+      mockResolveDownloadUrl.mockResolvedValueOnce({ url: 'https://cdn/x' });
+      mockSubmitWorkflow.mockResolvedValue({
+        data: { id: 'wf-1' },
+        error: null,
+        response: { status: 200 },
+      });
+
+      await createModelFileScanRequest(baseInput);
+
+      expect(mockResolveDownloadUrl).toHaveBeenCalledTimes(1);
+      expect(mockResolveDownloadUrl).toHaveBeenCalledWith(1, 's3://bucket/key.safetensors');
+      expect(mockSubmitWorkflow).toHaveBeenCalled();
+    });
+
+    it('retries pre-flight once after a 60s wait when the first attempt fails (sync-lag tolerance)', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new Error('not in resolver yet'))
+        .mockResolvedValueOnce({ url: 'https://cdn/x' });
+      mockSubmitWorkflow.mockResolvedValue({
+        data: { id: 'wf-1' },
+        error: null,
+        response: { status: 200 },
+      });
+
+      const promise = createModelFileScanRequest(baseInput);
+      // Run microtasks for the first reject, then advance the 60s sleep.
+      await vi.advanceTimersByTimeAsync(60_000);
+      await promise;
+
+      expect(mockResolveDownloadUrl).toHaveBeenCalledTimes(2);
+      expect(mockSubmitWorkflow).toHaveBeenCalled();
+    });
+
+    it('throws code=not-found when both pre-flight attempts fail', async () => {
+      mockResolveDownloadUrl
+        .mockRejectedValueOnce(new Error('first miss'))
+        .mockRejectedValueOnce(new Error('still missing'));
+
+      const promise = createModelFileScanRequest(baseInput).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(60_000);
+      const err = await promise;
+
+      expect(err).toBeInstanceOf(ModelFileScanSubmissionError);
+      expect(err.code).toBe('not-found');
+      // submitWorkflow must NOT run when we can't even resolve the file URL.
+      expect(mockSubmitWorkflow).not.toHaveBeenCalled();
+      // scanRequestedAt write only happens on success; verify it didn't fire.
+      expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'model-file-scan',
+          submissionErrorCode: 'not-found',
+          fileId: 1,
+        })
+      );
+    });
+
+    it('skips pre-flight entirely when preflight=false (inline upload path)', async () => {
+      mockResolveDownloadUrl.mockRejectedValue(new Error('would fail if called'));
+      mockSubmitWorkflow.mockResolvedValue({
+        data: { id: 'wf-1' },
+        error: null,
+        response: { status: 200 },
+      });
+
+      await createModelFileScanRequest({ ...baseInput, preflight: false });
+
+      expect(mockResolveDownloadUrl).not.toHaveBeenCalled();
+      expect(mockSubmitWorkflow).toHaveBeenCalled();
     });
   });
 });

@@ -1,11 +1,14 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { Prisma } from '@prisma/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
-import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createModelFileScanRequest,
+  ModelFileScanSubmissionError,
+} from '~/server/services/orchestrator/orchestrator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 
@@ -84,10 +87,18 @@ export default ModEndpoint(
             modelId: f.modelVersion.model.id,
             modelType: f.modelVersion.model.type,
             baseModel: f.modelVersion.baseModel,
+            url: f.url,
             priority: 'low',
           });
-        } catch {
+        } catch (err) {
           failed.push(f.id);
+          // Admin endpoint: tombstone on permanent 'not-found' so the file
+          // exits the scan retry loop. Matches scanFilesFallbackJob policy.
+          if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
+            await dbWrite.modelFile
+              .update({ where: { id: f.id }, data: { exists: false } })
+              .catch(() => null);
+          }
         }
         return;
       }

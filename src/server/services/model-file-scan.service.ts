@@ -12,7 +12,10 @@ import { modelsSearchIndex } from '~/server/search-index';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
-import { createModelFileScanRequest } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createModelFileScanRequest,
+  ModelFileScanSubmissionError,
+} from '~/server/services/orchestrator/orchestrator.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -535,11 +538,21 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
           modelId: f.modelVersion.model.id,
           modelType: f.modelVersion.model.type,
           baseModel: f.modelVersion.baseModel,
+          url: f.url,
           priority: 'low',
         });
         sent.push(f.id);
-      } catch {
+      } catch (err) {
         failed.push(f.id);
+        // Admin-triggered rescan: caller has explicit intent and the file's
+        // been around long enough to settle. Mirror scanFilesFallbackJob and
+        // tombstone on a 'not-found' so this rescan doesn't keep churning on
+        // a permanently dead AIR.
+        if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
+          await dbWrite.modelFile
+            .update({ where: { id: f.id }, data: { exists: false } })
+            .catch(() => null);
+        }
       }
       return;
     }

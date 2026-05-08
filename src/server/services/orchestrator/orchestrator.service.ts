@@ -9,6 +9,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
 export async function createImageIngestionRequest({
   imageId,
@@ -238,12 +239,42 @@ export async function createTextModerationRequest({
   return data;
 }
 
+/**
+ * Thrown by createModelFileScanRequest when submission can't proceed. The
+ * `code` lets callers branch their recovery:
+ *   - 'not-found': pre-flight download-URL resolution failed twice (storage
+ *     resolver + delivery worker both can't locate the file). Caller should
+ *     mark ModelFile.exists=false to exit the scan retry loop.
+ *   - 'transient': submitWorkflow itself failed (5xx, network, auth, etc.).
+ *     Caller should leave `exists` alone and rely on retry.
+ *
+ * Why pre-flight (not orchestrator response): submitWorkflow only enqueues —
+ * orchestrator validates the AIR-fetchable file later, asynchronously, in
+ * the workflow steps themselves. There's no synchronous "file missing"
+ * signal at submit time. So we mirror legacy `requestScannerTasks`: resolve
+ * the download URL ourselves before submitting, and treat resolution failure
+ * as the file-gone signal.
+ */
+export class ModelFileScanSubmissionError extends Error {
+  constructor(
+    message: string,
+    public readonly code: 'not-found' | 'transient',
+    public readonly status?: number,
+    public readonly orchestratorMessages?: string[]
+  ) {
+    super(message);
+    this.name = 'ModelFileScanSubmissionError';
+  }
+}
+
 export async function createModelFileScanRequest({
   fileId,
   modelVersionId,
   modelId,
   modelType,
   baseModel,
+  url,
+  preflight = true,
   priority = 'normal',
 }: {
   fileId: number;
@@ -251,6 +282,14 @@ export async function createModelFileScanRequest({
   modelId: number;
   modelType: ModelType;
   baseModel: string;
+  /** S3 URL for the file. Used by the pre-flight download-URL resolver to
+   * confirm the file exists before submitting a workflow. */
+  url: string;
+  /** Default true. Pass false from `createFileHandler` (inline post-upload)
+   * to avoid a possible 60s sync-lag retry blocking the upload response —
+   * the file just landed, so existence is near-certain, and if it really
+   * is missing the 5-min `scanFilesFallbackJob` will catch and tombstone it. */
+  preflight?: boolean;
   priority?: Priority;
 }) {
   // Dev skip: only when BOTH (a) we're in non-prod AND (b) no token is
@@ -276,6 +315,42 @@ export async function createModelFileScanRequest({
       update: { hash: '0'.repeat(64) },
     });
     return;
+  }
+
+  // Pre-flight: confirm the file is actually fetchable before submitting an
+  // orchestrator workflow. Mirrors legacy `requestScannerTasks` (`scan-files.ts`):
+  //
+  //   1) try storage-resolver / delivery-worker (resolveDownloadUrl)
+  //   2) on failure, wait 60s and retry once (covers registration sync lag
+  //      for recently-uploaded files)
+  //   3) on second failure, throw 'not-found' so the caller can tombstone
+  //
+  // This is the file-gone signal we used in the legacy scanner; orchestrator
+  // submitWorkflow doesn't surface one synchronously.
+  if (preflight) {
+    try {
+      await resolveDownloadUrl(fileId, url);
+    } catch (firstError) {
+      await new Promise((r) => setTimeout(r, 60_000));
+      try {
+        await resolveDownloadUrl(fileId, url);
+      } catch (retryError) {
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-scan',
+          message: `Pre-flight download URL resolution failed for file ${fileId}`,
+          fileId,
+          modelVersionId,
+          submissionErrorCode: 'not-found',
+          firstError: firstError instanceof Error ? firstError.message : String(firstError),
+          retryError: retryError instanceof Error ? retryError.message : String(retryError),
+        });
+        throw new ModelFileScanSubmissionError(
+          `Pre-flight resolution failed for file ${fileId}; treating as not-found`,
+          'not-found'
+        );
+      }
+    }
   }
 
   const air = stringifyAIR({
@@ -335,6 +410,11 @@ export async function createModelFileScanRequest({
   });
 
   if (!data) {
+    // submitWorkflow only enqueues — orchestrator can't tell us the file is
+    // missing here (that surfaces later in the workflow steps). Anything that
+    // gets us here is transient: 5xx, network, auth, malformed payload. The
+    // caller's retry policy applies; 'not-found' is reserved for the
+    // pre-flight resolution-failure path above.
     logToAxiom({
       type: 'error',
       name: 'model-file-scan',
@@ -342,15 +422,15 @@ export async function createModelFileScanRequest({
       modelVersionId,
       air,
       responseStatus: response.status,
+      submissionErrorCode: 'transient',
       error,
     });
-    // Throw so callers' try/catch / .catch() actually fire. Returning
-    // undefined silently here was hiding submission failures from
-    // scanFilesFallbackJob's `failed` counter and createFileHandler's
-    // Axiom error path.
-    throw new Error(
+
+    throw new ModelFileScanSubmissionError(
       `Failed to submit model file scan workflow for file ${fileId}` +
-        (response?.status ? ` (status ${response.status})` : '')
+        (response?.status ? ` (status ${response.status})` : ''),
+      'transient',
+      response?.status
     );
   }
 

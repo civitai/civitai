@@ -1,3 +1,27 @@
+/**
+ * Debug endpoint for the orchestrator-based model file scanner.
+ * =============================================================================
+ *
+ * Hidden testing route. Guarded by the WEBHOOK_TOKEN via `?token=` query
+ * param (see WebhookEndpoint). Not reachable without the secret; no public UI.
+ *
+ * Usage:
+ *   POST /api/testing/model-file-scan?token=$WEBHOOK_TOKEN&modelVersionId=<id>
+ *
+ * Behavior:
+ *   - Loads the modelVersion + all of its ModelFile rows.
+ *   - For each file, submits a fresh orchestrator scan workflow via
+ *     `createModelFileScanRequest` (modelClamScan + modelPickleScan +
+ *     modelHash + modelParseMetadata).
+ *   - Returns per-file `{ ok, response | error }` so manual canary checks can
+ *     verify submission without touching the cron path.
+ *
+ * Notes:
+ *   - Submission marks `ModelFile.scanRequestedAt = now()`. The webhook
+ *     callback at `/api/webhooks/model-file-scan-result` writes scan results.
+ *   - Scoped to a single modelVersionId per call so a misuse can't cascade.
+ */
+
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead } from '~/server/db/client';
@@ -22,7 +46,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         id: true,
         baseModel: true,
         model: { select: { id: true, type: true } },
-        files: { select: { id: true, name: true } },
+        files: { select: { id: true, name: true, url: true } },
       },
     });
 
@@ -40,6 +64,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             modelId: modelVersion.model.id,
             modelType: modelVersion.model.type,
             baseModel: modelVersion.baseModel,
+            url: file.url,
           });
           return { fileId: file.id, fileName: file.name, ok: true, response };
         } catch (err) {
