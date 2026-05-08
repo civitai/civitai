@@ -179,12 +179,18 @@ export function deleteManyObjects(bucket: string, keys: string[], s3: S3Client |
  *   1. Configured-bucket env vars (filtered to defined values).
  *   2. Hardcoded legacy R2 bucket names that hold existing ModelFile rows but
  *      are no longer referenced by any env var (historical writes).
+ *
+ * NOTE: `env.S3_VAULT_BUCKET` is intentionally excluded. Vault objects share
+ * keys with `VaultItem` rows and are deleted exclusively via `vault.service.ts`
+ * after a `VaultItem` row goes away. The ModelFile cleanup path has no business
+ * touching the vault bucket: `urlsSafeToDelete` only checks ModelFile refcounts,
+ * so a user-planted ModelFile.url pointing at a victim's vault object would
+ * pass the refcount check and orphan-delete the victim's bytes.
  */
 const MODEL_FILE_BUCKET_ALLOWLIST: ReadonlySet<string> = new Set(
   [
     env.S3_UPLOAD_BUCKET,
     env.S3_UPLOAD_B2_BUCKET,
-    env.S3_VAULT_BUCKET,
     // Default fallback used by getUploadBucket when S3_UPLOAD_B2_BUCKET is unset.
     'civitai-modelfiles',
     // Legacy R2 buckets that still hold real ModelFile rows.
