@@ -1520,18 +1520,46 @@ export const permaDeleteModelById = async ({
   const { deletedModel, imagesToDelete } = deletionResult;
 
   if (deletedModel) {
-    // Delete model bids
-    await deleteBidsForModel({ modelId: deletedModel.id });
-    // Queue model search index updates
-    await modelsSearchIndex.queueUpdate([
-      { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
-    // Queue image search index updates
-    if (imagesToDelete.length > 0) {
-      await queueImageSearchIndexUpdate({
-        ids: imagesToDelete.map((img) => img.id),
-        action: SearchIndexUpdateQueueAction.Delete,
+    // Each post-commit step is independently best-effort. The DB tx already
+    // committed, so a downstream failure in bid cleanup or search-index
+    // queueing must NOT shortcut the S3 cleanup — otherwise we leak orphan
+    // objects in B2/R2 every time one of these auxiliary services hiccups.
+    try {
+      await deleteBidsForModel({ modelId: deletedModel.id });
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-perma-delete-bids',
+        message: `Failed to delete bids for model ${id}`,
+        error,
       });
+    }
+    try {
+      await modelsSearchIndex.queueUpdate([
+        { id: deletedModel.id, action: SearchIndexUpdateQueueAction.Delete },
+      ]);
+    } catch (error) {
+      logToAxiom({
+        type: 'error',
+        name: 'model-perma-delete-search-index',
+        message: `Failed to queue search index update for model ${id}`,
+        error,
+      });
+    }
+    if (imagesToDelete.length > 0) {
+      try {
+        await queueImageSearchIndexUpdate({
+          ids: imagesToDelete.map((img) => img.id),
+          action: SearchIndexUpdateQueueAction.Delete,
+        });
+      } catch (error) {
+        logToAxiom({
+          type: 'error',
+          name: 'model-perma-delete-image-search-index',
+          message: `Failed to queue image search index update for model ${id}`,
+          error,
+        });
+      }
     }
     // Clean up S3 objects for all deleted ModelFiles (admin-triggered, latency-tolerant → await).
     if (modelFileUrls.length > 0) {

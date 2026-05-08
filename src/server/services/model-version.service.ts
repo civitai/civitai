@@ -614,8 +614,29 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
   // Postgres transaction actually commits. Running them inside the txn would
   // invalidate caches on rollback, and would publish a lag flag for a delete
   // that never happened.
-  await preventModelVersionLag(version.modelId, version.id);
-  await bustMvCache(version.id, version.modelId);
+  // Each step is independently best-effort: a Redis blip on the lag flag must
+  // NOT shortcut the cache bust or the S3 cleanup, otherwise we leak orphan
+  // objects in B2/R2 every time Redis hiccups during a delete.
+  try {
+    await preventModelVersionLag(version.modelId, version.id);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-delete-prevent-lag',
+      message: `Failed to set lag flag for deleted model version ${id}`,
+      error,
+    });
+  }
+  try {
+    await bustMvCache(version.id, version.modelId);
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'model-version-delete-bust-cache',
+      message: `Failed to bust cache for deleted model version ${id}`,
+      error,
+    });
+  }
 
   // Post-commit S3 cleanup — only after Postgres confirms the delete stuck.
   if (modelFileUrls.length > 0) {
