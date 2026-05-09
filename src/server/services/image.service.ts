@@ -40,7 +40,7 @@ import {
   type JudgeScore,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { fetchDocumentsAbortable, metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
@@ -247,6 +247,28 @@ export async function purgeResizeCache({ url }: { url: string }) {
     await imageS3Client.deleteManyObjects({
       bucket: env.S3_IMAGE_CACHE_BUCKET,
       keys,
+    });
+  }
+
+  // Best-effort: tell image-cacher to invalidate its caches for this UUID
+  // after the source-of-truth deletion (above) has succeeded. If this fails
+  // (network, image-cacher down, etc.) we accept up to 4d of stale L2 entries
+  // — no worse than today's behavior. Never block or throw the delete flow.
+  if (env.IMAGE_CACHER_URL && url) {
+    fetch(`${env.IMAGE_CACHER_URL}/admin/invalidate?imageKey=${encodeURIComponent(url)}`, {
+      method: 'POST',
+      // Invalidation must not slow down the delete flow.
+      signal: AbortSignal.timeout(2000),
+    }).catch((err) => {
+      logToAxiom({
+        type: 'warning',
+        name: 'image-cacher-invalidate',
+        message: 'image-cacher invalidate failed',
+        imageKey: url,
+        error: safeError(err),
+      }).catch(() => {
+        // swallow — best effort logging
+      });
     });
   }
 }

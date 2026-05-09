@@ -291,6 +291,11 @@ export const serverSchema = z.object({
   STORAGE_RESOLVER_INTERNAL_URL: z.string().optional(),
   STORAGE_RESOLVER_INTERNAL_TOKEN: z.string().optional(),
 
+  // Image-cacher invalidation endpoint (cluster-internal). Used to clear
+  // image-cacher's Redis L2 cache + Cloudflare cache after we delete an
+  // image from B2. Optional — if unset, invalidation is skipped.
+  IMAGE_CACHER_URL: z.url().optional(),
+
   // BitDex
   BITDEX_URL: z.string().optional().default(''),
 
