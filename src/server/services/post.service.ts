@@ -373,12 +373,11 @@ export const getPostsInfinite = async ({
     }
 
     if (cursorId !== null) {
-      // Composite cursor: use keyset pagination for stable results
-      // (primary < cursor) OR (primary = cursor AND id < cursor_id)
+      // Composite cursor: row-comparison form lets postgres push the predicate
+      // into Index Cond on (primarySortProp DESC, id DESC) indexes. Equivalent
+      // to (primary < cursor) OR (primary = cursor AND id <= cursor_id).
       AND.push(
-        Prisma.sql`(${Prisma.raw(primarySortProp)} < ${primaryValue} OR (${Prisma.raw(
-          primarySortProp
-        )} = ${primaryValue} AND p.id <= ${cursorId}))`
+        Prisma.sql`(${Prisma.raw(primarySortProp)}, p.id) <= (${primaryValue}, ${cursorId})`
       );
     } else {
       // Legacy single cursor
