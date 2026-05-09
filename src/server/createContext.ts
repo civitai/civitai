@@ -48,27 +48,21 @@ export const createContext = async ({
   const domain = getRequestDomainColor(req) ?? 'blue';
 
   // Abort downstream work (Meili, DB calls that plumb signal) when the client
-  // disconnects â€” e.g. when the image feed's slow-fetch timeout cancels a hung
+  // disconnects — e.g. when the image feed's slow-fetch timeout cancels a hung
   // request. Saves pod CPU on requests whose response will never be read.
   //
-  // Listening on the raw socket's 'end' event: Next.js pages router wraps
-  // req/res such that req/res 'close' events don't fire until the response
-  // finishes (useless for mid-handler cancellation). socket.end fires
-  // immediately when the client half-closes the connection, which is exactly
-  // what we need. Listener is removed as soon as the response finishes so we
-  // don't accumulate handlers on a keep-alive socket.
+  // Listen on `res` (per-request) rather than `req.socket` (long-lived,
+  // reused across keep-alive requests). `res.close` fires once when the
+  // underlying connection terminates OR after `res.end()` completes, covering
+  // both abnormal client disconnect and normal completion. Because `res` is
+  // per-request and not reused, the listener is reclaimed by GC when `res`
+  // becomes unreferenced — no manual detach needed, and no accumulation on
+  // the keep-alive socket.
   const abortController = new AbortController();
   const onDisconnect = () => {
     if (!res.writableEnded && !abortController.signal.aborted) abortController.abort();
   };
-  req.socket?.on('end', onDisconnect);
-  req.socket?.on('close', onDisconnect);
-  const detach = () => {
-    req.socket?.off('end', onDisconnect);
-    req.socket?.off('close', onDisconnect);
-  };
-  res.once('finish', detach);
-  res.once('close', detach);
+  res.once('close', onDisconnect);
 
   // tokenScope: from bearer token auth (stored on req.context by getServerAuthSession).
   // Session auth (cookies) gets Full scope â€” no restrictions for browser users.
