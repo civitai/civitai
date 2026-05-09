@@ -61,7 +61,7 @@ import {
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
-import { createCachedObject } from '~/server/utils/cache-helpers';
+import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
@@ -1115,8 +1115,10 @@ export const getAllImages = async (
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
   let orderBy: string;
-  // const cacheTags: string[] = [];
-  // let cacheTime = CacheTTL.xs;
+  const cacheTags: string[] = [];
+  // Default-deny: cache only enabled for safe, shareable paths (set explicitly below).
+  // Personalized/identity-leaking branches must keep cacheTime = 0.
+  let cacheTime = 0;
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
@@ -1172,7 +1174,7 @@ export const getAllImages = async (
     if (!userId) throw throwAuthorizationError();
     const imageIds = prefetchedHiddenImages?.map((x) => x.imageId) ?? [];
     if (imageIds.length) {
-      // cacheTime = 0;
+      cacheTime = 0; // per-user hidden image set
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
       return { items: [], nextCursor: undefined };
@@ -1226,6 +1228,8 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) {
     if (userId && !publishedOnly) {
+      // userId is bound into the SQL, so each user gets their own cache key —
+      // safe to cache, lower hit rate but no cross-user leakage.
       AND.push(Prisma.sql`(p."publishedAt" < now() OR p."userId" = ${userId})`);
     } else {
       AND.push(Prisma.sql`(p."publishedAt" < now())`);
@@ -1267,13 +1271,15 @@ export const getAllImages = async (
       // cacheTime = 0;
     } else if (modelVersionId) {
       AND.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
-      // cacheTime = CacheTTL.day;
-      // cacheTags.push(`images-modelVersion:${modelVersionId}`);
+      // 10 min — model galleries can tolerate brief staleness; bust hooks in
+      // post.service.ts fire on image upload/update for the matching tag.
+      cacheTime = CacheTTL.md;
+      cacheTags.push(`images-modelVersion:${modelVersionId}`);
     } else if (modelId) {
       joins.push(`JOIN "ModelVersion" mv ON mv.id = irr."modelVersionId"`);
       AND.push(Prisma.sql`mv."modelId" = ${modelId}`);
-      // cacheTime = CacheTTL.day;
-      // cacheTags.push(`images-model:${modelId}`);
+      cacheTime = CacheTTL.md;
+      cacheTags.push(`images-model:${modelId}`);
     }
   }
 
@@ -1293,23 +1299,21 @@ export const getAllImages = async (
       // Prisma.sql`(i."userId" = ${targetUserId} OR i."postId" IN (SELECT id FROM collaboratingPosts))`
       Prisma.sql`i."userId" = ${targetUserId}`
     );
-    // Don't cache self queries
-    // cacheTime = 0;
-    // if (targetUserId !== userId) {
-    //   cacheTime = CacheTTL.day;
-    //   cacheTags.push(`images-user:${targetUserId}`);
-    // } else cacheTime = 0;
+    // user-gallery path: out of scope for this PR; future work could enable
+    // cache for targetUserId !== userId via an `images-user:${targetUserId}` tag.
+    cacheTime = 0;
   }
 
   // Filter only followed users
   // [x]
   if (userId && followed && prefetchedUserFollows?.length) {
-    // cacheTime = 0;
+    cacheTime = 0; // per-user follow set
     AND.push(Prisma.sql`i."userId" IN (${Prisma.join(prefetchedUserFollows)})`);
   }
 
   // Filter to specific tags
   if (tags?.length) {
+    cacheTime = 0; // tag combinations are high-cardinality; skip cache for now
     AND.push(Prisma.sql`i.id IN (
       SELECT "imageId"
       FROM "TagsOnImageDetails"
@@ -1330,7 +1334,10 @@ export const getAllImages = async (
   if (!!postIds?.length) AND.push(Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`);
 
   // Filter to a specific image
-  if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
+  if (imageId) {
+    cacheTime = 0; // single-image lookups don't benefit from caching
+    AND.push(Prisma.sql`i.id = ${imageId}`);
+  }
 
   if (sort === ImageSort.Random && !collectionId) {
     throw throwBadRequestError('Random sort requires a collectionId');
@@ -1439,7 +1446,10 @@ export const getAllImages = async (
     //   orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
     //   if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
     // }
-    if (sort === ImageSort.Random) orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    if (sort === ImageSort.Random) {
+      cacheTime = 0; // random ordering should not be pinned by a cache
+      orderBy = 'ct."sortKey" DESC, i."id" DESC';
+    }
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
     //   orderBy = 'i."sortAt" ASC';
@@ -1498,6 +1508,7 @@ export const getAllImages = async (
   if (prioritizeUser && !useModelVersionCache) {
     // [x]
     if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
+    cacheTime = 0; // prioritizedUserIds reorders/filters per-caller
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
     // If system user, show community images
@@ -1519,7 +1530,7 @@ export const getAllImages = async (
   }
 
   if (userId && !!reactions?.length) {
-    // cacheTime = 0;
+    cacheTime = 0; // per-user reaction filter
     // Use IN subquery - planner can start from reactions (small set per user) and join to images
     AND.push(Prisma.sql`i.id IN (
       SELECT ir."imageId" FROM "ImageReaction" ir
@@ -1554,6 +1565,7 @@ export const getAllImages = async (
   }
 
   if (pending && (isModerator || userId)) {
+    cacheTime = 0; // pending view is moderator/owner-scoped
     if (isModerator) {
       AND.push(Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR i."nsfwLevel" = 0)`);
     } else if (userId) {
@@ -1655,13 +1667,21 @@ export const getAllImages = async (
       LIMIT ${limit + 1}
   `;
 
-  // Disable Prisma query
-  // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
-  // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
-  // const rawImages = await cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags });
-
-  const { rows: rawImages } = await withSpan('image:getAllImages:rawQuery', () =>
-    imageDb.query<GetAllImagesRaw>(query)
+  if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
+  // queryCacheRaw wraps imageDb.query so the dual-DB routing (write/datapacket/read)
+  // computed above is preserved while gaining Redis cache semantics.
+  // bustCacheTag('images-model:X' / 'images-modelVersion:X') is already wired in
+  // post.service.ts on image upload/update events.
+  const cacheable = queryCacheRaw(
+    async <Row,>(q: Prisma.Sql) => {
+      const { rows } = await imageDb.query(q as any);
+      return rows as Row[];
+    },
+    'getAllImages',
+    'v1'
+  );
+  const rawImages = await withSpan('image:getAllImages:rawQuery', () =>
+    cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags })
   );
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
