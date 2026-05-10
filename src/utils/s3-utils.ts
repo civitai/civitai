@@ -15,7 +15,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
-import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
+
 import { logToAxiom } from '~/server/logging/client';
 
 const missingEnvs = (): string[] => {
@@ -75,16 +75,12 @@ export function getB2ImageS3Client(): S3Client {
   return _b2ImageS3Client;
 }
 
-export async function getImageUploadBackend(userId?: number): Promise<{
+export async function getImageUploadBackend(_userId?: number): Promise<{
   s3: S3Client;
   bucket: string;
   backend: ImageUploadBackend;
 }> {
-  // Server-side paths (orchestrator, comics) pass no userId and default to DO Spaces.
-  // This is intentional for Phase 1 — migrate user-facing uploads first, then flip server-side.
-  const useB2 =
-    env.S3_IMAGE_B2_ACCESS_KEY &&
-    (userId ? await isFlipt(FLIPT_FEATURE_FLAGS.B2_IMAGE_UPLOAD, String(userId)) : false);
+  const useB2 = !!env.S3_IMAGE_B2_ACCESS_KEY;
 
   if (useB2) {
     return {
