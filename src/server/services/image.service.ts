@@ -1268,7 +1268,7 @@ export const getAllImages = async (
     if (reviewId) {
       joins.push(`JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"`);
       AND.push(Prisma.sql`re."id" = ${reviewId}`);
-      // cacheTime = 0;
+      // reviewId joins ResourceReview — out of scope for this PR's cache enable.
     } else if (modelVersionId) {
       AND.push(Prisma.sql`irr."modelVersionId" = ${modelVersionId}`);
       // 10 min — model galleries can tolerate brief staleness; bust hooks in

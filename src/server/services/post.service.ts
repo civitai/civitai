@@ -1090,14 +1090,28 @@ export async function bustCachesForPosts(postIds: number | number[]) {
   const ids = Array.isArray(postIds) ? postIds : [postIds];
   // Use dbWrite — bustCachesForPosts runs immediately after image/post writes
   // so the replica may not yet reflect the post.modelVersionId we need.
-  const results = await dbWrite.$queryRaw<{ isShowcase: boolean; modelVersionId: number }[]>`
+  const results = await dbWrite.$queryRaw<
+    { isShowcase: boolean; modelVersionId: number; modelId: number }[]
+  >`
     SELECT m."userId" = p."userId" as "isShowcase",
-           p."modelVersionId"
+           p."modelVersionId",
+           mv."modelId"
     FROM "Post" p
            JOIN "ModelVersion" mv ON mv."id" = p."modelVersionId"
            JOIN "Model" m ON m."id" = mv."modelId"
     WHERE p."id" IN (${Prisma.join(ids)})
   `;
+
+  // Bust getAllImages model-gallery cache for ALL affected modelVersions/models —
+  // not just showcase posts. Deletion/moderation paths also call this, and stale
+  // gallery results for deleted/blocked images would defeat fast removal (e.g.
+  // DMCA, CSAM, policy moderation). Deduplicate to avoid redundant Redis ops.
+  const modelVersionIds = [...new Set(results.map((x) => x.modelVersionId))];
+  const modelIds = [...new Set(results.map((x) => x.modelId))];
+  await Promise.all([
+    ...modelVersionIds.map((mvId) => bustCacheTag(`images-modelVersion:${mvId}`)),
+    ...modelIds.map((mId) => bustCacheTag(`images-model:${mId}`)),
+  ]);
 
   const showcaseVersionIds = results.filter((x) => x.isShowcase).map((x) => x.modelVersionId);
   if (!showcaseVersionIds.length) return;
