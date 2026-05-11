@@ -2,13 +2,13 @@
 
 ## Overview
 
-When users upload model files to a model version, the system scans them for viruses, dangerous pickle imports, and computes file hashes. We are migrating from a legacy HTTP-based scanner to orchestrator workflows via `@civitai/client`.
+When users upload model files to a model version, the system scans them for viruses, dangerous pickle imports, and computes file hashes. Scans run as orchestrator workflows via `@civitai/client`.
 
-## New System: Orchestrator Workflows
+## How It Works
 
 ### Scan Types
 
-The new system uses three orchestrator workflow step types in a single workflow:
+A single workflow submits four orchestrator step types per file:
 
 | Step Type | `$type` | Input | Output |
 |-----------|---------|-------|--------|
@@ -17,11 +17,11 @@ The new system uses three orchestrator workflow step types in a single workflow:
 | File Hashing | `modelHash` | `{ model: string }` (AIR) | `{ shA256, autoV1, autoV2, autoV3, blake3, crC32 }` |
 | Parse Metadata | `modelParseMetadata` | `{ model: string }` (AIR) | `{ metadata: string \| null }` (raw JSON header from safetensors) |
 
-All three steps take a `model` AIR string as input (e.g. `urn:air:sd1:checkpoint:civitai:12345@67890`).
+All steps take a `model` AIR string as input (e.g. `urn:air:sd1:checkpoint:civitai:12345@67890`).
 
 ### Workflow Submission
 
-Submit a single workflow with all three steps using `submitWorkflow` from `@civitai/client` with the `internalOrchestratorClient`:
+Submit a single workflow with all four steps using `submitWorkflow` from `@civitai/client` and the `internalOrchestratorClient`:
 
 ```typescript
 import { submitWorkflow } from '@civitai/client';
@@ -34,30 +34,10 @@ const { data, error } = await submitWorkflow({
     currencies: [],
     tags: ['civitai', 'model-scan'],
     steps: [
-      {
-        $type: 'modelClamScan',
-        name: 'clamScan',
-        metadata: { fileId },
-        input: { model: air },
-      },
-      {
-        $type: 'modelPickleScan',
-        name: 'pickleScan',
-        metadata: { fileId },
-        input: { model: air },
-      },
-      {
-        $type: 'modelHash',
-        name: 'hash',
-        metadata: { fileId },
-        input: { model: air },
-      },
-      {
-        $type: 'modelParseMetadata',
-        name: 'parseMetadata',
-        metadata: { fileId },
-        input: { model: air },
-      },
+      { $type: 'modelClamScan',     name: 'clamScan',     metadata: { fileId }, input: { model: air } },
+      { $type: 'modelPickleScan',   name: 'pickleScan',   metadata: { fileId }, input: { model: air } },
+      { $type: 'modelHash',         name: 'hash',         metadata: { fileId }, input: { model: air } },
+      { $type: 'modelParseMetadata',name: 'parseMetadata',metadata: { fileId }, input: { model: air } },
     ],
     callbacks: [
       {
@@ -71,16 +51,16 @@ const { data, error } = await submitWorkflow({
 
 ### Callback Webhook
 
-Create a new webhook endpoint at `/api/webhooks/model-file-scan-result` following the pattern from `image-scan-result.ts`:
+The orchestrator calls back to `/api/webhooks/model-file-scan-result`:
 
 1. Receive `WorkflowEvent` in request body
 2. Fetch the full workflow via `getWorkflow({ client: internalOrchestratorClient, path: { workflowId } })`
 3. Extract `fileId` from `data.metadata`
 4. Process each step's output by `$type`:
-   - `modelClamScan` -> update `virusScanResult`, `virusScanMessage`
-   - `modelPickleScan` -> update `pickleScanResult`, `pickleScanMessage` (examine dangerous imports)
-   - `modelHash` -> upsert `ModelFileHash` records
-   - `modelParseMetadata` -> parse JSON string and store in `ModelFile.headerData`
+   - `modelClamScan` → update `virusScanResult`, `virusScanMessage`
+   - `modelPickleScan` → update `pickleScanResult`, `pickleScanMessage` (examine dangerous imports)
+   - `modelHash` → upsert `ModelFileHash` records
+   - `modelParseMetadata` → parse JSON string and store in `ModelFile.headerData`
 5. On failure (`event.status !== 'succeeded'`), mark file for retry
 
 ```
@@ -92,17 +72,15 @@ Body: WorkflowEvent { workflowId, type, status }
 
 | File | Purpose |
 |------|---------|
-| `src/server/flipt/client.ts` | **MODIFIED** - Added `MODEL_FILE_SCAN_ORCHESTRATOR` to the `FLIPT_FEATURE_FLAGS` enum |
-| `src/server/services/orchestrator/orchestrator.service.ts` | **MODIFIED** - Added `createModelFileScanRequest()` alongside existing `createImageIngestionRequest()`; production-gated dev-skip when `ORCHESTRATOR_ACCESS_TOKEN` is unset |
-| `src/server/services/model-file-scan-result.service.ts` | **NEW** - Shared `applyScanOutcome()` consumed by both webhook adapters (zero behavioral drift); orchestrator-specific adapter that fetches workflow + normalizes step outputs |
-| `src/pages/api/webhooks/model-file-scan-result.ts` | **NEW** - Thin webhook adapter for orchestrator callbacks; try/catch + 500 + Axiom error log |
-| `src/pages/api/webhooks/scan-result.ts` | **REWRITTEN** - Now a thin adapter for the legacy scanner. Translates `ScanResult` → `ScanOutcome` → `applyScanOutcome()`. `Convert` and `Import` task blocks dropped (confirmed dead). To be deleted in Phase 3. |
-| `src/server/controllers/model-file.controller.ts` | **MODIFIED** - Flag-gated inline `createModelFileScanRequest` call after file creation; `logToAxiom` on submission failure |
-| `src/server/jobs/scan-files.ts` | **MODIFIED** - Added `scanFilesFallbackJob` that resubmits stalled/pending files via orchestrator. Both jobs flag-gated to prevent double-submit. |
-| `src/pages/api/webhooks/run-jobs/[[...run]].ts` | **MODIFIED** - Registered `scanFilesFallbackJob` |
-| `src/server/services/model.service.ts` | **MODIFIED** - `rescanModel` flag-branched (legacy vs orchestrator dispatch); `unpublishBlockedModel` relocated here from the legacy webhook for stable import after Phase 3 deletion |
-| `src/pages/api/mod/clean-up.ts` | **MODIFIED** - Flag-branched dispatch; null-guard for soft-deleted `modelVersion`; try/catch with `failed[]` tracking |
-| `src/server/jobs/retroactive-hash-blocking.ts` | **MODIFIED** - Updated `unpublishBlockedModel` import path (now from `model.service.ts`) |
+| `src/server/services/orchestrator/orchestrator.service.ts` | `createModelFileScanRequest()` and `ModelFileScanSubmissionError`. Pre-flight URL resolution with 60s sync-lag retry; throws `'not-found'` vs `'transient'` on submission failure |
+| `src/server/services/model-file-scan.service.ts` | Shared `applyScanOutcome()`, `examinePickleImports()`, `processModelFileScanResult()` (orchestrator-side adapter), `rescanModel()`, `unpublishBlockedModel()` |
+| `src/pages/api/webhooks/model-file-scan-result.ts` | Thin webhook adapter for orchestrator callbacks |
+| `src/server/controllers/model-file.controller.ts` | Inline `createModelFileScanRequest()` on file create with `preflight: false` (fallback job tombstones if file is missing) |
+| `src/server/jobs/scan-files.ts` | `scanFilesFallbackJob` (cron `*/5 * * * *`) — resubmits stalled/pending files via orchestrator; tombstones permanent `'not-found'`s, resets `scanRequestedAt` on transient failures |
+| `src/pages/api/webhooks/run-jobs/[[...run]].ts` | Registers `scanFilesFallbackJob` |
+| `src/pages/api/mod/clean-up.ts` | Admin endpoint; submits the full orchestrator workflow per file |
+| `src/server/jobs/retroactive-hash-blocking.ts` | Imports `unpublishBlockedModel` from `model-file-scan.service.ts` |
+| `src/pages/api/testing/model-file-scan.ts` | Manual scan-tester for ad-hoc verification |
 
 ### AIR String Construction
 
@@ -121,7 +99,7 @@ const air = stringifyAIR({
 
 ### Output Type Definitions
 
-Define local types for the step outputs (same pattern as `image-scan-result.service.ts`):
+Local types for the step outputs (same pattern as `image-scan-result.service.ts`):
 
 ```typescript
 type ModelClamScanStep = {
@@ -186,247 +164,44 @@ Hash output maps to `ModelFileHash` records:
 | `blake3` | `BLAKE3` |
 | `crC32` | `CRC32` |
 
-### Migration from Legacy System
+### Submission-Failure Policy
 
-The legacy system in `scan-files.ts`:
+`createModelFileScanRequest` throws `ModelFileScanSubmissionError` on failure with one of two codes:
 
-1. Queries `ModelFile` records where `virusScanResult = Pending`
-2. POSTs to `SCANNING_ENDPOINT` with file download URL and callback
-3. Receives results at `/api/webhooks/scan-result`
+- `'not-found'` — pre-flight URL resolution failed twice (with a 60s sync-lag retry between attempts). The file is genuinely gone.
+- `'transient'` — any other submission failure (orchestrator outage, network blip, etc.)
 
-The new system replaces steps 2-3:
+Caller policy is asymmetric on purpose:
 
-- Instead of POST to `SCANNING_ENDPOINT`, submits an orchestrator workflow via `submitWorkflow` from `@civitai/client`
-- Instead of `/api/webhooks/scan-result`, the orchestrator calls back to `/api/webhooks/model-file-scan-result`
-- The orchestrator handles file access via AIR, no need to resolve download URLs
-- A 400 response from `submitWorkflow` indicates the file was not found (currently swallowed by `createFileHandler`; tracked as a 🟢 follow-up)
+| Caller | Pre-flight? | On `'not-found'` |
+|--------|-------------|------------------|
+| `scanFilesFallbackJob` (cron) | yes (default) | `exists = false` (tombstone, exits scan poll forever) |
+| `rescanModel` (admin) | yes (default) | `exists = false` |
+| `clean-up.ts` (admin) | yes (default) | `exists = false` |
+| `createFileHandler` (inline post-upload) | **no** | log-only — file just landed; fallback job runs full pre-flight 5 min later |
+| `testing/model-file-scan.ts` (canary tester) | yes | catch + report, **no DB write** — manual runs must not tombstone real files |
 
-`scanFilesFallbackJob` (the orchestrator-side counterpart of `scanFilesJob`) is what runs when the flag is ON:
+The fallback job uses `{ OR: [{ exists: null }, { exists: true }] }` in its WHERE clause, so tombstoned files exit the scan poll permanently.
 
-1. Queries pending files joined through `ModelVersion` → `Model` for AIR construction
-2. Builds AIR strings for each file via `stringifyAIR`
-3. Submits orchestrator workflows via `createModelFileScanRequest`, with `limitConcurrency` for backpressure
+On `'transient'`, the fallback job resets `scanRequestedAt = null` so the next 5-min tick retries, vs. waiting for the 24h workflow-failure backoff path.
 
-### Legacy Tasks Disposition
+### Admin Clean-Up Behavior
 
-The legacy scanner supported 5 task types. Here's what happens to each:
+`/api/mod/clean-up.ts` submits the **full** orchestrator workflow (clam + pickle + hash + metadata) per file. This is intentional — the orchestrator workflow is atomic and the operational complexity of supporting partial-step submission isn't justified for an admin endpoint. Implications:
 
-| Legacy Task | Status | Notes |
-|-------------|--------|-------|
-| `Scan` | **Replaced** by `modelClamScan` + `modelPickleScan` steps | Split into two dedicated steps |
-| `Hash` | **Replaced** by `modelHash` step | Now returns more hash types (blake3, crc32, autoV3) |
-| `ParseMetadata` | **Replaced** by `modelParseMetadata` step | Returns raw JSON header string from safetensors files. Parse and store in `ModelFile.headerData`. See `scan-result.ts:62-69` |
-| `Import` | **Move app-side** | Bucket management (upload -> permanent storage). Not a processing task. Handle during upload flow or post-scan callback. See `scan-result.ts:72-78` |
-| `Convert` | **Drop** | Pickle-to-safetensors conversion. Never actually requested by any caller — dead code. See `scan-result.ts:132-161` |
+- Re-running clean-up on an already-scanned file re-evaluates virus/pickle results
+- During processing, `virusScanResult` / `pickleScanResult` may transition through Pending before settling
+- If the file's content hasn't changed, results should land the same; differences indicate scanner-rule changes (which is what you'd want to know about anyway)
 
-### Existing Result Processing to Preserve
+The legacy HTTP scanner accepted per-task gating (`['Hash', 'ParseMetadata']` only); the orchestrator does not. If a metadata-only refresh path is ever needed, it would require extending `createModelFileScanRequest` with optional step selection.
 
-The legacy `/api/webhooks/scan-result` does several things that must carry over. Status of each in the new shared `applyScanOutcome()`:
+### Hash Blocking
 
-- ✅ **Pickle import examination**: `examinePickleImports()` (renamed from `examinePickleScanMessage`) preserves the `pytorch_lightning ModelCheckpoint` promotion logic. Inputs are now shallow-copied so the raw payload reference isn't mutated.
-- ⚠️ **Hash blocking**: `isModelHashBlocked()` framework wired (pre-existing SHA256 capture in place) but the actual block + `unpublishBlockedModel()` call remains commented out — matches legacy `scan-result.ts:126-128` (D2). Re-enabling is a separate decision.
-- ✅ **Search index update**: `modelsSearchIndex.queueUpdate()` after the scan.
-- ✅ **Cache invalidation**: `dataForModelsCache.refresh()` (proactive re-warm, matches legacy) and `deleteFilesForModelVersionCache()`.
-- 🟢 **Unpublish on missing file**: deferred — the legacy `Import`-task path that drove this never fires today (no caller passes `Import`). Tracked as a worth-considering follow-up that needs `submitWorkflow` 400-response handling in `createFileHandler`.
-- ✅ **Hash fix notifications**: synthesized from `AutoV2` diff in `applyScanOutcome` (D3) — orchestrator doesn't expose legacy's `fixed[]` array.
+`isModelHashBlocked()` framework is wired in `applyScanOutcome` (with pre-existing SHA256 capture in place) but the actual block + `unpublishBlockedModel()` call is **commented out**. This matches the pre-migration legacy behavior. Re-enabling is a separate product decision.
 
 ---
 
-## Rollout Strategy
-
-The new flow runs **side-by-side** with the legacy scanner during rollout, gated by a single Flipt flag so we can flip between them (or disable both for incident response) without redeploying.
-
-### Flipt Flag
-
-```ts
-// src/server/flipt/client.ts
-export enum FLIPT_FEATURE_FLAGS {
-  ...
-  MODEL_FILE_SCAN_ORCHESTRATOR = 'model-file-scan-orchestrator',
-}
-```
-
-**Convention used elsewhere**: server-side checks use `await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR)`. Default off; flip on after Phase 1 work below is complete.
-
-### Gated Call Sites
-
-| Site | Flag OFF (legacy) | Flag ON (orchestrator) |
-|------|-------------------|------------------------|
-| `createFileHandler` (post-create scan trigger) | Skip scan; rely on `scanFilesJob` cron | Call `createModelFileScanRequest()` |
-| `scanFilesJob` (legacy `*/5 * * * *`) | Runs as today | **Early-return** — prevent double-submit |
-| `scanFilesFallbackJob` (new `*/5 * * * *`) | Early-return | Runs as designed |
-| `rescanModel()` in `model.service.ts:1132` | Calls `requestScannerTasks()` | Calls `createModelFileScanRequest()` |
-| `clean-up.ts:47` (admin) | Calls `requestScannerTasks()` | Calls `createModelFileScanRequest()` |
-
-> ✅ **Phase 1 gate is in place**: both `scanFilesJob` and `scanFilesFallbackJob` early-return based on the flag, so no double-submit risk regardless of which env vars are configured.
-
-### Rollout Phases
-
-1. **Phase 1 — Parity & gating** (before flag flip): finish the 🔴 items below.
-2. **Phase 2 — Canary** (flag at 1% → 10% → 50% → 100% via Flipt segments): monitor for skew between legacy and orchestrator results.
-3. **Phase 3 — Cleanup** (flag at 100% for ≥1 week, no regressions): finish the 🟡 items below.
-
-### Monitoring During Rollout
-
-Compare the two paths via Axiom logs (`name: scan-result` vs `name: model-file-scan-result`):
-
-- Workflow submission failures (`createModelFileScanRequest` returns no data)
-- Webhook latency (`event.status === 'succeeded'` to DB write)
-- Files stuck `Pending` for >24h (Postgres query on `ModelFile`)
-- Hash mismatches: re-scan the same file via both paths and compare `ModelFileHash` rows
-
----
-
-## TODO Tracker
-
-### 🔴 Phase 1 — Required before flag flip
-
-**Flag plumbing**
-- [x] Add `MODEL_FILE_SCAN_ORCHESTRATOR` to `FLIPT_FEATURE_FLAGS` in `src/server/flipt/client.ts`
-- [x] Gate `createModelFileScanRequest()` call in `createFileHandler` (controllers/model-file.controller.ts:140)
-- [x] Gate `scanFilesJob` (early-return when flag ON) and `scanFilesFallbackJob` (early-return when flag OFF) in `src/server/jobs/scan-files.ts`
-- [x] Gate `rescanModel()` and `clean-up.ts` admin endpoint to dispatch via the right path
-
-**Service consolidation** (see [Webhook Comparison](#webhook-comparison-legacy-vs-orchestrator) for full delta)
-- [x] Extract a shared `applyScanOutcome({ fileId, virusScan, pickleScan, hashes, headerData, modelVersionId? })` from `model-file-scan-result.service.ts` so both webhook adapters can call it
-- [x] Both `/api/webhooks/scan-result` and `/api/webhooks/model-file-scan-result` become thin payload normalizers that call `applyScanOutcome()`
-- [x] Port pre-existing SHA256/AutoV2 capture (`scan-result.ts:100-107`) — used today for hash-fix notification (D3); SHA256 path remains for when hash-blocking is re-enabled
-- [x] **Decision (D2)**: hash-blocking kept commented-out, matching legacy. Re-enabling is a separate decision, tracked in 🟢 below.
-- [x] **Decision (D1)**: `rawScanResult` populated with a normalized envelope `{ source: 'orchestrator' | 'legacy', ... }` from both adapters. No schema migration.
-
-**Operational hygiene**
-- [x] Failed workflow handling: `applyScanOutcome` bumps `scanRequestedAt = now()` when `outcome.failed === true` (D4), so the file retries via the 24h-stale path. Prevents tight retry loops on permanently-broken AIRs.
-- [x] Submission-failure handling: `scanFilesFallbackJob` resets `scanRequestedAt = null` in its catch handler when `createModelFileScanRequest` throws, so transient orchestrator outages retry on the next 5-min tick (vs. the 24h workflow-failure backoff).
-- [x] `createModelFileScanRequest` now throws on submission failure (was silently returning `undefined`); sets `scanRequestedAt = now()` on success so concurrent paths don't double-submit while the orchestrator works on the file.
-- [x] Dev skip when `ORCHESTRATOR_ACCESS_TOKEN` missing — fires only when `!isProd && !env.ORCHESTRATOR_ACCESS_TOKEN`. In prod, missing token surfaces as a real `submitWorkflow` error; never silently fake-succeeds.
-- [x] `applyScanOutcome` only advances `scannedAt` when a scan actually ran (`virusScan` or `pickleScan` present in outcome). Hash/metadata-only callers (e.g. `clean-up.ts` legacy path) no longer mark files as "scanned" without virus checks.
-- [x] Removed debug `console.log({ workflowId: data?.id })` in `orchestrator.service.ts`
-- [x] `src/pages/api/testing/model-file-scan.ts` — scan-tester for manual canary verification. Moved from `src/pages/api/admin/test.ts` per project convention; doc-block header lists params and behavior.
-- [x] Restored trailing newline in `package.json`
-
-### 🟡 Phase 3 — Required before legacy removal
-
-These can wait until the flag has been at 100% for ≥1 week with no skew alerts.
-
-- [x] Delete `src/pages/api/webhooks/scan-result.ts`
-- [x] Delete `scanFilesJob` and `requestScannerTasks()` from `src/server/jobs/scan-files.ts`
-- [x] Drop `SCANNING_ENDPOINT` and `SCANNING_TOKEN` from `env/server.ts` and infrastructure config
-- [x] Remove the `MODEL_FILE_SCAN_ORCHESTRATOR` flag and all gates (full commit to the new path)
-- [x] Drop the `ScannerTasks` / `ScannerTask` exports if nothing consumes them
-- [ ] If `rawScanResult` was decided "drop", run the schema migration *(D1 kept it populated as normalized envelope — no migration needed)*
-
-**Note**: The cron job key `scan-files-fallback` was retained for operational continuity with the pre-deprecation cron registry rather than renamed back to `scan-files`.
-
-### 🟢 Worth considering (decisions, not blockers)
-
-- [x] **`ModelFile.exists` tracking + tombstone-on-missing-file** — `submitWorkflow` only enqueues; orchestrator can't tell us synchronously whether the file is fetchable (orchestrator team confirmed they can't add an AIR-resolution-failure signal at submit time). So we mirror legacy `requestScannerTasks` and run a pre-flight `resolveDownloadUrl(fileId, url)` ourselves before submitting. On second consecutive resolution failure (with a 60s sync-lag retry between attempts), `createModelFileScanRequest` throws `ModelFileScanSubmissionError({ code: 'not-found' })`. All other submission failures are `'transient'`. Caller policy is asymmetric on purpose:
-  - `scanFilesFallbackJob`, `rescanModel`, `clean-up.ts` (admin) → run pre-flight (default `preflight: true`); on `'not-found'`, set `exists=false`. The file's been around long enough; resolution failure = genuinely gone. This exits both scan jobs' WHERE-clause filter (`{ OR: [{ exists: null }, { exists: true }] }`) so the file stops being polled forever.
-  - `createFileHandler` (inline post-upload) → pass `preflight: false` so the upload response isn't blocked by a possible 60s sync-lag retry. The file just landed and almost certainly exists; if it really doesn't, the 5-min `scanFilesFallbackJob` runs full pre-flight and tombstones properly.
-  - `pages/api/testing/model-file-scan.ts` (canary tester) → catch + report, no DB write. Manual runs must not tombstone real files.
-  - **Known gap (matches legacy)**: pre-flight catches files missing from storage-resolver / delivery-worker. It does NOT catch files present in storage but unfetchable by orchestrator (auth, race, B2 hiccup). Those surface as workflow-step failures → `applyScanOutcome({ failed: true })` → 24h `scanRequestedAt` backoff → fallback retry; if the issue is permanent the file stays `Pending` indefinitely. Legacy had the same gap. If Axiom shows files stuck `Pending` >7 days with repeated failed callbacks, follow-up options: failure-count counter + tombstone after N, stale-Pending sweeper job, or revisit orchestrator team.
-- [x] **Auto-unpublish orphaned ModelVersion** — **consciously not ported.** Legacy `unpublish()` lived at `scan-result.ts:235-266` and was called from line 77, but only when `tasks.includes('Import')`. `Import` was confirmed dead by callsite audit (no caller passed it), so the auto-unpublish never actually fired in production. Skipping is not a behavior regression. Tombstoning via `exists=false` (above) already exits the scan retry loop — the load-bearing piece. Auto-unpublishing creator content based on a single file-resolution failure is a heavy action with non-trivial false-positive risk (storage-resolver hiccup → unpublishing real models); revisit as a deliberate product decision if Axiom data later shows it's needed, not as parity-driven cleanup.
-- [x] **`model-hash-fix` notification (D3)** — synthesized in `applyScanOutcome` by comparing pre-existing `AutoV2` to new `AutoV2` (captured before hash deletion). Fires for both legacy and orchestrator paths.
-- [x] **`Convert` task** — legacy created sibling `ModelFile` rows for `safetensors↔ckpt` conversion. Confirmed dead by callsite audit (no caller passes `Convert`); already dropped from the new shared service. Removed from legacy webhook in Phase 3.
-- [x] **`Import` task** — legacy reassigned `ModelFile.url` after the scanner moved the file. Confirmed dead by callsite audit (no caller passes `Import`); already dropped from the new shared service. Removed from legacy webhook in Phase 3.
-- [x] **Cache strategy (D5)** — switched to `dataForModelsCache.refresh()` to match legacy's proactive re-warm.
-- [x] **HTTP status on missing file in webhook** — resolved as **keep-as-is**. Both adapters return 200 with a logged warning when the file is missing, which tells the upstream (orchestrator/legacy scanner) "we received it, don't retry." Returning 404 would risk retry storms on legitimately-deleted files. The legacy 404 was actually less-correct.
-
----
-
-## Webhook Comparison: Legacy vs Orchestrator
-
-**Bottom line**: the two endpoints can't be a single endpoint because the payload contracts are fundamentally different. But the *business logic* should be a single shared service that both adapters call.
-
-| | Legacy `/api/webhooks/scan-result` | New `/api/webhooks/model-file-scan-result` |
-|---|---|---|
-| Caller | Legacy HTTP scanner | Orchestrator |
-| Identifier | `?fileId=&tasks=...` querystring | `workflowId` in body, `fileId` in workflow `metadata` |
-| Body | Full `ScanResult` payload (one task set per call) | `WorkflowEvent { workflowId, type, status }` only |
-| Results retrieval | Inline in body | Round-trip via `getWorkflow()` to read step outputs |
-| Granularity | Per-task gates (`tasks.includes('Scan')` etc.) | All 4 steps in one event |
-
-### Behavior delta (legacy → new)
-
-| # | Legacy behavior | New status | Action |
-|---|-----------------|-----------|--------|
-| 1 | `data.exists = scanResult.fileExists === 1`, `unpublish()` if missing (`scan-result.ts:73-77`, `:235-266`) | Not handled | 🟢 Worth considering — fold into `createFileHandler` 400-response path |
-| 2 | Stores raw `ScanResult` in `ModelFile.rawScanResult` (`:51`) | ✅ Ported — normalized envelope `{ source, ... }` written by both adapters (D1) | — |
-| 3 | Captures pre-existing SHA256 *before* hash deletion (`:100-107`, `:124`) | ✅ Ported — captures `AutoV2` for hash-fix detection (D3); SHA256 capture wired but commented (D2) | — |
-| 4 | `isModelHashBlocked()` + `unpublishBlockedModel()` (`:126-128`, `:217-233`) — currently commented out | ✅ Carried forward as commented-out — matches legacy (D2) | — |
-| 5 | `model-hash-fix` notification on `fixed: ['sshs_hash']` (`:179-199`) | ✅ Synthesized from `AutoV2` diff in `applyScanOutcome` (D3) | — |
-| 6 | `dataForModelsCache.refresh(modelId)` (`:175`) | ✅ Switched from `bust()` to `refresh()` (D5) | — |
-| 7 | Returns 404 on missing file (`:38-44`) | Logs warning, returns 200 in `applyScanOutcome` | ✅ Resolved as keep-as-is — 200 prevents upstream retry storms on deleted files |
-| 8 | `examinePickleScanMessage` with `specialImports` check (`:319-360`) | ✅ Ported as `examinePickleImports` | — |
-| 9 | Hash field map → `ModelFileHash` upsert (`:99-129`) | ✅ Ported | — |
-| 10 | `headerData` JSON parse + `ss_tag_frequency` quirk (`:62-69`) | ✅ Ported | — |
-| 11 | Search index queue update (`:163-176`) | ✅ Ported | — |
-| 12 | `deleteFilesForModelVersionCache` (`:177`) | ✅ Ported | — |
-| 13 | `ScanExitCode` → `ScanResultCode` mapping | ✅ Ported as `exitCodeToScanResult` | — |
-| 14 | `Convert` task → sibling `ModelFile` creation (`:132-161`) | ✅ Confirmed dead, already dropped from legacy webhook | — |
-| 15 | `Import` task → URL rewrite (`:72-78`) | ✅ Confirmed dead, already dropped from legacy webhook | — |
-
-### Recommended target shape
-
-```
-src/server/services/model-file-scan-result.service.ts   ← shared logic
-  ├─ applyScanOutcome({ fileId, virusScan, pickleScan, hashes, headerData, modelVersionId? })
-  ├─ examinePickleImports(...)
-  └─ (cache busting, search index queue, hash blocking, notifications)
-
-src/pages/api/webhooks/scan-result.ts                   ← legacy adapter (DELETE in Phase 3)
-  parses ScanResult → calls applyScanOutcome()
-
-src/pages/api/webhooks/model-file-scan-result.ts        ← orchestrator adapter
-  fetches workflow, maps step outputs → calls applyScanOutcome()
-```
-
-This makes the eventual deletion of the legacy webhook a delete-the-adapter operation, with zero risk of behavioral drift during the rollout.
-
----
-
-## Architecture Diagram
-
-### During rollout (flag-gated, both paths coexist)
-
-```
-User Upload
-    |
-    v
-createFileHandler() --> ModelFile record (status: Pending)
-    |
-    +-- isFlipt(MODEL_FILE_SCAN_ORCHESTRATOR) ?
-    |       |
-    |  YES  |  NO
-    |       |
-    v       v
- [NEW]   [LEGACY]
- createModelFileScanRequest()    (no inline call - relies on cron)
-    |                                       |
-    v                                       v
- Orchestrator                       scanFilesJob (*/5 * * * *)
- (modelClamScan + modelPickleScan       early-return if flag ON
-  + modelHash + modelParseMetadata)        |
-    |                                       v
-    v                               requestScannerTasks() -> SCANNING_ENDPOINT
- /webhooks/model-file-scan-result               |
- (getWorkflow -> step outputs)                  v
-    |                               /webhooks/scan-result
-    +---------+---------+                       |
-    |         |         |                       |
-    v         v         v                       v
-   ----- applyScanOutcome() (shared service) -----
-                      |
-       +--------+-----+-----+--------+
-       v        v           v        v
-  virusScan pickleScan   hashes  headerData
-   result    result      upsert   update
-
-Fallback paths (every 5 min):
-  scanFilesJob          → legacy scanner (flag OFF)
-  scanFilesFallbackJob  → orchestrator    (flag ON)
-```
-
-### Target state (post-Phase-3 cleanup)
+## Architecture
 
 ```
 User Upload
@@ -450,10 +225,47 @@ createFileHandler() --> ModelFile record (status: Pending)
                                |
                                v
                        applyScanOutcome()
-                     |          |          |
-                     v          v          v
-               virusScan   pickleScan   hashes
-               result      result       upsert
+                     |          |          |          |
+                     v          v          v          v
+               virusScan   pickleScan   hashes   headerData
 
 Fallback: scanFilesFallbackJob (*/5 * * * *) for stalled/missed files
 ```
+
+---
+
+## Migration History
+
+This feature replaced a legacy HTTP scanner (`SCANNING_ENDPOINT` / `SCANNING_TOKEN`, `/api/webhooks/scan-result`, `scanFilesJob`, `requestScannerTasks`). The migration ran in three phases gated by the Flipt flag `MODEL_FILE_SCAN_ORCHESTRATOR`:
+
+1. **Phase 1** — Parity & gating: shared `applyScanOutcome()` extracted so both adapters used the same business logic; flag-gated dispatch sites.
+2. **Phase 2** — Canary: flag rolled 1% → 10% → 50% → 100% with Axiom log comparisons (`name: scan-result` vs `name: model-file-scan-result`).
+3. **Phase 3** — Cleanup: legacy scanner, webhook, flag, and env vars removed. Cron job key `scan-files-fallback` was retained for operational continuity with the pre-deprecation cron registry.
+
+### Tasks Disposition
+
+The legacy scanner supported 5 task types:
+
+| Legacy Task | Disposition |
+|-------------|-------------|
+| `Scan` | Replaced by `modelClamScan` + `modelPickleScan` steps |
+| `Hash` | Replaced by `modelHash` step (now returns more hash types: blake3, crc32, autoV3) |
+| `ParseMetadata` | Replaced by `modelParseMetadata` step |
+| `Import` | Dropped — confirmed dead by callsite audit (no caller passed it) |
+| `Convert` | Dropped — confirmed dead by callsite audit (pickle-to-safetensors conversion was never requested) |
+
+### Decisions
+
+- **D1**: `rawScanResult` populated with a normalized envelope `{ source: 'orchestrator', ... }`. No schema migration.
+- **D2**: Hash-blocking kept commented out, matching legacy. Re-enabling is a separate product decision.
+- **D3**: `model-hash-fix` notification synthesized from `AutoV2` diff in `applyScanOutcome` (orchestrator doesn't expose legacy's `fixed[]` array).
+- **D4**: `applyScanOutcome` bumps `scanRequestedAt = now()` when `outcome.failed === true`, so the file retries via the 24h-stale path. Prevents tight retry loops on permanently broken AIRs.
+- **D5**: Switched from `dataForModelsCache.bust()` to `.refresh()` for proactive re-warm.
+
+### Known Gap (Matches Legacy)
+
+Pre-flight URL resolution catches files missing from storage-resolver / delivery-worker. It does **not** catch files present in storage but unfetchable by orchestrator (auth, race, B2 hiccup). Those surface as workflow-step failures → `applyScanOutcome({ failed: true })` → 24h `scanRequestedAt` backoff → fallback retry; if the issue is permanent the file stays `Pending` indefinitely. Legacy had the same gap. If Axiom shows files stuck `Pending` >7 days with repeated failed callbacks, follow-up options: failure-count counter + tombstone after N, stale-Pending sweeper job, or revisit with the orchestrator team.
+
+### Auto-Unpublish on Missing File
+
+Legacy `unpublish()` was called only when `tasks.includes('Import')`, but `Import` was never passed in production, so the auto-unpublish never actually fired. Not ported. Tombstoning via `exists = false` already exits the scan retry loop — the load-bearing piece. Auto-unpublishing creator content based on a single file-resolution failure has non-trivial false-positive risk (storage-resolver hiccup → unpublishing real models); revisit as a deliberate product decision if Axiom data later shows it's needed.
