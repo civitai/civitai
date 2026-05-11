@@ -128,7 +128,14 @@ import {
   showWarningNotification,
 } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { getDisplayName, getModelUrl, removeTags, slugit, splitUppercase } from '~/utils/string-helpers';
+import { buildPassthroughQuery } from '~/utils/query-string-helpers';
+import {
+  getDisplayName,
+  getModelUrl,
+  removeTags,
+  slugit,
+  splitUppercase,
+} from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
@@ -239,24 +246,13 @@ export const getServerSideProps = createServerSideProps({
         const correctSlug = slugit(model.name);
         const currentSlug = params.slug?.join('/');
         if (correctSlug && currentSlug !== correctSlug) {
-          // Preserve all inbound query params (dialog, commentId, highlight,
-          // modelVersionId, etc.) — Next.js merges path params into ctx.query
-          // for catch-all routes, so strip the path keys before re-serializing.
-          const passthrough = new URLSearchParams();
-          for (const [key, value] of Object.entries(ctx.query)) {
-            if (key === 'id' || key === 'slug') continue;
-            if (Array.isArray(value)) {
-              for (const v of value) passthrough.append(key, v);
-            } else if (value != null) {
-              passthrough.append(key, value);
-            }
-          }
-          const qs = passthrough.toString();
-          const queryString = qs ? `?${qs}` : '';
-          // 308 when no slug was supplied (bare-id URLs are a stable canonical
-          // mapping); 307 when the slug is wrong (model rename can happen
-          // again, so don't let browsers cache the redirect).
-          const permanent = !currentSlug;
+          const queryString = buildPassthroughQuery(ctx.query);
+          // 308 only for bare-id → slug canonical mapping with no query string.
+          // Some browsers cache 308 by path alone and drop the query on
+          // subsequent hits, which strands deep-link params (highlight=,
+          // commentParentType=, etc.). 307 anywhere a query is involved or the
+          // slug differs — request-specific, should not be cached.
+          const permanent = !currentSlug && !queryString;
           return {
             redirect: {
               destination: `/models/${id}/${correctSlug}${queryString}`,

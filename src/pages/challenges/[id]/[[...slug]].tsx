@@ -75,6 +75,7 @@ import { useQueryChallenge } from '~/components/Challenge/challenge.utils';
 import { WinnerPodiumCard } from '~/components/Challenge/WinnerPodiumCard';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { getModelUrl, slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -179,9 +180,10 @@ export const getServerSideProps = createServerSideProps({
         const correctSlug = slugit(challenge.title);
         const currentSlug = result.data.slug?.join('/');
         if (currentSlug !== correctSlug) {
+          const queryString = buildPassthroughQuery(ctx.query);
           return {
             redirect: {
-              destination: `/challenges/${result.data.id}/${correctSlug}`,
+              destination: `/challenges/${result.data.id}/${correctSlug}${queryString}`,
               permanent: false,
             },
           };

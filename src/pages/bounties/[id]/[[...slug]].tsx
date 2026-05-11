@@ -66,6 +66,7 @@ import {
 import { constants } from '~/server/common/constants';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { AttachmentCard } from '~/components/Article/Detail/AttachmentCard';
 import produce from 'immer';
@@ -120,9 +121,10 @@ export const getServerSideProps = createServerSideProps({
         const correctSlug = slugit(bounty.name);
         const currentSlug = result.data.slug?.join('/');
         if (correctSlug && currentSlug !== correctSlug) {
+          const queryString = buildPassthroughQuery(ctx.query);
           return {
             redirect: {
-              destination: `/bounties/${result.data.id}/${correctSlug}`,
+              destination: `/bounties/${result.data.id}/${correctSlug}${queryString}`,
               permanent: false,
             },
           };

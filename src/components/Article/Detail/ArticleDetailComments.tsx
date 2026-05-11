@@ -44,9 +44,7 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
               <Stack gap={0}>
                 <Group justify="space-between">
                   <Group gap="md">
-                    <Title order={2} id="comments">
-                      Comments
-                    </Title>
+                    <Title order={2}>Comments</Title>
                     {hiddenCount > 0 && !isLoading && (
                       <Button
                         variant="subtle"

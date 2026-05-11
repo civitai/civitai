@@ -18,7 +18,8 @@ import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/ico
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/router';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -69,7 +70,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseNumericString } from '~/utils/query-string-helpers';
+import { buildPassthroughQuery, parseNumericString } from '~/utils/query-string-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -107,13 +108,17 @@ export const getServerSideProps = createServerSideProps({
         const correctSlug = slugit(article.title);
         const currentSlug = result.data.slug?.join('/');
         if (currentSlug !== correctSlug) {
-          // 308 when no slug was supplied (bare-id URLs are a stable canonical
-          // mapping); 307 when the slug is wrong (article rename can happen
-          // again, so don't let browsers cache the redirect).
-          const permanent = !currentSlug;
+          const queryString = buildPassthroughQuery(ctx.query);
+          // 308 only for bare-id → slug canonical mapping with no query string,
+          // because some browsers cache 308 keyed on path only and drop the
+          // query on subsequent hits (which strands deep-link params from
+          // /comments/v2/<id> and notification redirects). 307 anywhere a
+          // query is involved or the slug differs — those redirects are
+          // request-specific and should not be cached.
+          const permanent = !currentSlug && !queryString;
           return {
             redirect: {
-              destination: `/articles/${result.data.id}/${correctSlug}`,
+              destination: `/articles/${result.data.id}/${correctSlug}${queryString}`,
               permanent,
             },
           };
@@ -145,6 +150,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     rootMargin: '100px', // Start loading when 100px away from viewport (reduced from 400px; this delays loading and may worsen perceived performance)
     threshold: 0.1, // Trigger when 10% of the element is visible
   });
+
+  // Force eager mount when the URL targets the comments section, so deep links
+  // (#comments, ?highlight=, mod report redirects) load comments on first paint
+  // instead of waiting for the user to scroll into the IntersectionObserver.
+  const router = useRouter();
+  const [forceEagerComments, setForceEagerComments] = useState(() => !!router.query.highlight);
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash === '#comments') {
+      setForceEagerComments(true);
+    }
+  }, []);
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
@@ -492,8 +508,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             />
           </ContainerGrid2.Col>
         </ContainerGrid2>
-        <div ref={commentsRef}>
-          {commentsInView && (
+        <div id="comments" ref={commentsRef}>
+          {(commentsInView || forceEagerComments) && (
             <ArticleDetailComments articleId={article.id} userId={article.user.id} />
           )}
         </div>

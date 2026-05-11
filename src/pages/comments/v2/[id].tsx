@@ -135,8 +135,11 @@ export const getServerSideProps = createServerSideProps({
       threadType: threadData.threadType,
       threadId: thread.id,
       commentId: commentV2.id,
-      commentParentType: commentV2.thread.comment?.id ? 'comment' : threadData.threadType,
-      commentParentId: commentV2.thread.comment?.id,
+      // Always pin the target comment as the thread root so it renders standalone via
+      // RootThreadProvider's activeComment path. Sidesteps cursor-paginated thread fetches
+      // (target may be on page N) and works uniformly for root and reply comments.
+      commentParentType: 'comment',
+      commentParentId: commentV2.id,
     });
 
     if (url) {
