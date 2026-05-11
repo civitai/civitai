@@ -19,9 +19,11 @@ import {
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { handleLogError, throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
-import { parseB2Url } from '~/utils/s3-utils';
+import { isB2Url, parseB2Url, parseKey } from '~/utils/s3-utils';
 import { registerFileLocation } from '~/utils/storage-resolver';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
+
+type ResolverBackend = 'backblaze' | 'cloudflare';
 
 // Wraps registerFileLocation so a resolver outage or misconfig becomes a
 // logged warning instead of a silent download-breaker. A missing row in
@@ -33,11 +35,11 @@ async function safeRegisterFileLocation(params: {
   fileId: number;
   modelVersionId: number;
   modelId: number;
+  backend: ResolverBackend;
   s3Path: string;
   sizeKb: number;
 }) {
-  const { op, userId, fileId, modelVersionId, modelId, s3Path, sizeKb } = params;
-  const backend = 'backblaze';
+  const { op, userId, fileId, modelVersionId, modelId, backend, s3Path, sizeKb } = params;
   try {
     await registerFileLocation({
       fileId,
@@ -68,21 +70,49 @@ async function safeRegisterFileLocation(params: {
 }
 
 /**
- * Derive the s3 path for a B2 registration. Prefers the explicit `s3Path`
- * from the client payload, falls back to parsing the committed URL. The
- * fallback covers users running stale client bundles that don't yet send
- * `s3Path` on the tRPC upsert â€” training pages live for hours during a run,
- * so a frontend deploy can take a long time to reach every open tab.
+ * Resolve `{ backend, s3Path }` for a storage-resolver registration.
+ *
+ * The upload session (`/api/upload`) returns `backend='b2'` or
+ * `backend='default'`. For B2 we hit B2 directly; for `default` we hit
+ * the configured `S3_UPLOAD_ENDPOINT`, which on production is Cloudflare
+ * R2. Historically this handler only registered B2 uploads, leaving R2
+ * uploads invisible to storage-resolver and breaking the
+ * migrate-to-b2 / promote-to-r2 cycle for new files.
+ *
+ * Resolution order:
+ *   1. If the URL is recognizable as B2 → backend='backblaze', key from
+ *      `parseB2Url`. Prefer the explicit `s3Path` from the upload payload
+ *      (stale client bundles may omit it, so the URL parse is a fallback).
+ *   2. Otherwise, if the URL parses cleanly via `parseKey` and the key is
+ *      non-empty → backend='cloudflare' (S3_UPLOAD_ENDPOINT, i.e. R2).
+ *   3. Otherwise → null (skip registration; logged upstream).
+ *
+ * NOTE: we trust `parseKey` for R2 URLs because the upload session
+ * guarantees the URL is one of our configured endpoints (B2 or
+ * S3_UPLOAD_ENDPOINT). Random external URLs won't appear here.
  */
-function resolveB2Path(args: {
+function resolveRegistration(args: {
   backend: string | undefined;
   s3Path: string | undefined;
   url: string | undefined | null;
-}): string | null {
-  if (args.backend !== 'b2') return null;
-  if (args.s3Path) return args.s3Path;
+}): { backend: ResolverBackend; s3Path: string } | null {
+  // B2 path — preserve prior behavior (explicit s3Path > URL parse).
+  if (args.backend === 'b2' || (args.url && isB2Url(args.url))) {
+    if (args.s3Path) return { backend: 'backblaze', s3Path: args.s3Path };
+    if (!args.url) return null;
+    const b2 = parseB2Url(args.url);
+    return b2 ? { backend: 'backblaze', s3Path: b2.key } : null;
+  }
+
+  // R2 / S3_UPLOAD_ENDPOINT path — uses parseKey, which handles both
+  // path-style and virtual-host-style URLs against the configured host.
   if (!args.url) return null;
-  return parseB2Url(args.url)?.key ?? null;
+  // Trust client-provided s3Path when present even for R2 (forward-compat
+  // with future client changes that send it for non-B2 uploads).
+  if (args.s3Path) return { backend: 'cloudflare', s3Path: args.s3Path };
+  const parsed = parseKey(args.url);
+  if (!parsed.key) return null;
+  return { backend: 'cloudflare', s3Path: parsed.key };
 }
 
 export const getFilesByVersionIdHandler = async ({ input }: { input: GetByIdInput }) => {
@@ -125,17 +155,19 @@ export const createFileHandler = async ({
       },
     });
 
-    // Register with storage-resolver for B2 uploads so downloads work.
-    // Awaited so the location is registered before scan-files can trigger.
-    const resolvedPath = resolveB2Path({ backend, s3Path, url: createInput.url });
-    if (resolvedPath) {
+    // Register with storage-resolver for both R2 and B2 uploads so downloads
+    // resolve correctly through the promote/migrate/verify cycle. Awaited so
+    // the location is registered before scan-files can trigger.
+    const resolved = resolveRegistration({ backend, s3Path, url: createInput.url });
+    if (resolved) {
       await safeRegisterFileLocation({
         op: 'create',
         userId: ctx.user.id,
         fileId: file.id,
         modelVersionId: file.modelVersion.id,
         modelId: file.modelVersion.modelId,
-        s3Path: resolvedPath,
+        backend: resolved.backend,
+        s3Path: resolved.s3Path,
         sizeKb: input.sizeKB,
       });
     }
@@ -221,17 +253,19 @@ export const updateFileHandler = async ({
       isModerator: ctx.user.isModerator,
     });
 
-    // Re-register with storage-resolver when the file was re-uploaded to B2
-    // (e.g. training data re-uploads), so downloads resolve to the new path.
-    const resolvedPath = resolveB2Path({ backend, s3Path, url: updateInput.url });
-    if (resolvedPath) {
+    // Re-register with storage-resolver when the file was re-uploaded
+    // (e.g. training data re-uploads to B2, or new model uploads to R2),
+    // so downloads resolve to the new path.
+    const resolved = resolveRegistration({ backend, s3Path, url: updateInput.url });
+    if (resolved) {
       await safeRegisterFileLocation({
         op: 'update',
         userId: ctx.user.id,
         fileId: result.id,
         modelVersionId: result.modelVersionId,
         modelId: result.modelVersion.modelId,
-        s3Path: resolvedPath,
+        backend: resolved.backend,
+        s3Path: resolved.s3Path,
         sizeKb: updateInput.sizeKB ?? result.sizeKB ?? 0,
       });
     }
