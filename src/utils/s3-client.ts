@@ -251,11 +251,19 @@ export class S3Bucket implements HasKeys<S3Client> {
   }
 }
 
-export const imageS3Client = new S3Client({
-  name: 'image-s3-client',
-  uploadKey: env.S3_IMAGE_UPLOAD_KEY,
-  uploadSecret: env.S3_IMAGE_UPLOAD_SECRET,
-  uploadEndpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
-  uploadRegion: env.S3_IMAGE_UPLOAD_REGION,
-  forcePathStyle: env.S3_IMAGE_FORCE_PATH_STYLE,
-});
+// Legacy DO Spaces image client — only used for deleting old images.
+// Lazy-initialized because the env vars are now optional.
+let _imageS3Client: S3Client | null = null;
+export function getImageS3Client(): S3Client {
+  if (!_imageS3Client) {
+    _imageS3Client = new S3Client({
+      name: 'image-s3-client',
+      uploadKey: env.S3_IMAGE_UPLOAD_KEY,
+      uploadSecret: env.S3_IMAGE_UPLOAD_SECRET,
+      uploadEndpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
+      uploadRegion: env.S3_IMAGE_UPLOAD_REGION,
+      forcePathStyle: env.S3_IMAGE_FORCE_PATH_STYLE,
+    });
+  }
+  return _imageS3Client;
+}

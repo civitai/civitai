@@ -54,7 +54,7 @@ export function getUploadBucket(backend: UploadBackend = 'default') {
   return env.S3_UPLOAD_BUCKET;
 }
 
-export type ImageUploadBackend = 'cloudflare' | 'backblaze';
+export type ImageUploadBackend = 'backblaze';
 
 let _b2ImageS3Client: S3Client | null = null;
 export function getB2ImageS3Client(): S3Client {
@@ -75,44 +75,21 @@ export function getB2ImageS3Client(): S3Client {
   return _b2ImageS3Client;
 }
 
-export async function getImageUploadBackend(_userId?: number): Promise<{
+export async function getImageUploadBackend(): Promise<{
   s3: S3Client;
   bucket: string;
   backend: ImageUploadBackend;
 }> {
-  const useB2 = !!env.S3_IMAGE_B2_ACCESS_KEY;
-
-  if (useB2) {
-    return {
-      s3: getB2ImageS3Client(),
-      bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
-      backend: 'backblaze',
-    };
-  }
-
   return {
-    s3: getS3Client('image'),
-    bucket: env.S3_IMAGE_UPLOAD_BUCKET,
-    backend: 'cloudflare',
+    s3: getB2ImageS3Client(),
+    bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
+    backend: 'backblaze',
   };
 }
 
-type S3Clients = 'model' | 'image';
-export function getS3Client(destination: S3Clients = 'model') {
+export function getS3Client() {
   const missing = missingEnvs();
   if (missing.length > 0) throw new Error(`Next S3 Upload: Missing ENVs ${missing.join(', ')}`);
-
-  if (destination === 'image' && env.S3_IMAGE_UPLOAD_KEY && env.S3_IMAGE_UPLOAD_SECRET) {
-    return new S3Client({
-      credentials: {
-        accessKeyId: env.S3_IMAGE_UPLOAD_KEY,
-        secretAccessKey: env.S3_IMAGE_UPLOAD_SECRET,
-      },
-      region: env.S3_IMAGE_UPLOAD_REGION,
-      endpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
-      forcePathStyle: env.S3_IMAGE_FORCE_PATH_STYLE,
-    });
-  }
 
   return new S3Client({
     credentials: {
@@ -659,7 +636,7 @@ export const serverUploadImage = async ({
   bucket: string;
   key: string;
 }) => {
-  const s3Client = getS3Client('image');
+  const s3Client = getB2ImageS3Client();
   return new Upload({
     client: s3Client,
     params: {

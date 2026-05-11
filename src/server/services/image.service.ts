@@ -175,7 +175,7 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import { imageS3Client } from '~/utils/s3-client';
+import { getImageS3Client } from '~/utils/s3-client';
 import { serverUploadImage, getB2ImageS3Client } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
@@ -238,13 +238,13 @@ const {
 
 export async function purgeResizeCache({ url }: { url: string }) {
   // Purge from new cache bucket
-  const { items } = await imageS3Client.listObjects({
+  const { items } = await getImageS3Client().listObjects({
     bucket: env.S3_IMAGE_CACHE_BUCKET,
     prefix: url,
   });
   const keys = items.map((x) => x.Key).filter(isDefined);
   if (keys.length) {
-    await imageS3Client.deleteManyObjects({
+    await getImageS3Client().deleteManyObjects({
       bucket: env.S3_IMAGE_CACHE_BUCKET,
       keys,
     });
@@ -277,9 +277,9 @@ export async function deleteImageFromS3({ id, url }: { id: number; url: string }
           })
         )
       );
-    } else {
+    } else if (env.S3_IMAGE_UPLOAD_BUCKET) {
       await withRetries(() =>
-        imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: url })
+        getImageS3Client().deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET!, key: url })
       );
     }
     await purgeResizeCache({ url: url });
@@ -7141,7 +7141,7 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
   const upload = await serverUploadImage({
     file: blob,
     key: imageKey,
-    bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+    bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
   });
 
   const data = await upload.done();
