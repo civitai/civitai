@@ -100,9 +100,14 @@ const checkFns: Record<string, CancellableCheckFn> = {
   async redis(signal: AbortSignal) {
     if (signal.aborted) return false;
     try {
-      // For cluster, we need to check if it's ready first
+      // RedisCluster does not expose `isReady` (only RedisClient does), so a
+      // strict `=== false` check is a silent no-op for cluster mode and lets
+      // ping() run before slot discovery completes — which throws
+      // `Cannot read properties of undefined (reading 'connectPromise')`
+      // from inside node-redis cluster-slots. Treat any non-truthy isReady
+      // (undefined or false) as not ready.
       const baseClient = redis as any;
-      if (baseClient.isReady === false) {
+      if (!baseClient.isReady) {
         return false;
       }
       const res = await (redis as any).ping();
@@ -118,7 +123,7 @@ const checkFns: Record<string, CancellableCheckFn> = {
     if (signal.aborted) return false;
     try {
       const baseClient = sysRedis as any;
-      if (baseClient.isReady === false) {
+      if (!baseClient.isReady) {
         return false;
       }
       const res = await (sysRedis as any).ping();
