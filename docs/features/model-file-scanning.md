@@ -308,12 +308,14 @@ Compare the two paths via Axiom logs (`name: scan-result` vs `name: model-file-s
 
 These can wait until the flag has been at 100% for ≥1 week with no skew alerts.
 
-- [ ] Delete `src/pages/api/webhooks/scan-result.ts`
-- [ ] Delete `scanFilesJob` and `requestScannerTasks()` from `src/server/jobs/scan-files.ts`
-- [ ] Drop `SCANNING_ENDPOINT` and `SCANNING_TOKEN` from `env/server.ts` and infrastructure config
-- [ ] Remove the `MODEL_FILE_SCAN_ORCHESTRATOR` flag and all gates (full commit to the new path)
-- [ ] Drop the `ScannerTasks` / `ScannerTask` exports if nothing consumes them
-- [ ] If `rawScanResult` was decided "drop", run the schema migration
+- [x] Delete `src/pages/api/webhooks/scan-result.ts`
+- [x] Delete `scanFilesJob` and `requestScannerTasks()` from `src/server/jobs/scan-files.ts`
+- [x] Drop `SCANNING_ENDPOINT` and `SCANNING_TOKEN` from `env/server.ts` and infrastructure config
+- [x] Remove the `MODEL_FILE_SCAN_ORCHESTRATOR` flag and all gates (full commit to the new path)
+- [x] Drop the `ScannerTasks` / `ScannerTask` exports if nothing consumes them
+- [ ] If `rawScanResult` was decided "drop", run the schema migration *(D1 kept it populated as normalized envelope — no migration needed)*
+
+**Note**: The cron job key `scan-files-fallback` was retained for operational continuity with the pre-deprecation cron registry rather than renamed back to `scan-files`.
 
 ### 🟢 Worth considering (decisions, not blockers)
 

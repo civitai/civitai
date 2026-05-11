@@ -51,12 +51,6 @@ export enum FLIPT_FEATURE_FLAGS {
   // paying the per-flag Redis write/read cost.
   HIGH_REPLICATION_LAG_MODE = 'high-replication-lag-mode',
   LICENSING_FEE = 'licensing-fee',
-  // Routes model-file scans through the orchestrator workflow instead of the
-  // legacy HTTP scanner. When ON: createFileHandler triggers
-  // createModelFileScanRequest inline, scanFilesFallbackJob handles retries,
-  // and rescanModel/clean-up dispatch to the orchestrator. When OFF: legacy
-  // scanFilesJob + requestScannerTasks path. See docs/features/model-file-scanning.md.
-  MODEL_FILE_SCAN_ORCHESTRATOR = 'model-file-scan-orchestrator',
 }
 
 const FLIPT_INIT_TIMEOUT_MS = 5000;

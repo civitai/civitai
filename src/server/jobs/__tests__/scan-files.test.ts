@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const {
   mockDbWrite,
-  mockIsFlipt,
   mockCreateModelFileScanRequest,
   mockModelFileScanSubmissionError,
   mockLogToAxiom,
@@ -34,7 +33,6 @@ const {
         create: vi.fn(),
       },
     },
-    mockIsFlipt: vi.fn(),
     mockCreateModelFileScanRequest: vi.fn(),
     mockModelFileScanSubmissionError: MockModelFileScanSubmissionError,
     mockLogToAxiom: vi.fn(),
@@ -47,11 +45,6 @@ const {
 
 vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 
-vi.mock('~/server/flipt/client', () => ({
-  isFlipt: mockIsFlipt,
-  FLIPT_FEATURE_FLAGS: { MODEL_FILE_SCAN_ORCHESTRATOR: 'model-file-scan-orchestrator' },
-}));
-
 vi.mock('~/server/services/orchestrator/orchestrator.service', () => ({
   createModelFileScanRequest: mockCreateModelFileScanRequest,
   ModelFileScanSubmissionError: mockModelFileScanSubmissionError,
@@ -63,24 +56,9 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
   limitConcurrency: mockLimitConcurrency,
 }));
 
-vi.mock('~/utils/delivery-worker', () => ({
-  getDownloadUrl: vi.fn().mockResolvedValue({ url: 'https://cdn.example/file' }),
-  getDownloadUrlByFileId: vi.fn().mockResolvedValue({ url: 'https://cdn.example/file' }),
-  isStorageResolverEnabled: vi.fn().mockReturnValue(false),
-}));
+import { scanFilesFallbackJob } from '~/server/jobs/scan-files';
 
-vi.mock('~/env/server', () => ({
-  env: {
-    SCANNING_ENDPOINT: 'https://scanner.example',
-    SCANNING_TOKEN: 'scan-token',
-    NEXTAUTH_URL: 'https://civitai.test',
-    WEBHOOK_TOKEN: 'wh-token',
-  },
-}));
-
-import { scanFilesJob, scanFilesFallbackJob } from '~/server/jobs/scan-files';
-
-const ctx = {} as Parameters<typeof scanFilesJob.run>[0];
+const ctx = {} as Parameters<typeof scanFilesFallbackJob.run>[0];
 
 // createJob wraps the function so .run() returns { result, cancel }.
 // Await `.result` to get the actual return value of the inner async fn.
@@ -96,55 +74,13 @@ beforeEach(() => {
   mockDbWrite.modelFile.updateMany.mockReset().mockResolvedValue({ count: 0 });
   mockDbWrite.modelFile.update.mockReset().mockResolvedValue({});
   mockDbWrite.modelFileHash.create.mockReset().mockResolvedValue(undefined);
-  mockIsFlipt.mockReset();
   mockCreateModelFileScanRequest.mockReset();
   mockLogToAxiom.mockReset().mockResolvedValue(undefined);
   // limitConcurrency stays as our sequential runner — never reset
 });
 
-describe('scanFilesJob (legacy gate)', () => {
-  it('early-returns without DB calls when MODEL_FILE_SCAN_ORCHESTRATOR is ON', async () => {
-    mockIsFlipt.mockResolvedValue(true);
-
-    await runJob(scanFilesJob);
-
-    expect(mockDbWrite.modelFile.findMany).not.toHaveBeenCalled();
-    expect(mockDbWrite.modelFile.updateMany).not.toHaveBeenCalled();
-  });
-
-  it('runs the legacy poll when flag is OFF', async () => {
-    mockIsFlipt.mockResolvedValue(false);
-    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
-
-    await runJob(scanFilesJob);
-
-    expect(mockDbWrite.modelFile.findMany).toHaveBeenCalledTimes(1);
-  });
-
-  it('queries by virusScanResult=Pending with the 24h-stale cutoff', async () => {
-    mockIsFlipt.mockResolvedValue(false);
-    mockDbWrite.modelFile.findMany.mockResolvedValue([]);
-
-    await runJob(scanFilesJob);
-
-    const where = mockDbWrite.modelFile.findMany.mock.calls[0][0].where;
-    expect(where.virusScanResult).toBe('Pending');
-    expect(where.AND).toBeDefined();
-  });
-});
-
-describe('scanFilesFallbackJob (orchestrator path)', () => {
-  it('early-returns when flag is OFF', async () => {
-    mockIsFlipt.mockResolvedValue(false);
-
-    const result = await runJob(scanFilesFallbackJob);
-
-    expect(result).toBeUndefined();
-    expect(mockDbWrite.modelFile.findMany).not.toHaveBeenCalled();
-  });
-
+describe('scanFilesFallbackJob', () => {
   it('returns submitted=0 with no DB writes when no pending files', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([]);
 
     const result = await runJob(scanFilesFallbackJob);
@@ -155,7 +91,6 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
   });
 
   it('marks the batch as scanRequestedAt=now upfront before per-file submission', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 1,
@@ -177,7 +112,6 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
   });
 
   it('calls createModelFileScanRequest per file with low priority and counts submitted', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 1,
@@ -200,7 +134,6 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
   });
 
   it('skips files with a null modelVersion (soft-deleted) and resets scanRequestedAt', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([{ id: 99, modelVersion: null }]);
 
     const result = await runJob(scanFilesFallbackJob);
@@ -214,7 +147,6 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
   });
 
   it('on submission failure, resets scanRequestedAt and logs to Axiom', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 5,
@@ -241,7 +173,6 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
   });
 
   it('on ModelFileScanSubmissionError code=not-found, tombstones via exists=false (no scanRequestedAt reset)', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 7,
@@ -281,7 +212,6 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
   });
 
   it('on ModelFileScanSubmissionError code=transient, resets scanRequestedAt (no tombstone)', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 8,
@@ -317,7 +247,6 @@ describe('scanFilesFallbackJob (orchestrator path)', () => {
   });
 
   it('processes mixed batches: counts per-file successes and failures correctly', async () => {
-    mockIsFlipt.mockResolvedValue(true);
     mockDbWrite.modelFile.findMany.mockResolvedValue([
       {
         id: 1,

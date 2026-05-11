@@ -3,8 +3,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import * as z from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import type { Prisma } from '@prisma/client';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { requestScannerTasks } from '~/server/jobs/scan-files';
 import {
   createModelFileScanRequest,
   ModelFileScanSubmissionError,
@@ -44,65 +42,48 @@ export default ModEndpoint(
       return;
     }
 
-    const useOrchestrator = await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR);
-
     const modelFiles = await dbRead.modelFile.findMany({
       where: { OR, type: { not: 'Training Data' } },
-      select: useOrchestrator
-        ? {
+      select: {
+        id: true,
+        url: true,
+        modelVersion: {
+          select: {
             id: true,
-            url: true,
-            modelVersion: {
-              select: {
-                id: true,
-                baseModel: true,
-                model: { select: { id: true, type: true } },
-              },
-            },
-          }
-        : { id: true, url: true },
+            baseModel: true,
+            model: { select: { id: true, type: true } },
+          },
+        },
+      },
     });
 
     const failed: number[] = [];
     const tasks = modelFiles.map((file) => async () => {
-      if (useOrchestrator) {
-        const f = file as (typeof modelFiles)[number] & {
-          modelVersion: {
-            id: number;
-            baseModel: string;
-            model: { id: number; type: ModelType };
-          } | null;
-        };
-        // Guard against orphaned files whose modelVersion was soft-deleted.
-        // The conditional Prisma select widens the type but doesn't enforce
-        // non-null at runtime.
-        if (!f.modelVersion) {
-          failed.push(f.id);
-          return;
-        }
-        try {
-          await createModelFileScanRequest({
-            fileId: f.id,
-            modelVersionId: f.modelVersion.id,
-            modelId: f.modelVersion.model.id,
-            modelType: f.modelVersion.model.type,
-            baseModel: f.modelVersion.baseModel,
-            url: f.url,
-            priority: 'low',
-          });
-        } catch (err) {
-          failed.push(f.id);
-          // Admin endpoint: tombstone on permanent 'not-found' so the file
-          // exits the scan retry loop. Matches scanFilesFallbackJob policy.
-          if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
-            await dbWrite.modelFile
-              .update({ where: { id: f.id }, data: { exists: false } })
-              .catch(() => null);
-          }
-        }
+      // Guard against orphaned files whose modelVersion was soft-deleted.
+      if (!file.modelVersion) {
+        failed.push(file.id);
         return;
       }
-      await requestScannerTasks({ file, tasks: ['Hash', 'ParseMetadata'], lowPriority: true });
+      try {
+        await createModelFileScanRequest({
+          fileId: file.id,
+          modelVersionId: file.modelVersion.id,
+          modelId: file.modelVersion.model.id,
+          modelType: file.modelVersion.model.type as ModelType,
+          baseModel: file.modelVersion.baseModel,
+          url: file.url,
+          priority: 'low',
+        });
+      } catch (err) {
+        failed.push(file.id);
+        // Admin endpoint: tombstone on permanent 'not-found' so the file
+        // exits the scan retry loop. Matches scanFilesFallbackJob policy.
+        if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
+          await dbWrite.modelFile
+            .update({ where: { id: file.id }, data: { exists: false } })
+            .catch(() => null);
+        }
+      }
     });
 
     if (wait) {

@@ -3,8 +3,6 @@ import type { WorkflowEvent } from '@civitai/client';
 import { getWorkflow } from '@civitai/client';
 import type { NextApiRequest } from 'next';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
-import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -524,29 +522,23 @@ export async function processModelFileScanResult(req: NextApiRequest) {
 }
 
 // -----------------------------------------------------------------------------
-// rescanModel — admin/moderator-driven re-scan dispatch. Flag-branched between
-// the legacy scanner and the orchestrator path so a wrong branch can't silently
-// route to the wrong system.
+// rescanModel — admin/moderator-driven re-scan dispatch via the orchestrator.
 // -----------------------------------------------------------------------------
 
 export const rescanModel = async ({ id }: GetByIdInput) => {
-  const useOrchestrator = await isFlipt(FLIPT_FEATURE_FLAGS.MODEL_FILE_SCAN_ORCHESTRATOR);
-
   const modelFiles = await dbRead.modelFile.findMany({
     where: { modelVersion: { modelId: id } },
-    select: useOrchestrator
-      ? {
+    select: {
+      id: true,
+      url: true,
+      modelVersion: {
+        select: {
           id: true,
-          url: true,
-          modelVersion: {
-            select: {
-              id: true,
-              baseModel: true,
-              model: { select: { id: true, type: true } },
-            },
-          },
-        }
-      : { id: true, url: true },
+          baseModel: true,
+          model: { select: { id: true, type: true } },
+        },
+      },
+    },
   });
 
   if (modelFiles.length === 0) return { sent: 0, failed: 0 };
@@ -555,53 +547,34 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
   const failed: number[] = [];
 
   const tasks = modelFiles.map((file) => async () => {
-    if (useOrchestrator) {
-      const f = file as (typeof modelFiles)[number] & {
-        modelVersion: {
-          id: number;
-          baseModel: string;
-          model: { id: number; type: ModelType };
-        } | null;
-      };
-      // Soft-deleted version → orphaned file. Skip rather than crash on the
-      // null dereference that the conditional-select cast hides.
-      if (!f.modelVersion) {
-        failed.push(f.id);
-        return;
-      }
-      try {
-        await createModelFileScanRequest({
-          fileId: f.id,
-          modelVersionId: f.modelVersion.id,
-          modelId: f.modelVersion.model.id,
-          modelType: f.modelVersion.model.type,
-          baseModel: f.modelVersion.baseModel,
-          url: f.url,
-          priority: 'low',
-        });
-        sent.push(f.id);
-      } catch (err) {
-        failed.push(f.id);
-        // Admin-triggered rescan: caller has explicit intent and the file's
-        // been around long enough to settle. Mirror scanFilesFallbackJob and
-        // tombstone on a 'not-found' so this rescan doesn't keep churning on
-        // a permanently dead AIR.
-        if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
-          await dbWrite.modelFile
-            .update({ where: { id: f.id }, data: { exists: false } })
-            .catch(() => null);
-        }
-      }
+    // Soft-deleted version → orphaned file. Skip rather than crash.
+    if (!file.modelVersion) {
+      failed.push(file.id);
       return;
     }
-
-    const result = await requestScannerTasks({
-      file,
-      tasks: ['Hash', 'Scan', 'ParseMetadata'],
-      lowPriority: true,
-    });
-    if (result === 'sent') sent.push(file.id);
-    else failed.push(file.id);
+    try {
+      await createModelFileScanRequest({
+        fileId: file.id,
+        modelVersionId: file.modelVersion.id,
+        modelId: file.modelVersion.model.id,
+        modelType: file.modelVersion.model.type as ModelType,
+        baseModel: file.modelVersion.baseModel,
+        url: file.url,
+        priority: 'low',
+      });
+      sent.push(file.id);
+    } catch (err) {
+      failed.push(file.id);
+      // Admin-triggered rescan: caller has explicit intent and the file's
+      // been around long enough to settle. Mirror scanFilesFallbackJob and
+      // tombstone on a 'not-found' so this rescan doesn't keep churning on
+      // a permanently dead AIR.
+      if (err instanceof ModelFileScanSubmissionError && err.code === 'not-found') {
+        await dbWrite.modelFile
+          .update({ where: { id: file.id }, data: { exists: false } })
+          .catch(() => null);
+      }
+    }
   });
 
   await limitConcurrency(tasks, 10);

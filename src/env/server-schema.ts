@@ -88,8 +88,6 @@ export const serverSchema = z.object({
   JOB_TOKEN: z.string(),
   WEBHOOK_URL: z.url().optional(),
   WEBHOOK_TOKEN: z.string(),
-  SCANNING_ENDPOINT: isProd ? z.string() : z.string().optional(),
-  SCANNING_TOKEN: z.string(),
   UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
   UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
   LOGGING: commaDelimitedStringArray(),
