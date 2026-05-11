@@ -1,3 +1,7 @@
+/**
+ * @deprecated EmerchantPay is no longer used in production. Handler retained
+ * for historical webhook reconciliation only — do not extend.
+ */
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Readable } from 'node:stream';
 import { env } from '~/env/server';

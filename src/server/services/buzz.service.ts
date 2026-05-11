@@ -533,7 +533,13 @@ export async function completeStripeBuzzTransaction({
 
     stage = 'getMultipliersForUser';
     const { purchasesMultiplier } = await getMultipliersForUser(userId);
-    const buzzAmount = Math.ceil(amount * (purchasesMultiplier ?? 1));
+
+    stage = 'getBuzzBulkMultiplier';
+    const { totalCustomBuzz, blueBuzzAdded, bulkBuzzMultiplier } = getBuzzBulkMultiplier({
+      buzzAmount: amount,
+      purchasesMultiplier,
+    });
+    const buzzAmount = totalCustomBuzz;
 
     const body = JSON.stringify({
       amount: buzzAmount,
@@ -545,7 +551,9 @@ export async function completeStripeBuzzTransaction({
         purchasesMultiplier && purchasesMultiplier > 1
           ? 'Multiplier applied due to membership. '
           : ''
-      }A total of ${buzzAmount} Buzz was added to your account.`,
+      }${
+        bulkBuzzMultiplier > 1 ? 'Bulk purchase bonus applied. ' : ''
+      }A total of ${numberWithCommas(buzzAmount)} Buzz was added to your account.`,
       details: { ...(details ?? {}), stripePaymentIntentId },
       externalTransactionId: paymentIntent.id,
     });
@@ -557,8 +565,37 @@ export async function completeStripeBuzzTransaction({
       body,
     });
 
-    // Update the payment intent with the transaction id
-    // A payment intent without a transaction ID can be tied to a DB failure delivering buzz.
+    // Sub-grants run before the paymentIntent metadata update so that any
+    // failure here leaves transactionId unset, allowing the retry path to
+    // re-execute. Both sub-grants are idempotent (buzz-api 409 on suffixed
+    // externalTransactionId; ON CONFLICT DO NOTHING on cosmetic insert).
+    if (blueBuzzAdded > 0) {
+      stage = 'buzzApi.blueBuzzReward';
+      await createBuzzTransaction({
+        amount: blueBuzzAdded,
+        fromAccountId: 0,
+        toAccountId: userId,
+        toAccountType: 'blue',
+        externalTransactionId: `${paymentIntent.id}-bulk-reward`,
+        type: TransactionType.Purchase,
+        description: `A total of ${numberWithCommas(
+          blueBuzzAdded
+        )} Blue Buzz was added to your account for Bulk purchase.`,
+        details: { ...(details ?? {}), stripePaymentIntentId },
+      });
+    }
+
+    if (bulkBuzzMultiplier > 1) {
+      stage = 'cosmetic.grant';
+      await grantCosmetics({
+        userId,
+        cosmeticIds: specialCosmeticRewards.bulkBuzzRewards,
+      });
+    }
+
+    // Update the payment intent with the transaction id last so that retries
+    // before this point re-run all sub-grants. Once set, the early-return
+    // above covers the whole bundle.
     stage = 'stripe.paymentIntents.update';
     await stripe.paymentIntents.update(stripePaymentIntentId, {
       metadata: {

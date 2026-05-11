@@ -1,3 +1,7 @@
+/**
+ * @deprecated EmerchantPay is no longer used in production. Code retained for
+ * historical webhook reconciliation only — do not extend or add new callers.
+ */
 import { Decimal } from '@prisma/client/runtime/library';
 import { env } from '~/env/server';
 import emerchantpayCaller from '~/server/http/emerchantpay/emerchantpay.caller';
@@ -23,6 +27,7 @@ const log = async (data: MixedObject) => {
   }
 };
 
+/** @deprecated EmerchantPay is no longer used in production. */
 export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number }) => {
   const transactionId = `${input.userId}-${input.buzzAmount}-${new Date().getTime()}`;
   const successUrl =
@@ -68,6 +73,7 @@ export const createBuzzOrder = async (input: CreateBuzzCharge & { userId: number
   return wpfPayment;
 };
 
+/** @deprecated EmerchantPay is no longer used in production. */
 export const getTransactionStatusByUniqueId = async ({
   userId,
   uniqueId,
@@ -97,6 +103,7 @@ export const getTransactionStatusByUniqueId = async ({
   }
 };
 
+/** @deprecated EmerchantPay is no longer used in production. */
 export const processBuzzOrder = async (
   notification: EmerchantPay.WebhookNotificationSchema
 ): Promise<{
@@ -166,6 +173,7 @@ export const processBuzzOrder = async (
   }
 };
 
+/** @deprecated EmerchantPay is no longer used in production. */
 export const isAPIHealthy = async (): Promise<boolean | null> => {
   return emerchantpayCaller.isAPIHealthy();
 };
