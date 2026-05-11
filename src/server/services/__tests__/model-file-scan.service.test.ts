@@ -14,6 +14,7 @@ const {
   mockModelFileScanSubmissionError,
   mockLimitConcurrency,
   mockUnpublishModelById,
+  mockSetNxKeepTtlWithEx,
 } = vi.hoisted(() => {
   // Test-local copy of the real error class so rescanModel's instanceof
   // check resolves without importing the real orchestrator module.
@@ -67,6 +68,7 @@ const {
       for (const t of tasks) await t();
     }),
     mockUnpublishModelById: vi.fn().mockResolvedValue({}),
+    mockSetNxKeepTtlWithEx: vi.fn().mockResolvedValue(true),
   };
 });
 
@@ -133,6 +135,13 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({
 // Stub the whole module to avoid loading its dep tree.
 vi.mock('~/server/services/model.service', () => ({
   unpublishModelById: mockUnpublishModelById,
+}));
+
+vi.mock('~/server/redis/client', () => ({
+  sysRedis: { setNxKeepTtlWithEx: mockSetNxKeepTtlWithEx },
+  REDIS_SYS_KEYS: {
+    WEBHOOKS: { MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed' },
+  },
 }));
 
 import {
@@ -273,13 +282,14 @@ describe('model-file-scan.service', () => {
     it('logs a warning and returns without writes when the file is not found', async () => {
       setupFileFound(null);
 
-      await applyScanOutcome({ fileId: 999 });
+      await applyScanOutcome({ fileId: 999, modelVersionId: 42 });
 
       expect(mockLogToAxiom).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'warning',
           name: 'apply-scan-outcome',
           fileId: 999,
+          modelVersionId: 42,
         }),
         'webhooks'
       );
@@ -511,6 +521,56 @@ describe('model-file-scan.service', () => {
       mockDbWrite.modelFile.update.mockResolvedValue({});
       mockDbWrite.$transaction.mockResolvedValue([]);
       mockDbWrite.modelFileHash.findMany.mockResolvedValue([]);
+      // Default: dedupe key acquired (first delivery for this workflow).
+      mockSetNxKeepTtlWithEx.mockResolvedValue(true);
+    });
+
+    it('suppresses duplicate callbacks for the same workflowId without side-effects', async () => {
+      // Second delivery: dedupe lock already held by first delivery.
+      mockSetNxKeepTtlWithEx.mockResolvedValueOnce(false);
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-dup', type: 'workflow', status: 'succeeded' })
+      );
+
+      expect(mockSetNxKeepTtlWithEx).toHaveBeenCalledWith(
+        'webhooks:model-file-scan:processed:wf-dup',
+        '1',
+        expect.any(Number)
+      );
+      // No orchestrator round-trip, no DB writes, no cache busts on duplicate.
+      expect(mockGetWorkflow).not.toHaveBeenCalled();
+      expect(mockDbWrite.modelFile.update).not.toHaveBeenCalled();
+      expect(mockDeleteFilesForModelVersionCache).not.toHaveBeenCalled();
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'info',
+          name: 'model-file-scan-result',
+          workflowId: 'wf-dup',
+          duplicate: true,
+        }),
+        'webhooks'
+      );
+    });
+
+    it('acquires the dedupe lock on first delivery and proceeds to process the workflow', async () => {
+      mockGetWorkflow.mockResolvedValue({
+        data: {
+          metadata: { fileId: 1, modelVersionId: 100 },
+          steps: [],
+        },
+      });
+
+      await processModelFileScanResult(
+        makeReq({ workflowId: 'wf-first', type: 'workflow', status: 'succeeded' })
+      );
+
+      expect(mockSetNxKeepTtlWithEx).toHaveBeenCalledWith(
+        'webhooks:model-file-scan:processed:wf-first',
+        '1',
+        expect.any(Number)
+      );
+      expect(mockGetWorkflow).toHaveBeenCalledTimes(1);
     });
 
     it('throws when the orchestrator returns no workflow data', async () => {

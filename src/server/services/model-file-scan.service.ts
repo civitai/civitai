@@ -8,6 +8,7 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
 import { deleteFilesForModelVersionCache } from '~/server/services/model-file.service';
 import { unpublishModelById } from '~/server/services/model.service';
@@ -129,7 +130,13 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
   });
   if (!file) {
     logToAxiom(
-      { type: 'warning', name: 'apply-scan-outcome', message: `File not found: ${fileId}`, fileId },
+      {
+        type: 'warning',
+        name: 'apply-scan-outcome',
+        message: `File not found: ${fileId}`,
+        fileId,
+        modelVersionId: outcome.modelVersionId,
+      },
       'webhooks'
     ).catch();
     return;
@@ -367,8 +374,39 @@ function derivePickleScanResult(
   return exitCodeToScanResult(output.exitCode);
 }
 
+// Webhook callbacks can fire more than once per workflow (orchestrator retries,
+// fan-out from multiple terminal event types). Dedupe on workflowId before any
+// side-effect so duplicate deliveries don't double-write DB rows, double-bump
+// `scanRequestedAt`, or double-invalidate caches. 1h TTL covers retry windows
+// while keeping the key cardinality bounded.
+const SCAN_CALLBACK_DEDUPE_TTL_SECONDS = 60 * 60;
+
 export async function processModelFileScanResult(req: NextApiRequest) {
   const event: WorkflowEvent = req.body;
+
+  if (event.workflowId) {
+    const dedupeKey =
+      `${REDIS_SYS_KEYS.WEBHOOKS.MODEL_FILE_SCAN_PROCESSED}:${event.workflowId}` as const;
+    const acquired = await sysRedis.setNxKeepTtlWithEx(
+      dedupeKey,
+      '1',
+      SCAN_CALLBACK_DEDUPE_TTL_SECONDS
+    );
+    if (!acquired) {
+      logToAxiom(
+        {
+          type: 'info',
+          name: 'model-file-scan-result',
+          message: `Duplicate callback suppressed for workflow ${event.workflowId}`,
+          workflowId: event.workflowId,
+          status: event.status,
+          duplicate: true,
+        },
+        'webhooks'
+      ).catch();
+      return;
+    }
+  }
 
   const { data } = await getWorkflow({
     client: internalOrchestratorClient,

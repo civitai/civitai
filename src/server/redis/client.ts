@@ -778,6 +778,9 @@ export const REDIS_SYS_KEYS = {
   CACHES: {
     IMAGE_EXISTS: 'feed:image:exists',
   },
+  WEBHOOKS: {
+    MODEL_FILE_SCAN_PROCESSED: 'webhooks:model-file-scan:processed',
+  },
 } as const;
 
 // Cached data
