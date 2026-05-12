@@ -27,21 +27,38 @@ export function RenderHtml({
     if (withProfanityFilter && blurNsfw) {
       const profanityFilter = createProfanityFilter();
 
-      // Use regex to find and preserve mentions while filtering everything else
+      // Preserve mentions, URL-bearing attributes (href/src), and all tag markup
+      // so the filter only operates on visible text content.
       const mentionRegex = /<span[^>]*data-type="mention"[^>]*>.*?<\/span>/gi;
-      const mentions: string[] = [];
-      let mentionIndex = 0;
+      const urlAttrRegex = /\b(?:href|src)="[^"]*"/gi;
+      const tagRegex = /<[^>]+>/g;
 
-      // Extract mentions and replace with placeholders
+      const mentions: string[] = [];
       processedHtml = processedHtml.replace(mentionRegex, (match) => {
         mentions.push(match);
-        return `__MENTION_PLACEHOLDER_${mentionIndex++}__`;
+        return `__MENTION_PLACEHOLDER_${mentions.length - 1}__`;
       });
 
-      // Apply profanity filtering to the text without mentions
+      const urlAttrs: string[] = [];
+      processedHtml = processedHtml.replace(urlAttrRegex, (match) => {
+        urlAttrs.push(match);
+        return `__URLATTR_PLACEHOLDER_${urlAttrs.length - 1}__`;
+      });
+
+      const tags: string[] = [];
+      processedHtml = processedHtml.replace(tagRegex, (match) => {
+        tags.push(match);
+        return `__TAG_PLACEHOLDER_${tags.length - 1}__`;
+      });
+
       processedHtml = profanityFilter.clean(processedHtml);
 
-      // Restore mentions
+      tags.forEach((tag, index) => {
+        processedHtml = processedHtml.replace(`__TAG_PLACEHOLDER_${index}__`, tag);
+      });
+      urlAttrs.forEach((attr, index) => {
+        processedHtml = processedHtml.replace(`__URLATTR_PLACEHOLDER_${index}__`, attr);
+      });
       mentions.forEach((mention, index) => {
         processedHtml = processedHtml.replace(`__MENTION_PLACEHOLDER_${index}__`, mention);
       });
