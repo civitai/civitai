@@ -18,7 +18,7 @@ import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/ico
 import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -154,13 +154,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   // Force eager mount when the URL targets the comments section, so deep links
   // (#comments, ?highlight=, mod report redirects) load comments on first paint
   // instead of waiting for the user to scroll into the IntersectionObserver.
+  // Derived per-render so it stays in sync with router state across navigations
+  // (the page component instance is reused by _app without a key).
   const router = useRouter();
-  const [forceEagerComments, setForceEagerComments] = useState(() => !!router.query.highlight);
-  useEffect(() => {
-    if (typeof window !== 'undefined' && window.location.hash === '#comments') {
-      setForceEagerComments(true);
-    }
-  }, []);
+  const forceEagerComments =
+    !!router.query.highlight ||
+    (typeof window !== 'undefined' && window.location.hash === '#comments');
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
