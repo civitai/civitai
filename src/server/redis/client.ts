@@ -51,6 +51,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
     | 'hSet'
     | 'hmGet'
     | 'del'
+    | 'unlink'
     | 'exists'
     | 'expire'
     | 'expireAt'
@@ -140,6 +141,9 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
   ): Promise<T[]>;
   // Wrapped to avoid CROSSSLOT errors - deletes keys individually with Promise.all when array
   del(key: K | K[]): Promise<number>;
+  // Wrapped to avoid CROSSSLOT errors - unlinks keys individually with Promise.all when array.
+  // Prefer over del for large keys (sets/hashes) — UNLINK frees memory in a background thread.
+  unlink(key: K | K[]): Promise<number>;
   exists(key: K | K[]): Promise<number>;
   expire(key: K, seconds: number, mode?: 'NX' | 'XX' | 'GT' | 'LT'): Promise<boolean>;
   expireAt(key: K, timestamp: number | Date, mode?: 'NX' | 'XX' | 'GT' | 'LT'): Promise<boolean>;
@@ -580,6 +584,15 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     if (!Array.isArray(key)) key = [key];
 
     const results = await Promise.all(key.map((k) => originalDel(k)));
+    return results.reduce((sum, count) => sum + count, 0);
+  };
+
+  // Wrap unlink to avoid CROSSSLOT errors - unlink keys individually when array
+  const originalUnlink = baseClient.unlink?.bind(baseClient);
+  client.unlink = async function (key: K | K[]): Promise<number> {
+    if (!Array.isArray(key)) key = [key];
+
+    const results = await Promise.all(key.map((k) => originalUnlink(k)));
     return results.reduce((sum, count) => sum + count, 0);
   };
 

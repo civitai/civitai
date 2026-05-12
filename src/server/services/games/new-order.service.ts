@@ -1447,7 +1447,16 @@ async function ensureRatedImagesCache({
   // Always populate the set with a sentinel '0' so EXISTS returns true on next call.
   // Real image IDs are always > 0, so the sentinel never interferes with SMISMEMBER checks.
   const members = imageIds.length > 0 ? ['0', ...imageIds.map(String)] : ['0'];
-  await redis.multi().sAdd(key, members).expire(key, CacheTTL.day).exec();
+
+  // Chunk the SADD so a heavy rater (>100K rated images) doesn't block the Redis shard
+  // for tens of ms. Each chunk is its own command (NOT inside MULTI/EXEC) so Redis can
+  // interleave other clients' commands between chunks. Sequential await keeps the burst
+  // small and predictable.
+  const CHUNK_SIZE = 1000;
+  for (let i = 0; i < members.length; i += CHUNK_SIZE) {
+    await redis.sAdd(key, members.slice(i, i + CHUNK_SIZE));
+  }
+  await redis.expire(key, CacheTTL.day);
 
   return key;
 }
@@ -1477,7 +1486,10 @@ export async function clearRatedImages(userId: number) {
   if (!redis) return;
 
   const key = `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}` as const;
-  await redis.del(key);
+  // UNLINK is non-blocking: returns immediately, frees memory in a background thread.
+  // Daily-reset job fans this across all players via Promise.all; with DEL on
+  // 100K-element sets that stampedes the shard.
+  await redis.unlink(key);
 }
 
 export async function addImageToQueue({
