@@ -565,11 +565,20 @@ export async function completeStripeBuzzTransaction({
       body,
     });
 
-    // Sub-grants run before the paymentIntent metadata update so that any
-    // failure here leaves transactionId unset, allowing the retry path to
-    // re-execute. Both sub-grants are idempotent (buzz-api 409 on suffixed
-    // externalTransactionId; ON CONFLICT DO NOTHING on cosmetic insert).
-    if (blueBuzzAdded > 0) {
+    // Write transactionId immediately so any subsequent failure lets the retry
+    // path skip the main grant via the early-return above.
+    stage = 'stripe.paymentIntents.update:transactionId';
+    await stripe.paymentIntents.update(stripePaymentIntentId, {
+      metadata: {
+        transactionId: data.transactionId,
+        buzzAmountWithMultiplier: buzzAmount,
+        multiplier: purchasesMultiplier,
+      },
+    });
+
+    // Sub-grants use per-grant metadata flags so retries skip already-completed
+    // steps. Each flag is written immediately after its grant succeeds.
+    if (blueBuzzAdded > 0 && !metadata.blueBuzzGranted) {
       stage = 'buzzApi.blueBuzzReward';
       await createBuzzTransaction({
         amount: blueBuzzAdded,
@@ -583,27 +592,23 @@ export async function completeStripeBuzzTransaction({
         )} Blue Buzz was added to your account for Bulk purchase.`,
         details: { ...(details ?? {}), stripePaymentIntentId },
       });
+      stage = 'stripe.paymentIntents.update:blueBuzzGranted';
+      await stripe.paymentIntents.update(stripePaymentIntentId, {
+        metadata: { blueBuzzGranted: 'true' },
+      });
     }
 
-    if (bulkBuzzMultiplier > 1) {
+    if (bulkBuzzMultiplier > 1 && !metadata.cosmeticsGranted) {
       stage = 'cosmetic.grant';
       await grantCosmetics({
         userId,
         cosmeticIds: specialCosmeticRewards.bulkBuzzRewards,
       });
+      stage = 'stripe.paymentIntents.update:cosmeticsGranted';
+      await stripe.paymentIntents.update(stripePaymentIntentId, {
+        metadata: { cosmeticsGranted: 'true' },
+      });
     }
-
-    // Update the payment intent with the transaction id last so that retries
-    // before this point re-run all sub-grants. Once set, the early-return
-    // above covers the whole bundle.
-    stage = 'stripe.paymentIntents.update';
-    await stripe.paymentIntents.update(stripePaymentIntentId, {
-      metadata: {
-        transactionId: data.transactionId,
-        buzzAmountWithMultiplier: buzzAmount,
-        multiplier: purchasesMultiplier,
-      },
-    });
 
     // 2024-12-12: Deprecated
     // await eventEngine.processPurchase({

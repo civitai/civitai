@@ -36,6 +36,8 @@ const buzzPurchaseMetadataSchema = z
     userId: z.coerce.number().positive(),
     transactionId: z.string().optional(),
     buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
+    blueBuzzGranted: z.coerce.boolean().optional(),
+    cosmeticsGranted: z.coerce.boolean().optional(),
   })
   .passthrough();
 
