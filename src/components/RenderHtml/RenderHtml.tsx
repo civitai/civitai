@@ -22,46 +22,45 @@ export function RenderHtml({
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
 
   html = useMemo(() => {
-    // Apply profanity filtering if enabled, but skip mentions
     let processedHtml = html;
     if (withProfanityFilter && blurNsfw) {
       const profanityFilter = createProfanityFilter();
 
-      // Preserve mentions, URL-bearing attributes (href/src), and all tag markup
-      // so the filter only operates on visible text content.
+      // Preserve mentions (entire span + content) and all HTML tag markup so
+      // the filter only operates on visible text content. Capturing entire
+      // tags also protects href/src attribute values, since the whole opening
+      // tag is one match. The per-render nonce prevents collisions with any
+      // user-typed text that happens to look like a placeholder.
+      const nonce = Math.random().toString(36).slice(2, 12);
+      const mentionToken = (i: number) => `__pf${nonce}M${i}__`;
+      const tagToken = (i: number) => `__pf${nonce}T${i}__`;
+
       const mentionRegex = /<span[^>]*data-type="mention"[^>]*>.*?<\/span>/gi;
-      const urlAttrRegex = /\b(?:href|src)="[^"]*"/gi;
       const tagRegex = /<[^>]+>/g;
 
       const mentions: string[] = [];
       processedHtml = processedHtml.replace(mentionRegex, (match) => {
         mentions.push(match);
-        return `__MENTION_PLACEHOLDER_${mentions.length - 1}__`;
-      });
-
-      const urlAttrs: string[] = [];
-      processedHtml = processedHtml.replace(urlAttrRegex, (match) => {
-        urlAttrs.push(match);
-        return `__URLATTR_PLACEHOLDER_${urlAttrs.length - 1}__`;
+        return mentionToken(mentions.length - 1);
       });
 
       const tags: string[] = [];
       processedHtml = processedHtml.replace(tagRegex, (match) => {
         tags.push(match);
-        return `__TAG_PLACEHOLDER_${tags.length - 1}__`;
+        return tagToken(tags.length - 1);
       });
 
       processedHtml = profanityFilter.clean(processedHtml);
 
-      tags.forEach((tag, index) => {
-        processedHtml = processedHtml.replace(`__TAG_PLACEHOLDER_${index}__`, tag);
-      });
-      urlAttrs.forEach((attr, index) => {
-        processedHtml = processedHtml.replace(`__URLATTR_PLACEHOLDER_${index}__`, attr);
-      });
-      mentions.forEach((mention, index) => {
-        processedHtml = processedHtml.replace(`__MENTION_PLACEHOLDER_${index}__`, mention);
-      });
+      // Single-pass O(n) restore per type via global regex callback.
+      processedHtml = processedHtml.replace(
+        new RegExp(`__pf${nonce}T(\\d+)__`, 'g'),
+        (_, index) => tags[Number(index)] ?? ''
+      );
+      processedHtml = processedHtml.replace(
+        new RegExp(`__pf${nonce}M(\\d+)__`, 'g'),
+        (_, index) => mentions[Number(index)] ?? ''
+      );
     }
 
     return sanitizeHtml(processedHtml, {
