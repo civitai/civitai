@@ -125,7 +125,7 @@ export async function bulkSetCommentV2TosViolation({
   actor,
 }: {
   ids: number[];
-  actor: { id: number; ip?: string; fingerprint?: string };
+  actor: { id: number; ip?: string };
 }) {
   if (ids.length === 0) return { count: 0, notified: 0, rewardedReports: 0 };
 
@@ -163,7 +163,7 @@ export async function bulkSetCommentV2TosViolation({
       reports.map((report) =>
         reportAcceptedReward.apply(
           { userId: report.userId, reportId: report.id },
-          { ip: actor.ip, fingerprint: actor.fingerprint as never }
+          { ip: actor.ip }
         )
       )
     );

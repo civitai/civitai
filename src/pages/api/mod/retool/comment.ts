@@ -71,8 +71,7 @@ export default defineRetoolEndpoint('comment', {
     async handler(input, ctx) {
       ensureAtLeastOneList(input);
       const ip = requestIp.getClientIp(ctx.req) ?? undefined;
-      const fingerprint = (ctx.req.headers['x-fingerprint'] as string | undefined) ?? undefined;
-      const actor = { id: ctx.actor.id, ip, fingerprint };
+      const actor = { id: ctx.actor.id, ip };
 
       const v1 = input.commentIds?.length
         ? await bulkSetCommentTosViolation({ ids: input.commentIds, actor })
