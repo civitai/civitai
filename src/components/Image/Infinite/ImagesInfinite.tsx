@@ -80,7 +80,10 @@ export function ImagesInfiniteContent({
   // On the green (SFW) domain we default to PG only on image/video feeds.
   // Users opt in to PG-13 via the feed filter; otherwise narrow the forced
   // domain cap (sfwBrowsingLevelsFlag = PG | PG-13) down to PG.
-  const capToPublic = domainColor === 'green' && !imageFilters.includePG13;
+  // Read from merged `filters` (not just the Zustand store) so callers that
+  // pass `filterOverrides` via URL params (Collection, UserMediaInfinite)
+  // still drive the cap correctly.
+  const capToPublic = domainColor === 'green' && !filters.includePG13;
   const browsingLevel = capToPublic
     ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
     : rawBrowsingLevel;

@@ -58,7 +58,7 @@ export function MediaFiltersDropdown({
   // Anonymous users on green are hard-capped to PG by the domain rule, so the
   // toggle would be a no-op for them. Only logged-in users actually have
   // PG-13 access to opt in/out of.
-  const showPG13Toggle = isGreen && filterType !== 'modelImages' && !!currentUser;
+  const showPG13Toggle = isGreen && !!currentUser;
 
   const [opened, setOpened] = useState(false);
 
@@ -98,27 +98,31 @@ export function MediaFiltersDropdown({
     (showPG13Toggle && mergedFilters.includePG13 ? 1 : 0);
 
   const clearFilters = useCallback(() => {
+    // All values must be `undefined` so `removeEmpty` strips them from the URL
+    // (when onChange writes to query params) and from the Zustand store. Using
+    // `false` here would leave keys like `?withMeta=false` on the URL, and
+    // `period: AllTime` would leave `?period=AllTime`.
     const reset = {
       types: undefined,
-      withMeta: false,
-      requiringMeta: false,
-      hidden: false,
-      fromPlatform: false,
-      notPublished: false,
-      scheduled: false,
-      hideManualResources: false,
-      hideAutoResources: false,
-      tools: [],
-      techniques: [],
-      period: MetricTimeframe.AllTime,
-      baseModels: [],
-      remixesOnly: false,
-      nonRemixesOnly: false,
-      disablePoi: false,
-      disableMinor: false,
-      poiOnly: false,
-      minorOnly: false,
-      includePG13: false,
+      withMeta: undefined,
+      requiringMeta: undefined,
+      hidden: undefined,
+      fromPlatform: undefined,
+      notPublished: undefined,
+      scheduled: undefined,
+      hideManualResources: undefined,
+      hideAutoResources: undefined,
+      tools: undefined,
+      techniques: undefined,
+      period: undefined,
+      baseModels: undefined,
+      remixesOnly: undefined,
+      nonRemixesOnly: undefined,
+      disablePoi: undefined,
+      disableMinor: undefined,
+      poiOnly: undefined,
+      minorOnly: undefined,
+      includePG13: undefined,
     };
 
     if (onChange) onChange(reset);
@@ -280,13 +284,13 @@ export function MediaFiltersDropdown({
                 <span>Minor</span>
               </FilterChip>
               <FilterChip
-                checked={mergedFilters.poiOnly}
+                checked={mergedFilters.disablePoi}
                 onChange={(checked) => handleChange({ disablePoi: checked })}
               >
                 <span>Disable POI</span>
               </FilterChip>
               <FilterChip
-                checked={mergedFilters.minorOnly}
+                checked={mergedFilters.disableMinor}
                 onChange={(checked) => handleChange({ disableMinor: checked })}
               >
                 <span>Disable Minor</span>

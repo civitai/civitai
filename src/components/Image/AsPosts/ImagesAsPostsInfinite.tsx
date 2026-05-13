@@ -40,6 +40,8 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useDomainColor } from '~/hooks/useDomainColor';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -91,7 +93,16 @@ export function ImagesAsPostsInfinite({
     [imageFilters, selectedVersionId, model.id, username, showHidden]
   );
 
-  const browsingLevel = useBrowsingLevelDebounced();
+  const rawBrowsingLevel = useBrowsingLevelDebounced();
+  const domainColor = useDomainColor();
+  // On the green (SFW) domain we default to PG only for model galleries.
+  // Users opt in to PG-13 via the feed filter; otherwise narrow the forced
+  // domain cap (sfwBrowsingLevelsFlag = PG | PG-13) down to PG. Mirrors the
+  // logic in ImagesInfinite.tsx so behavior is consistent across feeds.
+  const capToPublic = domainColor === 'green' && !filters.includePG13;
+  const browsingLevel = capToPublic
+    ? Flags.intersection(rawBrowsingLevel, publicBrowsingLevelsFlag)
+    : rawBrowsingLevel;
   const { gallerySettings } = useGallerySettings({ modelId: model.id });
   let intersection = browsingLevel;
   if (gallerySettings?.level) {

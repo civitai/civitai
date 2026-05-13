@@ -122,6 +122,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     tools,
                     techniques,
                     requiringMeta,
+                    notPublished,
                   }}
                   filterType={isVideo ? 'videos' : 'images'}
                   onChange={(filters) => replace(filters)}

@@ -88,6 +88,13 @@ export const imagesQueryParamSchema = z
     withMeta: booleanString().optional(),
     requiringMeta: booleanString(),
     remixOfId: numericString(),
+    includePG13: booleanString().optional(),
+    poiOnly: booleanString(),
+    minorOnly: booleanString(),
+    disablePoi: booleanString(),
+    disableMinor: booleanString(),
+    remixesOnly: booleanString(),
+    nonRemixesOnly: booleanString(),
   })
   .partial();
 
