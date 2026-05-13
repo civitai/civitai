@@ -246,7 +246,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
 // modelVersionId or modelId depending on which the caller passed, so we bust
 // both tags whenever a review row changes — counts under either tag could
 // shift. Fire-and-forget; bust failures should not surface to the caller.
-const bustRatingTotalsCache = async ({
+export const bustRatingTotalsCache = async ({
   modelId,
   modelVersionId,
 }: {
@@ -258,6 +258,20 @@ const bustRatingTotalsCache = async ({
   if (modelId) tags.push(`rating:model:${modelId}`);
   if (tags.length === 0) return;
   await bustCacheTag(tags);
+};
+
+// Deduped bulk bust for batch mutations. Collects all distinct model/version
+// tags from a set of rows, then issues a single bustCacheTag call.
+const bustRatingTotalsForRows = async (
+  rows: { modelId: number | null; modelVersionId: number | null }[]
+) => {
+  const tags = new Set<string>();
+  for (const r of rows) {
+    if (r.modelVersionId) tags.add(`rating:modelVersion:${r.modelVersionId}`);
+    if (r.modelId) tags.add(`rating:model:${r.modelId}`);
+  }
+  if (tags.size === 0) return;
+  await bustCacheTag([...tags]);
 };
 
 const createResourceReviewNotification = async ({
@@ -383,18 +397,33 @@ export async function setExcludeResourceReviews({
   exclude: boolean;
 }) {
   if (ids.length === 0) return { count: 0 };
+  // Collect affected model/version ids BEFORE the update so we can bust the
+  // rating-totals cache. setExclude flips the `NOT rr.exclude` filter, so the
+  // totals shift even though rating/recommended don't change.
+  const affected = await dbRead.resourceReview.findMany({
+    where: { id: { in: ids } },
+    select: { modelId: true, modelVersionId: true },
+  });
   const result = await dbWrite.resourceReview.updateMany({
     where: { id: { in: ids } },
     data: { exclude },
   });
+  await bustRatingTotalsForRows(affected).catch();
   return { count: result.count };
 }
 
 export async function deleteResourceReviews({ ids }: { ids: number[] }) {
   if (ids.length === 0) return { count: 0 };
+  // Fetch model/version ids BEFORE the delete so we can bust the rating-totals
+  // cache after.
+  const affected = await dbRead.resourceReview.findMany({
+    where: { id: { in: ids } },
+    select: { modelId: true, modelVersionId: true },
+  });
   const result = await dbWrite.resourceReview.deleteMany({
     where: { id: { in: ids } },
   });
+  await bustRatingTotalsForRows(affected).catch();
   return { count: result.count };
 }
 

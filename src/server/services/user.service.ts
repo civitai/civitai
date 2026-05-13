@@ -79,6 +79,7 @@ import {
   HiddenModels,
 } from '~/server/services/user-preferences.service';
 import { createCachedObject } from '~/server/utils/cache-helpers';
+import { bustRatingTotalsCache } from '~/server/services/resourceReview.service';
 import {
   handleLogError,
   throwBadRequestError,
@@ -1685,13 +1686,21 @@ export async function toggleReview({
 }) {
   const review = await dbRead.resourceReview.findFirst({
     where: { modelId, modelVersionId, userId },
-    select: { id: true, recommended: true },
+    select: { id: true, recommended: true, modelVersionId: true },
   });
   setTo ??= review ? false : true;
 
   if (setTo === false) {
     await dbWrite.resourceReview.deleteMany({ where: { modelId, modelVersionId, userId } });
     modelMetrics.queueUpdate(modelId);
+    // Use the actual modelVersionId from the existing review row when input was
+    // undefined. If the user had reviews on multiple versions (rare — typically
+    // 1 review per user per model), only the first row's version tag gets busted
+    // and the rest fall back to the 1h TTL.
+    await bustRatingTotalsCache({
+      modelId,
+      modelVersionId: modelVersionId ?? review?.modelVersionId,
+    }).catch(() => undefined);
   } else {
     if (review) {
       if (setTo !== review.recommended) {
@@ -1699,6 +1708,10 @@ export async function toggleReview({
           where: { id: review.id },
           data: { recommended: setTo },
         });
+        await bustRatingTotalsCache({
+          modelId,
+          modelVersionId: review.modelVersionId,
+        }).catch(() => undefined);
       }
     } else {
       if (!modelVersionId) {
@@ -1720,6 +1733,7 @@ export async function toggleReview({
           rating: setTo ? 5 : 1,
         },
       });
+      await bustRatingTotalsCache({ modelId, modelVersionId }).catch(() => undefined);
     }
   }
 
