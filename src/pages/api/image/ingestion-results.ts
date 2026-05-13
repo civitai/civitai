@@ -9,7 +9,9 @@ const schema = z.object({
 
 export default AuthedEndpoint(
   async function handler(req, res, user) {
-    const { ids } = schema.parse(req.query);
+    const result = schema.safeParse(req.query);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    const { ids } = result.data;
     const data = await getIngestionResults({ ids, userId: user.id });
     res.status(200).json(data);
   },

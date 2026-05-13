@@ -16,7 +16,9 @@ const historyLimiter = createLimiter({
 const schema = z.object({ userId: z.coerce.number() });
 
 export default PublicEndpoint(async function handler(req, res) {
-  const { userId } = schema.parse(req.query);
+  const result = schema.safeParse(req.query);
+  if (!result.success) return res.status(400).json({ error: result.error });
+  const { userId } = result.data;
   const limitKey = userId.toString();
 
   await historyLimiter.increment(limitKey);
