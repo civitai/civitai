@@ -1,6 +1,8 @@
 import type { ProfileSectionProps } from '~/components/Profile/ProfileSection';
 import { ProfileSection, ProfileSectionPreview } from '~/components/Profile/ProfileSection';
-import { IconHeart } from '@tabler/icons-react';
+import { IconArrowRight, IconHeart } from '@tabler/icons-react';
+import { Button, Text } from '@mantine/core';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { useMemo } from 'react';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { trpc } from '~/utils/trpc';
@@ -63,7 +65,22 @@ export const ShowcaseSection = ({ user }: ProfileSectionProps) => {
         (isLoading ? (
           <ProfileSectionPreview rowCount={2} />
         ) : (
-          <ProfileSection title="Showcase" icon={<IconHeart />}>
+          <ProfileSection
+            title="Showcase"
+            icon={<IconHeart />}
+            action={
+              <Link legacyBehavior href={`/user/${user.username}/images`} passHref>
+                <Button
+                  h={34}
+                  component="a"
+                  variant="subtle"
+                  rightSection={<IconArrowRight size={16} />}
+                >
+                  <Text inherit>View all</Text>
+                </Button>
+              </Link>
+            }
+          >
             <ShowcaseGrid
               itemCount={showcaseItems.length}
               rows={2}
