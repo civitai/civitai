@@ -78,7 +78,9 @@ async function tagCacheKey(key: string, tag: string | string[]) {
 export async function bustCacheTag(tag: string | string[]) {
   const tags = Array.isArray(tag) ? tag : [tag];
   for (const tag of tags) {
-    const keys = await redis.packed.sMembers<RedisKeyTemplateCache>(`${REDIS_KEYS.TAG}:${tag}`);
+    // tagCacheKey writes raw strings via redis.sAdd; read with the same codec.
+    // packed.sMembers would msgpack-decode them and throw on every member.
+    const keys = await redis.sMembers<RedisKeyTemplateCache>(`${REDIS_KEYS.TAG}:${tag}`);
     for (const key of keys) await redis.del(key);
     await redis.del(`${REDIS_KEYS.TAG}:${tag}`);
   }
@@ -460,10 +462,7 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
   await redis.packed.set(key, toCache, { KEEPTTL: true });
 }
 
-export async function clearCacheByPattern(
-  pattern: string,
-  onProgress?: (cleared: number) => void
-) {
+export async function clearCacheByPattern(pattern: string, onProgress?: (cleared: number) => void) {
   const cleared: string[] = [];
 
   if (!pattern.includes('*')) {
@@ -498,7 +497,10 @@ export async function clearCacheByPattern(
 }
 
 function globToRegex(pattern: string) {
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '.*')
+    .replace(/\?/g, '.');
   return new RegExp('^' + escaped + '$');
 }
 

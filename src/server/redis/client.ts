@@ -522,7 +522,11 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     async sMembers<T>(key: K): Promise<T[]> {
       const packedValues = await bufferClient.sMembers<Buffer>(key);
       return packedValues
-        .map((value) => safeUnpack<T>(value, () => client.sRem(key, value as unknown as string)))
+        .map((value) =>
+          // node-redis accepts Buffer for sRem; cast through unknown to satisfy the
+          // typed wrapper without re-encoding the raw stored bytes.
+          safeUnpack<T>(value, () => client.sRem(key, value as unknown as Buffer))
+        )
         .filter((v): v is T => v !== null);
     },
 
