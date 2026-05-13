@@ -917,6 +917,7 @@ export const REDIS_KEYS = {
     IMAGE_TAGS: 'packed:caches:image-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
+    IMAGE_DELIVERY: 'packed:caches:image-delivery',
     USER_DOWNLOADS: 'packed:caches:user-downloads:v2',
     MOD_RULES: {
       MODELS: 'packed:caches:mod-rules:models',

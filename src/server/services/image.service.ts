@@ -374,6 +374,10 @@ export const deleteImageById = async ({
       invalidateExistence,
       imageMetaCache.refresh(id),
       imageMetadataCache.refresh(id),
+      // Bust the per-URL image-delivery cache (24h TTL) so the image-cacher
+      // webhook (src/pages/api/internal/image-delivery/[id].ts) stops returning
+      // metadata for an image we just deleted.
+      redis.del(`${REDIS_KEYS.CACHES.IMAGE_DELIVERY}:${image.url}`).catch(() => 0),
     ]);
 
     return image;
@@ -411,6 +415,11 @@ export async function deleteImages(ids: number[], updatePosts = true) {
       invalidateExistence,
       imageMetaCache.refresh(imageIds),
       imageMetadataCache.refresh(imageIds),
+      // Bust the per-URL image-delivery cache (24h TTL) for each deleted image.
+      // See src/pages/api/internal/image-delivery/[id].ts.
+      ...results.map(({ url }: { url: string }) =>
+        redis.del(`${REDIS_KEYS.CACHES.IMAGE_DELIVERY}:${url}`).catch(() => 0)
+      ),
     ]);
 
     await Limiter({ batchSize: 5 }).process(

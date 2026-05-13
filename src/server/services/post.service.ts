@@ -22,6 +22,7 @@ import {
   userBasicCache,
   userPostCountCache,
 } from '~/server/redis/caches';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
@@ -1166,6 +1167,15 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
   ];
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {
     cacheRefreshPromises.push(purgeResizeCache({ url: result.url }));
+  }
+  // Bust the per-URL image-delivery cache when hideMeta changes in EITHER
+  // direction. The endpoint at src/pages/api/internal/image-delivery/[id].ts
+  // caches {id, url, hideMeta} keyed by url with a 24h TTL — without this bust,
+  // moderator hideMeta toggles wouldn't reach the image-cacher for up to 24h.
+  if (image.hideMeta !== undefined && currentImage.hideMeta !== image.hideMeta) {
+    cacheRefreshPromises.push(
+      redis.del(`${REDIS_KEYS.CACHES.IMAGE_DELIVERY}:${result.url}`).catch(() => 0)
+    );
   }
   await Promise.all(cacheRefreshPromises);
 
