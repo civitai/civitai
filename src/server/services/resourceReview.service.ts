@@ -25,7 +25,11 @@ import {
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
-import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { queryCache } from '~/server/utils/cache-helpers';
+import {
+  bustRatingTotalsCache,
+  bustRatingTotalsForRows,
+} from '~/server/services/resourceReview.cache';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import type { ResourceReviewCreate } from '~/types/router';
@@ -242,38 +246,6 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   return transformed;
 };
 
-// Busts the getRatingTotals cache for a review. The cache key is keyed by either
-// modelVersionId or modelId depending on which the caller passed, so we bust
-// both tags whenever a review row changes — counts under either tag could
-// shift. Fire-and-forget; bust failures should not surface to the caller.
-export const bustRatingTotalsCache = async ({
-  modelId,
-  modelVersionId,
-}: {
-  modelId?: number | null;
-  modelVersionId?: number | null;
-}) => {
-  const tags: string[] = [];
-  if (modelVersionId) tags.push(`rating:modelVersion:${modelVersionId}`);
-  if (modelId) tags.push(`rating:model:${modelId}`);
-  if (tags.length === 0) return;
-  await bustCacheTag(tags);
-};
-
-// Deduped bulk bust for batch mutations. Collects all distinct model/version
-// tags from a set of rows, then issues a single bustCacheTag call.
-const bustRatingTotalsForRows = async (
-  rows: { modelId: number | null; modelVersionId: number | null }[]
-) => {
-  const tags = new Set<string>();
-  for (const r of rows) {
-    if (r.modelVersionId) tags.add(`rating:modelVersion:${r.modelVersionId}`);
-    if (r.modelId) tags.add(`rating:model:${r.modelId}`);
-  }
-  if (tags.size === 0) return;
-  await bustCacheTag([...tags]);
-};
-
 const createResourceReviewNotification = async ({
   id,
   modelId,
@@ -374,18 +346,14 @@ export const upsertResourceReview = async ({
 };
 
 export const deleteResourceReview = async ({ id }: GetByIdInput) => {
-  // Fetch model/version ids BEFORE delete so we can bust the cache after.
-  const existing = await dbRead.resourceReview.findUnique({
-    where: { id },
-    select: { modelId: true, modelVersionId: true },
-  });
+  // Prisma .delete() returns the full deleted row by default — caller in
+  // resourceReview.controller.ts already relies on this — so we use modelId
+  // and modelVersionId from the returned row rather than pre-fetching.
   const ret = await dbWrite.resourceReview.delete({ where: { id } });
-  if (existing) {
-    await bustRatingTotalsCache({
-      modelId: existing.modelId,
-      modelVersionId: existing.modelVersionId,
-    }).catch();
-  }
+  await bustRatingTotalsCache({
+    modelId: ret.modelId,
+    modelVersionId: ret.modelVersionId,
+  }).catch();
   return ret;
 };
 

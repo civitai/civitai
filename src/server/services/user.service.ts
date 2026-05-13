@@ -79,7 +79,7 @@ import {
   HiddenModels,
 } from '~/server/services/user-preferences.service';
 import { createCachedObject } from '~/server/utils/cache-helpers';
-import { bustRatingTotalsCache } from '~/server/services/resourceReview.service';
+import { bustRatingTotalsCache } from '~/server/services/resourceReview.cache';
 import {
   handleLogError,
   throwBadRequestError,
