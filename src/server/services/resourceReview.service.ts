@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 
@@ -24,6 +25,7 @@ import {
   getCosmeticsForUsers,
   getProfilePicturesForUsers,
 } from '~/server/services/user.service';
+import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import type { ResourceReviewCreate } from '~/types/router';
@@ -204,7 +206,7 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   if (modelVersionId) AND.push(Prisma.sql`rr."modelVersionId" = ${modelVersionId}`);
   else AND.push(Prisma.sql`rr."modelId" = ${modelId}`);
 
-  const result = await dbRead.$queryRaw<GetRatingTotalsRow[]>`
+  const query = Prisma.sql`
     SELECT
       rr.rating,
       rr.recommended,
@@ -215,6 +217,14 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
       AND rr.recommended -- Only expose recommended reviews
     GROUP BY rr.rating, rr.recommended
   `;
+
+  const cacheable = queryCache(dbRead, 'getRatingTotals', 'v1');
+  const result = await cacheable<GetRatingTotalsRow[]>(query, {
+    ttl: CacheTTL.hour,
+    tag: modelVersionId
+      ? [`rating:modelVersion:${modelVersionId}`]
+      : [`rating:model:${modelId}`],
+  });
 
   const transformed = result.reduce(
     (acc, { rating, recommended, count }) => {
@@ -230,6 +240,24 @@ export const getRatingTotals = async ({ modelVersionId, modelId }: GetRatingTota
   );
 
   return transformed;
+};
+
+// Busts the getRatingTotals cache for a review. The cache key is keyed by either
+// modelVersionId or modelId depending on which the caller passed, so we bust
+// both tags whenever a review row changes — counts under either tag could
+// shift. Fire-and-forget; bust failures should not surface to the caller.
+const bustRatingTotalsCache = async ({
+  modelId,
+  modelVersionId,
+}: {
+  modelId?: number | null;
+  modelVersionId?: number | null;
+}) => {
+  const tags: string[] = [];
+  if (modelVersionId) tags.push(`rating:modelVersion:${modelVersionId}`);
+  if (modelId) tags.push(`rating:model:${modelId}`);
+  if (tags.length === 0) return;
+  await bustCacheTag(tags);
 };
 
 const createResourceReviewNotification = async ({
@@ -312,18 +340,39 @@ export const upsertResourceReview = async ({
       select: resourceReviewSelect,
     });
     await createResourceReviewNotification({ ...ret, userId }).catch();
+    await bustRatingTotalsCache({
+      modelId: data.modelId,
+      modelVersionId: data.modelVersionId,
+    }).catch();
     return ret;
   } else {
-    return dbWrite.resourceReview.update({
+    const ret = await dbWrite.resourceReview.update({
       where: { id: data.id },
       data,
-      select: { id: true },
+      select: { id: true, modelId: true, modelVersionId: true },
     });
+    await bustRatingTotalsCache({
+      modelId: ret.modelId,
+      modelVersionId: ret.modelVersionId,
+    }).catch();
+    return ret;
   }
 };
 
-export const deleteResourceReview = ({ id }: GetByIdInput) => {
-  return dbWrite.resourceReview.delete({ where: { id } });
+export const deleteResourceReview = async ({ id }: GetByIdInput) => {
+  // Fetch model/version ids BEFORE delete so we can bust the cache after.
+  const existing = await dbRead.resourceReview.findUnique({
+    where: { id },
+    select: { modelId: true, modelVersionId: true },
+  });
+  const ret = await dbWrite.resourceReview.delete({ where: { id } });
+  if (existing) {
+    await bustRatingTotalsCache({
+      modelId: existing.modelId,
+      modelVersionId: existing.modelVersionId,
+    }).catch();
+  }
+  return ret;
 };
 
 export async function setExcludeResourceReviews({
@@ -354,11 +403,15 @@ export const createResourceReview = async (
 ) => {
   const ret = await dbWrite.resourceReview.create({ data, select: resourceReviewSimpleSelect });
   await createResourceReviewNotification({ ...ret, userId: data.userId }).catch();
+  await bustRatingTotalsCache({
+    modelId: data.modelId,
+    modelVersionId: data.modelVersionId,
+  }).catch();
   return ret;
 };
 
-export const updateResourceReview = ({ id, ...data }: UpdateResourceReviewInput) => {
-  return dbWrite.resourceReview.update({
+export const updateResourceReview = async ({ id, ...data }: UpdateResourceReviewInput) => {
+  const ret = await dbWrite.resourceReview.update({
     where: { id },
     data,
     select: {
@@ -370,6 +423,11 @@ export const updateResourceReview = ({ id, ...data }: UpdateResourceReviewInput)
       nsfw: true,
     },
   });
+  await bustRatingTotalsCache({
+    modelId: ret.modelId,
+    modelVersionId: ret.modelVersionId,
+  }).catch();
+  return ret;
 };
 
 type ResourceReviewRow = {
@@ -478,7 +536,7 @@ export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
   const item = await dbRead.resourceReview.findUnique({ where: { id }, select: { exclude: true } });
   if (!item) throw throwNotFoundError();
 
-  return await dbWrite.resourceReview.update({
+  const ret = await dbWrite.resourceReview.update({
     where: { id },
     data: { exclude: !item.exclude },
     select: {
@@ -491,6 +549,11 @@ export const toggleExcludeResourceReview = async ({ id }: GetByIdInput) => {
       exclude: true,
     },
   });
+  await bustRatingTotalsCache({
+    modelId: ret.modelId,
+    modelVersionId: ret.modelVersionId,
+  }).catch();
+  return ret;
 };
 
 export const getUserRatingTotals = async ({ userId }: { userId: number }) => {
