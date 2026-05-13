@@ -141,8 +141,12 @@ export const useQueryImages = (
     {
       ...filters,
       excludedTagIds,
-      disablePoi: browsingSettingsAddons.settings.disablePoi,
-      disableMinor: browsingSettingsAddons.settings.disableMinor,
+      // OR-merge with the addon so either source can flag the filter.
+      // Mods always have addon = false (BrowsingSettingsAddonsProvider), so
+      // the chip controls them. Non-mods don't see the chip; the addon
+      // value flows through untouched.
+      disablePoi: !!filters.disablePoi || browsingSettingsAddons.settings.disablePoi,
+      disableMinor: !!filters.disableMinor || browsingSettingsAddons.settings.disableMinor,
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
