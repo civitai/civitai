@@ -465,16 +465,34 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
     [RESP_TYPES.BLOB_STRING]: Buffer,
   }) as CustomRedisClient<K>;
 
+  // Decode a packed Buffer, evicting the bad entry if msgpack fails so the next
+  // read falls through to source. Returns null on decode failure, treated as cache miss.
+  const safeUnpack = <T>(value: Buffer, evict: () => Promise<unknown>): T | null => {
+    try {
+      return unpack(value) as T;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`Packed unpack failed, evicting bad cache entry: ${msg}`);
+      evict().catch((e) =>
+        log(`Eviction after unpack failure failed: ${e instanceof Error ? e.message : e}`)
+      );
+      return null;
+    }
+  };
+
   client.packed = {
     async get<T>(key: K): Promise<T | null> {
       const result = await bufferClient.get<Buffer>(key);
-      return result ? unpack(result) : null;
+      if (!result) return null;
+      return safeUnpack<T>(result, () => client.unlink(key));
     },
 
     // Wrapped to avoid CROSSSLOT errors - fetches keys individually with Promise.all
     async mGet<T>(keys: K[]): Promise<(T | null)[]> {
       const results = await Promise.all(keys.map((key) => bufferClient.get<Buffer>(key)));
-      return results.map((result) => (result ? unpack(result) : null));
+      return results.map((result, i) =>
+        result ? safeUnpack<T>(result, () => client.unlink(keys[i])) : null
+      );
     },
 
     async set<T>(key: K, value: T, options?: SetOptions): Promise<void> {
@@ -491,7 +509,10 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
     async sPop<T>(key: K, count: number): Promise<T[]> {
       const packedValues = await bufferClient.sPop<Buffer>(key, count);
-      return packedValues.map((value) => unpack(value));
+      // sPop already removed each value from the set, so on decode failure we just drop it.
+      return packedValues
+        .map((value) => safeUnpack<T>(value, () => Promise.resolve()))
+        .filter((v): v is T => v !== null);
     },
 
     async sRemove<T>(key: K, value: T): Promise<void> {
@@ -500,17 +521,26 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
     async sMembers<T>(key: K): Promise<T[]> {
       const packedValues = await bufferClient.sMembers<Buffer>(key);
-      return packedValues.map((value) => unpack(value));
+      return packedValues
+        .map((value) => safeUnpack<T>(value, () => client.sRem(key, value as unknown as string)))
+        .filter((v): v is T => v !== null);
     },
 
     async hGet<T>(key: K, hashKey: string): Promise<T | null> {
       const result = await bufferClient.hGet<Buffer>(key, hashKey);
-      return result ? unpack(result) : null;
+      if (!result) return null;
+      return safeUnpack<T>(result, () => client.hDel(key, hashKey));
     },
 
     async hGetAll<T>(key: K): Promise<{ [x: string]: T }> {
       const results = await bufferClient.hGetAll<Buffer>(key);
-      return Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v ? unpack(v) : null]));
+      const out: { [x: string]: T } = {};
+      for (const [k, v] of Object.entries(results)) {
+        if (!v) continue;
+        const decoded = safeUnpack<T>(v, () => client.hDel(key, k));
+        if (decoded !== null) out[k] = decoded;
+      }
+      return out;
     },
 
     async hSet<T>(key: K, hashKey: string, value: T): Promise<void> {
@@ -527,7 +557,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
 
     async hmGet<T>(key: K, hashKeys: string[]): Promise<(T | null)[]> {
       const results = await bufferClient.hmGet<Buffer>(key, hashKeys);
-      return results.map((result) => (result ? unpack(result) : null));
+      return results.map((result, i) =>
+        result ? safeUnpack<T>(result, () => client.hDel(key, hashKeys[i])) : null
+      );
     },
   };
 
