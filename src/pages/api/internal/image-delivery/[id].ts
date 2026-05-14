@@ -17,13 +17,23 @@ type ImageRow = {
   url: string;
   hideMeta: boolean;
 };
+// Cached shape omits `url` — it's already in the cache key (the request param),
+// so storing it twice wastes ~50 bytes/entry on a high-cardinality cache. We
+// rehydrate the full ImageRow from the request `id` (== url) on cache hit.
+type CachedImage = { id: number; hideMeta: boolean };
 
-// URL -> {id, url, hideMeta} is essentially immutable. The only mutation paths
-// are moderator `hideMeta` toggle and image deletion — both are rare and
-// absorbed by the TTL (clients re-resolve after 24h). Negative results are NOT
-// cached: a 404 here can flip to 200 the moment an Image row is created, and
-// caching `null` would mask that for hours.
-const CACHE_TTL_SECONDS = 24 * 60 * 60;
+// URL -> {id, hideMeta} is essentially immutable. The only mutation paths are
+// moderator `hideMeta` toggle and image deletion — both are rare and absorbed
+// by the TTL (clients re-resolve at expiry). Negative results are NOT cached:
+// a 404 here can flip to 200 the moment an Image row is created, and caching
+// `null` would mask that for hours.
+//
+// TTL choice: 4h. The cluster's `allkeys-lru` policy means hot keys stay hot
+// regardless of TTL, so a long TTL doesn't buy us hit rate — it just inflates
+// the cold-tail entry count and pressures other caches via eviction. Image-
+// cacher request patterns are Zipf with most repeats within minutes; 4h
+// captures essentially all reuse while bounding worst-case footprint.
+const CACHE_TTL_SECONDS = 4 * 60 * 60;
 const CACHE_NAME = 'imageDelivery';
 const CACHE_TYPE = 'queryCache';
 // Cap key length to keep Redis memory bounded against malformed/abusive URLs.
@@ -48,11 +58,12 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
   const cacheKey = `${REDIS_KEYS.CACHES.IMAGE_DELIVERY}:${id}` as const;
 
   if (cacheable) {
-    const cached = await redis.packed.get<ImageRow>(cacheKey).catch(() => null);
+    const cached = await redis.packed.get<CachedImage>(cacheKey).catch(() => null);
     if (cached) {
       cacheHitCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
       imageDeliveryRequestCounter.inc({ status: 'found' });
-      return res.status(200).json(cached);
+      // Rehydrate the response shape — `url` comes from the request param.
+      return res.status(200).json({ id: cached.id, url: id, hideMeta: cached.hideMeta });
     }
     cacheMissCounter.inc({ cache_name: CACHE_NAME, cache_type: CACHE_TYPE });
   }
@@ -87,8 +98,10 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
 
   if (cacheable) {
     // Fire-and-forget; don't block the response on Redis write.
+    // Store only {id, hideMeta} — `url` is already the cache key.
+    const cacheValue: CachedImage = { id: image.id, hideMeta: image.hideMeta };
     redis.packed
-      .set(cacheKey, image, { EX: CACHE_TTL_SECONDS })
+      .set(cacheKey, cacheValue, { EX: CACHE_TTL_SECONDS })
       .catch(() => undefined);
   }
 
