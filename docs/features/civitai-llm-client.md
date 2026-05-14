@@ -79,7 +79,8 @@ const result = await civitaiLLM!.getJsonCompletion<MyShape>({
   temperature: 1,
   maxTokens: 8192, // default
   retries: 3,
-  debug: false, // opt-in per-call info logging
+  debug: false,            // opt-in per-call info logging
+  suppressThinking: false, // opt-in JSON-only directive for thinking models
 });
 ```
 
@@ -101,11 +102,11 @@ The Orchestrator's chat endpoint and the Qwen3 family have a few sharp edges. Th
 
 OpenAI and OpenRouter accept `content` as either a `string` or an array of `{ type: 'text' | 'image_url', ... }` parts. The Orchestrator's validator rejects arrays for text-only messages (`The JSON value could not be converted to System.String`). The client flattens text-only arrays to a joined string before sending. Messages containing an `image_url` part pass through unchanged so vision support can be exercised when it lands end-to-end.
 
-### 2. Thinking-mode suppression (`suppressThinking`)
+### 2. Thinking-mode suppression (opt-in)
 
-Qwen3 emits chain-of-thought reasoning by default. With creative prompts it can consume the entire `max_tokens` budget before producing any JSON, returning `finish_reason: length` with prose preamble.
+Some models (e.g. Qwen3 thinking variants) emit chain-of-thought reasoning by default. With creative prompts they can consume the entire `max_tokens` budget on preamble and return `finish_reason: length` before producing JSON.
 
-Mitigation: an explicit "JSON only, no preamble" directive is appended to the last user message:
+Callers can opt in via `suppressThinking: true`, which appends a "JSON only" directive to the last user message:
 
 ```
 IMPORTANT: Respond with ONLY the raw JSON object. Do NOT include any
@@ -113,7 +114,7 @@ analysis, planning, thinking steps, markdown fences, or preamble before
 or after the JSON. Begin your response with `{` and end with `}`.
 ```
 
-The soft `/no_think` token and `chat_template_kwargs: { enable_thinking: false }` were also tried — `/no_think` was ignored by the current proxy build, and `chat_template_kwargs` triggered a 500. The instruction-based approach is the one that survived.
+Off by default — the client stays model-agnostic. The soft `/no_think` token and `chat_template_kwargs: { enable_thinking: false }` were also tried — `/no_think` was ignored by the current proxy build, and `chat_template_kwargs` triggered a 500. The instruction-based approach is what survived.
 
 ### 3. JSON extraction fallbacks (`extractJsonSlice`)
 
@@ -133,7 +134,9 @@ This catches cases where the model wraps JSON in prose despite the instruction.
 
 Same retry semantics as `openrouter.getJsonCompletion`: on "no content" or "all JSON candidates failed", recurse with `retries - 1` until exhausted. `debug` is forwarded through recursive calls.
 
-## Defaults
+## Daily-Challenge Defaults
+
+The daily-challenge pipeline runs on OpenRouter today. The civitai-llm client is wired up via the dispatcher so any call site can opt into a Civitai-hosted model (e.g. for testing in the Playground) without touching the existing OpenRouter path.
 
 `src/server/games/daily-challenge/generative-content.ts`:
 
@@ -157,12 +160,13 @@ Caller-supplied `input.model` overrides the default at every site. The mod-only 
 To make a call site use a Civitai-hosted model:
 
 1. Confirm the model is registered in `AI_MODELS` (`src/server/services/ai/openrouter.ts`). URN-shaped values route to this client automatically.
-2. Set the call site's default (or pass `input.model`) to that constant.
-3. Optionally surface the model in `ModelSelector.tsx` for mod testing.
+2. Pass the URN as `input.model` (or set it as the call-site default).
+3. If the model emits chain-of-thought by default, pass `suppressThinking: true`.
+4. Optionally surface the model in `ModelSelector.tsx` for mod testing.
 
 No dispatcher change is needed — URN-prefix routing already directs all `urn:air:*` models to the Civitai LLM client.
 
-If the Orchestrator gains support for `chat_template_kwargs` or its own JSON-mode flag, consider re-enabling them in `civitai-llm.ts` — they'd allow dropping the prompt-injection workaround:
+If the Orchestrator later accepts `chat_template_kwargs` or `response_format`, those flags can be added directly on the request body to avoid the prompt-based workaround:
 
 ```ts
 const body = {

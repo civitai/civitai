@@ -18,13 +18,16 @@ import {
   type ReviewTemplateVariables,
 } from './template-engine';
 
-// Temporary fallbacks while the orchestrator's Qwen endpoint stabilizes.
-// Restore AI_MODELS.QWEN_35B for both once it's production-ready.
+// Default models for the daily-challenge pipeline. Routed through OpenRouter.
 //
 // Split rationale:
 //   - Content + winner selection use warm, varied creative output → GPT-4o Mini.
 //   - Image review needs critical scoring that doesn't inflate; GPT-5 Nano
 //     runs stricter in practice → GPT-5 Nano.
+//
+// To experiment with a Civitai-hosted model (e.g. Qwen via the orchestrator),
+// pass the URN as `input.model` from the call site or the Playground; the
+// `pickClient` dispatcher routes `urn:air:*` to the civitai-llm client.
 const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
 const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.GPT_5_NANO;
 

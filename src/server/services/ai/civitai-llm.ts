@@ -17,6 +17,13 @@ type GetJsonCompletionInput = {
   retries?: number;
   /** Opt-in info logging for this call. Errors are logged regardless. */
   debug?: boolean;
+  /**
+   * Append a "JSON only, no preamble" instruction to the last user message.
+   * Enable for models that emit chain-of-thought by default (e.g. Qwen3
+   * thinking variants) so they don't burn the token budget on preamble.
+   * Off by default — the client is model-agnostic.
+   */
+  suppressThinking?: boolean;
 };
 
 type ChatCompletionResponse = {
@@ -41,14 +48,16 @@ function normalizeMessage(msg: SimpleMessage): SimpleMessage {
   return { ...msg, content: text };
 }
 
-// Qwen3 emits chain-of-thought before JSON by default, which eats `max_tokens`
-// and breaks parsing. Append an explicit "JSON only" instruction to the last
-// user message since the soft `/no_think` token isn't always honored and the
-// orchestrator does not yet forward `chat_template_kwargs`.
+// Opt-in helper for models that emit chain-of-thought before JSON (e.g. Qwen3
+// thinking variants). The instruction-based approach is the only reliable
+// switch today — the soft `/no_think` token is ignored by the current
+// orchestrator proxy, and `chat_template_kwargs: { enable_thinking: false }`
+// trips a 500 there. Callers enable this via `suppressThinking: true` on a
+// per-request basis.
 const NO_PREAMBLE_INSTRUCTION =
   '\n\nIMPORTANT: Respond with ONLY the raw JSON object. Do NOT include any analysis, planning, thinking steps, markdown fences, or preamble before or after the JSON. Begin your response with `{` and end with `}`.';
 
-function suppressThinking(messages: SimpleMessage[]): SimpleMessage[] {
+function appendNoPreamble(messages: SimpleMessage[]): SimpleMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === 'user') {
@@ -91,8 +100,10 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
     maxTokens = 8192,
     retries = 0,
     debug = false,
+    suppressThinking = false,
   }: GetJsonCompletionInput): Promise<T> => {
-    const finalMessages = suppressThinking(messages.map(normalizeMessage));
+    const normalized = messages.map(normalizeMessage);
+    const finalMessages = suppressThinking ? appendNoPreamble(normalized) : normalized;
     const body = {
       model,
       messages: finalMessages,
@@ -145,6 +156,7 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
           maxTokens,
           retries: retries - 1,
           debug,
+          suppressThinking,
         });
       }
       throw new Error('No content in Civitai LLM response');
@@ -172,6 +184,7 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
         maxTokens,
         retries: retries - 1,
         debug,
+        suppressThinking,
       });
     }
     console.error(
