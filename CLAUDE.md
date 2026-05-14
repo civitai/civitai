@@ -235,6 +235,7 @@ Feature-specific documentation lives in `docs/features/`. Before implementing a 
 | Notifications | [docs/features/notifications.md](docs/features/notifications.md) |
 | Metrics/Analytics | [docs/features/metrics-analytics.md](docs/features/metrics-analytics.md) |
 | Bitwise Flags | [docs/features/bitwise-flags.md](docs/features/bitwise-flags.md) |
+| Civitai LLM Client | [docs/features/civitai-llm-client.md](docs/features/civitai-llm-client.md) |
 
 ## Troubleshooting
 

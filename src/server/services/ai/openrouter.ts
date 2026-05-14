@@ -20,9 +20,11 @@ export const AI_MODELS = {
   CLAUDE_HAIKU: 'anthropic/claude-3-5-haiku',
 
   KIMI: 'moonshotai/kimi-k2.5',
+  // DEPRECATED 2026-05-15. Prefer QWEN_35B (via civitai-llm client) for new code.
   GROK: 'x-ai/grok-4.1-fast',
   GPT_5_NANO: 'openai/gpt-5-nano',
   STEP_FUN: 'stepfun/step-3.5-flash',
+  QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
 
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',

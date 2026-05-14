@@ -4,9 +4,10 @@ import type {
   Prize,
   Score,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { logToAxiom } from '~/server/logging/client';
+import { civitaiLLM } from '~/server/services/ai/civitai-llm';
 import { openrouter, AI_MODELS, type AIModel } from '~/server/services/ai/openrouter';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
-import { logToAxiom } from '~/server/logging/client';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { findLastIndex } from '~/utils/array-helpers';
 import { markdownToHtml } from '~/utils/markdown-helpers';
@@ -16,6 +17,28 @@ import {
   resolveTemplate,
   type ReviewTemplateVariables,
 } from './template-engine';
+
+// Temporary fallbacks while the orchestrator's Qwen endpoint stabilizes.
+// Restore AI_MODELS.QWEN_35B for both once it's production-ready.
+//
+// Split rationale:
+//   - Content + winner selection use warm, varied creative output → GPT-4o Mini.
+//   - Image review needs critical scoring that doesn't inflate; GPT-5 Nano
+//     runs stricter in practice → GPT-5 Nano.
+const DEFAULT_CONTENT_MODEL: AIModel = AI_MODELS.GPT_4O_MINI;
+const DEFAULT_REVIEW_MODEL: AIModel = AI_MODELS.GPT_5_NANO;
+
+// URN-prefixed models go through the orchestrator's OpenAI-compatible endpoint
+// (Civitai-hosted Qwen, etc.). Everything else (openai/*, anthropic/*, x-ai/*,
+// moonshotai/*, stepfun/*) stays on OpenRouter.
+function pickClient(model: string) {
+  if (model.startsWith('urn:air:')) {
+    if (!civitaiLLM) throw new Error('Civitai LLM not connected');
+    return civitaiLLM;
+  }
+  if (!openrouter) throw new Error('OpenRouter not connected');
+  return openrouter;
+}
 
 type GenerateCollectionDetailsInput = {
   resource: {
@@ -35,11 +58,10 @@ type CollectionDetails = {
   description: string;
 };
 export async function generateCollectionDetails(input: GenerateCollectionDetailsInput) {
-  if (!openrouter) throw new Error('OpenRouter not connected');
-
-  const results = await openrouter.getJsonCompletion<CollectionDetails>({
+  const model = input.model ?? DEFAULT_CONTENT_MODEL;
+  const results = await pickClient(model).getJsonCompletion<CollectionDetails>({
     retries: 3,
-    model: input.model ?? AI_MODELS.GROK,
+    model,
     messages: [
       prepareSystemMessage(
         input.config,
@@ -96,13 +118,12 @@ type GeneratedArticle = {
   themeElements: string[];
 };
 export async function generateArticle({ resource, image, config, model }: GenerateArticleInput) {
-  if (!openrouter) throw new Error('OpenRouter not connected');
-
   const userText = `Resource title: ${resource.title}\nResource link: https://civitai.com/models/${resource.modelId}\nCreator: ${resource.creator}\nCreator link: https://civitai.com/user/${resource.creator}`;
 
-  const result = await openrouter.getJsonCompletion<GeneratedArticle>({
+  const selectedModel = model ?? DEFAULT_CONTENT_MODEL;
+  const result = await pickClient(selectedModel).getJsonCompletion<GeneratedArticle>({
     retries: 3,
-    model: model ?? AI_MODELS.GROK,
+    model: selectedModel,
     messages: [
       prepareSystemMessage(
         config,
@@ -153,12 +174,11 @@ type GenerateThemeElementsInput = {
   model?: AIModel;
 };
 export async function generateThemeElements(input: GenerateThemeElementsInput): Promise<string[]> {
-  if (!openrouter) throw new Error('OpenRouter not connected');
-
   try {
-    const result = await openrouter.getJsonCompletion<{ themeElements: string[] }>({
+    const model = input.model ?? DEFAULT_CONTENT_MODEL;
+    const result = await pickClient(model).getJsonCompletion<{ themeElements: string[] }>({
       retries: 3,
-      model: input.model ?? AI_MODELS.GROK,
+      model,
       messages: [
         {
           role: 'system',
@@ -218,8 +238,6 @@ const RESPONSE_SCHEMA = `{
 }`;
 
 export async function generateReview(input: GenerateReviewInput): Promise<GeneratedReview> {
-  if (!openrouter) throw new Error('OpenRouter not connected');
-
   let messages: SimpleMessage[];
   if (input.config.reviewTemplate) {
     try {
@@ -232,9 +250,10 @@ export async function generateReview(input: GenerateReviewInput): Promise<Genera
     messages = buildFallbackMessages(input);
   }
 
-  const result = await openrouter.getJsonCompletion<GeneratedReview>({
+  const model = input.model ?? DEFAULT_REVIEW_MODEL;
+  const result = await pickClient(model).getJsonCompletion<GeneratedReview>({
     retries: 3,
-    model: input.model ?? AI_MODELS.GROK,
+    model,
     messages,
   });
 
@@ -343,17 +362,16 @@ type GeneratedWinners = {
   outcome: string;
 };
 export async function generateWinners(input: GenerateWinnersInput) {
-  if (!openrouter) throw new Error('OpenRouter not connected');
-
   const userText = `Theme: ${input.theme}\nEntries:\n\`\`\`json \n${JSON.stringify(
     input.entries,
     null,
     2
   )}\n\`\`\``;
 
-  const result = await openrouter.getJsonCompletion<GeneratedWinners>({
+  const model = input.model ?? DEFAULT_CONTENT_MODEL;
+  const result = await pickClient(model).getJsonCompletion<GeneratedWinners>({
     retries: 3,
-    model: input.model ?? AI_MODELS.GROK,
+    model,
     messages: [
       prepareSystemMessage(
         input.config,
