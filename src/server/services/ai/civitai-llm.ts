@@ -184,3 +184,9 @@ const endpoint = env.ORCHESTRATOR_ENDPOINT;
 const token = env.ORCHESTRATOR_ACCESS_TOKEN;
 export const civitaiLLM: CivitaiLLM | undefined =
   endpoint && token ? createCivitaiLLM(endpoint, token) : undefined;
+
+if (!civitaiLLM) {
+  console.warn(
+    '[civitai-llm] ORCHESTRATOR_ENDPOINT and/or ORCHESTRATOR_ACCESS_TOKEN missing — calls to urn:air:* models will throw "Civitai LLM not connected".'
+  );
+}

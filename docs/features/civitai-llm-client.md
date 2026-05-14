@@ -85,14 +85,13 @@ const result = await civitaiLLM!.getJsonCompletion<MyShape>({
 
 `SimpleMessage` is re-exported from `civitai-llm.ts` so callers don't need to import from both modules.
 
-In practice, call sites use the dispatcher rather than importing `civitaiLLM` directly:
+In practice, the daily-challenge call sites go through a file-local `pickClient(model)` helper in `generative-content.ts` rather than importing `civitaiLLM` directly, so the URN-prefix routing rule stays in one place:
 
 ```ts
-import { pickClient } from '...'; // file-local helper
 const result = await pickClient(model).getJsonCompletion<MyShape>({ model, messages });
 ```
 
-That keeps the routing rule centralized.
+If a second consumer needs the same routing, promote `pickClient` to a shared module (e.g. `src/server/services/ai/dispatch.ts`) and import it from both sites.
 
 ## Built-in Defenses
 

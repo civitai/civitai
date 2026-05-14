@@ -115,7 +115,7 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
           'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
           'openai/gpt-5-nano',
         ];
-        if (version < 3 && state?.aiModel && stale.includes(state.aiModel)) {
+        if ((version ?? 0) < 3 && state?.aiModel && stale.includes(state.aiModel)) {
           state.aiModel = 'openai/gpt-4o-mini';
         }
         return state;
