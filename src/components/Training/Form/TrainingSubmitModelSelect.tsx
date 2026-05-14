@@ -31,6 +31,7 @@ import {
   trainingDetailsBaseModelsFlux,
   trainingDetailsBaseModelsFlux2,
   trainingDetailsBaseModelsFlux2Klein,
+  trainingDetailsBaseModelsHiDreamO1,
   trainingDetailsBaseModelsHunyuan,
   trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsLtx23,
@@ -249,7 +250,9 @@ export const ModelSelect = ({
     // Determine the appropriate engine based on the base type and model
     const engineToUse =
       data.params?.engine ??
-      (data.baseType ? getDefaultEngine(data.baseType, data.base ?? undefined, features) : defaultEngine);
+      (data.baseType
+        ? getDefaultEngine(data.baseType, data.base ?? undefined, features)
+        : defaultEngine);
 
     const defaultParams = getDefaultTrainingParams(data.base!, engineToUse);
 
@@ -377,6 +380,11 @@ export const ModelSelect = ({
   const baseModelErnie =
     !!formBaseModel &&
     (trainingDetailsBaseModelsErnie as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelHiDreamO1 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsHiDreamO1 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -519,6 +527,17 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
+                  {features.hidreamO1Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="indigo"
+                      name="HiDream O1"
+                      value={baseModelHiDreamO1}
+                      baseType="hidream-o1"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'video' && (
@@ -613,7 +632,8 @@ export const ModelSelect = ({
                 ) : selectedRun.baseType === 'hunyuan' ||
                   selectedRun.baseType === 'wan' ||
                   selectedRun.baseType === 'ltx2' ||
-                  selectedRun.baseType === 'ltx23' ? (
+                  selectedRun.baseType === 'ltx23' ||
+                  selectedRun.baseType === 'hidream-o1' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: this is an experimental build. Pricing, default settings, and results are
                     subject to change.

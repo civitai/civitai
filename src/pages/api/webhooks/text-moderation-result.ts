@@ -18,6 +18,7 @@ import {
   recordEntityModerationFailure,
   recordEntityModerationSuccess,
 } from '~/server/services/entity-moderation.service';
+import { recordXGuardScanFromWorkflow } from '~/server/services/scanner-audit.service';
 import { dbWrite } from '~/server/db/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotification } from '~/server/services/notification.service';
@@ -94,8 +95,7 @@ export default WebhookEndpoint(async (req, res) => {
 
     const entityType = data.metadata?.entityType as string | undefined;
     const entityId = data.metadata?.entityId as number | undefined;
-    if (!entityType || !entityId)
-      throw new Error(`missing workflow metadata.entityType or entityId - ${event.workflowId}`);
+    const hasEntity = !!entityType && entityId !== undefined;
 
     switch (event.status) {
       case 'succeeded': {
@@ -106,40 +106,60 @@ export default WebhookEndpoint(async (req, res) => {
 
         const { blocked, triggeredLabels } = moderationStep.output;
 
-        const recorded = await recordEntityModerationSuccess({
-          entityType,
-          entityId,
-          workflowId: event.workflowId,
-          output: moderationStep.output,
-        });
+        // Audit log write happens before `recordEntityModerationSuccess` so
+        // we capture the full results array (with non-triggered scores etc.)
+        // before the slimmer trims it for operational storage. Opt-in via
+        // metadata.recordForReview — fire-and-forget; failures never throw.
+        // Works without entity info (e.g. ad-hoc generator-prompt scans).
+        await recordXGuardScanFromWorkflow(data);
 
-        if (!recorded) {
-          await logToAxiom({
-            name: 'text-moderation-result',
-            type: 'warning',
-            message: 'Stale workflow callback ignored (workflowId mismatch)',
+        // Entity-bound operational state — only when an entity was attached.
+        if (hasEntity) {
+          const recorded = await recordEntityModerationSuccess({
+            entityType,
+            entityId,
             workflowId: event.workflowId,
-            entityType,
-            entityId,
-          });
-          break;
-        }
-
-        const handler = entityHandlers[entityType];
-        if (handler) {
-          await handler({
-            entityType,
-            entityId,
-            blocked,
-            triggeredLabels,
             output: moderationStep.output,
           });
+
+          if (!recorded) {
+            await logToAxiom({
+              name: 'text-moderation-result',
+              type: 'warning',
+              message: 'Stale workflow callback ignored (workflowId mismatch)',
+              workflowId: event.workflowId,
+              entityType,
+              entityId,
+            });
+            break;
+          }
+
+          const handler = entityHandlers[entityType];
+          if (handler) {
+            await handler({
+              entityType,
+              entityId,
+              blocked,
+              triggeredLabels,
+              output: moderationStep.output,
+            });
+          }
         }
         break;
       }
       case 'failed':
       case 'expired':
       case 'canceled': {
+        if (!hasEntity) {
+          await logToAxiom({
+            name: 'text-moderation-result',
+            type: event.status === 'failed' ? 'error' : 'warning',
+            message: `Workflow ${event.status} (no entity attached)`,
+            workflowId: event.workflowId,
+          });
+          break;
+        }
+
         const statusMap = {
           failed: EntityModerationStatus.Failed,
           expired: EntityModerationStatus.Expired,

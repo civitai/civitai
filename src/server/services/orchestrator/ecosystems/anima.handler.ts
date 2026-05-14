@@ -31,11 +31,13 @@ export const createAnimaInput = defineHandler<AnimaCtx, [ImageGenStepTemplate]>(
     }
   }
 
+  const diffuserModel = data.model ? ctx.airs.getOrThrow(data.model.id) : undefined;
+
   return [
     {
       $type: 'imageGen',
       input: removeEmpty({
-        engine: 'sdcpp',
+        engine: 'comfy',
         ecosystem: 'anima',
         operation: 'createImage',
         prompt: data.prompt,
@@ -50,6 +52,7 @@ export const createAnimaInput = defineHandler<AnimaCtx, [ImageGenStepTemplate]>(
         quantity: data.quantity ?? 1,
         outputFormat: data.outputFormat,
         loras: Object.keys(loras).length > 0 ? loras : undefined,
+        diffuserModel,
       }) as AnimaCreateImageGenInput,
     },
   ];

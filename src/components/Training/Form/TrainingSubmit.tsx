@@ -102,6 +102,7 @@ const prefersCaptions: TrainingBaseModelType[] = [
   'chroma',
   'zimage',
   'ernie',
+  'hidream-o1'
 ];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {

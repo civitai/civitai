@@ -940,6 +940,7 @@ export const upsertArticle = async ({
           entityId: result.id,
           content: textForModeration,
           labels: ['nsfw'],
+          recordForReview: true,
         }).catch((e) => {
           logToAxiom({
             type: 'error',
@@ -1204,6 +1205,7 @@ export const upsertArticle = async ({
             entityId: id,
             content: textForModeration,
             labels: ['nsfw'],
+            recordForReview: true,
           }).catch((e) => {
             logToAxiom({
               type: 'error',
@@ -2214,6 +2216,7 @@ export async function rescanArticle({
       entityId: id,
       content: textForModeration,
       labels: ['nsfw'],
+      recordForReview: true,
     }).catch((e) => {
       logToAxiom({
         type: 'error',

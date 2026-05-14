@@ -1955,6 +1955,8 @@ enum TagSource {
   HiveDemographics
   Clavata
   SpineRating
+  AiRecognition
+  AnimeRecognition
 }
 
 model TagsOnImageNew {
@@ -5508,4 +5510,44 @@ model GenerationPreset {
   @@unique([userId, ecosystem, name])
   @@index([userId])
   @@index([userId, ecosystem])
+}
+
+enum ReviewVerdict {
+  TruePositive
+  FalsePositive
+  TrueNegative
+  FalseNegative
+  Unsure
+}
+
+model ScannerLabelReview {
+  id          Int           @id @default(autoincrement())
+  contentHash String
+  version     String
+  label       String
+  reviewedBy  Int
+  reviewedAt  DateTime      @default(now())
+  verdict     ReviewVerdict
+  note        String?
+
+  @@unique([contentHash, version, label, reviewedBy])
+  @@index([verdict, label])
+  @@index([reviewedAt])
+}
+
+// One row per unique scan input. Snapshotted when the first moderator commits
+// a verdict, so the content survives the orchestrator's 30-day TTL and stays
+// available for follow-up review / tuning analysis. Multi-mod safe: only the
+// first verdict for a given contentHash creates the row.
+//
+// `content` is a JSON blob whose shape varies by scanner mode (see
+// scanContentBody zod schema in scanner-review.schema.ts). Avoids schema
+// migrations as new scanner modes and per-mode fields are added.
+model ScannerContentSnapshot {
+  contentHash String   @id
+  scanner     String
+  content     Json
+  createdAt   DateTime @default(now())
+
+  @@index([scanner])
 }

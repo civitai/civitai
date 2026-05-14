@@ -706,6 +706,15 @@ export const REDIS_SYS_KEYS = {
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
     SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
+    /*
+      Runtime toggle for the new image ingestion path (createImageIngestionRequest
+      with the expanded mediaRating step). Read by image.service.ts before
+      routing to the new vs legacy scanner. Accepts '1'/'true' to enable,
+      '0'/'false' to disable. If the key is missing, the first call seeds it to
+      'false' so the toggle is discoverable in Redis. Lets ops flip without a
+      deploy.
+     */
+    IMAGE_SCANNER_NEW: 'system:image-scanner-new',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

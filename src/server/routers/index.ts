@@ -29,6 +29,7 @@ import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { referralRouter } from '~/server/routers/referral.router';
 import { vimeoRouter } from '~/server/routers/vimeo.router';
+import { scannerReviewRouter } from '~/server/routers/scanner-review.router';
 import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
 import { announcementRouter } from './announcement.router';
@@ -177,6 +178,7 @@ export const appRouter = router({
   rewardsBonusEvent: rewardsBonusEventRouter,
   oauthClient: oauthClientRouter,
   oauthConsent: oauthConsentRouter,
+  scannerReview: scannerReviewRouter,
 });
 
 // export type definition of API

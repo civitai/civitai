@@ -96,7 +96,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata" | "SpineRating";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata" | "SpineRating" | "AiRecognition" | "AnimeRecognition";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -215,6 +215,8 @@ export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
+
+export type ReviewVerdict = "TruePositive" | "FalsePositive" | "TrueNegative" | "FalseNegative" | "Unsure";
 
 export interface Account {
   id: number;
@@ -4217,6 +4219,24 @@ export interface GenerationPreset {
   sortOrder: number;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ScannerLabelReview {
+  id: number;
+  contentHash: string;
+  version: string;
+  label: string;
+  reviewedBy: number;
+  reviewedAt: Date;
+  verdict: ReviewVerdict;
+  note: string | null;
+}
+
+export interface ScannerContentSnapshot {
+  contentHash: string;
+  scanner: string;
+  content: JsonValue;
+  createdAt: Date;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

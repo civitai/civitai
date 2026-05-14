@@ -74,6 +74,7 @@ export const trainingDetailsBaseModelsFlux2Klein = ['flux2klein_4b', 'flux2klein
 export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
+export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -86,6 +87,7 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsQwen,
   ...trainingDetailsBaseModelsZImage,
   ...trainingDetailsBaseModelsErnie,
+  ...trainingDetailsBaseModelsHiDreamO1,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,

@@ -55,6 +55,8 @@ import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
 import { maxRandomSeed } from '~/server/common/constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { logToAxiom } from '~/server/logging/client';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 // Ecosystem handlers - unified router
@@ -937,15 +939,37 @@ export async function generateFromGraph({
   // Audit prompt before generation
   if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
-    await auditPromptServer({
-      prompt: data.prompt,
-      negativePrompt,
-      userId,
-      isGreen: !!isGreen,
-      isModerator,
-      track,
-      remixOfId,
-    });
+    try {
+      await auditPromptServer({
+        prompt: data.prompt,
+        negativePrompt,
+        userId,
+        isGreen: !!isGreen,
+        isModerator,
+        track,
+        remixOfId,
+      });
+    } catch (err) {
+      // Legacy regex/external audit blocked the prompt. Fire-and-forget an
+      // XGuard scan against the same input so moderators can review whether
+      // XGuard would have agreed — feeds the "should XGuard replace the
+      // legacy gate?" decision. Doesn't gate the rethrow.
+      createXGuardModerationRequest({
+        mode: 'prompt',
+        entityType: 'prompt',
+        positivePrompt: data.prompt,
+        negativePrompt,
+        recordForReview: true,
+      }).catch((e) => {
+        logToAxiom({
+          type: 'error',
+          name: 'generation-xguard-scan',
+          message: (e as Error).message,
+          userId,
+        }).catch();
+      });
+      throw err;
+    }
   }
 
   // Audit ACE Audio creative fields (musicDescription + lyrics). Routed through

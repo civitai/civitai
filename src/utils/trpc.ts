@@ -1,5 +1,5 @@
 // src/utils/trpc.ts
-import { QueryClient } from '@tanstack/react-query';
+import { QueryClient, type QueryClientConfig } from '@tanstack/react-query';
 import type { CreateTRPCProxyClient, TRPCLink } from '@trpc/client';
 import { createTRPCProxyClient, httpLink, loggerLink } from '@trpc/client';
 import type { CreateTRPCNext } from '@trpc/next';
@@ -65,13 +65,57 @@ const headers: RequestHeaders = {
   'x-client': 'web',
 };
 
-export const queryClient = new QueryClient({
+/**
+ * Shared QueryClient config. Used by both the per-request server `QueryClient`
+ * (created by `@trpc/next` via `queryClientConfig` below) and the singleton
+ * browser `QueryClient` returned by `getQueryClient()` for callsites that
+ * import `queryClient` directly.
+ */
+const queryClientConfig: QueryClientConfig = {
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
       retry: 1,
       staleTime: Infinity,
     },
+  },
+};
+
+/**
+ * Browser-only QueryClient singleton.
+ *
+ * IMPORTANT: never construct this at module scope. Doing so on the server
+ * means every SSR request shares one `QueryCache`, which only ever grows.
+ * A heap snapshot from civitai-dp-prod on 2026-05-14 found 11,962 retained
+ * `Query` objects on a single pod traceable to a module-scope `QueryClient`.
+ *
+ * Callsites that import { queryClient } from this module run only in the
+ * browser (mutation `onSuccess` callbacks, event handlers, `useEffect`).
+ * Touching this on the server will throw to prevent the leak from coming back.
+ */
+let browserQueryClient: QueryClient | undefined;
+function getBrowserQueryClient(): QueryClient {
+  if (typeof window === 'undefined') {
+    throw new Error(
+      '[trpc] queryClient was accessed on the server. Use `useQueryClient()` ' +
+        'inside a component, or pass `queryClientConfig` to tRPC so a fresh ' +
+        'QueryClient is created per request.'
+    );
+  }
+  if (!browserQueryClient) browserQueryClient = new QueryClient(queryClientConfig);
+  return browserQueryClient;
+}
+
+/**
+ * Proxy preserves the existing `import { queryClient } from '~/utils/trpc'`
+ * call sites without forcing them to call a function. Property access is
+ * lazy, so the singleton is only created when first touched in the browser.
+ */
+export const queryClient: QueryClient = new Proxy({} as QueryClient, {
+  get(_target, prop, receiver) {
+    const client = getBrowserQueryClient();
+    const value = Reflect.get(client, prop, receiver);
+    return typeof value === 'function' ? value.bind(client) : value;
   },
 });
 
@@ -118,7 +162,16 @@ export const trpc: CreateTRPCNext<AppRouter, NextPageContext, null> = createTRPC
     const isClient = typeof window !== 'undefined';
 
     return {
-      queryClient,
+      // On the browser, reuse the same singleton `QueryClient` that direct
+      // `import { queryClient }` callsites read/write — otherwise their
+      // `setQueriesData`/`cancelQueries` would target a different cache than
+      // the one `useQuery` hooks subscribe to.
+      //
+      // On the server, omit `queryClient` so `@trpc/next` falls through to
+      // `new QueryClient(config.queryClientConfig)` per request — the prior
+      // module-scope singleton accumulated 11,962 `Query` objects per pod
+      // (heap snapshot, civitai-dp-prod, 2026-05-14).
+      ...(isClient ? { queryClient: getBrowserQueryClient() } : { queryClientConfig }),
       transformer: superjson,
       links: [
         authedCacheBypassLink,

@@ -7,11 +7,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
 import { ImageIngestionStatus, NewOrderRankType, TagSource } from '~/shared/utils/prisma/enums';
-import {
-  NsfwLevel,
-  SearchIndexUpdateQueueAction,
-  SignalMessages,
-} from '~/server/common/enums';
+import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -45,6 +41,7 @@ import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { logToAxiom } from '~/server/logging/client';
+import { recordImageScan } from '~/server/services/scanner-audit.service';
 
 export async function isExemptFromAiVerification(
   imageId: number,
@@ -71,9 +68,29 @@ type WdTaggingStep = {
   $type: 'wdTagging';
   output: { tags: Record<string, number>; rating: Record<string, number> };
 };
+type AgeDetection = {
+  detectorType?: string;
+  boundingBox: { x1: number; y1: number; x2: number; y2: number };
+  ageLabel: string;
+  confidence: number;
+  isMinor: boolean;
+  topK: Record<string, number>;
+};
+type FaceDetection = {
+  boundingBox: { x1: number; y1: number; x2: number; y2: number };
+};
+type RecognitionResult = { label: string; confidence: number };
 type MediaRatingStep = {
   $type: 'mediaRating';
-  output: { nsfwLevel: string; isBlocked: boolean; blockedReason?: string };
+  output: {
+    nsfwLevel: string;
+    isBlocked: boolean;
+    blockedReason?: string;
+    ageClassification?: { detections: AgeDetection[] };
+    faceRecognition?: { faces: FaceDetection[] };
+    aiRecognition?: RecognitionResult;
+    animeRecognition?: RecognitionResult;
+  };
 };
 type MediaHashStep = {
   $type: 'mediaHash';
@@ -124,6 +141,8 @@ export async function processImageScanResult(req: NextApiRequest) {
     steps: (data.steps ?? []) as unknown as ScanResultStep[],
     imageId,
     articleImageScanning: featureFlags.articleImageScanning,
+    startedAt: data.startedAt,
+    completedAt: data.completedAt,
   });
 }
 
@@ -138,6 +157,8 @@ export async function processImageScanWorkflow({
   steps,
   imageId,
   articleImageScanning = false,
+  startedAt,
+  completedAt,
 }: {
   workflowId: string;
   status: string;
@@ -145,6 +166,11 @@ export async function processImageScanWorkflow({
   imageId: number;
   /** Enable debounced article ingestion updates (webhook path with feature flag) */
   articleImageScanning?: boolean;
+  /** Workflow timing from the orchestrator response. Used by recordImageScan
+   * for the scanner_label_results audit log. Optional so migration scripts
+   * can still call this without supplying them. */
+  startedAt?: Date | string | null;
+  completedAt?: Date | string | null;
 }) {
   if (status !== 'succeeded') {
     await dbWrite.$executeRaw`
@@ -325,6 +351,16 @@ export async function processImageScanWorkflow({
       )}::jsonb)
     WHERE id = ${image.id}
   `;
+
+  // Audit-log to scanner_label_results. Fire-and-forget — failures log but
+  // can't block ingestion. Runs for every successful mediaRating output.
+  await recordImageScan({
+    workflowId,
+    imageId: image.id,
+    mediaRating: mediaRating!,
+    startedAt,
+    completedAt,
+  });
 
   // Fan out to articles for every terminal state (Scanned and Blocked).
   // Article ingestion must advance on Blocked too, otherwise articles whose last
@@ -684,12 +720,41 @@ function aggregateMediaRatingRepeater(steps: ScanResultStep[]) {
 
   return mediaRatingSteps.reduce<MediaRatingStep['output']>(
     (acc, step) => {
-      const { nsfwLevel, isBlocked, blockedReason } = step.output;
+      const {
+        nsfwLevel,
+        isBlocked,
+        blockedReason,
+        ageClassification,
+        faceRecognition,
+        aiRecognition,
+        animeRecognition,
+      } = step.output;
       if (!acc.isBlocked) acc.isBlocked = isBlocked;
       if (!acc.blockedReason) acc.blockedReason = blockedReason;
 
       if (orchestratorNsfwLevelMap[nsfwLevel] > orchestratorNsfwLevelMap[acc.nsfwLevel])
         acc.nsfwLevel = nsfwLevel;
+
+      if (ageClassification?.detections.length) {
+        acc.ageClassification ??= { detections: [] };
+        acc.ageClassification.detections.push(...ageClassification.detections);
+      }
+      if (faceRecognition?.faces.length) {
+        acc.faceRecognition ??= { faces: [] };
+        acc.faceRecognition.faces.push(...faceRecognition.faces);
+      }
+      if (
+        aiRecognition &&
+        (!acc.aiRecognition || aiRecognition.confidence > acc.aiRecognition.confidence)
+      ) {
+        acc.aiRecognition = aiRecognition;
+      }
+      if (
+        animeRecognition &&
+        (!acc.animeRecognition || animeRecognition.confidence > acc.animeRecognition.confidence)
+      ) {
+        acc.animeRecognition = animeRecognition;
+      }
 
       return acc;
     },

@@ -522,7 +522,6 @@ export const EXPERIMENTAL_MODE_SUPPORTED_MODELS: string[] = [
 // sdcpp under the hood.
 export const SDCPP_SUPPORTED_ECOSYSTEMS: string[] = [
   ...EXPERIMENTAL_MODE_SUPPORTED_MODELS,
-  'Anima',
   'ZImageBase',
   'ZImageTurbo',
   'Flux2Klein_9B',

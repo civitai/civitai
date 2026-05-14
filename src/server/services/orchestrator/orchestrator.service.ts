@@ -135,6 +135,10 @@ export async function createImageIngestionRequest({
                       path: 'url',
                     },
                     engine: 'civitai',
+                    includeAgeClassification: true,
+                    includeAIRecognition: true,
+                    includeFaceRecognition: true,
+                    includeAnimeRecognition: true,
                   },
                 },
               },
@@ -178,24 +182,89 @@ export async function createImageIngestionRequest({
   return { data, body, error, status: response.status };
 }
 
-export async function createTextModerationRequest({
-  entityType,
-  entityId,
-  content,
-  labels,
-  callbackUrl,
-  wait,
-  priority = 'normal',
-}: {
-  entityType: string;
-  entityId: number;
-  content: string;
+type XGuardModerationArgs = {
+  /**
+   * Optional entity reference. When present, the webhook updates
+   * `EntityModeration` and dispatches the entity-type handler. When omitted
+   * (e.g. ad-hoc generator-prompt scans with no persistent entity), only the
+   * audit-write path runs.
+   */
+  entityType?: string;
+  entityId?: number;
   labels?: string[];
-  callbackUrl?: string;
+  /** Override the default audit-result callback URL. Omit to use the standard
+   * `/api/webhooks/text-moderation-result` endpoint (which is what makes audit
+   * rows land in `scanner_label_results`). Pass `null` to suppress the
+   * callback entirely — only useful for synchronous-wait callers that handle
+   * the audit write themselves (e.g. `/api/admin/test`). */
+  callbackUrl?: string | null;
   wait?: number;
   priority?: Priority;
-}) {
-  const metadata = { entityType, entityId };
+  /**
+   * When true, the webhook handler will persist this scan's results to the
+   * scanner audit store (ClickHouse + Postgres review tables) for prompt
+   * tuning. Default false. Plumbed through workflow metadata so the webhook
+   * doesn't need any other signal.
+   */
+  recordForReview?: boolean;
+} & (
+  | { mode: 'text'; content: string }
+  | {
+      mode: 'prompt';
+      positivePrompt: string;
+      negativePrompt?: string;
+      instructions?: string;
+    }
+);
+
+export async function createXGuardModerationRequest(args: XGuardModerationArgs) {
+  const {
+    entityType,
+    entityId,
+    labels,
+    callbackUrl,
+    wait,
+    priority = 'normal',
+    recordForReview = false,
+  } = args;
+
+  // Default callback fires the standard text-moderation webhook, which is
+  // what triggers `recordXGuardScanFromWorkflow`. Callers can override the URL
+  // or pass `null` to skip the callback entirely.
+  const effectiveCallbackUrl =
+    callbackUrl === undefined
+      ? env.TEXT_MODERATION_CALLBACK ??
+        `${env.NEXTAUTH_URL}/api/webhooks/text-moderation-result?token=${env.WEBHOOK_TOKEN}`
+      : callbackUrl;
+
+  const metadata: Record<string, unknown> = {
+    mode: args.mode,
+    recordForReview,
+    version: '1',
+  };
+  if (entityType) metadata.entityType = entityType;
+  if (entityId !== undefined) metadata.entityId = entityId;
+
+  // Pass `labels` through as a filter so the orchestrator only evaluates the
+  // ones we ask about. Policies + thresholds + actions are owned orchestrator-
+  // side; per-label policyHash comes back on each result and is what we record
+  // as the per-label `version` column in the audit log.
+  const input =
+    args.mode === 'text'
+      ? {
+          mode: 'text' as const,
+          text: args.content,
+          labels,
+          storeFullResponse: true,
+        }
+      : {
+          mode: 'prompt' as const,
+          positivePrompt: args.positivePrompt,
+          negativePrompt: args.negativePrompt ?? null,
+          instructions: args.instructions ?? null,
+          labels,
+          storeFullResponse: true,
+        };
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
@@ -206,21 +275,16 @@ export async function createTextModerationRequest({
       steps: [
         {
           $type: 'xGuardModeration',
-          name: 'textModeration',
+          name: args.mode === 'text' ? 'textModeration' : 'promptModeration',
           metadata,
           priority,
-          input: {
-            text: content,
-            mode: 'text',
-            labels,
-            storeFullResponse: false,
-          },
+          input,
         } as XGuardModerationStepTemplate,
       ],
-      callbacks: callbackUrl
+      callbacks: effectiveCallbackUrl
         ? [
             {
-              url: `${callbackUrl}`,
+              url: effectiveCallbackUrl,
               type: [
                 'workflow:succeeded',
                 'workflow:failed',
@@ -238,7 +302,8 @@ export async function createTextModerationRequest({
   if (!data) {
     logToAxiom({
       type: 'error',
-      name: 'text-moderation',
+      name: 'xguard-moderation',
+      mode: args.mode,
       entityType,
       entityId,
       responseStatus: response?.status,

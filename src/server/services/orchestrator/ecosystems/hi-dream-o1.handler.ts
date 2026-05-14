@@ -7,7 +7,7 @@
  * - Dev  + create:  ComfyHiDreamO1DevCreateImageGenInput
  * - Dev  + edit:    ComfyHiDreamO1DevEditImageGenInput
  *
- * Engine: comfy, ecosystem: 'hidream'. LoRAs are passed as Record<AIR, strength>.
+ * Engine: comfy, ecosystem: 'hidream-o1'. LoRAs are passed as Record<AIR, strength>.
  */
 
 import type {
@@ -52,7 +52,7 @@ export const createHiDreamO1Input = defineHandler<HiDreamO1Ctx, [ImageGenStepTem
     // Shared fields across all four variants
     const base = {
       engine: 'comfy' as const,
-      ecosystem: 'hidream-o1' as 'hidream',
+      ecosystem: 'hidream-o1' as const,
       prompt: data.prompt,
       negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
       width: data.aspectRatio.width,

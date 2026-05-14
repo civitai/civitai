@@ -20,12 +20,18 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   const serverDomains = useServerDomains();
 
   const enabled = !!currentUser && features.isGreen && features.buzz;
-  const { data: buzzAccounts, isLoading: buzzLoading } = trpc.buzz.getBuzzAccount.useQuery(
+  const { data: buzzAccounts, isFetched: buzzFetched } = trpc.buzz.getBuzzAccount.useQuery(
     undefined,
-    { enabled }
+    { enabled, staleTime: 0 }
   );
-  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery(undefined, {
+  // AppProvider seeds `user.getSettings` with SSR initialData and the global
+  // `staleTime: Infinity` prevents refetching — so `data` is truthy immediately
+  // with potentially stale `dismissedAlerts`. Gate on `isFetched` (only true
+  // after a real network fetch resolves) so we never render based on the SSR
+  // snapshot, and force a refetch on mount via `staleTime: 0`.
+  const { data: settings, isFetched: settingsFetched } = trpc.user.getSettings.useQuery(undefined, {
     enabled,
+    staleTime: 0,
   });
   const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
 
@@ -46,15 +52,27 @@ export function YellowBuzzMigrationNotice({ children }: { children: React.ReactN
   });
 
   const yellowBalance = buzzAccounts?.yellow ?? 0;
-  const show = enabled && !buzzLoading && !settingsLoading && !isDismissed && yellowBalance > 0;
+  const show = enabled && buzzFetched && settingsFetched && !isDismissed && yellowBalance > 0;
+
+  const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
+
+  if (!show) return <>{children}</>;
 
   const redDomain = serverDomains.red;
   const redUrl = syncAccount(`//${redDomain}/`, '/user/buzz-dashboard');
 
-  const handleDismiss = () => dismissMutation.mutate({ alertId: ALERT_ID });
-
   return (
-    <Popover width={280} position="bottom-end" shadow="lg" opened={show} withArrow arrowSize={10}>
+    <Popover
+      width={280}
+      position="bottom-end"
+      shadow="lg"
+      opened
+      onChange={(opened) => {
+        if (!opened) handleDismiss();
+      }}
+      withArrow
+      arrowSize={10}
+    >
       <Popover.Target>
         <div className="inline-flex">{children}</div>
       </Popover.Target>

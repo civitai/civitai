@@ -731,6 +731,23 @@ export const getImageById = async ({ id }: GetByIdInput) => {
   });
 };
 
+/**
+ * Runtime toggle for the new image ingestion path (createImageIngestionRequest
+ * with the expanded mediaRating step). Reads from Redis so ops can flip
+ * without a deploy. Accepts '1'/'true' / '0'/'false' as string values.
+ *
+ * If the key doesn't exist (first request after deploy), seeds it to 'false'
+ * so the toggle is discoverable in Redis and explicitly off by default.
+ * Operators set the key to '1' to enable.
+ */
+async function isImageScannerNewEnabled(): Promise<boolean> {
+  const value = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
+  if (value === '1' || value === 'true') return true;
+  if (value === '0' || value === 'false') return false;
+  await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW, 'false');
+  return false;
+}
+
 export const ingestImageById = async ({ id }: GetByIdInput) => {
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt
@@ -811,7 +828,7 @@ export const ingestImage = async ({
     image.prompt = prompt;
   }
 
-  if (env.IMAGE_SCANNER_NEW || userId === 5) {
+  if ((await isImageScannerNewEnabled()) || userId === 5) {
     const { data: workflowResponse } = await createImageIngestionRequest({
       imageId: id,
       url,

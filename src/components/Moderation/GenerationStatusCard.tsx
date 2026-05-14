@@ -3,51 +3,21 @@ import {
   Badge,
   Button,
   Card,
-  Container,
   Group,
   Loader,
   Stack,
   Switch,
-  Text,
   Textarea,
   Title,
 } from '@mantine/core';
 import { showNotification } from '@mantine/notifications';
-import { IconSettings, IconSparkles } from '@tabler/icons-react';
+import { IconPhoto } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
-import { Page } from '~/components/AppLayout/Page';
-import { Meta } from '~/components/Meta/Meta';
-import { GenerationStatusCard } from '~/components/Moderation/GenerationStatusCard';
 import { trpc } from '~/utils/trpc';
 
-function ServiceStatusPage() {
-  return (
-    <>
-      <Meta title="Service Status" deIndex />
-      <Container size="md" py="xl">
-        <Stack gap="xl">
-          <Group gap="sm" align="center">
-            <IconSettings size={28} />
-            <Stack gap={0}>
-              <Title order={2}>Service Status</Title>
-              <Text c="dimmed" size="sm">
-                Enable or disable image generation and training. Set the message shown to users
-                when a service is unavailable.
-              </Text>
-            </Stack>
-          </Group>
-
-          <GenerationStatusCard />
-          <TrainingStatusCard />
-        </Stack>
-      </Container>
-    </>
-  );
-}
-
-function TrainingStatusCard() {
+export function GenerationStatusCard() {
   const utils = trpc.useUtils();
-  const { data, isLoading } = trpc.training.getStatusModerator.useQuery();
+  const { data, isLoading } = trpc.generation.getStatusModerator.useQuery();
   const [available, setAvailable] = useState(true);
   const [message, setMessage] = useState('');
   const [dirty, setDirty] = useState(false);
@@ -58,13 +28,13 @@ function TrainingStatusCard() {
     setMessage(data.message ?? '');
   }, [data, dirty]);
 
-  const setStatus = trpc.training.setStatus.useMutation({
+  const setStatus = trpc.generation.setStatus.useMutation({
     onSuccess: async () => {
-      await utils.training.getStatusModerator.invalidate();
+      await utils.generation.getStatusModerator.invalidate();
       setDirty(false);
       showNotification({
         title: 'Saved',
-        message: 'Training status updated',
+        message: 'Image generation status updated',
         color: 'green',
       });
     },
@@ -82,8 +52,8 @@ function TrainingStatusCard() {
       <Stack gap="md">
         <Group gap="sm" align="center" justify="space-between">
           <Group gap="sm" align="center">
-            <IconSparkles size={20} />
-            <Title order={4}>Training</Title>
+            <IconPhoto size={20} />
+            <Title order={4}>Image Generation</Title>
           </Group>
           {!isLoading && data && (
             <Badge color={data.available ? 'green' : 'red'} variant="light">
@@ -105,12 +75,12 @@ function TrainingStatusCard() {
                 setDirty(true);
               }}
               label={available ? 'Enabled' : 'Disabled'}
-              description="When disabled, users cannot start new training jobs."
+              description="When disabled, users cannot start new image generations."
             />
             <Textarea
               label="Status message"
-              description="Shown to users when training is unavailable. Leave blank for no message."
-              placeholder="e.g. Training is paused while we investigate an issue."
+              description="Shown to users when generation is unavailable. Leave blank for no message."
+              placeholder="e.g. Image generation is temporarily down for maintenance."
               value={message}
               onChange={(e) => {
                 setMessage(e.currentTarget.value);
@@ -123,8 +93,8 @@ function TrainingStatusCard() {
             />
             {!available && !message.trim() && (
               <Alert color="yellow" variant="light">
-                Training is disabled but no message is set. Consider adding a message so users know
-                what is happening.
+                Generation is disabled but no message is set. Consider adding a message so users
+                know what is happening.
               </Alert>
             )}
             <Group justify="flex-end">
@@ -138,7 +108,3 @@ function TrainingStatusCard() {
     </Card>
   );
 }
-
-export default Page(ServiceStatusPage, {
-  features: (features) => features.serviceStatus,
-});

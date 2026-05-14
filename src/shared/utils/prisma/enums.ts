@@ -471,6 +471,8 @@ export const TagSource = {
   HiveDemographics: 'HiveDemographics',
   Clavata: 'Clavata',
   SpineRating: 'SpineRating',
+  AiRecognition: 'AiRecognition',
+  AnimeRecognition: 'AnimeRecognition',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];
@@ -1030,3 +1032,13 @@ export const StrikeStatus = {
 } as const;
 
 export type StrikeStatus = (typeof StrikeStatus)[keyof typeof StrikeStatus];
+
+export const ReviewVerdict = {
+  TruePositive: 'TruePositive',
+  FalsePositive: 'FalsePositive',
+  TrueNegative: 'TrueNegative',
+  FalseNegative: 'FalseNegative',
+  Unsure: 'Unsure',
+} as const;
+
+export type ReviewVerdict = (typeof ReviewVerdict)[keyof typeof ReviewVerdict];

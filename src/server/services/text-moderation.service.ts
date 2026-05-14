@@ -1,6 +1,5 @@
-import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { createTextModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import {
   hashContent,
   upsertEntityModerationPending,
@@ -15,6 +14,7 @@ export async function submitTextModeration({
   labels,
   priority,
   wait,
+  recordForReview = false,
 }: {
   entityType: string;
   entityId: number;
@@ -22,15 +22,12 @@ export async function submitTextModeration({
   labels?: string[];
   priority?: Priority;
   wait?: number;
+  recordForReview?: boolean;
 }) {
-  const callbackUrl =
-    env.TEXT_MODERATION_CALLBACK ??
-    `${env.NEXTAUTH_URL}/api/webhooks/text-moderation-result?token=${env.WEBHOOK_TOKEN}`;
-
   const contentHash = hashContent(content);
 
   // Persist the Pending row BEFORE calling the orchestrator so a silent
-  // orchestrator failure (createTextModerationRequest returns undefined) still
+  // orchestrator failure (createXGuardModerationRequest returns undefined) still
   // leaves a retry candidate for `retry-failed-text-moderation`. Without this,
   // a failed submit produced no DB row and the article was trapped forever.
   await upsertEntityModerationPending({
@@ -40,14 +37,15 @@ export async function submitTextModeration({
     contentHash,
   });
 
-  const workflow = await createTextModerationRequest({
+  const workflow = await createXGuardModerationRequest({
+    mode: 'text',
     entityType,
     entityId,
     content,
     labels,
-    callbackUrl,
     priority,
     wait,
+    recordForReview,
   });
 
   if (workflow?.id) {

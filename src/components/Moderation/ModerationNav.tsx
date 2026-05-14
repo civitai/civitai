@@ -99,6 +99,10 @@ export function ModerationNav() {
           href: '/moderator/prompt-audit-test',
           hidden: !features.csamReports,
         },
+        {
+          label: 'Scanner Audit',
+          href: '/moderator/scanner-audit',
+        },
       ]
         .filter((i) => !i.hidden)
         .map((link) => (
