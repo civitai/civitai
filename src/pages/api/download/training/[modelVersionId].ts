@@ -83,14 +83,30 @@ export default AuthedEndpoint(
       return res.status(404).json({ error: 'Epoch download URL not available' });
     }
 
+    // Abort the upstream fetch + stream when the client disconnects.
+    // Without this, a client hang or Traefik timeout leaves the pod streaming
+    // into a dead socket for minutes, holding an event-loop slot.
+    const abortController = new AbortController();
+    const onClientClose = () => abortController.abort();
+    req.on('close', onClientClose);
+
     // Fetch from orchestrator using server-side token (bypasses CORS)
-    const orchestratorResponse = await fetch(epochUrl, {
-      headers: {
-        Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
-      },
-    });
+    let orchestratorResponse: Response;
+    try {
+      orchestratorResponse = await fetch(epochUrl, {
+        headers: {
+          Authorization: `Bearer ${env.ORCHESTRATOR_ACCESS_TOKEN}`,
+        },
+        signal: abortController.signal,
+      });
+    } catch (err) {
+      req.off('close', onClientClose);
+      if (abortController.signal.aborted) return res.end();
+      throw err;
+    }
 
     if (!orchestratorResponse.ok) {
+      req.off('close', onClientClose);
       return res
         .status(orchestratorResponse.status)
         .json({ error: 'Failed to fetch epoch from storage' });
@@ -110,17 +126,31 @@ export default AuthedEndpoint(
 
     const body = orchestratorResponse.body;
     if (!body) {
+      req.off('close', onClientClose);
       return res.status(500).json({ error: 'No response body from storage' });
     }
 
-    // Convert Web ReadableStream to Node.js Readable and pipe to response
+    // Convert Web ReadableStream to Node.js Readable and pipe to response.
+    // Destroy the stream on client disconnect so we stop reading from the orchestrator.
     const nodeStream = Readable.fromWeb(body as NodeReadableStream);
-    await new Promise<void>((resolve, reject) => {
-      nodeStream.pipe(res);
-      nodeStream.on('error', reject);
-      res.on('finish', resolve);
-      res.on('error', reject);
-    });
+    const onClientCloseStream = () => nodeStream.destroy();
+    req.on('close', onClientCloseStream);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        nodeStream.pipe(res);
+        nodeStream.on('error', (err) => {
+          // Aborted by client disconnect — not an error condition for us.
+          if (abortController.signal.aborted) return resolve();
+          reject(err);
+        });
+        res.on('finish', resolve);
+        res.on('error', reject);
+      });
+    } finally {
+      req.off('close', onClientClose);
+      req.off('close', onClientCloseStream);
+    }
   },
   ['GET']
 );
