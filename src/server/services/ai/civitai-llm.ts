@@ -1,7 +1,13 @@
+import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import type { SimpleMessage } from '~/server/services/ai/openrouter';
 
 export type { SimpleMessage } from '~/server/services/ai/openrouter';
+
+declare global {
+  // eslint-disable-next-line no-var, vars-on-top
+  var globalCivitaiLLM: CivitaiLLM | undefined;
+}
 
 type GetJsonCompletionInput = {
   model: string;
@@ -180,12 +186,17 @@ function createCivitaiLLM(endpoint: string, token: string): CivitaiLLM {
   return { getJsonCompletion };
 }
 
+export let civitaiLLM: CivitaiLLM | undefined;
 const endpoint = env.ORCHESTRATOR_ENDPOINT;
 const token = env.ORCHESTRATOR_ACCESS_TOKEN;
-export const civitaiLLM: CivitaiLLM | undefined =
-  endpoint && token ? createCivitaiLLM(endpoint, token) : undefined;
-
-if (!civitaiLLM) {
+if (endpoint && token) {
+  if (isProd) {
+    civitaiLLM = createCivitaiLLM(endpoint, token);
+  } else {
+    if (!global.globalCivitaiLLM) global.globalCivitaiLLM = createCivitaiLLM(endpoint, token);
+    civitaiLLM = global.globalCivitaiLLM;
+  }
+} else {
   console.warn(
     '[civitai-llm] ORCHESTRATOR_ENDPOINT and/or ORCHESTRATOR_ACCESS_TOKEN missing — calls to urn:air:* models will throw "Civitai LLM not connected".'
   );
