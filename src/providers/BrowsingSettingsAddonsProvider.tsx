@@ -67,8 +67,8 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
           }
 
           if (apply) {
-            acc.disablePoi = elem.disablePoi || acc.disablePoi;
-            acc.disableMinor = elem.disableMinor || acc.disableMinor;
+            if (elem.disablePoi !== undefined) acc.disablePoi = elem.disablePoi;
+            if (elem.disableMinor !== undefined) acc.disableMinor = elem.disableMinor;
             acc.excludedTagIds.push(...(elem.excludedTagIds ?? []));
             acc.excludedFooterLinks.push(...(elem.excludedFooterLinks ?? []));
             acc.generationDefaultValues = {

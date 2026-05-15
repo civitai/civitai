@@ -474,6 +474,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
+              minor={model.minor}
             />
           )}
           {showRequestReview ? (
@@ -1359,9 +1360,9 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
                           </Popover.Target>
                           <Popover.Dropdown>
                             <Text size="xs">
-                              The creator has issued a license fee. This amount is added on top
-                              of the standard generation cost for each image generated on Civitai
-                              with this resource.
+                              The creator has issued a license fee. This amount is added on top of
+                              the standard generation cost for each image generated on Civitai with
+                              this resource.
                             </Text>
                           </Popover.Dropdown>
                         </Popover>
@@ -1677,11 +1678,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               <Stack gap={4} style={{ flex: 1, minWidth: 0 }}>
                 <Group gap={4} wrap="wrap" align="center">
                   <IconLicense size={16} />
-                  <Text
-                    size="xs"
-                    c="dimmed"
-                    style={{ whiteSpace: 'nowrap', lineHeight: 1.1 }}
-                  >
+                  <Text size="xs" c="dimmed" style={{ whiteSpace: 'nowrap', lineHeight: 1.1 }}>
                     License{model.licenses.length > 0 ? 's' : ''}:
                   </Text>
                   {license && (
@@ -1763,6 +1760,7 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
+              minor={model.minor}
             />
           )}
           {model.description ? (

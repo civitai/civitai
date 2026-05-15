@@ -639,15 +639,6 @@ export default function ModelDetailsV2({
     return <NotFound />;
   }
 
-  if (model.minor && browsingSettingsAddons.settings.disableMinor) {
-    return (
-      <NotFound
-        title="Model not available with current settings"
-        message="This model is hidden when adult content filters are on. Disable X/XXX to view it."
-      />
-    );
-  }
-
   const image = versionImages.find((image) => getIsSafeBrowsingLevel(image.nsfwLevel));
   const imageUrl = image ? getEdgeUrl(image.url, { width: 1200 }) : undefined;
   const thumbsUpCount = model.rank?.thumbsUpCountAllTime ?? 0;
