@@ -1,5 +1,5 @@
 import type { SuggestionOptions } from '@tiptap/suggestion';
-import { exitSuggestion } from '@tiptap/suggestion';
+import { exitSuggestion, SuggestionPluginKey } from '@tiptap/suggestion';
 import { computePosition, flip, shift } from '@floating-ui/dom';
 import { posToDOMRect, ReactRenderer } from '@tiptap/react';
 
@@ -12,6 +12,12 @@ export function getSuggestions(options?: Options) {
   const { defaultSuggestions = [] } = options || {};
 
   const suggestion: Omit<SuggestionOptions, 'editor'> = {
+    // @tiptap/extension-mention creates a fresh anonymous PluginKey per
+    // suggestion instance. exitSuggestion() defaults to SuggestionPluginKey,
+    // so without aligning the keys here the metadata-only exit transaction
+    // would never reach the mention plugin's reducer and outside-click
+    // would silently fail to close the popup.
+    pluginKey: SuggestionPluginKey,
     items: ({ query }) =>
       defaultSuggestions
         .filter((suggestion) => suggestion.label.toLowerCase().startsWith(query.toLowerCase()))
