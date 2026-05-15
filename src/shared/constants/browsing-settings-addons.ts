@@ -22,8 +22,6 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
     nsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disablePoi: true,
     excludedTagIds: [
-      415792, // Clavata Celebrity
-      426772, // Clavata Celebrity
       5161, //actor
       5162, //actress
       5188, //celebrity
