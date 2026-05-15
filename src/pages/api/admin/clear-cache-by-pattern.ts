@@ -8,10 +8,13 @@ const schema = z.object({
   pattern: z.string().optional(),
   patterns: z.string().optional(),
   stream: z.string().optional(),
+  // Which Redis instance to target. Defaults to the main cache cluster.
+  target: z.enum(['main', 'sys']).optional(),
 });
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const parsed = schema.parse(req.query);
+  const target = parsed.target ?? 'main';
   const patterns = parsed.patterns
     ? parsed.patterns
         .split(',')
@@ -39,11 +42,15 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
-    send('start', { patterns });
+    send('start', { patterns, target });
     const heartbeat = setInterval(() => res.write(': heartbeat\n\n'), 15000);
 
     try {
-      const results = await clearCacheByPatterns(patterns, (progress) => send('progress', progress));
+      const results = await clearCacheByPatterns(
+        patterns,
+        (progress) => send('progress', progress),
+        target
+      );
       const total = results.reduce((s, r) => s + r.cleared, 0);
       send('done', { total, perPattern: results });
     } catch (e) {
@@ -56,11 +63,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   }
 
   if (patterns.length === 1) {
-    const cleared = await clearCacheByPattern(patterns[0]);
-    return res.status(200).json({ ok: true, cleared: cleared.length });
+    const cleared = await clearCacheByPattern(patterns[0], undefined, target);
+    return res.status(200).json({ ok: true, cleared: cleared.length, target });
   }
 
-  const results = await clearCacheByPatterns(patterns);
+  const results = await clearCacheByPatterns(patterns, undefined, target);
   const total = results.reduce((s, r) => s + r.cleared, 0);
-  return res.status(200).json({ ok: true, cleared: total, perPattern: results });
+  return res.status(200).json({ ok: true, cleared: total, target, perPattern: results });
 });

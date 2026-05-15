@@ -32,14 +32,21 @@ export interface BlockedPromptEntry {
   time: string;
 }
 
-const BLOCKED_PROMPTS_TTL = 60 * 60 * 24; // 24 hours — ClickHouse seed is a cold-start fallback only
+// Window over which we count blocked-prompt attempts toward the auto-mute threshold.
+// Doubles as the Redis TTL and as the ClickHouse seed window so that a cold start
+// (key missing / sysRedis wipe) rebuilds the counter with the same horizon it would
+// have had in steady state. Keeping these in lockstep prevents the previous behavior
+// where many users effectively accumulated forever in Redis but only recovered the
+// last 24h after a wipe.
+const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
+const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const RESET_MARKER = '__RESET__';
 
 function getBlockedPromptsKey(userId: number) {
   return `${REDIS_SYS_KEYS.GENERATION.BLOCKED_PROMPTS}:${userId}` as const;
 }
 
-/** Seed the blocked prompts list from ClickHouse for today's violations */
+/** Seed the blocked prompts list from ClickHouse for the configured rolling window. */
 async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
   const key = getBlockedPromptsKey(userId);
   const { clickhouse } = await import('~/server/clickhouse/client');
@@ -60,7 +67,7 @@ async function seedBlockedPromptsFromClickHouse(userId: number): Promise<void> {
   }>`
     SELECT prompt, negativePrompt, source, remixOfId, time
     FROM prohibitedRequests
-    WHERE time > subtractHours(now(), 24) AND userId = ${userId}
+    WHERE time > subtractDays(now(), ${BLOCKED_PROMPTS_WINDOW_DAYS}) AND userId = ${userId}
     ORDER BY time ASC
   `;
 
@@ -110,17 +117,18 @@ async function addBlockedPrompt(userId: number, entry: BlockedPromptEntry): Prom
     await seedBlockedPromptsFromClickHouse(userId);
   }
 
-  // Check if list only contains reset marker - if so, remove it first
+  // Push the new entry first so the list is never empty during cleanup —
+  // an empty list would auto-delete the key in Redis and discard its TTL.
+  await sysRedis.lPush(key, JSON.stringify(entry));
+
+  // If the seeded list was just a reset marker, drop the marker now that we
+  // have a real entry. Using lRem (not del) preserves the TTL set by the seed.
   const currentEntries = await sysRedis.lRange(key, 0, -1);
-  if (currentEntries.length === 1 && currentEntries[0] === RESET_MARKER) {
-    await sysRedis.del(key);
+  if (currentEntries.includes(RESET_MARKER)) {
+    await sysRedis.lRem(key, 0, RESET_MARKER);
   }
 
-  await sysRedis.lPush(key, JSON.stringify(entry));
-  // Don't reset TTL here — let the key expire on its natural schedule
-  // so re-seeding from ClickHouse keeps the rolling 24h window accurate.
-
-  // Return count (lLen is faster than fetching all entries)
+  // Marker has been removed above, so lLen now equals the real violation count.
   return await sysRedis.lLen(key);
 }
 
@@ -379,9 +387,10 @@ async function reportProhibitedRequest(options: {
         },
       });
 
+      const muteDate = new Date();
       await updateUserById({
         id: userId,
-        data: { muted: true },
+        data: { muted: true, mutedAt: muteDate, muteConfirmedAt: muteDate },
         updateSource: 'promptAuditing:autoMute',
       });
 

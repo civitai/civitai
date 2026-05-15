@@ -3,8 +3,18 @@ import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
 import { cacheHitCounter, cacheMissCounter, cacheRevalidateCounter } from '~/server/prom/client';
-import type { RedisKeyTemplateCache } from '~/server/redis/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import type { RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
+import { redis, REDIS_KEYS, sysRedis } from '~/server/redis/client';
+
+export type CacheTarget = 'main' | 'sys';
+
+// The clearCacheByPattern* helpers use only the cross-client methods
+// (scanIterator, del); typed as `any` here to bridge the cache vs sys key-template
+// generics without forcing every caller to know which client they're hitting.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function getCacheClient(target: CacheTarget = 'main'): any {
+  return target === 'sys' ? sysRedis : redis;
+}
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
@@ -462,30 +472,35 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
   await redis.packed.set(key, toCache, { KEEPTTL: true });
 }
 
-export async function clearCacheByPattern(pattern: string, onProgress?: (cleared: number) => void) {
+export async function clearCacheByPattern(
+  pattern: string,
+  onProgress?: (cleared: number) => void,
+  target: CacheTarget = 'main'
+) {
+  const client = getCacheClient(target);
   const cleared: string[] = [];
 
   if (!pattern.includes('*')) {
-    await redis.del(pattern as RedisKeyTemplateCache);
+    await client.del(pattern);
     cleared.push(pattern);
     onProgress?.(cleared.length);
     return cleared;
   }
 
   // Use cluster's scanIterator which handles scanning all nodes
-  log('Scanning cache with pattern:', pattern);
-  const stream = redis.scanIterator({ MATCH: pattern, COUNT: 10000 });
+  log('Scanning cache with pattern:', pattern, 'target:', target);
+  const stream = client.scanIterator({ MATCH: pattern, COUNT: 10000 });
 
   for await (const keys of stream) {
-    const newKeys = (keys as RedisKeyTemplateCache[]).filter((key) => !cleared.includes(key));
+    const newKeys = (keys as RedisKeyTemplates[]).filter((key) => !cleared.includes(key));
     log('Total keys:', cleared.length, 'Adding:', newKeys.length);
     if (newKeys.length === 0) continue;
 
     const batches = chunk(newKeys, 10000);
     for (let i = 0; i < batches.length; i++) {
       log('Clearing batch:', i + 1, 'of', batches.length);
-      // Delete keys one at a time to avoid CROSSSLOT errors
-      await Promise.all(batches[i].map((key) => redis.del(key)));
+      // Delete keys one at a time to avoid CROSSSLOT errors on the main cluster.
+      await Promise.all(batches[i].map((key) => client.del(key)));
       cleared.push(...batches[i]);
       log('Cleared batch:', i + 1, 'of', batches.length);
       onProgress?.(cleared.length);
@@ -513,8 +528,10 @@ export type ClearCacheByPatternsProgress = {
 // tests each key against every pattern regex. Replaces N full SCANs with 1.
 export async function clearCacheByPatterns(
   patterns: string[],
-  onProgress?: (progress: ClearCacheByPatternsProgress) => void
+  onProgress?: (progress: ClearCacheByPatternsProgress) => void,
+  target: CacheTarget = 'main'
 ) {
+  const client = getCacheClient(target);
   const perPattern = patterns.map((pattern) => ({
     pattern,
     regex: globToRegex(pattern),
@@ -526,17 +543,17 @@ export async function clearCacheByPatterns(
 
   // Fast path for exact keys — no scan needed.
   for (const p of exact) {
-    await redis.del(p.pattern as RedisKeyTemplateCache);
+    await client.del(p.pattern as RedisKeyTemplates);
     p.cleared.push(p.pattern);
   }
 
   if (globbed.length > 0) {
-    log('Scanning cache for', globbed.length, 'patterns in a single pass');
-    const stream = redis.scanIterator({ MATCH: '*', COUNT: 10000 });
+    log('Scanning cache for', globbed.length, 'patterns in a single pass, target:', target);
+    const stream = client.scanIterator({ MATCH: '*', COUNT: 10000 });
 
     for await (const keys of stream) {
-      const toDelete: RedisKeyTemplateCache[] = [];
-      for (const key of keys as RedisKeyTemplateCache[]) {
+      const toDelete: RedisKeyTemplates[] = [];
+      for (const key of keys as RedisKeyTemplates[]) {
         for (const p of globbed) {
           if (p.regex.test(key)) {
             p.cleared.push(key);
@@ -549,7 +566,7 @@ export async function clearCacheByPatterns(
 
       const batches = chunk(toDelete, 10000);
       for (const batch of batches) {
-        await Promise.all(batch.map((key) => redis.del(key)));
+        await Promise.all(batch.map((key) => client.del(key)));
       }
       const total = perPattern.reduce((s, p) => s + p.cleared.length, 0);
       onProgress?.({
