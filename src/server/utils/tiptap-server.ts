@@ -27,17 +27,32 @@
  * The fix
  * -------
  * Reimplement `generateJSON` locally — the upstream body is ~10 lines —
- * and call `await window.happyDOM.close()` in a `finally` block.
- * `happyDOM.close()` triggers the destroy chain in `BrowserWindow` which
- * calls `WindowBrowserContext.removeWindowBrowserFrameRelation(this)` and
- * frees the entry from the static `browserFrames` Map. This matches
- * happy-dom's documented disposal contract.
+ * and call `localWindow.happyDOM.close()` in a `finally` block (fire-and-
+ * forget; see "Why not await" below). `happyDOM.close()` triggers the
+ * destroy chain in `BrowserWindow` which calls
+ * `WindowBrowserContext.removeWindowBrowserFrameRelation(this)` and frees
+ * the entry from the static `browserFrames` Map. This matches happy-dom's
+ * documented disposal contract.
  *
- * The callers in this codebase only need the synchronous result of
- * `parseFromString(...).toJSON()`, so the close can run without awaiting
- * — it will resolve in the background and is safe to fire-and-forget for
- * teardown. We `void` it to keep the function signature synchronous and
- * avoid changing every callsite to `await`.
+ * Cleanup timing
+ * --------------
+ * For content with no iframes, the destroy chain runs synchronously inside
+ * the `Promise` constructor in `BrowserFrameFactory.destroyFrame`, so the
+ * Map entry is gone before `close()` returns. For content with iframes
+ * (e.g. YouTube embeds — which are exactly what bloated the heap pre-fix),
+ * the parent window's destroy runs in `.then(...)` after `Promise.all`
+ * over children — i.e. one microtask later, not synchronously. In either
+ * case, microtasks drain before the next SSR request lands, so the Map is
+ * empty across requests; entries never accumulate.
+ *
+ * Why not await
+ * -------------
+ * Awaiting would close the iframe-path microtask gap, but at the cost of
+ * making `generateJSON` async and propagating `await` to every callsite.
+ * Since the gap is bounded by one microtask drain (not by I/O) and never
+ * spans requests, the sync-API ergonomics win. We `void` the promise and
+ * `.catch(() => {})` so an unlikely close() rejection doesn't surface as
+ * an unhandled rejection.
  *
  * Upstream issue family on tiptap + happy-dom: see happy-dom GitHub
  * issues referencing "WindowBrowserContext" / "browserFrames" memory
@@ -82,10 +97,9 @@ export function generateJSON(
       .toJSON();
   } finally {
     // Drop this window from happy-dom's static `browserFrames` Map and
-    // release the BrowserWindow + DOM tree. The returned promise resolves
-    // when async tasks (none for our parse-only flow) complete; we don't
-    // need to await it for correctness, but we don't want an unhandled
-    // rejection in the unlikely event close() throws.
+    // release the BrowserWindow + DOM tree. Synchronous for iframe-free
+    // content; one microtask later for content with iframes (see header).
+    // Either way the Map entry is gone before the next SSR request lands.
     void localWindow.happyDOM.close().catch(() => {
       /* swallow — disposal best-effort */
     });
