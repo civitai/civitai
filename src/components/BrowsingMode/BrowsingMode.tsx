@@ -95,11 +95,12 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                   Your content levels are limited by restrictions in your region
                 </Text>
               )}
-              {browsingSettingsAddons.settings.disablePoi && (
+              {(browsingSettingsAddons.settings.disablePoi ||
+                browsingSettingsAddons.settings.disableMinor) && (
                 <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
                   <Text c="dimmed" size="xs">
-                    With X or XXX enabled, some content may be hidden.{' '}
+                    With mature content enabled, some content may be hidden.{' '}
                     <Anchor href="/articles/13632">Learn more</Anchor>
                   </Text>
                 </Group>

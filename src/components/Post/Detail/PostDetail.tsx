@@ -379,8 +379,8 @@ export function PostDetailContent({ postId }: Props) {
                   hiddenExplained.hiddenByBrowsingSettings.length > 0 && (
                     <>
                       <Alert color="yellow" mb="md">
-                        While browsing with X or XXX enabled, content tagged as minor or potential
-                        celebrity is not shown. Some images in this post have been hidden.
+                        With mature content enabled, content tagged as minor is not shown. Some
+                        images in this post have been hidden.
                       </Alert>
                     </>
                   )}
