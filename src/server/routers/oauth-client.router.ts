@@ -7,6 +7,7 @@ import { logOAuthEvent } from '~/server/oauth/audit-log';
 import {
   createOauthClientSchema,
   deleteOauthClientSchema,
+  deriveAllowedOriginsFromRedirectUris,
   getOauthClientByIdSchema,
   rotateOauthClientSecretSchema,
   updateOauthClientSchema,
@@ -28,6 +29,7 @@ export const oauthClientRouter = router({
           logoUrl: true,
           isVerified: true,
           redirectUris: true,
+          allowedOrigins: true,
           allowedScopes: true,
         },
       });
@@ -45,6 +47,7 @@ export const oauthClientRouter = router({
         description: true,
         logoUrl: true,
         redirectUris: true,
+        allowedOrigins: true,
         grants: true,
         allowedScopes: true,
         isConfidential: true,
@@ -65,6 +68,15 @@ export const oauthClientRouter = router({
       const clientSecret = input.isConfidential ? generateKey(48) : null;
       const hashedSecret = clientSecret ? generateSecretHash(clientSecret) : null;
 
+      // Public clients depend on Origin pinning for token-endpoint identity;
+      // if the caller didn't supply explicit origins, fall back to the origin
+      // part of their redirect URIs so registration still produces a working
+      // client without forcing the user to type the same hosts twice.
+      const allowedOrigins =
+        input.allowedOrigins.length > 0
+          ? input.allowedOrigins
+          : deriveAllowedOriginsFromRedirectUris(input.redirectUris);
+
       await dbWrite.oauthClient.create({
         data: {
           id: clientId,
@@ -72,6 +84,7 @@ export const oauthClientRouter = router({
           name: input.name,
           description: input.description,
           redirectUris: input.redirectUris,
+          allowedOrigins,
           isConfidential: input.isConfidential,
           allowedScopes: input.allowedScopes,
           userId: ctx.user.id,

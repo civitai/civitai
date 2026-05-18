@@ -1,7 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { timingSafeEqual } from 'crypto';
 import requestIp from 'request-ip';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { addCorsHeaders } from '~/server/utils/endpoint-helpers';
 import { checkOAuthRateLimit, sendRateLimitResponse } from '~/server/oauth/rate-limit';
@@ -9,14 +9,56 @@ import { logOAuthEvent } from '~/server/oauth/audit-log';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const shouldStop = addCorsHeaders(req, res, ['POST']);
-  if (shouldStop) return;
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
+
+  // Preflights stay permissive — we can't know whether the caller is public
+  // or confidential until we see the client_id on the actual POST.
+  if (req.method === 'OPTIONS') {
+    const shouldStop = addCorsHeaders(req, res, ['POST']);
+    if (shouldStop) return;
+  }
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
   const { token, token_type_hint, client_id, client_secret } = req.body;
+
+  // Mirror the token endpoint: public clients must come from a registered
+  // origin. Confidential clients keep the existing wildcard CORS.
+  let isConfidentialClient = true;
+  if (typeof client_id === 'string') {
+    const lookedUp = await dbRead.oauthClient.findUnique({
+      where: { id: client_id },
+      select: { id: true, isConfidential: true, allowedOrigins: true },
+    });
+    if (lookedUp) {
+      isConfidentialClient = lookedUp.isConfidential;
+      if (!lookedUp.isConfidential) {
+        if (!origin || !lookedUp.allowedOrigins.includes(origin)) {
+          logOAuthEvent({
+            type: 'origin.rejected',
+            clientId: lookedUp.id,
+            ip: requestIp.getClientIp(req) ?? undefined,
+            metadata: { origin: origin ?? null, endpoint: 'revoke' },
+          });
+          return res.status(403).json({
+            error: 'origin_not_allowed',
+            error_description:
+              'Origin is not in the registered allowedOrigins for this client.',
+          });
+        }
+        res.setHeader('Access-Control-Allow-Origin', origin);
+        res.setHeader('Vary', 'Origin');
+        res.setHeader('Access-Control-Allow-Credentials', 'true');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'POST');
+      }
+    }
+  }
+  if (isConfidentialClient) {
+    addCorsHeaders(req, res, ['POST']);
+  }
 
   if (!token) {
     return res
