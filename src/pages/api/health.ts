@@ -96,22 +96,14 @@ const checkFns: Record<string, CancellableCheckFn> = {
     });
   },
 
-  // Redis checks - use simple ping (redis v5 doesn't support AbortSignal via commandOptions)
+  // Redis cluster client: skip explicit PING because redis@5 cluster client
+  // throws `Cannot read properties of undefined (reading 'connectPromise')`
+  // when a master is transiently re-establishing, even with isReady=true.
+  // isReady tracks topology + per-master connection state; it flips to
+  // false on real failures.
   async redis(signal: AbortSignal) {
     if (signal.aborted) return false;
-    try {
-      // For cluster, we need to check if it's ready first
-      const baseClient = redis as any;
-      if (baseClient.isReady === false) {
-        return false;
-      }
-      const res = await (redis as any).ping();
-      return res === 'PONG';
-    } catch (e) {
-      if (signal.aborted || (e as Error).name === 'AbortError') return false;
-      logError({ error: e as Error, name: 'redis', details: null });
-      return false;
-    }
+    return (redis as any).isReady === true;
   },
 
   async sysRedis(signal: AbortSignal) {
