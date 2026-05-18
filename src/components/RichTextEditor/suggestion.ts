@@ -1,4 +1,5 @@
 import type { SuggestionOptions } from '@tiptap/suggestion';
+import { exitSuggestion, SuggestionPluginKey } from '@tiptap/suggestion';
 import { computePosition, flip, shift } from '@floating-ui/dom';
 import { posToDOMRect, ReactRenderer } from '@tiptap/react';
 
@@ -11,13 +12,19 @@ export function getSuggestions(options?: Options) {
   const { defaultSuggestions = [] } = options || {};
 
   const suggestion: Omit<SuggestionOptions, 'editor'> = {
+    // @tiptap/extension-mention creates a fresh anonymous PluginKey per
+    // suggestion instance. exitSuggestion() defaults to SuggestionPluginKey,
+    // so without aligning the keys here the metadata-only exit transaction
+    // would never reach the mention plugin's reducer and outside-click
+    // would silently fail to close the popup.
+    pluginKey: SuggestionPluginKey,
     items: ({ query }) =>
       defaultSuggestions
         .filter((suggestion) => suggestion.label.toLowerCase().startsWith(query.toLowerCase()))
         .slice(0, 5),
     render: () => {
       let component: ReactRenderer<MentionListRef>;
-      // let popup: TippyInstance[] | undefined;
+      let outsideClickHandler: ((event: MouseEvent) => void) | null = null;
 
       return {
         onStart: (props) => {
@@ -32,6 +39,18 @@ export function getSuggestions(options?: Options) {
           document.body.appendChild(component.element);
 
           updatePosition(props.editor, component.element);
+
+          // @tiptap/suggestion 3.4.0 removed the built-in document mousedown
+          // handler that closed popups on outside click. Restore that behavior
+          // here so clicking outside the popup and editor exits the suggestion.
+          outsideClickHandler = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            if (!target) return;
+            if (component.element.contains(target)) return;
+            if (props.editor.view.dom.contains(target)) return;
+            exitSuggestion(props.editor.view);
+          };
+          document.addEventListener('mousedown', outsideClickHandler);
         },
 
         onUpdate(props) {
@@ -42,16 +61,14 @@ export function getSuggestions(options?: Options) {
         },
 
         onKeyDown(props) {
-          if (props.event.key === 'Escape') {
-            component.destroy();
-
-            return true;
-          }
-
           return component.ref?.onKeyDown(props) ?? true;
         },
 
         onExit() {
+          if (outsideClickHandler) {
+            document.removeEventListener('mousedown', outsideClickHandler);
+            outsideClickHandler = null;
+          }
           component.element.remove();
           component.destroy();
         },
