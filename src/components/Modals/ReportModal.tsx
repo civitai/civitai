@@ -22,6 +22,7 @@ import { AdminAttentionForm } from '~/components/Report/AdminAttentionForm';
 import { ClaimForm } from '~/components/Report/ClaimForm';
 import { ArticleNsfwForm, ImageNsfwForm, ModelNsfwForm } from '~/components/Report/NsfwForm';
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
+import { SpamForm } from '~/components/Report/SpamForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
 import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -108,6 +109,26 @@ const reports = [
     label: 'This uses my art',
     Element: OwnershipForm,
     availableFor: [ReportEntity.Model, ReportEntity.BountyEntry],
+  },
+  {
+    reason: ReportReason.Spam,
+    label: 'Spam',
+    Element: SpamForm,
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.Comment,
+      ReportEntity.CommentV2,
+      ReportEntity.Image,
+      ReportEntity.ResourceReview,
+      ReportEntity.Article,
+      ReportEntity.Post,
+      ReportEntity.User,
+      ReportEntity.Collection,
+      ReportEntity.Bounty,
+      ReportEntity.BountyEntry,
+      ReportEntity.Chat,
+      ReportEntity.ComicProject,
+    ],
   },
 ];
 
