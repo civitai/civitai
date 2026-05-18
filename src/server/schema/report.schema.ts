@@ -91,7 +91,6 @@ export const reportCsamSchema = baseSchema.extend({
 
 export const reportSpamSchema = baseSchema.extend({
   reason: z.literal(ReportReason.Spam),
-  details: reportSpamDetailsSchema,
 });
 
 export const reportAutomatedSchema = baseSchema.extend({
