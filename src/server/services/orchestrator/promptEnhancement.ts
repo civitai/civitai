@@ -77,27 +77,24 @@ export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem
   const promptLower = input.prompt.toLowerCase();
   const negativeLower = (input.negativePrompt ?? '').toLowerCase();
 
-  // Combined preserve list — LoRA trigger words and snippet `#references` ride
-  // the same "Preserve these exact trigger words…" directive to keep the LLM
-  // instruction surface tight. They have different runtime semantics on the
-  // server (snippets get resolved post-enhancement; trigger words activate
-  // LoRAs at generation time), but the ask of the LLM is identical: leave
-  // these tokens untouched. Dedupe case-insensitively in case a trigger word
-  // coincidentally matches a `#category`.
-  const preserveTokens: string[] = [];
-  const seen = new Set<string>();
-  const addToken = (raw: string) => {
-    const key = raw.toLowerCase();
-    if (seen.has(key)) return;
-    seen.add(key);
-    preserveTokens.push(raw);
-  };
-  for (const w of input.preserveTriggerWords ?? []) addToken(w);
-  for (const t of collectSnippetTokens(input)) addToken(t);
+  // Trigger words and snippet `#references` are both "leave this token alone"
+  // asks, but they need different positional language:
+  //   - Trigger words (LoRA activators): position doesn't matter; the LLM
+  //     can place them wherever reads best in the enhanced prompt.
+  //   - Snippet refs: position MATTERS to the user — the placeholder will be
+  //     substituted with a random value at generation time, and the user's
+  //     prompt structure was authored around where they put each `#ref`.
+  //     Moving `#character` from the subject slot to the end of the prompt
+  //     would silently change the composition.
+  // So we emit two separate directives. Dedupe is per-list (trigger words and
+  // snippets are different concepts; a coincidental name overlap should not
+  // collapse them).
+  const triggerWords = input.preserveTriggerWords ?? [];
+  const snippetTokens = collectSnippetTokens(input);
 
-  if (preserveTokens.length > 0) {
-    const inPrompt = preserveTokens.filter((t) => promptLower.includes(t.toLowerCase()));
-    const inNegative = preserveTokens.filter((t) => negativeLower.includes(t.toLowerCase()));
+  if (triggerWords.length > 0) {
+    const inPrompt = triggerWords.filter((t) => promptLower.includes(t.toLowerCase()));
+    const inNegative = triggerWords.filter((t) => negativeLower.includes(t.toLowerCase()));
 
     if (inPrompt.length) {
       parts.push(`Preserve these exact trigger words in the prompt: ${inPrompt.join(', ')}`);
@@ -105,6 +102,31 @@ export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem
     if (inNegative.length) {
       parts.push(
         `Preserve these exact trigger words in the negative prompt: ${inNegative.join(', ')}`
+      );
+    }
+  }
+
+  if (snippetTokens.length > 0) {
+    const inPrompt = snippetTokens.filter((t) => promptLower.includes(t.toLowerCase()));
+    const inNegative = snippetTokens.filter((t) => negativeLower.includes(t.toLowerCase()));
+
+    // Positional directive — the `#refs` are placeholders that will be
+    // substituted at generation time, and where the user put them defines
+    // the structural role of that substitution (subject, style, setting,
+    // etc.). Asking the LLM to keep them in roughly the same place ensures
+    // the enhanced prompt still composes coherently after substitution.
+    if (inPrompt.length) {
+      parts.push(
+        `Preserve these snippet references exactly as written in the prompt, and keep each one in approximately the same position it currently occupies (do not move them to a different part of the prompt): ${inPrompt.join(
+          ', '
+        )}`
+      );
+    }
+    if (inNegative.length) {
+      parts.push(
+        `Preserve these snippet references exactly as written in the negative prompt, and keep each one in approximately the same position it currently occupies: ${inNegative.join(
+          ', '
+        )}`
       );
     }
   }
