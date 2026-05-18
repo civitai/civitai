@@ -584,7 +584,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
-                    Searching for content depicting real people is not permitted on the platform.
+                    Your search includes terms tied to real people. Content depicting real people
+                    is filtered from search results.
                   </Text>
                 </Stack>
               );
