@@ -73,18 +73,25 @@ const autoLabelCaptionParamsSchema = z.object({
 });
 
 export type SubmitAutoLabelWorkflowInput = z.infer<typeof submitAutoLabelWorkflowSchema>;
-export const submitAutoLabelWorkflowSchema = z.object({
-  modelId: z.number().positive(),
-  mediaType: z.enum(['image', 'video', 'audio']).default('image'),
-  images: z
-    .array(autoLabelImageSchema)
-    .min(1)
-    .max(AUTO_LABEL_BATCH_SIZE)
-    .refine((imgs) => new Set(imgs.map((i) => i.mediaUrl)).size === imgs.length, {
-      message: 'Duplicate mediaUrl in batch',
-    }),
-  params: z.discriminatedUnion('type', [autoLabelTagParamsSchema, autoLabelCaptionParamsSchema]),
-});
+export const submitAutoLabelWorkflowSchema = z
+  .object({
+    modelId: z.number().positive(),
+    mediaType: z.enum(['image', 'video', 'audio']).default('image'),
+    images: z
+      .array(autoLabelImageSchema)
+      .min(1)
+      .max(AUTO_LABEL_BATCH_SIZE)
+      .refine((imgs) => new Set(imgs.map((i) => i.mediaUrl)).size === imgs.length, {
+        message: 'Duplicate mediaUrl in batch',
+      }),
+    params: z.discriminatedUnion('type', [autoLabelTagParamsSchema, autoLabelCaptionParamsSchema]),
+  })
+  // Audio only flows through the audioCaptioning step; the tag/wdTagging path
+  // can't process audio URLs, so reject the combination at the schema layer.
+  .refine((v) => !(v.mediaType === 'audio' && v.params.type === 'tag'), {
+    message: 'Audio auto-label only supports caption mode',
+    path: ['params'],
+  });
 
 export type GetAutoLabelUploadUrlInput = z.infer<typeof getAutoLabelUploadUrlSchema>;
 export const getAutoLabelUploadUrlSchema = z.object({

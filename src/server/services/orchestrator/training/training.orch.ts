@@ -32,6 +32,7 @@ import {
   isInvalidRapid,
   isInvalidAiToolkit,
   isAiToolkitEnabled,
+  isAudioTrainingBaseType,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -312,6 +313,13 @@ export const createTrainingWorkflow = async ({
 
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
+
+  // Audio base types are marked `isAiToolkitMandatory`, so the check above
+  // short-circuits to true regardless of feature flags. Enforce the rollout
+  // flag here so API callers can't submit ACE-Step training when the
+  // `audioTraining` flag is off.
+  if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
+    throw throwBadRequestError('Audio training is not currently enabled.');
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })

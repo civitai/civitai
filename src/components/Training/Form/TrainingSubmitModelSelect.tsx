@@ -56,8 +56,10 @@ import {
 } from '~/store/training.store';
 import { stringifyAIR } from '~/shared/utils/air';
 import {
+  type AudioSampleOverride,
   getDefaultEngine,
   isSamplePromptsRequired,
+  parseAudioCaption,
   type TrainingBaseModelType,
   trainingModelInfo,
 } from '~/utils/training';
@@ -296,12 +298,38 @@ export const ModelSelect = ({
           }
         }
 
-        // Fill remaining slots with empty strings if needed
-        while (randomCaptions.length < numPromptsNeeded) {
-          randomCaptions.push('');
-        }
+        // Audio captions arrive XML-tagged (CAPTION/LYRICS/DURATION/LANGUAGE)
+        // from the audioCaptioning step. Strip the tags for the visible prompt
+        // and seed `samplesOverrides` from the parsed fields so this prefill
+        // path stays consistent with the advanced-settings prefill effect.
+        if (mediaType === 'audio') {
+          const finalPrompts: string[] = [];
+          const finalOverrides: AudioSampleOverride[] = [];
+          for (let i = 0; i < numPromptsNeeded; i++) {
+            const raw = randomCaptions[i] ?? '';
+            if (raw) {
+              const parsed = parseAudioCaption(raw);
+              finalPrompts.push(parsed.caption ?? raw);
+              finalOverrides.push({
+                ...(parsed.lyrics && { lyrics: parsed.lyrics }),
+                ...(parsed.duration && { duration: parsed.duration }),
+                ...(parsed.language && { language: parsed.language }),
+              });
+            } else {
+              finalPrompts.push('');
+              finalOverrides.push({});
+            }
+          }
+          data.samplePrompts = finalPrompts;
+          data.samplesOverrides = finalOverrides;
+        } else {
+          // Fill remaining slots with empty strings if needed
+          while (randomCaptions.length < numPromptsNeeded) {
+            randomCaptions.push('');
+          }
 
-        data.samplePrompts = randomCaptions;
+          data.samplePrompts = randomCaptions;
+        }
       }
     }
 

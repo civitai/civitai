@@ -99,6 +99,12 @@ const useSubmitImages = ({
   );
   const { setAutoLabeling, mutateAutoLabeling, updateImage } = trainingStore;
 
+  // Audio always uses the orchestrator path — the legacy imageAutoCaption job
+  // can't process audio. Match the gating logic in TrainingFormImages so the
+  // UI and submit path agree.
+  const isAudio = mediaType === 'audio';
+  const useOrchestratorPath = features.trainingAutoLabelOrchestrator || isAudio;
+
   const filteredImages = imageList.filter((i) =>
     (type === 'caption' ? autoCaptioning : autoTagging).overwrite === 'ignore'
       ? i.label.length === 0
@@ -106,9 +112,7 @@ const useSubmitImages = ({
   );
   // Caption cap only applies on the legacy path — orchestrator handles arbitrary counts.
   const disabled =
-    type === 'caption' &&
-    filteredImages.length > maxImagesCaption &&
-    !features.trainingAutoLabelOrchestrator;
+    type === 'caption' && filteredImages.length > maxImagesCaption && !useOrchestratorPath;
 
   const submitViaOrchestrator = async () => {
     // Cancel any prior run for this model — without this, an old poll loop
@@ -419,8 +423,10 @@ const useSubmitImages = ({
 
     try {
       // The orchestrator flag overrides — when on, we always use the new flow,
-      // regardless of what trainingAutoTag / trainingAutoCaption say.
-      if (features.trainingAutoLabelOrchestrator) {
+      // regardless of what trainingAutoTag / trainingAutoCaption say. Audio
+      // always forces the orchestrator path because the legacy zip job can't
+      // process audio files.
+      if (useOrchestratorPath) {
         // Hand off to the page-level progress card so the modal doesn't sit on
         // "Sending data..." through the entire upload+submit phase. The first
         // setAutoLabeling call inside submitViaOrchestrator runs synchronously
@@ -635,7 +641,10 @@ const AutoCaptionSection = ({
   const features = useFeatureFlags();
   // Orchestrator path doesn't need the legacy service-availability flag, so the new
   // flag overrides it. Otherwise fall back to the existing trainingAutoCaption check.
-  const available = features.trainingAutoLabelOrchestrator || features.trainingAutoCaption;
+  // Audio captions always route through the orchestrator audioCaptioning step,
+  // so they don't need the legacy auto-caption availability gate either.
+  const available =
+    features.trainingAutoLabelOrchestrator || features.trainingAutoCaption || mediaType === 'audio';
   const { autoCaptioning } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {

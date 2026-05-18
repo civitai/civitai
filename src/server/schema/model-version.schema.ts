@@ -196,18 +196,20 @@ export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUni
 
 // Per-prompt overrides for ACE-Step audio training samples. Index-aligned with
 // `samplePrompts`. Fields the SDK accepts as nullable are stored optional here;
-// we coerce to null in the orchestrator dispatch as needed.
+// we coerce to null in the orchestrator dispatch as needed. Bounds mirror the UI
+// inputs in TrainingSubmitAdvancedSettings so API callers and persisted data
+// can't bypass them.
 export const audioSampleOverrideSchema = z.object({
-  lyrics: z.string().optional(),
-  duration: z.number().optional(),
-  bpm: z.number().optional(),
-  timeSignature: z.string().optional(),
-  language: z.string().optional(),
-  key: z.string().optional(),
+  lyrics: z.string().max(10000).optional(),
+  duration: z.number().min(1).max(240).optional(),
+  bpm: z.number().min(20).max(300).optional(),
+  timeSignature: z.string().max(16).optional(),
+  language: z.string().max(64).optional(),
+  key: z.string().max(64).optional(),
   instrumentalWeight: z.number().min(0).max(1).optional(),
   vocalWeight: z.number().min(0).max(1).optional(),
-  steps: z.number().optional(),
-  cfg: z.number().optional(),
+  steps: z.number().int().min(1).max(200).optional(),
+  cfg: z.number().min(0).max(20).optional(),
 });
 export type AudioSampleOverrideSchema = z.infer<typeof audioSampleOverrideSchema>;
 
