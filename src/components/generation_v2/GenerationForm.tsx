@@ -1093,11 +1093,13 @@ export function GenerationForm() {
               graph={graph}
               name="aspectRatio"
               render={({ value, meta, onChange }) => {
-                // Get middle 5 items as priority options when there are more than 5
+                // Prefer explicit priorityOptions from the node meta; otherwise
+                // fall back to the middle 5 items when there are more than 5.
                 const priorityOptions =
-                  meta.options.length > 5
+                  (meta as { priorityOptions?: string[] }).priorityOptions ??
+                  (meta.options.length > 5
                     ? meta.options.slice(1, 6).map((o) => o.value)
-                    : undefined;
+                    : undefined);
 
                 return (
                   <AspectRatioInput

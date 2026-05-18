@@ -64,14 +64,17 @@ export type AspectRatioOption = {
 
 /**
  * Creates an aspect ratio node with the given options.
- * Meta contains only: options (dynamic based on model)
+ * Meta contains: options (dynamic based on model) and optional priorityOptions
+ * (subset of values shown before the "More" overflow button in the UI).
  */
 export function aspectRatioNode({
   options,
   defaultValue,
+  priorityOptions,
 }: {
   options: AspectRatioOption[];
   defaultValue?: string;
+  priorityOptions?: string[];
 }) {
   const defaultOption = options.find((o) => o.value === (defaultValue ?? '1:1')) ?? options[0];
   return {
@@ -110,6 +113,7 @@ export function aspectRatioNode({
     defaultValue: defaultOption,
     meta: {
       options,
+      priorityOptions,
     },
   };
 }
