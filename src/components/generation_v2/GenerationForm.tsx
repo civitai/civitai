@@ -92,7 +92,7 @@ import { PromptInput } from './inputs/PromptInput';
 import { ActiveWildcards } from '~/components/Generate/Input/ActiveWildcards';
 import { GenerationTextEditor } from '~/components/Generate/Input/GenerationTextEditor';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
-import type { SnippetReference, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
+import type { ResourcesNodeValue, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
 import { showNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
 import { AspectRatioInput } from './inputs/AspectRatioInput';
@@ -890,12 +890,8 @@ export function GenerationForm() {
                             const snap = graph.getSnapshot() as {
                               ecosystem?: string;
                               negativePrompt?: string;
-                              resources?: {
-                                id: number;
-                                model: { type: string };
-                                trainedWords?: string[];
-                                strength?: number;
-                              }[];
+                              resources?: ResourcesNodeValue;
+                              snippets?: SnippetsNodeValue;
                             };
                             triggerPromptEnhance(
                               {
@@ -903,6 +899,7 @@ export function GenerationForm() {
                                 negativePrompt: snap.negativePrompt,
                                 ecosystem: snap.ecosystem ?? '',
                                 resources: snap.resources,
+                                snippetTargets: snap.snippets?.targets,
                               },
                               (wf) =>
                                 graph.set({
@@ -1790,6 +1787,7 @@ function PromptEnhancePanelWrapper({
       negativePrompt={data.negativePrompt}
       ecosystem={data.ecosystem}
       triggerWords={data.triggerWords}
+      snippetTargets={data.snippetTargets}
       onBack={onBack}
       onApply={(enhancedPrompt, enhancedNegativePrompt) => {
         graph.set({ prompt: enhancedPrompt } as Parameters<typeof graph.set>[0]);

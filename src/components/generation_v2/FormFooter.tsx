@@ -946,6 +946,18 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         }
       }
 
+      // Drop any preview-locked snippets seed so the next submission samples
+      // fresh values. The seed is only ever set by the wildcard preview modal
+      // (so the user can reroll deterministically within a preview session)
+      // and is never persisted to workflow metadata — leaving it in the
+      // graph after submit would silently pin every subsequent generation to
+      // the same wildcard expansion.
+      const submitSnap = graph.getSnapshot() as { snippets?: { seed?: number } };
+      if (submitSnap.snippets?.seed !== undefined) {
+        const { seed: _seed, ...rest } = submitSnap.snippets;
+        (graph as { set: (v: Record<string, unknown>) => void }).set({ snippets: rest });
+      }
+
       onSubmitSuccess?.();
     };
 

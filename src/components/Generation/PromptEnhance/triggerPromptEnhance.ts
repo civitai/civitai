@@ -1,6 +1,7 @@
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
+import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
 import { usePromptEnhanceStore } from './promptEnhanceStore';
 
 const PromptEnhanceDrawer = dynamic(
@@ -26,6 +27,12 @@ export function triggerPromptEnhance(
     negativePrompt?: string;
     ecosystem: string;
     resources?: ResourceData[];
+    /**
+     * `snippets.targets` map at trigger time. The form reads this off the
+     * graph snapshot and forwards it untouched so the enhancement
+     * mutation can preserve every `#category` reference through the LLM.
+     */
+    snippetTargets?: Record<string, SnippetReferenceValue[]>;
   },
   setWorkflow: (workflow: string) => void
 ) {
@@ -38,6 +45,7 @@ export function triggerPromptEnhance(
     negativePrompt: data.negativePrompt,
     ecosystem: data.ecosystem,
     triggerWords,
+    snippetTargets: data.snippetTargets,
   });
   setWorkflow('prompt:enhance');
 }

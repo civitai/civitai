@@ -26,6 +26,7 @@ import {
 } from '~/components/generation_v2/GenerationLayout';
 import { getRootEcosystem } from '~/shared/constants/basemodel.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
+import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
 
@@ -47,6 +48,12 @@ type EnhanceTabProps = {
   instruction?: string;
   ecosystem: string;
   triggerWords?: string[];
+  /**
+   * `snippets.targets` snapshot. Passed straight to the enhancement mutation
+   * so `buildInstruction` can union the `#category` references with any
+   * `preserveSnippets` overrides and emit a preservation directive.
+   */
+  snippetTargets?: Record<string, SnippetReferenceValue[]>;
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
   onBack?: () => void;
 };
@@ -67,6 +74,7 @@ export function EnhanceTab({
   instruction,
   ecosystem,
   triggerWords,
+  snippetTargets,
   onApply,
   onBack,
 }: EnhanceTabProps) {
@@ -140,6 +148,11 @@ export function EnhanceTab({
       instruction: values.instruction || null,
       temperature: values.temperature ?? 0.7,
       preserveTriggerWords: preserveTriggerWords.length ? preserveTriggerWords : null,
+      // Forward the form's `snippets.targets` snapshot. `buildInstruction`
+      // flattens this to `#category` tokens and asks the LLM to preserve
+      // them through the rewrite. Null when the source form didn't have a
+      // snippets node (non-snippet-enabled ecosystems).
+      snippetTargets: snippetTargets ?? null,
       segmentPrompt,
     };
   };

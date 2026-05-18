@@ -1,6 +1,7 @@
 import { Badge, Tabs } from '@mantine/core';
 import { IconHistory, IconSparkles } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
+import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
 import { EnhanceTab } from './EnhanceTab';
 import { HistoryTab, type RemixData } from './HistoryTab';
 
@@ -9,6 +10,11 @@ type PromptEnhancePanelProps = {
   negativePrompt?: string;
   ecosystem: string;
   triggerWords?: string[];
+  /**
+   * `snippets.targets` snapshot forwarded to the enhancement mutation so the
+   * LLM is instructed to preserve every `#category` reference verbatim.
+   */
+  snippetTargets?: Record<string, SnippetReferenceValue[]>;
   onApply: (enhancedPrompt: string, enhancedNegativePrompt?: string) => void;
   onBack?: () => void;
 };
@@ -18,6 +24,7 @@ export function PromptEnhancePanel({
   negativePrompt,
   ecosystem,
   triggerWords,
+  snippetTargets,
   onApply,
   onBack,
 }: PromptEnhancePanelProps) {
@@ -61,6 +68,7 @@ export function PromptEnhancePanel({
           instruction={enhanceInstruction}
           ecosystem={ecosystem}
           triggerWords={triggerWords}
+          snippetTargets={snippetTargets}
           onApply={onApply}
           onBack={onBack}
         />

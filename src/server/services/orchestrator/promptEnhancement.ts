@@ -74,14 +74,30 @@ export function createChainedPromptEnhancementStep(
 
 export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem'>): string {
   const parts: string[] = [];
+  const promptLower = input.prompt.toLowerCase();
+  const negativeLower = (input.negativePrompt ?? '').toLowerCase();
 
-  if (input.preserveTriggerWords?.length) {
-    const words = input.preserveTriggerWords;
-    const promptLower = input.prompt.toLowerCase();
-    const negativeLower = (input.negativePrompt ?? '').toLowerCase();
+  // Combined preserve list — LoRA trigger words and snippet `#references` ride
+  // the same "Preserve these exact trigger words…" directive to keep the LLM
+  // instruction surface tight. They have different runtime semantics on the
+  // server (snippets get resolved post-enhancement; trigger words activate
+  // LoRAs at generation time), but the ask of the LLM is identical: leave
+  // these tokens untouched. Dedupe case-insensitively in case a trigger word
+  // coincidentally matches a `#category`.
+  const preserveTokens: string[] = [];
+  const seen = new Set<string>();
+  const addToken = (raw: string) => {
+    const key = raw.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    preserveTokens.push(raw);
+  };
+  for (const w of input.preserveTriggerWords ?? []) addToken(w);
+  for (const t of collectSnippetTokens(input)) addToken(t);
 
-    const inPrompt = words.filter((w) => promptLower.includes(w.toLowerCase()));
-    const inNegative = words.filter((w) => negativeLower.includes(w.toLowerCase()));
+  if (preserveTokens.length > 0) {
+    const inPrompt = preserveTokens.filter((t) => promptLower.includes(t.toLowerCase()));
+    const inNegative = preserveTokens.filter((t) => negativeLower.includes(t.toLowerCase()));
 
     if (inPrompt.length) {
       parts.push(`Preserve these exact trigger words in the prompt: ${inPrompt.join(', ')}`);
@@ -112,6 +128,35 @@ export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem
   }
 
   return parts.length ? parts.join('\n') : '';
+}
+
+/**
+ * Build the canonical `#category` token list to ask the LLM to preserve.
+ * Unions explicit `preserveSnippets` with category names extracted from
+ * `snippetTargets` (the raw `snippets.targets` map), normalizes every entry
+ * to the `#`-prefixed form, and dedupes case-insensitively.
+ */
+function collectSnippetTokens(
+  input: Pick<PromptEnhancementSchema, 'preserveSnippets' | 'snippetTargets'>
+): string[] {
+  const seen = new Set<string>(); // lower-case keys for case-insensitive dedupe
+  const out: string[] = [];
+
+  const push = (raw: string) => {
+    const token = raw.startsWith('#') ? raw : `#${raw}`;
+    const key = token.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(token);
+  };
+
+  for (const ref of input.preserveSnippets ?? []) push(ref);
+  if (input.snippetTargets) {
+    for (const refs of Object.values(input.snippetTargets)) {
+      for (const ref of refs) push(ref.category);
+    }
+  }
+  return out;
 }
 
 export async function enhancePrompt({
@@ -157,6 +202,8 @@ export async function enhancePrompt({
       metadata: {
         userInstruction: input.instruction ?? undefined,
         preserveTriggerWords: input.preserveTriggerWords ?? undefined,
+        preserveSnippets: input.preserveSnippets ?? undefined,
+        snippetTargets: input.snippetTargets ?? undefined,
       },
       steps: [createPromptEnhancementStep(input, { name: PROMPT_ENHANCEMENT_STEP_NAME })],
       callbacks: getWorkflowCallbacks(userId),
