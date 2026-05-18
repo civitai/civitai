@@ -16,11 +16,12 @@ import dynamic from 'next/dynamic';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 // import { constants } from '~/server/common/constants';
-import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsRegionRestricted } from '~/hooks/useIsRegionRestricted';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils/flags';
 
 const HiddenTagsModal = dynamic(() => import('~/components/Tags/HiddenTagsModal'), { ssr: false });
 
@@ -52,9 +53,10 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
   const setState = useBrowsingSettings((x) => x.setState);
-  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const userBrowsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const features = useFeatureFlags();
   const { isRestricted } = useIsRegionRestricted();
+  const hasMatureLevelSelected = Flags.intersects(userBrowsingLevel, nsfwBrowsingLevelsFlag);
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
@@ -95,7 +97,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                   Your content levels are limited by restrictions in your region
                 </Text>
               )}
-              {browsingSettingsAddons.settings.disableMinor && (
+              {hasMatureLevelSelected && (
                 <Group gap="sm" mt={4}>
                   <IconAlertTriangle size={16} />
                   <Text c="dimmed" size="xs">
