@@ -65,7 +65,7 @@ export const constants = {
     'Workflow',
     'Upscaler',
   ],
-  trainingMediaTypes: ['image', 'video'],
+  trainingMediaTypes: ['image', 'video', 'audio'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
@@ -606,6 +606,9 @@ const baseLicenses: Record<string, LicenseDetails> = {
   anima: {
     url: 'https://huggingface.co/circlestone-labs/Anima/blob/main/LICENSE.md',
     name: 'Anima',
+    notice:
+      'The Anima Model is licensed by CircleStone Labs LLC. Copyright CircleStone Labs LLC. IN NO EVENT SHALL CIRCLESTONE LABS LLC BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH USE OF THIS MODEL.',
+    poweredBy: 'Built on NVIDIA Cosmos',
   },
   kling: {
     url: 'https://klingai.com/terms-of-service',

@@ -8,14 +8,10 @@ import { auditPrompt } from '~/utils/metadata/audit';
 import { SignalMessages } from '~/server/common/enums';
 import type { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
-import type {
-  CaptionDataResponse,
-  TagDataResponse,
-} from '~/server/services/training.service';
+import type { CaptionDataResponse, TagDataResponse } from '~/server/services/training.service';
 import {
   autoLabelLimits,
-  defaultTrainingState,
-  defaultTrainingStateVideo,
+  getDefaultTrainingStateFor,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
@@ -205,7 +201,7 @@ export const useOrchestratorUpdateSignal = () => {
 
     // TODO get the mediaType back so we know which training state to use
     const mediaType = mt ?? 'image';
-    const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+    const defaultState = getDefaultTrainingStateFor(mediaType);
 
     const { autoLabeling, autoTagging, autoCaptioning } = storeState[modelId] ?? {
       ...defaultState,

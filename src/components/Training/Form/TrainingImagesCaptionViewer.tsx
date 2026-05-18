@@ -1,5 +1,5 @@
 import { Accordion, Badge, Divider, Group, Paper, Switch, Text, TextInput } from '@mantine/core';
-import { IconFilter, IconPhoto, IconSearch, IconX } from '@tabler/icons-react';
+import { IconFilter, IconMovie, IconMusic, IconPhoto, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { HighlightWithinTextarea } from 'react-highlight-within-textarea';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
@@ -75,20 +75,24 @@ export const TrainingImagesCaptionViewer = ({
   searchCaption,
   setSearchCaption,
   numImages,
+  mediaType,
 }: {
   selectedTags: string[];
   setSelectedTags: React.Dispatch<React.SetStateAction<string[]>>;
   searchCaption: string;
   setSearchCaption: React.Dispatch<React.SetStateAction<string>>;
   numImages: number;
+  mediaType?: TrainingDetailsObj['mediaType'];
 }) => {
+  const CountIcon =
+    mediaType === 'audio' ? IconMusic : mediaType === 'video' ? IconMovie : IconPhoto;
   return (
     <Accordion variant="contained" transitionDuration={0}>
       <Accordion.Item value="caption-viewer">
         <Accordion.Control py="md" pl="md" pr={8}>
           <Group gap="xs">
             <Text>Caption Viewer</Text>
-            <Badge color="indigo" leftSection={<IconPhoto size={14} />}>
+            <Badge color="indigo" leftSection={<CountIcon size={14} />}>
               {numImages}
             </Badge>
             {(selectedTags.length > 0 || searchCaption.length > 0) && (

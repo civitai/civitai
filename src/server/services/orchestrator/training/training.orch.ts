@@ -32,6 +32,7 @@ import {
   isInvalidRapid,
   isInvalidAiToolkit,
   isAiToolkitEnabled,
+  isAudioTrainingBaseType,
   trainingModelInfo,
 } from '~/utils/training';
 
@@ -157,6 +158,7 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
     trainingData,
     trainingDataImagesCount,
     samplePrompts,
+    samplesOverrides,
     negativePrompt,
     modelFileId,
     params,
@@ -206,6 +208,21 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
       model,
       minSnrGamma: aiToolkitParams.minSnrGamma ?? undefined,
     } as SdxlAiToolkitTrainingInput;
+  }
+
+  // ACE-Step audio ecosystems accept per-prompt sample overrides. The SDK
+  // types only declare `samplesOverrides` on the AceStep15* variants, so we
+  // attach via a cast rather than widening every other ecosystem branch.
+  if (
+    samplesOverrides &&
+    samplesOverrides.length > 0 &&
+    (aiToolkitParams.ecosystem === 'ace_step_15' || aiToolkitParams.ecosystem === 'ace_step_15_xl')
+  ) {
+    (
+      trainingInput as AiToolkitTrainingInput & {
+        samplesOverrides?: Array<Record<string, unknown>>;
+      }
+    ).samplesOverrides = samplesOverrides as Array<Record<string, unknown>>;
   }
 
   return {
@@ -281,6 +298,7 @@ export const createTrainingWorkflow = async ({
 
   const baseModelType = modelVersion.trainingDetails.baseModelType ?? 'sd15';
   const samplePrompts = modelVersion.trainingDetails.samplePrompts ?? ['', '', ''];
+  const samplesOverrides = modelVersion.trainingDetails.samplesOverrides;
   const negativePrompt = modelVersion.trainingDetails.negativePrompt ?? '';
   const isPriority = modelVersion.trainingDetails.highPriority ?? false;
   const fileMetadata = modelVersion.fileMetadata ?? {};
@@ -295,6 +313,13 @@ export const createTrainingWorkflow = async ({
 
   if (trainingParams.engine === 'ai-toolkit' && !isAiToolkitEnabled(baseModelType, features))
     throw throwBadRequestError('AI Toolkit training is not currently enabled for this base model.');
+
+  // Audio base types are marked `isAiToolkitMandatory`, so the check above
+  // short-circuits to true regardless of feature flags. Enforce the rollout
+  // flag here so API callers can't submit ACE-Step training when the
+  // `audioTraining` flag is off.
+  if (isAudioTrainingBaseType(baseModelType) && !features.audioTraining)
+    throw throwBadRequestError('Audio training is not currently enabled.');
 
   const { url: trainingData } = isB2Url(modelVersion.trainingUrl)
     ? await getGetUrl(modelVersion.trainingUrl, { s3: getB2S3Client() })
@@ -327,6 +352,7 @@ export const createTrainingWorkflow = async ({
     loraName,
     triggerWord,
     samplePrompts,
+    samplesOverrides,
     negativePrompt,
     modelFileId,
     params, // This keeps the literal string type in params.engine

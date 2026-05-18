@@ -23,9 +23,11 @@ export const trainingBaseModelTypesImage = [
   'hidream-o1',
 ] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2', 'ltx23'] as const;
+export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
   ...trainingBaseModelTypesVideo,
+  ...trainingBaseModelTypesAudio,
 ] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
@@ -313,6 +315,37 @@ export const trainingModelInfo: {
     baseModel: 'Flux.2 D',
     isNew: true,
   },
+  //
+  acestep_15: {
+    label: '1.5 (3.5B)',
+    pretty: 'ACE-Step 1.5',
+    type: 'acestep15',
+    description: 'ACE-Step 1.5 audio diffusion model for music generation training.',
+    air: 'urn:air:ace:checkpoint:civitai:2549270@2864864',
+    baseModel: 'ACE-Step',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ace_step_15' },
+  },
+  acestep_15_xl_base: {
+    label: 'XL Base (4B)',
+    pretty: 'ACE-Step 1.5 XL Base',
+    type: 'acestep15xl',
+    description: 'ACE-Step 1.5 XL Base 4B audio diffusion model.',
+    air: 'urn:air:ace:checkpoint:civitai:2549270@2864892',
+    baseModel: 'ACE-Step',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'base' },
+  },
+  acestep_15_xl_sft: {
+    label: 'XL SFT (4B)',
+    pretty: 'ACE-Step 1.5 XL SFT',
+    type: 'acestep15xl',
+    description: 'ACE-Step 1.5 XL SFT (supervised fine-tuned) 4B audio diffusion model.',
+    air: 'urn:air:ace:checkpoint:civitai:2549270@2864917',
+    baseModel: 'ACE-Step',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'sft' },
+  },
   // flux2_dev_edit: {
   //   label: 'Dev Edit',
   //   pretty: 'Flux.2 Edit',
@@ -409,6 +442,8 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   ltx2: 'ltx2',
   ltx23: 'ltx23',
   'hidream-o1': 'hidream-o1',
+  acestep15: 'ace_step_15',
+  acestep15xl: 'ace_step_15_xl',
 };
 
 /**
@@ -502,6 +537,8 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'ltx2',
     'ltx23',
     'hidream-o1',
+    'acestep15',
+    'acestep15xl',
   ];
   return supportedTypes.includes(baseType);
 };
@@ -516,8 +553,14 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'ltx2',
     'ltx23',
     'hidream-o1',
+    'acestep15',
+    'acestep15xl',
   ];
   return mandatoryTypes.includes(baseType);
+};
+
+export const isAudioTrainingBaseType = (baseType: TrainingBaseModelType): boolean => {
+  return (trainingBaseModelTypesAudio as readonly string[]).includes(baseType);
 };
 
 // Get default engine for base type
@@ -535,6 +578,7 @@ export const getDefaultEngine = (
   if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
   if (baseType === 'ltx23') return 'ai-toolkit'; // LTX 2.3 requires AI Toolkit
   if (baseType === 'hidream-o1') return 'ai-toolkit'; // HiDream O1 requires AI Toolkit
+  if (baseType === 'acestep15' || baseType === 'acestep15xl') return 'ai-toolkit'; // Audio models require AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model
   if (baseType === 'flux2') {
@@ -604,4 +648,50 @@ export const discountInfo = {
   bannerId: '9-13-24',
   endDate: '2024-09-28 00:00:00',
   message: 'Flux-Dev Rapid Training',
+};
+
+export type AudioSampleOverride = {
+  lyrics?: string;
+  duration?: number;
+  bpm?: number;
+  timeSignature?: string;
+  language?: string;
+  key?: string;
+  instrumentalWeight?: number;
+  vocalWeight?: number;
+  steps?: number;
+  cfg?: number;
+};
+
+export type ParsedAudioCaption = {
+  caption?: string;
+  lyrics?: string;
+  duration?: number;
+  language?: string;
+};
+
+const extractTag = (input: string, tag: string): string | undefined => {
+  const re = new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*<\\/${tag}>`, 'i');
+  const m = input.match(re);
+  return m ? m[1].trim() : undefined;
+};
+
+/** Parse the XML-tagged audio caption emitted by the audioCaptioning step.
+ *  Returns plain fields when present; ignores `<LANGUAGE>unknown</LANGUAGE>` and
+ *  non-numeric `<DURATION>` values so callers don't need to re-validate. */
+export const parseAudioCaption = (text: string | undefined | null): ParsedAudioCaption => {
+  if (!text) return {};
+  const result: ParsedAudioCaption = {};
+  const caption = extractTag(text, 'CAPTION');
+  if (caption) result.caption = caption;
+  const lyrics = extractTag(text, 'LYRICS');
+  if (lyrics) result.lyrics = lyrics;
+  const duration = extractTag(text, 'DURATION');
+  if (duration) {
+    const n = Number(duration);
+    if (Number.isFinite(n) && n > 0) result.duration = n;
+  }
+  const language = extractTag(text, 'LANGUAGE');
+  if (language && language.toLowerCase() !== 'unknown') result.language = language;
+  return result;
 };

@@ -75,6 +75,11 @@ export const trainingDetailsBaseModelsLtx2 = ['ltx2'] as const;
 export const trainingDetailsBaseModelsLtx23 = ['ltx23'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
+export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
+export const trainingDetailsBaseModelsAcestep15Xl = [
+  'acestep_15_xl_base',
+  'acestep_15_xl_sft',
+] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
@@ -95,10 +100,15 @@ const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsLtx2,
   ...trainingDetailsBaseModelsLtx23,
 ] as const;
+const trainingDetailsBaseModelsAudio = [
+  ...trainingDetailsBaseModelsAcestep15,
+  ...trainingDetailsBaseModelsAcestep15Xl,
+] as const;
 
 const trainingDetailsBaseModels = [
   ...trainingDetailsBaseModelsImage,
   ...trainingDetailsBaseModelsVideo,
+  ...trainingDetailsBaseModelsAudio,
 ] as const;
 
 export type TrainingDetailsBaseModelList = (typeof trainingDetailsBaseModels)[number];
@@ -184,6 +194,25 @@ export const trainingDetailsParamsUnion = z.discriminatedUnion('engine', [
 ]);
 export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUnion>;
 
+// Per-prompt overrides for ACE-Step audio training samples. Index-aligned with
+// `samplePrompts`. Fields the SDK accepts as nullable are stored optional here;
+// we coerce to null in the orchestrator dispatch as needed. Bounds mirror the UI
+// inputs in TrainingSubmitAdvancedSettings so API callers and persisted data
+// can't bypass them.
+export const audioSampleOverrideSchema = z.object({
+  lyrics: z.string().max(10000).optional(),
+  duration: z.number().min(1).max(240).optional(),
+  bpm: z.number().min(20).max(300).optional(),
+  timeSignature: z.string().max(16).optional(),
+  language: z.string().max(64).optional(),
+  key: z.string().max(64).optional(),
+  instrumentalWeight: z.number().min(0).max(1).optional(),
+  vocalWeight: z.number().min(0).max(1).optional(),
+  steps: z.number().int().min(1).max(200).optional(),
+  cfg: z.number().min(0).max(20).optional(),
+});
+export type AudioSampleOverrideSchema = z.infer<typeof audioSampleOverrideSchema>;
+
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;
 export const trainingDetailsObj = z.object({
   baseModel: z
@@ -195,6 +224,7 @@ export const trainingDetailsObj = z.object({
   // triggerWord: z.string().optional(),
   params: trainingDetailsParamsUnion.optional(), // Support both Kohya and AI Toolkit formats
   samplePrompts: z.array(z.string()).optional(),
+  samplesOverrides: z.array(audioSampleOverrideSchema).optional(),
   negativePrompt: z.string().optional(),
   staging: z.boolean().optional(),
   highPriority: z.boolean().optional(),
