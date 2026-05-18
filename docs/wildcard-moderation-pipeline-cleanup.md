@@ -106,37 +106,51 @@ This single change subsumes what were previously separate fixes for the silent-s
 
 **Why this fixes the 86 stuck Pending-no-workflowId rows:** the Failure branch writes a terminal status the retry job can act on, instead of leaving an ambiguous Pending row.
 
-**Caller cleanup:** `submitWildcardCategoryAudit` and `submitTextModeration` stop calling `upsertEntityModerationPending` and stop calling `entityModeration.updateMany` to stamp the workflow id. They become a single call to `createXGuardModerationRequest` plus their own entity-specific bookkeeping (e.g. `submitWildcardCategoryAudit` still stamps `WSC.metadata.workflowId` until Phase 2 removes that column).
+**Caller cleanup:** `submitWildcardCategoryAudit` and `submitTextModeration` stop calling `upsertEntityModerationPending` and stop calling `entityModeration.updateMany` to stamp the workflow id. They become a single call to `createXGuardModerationRequest`.
 
 **Affected rows:** prevents new instances of both classes of inconsistency. Existing rows are addressed by fix #5 (backfill).
 
-### 2. Check return value of `recordEntityModerationSuccess` and log on mismatch
+### 2. Drop `WSC.metadata.workflowId` (EntityModeration as the only source of truth)
 
-In `applyWildcardCategoryAuditSuccess`, capture the boolean return and emit a warning log when it's false. Same in `applyWildcardCategoryAuditFailure`. Pure observability — no behavior change — but turns silent drift into a visible signal we can dashboard.
+With EM authoritative, the duplicate workflow id on WSC.metadata is redundant. Three concrete edits:
 
-### 3. Cap Pending-timeout retries in the retry cron
+- Stop writing it in `submitWildcardCategoryAudit` (drop the `mergeCategoryMetadata({ workflowId })` call).
+- Replace the WSC-side stale-check in `applyWildcardCategoryAuditSuccess` / `applyWildcardCategoryAuditFailure` (which read `meta.workflowId !== workflowId`) with a gate on `recordEntityModeration{Success,Failure}`'s return value. The `WHERE workflowId=X` predicate inside those functions is the canonical stale-callback gate.
+- Drop the `workflowId` field from the `WildcardCategoryMetadata` type. `serializeMetadata` no longer emits it, so legacy values on existing rows get purged the next time the row is written.
 
-In `text-moderation-retry.ts`'s Pending-timeout retry branch, increment `EM.retryCount` before resubmitting and respect `retryCount < 9` the same way Failed/Expired/Canceled rows do. Closes the infinite-retry loophole for stuck Pending rows without involving WSC at all — EM is the source of truth for retry state.
+Filters that previously gated on `metadata.workflowId` (in `submitWildcardSetAudit` and `submitPendingWildcardCategoryAudits`) now gate on EM-row absence via a `LEFT JOIN ... WHERE em.id IS NULL` orphan query.
 
-(Intentionally narrow. An earlier draft proposed gating the cron on `WSC.auditStatus` to skip Clean/Dirty categories, but that re-asserts WSC as authoritative, which is exactly the duplication Phase 2 removes. With fix #1 closing the race window, no new Clean+Pending inconsistencies should accrue, so the cron has no reason to second-guess EM.)
+### 3. Check return values and log on mismatch
 
-### 4. Reconciliation cron — `reconcile-wildcard-category-moderation`
+In `applyWildcardCategoryAuditSuccess` / `applyWildcardCategoryAuditFailure`, the new return-value gate from fix #2 doubles as observability — when an update returns `false`, log a warning so we can dashboard stale-callback rate. No separate observability fix needed.
 
-Hourly job that uses the orchestrator (not WSC) as the tiebreaker for in-flight workflows:
+### 4. Cap Pending-timeout retries in the retry cron
 
-- **Orphans:** find WSCs with no EM row. Seed a Pending EM row and trigger `submitWildcardCategoryAudit`. Drains the 449 current orphans.
-- **EM Pending stuck for >2h with workflowId:** call `getWorkflow` against the orchestrator. If terminal (succeeded/failed/expired/canceled), replay the appropriate webhook handler. If the orchestrator has no record of the workflow (retention dropped it, etc.), write EM as `Expired` and let the existing retry path resubmit. WSC is never read here.
-- **EM Pending stuck for >2h with NO workflowId:** shouldn't exist after fix #1 lands, but if it does, mark `Failed` with `retryCount` incremented so the retry path takes over.
+In `text-moderation-retry.ts`'s Pending-timeout retry branch, increment `EM.retryCount` before resubmitting and respect `retryCount < 9` the same way Failed/Expired/Canceled rows do. Closes the infinite-retry loophole for stuck Pending rows. EM is the source of truth for retry state — no WSC involvement.
 
 ### 5. One-shot backfill for the existing 286 Clean+Pending inconsistencies
 
-These rows pre-date the fixes and are the one case where WSC genuinely is the source of truth — the callback already ran successfully against WSC; only the EM mirror was lost to the pre-fix race. A one-time script (or admin endpoint, scoped to a single run) reads each `(WSC.auditStatus IN (Clean, Dirty), EM.status = Pending)` pair and writes EM to match: `Succeeded` + `blocked` derived from `WSC.auditStatus='Dirty'`, plus `triggeredLabels` / `result` reconstructed from `WSC.metadata.triggeredLabels` and `WSC.metadata.triggeredTerms` where available.
+These rows pre-date the fixes and are the one case where WSC genuinely is the source of truth — the callback already ran successfully against WSC; only the EM mirror was lost to the pre-fix race. A one-time admin endpoint (`/api/testing/wildcard-em-backfill`) reads each `(WSC.auditStatus IN (Clean, Dirty), EM.status = Pending)` pair and writes EM to match: `Succeeded` + `blocked` derived from `WSC.auditStatus='Dirty'`, plus `triggeredLabels` / `result` reconstructed from `WSC.metadata.triggeredLabels` and `WSC.metadata.triggeredTerms` where available.
 
-Explicitly a one-shot — once it runs, the reconcile cron from fix #4 (orchestrator-driven, EM-authoritative) takes over forever after, and we never again use WSC as a fallback truth source.
+Explicitly a one-shot. After it runs, the only paths that touch EM moderation state are: `createXGuardModerationRequest` (submit), the webhook callback handlers (terminal), and `retry-failed-text-moderation` (retries). WSC is never read as a fallback truth source again.
+
+### What about the 449 orphans (WSC with no EM row)?
+
+Covered by `audit-wildcard-set-categories`, which we already have. Its filter was updated as part of fix #2 to gate on EM-row absence (`LEFT JOIN ... WHERE em.id IS NULL`) instead of `metadata.workflowId`. The cron's purpose is unchanged: find WSCs that never got submitted and submit them. After Phase 1, "never got submitted" is exactly "no EM row exists."
+
+### Ongoing retry job for "entities that haven't had a successful moderation"
+
+`retry-failed-text-moderation` is the canonical job. After fix #4 it:
+
+- Picks up `Failed`/`Expired`/`Canceled` rows after the 60-min backoff, capped at `retryCount < 9`.
+- Picks up `Pending` rows whose callback never arrived (>30 min stale), capped at `retryCount < 9` via the new pre-increment.
+- Resubmits via the per-entityType dispatch (`submitWildcardCategoryAudit` for wildcards, `submitTextModeration` for articles).
+
+It owns the EM-side retry lifecycle. No additional reconcile cron is needed.
 
 ### Rollout order
 
-1 (centralize EM bookkeeping — the load-bearing change) → 2 (observability) → 3 (retry cap) → 4 (reconciliation cron) → 5 (one-shot backfill).
+1 (centralize EM bookkeeping — the load-bearing change) → 2 (drop WSC.metadata.workflowId + simplify stale-check) → 3 (return-value logging is folded into #2) → 4 (retry cap) → 5 (one-shot backfill).
 
 ---
 
@@ -188,7 +202,7 @@ The framing: with EM as the source of truth, the WSC audit columns are mostly de
 1. Add new columns (`nsfw: boolean?` already exists; `blocked: boolean default false` is new on WSC). Backfill from current `auditStatus`/`nsfw`.
 2. Switch all readers to the new columns. Old columns still maintained in parallel.
 3. Switch all writers to the new columns + EM only. Stop writing the old columns.
-4. Drop the old columns and `metadata.workflowId` / `metadata.retryCount` / `metadata.triggeredTerms` / `metadata.triggeredLabels`.
+4. Drop the old columns and the remaining metadata fields. (`metadata.workflowId` was already dropped in Phase 1; `metadata.retryCount` / `metadata.triggeredTerms` / `metadata.triggeredLabels` get dropped here.)
 
 Phase 1 should ship first to stabilize the pipeline; Phase 2 is a follow-up once the inconsistency counts are at zero.
 
@@ -196,6 +210,6 @@ Phase 1 should ship first to stabilize the pipeline; Phase 2 is a follow-up once
 
 ## Open items / decisions
 
-@ai:* **D1.** Do Phase 1 fixes go out as one PR or split? My preference: split — fix 1 in one (the load-bearing refactor, careful review), fix 2 in one (observability), fix 3 in one (one-line cron change), fix 4 in one (new cron), and fix 5 is a manual one-shot script.
+@ai:* **D1.** Do Phase 1 fixes go out as one PR or split? My preference: split — fixes 1 + 2 in one (load-bearing refactor of `createXGuardModerationRequest` plus dropping `WSC.metadata.workflowId`), fix 4 in one (one-line retry cap), and fix 5 is a manual one-shot via the testing endpoint.
 
 @ai:* **D2.** For Phase 2, do you want a separate design doc or proceed from this section once the Phase 1 dust settles?
