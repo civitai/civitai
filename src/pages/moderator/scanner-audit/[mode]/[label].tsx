@@ -297,7 +297,8 @@ function FocusedRun({
         label={label}
         completed={cursor}
         total={items.length}
-        alreadyVerdicted={data?.alreadyVerdicted ?? 0}
+        verdictedInLookback={data?.verdictedInLookback ?? 0}
+        lookbackDays={data?.lookbackDays ?? 30}
         tablePath={tablePath}
         onExtendLookback={() => {
           const next = (lookbackDays ?? 30) + 30;
@@ -633,7 +634,12 @@ function ContentDisplay({
     );
   }
 
-  const textStyle = { whiteSpace: 'pre-wrap' as const, lineHeight: 1.6, fontSize };
+  const textStyle = {
+    whiteSpace: 'pre-wrap' as const,
+    overflowWrap: 'anywhere' as const,
+    lineHeight: 1.6,
+    fontSize,
+  };
 
   if (item.scanner === 'xguard_text') {
     return (
@@ -845,14 +851,16 @@ function EndOfRun({
   label,
   completed,
   total,
-  alreadyVerdicted,
+  verdictedInLookback,
+  lookbackDays,
   tablePath,
   onExtendLookback,
 }: {
   label: string;
   completed: number;
   total: number;
-  alreadyVerdicted: number;
+  verdictedInLookback: number;
+  lookbackDays: number;
   tablePath: string;
   onExtendLookback: () => void;
 }) {
@@ -866,8 +874,12 @@ function EndOfRun({
               {total === 0
                 ? `No unverdicted scans for ${label} in the current lookback window.`
                 : `You reviewed ${completed} of ${total} scans for ${label}.`}
-              {alreadyVerdicted > 0 && (
-                <> ({alreadyVerdicted} were already verdicted by you in a previous session.)</>
+              {verdictedInLookback > 0 && (
+                <>
+                  {' '}
+                  (You&apos;ve verdicted {verdictedInLookback.toLocaleString()} {label} scan
+                  {verdictedInLookback === 1 ? '' : 's'} in the last {lookbackDays} days.)
+                </>
               )}
             </Text>
           </Stack>

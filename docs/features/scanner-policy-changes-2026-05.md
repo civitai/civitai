@@ -58,7 +58,21 @@ Orchestrator-dev feedback: the policy text's first line `- x: {name}` should des
 
 Significant overlap with text-mode CSAM (covers CSAM trade) and Sex Trafficking (covers trafficking-related trade). Zero verdicts — not operationally relied upon. The narrow remaining sub-case (non-consensual content / revenge porn / deepfakes-with-malice) would be better designed as a dedicated `Non-Consensual Sexual Content` label later, rather than retrofitted into Illegal Trade.
 
-### 5. Surgical signalTerms edits were not pursued
+### 5. Threshold tuning pass (2026-05-18)
+
+A second pass after ~5 days of verdict data (n=2006). Cross-joined `ScannerLabelReview` verdicts with `scanner_label_results` scores to look at the TP/FP score distribution per label and simulate threshold changes.
+
+Findings:
+
+- **Free wins (clear TP/FP separation, raise threshold)**: Menstruation, Urine, Scat, Sexual — TPs cluster well above the current threshold while FPs cluster near it. Bumping the threshold preserves recall and cuts FP rate substantially. Menstruation was the cleanest: TPs all ≥0.94, FPs all ≤0.70 — raising to 0.70 takes FP rate from 88% to ~0% with no recall loss.
+- **Bestiality**: partial separation. 0.55 → 0.60 keeps 76% recall, cuts FP rate from 65% to 44%. Higher would cost too much recall.
+- **Young**: User's hypothesis (raise threshold for the noisy Young label) tested — TPs and FPs overlap heavily, so threshold tuning helps only marginally. Bumped 0.35 → 0.50 as a small win (75% recall, 55% FP rate vs 64%). Policy refinement is the real fix.
+- **Diaper / Celebrity / CSAM-text**: skipped. FP scores span the entire range — model is fundamentally miscalibrated, not just over-firing. Policy refinement needed, not threshold change.
+- **text NSFW**: skipped. My analysis bucket "nsfw" was the lowercase image-side scanner (n=47), not text-mode NSFW (n=6, currently 0.5).
+
+All threshold changes shown in the status tables above with "(was ...)" annotations.
+
+### 6. Surgical signalTerms edits were not pursued
 
 The orchestrator's per-label `SignalTerms` arrays are vestigial — the dashboard never exposed them for editing, the model never receives them, and they're only used for post-processing `Field` attribution. The orchestrator-dev plan removes the field entirely. Civitai-side `signalTerms` edits would be moot once that change ships, so we focused on policy-text changes instead.
 
@@ -68,14 +82,14 @@ The orchestrator's per-label `SignalTerms` arrays are vestigial — the dashboar
 
 | Label | Status | Threshold | Action |
 |-------|--------|-----------|--------|
-| **Young** (renamed from "Age-Down Signal") | rewritten — self-contained, 5 new carve-outs | 0.35 | Scan |
-| **Sexual** | minor polish — carve-outs added | 0.35 | Scan |
-| **Bestiality** | rewritten — strengthened anthro carve-out | 0.55 | Block |
-| **Urine** | rewritten — fluid/bathroom carve-outs added | 0.55 | Block |
+| **Young** (renamed from "Age-Down Signal") | rewritten — self-contained, 5 new carve-outs | **0.50** (was 0.35) | Scan |
+| **Sexual** | minor polish — carve-outs added | **0.75** (was 0.35) | Scan |
+| **Bestiality** | rewritten — strengthened anthro carve-out | **0.60** (was 0.55) | Block |
+| **Urine** | rewritten — fluid/bathroom carve-outs added | **0.65** (was 0.55) | Block |
 | **Celebrity** | rewritten — fictional-character + LoRA carve-outs | 0.55 | Block |
-| **Menstruation** | unchanged — clean | 0.55 | Block |
+| **Menstruation** | unchanged — clean | **0.70** (was 0.55) | Block |
 | **Diaper** | unchanged — clean | 0.55 | Block |
-| **Scat** | unchanged — clean | 0.55 | Block |
+| **Scat** | unchanged — clean | **0.60** (was 0.55) | Block |
 | ~~CSAM~~ | **dropped** in Tier A | — | — |
 | ~~CR~~ | **dropped** in Tier A | — | — |
 
@@ -87,14 +101,14 @@ The orchestrator's per-label `SignalTerms` arrays are vestigial — the dashboar
 | **Grooming** | Extremism-template carve-out added | 0.45 | Review |
 | **Sex Trafficking** | Extremism-template carve-out added | 0.45 | Review |
 | **Exploitation** | scope tightened + Extremism-template carve-out | 0.45 | Review |
-| **Bestiality** | parity rewrite with prompt-mode | 0.55 | Block |
-| **Urine** | parity rewrite with prompt-mode | 0.55 | Block |
+| **Bestiality** | parity rewrite with prompt-mode | **0.60** (was 0.55) | Block |
+| **Urine** | parity rewrite with prompt-mode | **0.65** (was 0.55) | Block |
 | **CSAM** | unchanged — single concept, clean | 0.6 | Block |
 | **Extremism** | unchanged — template label | 0.45 | Review |
 | **Impersonating Civitai Staff** | unchanged — well-constructed | 0.45 | Review |
-| **Menstruation** | unchanged — clean | 0.55 | Block |
+| **Menstruation** | unchanged — clean | **0.70** (was 0.55) | Block |
 | **Diaper** | unchanged — clean | 0.55 | Block |
-| **Scat** | unchanged — clean | 0.55 | Block |
+| **Scat** | unchanged — clean | **0.60** (was 0.55) | Block |
 | ~~Illegal Trade~~ | **dropped** | — | — |
 | ~~PG / PG13 / R / X / XXX~~ | **dropped** in Tier A | — | — |
 
@@ -278,6 +292,9 @@ C:\temp\prompt-batch2-pre.json                # state after batch 1, before batc
 C:\temp\text-batch2-pre.json
 C:\temp\prompt-batch3-pre.json                # state after batch 2, before batch 3
 C:\temp\text-batch3-pre.json
+C:\temp\xguard-backup-pre-threshold.json      # full backup before 2026-05-18 threshold pass
+C:\temp\prompt-threshold-pre.json             # prompt-mode state before threshold pass
+C:\temp\text-threshold-pre.json               # text-mode state before threshold pass
 ```
 
 Restore the entire registry to pre-change state:
