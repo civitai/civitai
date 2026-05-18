@@ -75,7 +75,7 @@ const autoLabelCaptionParamsSchema = z.object({
 export type SubmitAutoLabelWorkflowInput = z.infer<typeof submitAutoLabelWorkflowSchema>;
 export const submitAutoLabelWorkflowSchema = z.object({
   modelId: z.number().positive(),
-  mediaType: z.enum(['image', 'video']).default('image'),
+  mediaType: z.enum(['image', 'video', 'audio']).default('image'),
   images: z
     .array(autoLabelImageSchema)
     .min(1)

@@ -10,7 +10,7 @@ import type {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import type { GenerationResource } from '~/shared/types/generation.types';
-import type { EngineTypes, TrainingBaseModelType } from '~/utils/training';
+import type { AudioSampleOverride, EngineTypes, TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {
   url: string;
@@ -125,6 +125,8 @@ export type TrainingRun = {
   baseType: TrainingBaseModelType;
   customModel?: GenerationResource;
   samplePrompts: string[];
+  /** Audio-only. Index-aligned with samplePrompts. */
+  samplesOverrides?: AudioSampleOverride[];
   negativePrompt?: string;
   params: TrainingDetailsParams;
   highPriority: boolean;
@@ -266,6 +268,10 @@ export const defaultBaseVideo = 'hy_720_fp8';
 export const defaultBaseTypeVideo = 'hunyuan' as const;
 export const defaultEngineVideo = 'musubi';
 
+export const defaultBaseAudio = 'acestep_15';
+export const defaultBaseTypeAudio = 'acestep15' as const;
+export const defaultEngineAudio = 'ai-toolkit';
+
 export const getDefaultTrainingParams = (base: TrainingDetailsBaseModel, engine: EngineTypes) => {
   return trainingSettings.reduce(
     (a, v) => ({
@@ -299,6 +305,12 @@ export const defaultRunVideo = {
   params: getDefaultTrainingParams(defaultBaseVideo, defaultEngineVideo),
   base: defaultBaseVideo,
   baseType: defaultBaseTypeVideo,
+};
+export const defaultRunAudio = {
+  ...defaultRunBase,
+  params: getDefaultTrainingParams(defaultBaseAudio, defaultEngineAudio),
+  base: defaultBaseAudio,
+  baseType: defaultBaseTypeAudio,
 };
 
 const defaultTrainingStateBase: Omit<TrainingDataState, 'labelType' | 'initialLabelType' | 'runs'> =
@@ -350,6 +362,28 @@ export const defaultTrainingStateVideo: TrainingDataState = {
   initialLabelType: 'caption',
   runs: [{ ...defaultRunVideo }],
 };
+export const defaultTrainingStateAudio: TrainingDataState = {
+  ...defaultTrainingStateBase,
+  labelType: 'caption',
+  initialLabelType: 'caption',
+  runs: [{ ...defaultRunAudio }],
+};
+
+/** Picks the right default training state for the given media type.
+ * Centralized so callers don't repeat `mediaType === 'video' ? … : …` ternaries. */
+export const getDefaultTrainingStateFor = (
+  mediaType: TrainingDetailsObj['mediaType']
+): TrainingDataState => {
+  if (mediaType === 'video') return defaultTrainingStateVideo;
+  if (mediaType === 'audio') return defaultTrainingStateAudio;
+  return defaultTrainingState;
+};
+
+const getDefaultRunFor = (mediaType: TrainingDetailsObj['mediaType']) => {
+  if (mediaType === 'video') return defaultRunVideo;
+  if (mediaType === 'audio') return defaultRunAudio;
+  return defaultRun;
+};
 
 export const getShortNameFromUrl = (i: ImageDataType) => {
   return `${i.url.split('/').pop() ?? 'unk'}.${i.type.split('/').pop() ?? 'jpg'}`;
@@ -360,10 +394,7 @@ const setModelState = (
   modelId: number,
   mediaType: TrainingDetailsObj['mediaType']
 ) => {
-  if (!state[modelId])
-    state[modelId] = {
-      ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
-    };
+  if (!state[modelId]) state[modelId] = { ...getDefaultTrainingStateFor(mediaType) };
   // TODO figure out how to tell TS that it exists now (no "!" below)
 };
 
@@ -509,7 +540,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         setModelState(state, modelId, mediaType);
 
         const lastNum = Math.max(1, ...state[modelId]!.runs.map((r) => r.id));
-        const newData = data ?? (mediaType === 'video' ? defaultRunVideo : defaultRun);
+        const newData = data ?? getDefaultRunFor(mediaType);
         const newRun = {
           ...newData,
           id: lastNum + 1,
@@ -528,7 +559,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
           thisState.runs.splice(idx, 1);
         }
         if (thisState.runs.length === 0) {
-          state[modelId]!.runs.push(mediaType === 'video' ? defaultRunVideo : defaultRun);
+          state[modelId]!.runs.push(getDefaultRunFor(mediaType));
         }
       });
     },
@@ -536,7 +567,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
       set((state) => {
         setModelState(state, modelId, mediaType);
 
-        state[modelId]!.runs = [mediaType === 'video' ? defaultRunVideo : defaultRun];
+        state[modelId]!.runs = [getDefaultRunFor(mediaType)];
       });
     },
     updateRun: (modelId, mediaType, runId, data) => {
@@ -554,6 +585,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
               ? data.customModel
               : run.customModel;
           run.samplePrompts = data.samplePrompts ?? run.samplePrompts;
+          run.samplesOverrides = data.samplesOverrides ?? run.samplesOverrides;
           run.negativePrompt = data.negativePrompt ?? run.negativePrompt;
           run.highPriority = data.highPriority ?? run.highPriority;
           run.staging = data.staging ?? run.staging;

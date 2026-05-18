@@ -65,7 +65,7 @@ export const constants = {
     'Workflow',
     'Upscaler',
   ],
-  trainingMediaTypes: ['image', 'video'],
+  trainingMediaTypes: ['image', 'video', 'audio'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],

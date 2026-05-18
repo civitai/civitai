@@ -29,8 +29,7 @@ import type {
 } from '~/store/training.store';
 import {
   autoLabelLimits,
-  defaultTrainingState,
-  defaultTrainingStateVideo,
+  getDefaultTrainingStateFor,
   getShortNameFromUrl,
   trainingStore,
   useTrainingImageStore,
@@ -95,7 +94,7 @@ const useSubmitImages = ({
   const { autoTagging, autoCaptioning, imageList } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
   const { setAutoLabeling, mutateAutoLabeling, updateImage } = trainingStore;
@@ -180,7 +179,7 @@ const useSubmitImages = ({
     }
 
     if (images.length === 0) {
-      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      const defaultState = getDefaultTrainingStateFor(mediaType);
       setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
       showErrorNotification({
         title: 'Auto-label failed',
@@ -269,7 +268,9 @@ const useSubmitImages = ({
         .join('; ');
 
       const totalFails = allFailedKeys.size;
-      const headline = `${labelVerb} ${successes} image${successes === 1 ? '' : 's'}.`;
+      const itemNoun =
+        mediaType === 'audio' ? 'audio file' : mediaType === 'video' ? 'video' : 'image';
+      const headline = `${labelVerb} ${successes} ${itemNoun}${successes === 1 ? '' : 's'}.`;
       const failureText =
         totalFails > 0
           ? ` ${totalFails} failure${totalFails === 1 ? '' : 's'}${
@@ -290,11 +291,13 @@ const useSubmitImages = ({
         });
       } else {
         showSuccessNotification({
-          title: 'Images auto-labeled successfully!',
+          title: `${
+            mediaType === 'audio' ? 'Audio files' : mediaType === 'video' ? 'Videos' : 'Images'
+          } auto-labeled successfully!`,
           message,
         });
       }
-      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      const defaultState = getDefaultTrainingStateFor(mediaType);
       setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
       inFlightHandles.delete(modelId);
     };
@@ -363,7 +366,7 @@ const useSubmitImages = ({
         handle.cancel();
       }
     } catch (e) {
-      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      const defaultState = getDefaultTrainingStateFor(mediaType);
       guard(() => setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling }));
       throw e;
     }
@@ -466,7 +469,7 @@ const AutoTagSection = ({
   const { autoTagging } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
   const { setAutoTagging } = trainingStore;
@@ -636,7 +639,7 @@ const AutoCaptionSection = ({
   const { autoCaptioning } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
   const { setAutoCaptioning } = trainingStore;
@@ -800,7 +803,7 @@ export const AutoLabelModal = ({
   const { labelType } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
 
