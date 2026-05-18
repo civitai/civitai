@@ -19,8 +19,31 @@ type CacheSettings = {
   skip: boolean;
 };
 
-const origins = [...env.TRPC_ORIGINS];
-const hosts = getAllServerHosts();
+function hostFromUrl(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    return new URL(value).host.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+// Allowlist of hosts permitted to issue cookie-authenticated cross-origin
+// requests. Built from server domains (primary + aliases), explicit
+// TRPC_ORIGINS, and NEXTAUTH_URL.
+const allowedOriginHosts = new Set<string>(
+  [...getAllServerHosts(), ...env.TRPC_ORIGINS.map(hostFromUrl), hostFromUrl(env.NEXTAUTH_URL)]
+    .filter((h): h is string => !!h)
+    .map((h) => h.toLowerCase())
+);
+
+// Origin preferred; Referer is the fallback for clients that suppress Origin.
+// Absent both, treat as untrusted — isAcceptableOrigin rejects the request.
+function isAllowedOriginRequest(req: NextApiRequest): boolean {
+  const sourceHost = hostFromUrl(req.headers.origin) ?? hostFromUrl(req.headers.referer);
+  return !!sourceHost && allowedOriginHosts.has(sourceHost);
+}
+
 export const createContext = async ({
   req,
   res,
@@ -30,11 +53,9 @@ export const createContext = async ({
 }) => {
   const session = await getServerAuthSession({ req, res });
   const ip = requestIp.getClientIp(req) ?? '';
-  const acceptableOrigin = isProd
-    ? (origins.some((o) => req.headers.referer?.startsWith(o)) ||
-        hosts.some((h) => req.headers.host === h)) ??
-      false
-    : true;
+  // Bearer/API-key auth carries no cookies, so CSRF does not apply.
+  const isBearerAuth = (req as any).context?.apiKeyId != null;
+  const acceptableOrigin = !isProd || isBearerAuth || isAllowedOriginRequest(req);
   const track = new Tracker(req, res);
   const cache: CacheSettings | null = {
     browserTTL: session?.user ? 0 : 60,
