@@ -98,12 +98,12 @@ const checkFns: Record<string, CancellableCheckFn> = {
 
   // Redis cluster client: skip explicit PING because redis@5 cluster client
   // throws `Cannot read properties of undefined (reading 'connectPromise')`
-  // when a master is transiently re-establishing, even with isReady=true.
-  // isReady tracks topology + per-master connection state; it flips to
-  // false on real failures.
+  // when a master is transiently re-establishing. isReady is the canonical
+  // signal — but be lenient: treat only explicit `false` as failure, since
+  // it can briefly read undefined during topology refresh / cold start.
   async redis(signal: AbortSignal) {
     if (signal.aborted) return false;
-    return (redis as any).isReady === true;
+    return (redis as any)?.isReady !== false;
   },
 
   async sysRedis(signal: AbortSignal) {
