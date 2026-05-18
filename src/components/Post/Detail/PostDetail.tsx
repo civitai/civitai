@@ -68,7 +68,10 @@ import type { CollectionMetadataSchema } from '~/server/schema/collection.schema
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
-import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import {
+  BrowsingSettingsAddonsProvider,
+  useBrowsingSettingsAddons,
+} from '~/providers/BrowsingSettingsAddonsProvider';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
@@ -145,6 +148,9 @@ export function PostDetailContent({ postId }: Props) {
   });
 
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const hasActiveContentFilter =
+    browsingSettingsAddons.settings.disableMinor || browsingSettingsAddons.settings.disablePoi;
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
   const sidebarEnabled = true;
@@ -372,7 +378,14 @@ export function PostDetailContent({ postId }: Props) {
               </>
             )}
             {!imagesLoading && !unfilteredImages?.length ? (
-              <Alert>Unable to load images</Alert>
+              hasActiveContentFilter ? (
+                <Alert color="yellow">
+                  No images visible at your current browsing settings. Some images in this post may
+                  be hidden because they are tagged as minor or depict real people.
+                </Alert>
+              ) : (
+                <Alert>Unable to load images</Alert>
+              )
             ) : (
               <>
                 {currentUser?.id === post.user.id &&
