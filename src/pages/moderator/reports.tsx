@@ -71,6 +71,7 @@ export default function Reports() {
         ReportReason.Claim,
         ReportReason.Ownership,
         ReportReason.TOSViolation,
+        ReportReason.Spam,
         // ReportReason.Automated, // removing temporarily as per Seb
       ],
     },

@@ -33,6 +33,8 @@ export const reportAdminAttentionDetailsSchema = baseDetailSchema.extend({
   reason: z.string(),
 });
 
+export const reportSpamDetailsSchema = baseDetailSchema;
+
 export const reportAutomatedDetailsSchema = baseDetailSchema.extend({
   externalId: z.string(),
   externalType: z.enum(ExternalModerationType),
@@ -87,6 +89,11 @@ export const reportCsamSchema = baseSchema.extend({
   reason: z.literal(ReportReason.CSAM),
 });
 
+export const reportSpamSchema = baseSchema.extend({
+  reason: z.literal(ReportReason.Spam),
+  details: reportSpamDetailsSchema,
+});
+
 export const reportAutomatedSchema = baseSchema.extend({
   reason: z.literal(ReportReason.Automated),
   details: reportAutomatedDetailsSchema,
@@ -103,6 +110,7 @@ export const createReportInputSchema = z.discriminatedUnion('reason', [
   reportAdminAttentionSchema,
   reportCsamSchema,
   reportAutomatedSchema,
+  reportSpamSchema,
 ]);
 
 export type SetReportStatusInput = z.infer<typeof setReportStatusSchema>;

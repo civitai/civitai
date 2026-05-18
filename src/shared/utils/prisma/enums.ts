@@ -336,6 +336,7 @@ export const ReportReason = {
   Claim: 'Claim',
   CSAM: 'CSAM',
   Automated: 'Automated',
+  Spam: 'Spam',
 } as const;
 
 export type ReportReason = (typeof ReportReason)[keyof typeof ReportReason];
