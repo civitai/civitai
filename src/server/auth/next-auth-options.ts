@@ -522,10 +522,12 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
   // Request specific customizations
   // -------------------------------
 
-  // Handle request hostname
+  // Construct a request-origin string locally instead of overwriting
+  // req.headers.origin, which would mask the browser-supplied Origin needed
+  // by downstream CSRF gating in createContext.
   const protocol = getProtocol(req);
-  req.headers.origin = `${protocol}://${req.headers.host as string}`;
-  const { hostname: reqHostname } = new URL(req.headers.origin);
+  const requestOrigin = `${protocol}://${req.headers.host as string}`;
+  const { hostname: reqHostname } = new URL(requestOrigin);
 
   // Handle domain-specific cookie
   // Skip domain color override when NEXTAUTH_COOKIE_DOMAIN is explicitly set
@@ -572,7 +574,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
       // Set the correct redirect uri
       provider.options.authorization ??= {};
       provider.options.authorization.params ??= {};
-      provider.options.authorization.params.redirect_uri = `${req.headers.origin}/api/auth/callback/${provider.id}`;
+      provider.options.authorization.params.redirect_uri = `${requestOrigin}/api/auth/callback/${provider.id}`;
 
       // Apply per-host credentials (handles primary color override + alias CSV).
       if (oauthProviderIds.includes(provider.id as OAuthProviderId)) {
