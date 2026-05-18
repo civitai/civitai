@@ -328,6 +328,13 @@ function EditorBody({
     attentionEditRef.current = attentionEdit;
   }, [attentionEdit]);
 
+  // The editor instance itself also lives in a ref so the `handleKeyDown`
+  // closure (baked in at editor build time) can reach the current editor.
+  // With `immediatelyRender: false`, `useEditor` returns `null` on the first
+  // render — the closure would otherwise capture that null and never recover,
+  // silently no-op-ing mod+ArrowUp / mod+ArrowDown attention edits.
+  const editorRef = useRef<Editor | null>(null);
+
   // The SnippetCategory extension must be present at editor-build time to
   // be available — toggling the `snippets` prop on/off rebuilds the editor.
   // Inside a single editor lifetime, the categories list itself can change
@@ -415,8 +422,9 @@ function EditorBody({
           // positions so the cursor lands inside the bumped weight ready
           // for repeated nudges.
           if (attentionEditRef.current && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-            if (!editor) return false;
-            const handled = applyAttentionEdit(editor, event.key === 'ArrowUp', snippetsEnabled);
+            const ed = editorRef.current;
+            if (!ed) return false;
+            const handled = applyAttentionEdit(ed, event.key === 'ArrowUp', snippetsEnabled);
             if (handled) {
               event.preventDefault();
               return true;
@@ -473,6 +481,10 @@ function EditorBody({
     if (current === value) return;
     editor.commands.setContent(parseTextToDoc(value, snippetsEnabled), { emitUpdate: false });
   }, [editor, value, snippetsEnabled]);
+
+  useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
 
   useEffect(() => {
     if (autoFocus && editor) editor.commands.focus('end');
