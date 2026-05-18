@@ -260,7 +260,11 @@ function EditorBody({
             'tiptap-textarea-editor outline-none',
             // Mantine input-style baseline so the editor sits naturally
             // inside Input.Wrapper labels.
-            'text-sm leading-snug'
+            'text-sm leading-snug',
+            // Preserve consecutive spaces and explicit newlines instead of
+            // letting the browser collapse them. ProseMirror's default CSS
+            // (which sets this on `.ProseMirror`) isn't imported globally.
+            'whitespace-pre-wrap'
           ),
           'data-placeholder': placeholder ?? (typeof label === 'string' ? label : ''),
         },
@@ -447,44 +451,46 @@ function EditorBody({
 }
 
 /**
- * Convert a plain-text value into a Tiptap doc. When snippet support is
- * enabled, every `#category` reference becomes a `snippetCategory` inline
- * node; otherwise the text is a single literal text node. Either way the
- * doc serializes back through `editor.getText()` to the same source string.
+ * Convert a plain-text value into a Tiptap doc. Each line of input becomes
+ * its own paragraph so the round-trip through `editor.getText({
+ * blockSeparator: '\n' })` preserves newlines verbatim — stuffing `\n`
+ * characters into a single text node would let the DOM collapse them.
+ * When snippet support is enabled, `#category` references within each
+ * line become `snippetCategory` inline nodes.
  */
 function parseTextToDoc(text: string, snippetsEnabled: boolean): JSONContent {
+  const buildParagraph = (line: string): JSONContent => {
+    if (!line) return { type: 'paragraph' };
+    if (!snippetsEnabled) {
+      return { type: 'paragraph', content: [{ type: 'text', text: line }] };
+    }
+    const refs = parsePromptSnippetReferences(line);
+    if (refs.length === 0) {
+      return { type: 'paragraph', content: [{ type: 'text', text: line }] };
+    }
+    const inline: JSONContent[] = [];
+    let cursor = 0;
+    for (const ref of refs) {
+      if (ref.start > cursor) {
+        inline.push({ type: 'text', text: line.slice(cursor, ref.start) });
+      }
+      inline.push({
+        type: 'snippetCategory',
+        attrs: { id: ref.category, label: ref.category },
+      });
+      cursor = ref.end;
+    }
+    if (cursor < line.length) {
+      inline.push({ type: 'text', text: line.slice(cursor) });
+    }
+    return { type: 'paragraph', content: inline };
+  };
+
   if (!text) {
     return { type: 'doc', content: [{ type: 'paragraph' }] };
   }
-  if (!snippetsEnabled) {
-    return {
-      type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
-    };
-  }
-  const refs = parsePromptSnippetReferences(text);
-  if (refs.length === 0) {
-    return {
-      type: 'doc',
-      content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
-    };
-  }
-  const inline: JSONContent[] = [];
-  let cursor = 0;
-  for (const ref of refs) {
-    if (ref.start > cursor) {
-      inline.push({ type: 'text', text: text.slice(cursor, ref.start) });
-    }
-    inline.push({
-      type: 'snippetCategory',
-      attrs: { id: ref.category, label: ref.category },
-    });
-    cursor = ref.end;
-  }
-  if (cursor < text.length) {
-    inline.push({ type: 'text', text: text.slice(cursor) });
-  }
-  return { type: 'doc', content: [{ type: 'paragraph', content: inline }] };
+  const lines = text.split('\n');
+  return { type: 'doc', content: lines.map(buildParagraph) };
 }
 
 /**
@@ -492,9 +498,11 @@ function parseTextToDoc(text: string, snippetsEnabled: boolean): JSONContent {
  * `getText()` walks every node and (via the chip's `renderText`) emits
  * `#${id}` for snippet chips — so the form's serialized value matches
  * what `parsePromptSnippetReferences` and the server-side resolver expect.
+ * `blockSeparator: '\n'` mirrors textarea semantics: each paragraph break
+ * becomes a single newline, round-tripping cleanly with `parseTextToDoc`.
  */
 function serializeEditorToText(editor: Editor): string {
-  return editor.getText();
+  return editor.getText({ blockSeparator: '\n' });
 }
 
 /**
@@ -544,8 +552,11 @@ function applyAttentionEdit(editor: Editor, isPlus: boolean, snippetsEnabled: bo
 /**
  * Walk the doc inline-by-inline, accumulating the text-rendering length of
  * each node (text nodes use their literal text length; snippetCategory atoms
- * use `#${id}`'s length to match `editor.getText()`). When the accumulated
- * length reaches `charOffset`, emit the corresponding ProseMirror position.
+ * use `#${id}`'s length to match `editor.getText()`). Paragraph boundaries
+ * contribute one `\n` each to the flat text view (mirroring `textBetween`'s
+ * blockSeparator), so we deduct one char on entering every paragraph after
+ * the first. When the accumulated length reaches `charOffset`, emit the
+ * corresponding ProseMirror position.
  *
  * Atomic chips can't host a cursor; offsets that fall inside a chip's
  * rendered text round to the nearest chip boundary (start when `remaining
@@ -554,8 +565,21 @@ function applyAttentionEdit(editor: Editor, isPlus: boolean, snippetsEnabled: bo
 function charOffsetToPmPos(editor: Editor, charOffset: number): number {
   let remaining = charOffset;
   let result = -1;
+  let firstParagraph = true;
   editor.state.doc.descendants((node, pmPos) => {
     if (result !== -1) return false;
+    if (node.type.name === 'paragraph') {
+      if (!firstParagraph) {
+        if (remaining === 0) {
+          // Cursor lands at the start of this paragraph (inside the opening tag).
+          result = pmPos + 1;
+          return false;
+        }
+        remaining -= 1;
+      }
+      firstParagraph = false;
+      return true;
+    }
     if (node.isText) {
       const len = (node.text ?? '').length;
       if (remaining <= len) {
