@@ -32,7 +32,7 @@ export type AutoLabelImageInput = {
 
 type CommonOptions = {
   modelId: number;
-  mediaType: 'image' | 'video';
+  mediaType: 'image' | 'video' | 'audio';
   images: AutoLabelImageInput[];
   // Post-processing is purely client-side now — the server never sees these fields.
   postProcess: TagPostProcessOptions;

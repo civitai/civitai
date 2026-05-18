@@ -29,8 +29,7 @@ import type {
 } from '~/store/training.store';
 import {
   autoLabelLimits,
-  defaultTrainingState,
-  defaultTrainingStateVideo,
+  getDefaultTrainingStateFor,
   getShortNameFromUrl,
   trainingStore,
   useTrainingImageStore,
@@ -95,10 +94,16 @@ const useSubmitImages = ({
   const { autoTagging, autoCaptioning, imageList } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
   const { setAutoLabeling, mutateAutoLabeling, updateImage } = trainingStore;
+
+  // Audio always uses the orchestrator path — the legacy imageAutoCaption job
+  // can't process audio. Match the gating logic in TrainingFormImages so the
+  // UI and submit path agree.
+  const isAudio = mediaType === 'audio';
+  const useOrchestratorPath = features.trainingAutoLabelOrchestrator || isAudio;
 
   const filteredImages = imageList.filter((i) =>
     (type === 'caption' ? autoCaptioning : autoTagging).overwrite === 'ignore'
@@ -107,9 +112,7 @@ const useSubmitImages = ({
   );
   // Caption cap only applies on the legacy path — orchestrator handles arbitrary counts.
   const disabled =
-    type === 'caption' &&
-    filteredImages.length > maxImagesCaption &&
-    !features.trainingAutoLabelOrchestrator;
+    type === 'caption' && filteredImages.length > maxImagesCaption && !useOrchestratorPath;
 
   const submitViaOrchestrator = async () => {
     // Cancel any prior run for this model — without this, an old poll loop
@@ -180,7 +183,7 @@ const useSubmitImages = ({
     }
 
     if (images.length === 0) {
-      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      const defaultState = getDefaultTrainingStateFor(mediaType);
       setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
       showErrorNotification({
         title: 'Auto-label failed',
@@ -269,7 +272,9 @@ const useSubmitImages = ({
         .join('; ');
 
       const totalFails = allFailedKeys.size;
-      const headline = `${labelVerb} ${successes} image${successes === 1 ? '' : 's'}.`;
+      const itemNoun =
+        mediaType === 'audio' ? 'audio file' : mediaType === 'video' ? 'video' : 'image';
+      const headline = `${labelVerb} ${successes} ${itemNoun}${successes === 1 ? '' : 's'}.`;
       const failureText =
         totalFails > 0
           ? ` ${totalFails} failure${totalFails === 1 ? '' : 's'}${
@@ -290,11 +295,13 @@ const useSubmitImages = ({
         });
       } else {
         showSuccessNotification({
-          title: 'Images auto-labeled successfully!',
+          title: `${
+            mediaType === 'audio' ? 'Audio files' : mediaType === 'video' ? 'Videos' : 'Images'
+          } auto-labeled successfully!`,
           message,
         });
       }
-      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      const defaultState = getDefaultTrainingStateFor(mediaType);
       setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling });
       inFlightHandles.delete(modelId);
     };
@@ -363,7 +370,7 @@ const useSubmitImages = ({
         handle.cancel();
       }
     } catch (e) {
-      const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+      const defaultState = getDefaultTrainingStateFor(mediaType);
       guard(() => setAutoLabeling(modelId, mediaType, { ...defaultState.autoLabeling }));
       throw e;
     }
@@ -416,8 +423,10 @@ const useSubmitImages = ({
 
     try {
       // The orchestrator flag overrides — when on, we always use the new flow,
-      // regardless of what trainingAutoTag / trainingAutoCaption say.
-      if (features.trainingAutoLabelOrchestrator) {
+      // regardless of what trainingAutoTag / trainingAutoCaption say. Audio
+      // always forces the orchestrator path because the legacy zip job can't
+      // process audio files.
+      if (useOrchestratorPath) {
         // Hand off to the page-level progress card so the modal doesn't sit on
         // "Sending data..." through the entire upload+submit phase. The first
         // setAutoLabeling call inside submitViaOrchestrator runs synchronously
@@ -466,7 +475,7 @@ const AutoTagSection = ({
   const { autoTagging } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
   const { setAutoTagging } = trainingStore;
@@ -632,11 +641,14 @@ const AutoCaptionSection = ({
   const features = useFeatureFlags();
   // Orchestrator path doesn't need the legacy service-availability flag, so the new
   // flag overrides it. Otherwise fall back to the existing trainingAutoCaption check.
-  const available = features.trainingAutoLabelOrchestrator || features.trainingAutoCaption;
+  // Audio captions always route through the orchestrator audioCaptioning step,
+  // so they don't need the legacy auto-caption availability gate either.
+  const available =
+    features.trainingAutoLabelOrchestrator || features.trainingAutoCaption || mediaType === 'audio';
   const { autoCaptioning } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
   const { setAutoCaptioning } = trainingStore;
@@ -800,7 +812,7 @@ export const AutoLabelModal = ({
   const { labelType } = useTrainingImageStore(
     (state) =>
       state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+        ...getDefaultTrainingStateFor(mediaType),
       }
   );
 

@@ -31,8 +31,7 @@ import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
-  defaultTrainingState,
-  defaultTrainingStateVideo,
+  getDefaultTrainingStateFor,
   getDefaultTrainingParams,
   type TrainingRun,
   type TrainingRunUpdate,
@@ -46,12 +45,15 @@ import {
   isValidRapid,
   isAiToolkitEnabled,
   isAiToolkitMandatory,
+  isAudioTrainingBaseType,
   isKohyaEnabled,
   isSamplePromptsRequired,
   getDefaultEngine,
+  parseAudioCaption,
   rapidEta,
   trainingBaseModelTypesVideo,
 } from '~/utils/training';
+import type { AudioSampleOverride } from '~/utils/training';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const AdvancedSettings = ({
@@ -70,10 +72,7 @@ export const AdvancedSettings = ({
   const { updateRun } = trainingStore;
   const features = useFeatureFlags();
   const { triggerWord, imageList } = useTrainingImageStore(
-    (state) =>
-      state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
-      }
+    (state) => state[modelId] ?? { ...getDefaultTrainingStateFor(mediaType) }
   );
   const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
@@ -89,6 +88,13 @@ export const AdvancedSettings = ({
   const isVideo = (trainingBaseModelTypesVideo as unknown as string[]).includes(
     selectedRun.baseType
   );
+  const isAudio = isAudioTrainingBaseType(selectedRun.baseType);
+  // Sample prompts are text descriptions across all media types — naming is the
+  // only thing that varies. Audio gets the same 3-slot layout as image for now;
+  // when the orchestrator switches to a different prompt format we can swap the
+  // promptLabelNoun out without rewriting the loop.
+  const promptLabelNoun = isAudio ? 'Sample' : isVideo ? 'Video' : 'Image';
+  const numSamplePrompts = isVideo ? 2 : 3;
 
   useEffect(() => {
     if (previous?.id !== selectedRun.id) return;
@@ -233,7 +239,10 @@ export const AdvancedSettings = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRun.params.shuffleCaption]);
 
-  // Pre-fill sample prompts with random captions when AI Toolkit is selected
+  // Pre-fill sample prompts with random captions when AI Toolkit is selected.
+  // For audio, captions are XML-tagged (CAPTION/LYRICS/DURATION/LANGUAGE); we
+  // strip the tags for the visible prompt and seed `samplesOverrides` from the
+  // remaining fields so the user gets sensible defaults to tweak.
   useEffect(() => {
     if (selectedRun.params.engine !== 'ai-toolkit') return;
 
@@ -248,28 +257,45 @@ export const AdvancedSettings = ({
 
     if (captionsWithContent.length === 0) return;
 
-    // Select 3 random captions (or fewer if not enough available)
+    // Select up to N random captions (or fewer if not enough available).
+    // Video uses 2 slots; image and audio use 3.
     const numPromptsNeeded = mediaType === 'video' ? 2 : 3;
-    const randomCaptions: string[] = [];
+    const pickedCaptions: string[] = [];
     const usedIndices = new Set<number>();
 
     while (
-      randomCaptions.length < numPromptsNeeded &&
-      randomCaptions.length < captionsWithContent.length
+      pickedCaptions.length < numPromptsNeeded &&
+      pickedCaptions.length < captionsWithContent.length
     ) {
       const randomIndex = Math.floor(Math.random() * captionsWithContent.length);
       if (!usedIndices.has(randomIndex)) {
         usedIndices.add(randomIndex);
-        randomCaptions.push(captionsWithContent[randomIndex]);
+        pickedCaptions.push(captionsWithContent[randomIndex]);
       }
     }
 
-    // Fill remaining slots with empty strings if needed
-    while (randomCaptions.length < numPromptsNeeded) {
-      randomCaptions.push('');
+    const finalPrompts: string[] = [];
+    const finalOverrides: AudioSampleOverride[] = [];
+    for (let i = 0; i < numPromptsNeeded; i++) {
+      const raw = pickedCaptions[i] ?? '';
+      if (mediaType === 'audio' && raw) {
+        const parsed = parseAudioCaption(raw);
+        finalPrompts.push(parsed.caption ?? raw);
+        finalOverrides.push({
+          ...(parsed.lyrics && { lyrics: parsed.lyrics }),
+          ...(parsed.duration && { duration: parsed.duration }),
+          ...(parsed.language && { language: parsed.language }),
+        });
+      } else {
+        finalPrompts.push(raw);
+        finalOverrides.push({});
+      }
     }
 
-    doUpdate({ samplePrompts: randomCaptions });
+    doUpdate({
+      samplePrompts: finalPrompts,
+      ...(mediaType === 'audio' && { samplesOverrides: finalOverrides }),
+    });
 
     showInfoNotification({
       title: 'Sample prompts pre-filled',
@@ -292,8 +318,9 @@ export const AdvancedSettings = ({
     if (appliedDefaultEngineRuns.current.has(selectedRun.id)) return;
 
     const shouldOverride =
-      (!isKohyaEnabled(features)) ||
-      (features.aiToolkitDefaultSd && (selectedRun.baseType === 'sd15' || selectedRun.baseType === 'sdxl'));
+      !isKohyaEnabled(features) ||
+      (features.aiToolkitDefaultSd &&
+        (selectedRun.baseType === 'sd15' || selectedRun.baseType === 'sdxl'));
 
     if (!shouldOverride) return;
 
@@ -465,9 +492,9 @@ export const AdvancedSettings = ({
               {openedSections.includes('custom-prompts') && (
                 <Text size="xs" c="dimmed">
                   {isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
-                    ? `This model requires sample prompts. These are pre-filled from your image captions.`
-                    : `Set your own prompts for any of the ${isVideo ? '2' : '3'} sample ${
-                        isVideo ? 'videos' : 'images'
+                    ? `This model requires sample prompts. These are pre-filled from your captions.`
+                    : `Set your own prompts for any of the ${numSamplePrompts} sample ${
+                        isAudio ? 'clips' : isVideo ? 'videos' : 'images'
                       } we generate for each epoch.`}
                 </Text>
               )}
@@ -475,86 +502,157 @@ export const AdvancedSettings = ({
           </Accordion.Control>
           <Accordion.Panel>
             <Stack p="sm">
-              <TextInputWrapper
-                label={`${isVideo ? 'Video' : 'Image'} #1`}
-                placeholder={
-                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
-                    ? 'Required - pre-filled from captions'
-                    : 'Automatically set'
-                }
-                value={selectedRun.samplePrompts[0]}
-                required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
-                error={
-                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
-                  !selectedRun.samplePrompts[0]?.trim()
-                    ? 'Required'
-                    : undefined
-                }
-                onChange={(event) => {
-                  doUpdate({
-                    samplePrompts: [
-                      event.currentTarget.value,
-                      selectedRun.samplePrompts[1],
-                      selectedRun.samplePrompts[2],
-                    ],
-                  });
-                }}
-              />
-              <TextInputWrapper
-                label={`${isVideo ? 'Video' : 'Image'} #2`}
-                placeholder={
-                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
-                    ? 'Required - pre-filled from captions'
-                    : 'Automatically set'
-                }
-                value={selectedRun.samplePrompts[1]}
-                required={isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)}
-                error={
-                  isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
-                  !selectedRun.samplePrompts[1]?.trim()
-                    ? 'Required'
-                    : undefined
-                }
-                onChange={(event) => {
-                  doUpdate({
-                    samplePrompts: [
-                      selectedRun.samplePrompts[0],
-                      event.currentTarget.value,
-                      selectedRun.samplePrompts[2],
-                    ],
-                  });
-                }}
-              />
-              {!isVideo && (
-                <TextInputWrapper
-                  label={`${isVideo ? 'Video' : 'Image'} #3`}
-                  placeholder={
-                    isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine)
-                      ? 'Required - pre-filled from captions'
-                      : 'Automatically set'
+              {Array.from({ length: numSamplePrompts }).map((_, idx) => {
+                const required = isSamplePromptsRequired(
+                  selectedRun.baseType,
+                  selectedRun.params.engine
+                );
+                const current = selectedRun.samplePrompts[idx] ?? '';
+                const override = selectedRun.samplesOverrides?.[idx] ?? {};
+                const setPromptAt = (value: string) => {
+                  const next = [...selectedRun.samplePrompts];
+                  next[idx] = value;
+                  doUpdate({ samplePrompts: next });
+                };
+                const setOverrideAt = (patch: Partial<AudioSampleOverride>) => {
+                  const next: AudioSampleOverride[] = Array.from(
+                    { length: numSamplePrompts },
+                    (_v, i) => ({ ...(selectedRun.samplesOverrides?.[i] ?? {}) })
+                  );
+                  next[idx] = { ...next[idx], ...patch };
+                  // Drop undefined / empty-string keys so we send a tight object.
+                  for (const k of Object.keys(next[idx]) as (keyof AudioSampleOverride)[]) {
+                    const v = next[idx][k];
+                    if (v === undefined || v === '' || v === null) delete next[idx][k];
                   }
-                  value={selectedRun.samplePrompts[2]}
-                  required={isSamplePromptsRequired(
-                    selectedRun.baseType,
-                    selectedRun.params.engine
-                  )}
-                  error={
-                    isSamplePromptsRequired(selectedRun.baseType, selectedRun.params.engine) &&
-                    !selectedRun.samplePrompts[2]?.trim()
-                      ? 'Required'
-                      : undefined
-                  }
-                  onChange={(event) => {
-                    doUpdate({
-                      samplePrompts: [
-                        selectedRun.samplePrompts[0],
-                        selectedRun.samplePrompts[1],
-                        event.currentTarget.value,
-                      ],
-                    });
-                  }}
-                />
-              )}
+                  doUpdate({ samplesOverrides: next });
+                };
+                return (
+                  <Stack key={idx} gap="xs">
+                    <TextInputWrapper
+                      label={`${promptLabelNoun} #${idx + 1}`}
+                      placeholder={
+                        required ? 'Required - pre-filled from captions' : 'Automatically set'
+                      }
+                      value={current}
+                      required={required}
+                      error={required && !current.trim() ? 'Required' : undefined}
+                      onChange={(event) => setPromptAt(event.currentTarget.value)}
+                    />
+                    {isAudio && (
+                      <Card withBorder p="sm" radius="sm">
+                        <Stack gap="xs">
+                          <Text size="xs" c="dimmed">
+                            Optional overrides for this sample. Leave blank to use the model
+                            defaults.
+                          </Text>
+                          <Textarea
+                            label="Lyrics"
+                            autosize
+                            minRows={2}
+                            maxRows={6}
+                            placeholder="[Verse]&#10;...&#10;[Chorus]&#10;..."
+                            value={override.lyrics ?? ''}
+                            onChange={(e) => setOverrideAt({ lyrics: e.currentTarget.value })}
+                          />
+                          <Group grow wrap="wrap">
+                            <NumberInputWrapper
+                              label="Duration (s)"
+                              min={1}
+                              max={240}
+                              value={override.duration ?? ''}
+                              onChange={(v) =>
+                                setOverrideAt({ duration: typeof v === 'number' ? v : undefined })
+                              }
+                            />
+                            <NumberInputWrapper
+                              label="BPM"
+                              min={20}
+                              max={300}
+                              value={override.bpm ?? ''}
+                              onChange={(v) =>
+                                setOverrideAt({ bpm: typeof v === 'number' ? v : undefined })
+                              }
+                            />
+                            <TextInputWrapper
+                              label="Time signature"
+                              placeholder="4"
+                              value={override.timeSignature ?? ''}
+                              onChange={(e) =>
+                                setOverrideAt({ timeSignature: e.currentTarget.value })
+                              }
+                            />
+                          </Group>
+                          <Group grow wrap="wrap">
+                            <TextInputWrapper
+                              label="Language"
+                              placeholder="en"
+                              value={override.language ?? ''}
+                              onChange={(e) => setOverrideAt({ language: e.currentTarget.value })}
+                            />
+                            <TextInputWrapper
+                              label="Key"
+                              placeholder="A minor"
+                              value={override.key ?? ''}
+                              onChange={(e) => setOverrideAt({ key: e.currentTarget.value })}
+                            />
+                          </Group>
+                          <Group grow wrap="wrap">
+                            <NumberInputWrapper
+                              label="Instrumental weight"
+                              min={0}
+                              max={1}
+                              step={0.1}
+                              decimalScale={2}
+                              value={override.instrumentalWeight ?? ''}
+                              onChange={(v) =>
+                                setOverrideAt({
+                                  instrumentalWeight: typeof v === 'number' ? v : undefined,
+                                })
+                              }
+                            />
+                            <NumberInputWrapper
+                              label="Vocal weight"
+                              min={0}
+                              max={1}
+                              step={0.1}
+                              decimalScale={2}
+                              value={override.vocalWeight ?? ''}
+                              onChange={(v) =>
+                                setOverrideAt({
+                                  vocalWeight: typeof v === 'number' ? v : undefined,
+                                })
+                              }
+                            />
+                          </Group>
+                          <Group grow wrap="wrap">
+                            <NumberInputWrapper
+                              label="Steps"
+                              min={1}
+                              max={200}
+                              value={override.steps ?? ''}
+                              onChange={(v) =>
+                                setOverrideAt({ steps: typeof v === 'number' ? v : undefined })
+                              }
+                            />
+                            <NumberInputWrapper
+                              label="CFG"
+                              min={0}
+                              max={20}
+                              step={0.5}
+                              decimalScale={2}
+                              value={override.cfg ?? ''}
+                              onChange={(v) =>
+                                setOverrideAt({ cfg: typeof v === 'number' ? v : undefined })
+                              }
+                            />
+                          </Group>
+                        </Stack>
+                      </Card>
+                    )}
+                  </Stack>
+                );
+              })}
             </Stack>
           </Accordion.Panel>
         </Accordion.Item>
@@ -700,7 +798,7 @@ export const AdvancedSettings = ({
                       options = options.filter((o) => o !== 'cosine_with_restarts');
                     }
 
-                    if (ts.name === 'optimizerType' && isVideo) {
+                    if (ts.name === 'optimizerType' && (isVideo || isAudio)) {
                       options = options.filter((o) => o !== 'Prodigy');
                     }
 
@@ -709,7 +807,10 @@ export const AdvancedSettings = ({
                     }
 
                     if (ts.name === 'engine') {
-                      if (isVideo) {
+                      if (isAudio) {
+                        // Audio only supports AI Toolkit
+                        options = options.filter((o) => o === 'ai-toolkit');
+                      } else if (isVideo) {
                         options = options.filter((o) => o !== 'kohya' && o !== 'rapid');
                       } else {
                         options = options.filter((o) => o !== 'musubi');
@@ -798,7 +899,8 @@ export const AdvancedSettings = ({
                     value: inp,
                     visible: !(
                       ts.name === 'engine' ||
-                      (ts.name === 'trainBatchSize' && selectedRun.params.engine === 'ai-toolkit') ||
+                      (ts.name === 'trainBatchSize' &&
+                        selectedRun.params.engine === 'ai-toolkit') ||
                       (ts.name === 'optimizerArgs' && selectedRun.params.engine === 'ai-toolkit')
                     ),
                   };

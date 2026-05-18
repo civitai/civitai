@@ -1,5 +1,16 @@
-import { Badge, Button, Group, Image, Input, Radio, Stack, Text, Tooltip } from '@mantine/core';
-import { IconPhoto, IconVideo } from '@tabler/icons-react';
+import {
+  Alert,
+  Badge,
+  Button,
+  Group,
+  Image,
+  Input,
+  Radio,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { IconMusic, IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
@@ -31,7 +42,7 @@ type tMediaTypes = TrainingDetailsObj['mediaType'];
 
 const trainingModelTypesMap: {
   [p in tmTypes]: {
-    allowedTypes: ('image' | 'video')[];
+    allowedTypes: ('image' | 'video' | 'audio')[];
     description: string;
     src: string;
     type: 'img' | 'vid';
@@ -44,13 +55,13 @@ const trainingModelTypesMap: {
     type: 'img',
   },
   Style: {
-    allowedTypes: ['image', 'video'],
+    allowedTypes: ['image', 'video', 'audio'],
     description: 'A time period, art style, or general look and feel',
     src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/9829c1d2-6c99-40a6-b882-057209a86bee/width=1024/00104-1775031745.jpeg',
     type: 'img',
   },
   Concept: {
-    allowedTypes: ['image', 'video'],
+    allowedTypes: ['image', 'video', 'audio'],
     description: 'Objects, clothing, anatomy, poses, etc.',
     src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/55418f7b-7d7d-4284-abea-35d684c48b78/width=1024/00454.jpeg',
     type: 'img',
@@ -294,6 +305,13 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
       });
       return;
     }
+    if (!features.audioTraining && trainingMediaType === 'audio') {
+      showErrorNotification({
+        error: new Error('Audio training not available'),
+        autoClose: false,
+      });
+      return;
+    }
 
     if (isDirty) {
       setAwaitInvalidate(true);
@@ -316,11 +334,31 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   useEffect(() => {
     if (model?.id && trainingMediaType) resetRuns(model.id, trainingMediaType);
 
+    // Audio training collapses the LoRA-type concept (Style/Character/etc.)
+    // into a single audio-training mode — force the value rather than render
+    // a selector the user can't act on.
+    if (trainingMediaType === 'audio') {
+      if (trainingModelType !== 'Style') form.setValue('trainingModelType', 'Style');
+      return;
+    }
+
     if (
       trainingModelType &&
       !trainingModelTypesMap[trainingModelType].allowedTypes.includes(trainingMediaType)
     ) {
-      form.setValue('trainingModelType', 'Character');
+      // Pick the first model type that supports the new media type. The static
+      // 'Character' fallback would leave the form in an invalid state (e.g.
+      // Character is not allowed for audio), which still passes the zod enum
+      // and can be submitted as Character+audio.
+      const fallback = (
+        Object.entries(trainingModelTypesMap) as [
+          tmTypes,
+          (typeof trainingModelTypesMap)[tmTypes]
+        ][]
+      ).find(([, v]) =>
+        trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
+      )?.[0];
+      form.setValue('trainingModelType', fallback ?? 'Character');
     }
   }, [trainingMediaType]);
 
@@ -340,54 +378,79 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
             className="border-gray-4 dark:border-dark-4"
             data={constants.trainingMediaTypes.map((mt) => {
               const videoNotAllowed = mt === 'video' && !features.videoTraining;
+              const audioNotAllowed = mt === 'audio' && !features.audioTraining;
+              const notAllowed = videoNotAllowed || audioNotAllowed;
+
+              const icon =
+                mt === 'video' ? (
+                  <IconVideo size={18} />
+                ) : mt === 'audio' ? (
+                  <IconMusic size={18} />
+                ) : (
+                  <IconPhoto size={16} />
+                );
 
               return {
                 label: (
                   <Tooltip
-                    disabled={!videoNotAllowed}
-                    // label={videoNotAllowed ? 'Currently available to subscribers only' : undefined}
+                    disabled={!notAllowed}
                     label="Temporarily disabled - check back soon!"
                     withinPortal
                   >
                     <Group gap="xs" justify="center">
-                      {mt === 'video' ? <IconVideo size={18} /> : <IconPhoto size={16} />}
+                      {icon}
                       <Text>{titleCase(mt)}</Text>
                       {mt === 'video' && new Date() < new Date('2025-04-30') && (
                         <Badge color="green">New</Badge>
                       )}
+                      {mt === 'audio' && <Badge color="green">New</Badge>}
                     </Group>
                   </Tooltip>
                 ),
                 value: mt,
-                disabled: videoNotAllowed,
+                disabled: notAllowed,
               };
             })}
             fullWidth
           />
         </Input.Wrapper>
-        <InputRadioGroup
-          className={classes.centerRadio}
-          name="trainingModelType"
-          label="Choose your LoRA type"
-          withAsterisk
-        >
-          <Group justify="space-between" gap="md" grow>
-            {Object.entries(trainingModelTypesMap)
-              .filter(([, v]) =>
-                !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
-              )
-              .map(([k, v]) => (
-                <RadioImg
-                  value={k}
-                  description={v.description}
-                  src={v.src}
-                  type={v.type}
-                  isNew={k === 'Effect' && new Date() < new Date('2025-04-30')}
-                  key={k}
-                />
-              ))}
-          </Group>
-        </InputRadioGroup>
+        {trainingMediaType === 'audio' ? (
+          <Alert color="blue" radius="md">
+            <Stack gap={4}>
+              <Text fw={600}>Audio training</Text>
+              <Text size="sm">
+                Teach the model a new sound, voice, or musical style by uploading a small set of
+                audio clips. We&apos;ll auto-caption each clip and use those captions — plus the
+                per-sample overrides you can tweak in the next steps — to train an ACE-Step LoRA
+                that can be used in music generation.
+              </Text>
+            </Stack>
+          </Alert>
+        ) : (
+          <InputRadioGroup
+            className={classes.centerRadio}
+            name="trainingModelType"
+            label="Choose your LoRA type"
+            withAsterisk
+          >
+            <Group justify="space-between" gap="md" grow>
+              {Object.entries(trainingModelTypesMap)
+                .filter(([, v]) =>
+                  !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
+                )
+                .map(([k, v]) => (
+                  <RadioImg
+                    value={k}
+                    description={v.description}
+                    src={v.src}
+                    type={v.type}
+                    isNew={k === 'Effect' && new Date() < new Date('2025-04-30')}
+                    key={k}
+                  />
+                ))}
+            </Group>
+          </InputRadioGroup>
+        )}
         <InputText name="name" label="Name" placeholder="Name" withAsterisk />
       </Stack>
       {/*

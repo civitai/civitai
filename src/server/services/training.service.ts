@@ -1,5 +1,6 @@
 import { Upload } from '@aws-sdk/lib-storage';
 import type {
+  AudioCaptioningStepTemplate,
   ImageResourceTrainingStep,
   ImageResourceTrainingOutput,
   MediaCaptioningStepTemplate,
@@ -670,7 +671,7 @@ type AutoLabelWorkflowMetadata = {
   kind: 'auto-label';
   userId: number;
   modelId: number;
-  mediaType: 'image' | 'video';
+  mediaType: 'image' | 'video' | 'audio';
   type: 'tag' | 'caption';
 };
 
@@ -775,6 +776,22 @@ export async function submitAutoLabelWorkflow({
     const stepMetadata: AutoLabelStepMetadata = { filename: img.filename };
 
     if (params.type === 'caption') {
+      // Audio captioning uses a dedicated orchestrator step type. Tag-style
+      // labels aren't available for audio yet, so the upstream router only
+      // forwards `caption` jobs when mediaType is 'audio'.
+      if (mediaType === 'audio') {
+        const step: AudioCaptioningStepTemplate = {
+          $type: 'audioCaptioning',
+          name: `${index}`,
+          input: {
+            mediaUrl: img.mediaUrl,
+            temperature: params.temperature,
+            maxNewTokens: params.maxNewTokens,
+          },
+          metadata: stepMetadata,
+        };
+        return step;
+      }
       const step: MediaCaptioningStepTemplate = {
         $type: 'mediaCaptioning',
         name: `${index}`,
@@ -856,16 +873,36 @@ export async function getAutoLabelWorkflow({
     modelId: metadata.modelId,
     steps: (data.steps ?? []).map((step) => {
       const stepMeta = (step.metadata ?? {}) as Partial<AutoLabelStepMetadata>;
-      // The base WorkflowStep type doesn't expose `output`, but the discriminated
-      // step types (mediaCaptioning, wdTagging) do. We only ever submit those two.
+      // The base WorkflowStep type doesn't expose `output`, but each discriminated
+      // step type (mediaCaptioning, wdTagging, audioCaptioning) does. Audio steps
+      // nest the captioner output under `results.<filename>` (the key has varied
+      // across service versions, so we just take the first entry) and use `text`
+      // (full XML-tagged: CAPTION/LYRICS/DURATION/LANGUAGE) rather than `caption`.
+      // Normalize so the client always sees `caption` in the output payload — for
+      // audio, the full tagged `text` is what training expects.
       const stepWithOutput = step as typeof step & {
-        output?: { caption?: string; tags?: { [tag: string]: number } };
+        $type?: string;
+        output?: {
+          caption?: string;
+          tags?: { [tag: string]: number };
+          text?: string | null;
+          results?: Record<string, { text?: string | null; caption?: string | null } | undefined>;
+        };
       };
+      const rawOutput = stepWithOutput.output ?? null;
+      let output: { caption?: string; tags?: { [tag: string]: number } } | null = rawOutput
+        ? { caption: rawOutput.caption ?? undefined, tags: rawOutput.tags }
+        : null;
+      if (rawOutput && stepWithOutput.$type === 'audioCaptioning') {
+        const firstResult = Object.values(rawOutput.results ?? {})[0];
+        const text = firstResult?.text ?? rawOutput.text ?? null;
+        output = { ...output, caption: text ?? undefined };
+      }
       return {
         name: step.name,
         status: step.status,
         filename: stepMeta.filename ?? null,
-        output: stepWithOutput.output ?? null,
+        output,
       };
     }),
   };

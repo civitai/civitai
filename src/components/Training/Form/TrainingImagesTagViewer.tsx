@@ -87,10 +87,17 @@ export const TrainingImagesLabelTypeSelect = ({
   );
   const { setLabelType } = trainingStore;
 
+  // Audio is captioning-only — the wdTagging path doesn't support audio URLs,
+  // so we hide the 'tag' option entirely.
+  const availableLabelTypes =
+    mediaType === 'audio'
+      ? constants.autoLabel.labelTypes.filter((l) => l === 'caption')
+      : constants.autoLabel.labelTypes;
+
   return (
     <SegmentedControl
       value={labelType}
-      data={constants.autoLabel.labelTypes.map((l) => ({
+      data={availableLabelTypes.map((l) => ({
         label: (
           // <Group justify="center">
           //   <Text>{capitalize(l)}</Text>

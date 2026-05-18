@@ -26,6 +26,8 @@ import type {
 import {
   trainingDetailsBaseModels15,
   // trainingDetailsBaseModels35,
+  trainingDetailsBaseModelsAcestep15,
+  trainingDetailsBaseModelsAcestep15Xl,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsErnie,
   trainingDetailsBaseModelsFlux,
@@ -54,8 +56,10 @@ import {
 } from '~/store/training.store';
 import { stringifyAIR } from '~/shared/utils/air';
 import {
+  type AudioSampleOverride,
   getDefaultEngine,
   isSamplePromptsRequired,
+  parseAudioCaption,
   type TrainingBaseModelType,
   trainingModelInfo,
 } from '~/utils/training';
@@ -277,7 +281,8 @@ export const ModelSelect = ({
         .map((img) => img.label.trim());
 
       if (captionsWithContent.length > 0) {
-        // Select random captions for sample prompts
+        // Select random captions for sample prompts. Video uses 2 slots; image
+        // and audio use 3.
         const numPromptsNeeded = mediaType === 'video' ? 2 : 3;
         const randomCaptions: string[] = [];
         const usedIndices = new Set<number>();
@@ -293,12 +298,38 @@ export const ModelSelect = ({
           }
         }
 
-        // Fill remaining slots with empty strings if needed
-        while (randomCaptions.length < numPromptsNeeded) {
-          randomCaptions.push('');
-        }
+        // Audio captions arrive XML-tagged (CAPTION/LYRICS/DURATION/LANGUAGE)
+        // from the audioCaptioning step. Strip the tags for the visible prompt
+        // and seed `samplesOverrides` from the parsed fields so this prefill
+        // path stays consistent with the advanced-settings prefill effect.
+        if (mediaType === 'audio') {
+          const finalPrompts: string[] = [];
+          const finalOverrides: AudioSampleOverride[] = [];
+          for (let i = 0; i < numPromptsNeeded; i++) {
+            const raw = randomCaptions[i] ?? '';
+            if (raw) {
+              const parsed = parseAudioCaption(raw);
+              finalPrompts.push(parsed.caption ?? raw);
+              finalOverrides.push({
+                ...(parsed.lyrics && { lyrics: parsed.lyrics }),
+                ...(parsed.duration && { duration: parsed.duration }),
+                ...(parsed.language && { language: parsed.language }),
+              });
+            } else {
+              finalPrompts.push('');
+              finalOverrides.push({});
+            }
+          }
+          data.samplePrompts = finalPrompts;
+          data.samplesOverrides = finalOverrides;
+        } else {
+          // Fill remaining slots with empty strings if needed
+          while (randomCaptions.length < numPromptsNeeded) {
+            randomCaptions.push('');
+          }
 
-        data.samplePrompts = randomCaptions;
+          data.samplePrompts = randomCaptions;
+        }
       }
     }
 
@@ -385,6 +416,16 @@ export const ModelSelect = ({
   const baseModelHiDreamO1 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsHiDreamO1 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelAcestep15 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsAcestep15 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelAcestep15Xl =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsAcestep15Xl as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
 
@@ -540,6 +581,28 @@ export const ModelSelect = ({
                   )}
                 </>
               )}
+              {mediaType === 'audio' && (
+                <>
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="violet"
+                    name="ACE-Step 1.5"
+                    value={baseModelAcestep15}
+                    baseType="acestep15"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="grape"
+                    name="ACE-Step 1.5 XL"
+                    value={baseModelAcestep15Xl}
+                    baseType="acestep15xl"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew
+                  />
+                </>
+              )}
               {mediaType === 'video' && (
                 <>
                   <ModelSelector
@@ -633,7 +696,9 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'wan' ||
                   selectedRun.baseType === 'ltx2' ||
                   selectedRun.baseType === 'ltx23' ||
-                  selectedRun.baseType === 'hidream-o1' ? (
+                  selectedRun.baseType === 'hidream-o1' ||
+                  selectedRun.baseType === 'acestep15' ||
+                  selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: this is an experimental build. Pricing, default settings, and results are
                     subject to change.

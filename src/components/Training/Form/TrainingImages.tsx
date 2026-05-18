@@ -82,6 +82,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import {
+  AUDIO_MIME_TYPE,
   IMAGE_MIME_TYPE,
   MIME_TYPES,
   VIDEO_MIME_TYPE,
@@ -91,8 +92,7 @@ import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   type AutoLabelType,
-  defaultTrainingState,
-  defaultTrainingStateVideo,
+  getDefaultTrainingStateFor,
   getShortNameFromUrl,
   type ImageDataType,
   type LabelTypes,
@@ -135,6 +135,11 @@ const AutoLabelModal = dynamic(
   { ssr: false }
 );
 
+const AudioWaveform = dynamic(
+  () => import('~/components/Training/Form/AudioWaveform').then((m) => m.AudioWaveform),
+  { ssr: false }
+);
+
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'), {
   ssr: false,
 });
@@ -158,6 +163,39 @@ const videoExts: { [key: string]: string } = {
   mp4: MIME_TYPES.mp4,
   webm: MIME_TYPES.webm,
 };
+const audioExts: { [key: string]: string } = {
+  mp3: MIME_TYPES.mp3,
+  wav: MIME_TYPES.wav,
+};
+
+// Browsers report WAV files inconsistently (audio/wav, audio/x-wav, audio/wave)
+// while our canonical MIME constant is audio/vnd.wave. Accept the common
+// variants in the Dropzone and normalize them to our canonical mp3/wav types
+// before persisting, so downstream code only ever sees the canonical set.
+const WAV_MIME_VARIANTS = ['audio/wav', 'audio/x-wav', 'audio/wave', 'audio/x-pn-wav'] as const;
+const AUDIO_DROPZONE_MIME_TYPE = [...AUDIO_MIME_TYPE, ...WAV_MIME_VARIANTS];
+
+const normalizeAudioMime = (mime: string): string => {
+  if ((WAV_MIME_VARIANTS as readonly string[]).includes(mime)) return MIME_TYPES.wav;
+  if (mime === 'audio/mp3') return MIME_TYPES.mp3;
+  return mime;
+};
+
+// Canonical extension for a stored MIME type, used when packaging files into
+// the training zip. Without this we'd derive the extension from the MIME
+// string (e.g. "audio/vnd.wave" → ".vnd.wave"), which produces unusable
+// filenames for the trainer.
+const mimeToCanonicalExt: { [key: string]: string } = Object.entries(MIME_TYPES).reduce(
+  (acc, [ext, mime]) => {
+    if (!acc[mime]) acc[mime] = ext;
+    return acc;
+  },
+  {} as { [key: string]: string }
+);
+const getCanonicalExt = (mime: string): string => {
+  const normalized = normalizeAudioMime(mime);
+  return mimeToCanonicalExt[normalized] ?? normalized.split('/').pop() ?? 'bin';
+};
 
 const minWidth = 256;
 const minHeight = 256;
@@ -177,10 +215,7 @@ const LabelSelectModal = ({
   const handleClose = dialog.onClose;
 
   const { labelType, imageList } = useTrainingImageStore(
-    (state) =>
-      state[modelId] ?? {
-        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
-      }
+    (state) => state[modelId] ?? { ...getDefaultTrainingStateFor(mediaType) }
   );
   const { setLabelType } = trainingStore;
 
@@ -252,7 +287,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const thisMediaType =
     (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
   const isVideo = thisMediaType === 'video';
-  const thisDefaultTrainingState = isVideo ? defaultTrainingStateVideo : defaultTrainingState;
+  const isAudio = thisMediaType === 'audio';
+  const thisDefaultTrainingState = getDefaultTrainingStateFor(thisMediaType);
   const domainColor = useDomainColor();
   const isGreen = domainColor === 'green';
 
@@ -312,8 +348,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const { connected } = useSignalContext();
   const features = useFeatureFlags();
   // Orchestrator path doesn't depend on signals or the legacy service flags,
-  // so trainingAutoLabelOrchestrator overrides both gates when on.
-  const useOrchestratorPath = features.trainingAutoLabelOrchestrator;
+  // so trainingAutoLabelOrchestrator overrides both gates when on. Audio always
+  // routes through the orchestrator path — the legacy imageAutoCaption job can't
+  // process audio.
+  const useOrchestratorPath = features.trainingAutoLabelOrchestrator || isAudio;
   const autoLabelAvailable =
     useOrchestratorPath || features.trainingAutoCaption || features.trainingAutoTag;
   const autoLabelConnected = useOrchestratorPath || connected;
@@ -332,12 +370,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     loading: false,
   };
 
-  const mediaExts = isVideo ? { ...imageExts, ...videoExts } : imageExts;
-  const allowedDropTypes = [
-    ...IMAGE_MIME_TYPE,
-    ...ZIP_MIME_TYPE,
-    ...(isVideo ? VIDEO_MIME_TYPE : []),
-  ];
+  const mediaExts = isAudio ? audioExts : isVideo ? { ...imageExts, ...videoExts } : imageExts;
+  const allowedDropTypes = isAudio
+    ? [...AUDIO_DROPZONE_MIME_TYPE, ...ZIP_MIME_TYPE]
+    : [...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE, ...(isVideo ? VIDEO_MIME_TYPE : [])];
 
   const { uploading } = getUploadStatus((file) => file.meta?.versionId === thisModelVersion.id);
 
@@ -637,11 +673,22 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           return { parsedFiles: [] as ImageDataType[], hasAnyLabelFiles: false };
         } else {
           try {
+            // Normalize browser-reported WAV variants (audio/wav, audio/x-wav)
+            // to our canonical MIME so persisted type and zip extension stay
+            // aligned with the trainer's expectations.
+            const storedType = normalizeAudioMime(f.type);
             const scaledUrl = await getResizedImgUrl(f, f.type, f.name);
             const label = data?.[f.name]?.label ?? '';
             const source = data?.[f.name]?.source ?? null;
             const parsed: ImageDataType[] = [
-              { name: f.name, type: f.type, url: scaledUrl, invalidLabel: false, label, source },
+              {
+                name: f.name,
+                type: storedType,
+                url: scaledUrl,
+                invalidLabel: false,
+                label,
+                source,
+              },
             ];
 
             return {
@@ -1075,7 +1122,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
           const imgBlob = await fetch(imgData.url).then((res) => res.blob());
 
-          zip.file(`${filenameBase}.${imgData.type.split('/').pop() ?? 'jpeg'}`, imgBlob);
+          // Use the canonical extension lookup — splitting the MIME directly
+          // would produce `.vnd.wave` for WAV files (and other unusable
+          // extensions for any compound MIME), and the trainer expects
+          // standard file extensions.
+          const ext = getCanonicalExt(imgData.type);
+          zip.file(`${filenameBase}.${ext}`, imgBlob);
         } catch (e) {
           failedImages++;
           console.error(`Failed to add image ${idx} to zip:`, e);
@@ -1242,9 +1294,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
-      if (isVideo && imageList.some((i) => i.label.length === 0)) {
+      if ((isVideo || isAudio) && imageList.some((i) => i.label.length === 0)) {
         showErrorNotification({
-          error: new Error('All files must have a label for video training'),
+          error: new Error(
+            `All files must have a label for ${isAudio ? 'audio' : 'video'} training`
+          ),
           autoClose: false,
         });
         return;
@@ -1403,58 +1457,62 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       for more info.
                     </Text>
 
-                    <Group mt="xs" justify="center" grow>
-                      <Button
-                        variant="light"
-                        onClick={() => {
-                          openImageSelectModal({
-                            title: 'Select Media',
-                            selectSource: 'generation',
-                            onSelect: async (media) => {
-                              await handleImport(media, 'generation');
-                            },
-                            importedUrls,
-                            videoAllowed: isVideo,
-                          });
-                        }}
-                      >
-                        Import from Generator
-                      </Button>
-                      <Button
-                        variant="light"
-                        onClick={() => {
-                          openImageSelectModal({
-                            title: 'Select Media',
-                            selectSource: 'uploaded',
-                            onSelect: async (media) => {
-                              await handleImport(media, 'uploaded');
-                            },
-                            importedUrls,
-                            videoAllowed: isVideo,
-                          });
-                        }}
-                      >
-                        Add from Profile
-                      </Button>
-                      <Button
-                        variant="light"
-                        onClick={() => {
-                          openImageSelectModal({
-                            title: 'Select Datasets',
-                            selectSource: 'training',
-                            onSelect: async (datasets) => {
-                              await handleImport(datasets, 'training');
-                            },
-                            importedUrls,
-                            videoAllowed: isVideo,
-                          });
-                        }}
-                      >
-                        Re-use a Dataset
-                      </Button>
-                    </Group>
+                    {!isAudio && (
+                      <>
+                        <Group mt="xs" justify="center" grow>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Media',
+                                selectSource: 'generation',
+                                onSelect: async (media) => {
+                                  await handleImport(media, 'generation');
+                                },
+                                importedUrls,
+                                videoAllowed: isVideo,
+                              });
+                            }}
+                          >
+                            Import from Generator
+                          </Button>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Media',
+                                selectSource: 'uploaded',
+                                onSelect: async (media) => {
+                                  await handleImport(media, 'uploaded');
+                                },
+                                importedUrls,
+                                videoAllowed: isVideo,
+                              });
+                            }}
+                          >
+                            Add from Profile
+                          </Button>
+                          <Button
+                            variant="light"
+                            onClick={() => {
+                              openImageSelectModal({
+                                title: 'Select Datasets',
+                                selectSource: 'training',
+                                onSelect: async (datasets) => {
+                                  await handleImport(datasets, 'training');
+                                },
+                                importedUrls,
+                                videoAllowed: isVideo,
+                              });
+                            }}
+                          >
+                            Re-use a Dataset
+                          </Button>
+                        </Group>
 
-                    <Divider label="OR" labelPosition="center" />
+                        <Divider label="OR" labelPosition="center" />
+                      </>
+                    )}
 
                     {isVideo && (
                       <DismissibleAlert
@@ -1475,7 +1533,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     <ImageDropzone
                       onDrop={handleDrop}
                       label={`${
-                        isVideo ? 'Drag images, zips, or videos' : 'Drag images or zips'
+                        isAudio
+                          ? 'Drag audio files (mp3, wav) or zips'
+                          : isVideo
+                          ? 'Drag images, zips, or videos'
+                          : 'Drag images or zips'
                       } here (or click to select files)`}
                       description={
                         <Text mt="xs" fz="sm" c={theme.colors.red[5]}>
@@ -1656,7 +1718,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 </Group>
               </Paper>
             )}
-            {imageList.length > 0 && (
+            {imageList.length > 0 && !isAudio && (
               <TrainingImagesSwitchLabel modelId={model.id} mediaType={thisMediaType} />
             )}
             {imageList.length > 0 ? (
@@ -1667,6 +1729,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   searchCaption={searchCaption}
                   setSearchCaption={setSearchCaption}
                   numImages={filteredImages.length}
+                  mediaType={thisMediaType}
                 />
               ) : (
                 <TrainingImagesTagViewer
@@ -1716,97 +1779,171 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         className={clsx('p-1', { [styles.badLabel]: imgData.invalidLabel })}
                       >
                         <Card.Section className="-mx-1 -mt-1" mb="xs">
-                          <div className={styles.imgOverlay}>
-                            <Group gap={4} className={clsx(styles.trash)}>
-                              <Tooltip label="Remove labels">
-                                <LegacyActionIcon
-                                  color="violet"
-                                  variant="filled"
-                                  size="md"
-                                  disabled={autoLabeling.isRunning || !imgData.label.length}
-                                  onClick={() => {
-                                    updateImage(model.id, thisMediaType, {
-                                      matcher: getShortNameFromUrl(imgData),
-                                      label: '',
-                                    });
-                                  }}
+                          {AUDIO_MIME_TYPE.includes(imgData.type as never) ? (
+                            // Audio gets its own non-overlapping layout: a header
+                            // strip with the filename + actions (always visible),
+                            // and the waveform in a clean row below.
+                            <div className="flex flex-col gap-2 p-2">
+                              <Group justify="space-between" wrap="nowrap" gap="xs">
+                                <Group
+                                  gap="xs"
+                                  wrap="nowrap"
+                                  className="min-w-0 flex-1 overflow-hidden"
                                 >
-                                  <IconTagsOff />
-                                </LegacyActionIcon>
-                              </Tooltip>
-                              <Tooltip label="Remove file">
-                                <LegacyActionIcon
-                                  color="red"
-                                  variant="filled"
-                                  size="md"
-                                  disabled={autoLabeling.isRunning}
-                                  onClick={() => {
-                                    const newLen = imageList.length - 1;
-                                    setImageList(
-                                      model.id,
-                                      thisMediaType,
-                                      imageList.filter((i) => i.url !== imgData.url)
-                                    );
-                                    if (
-                                      page === Math.ceil(imageList.length / maxImgPerPage) &&
-                                      newLen % maxImgPerPage === 0
-                                    )
-                                      setPage(Math.max(page - 1, 1));
+                                  {imgData.source?.type && (
+                                    <Badge
+                                      variant="filled"
+                                      className="shrink-0 px-1"
+                                      leftSection={<IconTransferIn size={14} />}
+                                    >
+                                      <Text inherit>{imgData.source.type}</Text>
+                                    </Badge>
+                                  )}
+                                  <Text size="sm" fw={500} truncate className="min-w-0 flex-1">
+                                    {imgData.name}
+                                  </Text>
+                                </Group>
+                                <Group gap={4} wrap="nowrap">
+                                  <Tooltip label="Remove labels">
+                                    <LegacyActionIcon
+                                      color="violet"
+                                      variant="filled"
+                                      size="md"
+                                      disabled={autoLabeling.isRunning || !imgData.label.length}
+                                      onClick={() => {
+                                        updateImage(model.id, thisMediaType, {
+                                          matcher: getShortNameFromUrl(imgData),
+                                          label: '',
+                                        });
+                                      }}
+                                    >
+                                      <IconTagsOff />
+                                    </LegacyActionIcon>
+                                  </Tooltip>
+                                  <Tooltip label="Remove file">
+                                    <LegacyActionIcon
+                                      color="red"
+                                      variant="filled"
+                                      size="md"
+                                      disabled={autoLabeling.isRunning}
+                                      onClick={() => {
+                                        const newLen = imageList.length - 1;
+                                        setImageList(
+                                          model.id,
+                                          thisMediaType,
+                                          imageList.filter((i) => i.url !== imgData.url)
+                                        );
+                                        if (
+                                          page === Math.ceil(imageList.length / maxImgPerPage) &&
+                                          newLen % maxImgPerPage === 0
+                                        )
+                                          setPage(Math.max(page - 1, 1));
 
-                                    if (newLen < 1) {
-                                      setAccordionUpload('uploading');
+                                        if (newLen < 1) {
+                                          setAccordionUpload('uploading');
+                                        }
+                                      }}
+                                    >
+                                      <IconTrash />
+                                    </LegacyActionIcon>
+                                  </Tooltip>
+                                </Group>
+                              </Group>
+                              <AudioWaveform src={imgData.url} />
+                            </div>
+                          ) : (
+                            <div className={styles.imgOverlay}>
+                              <Group gap={4} className={clsx(styles.trash)}>
+                                <Tooltip label="Remove labels">
+                                  <LegacyActionIcon
+                                    color="violet"
+                                    variant="filled"
+                                    size="md"
+                                    disabled={autoLabeling.isRunning || !imgData.label.length}
+                                    onClick={() => {
+                                      updateImage(model.id, thisMediaType, {
+                                        matcher: getShortNameFromUrl(imgData),
+                                        label: '',
+                                      });
+                                    }}
+                                  >
+                                    <IconTagsOff />
+                                  </LegacyActionIcon>
+                                </Tooltip>
+                                <Tooltip label="Remove file">
+                                  <LegacyActionIcon
+                                    color="red"
+                                    variant="filled"
+                                    size="md"
+                                    disabled={autoLabeling.isRunning}
+                                    onClick={() => {
+                                      const newLen = imageList.length - 1;
+                                      setImageList(
+                                        model.id,
+                                        thisMediaType,
+                                        imageList.filter((i) => i.url !== imgData.url)
+                                      );
+                                      if (
+                                        page === Math.ceil(imageList.length / maxImgPerPage) &&
+                                        newLen % maxImgPerPage === 0
+                                      )
+                                        setPage(Math.max(page - 1, 1));
+
+                                      if (newLen < 1) {
+                                        setAccordionUpload('uploading');
+                                      }
+                                    }}
+                                  >
+                                    <IconTrash />
+                                  </LegacyActionIcon>
+                                </Tooltip>
+                              </Group>
+                              {imgData.source?.type && (
+                                <div className={clsx(styles.source)}>
+                                  <Badge
+                                    variant="filled"
+                                    className="px-1"
+                                    leftSection={
+                                      // <ThemeIcon color="blue" size="lg" radius="xl" variant="filled">
+                                      <IconTransferIn size={14} />
+                                      // </ThemeIcon>
                                     }
+                                  >
+                                    <Text inherit>{imgData.source.type}</Text>
+                                  </Badge>
+                                </div>
+                              )}
+                              {VIDEO_MIME_TYPE.includes(imgData.type as never) ? (
+                                <video
+                                  loop
+                                  playsInline
+                                  disablePictureInPicture
+                                  muted
+                                  autoPlay
+                                  controls={false}
+                                  height={isZoomed ? '100%' : 250}
+                                  // TODO possibly object-contain
+                                  className={clsx('w-full object-cover', {
+                                    ['!h-[250px]']: !isZoomed,
+                                  })}
+                                >
+                                  <source src={imgData.url} type={imgData.type} />
+                                </video>
+                              ) : (
+                                <MImage
+                                  alt={imgData.name}
+                                  src={imgData.url}
+                                  style={{
+                                    height: isZoomed ? '100%' : '250px',
+                                    width: '100%',
+                                    // if we want to show full image, change objectFit to contain
+                                    objectFit: 'cover',
+                                    // object-position: top;
                                   }}
-                                >
-                                  <IconTrash />
-                                </LegacyActionIcon>
-                              </Tooltip>
-                            </Group>
-                            {imgData.source?.type && (
-                              <div className={clsx(styles.source)}>
-                                <Badge
-                                  variant="filled"
-                                  className="px-1"
-                                  leftSection={
-                                    // <ThemeIcon color="blue" size="lg" radius="xl" variant="filled">
-                                    <IconTransferIn size={14} />
-                                    // </ThemeIcon>
-                                  }
-                                >
-                                  <Text inherit>{imgData.source.type}</Text>
-                                </Badge>
-                              </div>
-                            )}
-                            {VIDEO_MIME_TYPE.includes(imgData.type as never) ? (
-                              <video
-                                loop
-                                playsInline
-                                disablePictureInPicture
-                                muted
-                                autoPlay
-                                controls={false}
-                                height={isZoomed ? '100%' : 250}
-                                // TODO possibly object-contain
-                                className={clsx('w-full object-cover', {
-                                  ['!h-[250px]']: !isZoomed,
-                                })}
-                              >
-                                <source src={imgData.url} type={imgData.type} />
-                              </video>
-                            ) : (
-                              <MImage
-                                alt={imgData.name}
-                                src={imgData.url}
-                                style={{
-                                  height: isZoomed ? '100%' : '250px',
-                                  width: '100%',
-                                  // if we want to show full image, change objectFit to contain
-                                  objectFit: 'cover',
-                                  // object-position: top;
-                                }}
-                              />
-                            )}
-                          </div>
+                                />
+                              )}
+                            </div>
+                          )}
                         </Card.Section>
                         {labelType === 'caption' ? (
                           <TrainingImagesCaptions
@@ -1935,7 +2072,7 @@ const AutoLabelProgress = ({ autoLabeling }: { autoLabeling: AutoLabelType }) =>
   if (phase === 'preparing') {
     return (
       <Stack>
-        <Text>Preparing images…</Text>
+        <Text>Preparing files…</Text>
         <Progress.Root size="xl" radius="xl">
           <Progress.Section value={100} striped animated>
             <Progress.Label>Reading source files</Progress.Label>
@@ -1957,7 +2094,7 @@ const AutoLabelProgress = ({ autoLabeling }: { autoLabeling: AutoLabelType }) =>
     }
     return (
       <Stack>
-        <Text>Uploading images{eta ? ` · ${eta}` : ''}</Text>
+        <Text>Uploading files{eta ? ` · ${eta}` : ''}</Text>
         <Progress.Root size="xl" radius="xl">
           <Progress.Section value={pct} striped animated>
             <Progress.Label>{`${uploaded} / ${total}`}</Progress.Label>

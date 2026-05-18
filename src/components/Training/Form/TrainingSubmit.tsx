@@ -31,10 +31,7 @@ import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
-import {
-  useSelectedBuzzType,
-  BuzzTypeSelector,
-} from '~/components/generation_v2/FormFooter';
+import { useSelectedBuzzType, BuzzTypeSelector } from '~/components/generation_v2/FormFooter';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -65,9 +62,9 @@ import type { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrat
 import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   defaultRun,
+  defaultRunAudio,
   defaultRunVideo,
-  defaultTrainingState,
-  defaultTrainingStateVideo,
+  getDefaultTrainingStateFor,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
@@ -102,7 +99,9 @@ const prefersCaptions: TrainingBaseModelType[] = [
   'chroma',
   'zimage',
   'ernie',
-  'hidream-o1'
+  'hidream-o1',
+  'acestep15',
+  'acestep15xl',
 ];
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
@@ -125,18 +124,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const { addRun, removeRun, updateRun } = trainingStore;
   const { runs, imageList, initialImageList } = useTrainingImageStore(
-    (state) =>
-      state[model.id] ?? {
-        ...(thisMediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
-      }
+    (state) => state[model.id] ?? { ...getDefaultTrainingStateFor(thisMediaType) }
   );
 
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
-  const selectedRun =
-    runs[selectedRunIndex] ?? (thisMediaType === 'video' ? defaultRunVideo : defaultRun);
+  const fallbackRun =
+    thisMediaType === 'audio'
+      ? defaultRunAudio
+      : thisMediaType === 'video'
+      ? defaultRunVideo
+      : defaultRun;
+  const selectedRun = runs[selectedRunIndex] ?? fallbackRun;
 
   const allLabeled =
-    thisMediaType === 'video' ? (thisMetadata?.numCaptions ?? 0) >= (thisNumImages ?? 0) : true;
+    thisMediaType === 'video' || thisMediaType === 'audio'
+      ? (thisMetadata?.numCaptions ?? 0) >= (thisNumImages ?? 0)
+      : true;
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
@@ -543,6 +546,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         params,
         customModel,
         samplePrompts,
+        samplesOverrides,
         negativePrompt,
         staging,
         highPriority,
@@ -651,6 +655,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           baseModelType: baseType,
           params: finalParams, // Store in the native format (Kohya or AI Toolkit)
           samplePrompts,
+          ...(samplesOverrides && samplesOverrides.length > 0 && { samplesOverrides }),
           ...(negativePrompt && { negativePrompt }),
           staging,
           highPriority,
@@ -936,7 +941,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           mt="sm"
         >
           <Group gap="sm" justify="space-between" wrap="nowrap">
-            <Text>Video training requires that all files are labeled.</Text>
+            <Text>
+              {thisMediaType === 'audio' ? 'Audio' : 'Video'} training requires that all files are
+              labeled.
+            </Text>
             <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
           </Group>
         </AlertWithIcon>

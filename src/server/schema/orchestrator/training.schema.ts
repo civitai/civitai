@@ -3,6 +3,7 @@ import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import {
+  audioSampleOverrideSchema,
   trainingDetailsParams,
   trainingDetailsParamsUnion,
 } from '~/server/schema/model-version.schema';
@@ -50,71 +51,82 @@ const aiToolkitBaseParams = z.object({
 });
 
 // Use discriminated union to enforce modelVariant requirements per ecosystem
-const aiToolkitTrainingParams = z.discriminatedUnion('ecosystem', [
-  // SD1, SDXL, Chroma, Qwen, and ZImageTurbo don't need modelVariant
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('sd1'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('sdxl'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('chroma'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('qwen'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('zimageturbo'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('zimagebase'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('ltx2'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('ltx23'),
-    modelVariant: z.undefined().optional(),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('ernie'),
-    modelVariant: z.undefined().optional(),
-  }),
-  // SD3, Flux1, Flux2Klein, and Wan require modelVariant
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('sd3'),
-    modelVariant: z.enum(['large', 'medium']),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('flux1'),
-    modelVariant: z.enum(['dev', 'schnell']),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('wan'),
-    modelVariant: z.enum(['2.1', '2.2']),
-  }),
-  aiToolkitBaseParams.extend({
-    ecosystem: z.literal('flux2klein'),
-    modelVariant: z.enum(['4b', '9b']),
-  }),
-]).refine(
-  (data) => {
-    if (prodigyOptimizers.includes(data.optimizerType)) return true;
-    return data.lr < maxLrForNonProdigy;
-  },
-  {
-    message: `Learning rate must be less than ${maxLrForNonProdigy} for non-Prodigy optimizers`,
-    path: ['lr'],
-  }
-);
+const aiToolkitTrainingParams = z
+  .discriminatedUnion('ecosystem', [
+    // SD1, SDXL, Chroma, Qwen, and ZImageTurbo don't need modelVariant
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('sd1'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('sdxl'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('chroma'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('qwen'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('zimageturbo'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('zimagebase'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ltx2'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ltx23'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ernie'),
+      modelVariant: z.undefined().optional(),
+    }),
+    // SD3, Flux1, Flux2Klein, and Wan require modelVariant
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('sd3'),
+      modelVariant: z.enum(['large', 'medium']),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('flux1'),
+      modelVariant: z.enum(['dev', 'schnell']),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('wan'),
+      modelVariant: z.enum(['2.1', '2.2']),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('flux2klein'),
+      modelVariant: z.enum(['4b', '9b']),
+    }),
+    // ACE-Step audio
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ace_step_15'),
+      modelVariant: z.undefined().optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ace_step_15_xl'),
+      modelVariant: z.enum(['base', 'sft']),
+    }),
+  ])
+  .refine(
+    (data) => {
+      if (prodigyOptimizers.includes(data.optimizerType)) return true;
+      return data.lr < maxLrForNonProdigy;
+    },
+    {
+      message: `Learning rate must be less than ${maxLrForNonProdigy} for non-Prodigy optimizers`,
+      path: ['lr'],
+    }
+  );
 
 export type AiToolkitTrainingParams = z.infer<typeof aiToolkitTrainingParams>;
 
@@ -201,6 +213,7 @@ const imageTrainingStepSchema = imageTrainingBaseSchema.extend({
   loraName: z.string(),
   triggerWord: z.string(),
   samplePrompts: z.array(z.string()),
+  samplesOverrides: z.array(audioSampleOverrideSchema).optional(),
   negativePrompt: z.string().optional(),
   params: z.discriminatedUnion('engine', [
     whatIfTrainingDetailsParams.extend({ engine: z.enum(OrchEngineTypes) }),
