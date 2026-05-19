@@ -79,7 +79,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           : null;
       attached = fallback ?? undefined;
     }
-    if (attached && !attached.isConfidential && origin) {
+    // Defense-in-depth: only echo the request Origin when it's actually in
+    // the client's allowlist. `oauthModel.getClient` already throws
+    // OriginNotAllowedError on a mismatch, so on the normal success path this
+    // is redundant — but if the fallback dbRead path runs (library wiring
+    // change) or anything else slips through, we don't want to echo an
+    // unverified origin and defeat the new pinning.
+    if (
+      attached &&
+      !attached.isConfidential &&
+      origin &&
+      attached.allowedOrigins.includes(origin)
+    ) {
       setPublicClientCors(res, origin);
     } else {
       addCorsHeaders(req, res, ['POST']);
@@ -124,6 +135,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // wildcard CORS so confidential / unknown-client callers can read the
     // structured error body. Public clients lose the ability to read the body
     // cross-origin here, but error bodies don't leak token material.
+    console.error('[oauth/token] handler error:', err);
     addCorsHeaders(req, res, ['POST']);
     const status = err.statusCode || err.code || 500;
     return res.status(typeof status === 'number' ? status : 500).json({

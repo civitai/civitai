@@ -29,7 +29,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const session = await getServerAuthSession({ req, res });
     if (!session?.user) {
       const returnUrl = encodeURIComponent(req.url ?? '/');
-      return res.redirect(303, `/login?returnUrl=${returnUrl}`);
+      // Don't `return res.redirect(...)` — res.redirect returns the res
+      // object, and a non-undefined handler return value triggers Next.js's
+      // "API handler should not return a value, received object" warning.
+      res.redirect(303, `/login?returnUrl=${returnUrl}`);
+      return;
     }
 
     // Rate limit by user ID
@@ -150,7 +154,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       for (const [key, value] of Object.entries(params)) {
         if (typeof value === 'string') consentUrl.searchParams.set(key, value);
       }
-      return res.redirect(303, consentUrl.toString());
+      res.redirect(303, consentUrl.toString());
+      return;
     }
 
     // Issue authorization code
@@ -188,7 +193,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const redirectUrl = new URL(redirectUri);
     redirectUrl.searchParams.set('code', code.authorizationCode);
     redirectUrl.searchParams.set('state', params.state as string);
-    return res.redirect(303, redirectUrl.toString());
+    res.redirect(303, redirectUrl.toString());
+    return;
   } catch (err: any) {
     const status = err.statusCode || err.code || 500;
     return res.status(typeof status === 'number' ? status : 500).json({

@@ -77,7 +77,9 @@ export const oauthModel = {
     // server-side with synthetic headers) but it's a top-level browser nav,
     // not an XHR, so PKCE alone handles its security boundary. Detect
     // token-exchange by the presence of `grant_type` in the request body —
-    // only set on /token and /revoke.
+    // set on /api/auth/oauth/token requests. /revoke uses
+    // `token`/`token_type_hint` per RFC 7009 and doesn't go through this
+    // model at all (it's hand-coded against dbRead.oauthClient directly).
     const body = request ? (request as Request & { body?: unknown }).body : undefined;
     const isTokenExchange =
       body !== null &&

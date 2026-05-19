@@ -127,7 +127,11 @@ describe('POST /api/auth/oauth/token — origin enforcement', () => {
     // Simulate what oauthModel.getClient does: stash the client on the
     // Request so the handler can read it back for CORS.
     mockOauthToken.mockImplementation(async (request: any) => {
-      request.oauthClient = { id: 'pub-1', isConfidential: false };
+      request.oauthClient = {
+        id: 'pub-1',
+        isConfidential: false,
+        allowedOrigins: ['https://app.example.com'],
+      };
       return {
         accessToken: 'at',
         refreshToken: 'rt',

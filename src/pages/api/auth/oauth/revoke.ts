@@ -48,7 +48,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   // Public clients with an Origin header must match the registered allowlist.
   // A missing Origin is allowed (native/mobile public clients don't send
-  // one); same policy as oauthModel.getClient on /token.
+  // one); same policy as oauthModel.getClient on /token. Defense-in-depth:
+  // we check `client.allowedOrigins.includes(origin)` here too — the echo
+  // below should never go out for an unverified origin.
   if (client && !client.isConfidential && origin) {
     if (!client.allowedOrigins.includes(origin)) {
       logOAuthEvent({
