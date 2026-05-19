@@ -42,7 +42,12 @@ import {
   getBuzzTransactionResponse,
   getTransactionsReportResultSchema,
 } from '~/server/schema/buzz.schema';
-import { BuzzTypes, buzzSpendTypes, TransactionType } from '~/shared/constants/buzz.constants';
+import {
+  BuzzTypes,
+  buzzSpendTypes,
+  CASH_SETTLED_ALIASES,
+  TransactionType,
+} from '~/shared/constants/buzz.constants';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -1127,7 +1132,12 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
   };
 }
 
-type Row = { modelVersionId: number; date: Date; total: number };
+type Row = {
+  modelVersionId: number;
+  date: Date;
+  accountType: string;
+  total: number;
+};
 
 export const getDailyCompensationRewardByUser = async ({
   userId,
@@ -1154,41 +1164,62 @@ export const getDailyCompensationRewardByUser = async ({
     SELECT
       date,
       modelVersionId,
+      accountType,
       SUM(FLOOR(amount))::int AS total
     FROM orchestration.resourceCompensations
     WHERE date BETWEEN ${minDate} AND ${maxDate}
       AND modelVersionId IN (${versionIds})
       AND amount > 0
-      AND source ${source === 'license' ? '=' : '!='} 'license'
+      AND source ${source === 'licenseFee' ? '=' : '!='} 'licenseFee'
       -- We do this weird conversion here because the DB sometimes has Yellow and sometimes User. Yellow being the alias for User.
+      -- License fees can settle to cash OR buzz, so we ignore the accountType filter on that source and surface all of them together.
       AND ${
-        accountType
+        accountType && source !== 'licenseFee'
           ? `accountType IN ('${BuzzTypes.toApiType(accountType)}', '${toPascalCase(accountType)}')`
           : '1=1'
       }
-    GROUP BY modelVersionId, date
+    GROUP BY modelVersionId, accountType, date
     ORDER BY date DESC, total DESC
   `;
 
   if (!generationData.length) return [];
 
-  return (
-    modelVersions
-      .map(({ model, ...version }) => {
-        const resourceData = generationData
-          .filter((x) => x.modelVersionId === version.id)
-          .map((resource) => ({
-            createdAt: dayjs(resource.date).format('YYYY-MM-DD'),
-            total: resource.total,
-          }));
-
-        const totalSum = resourceData.reduce((acc, x) => acc + x.total, 0);
-        return { ...version, modelName: model.name, data: resourceData, totalSum };
-      })
-      .filter((v) => v.data.length > 0)
-      // Pre-sort by most buzz
-      .sort((a, b) => b.totalSum - a.totalSum)
-  );
+  // cashData totals are in pennies — CH stores cashSettled amounts in
+  // tenths-of-a-penny, so divide by 10.
+  return modelVersions
+    .map(({ model, ...version }) => {
+      const versionRows = generationData.filter((x) => x.modelVersionId === version.id);
+      const buzzByDate = new Map<string, number>();
+      const cashByDate = new Map<string, number>();
+      for (const row of versionRows) {
+        const day = dayjs(row.date).format('YYYY-MM-DD');
+        if (CASH_SETTLED_ALIASES.has(row.accountType)) {
+          cashByDate.set(day, (cashByDate.get(day) ?? 0) + Math.floor(row.total / 10));
+        } else {
+          buzzByDate.set(day, (buzzByDate.get(day) ?? 0) + row.total);
+        }
+      }
+      const data = Array.from(buzzByDate.entries()).map(([createdAt, total]) => ({
+        createdAt,
+        total,
+      }));
+      const cashData = Array.from(cashByDate.entries()).map(([createdAt, total]) => ({
+        createdAt,
+        total,
+      }));
+      const totalSum = data.reduce((acc, x) => acc + x.total, 0);
+      const cashCents = cashData.reduce((acc, x) => acc + x.total, 0);
+      return {
+        ...version,
+        modelName: model.name,
+        data,
+        cashData,
+        totalSum,
+        cashCents,
+      };
+    })
+    .filter((v) => v.data.length > 0 || v.cashCents > 0)
+    .sort((a, b) => b.totalSum + b.cashCents - (a.totalSum + a.cashCents));
 };
 
 export async function claimWatchedAdReward({

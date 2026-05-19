@@ -183,7 +183,7 @@ export const clubTransactionSchema = z.object({
 
 export type ClubTransactionSchema = z.infer<typeof clubTransactionSchema>;
 
-export const compensationSources = ['compensation', 'license'] as const;
+export const compensationSources = ['compensation', 'licenseFee'] as const;
 export type CompensationSource = (typeof compensationSources)[number];
 
 export type GetDailyBuzzCompensationInput = z.infer<typeof getDailyBuzzCompensationInput>;
