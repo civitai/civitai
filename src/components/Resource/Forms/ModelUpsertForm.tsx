@@ -190,18 +190,20 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
     sort: TagSort.MostModels,
     limit: 100,
   });
+  const isModerator = !!currentUser?.isModerator;
   const { data: blockedTagsData } = trpc.system.getCreationBlockedTags.useQuery(undefined, {
-    enabled: !currentUser?.isModerator,
+    enabled: !isModerator,
   });
   const blockedTagIds = useMemo(
-    () => new Set((blockedTagsData ?? []).map((t) => t.id)),
-    [blockedTagsData]
+    () => (isModerator ? new Set<number>() : new Set((blockedTagsData ?? []).map((t) => t.id))),
+    [blockedTagsData, isModerator]
   );
   const blockedTagNames = useMemo(
-    () => new Set((blockedTagsData ?? []).map((t) => t.name)),
-    [blockedTagsData]
+    () => (isModerator ? new Set<string>() : new Set((blockedTagsData ?? []).map((t) => t.name))),
+    [blockedTagsData, isModerator]
   );
   const isBlockedTag = (tag: { id?: number; name?: string | null }) => {
+    if (isModerator) return false;
     if (tag.id && blockedTagIds.has(tag.id)) return true;
     const name = tag.name?.toLowerCase().trim();
     return !!name && blockedTagNames.has(name);
@@ -209,7 +211,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const blockedTagsOnModel = useMemo(
     () => (Array.isArray(watchedTags) ? watchedTags.filter((t) => isBlockedTag(t)) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [watchedTags, blockedTagIds, blockedTagNames]
+    [watchedTags, blockedTagIds, blockedTagNames, isModerator]
   );
   const categories =
     data?.items
