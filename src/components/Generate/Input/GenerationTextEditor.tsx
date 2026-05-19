@@ -1,14 +1,17 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Input } from '@mantine/core';
+import { Button, Input } from '@mantine/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import type { Editor, JSONContent } from '@tiptap/react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
+import { IconDice5, IconEye, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
-import { useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { openWildcardPreview } from '~/components/Dialog/triggers/wildcard-preview';
 import { editPromptAttentionRange } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import type { SnippetReference } from '~/shared/data-graph/generation/common';
+import { useGraph, useGraphSubscription } from '~/libs/data-graph/react/DataGraphProvider';
+import type { SnippetReference, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
 import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 import { SnippetCategory } from './SnippetCategory';
 import type { SnippetCategoryItem } from './SnippetCategoryList';
@@ -125,8 +128,107 @@ export function GenerationTextEditor(props: GenerationTextEditorProps) {
 }
 
 function SnippetsAwareEditor(props: GenerationTextEditorProps) {
-  const { categories, isLoading } = useSnippetCategories();
-  return <EditorBody {...props} _categories={categories} _loading={isLoading} />;
+  const { categories, isLoading, loadedSets } = useSnippetCategories();
+  const graph = useGraph();
+
+  // Subscribe to the snippets node so the editor footer re-renders when the
+  // modal writes a new seed back into `snippets.seed`. The hook returns
+  // `null` when the active subgraph doesn't have a snippets node — that's
+  // fine, the footer just won't render below.
+  const snippetsSnapshot = useGraphSubscription(graph, 'snippets');
+  const snippetsValue = snippetsSnapshot?.value as SnippetsNodeValue | undefined;
+  const currentSeed = snippetsValue?.seed;
+
+  // The Preview button lives on every snippets-aware editor but opens the
+  // SAME modal that renders all current snippet targets — clicking from any
+  // editor shows the full resolved set (prompt + negativePrompt + …). Read
+  // the snapshot at click time so the modal reflects the user's edits up to
+  // the moment they clicked.
+  //
+  // The footer only appears on an editor whose own value contains at least
+  // one `#category` reference. Two reasons: (a) clicking would open an
+  // empty modal otherwise, since the modal already filters out targets with
+  // no refs, and (b) hiding the affordance when there's nothing to preview
+  // keeps the editor visually quiet on a fresh form.
+  const hasLoadedSets = loadedSets.length > 0;
+  const hasRefsInThisEditor = useMemo(
+    () => parsePromptSnippetReferences(props.value ?? '').length > 0,
+    [props.value]
+  );
+
+  const onPreview = useCallback(() => {
+    const snap = graph.getSnapshot() as Record<string, unknown> & {
+      snippets?: SnippetsNodeValue;
+    };
+    const snippets = snap.snippets;
+    if (!snippets) return;
+    const targetKeys = Object.keys(snippets.targets ?? {});
+    const targets = targetKeys
+      .map((key) => {
+        const text = typeof snap[key] === 'string' ? (snap[key] as string) : '';
+        return { key, label: targetKeyToLabel(key), text };
+      })
+      // Skip targets that have no snippet references to resolve. The resolver
+      // would just echo the template back unchanged, and the preview row
+      // would be visually noisy without telling the user anything new (e.g.
+      // an empty negativePrompt next to a prompt full of `#refs` adds zero
+      // signal). Targets with at least one `#category` make the cut.
+      .filter((t) => parsePromptSnippetReferences(t.text).length > 0);
+    if (targets.length === 0) return;
+    openWildcardPreview({
+      wildcardSetIds: snippets.wildcardSetIds,
+      targets,
+      // Reopening the modal after a previous OK should show the same
+      // resolution the user committed to — pass the current seed so the
+      // first request reuses it instead of sampling fresh.
+      initialSeed: snippets.seed,
+      // Commit the modal's seed to form state when the user clicks OK.
+      // FormFooter clears `snippets.seed` on submit so it never persists.
+      onSeedChange: (seed) => {
+        const current = (graph.getSnapshot() as { snippets?: SnippetsNodeValue }).snippets;
+        if (!current) return;
+        graph.set({ snippets: { ...current, seed } } as Parameters<typeof graph.set>[0]);
+      },
+    });
+  }, [graph]);
+
+  const onClearSeed = useCallback(() => {
+    const current = (graph.getSnapshot() as { snippets?: SnippetsNodeValue }).snippets;
+    if (!current || current.seed === undefined) return;
+    const { seed: _seed, ...rest } = current;
+    graph.set({ snippets: rest } as Parameters<typeof graph.set>[0]);
+  }, [graph]);
+
+  const showFooter = hasLoadedSets && hasRefsInThisEditor;
+
+  return (
+    <EditorBody
+      {...props}
+      _categories={categories}
+      _loading={isLoading}
+      _onPreview={showFooter ? onPreview : undefined}
+      _currentSeed={showFooter ? currentSeed : undefined}
+      _onClearSeed={showFooter ? onClearSeed : undefined}
+    />
+  );
+}
+
+/**
+ * Convert a snippet target key (the editor node name) into a human-readable
+ * label by splitting on camelCase boundaries and title-casing the result.
+ *   prompt           → "Prompt"
+ *   negativePrompt   → "Negative Prompt"
+ *   musicDescription → "Music Description"
+ *
+ * Mirrors the labels the form's `<Controller>`s use for these editors —
+ * those labels are hand-written today, but they all follow this rule, so
+ * deriving here keeps the modal in sync without each editor having to
+ * thread a label through to the preview path.
+ */
+function targetKeyToLabel(key: string): string {
+  if (!key) return key;
+  const spaced = key.replace(/([A-Z])/g, ' $1');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
 }
 
 /**
@@ -157,10 +259,36 @@ function EditorBody({
   triggerWords: _triggerWords,
   _categories,
   _loading,
+  _onPreview,
+  _currentSeed,
+  _onClearSeed,
   ...rest
 }: GenerationTextEditorProps & {
   _categories?: SnippetCategoryItem[];
   _loading?: boolean;
+  /**
+   * Internal — supplied by `SnippetsAwareEditor` when the active subgraph has
+   * snippets enabled AND the user has at least one wildcard set loaded AND
+   * the editor's own value contains at least one `#category` reference.
+   * When defined, the editor renders the snippets footer below the input
+   * (separator + seed display + "Preview" button that opens the wildcard
+   * preview modal). Always `undefined` for non-snippets editors so the
+   * footer doesn't appear there.
+   */
+  _onPreview?: () => void;
+  /**
+   * Internal — current `snippets.seed` from form state. Echoed in the
+   * footer so the user sees the same seed the modal will use on its next
+   * open (and the seed used for the most recent preview/regenerate). When
+   * undefined, the footer renders "Random" as a placeholder — the modal
+   * will sample a fresh seed server-side on next open.
+   */
+  _currentSeed?: number;
+  /**
+   * Internal — clear the committed seed and return to "Random". Surfaced
+   * as a small × inside the seed pill when a seed is currently set.
+   */
+  _onClearSeed?: () => void;
 }) {
   // Refs for parent-supplied callbacks / data: the suggestion plugin and
   // editor handlers are baked into the `useEditor` config that we
@@ -199,6 +327,13 @@ function EditorBody({
   useEffect(() => {
     attentionEditRef.current = attentionEdit;
   }, [attentionEdit]);
+
+  // The editor instance itself also lives in a ref so the `handleKeyDown`
+  // closure (baked in at editor build time) can reach the current editor.
+  // With `immediatelyRender: false`, `useEditor` returns `null` on the first
+  // render — the closure would otherwise capture that null and never recover,
+  // silently no-op-ing mod+ArrowUp / mod+ArrowDown attention edits.
+  const editorRef = useRef<Editor | null>(null);
 
   // The SnippetCategory extension must be present at editor-build time to
   // be available — toggling the `snippets` prop on/off rebuilds the editor.
@@ -287,8 +422,9 @@ function EditorBody({
           // positions so the cursor lands inside the bumped weight ready
           // for repeated nudges.
           if (attentionEditRef.current && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
-            if (!editor) return false;
-            const handled = applyAttentionEdit(editor, event.key === 'ArrowUp', snippetsEnabled);
+            const ed = editorRef.current;
+            if (!ed) return false;
+            const handled = applyAttentionEdit(ed, event.key === 'ArrowUp', snippetsEnabled);
             if (handled) {
               event.preventDefault();
               return true;
@@ -347,6 +483,10 @@ function EditorBody({
   }, [editor, value, snippetsEnabled]);
 
   useEffect(() => {
+    editorRef.current = editor;
+  }, [editor]);
+
+  useEffect(() => {
     if (autoFocus && editor) editor.commands.focus('end');
   }, [autoFocus, editor]);
 
@@ -368,9 +508,7 @@ function EditorBody({
     if (!snippetsEnabled) return;
     if (_loading) return;
 
-    const known = new Set<string>(
-      (_categories ?? []).map((c) => (c.label ?? c.id).toLowerCase())
-    );
+    const known = new Set<string>((_categories ?? []).map((c) => (c.label ?? c.id).toLowerCase()));
 
     const evaluate = () => {
       const updates: Array<{ pos: number; orphan: boolean }> = [];
@@ -446,6 +584,46 @@ function EditorBody({
       >
         <EditorContent editor={editor} />
       </div>
+      {/* Snippets-aware footer: separator + seed pill + preview button.
+          Rendered only when `SnippetsAwareEditor` supplies the callback —
+          i.e. snippets enabled, at least one wildcard set loaded, and this
+          editor's value contains at least one `#category` reference. */}
+      {_onPreview ? (
+        <div className="mt-2 border-t border-gray-3 px-2 py-1 dark:border-dark-4">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <div className="flex items-center gap-1.5 text-gray-6 dark:text-dark-1">
+              <span>Seed</span>
+              <span className="font-mono font-semibold text-gray-8 dark:text-gray-3">
+                {_currentSeed ?? 'Random'}
+              </span>
+              {/* Clear-X — only when a committed seed exists. Reverts the
+                  footer to "Random" and frees the next preview to sample a
+                  fresh seed on open. */}
+              {_currentSeed !== undefined && _onClearSeed ? (
+                <button
+                  type="button"
+                  onClick={_onClearSeed}
+                  aria-label="Clear seed"
+                  title="Clear seed"
+                  className="flex size-4 items-center justify-center rounded text-gray-5 hover:bg-gray-2 hover:text-gray-8 dark:hover:bg-dark-5 dark:hover:text-gray-1"
+                >
+                  <IconX size={11} />
+                </button>
+              ) : null}
+            </div>
+            <Button
+              size="compact-xs"
+              variant="subtle"
+              color="gray"
+              leftSection={<IconEye size={12} />}
+              onClick={_onPreview}
+              disabled={disabled}
+            >
+              Preview
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </Input.Wrapper>
   );
 }

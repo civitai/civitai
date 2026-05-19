@@ -7,6 +7,7 @@
 
 import z from 'zod';
 import { videoValueSchema, videoMetadataSchema } from './media-schemas';
+import { snippetReferenceSchema, type SnippetReferenceValue } from '../schemas/snippet-schema';
 
 export const MAX_PROMPT_LENGTH = 6000;
 export const MAX_NEGATIVE_PROMPT_LENGTH = 6000;
@@ -63,14 +64,17 @@ export type AspectRatioOption = {
 
 /**
  * Creates an aspect ratio node with the given options.
- * Meta contains only: options (dynamic based on model)
+ * Meta contains: options (dynamic based on model) and optional priorityOptions
+ * (subset of values shown before the "More" overflow button in the UI).
  */
 export function aspectRatioNode({
   options,
   defaultValue,
+  priorityOptions,
 }: {
   options: AspectRatioOption[];
   defaultValue?: string;
+  priorityOptions?: string[];
 }) {
   const defaultOption = options.find((o) => o.value === (defaultValue ?? '1:1')) ?? options[0];
   return {
@@ -109,6 +113,7 @@ export function aspectRatioNode({
     defaultValue: defaultOption,
     meta: {
       options,
+      priorityOptions,
     },
   };
 }
@@ -231,16 +236,10 @@ export function negativePromptNode({
  *   snapshot is what's persisted to workflow.metadata after submit.
  *   `in`/`ex` selections stay empty until the per-value picker UI ships.
  */
-export type SnippetReferenceSelectionValue = {
-  categoryId: number;
-  in: string[];
-  ex: string[];
-};
-
-export type SnippetReferenceValue = {
-  category: string;
-  selections: SnippetReferenceSelectionValue[];
-};
+export type {
+  SnippetReferenceSelectionValue,
+  SnippetReferenceValue,
+} from '../schemas/snippet-schema';
 
 export type SnippetsNodeValue = {
   wildcardSetIds: number[];
@@ -249,17 +248,6 @@ export type SnippetsNodeValue = {
   seed?: number;
   targets: Record<string, SnippetReferenceValue[]>;
 };
-
-const snippetReferenceSelectionSchema = z.object({
-  categoryId: z.number().int().positive(),
-  in: z.array(z.string()).default([]),
-  ex: z.array(z.string()).default([]),
-});
-
-const snippetReferenceSchema = z.object({
-  category: z.string(),
-  selections: z.array(snippetReferenceSelectionSchema).default([]),
-});
 
 // Each field carries its v1 default at the schema level so a partial value
 // arriving via input (preset load, remix, dev-page `defaultValues`) parses
@@ -608,6 +596,14 @@ export const resourceSchema = z.object({
 
 /** Resource data type inferred from resourceSchema (minimal client-side data) */
 export type ResourceData = z.infer<typeof resourceSchema>;
+
+/**
+ * Value type of the `resources` node — a flat array of `ResourceData`. Mirrors
+ * the `SnippetsNodeValue` naming so callers reading the graph snapshot have a
+ * canonical name to cast against (e.g. `graph.getSnapshot() as { resources?:
+ * ResourcesNodeValue }`) instead of redeclaring the shape inline.
+ */
+export type ResourcesNodeValue = ResourceData[];
 
 const resourceInputSchema = z.union([
   z.number().transform((id) => ({ id })),

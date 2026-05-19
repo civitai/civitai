@@ -4,10 +4,8 @@ import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
-  hashContent,
   recordEntityModerationFailure,
   recordEntityModerationSuccess,
-  upsertEntityModerationPending,
 } from '~/server/services/entity-moderation.service';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
 import {
@@ -51,19 +49,14 @@ const LEVEL_LABEL_SET = new Set<string>(WILDCARD_AUDIT_LEVEL_LABELS);
 // results don't bleed into the entity-moderation flow used by Articles.
 const CALLBACK_TYPE = 'wildcardCategoryValue';
 
-// Max consecutive terminal failures (failed/expired/canceled) before we give
-// up on a category. Cron skips over Pending rows whose retryCount has hit
-// this so a permanently broken submission doesn't loop forever. Reset on a
-// successful audit.
-const MAX_RETRY = 5;
-
 // Open-ended container persisted on `WildcardSetCategory.metadata`. Treat
 // unknown fields as additive — readers should default missing fields rather
 // than assume their presence.
+//
+// Note: moderation lifecycle state (workflow id, retry attempts) lives on
+// `EntityModeration` as the source of truth. This metadata only holds the
+// forensic display fields the moderation UI surfaces on Dirty rows.
 export type WildcardCategoryMetadata = {
-  // Active orchestrator workflow ID. Set on submission, cleared on terminal
-  // callback. Cron treats absence as "needs (re)submission."
-  workflowId?: string;
   // XGuard matched terms (union of `matchedTerms.text` across triggered
   // labels). Survives after rollup so a moderator viewing a Dirty category
   // can see exactly what triggered. Empty/omitted for Clean categories.
@@ -73,6 +66,7 @@ export type WildcardCategoryMetadata = {
   triggeredLabels?: string[];
   // Increments on each terminal failure. Cleared/reset implicitly on the
   // next successful rollup.
+  // TODO(Phase 2): redundant with EntityModeration.retryCount; drop.
   retryCount?: number;
 };
 
@@ -95,18 +89,21 @@ function buildCallbackUrl(): string {
  * the helper onto workflow metadata so the webhook can look the category up.
  * The callback URL carries `?type=wildcardCategoryValue` so the webhook
  * dispatches to the wildcard handler instead of the default entity-moderation
- * flow (Wildcards have their own audit table, not EntityModeration).
+ * flow.
  *
- * The workflow ID is stamped onto `category.metadata.workflowId` so:
- *   - the cron can tell what's in flight,
- *   - stale callbacks (from a previous workflow that got superseded by a
- *     newer mutation) get rejected in `applyWildcardCategoryAuditSuccess`.
+ * EntityModeration is the source of truth for moderation state. The submit's
+ * EM upsert (Pending on success, Failed on submit failure) is owned by
+ * `createXGuardModerationRequest`. The workflow id is NOT written back to
+ * WSC.metadata — stale-callback gating uses `EntityModeration.workflowId`
+ * via the `WHERE workflowId=X` predicate in
+ * `recordEntityModerationSuccess`/`Failure`, and in-flight detection uses
+ * the EM row's existence + status, not WSC.
  *
  * Returns the workflow ID on a successful submission. Returns `null` when:
  *   - the category no longer exists,
  *   - the category has no values (caller should mark Clean directly),
- *   - the orchestrator submission silently failed (caller may retry on the
- *     next cron tick).
+ *   - the orchestrator submission failed (the helper has already written
+ *     EM=Failed with retryCount incremented; the retry job will pick it up).
  */
 export async function submitWildcardCategoryAudit(categoryId: number): Promise<string | null> {
   const category = await dbRead.wildcardSetCategory.findUnique({
@@ -117,19 +114,6 @@ export async function submitWildcardCategoryAudit(categoryId: number): Promise<s
   if (!category.values || category.values.length === 0) return null;
 
   const text = category.values.join('\n');
-  const contentHash = hashContent(text);
-
-  // Persist an EntityModeration row Pending BEFORE submitting so a silent
-  // orchestrator failure still leaves a row for `retry-failed-text-moderation`
-  // to pick up. Mirrors the pattern in `submitTextModeration` for Article.
-  // The row is keyed on (entityType, entityId) which matches what the webhook
-  // will use to find it via the workflow metadata.
-  await upsertEntityModerationPending({
-    entityType: WILDCARD_CATEGORY_ENTITY_TYPE,
-    entityId: categoryId,
-    workflowId: null,
-    contentHash,
-  });
 
   // Submit both fail labels (hard policy violations → Dirty) and level
   // labels (currently just `nsfw` → boolean `nsfw = true`). We ignore
@@ -156,54 +140,45 @@ export async function submitWildcardCategoryAudit(categoryId: number): Promise<s
     return null;
   }
 
-  // Stamp the workflow id onto BOTH the wildcard category metadata (used by
-  // the wildcard cron's "is this in-flight?" check) and the EntityModeration
-  // row (used by `recordEntityModerationSuccess`/`Failure` to gate stale
-  // callbacks, and by `retry-failed-text-moderation` to dispatch retries).
-  await mergeCategoryMetadata(categoryId, { workflowId: workflow.id });
-  await dbWrite.entityModeration.updateMany({
-    where: {
-      entityType: WILDCARD_CATEGORY_ENTITY_TYPE,
-      entityId: categoryId,
-      status: EntityModerationStatus.Pending,
-    },
-    data: { workflowId: workflow.id },
-  });
   return workflow.id;
 }
 
 /**
- * Submit every Pending category in a set whose metadata isn't already
- * tracking an in-flight workflow. Used at import-time (fire-and-forget after
+ * Submit every Pending category in a set that doesn't already have an
+ * EntityModeration row. Used at import-time (fire-and-forget after
  * `importWildcardModelVersion`) and by the cron's per-set unit of work.
  *
  * Empty categories (zero values) are short-circuited to Clean directly —
  * there's nothing to audit, and we want them counted in the set rollup.
+ *
+ * Gate on EM-row absence (not WSC.metadata.workflowId) so EntityModeration
+ * stays the single source of truth for moderation lifecycle. Categories
+ * that already have an EM row are owned by the EM-driven path
+ * (`retry-failed-text-moderation` handles retries; the webhook handles
+ * terminal outcomes), so we leave them alone.
  */
 export async function submitWildcardSetAudit(setId: number): Promise<{
   submitted: number;
   skipped: number;
   markedCleanEmpty: number;
 }> {
-  const categories = await dbRead.wildcardSetCategory.findMany({
-    where: { wildcardSetId: setId, auditStatus: WildcardSetCategoryAuditStatus.Pending },
-    select: { id: true, valueCount: true, metadata: true },
-  });
+  const orphans = await dbRead.$queryRaw<Array<{ id: number; valueCount: number }>>`
+    SELECT wsc.id, wsc."valueCount"
+    FROM "WildcardSetCategory" wsc
+    LEFT JOIN "EntityModeration" em
+      ON em."entityType" = ${WILDCARD_CATEGORY_ENTITY_TYPE}
+     AND em."entityId" = wsc.id
+    WHERE wsc."wildcardSetId" = ${setId}
+      AND wsc."auditStatus" = ${WildcardSetCategoryAuditStatus.Pending}::"WildcardSetCategoryAuditStatus"
+      AND em.id IS NULL
+    ORDER BY wsc.id ASC
+  `;
 
   let submitted = 0;
   let skipped = 0;
   let markedCleanEmpty = 0;
   let touchedSet = false;
-  for (const category of categories) {
-    const meta = (category.metadata ?? {}) as WildcardCategoryMetadata;
-    if (meta.workflowId) {
-      skipped++;
-      continue;
-    }
-    if ((meta.retryCount ?? 0) >= MAX_RETRY) {
-      skipped++;
-      continue;
-    }
+  for (const category of orphans) {
     if (category.valueCount === 0) {
       await dbWrite.wildcardSetCategory.update({
         where: { id: category.id },
@@ -229,9 +204,13 @@ export async function submitWildcardSetAudit(setId: number): Promise<{
 }
 
 /**
- * Cron unit of work: pick Pending categories that have no in-flight workflow
- * and submit them. Capped per call so the cron isn't unbounded; rerun until
- * `submitted + skipped == 0` to drain.
+ * Cron unit of work: find WildcardSetCategory orphans — Pending categories
+ * with no EntityModeration row — and submit them. Submission creates the EM
+ * row via `createXGuardModerationRequest`'s centralized bookkeeping, after
+ * which the row is owned by the EM-driven path.
+ *
+ * Capped per call so the cron isn't unbounded; rerun until `scanned == 0`
+ * to drain.
  */
 export async function submitPendingWildcardCategoryAudits(opts?: { limit?: number }): Promise<{
   scanned: number;
@@ -241,34 +220,26 @@ export async function submitPendingWildcardCategoryAudits(opts?: { limit?: numbe
 }> {
   const limit = Math.max(1, Math.min(opts?.limit ?? 100, 500));
 
-  // We can't cleanly filter on the JSON `metadata.workflowId` predicate via
-  // Prisma without raw SQL, so we over-fetch and filter in JS. The status
-  // filter prunes the candidate set first.
-  const candidates = await dbRead.wildcardSetCategory.findMany({
-    where: { auditStatus: WildcardSetCategoryAuditStatus.Pending },
-    select: { id: true, valueCount: true, wildcardSetId: true, metadata: true },
-    take: limit * 2,
-    orderBy: { id: 'asc' },
-  });
+  const orphans = await dbRead.$queryRaw<
+    Array<{ id: number; valueCount: number; wildcardSetId: number }>
+  >`
+    SELECT wsc.id, wsc."valueCount", wsc."wildcardSetId"
+    FROM "WildcardSetCategory" wsc
+    LEFT JOIN "EntityModeration" em
+      ON em."entityType" = ${WILDCARD_CATEGORY_ENTITY_TYPE}
+     AND em."entityId" = wsc.id
+    WHERE wsc."auditStatus" = ${WildcardSetCategoryAuditStatus.Pending}::"WildcardSetCategoryAuditStatus"
+      AND em.id IS NULL
+    ORDER BY wsc.id ASC
+    LIMIT ${limit}
+  `;
 
   const setsToRecompute = new Set<number>();
-  let scanned = 0;
   let submitted = 0;
   let skipped = 0;
   let markedCleanEmpty = 0;
 
-  for (const c of candidates) {
-    if (scanned >= limit) break;
-    scanned++;
-    const meta = (c.metadata ?? {}) as WildcardCategoryMetadata;
-    if (meta.workflowId) {
-      skipped++;
-      continue;
-    }
-    if ((meta.retryCount ?? 0) >= MAX_RETRY) {
-      skipped++;
-      continue;
-    }
+  for (const c of orphans) {
     if (c.valueCount === 0) {
       await dbWrite.wildcardSetCategory.update({
         where: { id: c.id },
@@ -290,7 +261,7 @@ export async function submitPendingWildcardCategoryAudits(opts?: { limit?: numbe
     await recomputeWildcardSetAuditStatus(setId);
   }
 
-  return { scanned, submitted, skipped, markedCleanEmpty };
+  return { scanned: orphans.length, submitted, skipped, markedCleanEmpty };
 }
 
 /**
@@ -335,17 +306,6 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
     return;
   }
   const meta = (current.metadata ?? {}) as WildcardCategoryMetadata;
-  if (meta.workflowId && meta.workflowId !== workflowId) {
-    logToAxiom({
-      type: 'warning',
-      name: 'wildcard-category-audit',
-      message: 'stale workflow callback ignored',
-      wildcardSetCategoryId: categoryId,
-      workflowId,
-      activeWorkflowId: meta.workflowId,
-    }).catch(() => undefined);
-    return;
-  }
 
   // Partition the per-label results: fail labels drive Dirty; level labels
   // drive the `nsfw` boolean. Falling back to score-vs-threshold for the
@@ -367,8 +327,7 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
   // match. Either label alone just contributes to the `nsfw` flag below.
   const youngResult = results.find((r) => r.label === 'young' && isTriggered(r));
   const sexualResult = results.find((r) => r.label === 'sexual' && isTriggered(r));
-  const syntheticCsamResults =
-    youngResult && sexualResult ? [youngResult, sexualResult] : [];
+  const syntheticCsamResults = youngResult && sexualResult ? [youngResult, sexualResult] : [];
   const syntheticCsam = syntheticCsamResults.length > 0;
 
   const blocked = triggeredFailResults.length > 0 || syntheticCsam;
@@ -416,11 +375,32 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
   // captured in `nsfw`.
   const nextMetadata: WildcardCategoryMetadata = {
     ...meta,
-    workflowId: undefined,
     retryCount: undefined,
     triggeredTerms: blocked ? triggeredTerms : undefined,
     triggeredLabels: blocked ? blockingLabels : undefined,
   };
+
+  // EntityModeration is the source of truth. Update it FIRST — its
+  // `WHERE workflowId=X` predicate is the stale-callback gate. If the EM
+  // row's stored workflowId no longer matches this callback's workflow
+  // (because a newer audit superseded it), the update returns false and
+  // we leave WSC untouched. The newer workflow's callback will reconcile.
+  const emUpdated = await recordEntityModerationSuccess({
+    entityType: WILDCARD_CATEGORY_ENTITY_TYPE,
+    entityId: categoryId,
+    workflowId,
+    output: opts.output,
+  });
+  if (!emUpdated) {
+    logToAxiom({
+      type: 'warning',
+      name: 'wildcard-category-audit',
+      message: 'stale workflow callback ignored (EntityModeration workflowId mismatch)',
+      wildcardSetCategoryId: categoryId,
+      workflowId,
+    }).catch(() => undefined);
+    return;
+  }
 
   await dbWrite.wildcardSetCategory.update({
     where: { id: categoryId },
@@ -433,30 +413,15 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
     },
   });
 
-  // Mirror the success onto the EntityModeration row so the retry job sees
-  // a Succeeded row and stops trying. Stale callbacks (workflowId mismatch)
-  // are filtered inside `recordEntityModerationSuccess` itself — we don't
-  // need to gate again here.
-  await recordEntityModerationSuccess({
-    entityType: WILDCARD_CATEGORY_ENTITY_TYPE,
-    entityId: categoryId,
-    workflowId,
-    output: opts.output,
-  });
-
   await recomputeWildcardSetAuditStatus(current.wildcardSetId);
 }
 
 /**
- * Webhook handler: terminal-failure callback. Bumps `retryCount` on the
- * category metadata so the cron can stop retrying after `MAX_RETRY`
- * consecutive failures. Status stays `Pending`.
- *
- * Also mirrors the failure onto the EntityModeration row so the
- * `retry-failed-text-moderation` job can pick it up for resubmission — the
- * wildcard-side cron only handles Pending categories with cleared workflowIds
- * (i.e. ones we already gave up on after orchestrator failure), while the
- * EntityModeration retry handles Failed/Expired/Canceled rows specifically.
+ * Webhook handler: terminal-failure callback. Mirrors the failure onto the
+ * EntityModeration row (which bumps `retryCount` and writes the terminal
+ * status) so `retry-failed-text-moderation` picks it up for resubmission.
+ * WSC.auditStatus stays Pending because the moderation outcome isn't known
+ * yet — the retry job will eventually produce a terminal verdict.
  */
 export async function applyWildcardCategoryAuditFailure(opts: {
   categoryId: number;
@@ -465,41 +430,30 @@ export async function applyWildcardCategoryAuditFailure(opts: {
 }): Promise<void> {
   const { categoryId, workflowId, status } = opts;
 
-  const current = await dbRead.wildcardSetCategory.findUnique({
-    where: { id: categoryId },
-    select: { metadata: true },
-  });
-  if (!current) return;
-
-  const meta = (current.metadata ?? {}) as WildcardCategoryMetadata;
-  if (meta.workflowId && meta.workflowId !== workflowId) return; // stale
-
-  const nextMetadata: WildcardCategoryMetadata = {
-    ...meta,
-    workflowId: undefined,
-    retryCount: (meta.retryCount ?? 0) + 1,
-  };
-
-  await dbWrite.wildcardSetCategory.update({
-    where: { id: categoryId },
-    data: { metadata: serializeMetadata(nextMetadata) },
-  });
-
-  // Mirror onto the EntityModeration row. The status maps directly to
-  // `EntityModerationStatus`'s capitalized values via the same helper Article
-  // uses, so the retry job's predicates (Failed/Expired/Canceled + updatedAt
-  // > 1hr) trigger correctly.
+  // EntityModeration is the source of truth. `recordEntityModerationFailure`'s
+  // `WHERE workflowId=X` predicate is the stale-callback gate — a false
+  // return means a newer audit superseded this workflow.
   const entityStatus = {
     failed: EntityModerationStatus.Failed,
     expired: EntityModerationStatus.Expired,
     canceled: EntityModerationStatus.Canceled,
   }[status];
-  await recordEntityModerationFailure({
+  const emUpdated = await recordEntityModerationFailure({
     entityType: WILDCARD_CATEGORY_ENTITY_TYPE,
     entityId: categoryId,
     workflowId,
     status: entityStatus,
   });
+  if (!emUpdated) {
+    logToAxiom({
+      type: 'warning',
+      name: 'wildcard-category-audit',
+      message: 'stale workflow callback ignored (EntityModeration workflowId mismatch)',
+      wildcardSetCategoryId: categoryId,
+      workflowId,
+      status,
+    }).catch(() => undefined);
+  }
 }
 
 /**
@@ -560,28 +514,13 @@ function aggregateSetStatus(
   return WildcardSetAuditStatus.Clean;
 }
 
-async function mergeCategoryMetadata(
-  categoryId: number,
-  patch: Partial<WildcardCategoryMetadata>
-): Promise<void> {
-  const current = await dbRead.wildcardSetCategory.findUnique({
-    where: { id: categoryId },
-    select: { metadata: true },
-  });
-  const meta = (current?.metadata ?? {}) as WildcardCategoryMetadata;
-  const next = { ...meta, ...patch };
-  await dbWrite.wildcardSetCategory.update({
-    where: { id: categoryId },
-    data: { metadata: serializeMetadata(next) },
-  });
-}
-
 // Strip empty/zero/undefined fields so the serialized JSON stays compact and
 // reflects only meaningful state (rather than persisting `{ retryCount: 0 }`
-// or `{ triggeredTerms: [] }`).
+// or `{ triggeredTerms: [] }`). Legacy rows may carry a `workflowId` field
+// from before the EntityModeration-as-source-of-truth refactor; we drop it
+// on the next write so it gets purged over time.
 function serializeMetadata(meta: WildcardCategoryMetadata): Prisma.InputJsonValue {
   const out: WildcardCategoryMetadata = {};
-  if (meta.workflowId) out.workflowId = meta.workflowId;
   if (meta.triggeredTerms?.length) out.triggeredTerms = meta.triggeredTerms;
   if (meta.triggeredLabels?.length) out.triggeredLabels = meta.triggeredLabels;
   if (meta.retryCount && meta.retryCount > 0) out.retryCount = meta.retryCount;

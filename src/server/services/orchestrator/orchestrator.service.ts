@@ -5,14 +5,16 @@ import type {
   XGuardModerationStepTemplate,
 } from '@civitai/client';
 import { submitWorkflow } from '@civitai/client';
+import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
+import { hashContent } from '~/server/services/entity-moderation.service';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
-import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
+import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 
@@ -316,6 +318,51 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
       serverTiming,
       error,
     });
+  }
+
+  // Centralized EntityModeration bookkeeping. Callers used to do their own
+  // upsert dance around this function, which left a window where the EM row
+  // sat at Pending+NULL workflowId while a previous workflow could still call
+  // back — the callback would update WSC/Article but no-op the EM mirror. By
+  // owning the upsert here, the EM row is never Pending+NULL: success path
+  // writes the new workflowId in one statement; failure path writes a
+  // terminal Failed status so the retry job can act on it.
+  //
+  // Gated on (entityType, entityId): ad-hoc scans (e.g. the prompt shadow
+  // scan from orchestration-new.service.ts which passes entityType='prompt'
+  // with no entityId) get no EM row, matching prior behavior.
+  if (entityType && entityId !== undefined) {
+    const contentHash = args.mode === 'text' ? hashContent(args.content) : undefined;
+    await dbWrite.entityModeration
+      .upsert({
+        where: { entityType_entityId: { entityType, entityId } },
+        create: {
+          entityType,
+          entityId,
+          workflowId: data?.id ?? null,
+          contentHash,
+          status: EntityModerationStatus.Pending,
+        },
+        update: {
+          workflowId: data?.id ?? null,
+          contentHash,
+          status: EntityModerationStatus.Pending,
+          blocked: null,
+          triggeredLabels: [],
+          result: Prisma.JsonNull,
+        },
+      })
+      .catch((e) =>
+        logToAxiom({
+          type: 'error',
+          name: 'xguard-moderation',
+          message: 'failed to upsert EntityModeration on submit success',
+          entityType,
+          entityId,
+          workflowId: data?.id ?? null,
+          error: e instanceof Error ? e.message : String(e),
+        }).catch(() => undefined)
+      );
   }
 
   return data;

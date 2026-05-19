@@ -74,14 +74,27 @@ export function createChainedPromptEnhancementStep(
 
 export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem'>): string {
   const parts: string[] = [];
+  const promptLower = input.prompt.toLowerCase();
+  const negativeLower = (input.negativePrompt ?? '').toLowerCase();
 
-  if (input.preserveTriggerWords?.length) {
-    const words = input.preserveTriggerWords;
-    const promptLower = input.prompt.toLowerCase();
-    const negativeLower = (input.negativePrompt ?? '').toLowerCase();
+  // Trigger words and snippet `#references` are both "leave this token alone"
+  // asks, but they need different positional language:
+  //   - Trigger words (LoRA activators): position doesn't matter; the LLM
+  //     can place them wherever reads best in the enhanced prompt.
+  //   - Snippet refs: position MATTERS to the user — the placeholder will be
+  //     substituted with a random value at generation time, and the user's
+  //     prompt structure was authored around where they put each `#ref`.
+  //     Moving `#character` from the subject slot to the end of the prompt
+  //     would silently change the composition.
+  // So we emit two separate directives. Dedupe is per-list (trigger words and
+  // snippets are different concepts; a coincidental name overlap should not
+  // collapse them).
+  const triggerWords = input.preserveTriggerWords ?? [];
+  const snippetTokens = collectSnippetTokens(input);
 
-    const inPrompt = words.filter((w) => promptLower.includes(w.toLowerCase()));
-    const inNegative = words.filter((w) => negativeLower.includes(w.toLowerCase()));
+  if (triggerWords.length > 0) {
+    const inPrompt = triggerWords.filter((t) => promptLower.includes(t.toLowerCase()));
+    const inNegative = triggerWords.filter((t) => negativeLower.includes(t.toLowerCase()));
 
     if (inPrompt.length) {
       parts.push(`Preserve these exact trigger words in the prompt: ${inPrompt.join(', ')}`);
@@ -89,6 +102,31 @@ export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem
     if (inNegative.length) {
       parts.push(
         `Preserve these exact trigger words in the negative prompt: ${inNegative.join(', ')}`
+      );
+    }
+  }
+
+  if (snippetTokens.length > 0) {
+    const inPrompt = snippetTokens.filter((t) => promptLower.includes(t.toLowerCase()));
+    const inNegative = snippetTokens.filter((t) => negativeLower.includes(t.toLowerCase()));
+
+    // Positional directive — the `#refs` are placeholders that will be
+    // substituted at generation time, and where the user put them defines
+    // the structural role of that substitution (subject, style, setting,
+    // etc.). Asking the LLM to keep them in roughly the same place ensures
+    // the enhanced prompt still composes coherently after substitution.
+    if (inPrompt.length) {
+      parts.push(
+        `Preserve these snippet references exactly as written in the prompt, and keep each one in approximately the same position it currently occupies (do not move them to a different part of the prompt): ${inPrompt.join(
+          ', '
+        )}`
+      );
+    }
+    if (inNegative.length) {
+      parts.push(
+        `Preserve these snippet references exactly as written in the negative prompt, and keep each one in approximately the same position it currently occupies: ${inNegative.join(
+          ', '
+        )}`
       );
     }
   }
@@ -112,6 +150,35 @@ export function buildInstruction(input: Omit<PromptEnhancementSchema, 'ecosystem
   }
 
   return parts.length ? parts.join('\n') : '';
+}
+
+/**
+ * Build the canonical `#category` token list to ask the LLM to preserve.
+ * Unions explicit `preserveSnippets` with category names extracted from
+ * `snippetTargets` (the raw `snippets.targets` map), normalizes every entry
+ * to the `#`-prefixed form, and dedupes case-insensitively.
+ */
+function collectSnippetTokens(
+  input: Pick<PromptEnhancementSchema, 'preserveSnippets' | 'snippetTargets'>
+): string[] {
+  const seen = new Set<string>(); // lower-case keys for case-insensitive dedupe
+  const out: string[] = [];
+
+  const push = (raw: string) => {
+    const token = raw.startsWith('#') ? raw : `#${raw}`;
+    const key = token.toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(token);
+  };
+
+  for (const ref of input.preserveSnippets ?? []) push(ref);
+  if (input.snippetTargets) {
+    for (const refs of Object.values(input.snippetTargets)) {
+      for (const ref of refs) push(ref.category);
+    }
+  }
+  return out;
 }
 
 export async function enhancePrompt({
@@ -157,6 +224,8 @@ export async function enhancePrompt({
       metadata: {
         userInstruction: input.instruction ?? undefined,
         preserveTriggerWords: input.preserveTriggerWords ?? undefined,
+        preserveSnippets: input.preserveSnippets ?? undefined,
+        snippetTargets: input.snippetTargets ?? undefined,
       },
       steps: [createPromptEnhancementStep(input, { name: PROMPT_ENHANCEMENT_STEP_NAME })],
       callbacks: getWorkflowCallbacks(userId),

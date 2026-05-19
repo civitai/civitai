@@ -584,11 +584,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
-                    Due to your current browsing settings, searching for people of interest has been
-                    disabled.
-                  </Text>
-                  <Text size="xs" align="center">
-                    You may remove X and XXX browsing settings to search for these.
+                    Your search includes terms tied to real people. Content depicting real people
+                    is filtered from search results.
                   </Text>
                 </Stack>
               );

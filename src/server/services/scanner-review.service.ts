@@ -331,7 +331,8 @@ export async function focusedRun(input: {
 }): Promise<{
   items: AggregatedScanRow[];
   totalAvailable: number;
-  alreadyVerdicted: number;
+  verdictedInLookback: number;
+  lookbackDays: number;
 }> {
   const ch = ensureClickhouse();
   const lookback = input.lookbackDays ?? DEFAULT_LOOKBACK_DAYS;
@@ -370,8 +371,22 @@ export async function focusedRun(input: {
   });
   const allRows = (await resp.json()) as AggregatedScanRow[];
 
+  // Surface a count the moderator can actually relate to: how many verdicts
+  // they've recorded for this label inside the same lookback window the
+  // run is sourced from. The earlier `alreadyVerdicted` stat was derived
+  // from the server-side over-fetch (up to 250 candidates) and was
+  // confusing because that pool is never exposed to the client.
+  const lookbackCutoff = new Date(Date.now() - lookback * 24 * 60 * 60 * 1000);
+  const verdictedInLookback = await dbRead.scannerLabelReview.count({
+    where: {
+      reviewedBy: input.userId,
+      label: input.label,
+      reviewedAt: { gt: lookbackCutoff },
+    },
+  });
+
   if (allRows.length === 0) {
-    return { items: [], totalAvailable: 0, alreadyVerdicted: 0 };
+    return { items: [], totalAvailable: 0, verdictedInLookback, lookbackDays: lookback };
   }
 
   const verdicted = await dbRead.scannerLabelReview.findMany({
@@ -389,7 +404,8 @@ export async function focusedRun(input: {
   return {
     items,
     totalAvailable: allRows.length,
-    alreadyVerdicted: allRows.length - unverdicted.length,
+    verdictedInLookback,
+    lookbackDays: lookback,
   };
 }
 

@@ -58,14 +58,26 @@ const nanoBananaModeVersionOptions = [
 // Aspect Ratios & Resolutions
 // =============================================================================
 
-/** Base aspect ratios at 1K resolution */
+/**
+ * Base aspect ratios at 1K resolution.
+ * Full set supported by both `nano-banana-pro` and `nano-banana-2` per the
+ * orchestrator client spec (`NanoBanana2ImageGenInput.aspectRatio`).
+ */
 const nanoBananaBaseAspectRatios: AspectRatioOption[] = [
+  { label: '21:9', value: '21:9', width: 2520, height: 1080 },
   { label: '16:9', value: '16:9', width: 1920, height: 1080 },
+  { label: '3:2', value: '3:2', width: 1620, height: 1080 },
   { label: '4:3', value: '4:3', width: 1440, height: 1080 },
+  { label: '5:4', value: '5:4', width: 1350, height: 1080 },
   { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '4:5', value: '4:5', width: 1080, height: 1350 },
   { label: '3:4', value: '3:4', width: 1080, height: 1440 },
+  { label: '2:3', value: '2:3', width: 1080, height: 1620 },
   { label: '9:16', value: '9:16', width: 1080, height: 1920 },
 ];
+
+/** Preferred (always-visible) aspect ratios — the historical default set. */
+const nanoBananaPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
 /** Resolution options for Nano Banana Pro */
 const resolutionOptions = ['1K', '2K', '4K'] as const;
@@ -122,6 +134,7 @@ const proModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
       return aspectRatioNode({
         options: getNanoBananaAspectRatios(resolution),
         defaultValue: '1:1',
+        priorityOptions: nanoBananaPriorityRatios,
       });
     },
     ['resolution']
@@ -145,6 +158,7 @@ const v2ModeGraph = new DataGraph<NanoBananaModeCtx, GenerationCtx>()
       return aspectRatioNode({
         options: getNanoBananaAspectRatios(resolution),
         defaultValue: '1:1',
+        priorityOptions: nanoBananaPriorityRatios,
       });
     },
     ['resolution']

@@ -258,8 +258,7 @@ export function ImageDetail2() {
               : undefined,
           }
         : undefined,
-    creditText:
-      image.user.username && !image.user.deletedAt ? image.user.username : undefined,
+    creditText: image.user.username && !image.user.deletedAt ? image.user.username : undefined,
     copyrightNotice:
       image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined,
     acquireLicensePage: env.NEXT_PUBLIC_BASE_URL
@@ -527,8 +526,8 @@ export function ImageDetail2() {
                         <Text>
                           This image was generated with AI and is based on the likeness of a real
                           person. It is not a photo, but because it depicts a real individual, it
-                          cannot be monetized, used to display non-PG content, or shown alongside X
-                          or XXX material. For more information, see our{' '}
+                          cannot be monetized, used to display non-PG content, or shown alongside
+                          mature material. For more information, see our{' '}
                           <Anchor href="/safety">Content Policies</Anchor>
                         </Text>
                       </AlertWithIcon>

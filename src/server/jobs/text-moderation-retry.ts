@@ -77,12 +77,27 @@ export const retryFailedTextModeration = createJob(
           },
         ],
       },
-      select: { id: true, entityType: true, entityId: true },
+      select: { id: true, entityType: true, entityId: true, status: true },
       orderBy: { updatedAt: 'asc' },
       take: FETCH_LIMIT,
     });
 
     if (!rows.length) return { processed: 0, retried: 0, missing: 0, errors: 0 };
+
+    // Pre-increment retryCount on Pending-timeout rows. Terminal-failure rows
+    // (Failed/Expired/Canceled) had their retryCount bumped by
+    // `recordEntityModerationFailure` when the callback arrived, so they
+    // already count against the cap. Pending-timeout rows never received a
+    // callback, so without this bump they would retry indefinitely.
+    const pendingIds = rows
+      .filter((r) => r.status === EntityModerationStatus.Pending)
+      .map((r) => r.id);
+    if (pendingIds.length) {
+      await dbWrite.entityModeration.updateMany({
+        where: { id: { in: pendingIds } },
+        data: { retryCount: { increment: 1 } },
+      });
+    }
 
     // Group by entityType so we can bulk-fetch content per type
     const byType = new Map<string, { id: number; entityId: number }[]>();
