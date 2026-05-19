@@ -69,6 +69,7 @@ import type { ComicProjectMeta } from '~/server/schema/comics.schema';
 import { Page } from '~/components/AppLayout/Page';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
@@ -800,6 +801,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   const panels = activeChapter?.panels ?? [];
   const headerRef = useRef<HTMLDivElement>(null);
   const projectMeta = project.meta as ComicProjectMeta | null;
+  const isRtl = projectMeta?.readingDirection === 'rtl';
   const { canRead, canDownload } = useChapterPermission({
     chapterId: activeChapter?.id,
     projectUserId: project.user.id,
@@ -829,7 +831,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
   };
 
   // Comments visibility — togglable from the header. Persisted so the user's
-  // choice survives chapter navigation and refreshes.
+  // choice survives chapter navigation and refreshes. When the URL carries a
+  // ?highlight= param (from a comment notification deep-link), we force the
+  // section open regardless of the saved preference.
+  const hasCommentHighlight = router.query.highlight != null;
   const [commentsVisible, setCommentsVisible] = useState<boolean>(() => {
     if (typeof window === 'undefined') return true;
     return localStorage.getItem(READER_COMMENTS_KEY) !== 'false';
@@ -952,9 +957,11 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
       if (effectiveReaderMode === 'pages') {
-        // In pages mode, arrow keys navigate pages (not chapters)
-        if (e.key === 'ArrowLeft') goPage(-1);
-        else if (e.key === 'ArrowRight') goPage(1);
+        // In pages mode, arrow keys navigate pages (not chapters). Under
+        // RTL (manga) layout, swap so ArrowLeft = next, ArrowRight = prev
+        // — matching the physical page-turn direction of manga.
+        if (e.key === 'ArrowLeft') goPage(isRtl ? 1 : -1);
+        else if (e.key === 'ArrowRight') goPage(isRtl ? -1 : 1);
       } else {
         if (e.key === 'ArrowLeft' && hasPrev) goToChapter(safeIdx - 1);
         else if (e.key === 'ArrowRight' && hasNext) goToChapter(safeIdx + 1);
@@ -962,7 +969,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [hasPrev, hasNext, safeIdx, effectiveReaderMode, pageIndex, totalPages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasPrev, hasNext, safeIdx, effectiveReaderMode, pageIndex, totalPages, isRtl]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Hide reader header on scroll down, show on scroll up (scroll mode only).
   // Mobile bails out — the header is non-sticky there (`position: static`)
@@ -997,9 +1004,10 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
     const panelSrc = getEdgeUrl(panel.imageUrl, { width: 1200 });
 
     if (panel.image) {
+      const image = panel.image;
       return (
         <div key={panel.id} className="relative">
-          <ImageGuard2 image={panel.image} connectType="comicChapter" connectId={chapterConnectId}>
+          <ImageGuard2 image={image} connectType="comicChapter" connectId={chapterConnectId}>
             {(safe) =>
               safe ? (
                 <>
@@ -1013,20 +1021,15 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                 </>
               ) : (
                 <>
-                  <div className={styles.readerPanelBlurWrap}>
-                    <img
-                      src={panelSrc}
-                      alt={panel.prompt}
-                      loading="lazy"
-                      className={styles.readerPanel}
-                      aria-hidden
-                    />
-                    <img
-                      src={panelSrc}
-                      alt={panel.prompt}
-                      loading="lazy"
-                      className={styles.readerPanelBlurred}
-                    />
+                  <div
+                    className={styles.readerPanelBlurWrap}
+                    style={
+                      image.width && image.height
+                        ? { aspectRatio: `${image.width} / ${image.height}` }
+                        : undefined
+                    }
+                  >
+                    <MediaHash {...image} />
                   </div>
                   <ImageGuard2.BlurToggle className="absolute top-2 left-2 z-10" />
                 </>
@@ -1479,21 +1482,35 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
 
                   {/* Edge-anchored prev/next. Wraps to prev/next chapter */}
                   {/* at boundaries, matching the existing `goPage` logic. */}
+                  {/* Under RTL (manga) layout the left chevron means "next" */}
+                  {/* and the right chevron means "previous" — physical icons */}
+                  {/* keep their left/right positions so they always convey */}
+                  {/* their direction-of-travel. */}
                   <ActionIcon
                     variant="filled"
                     color="dark"
                     size="xl"
                     radius="xl"
-                    disabled={!hasPagePrev && !hasPrev}
-                    onClick={() => goPage(-1)}
-                    aria-label={hasPagePrev ? 'Previous page' : 'Previous chapter'}
+                    disabled={isRtl ? !hasPageNext && !hasNext : !hasPagePrev && !hasPrev}
+                    onClick={() => goPage(isRtl ? 1 : -1)}
+                    aria-label={
+                      isRtl
+                        ? hasPageNext
+                          ? 'Next page'
+                          : 'Next chapter'
+                        : hasPagePrev
+                        ? 'Previous page'
+                        : 'Previous chapter'
+                    }
                     style={{
                       position: 'absolute',
                       left: 16,
                       top: '50%',
                       transform: 'translateY(-50%)',
                       zIndex: 5,
-                      opacity: hasPagePrev || hasPrev ? 0.85 : 0.3,
+                      opacity: (isRtl ? hasPageNext || hasNext : hasPagePrev || hasPrev)
+                        ? 0.85
+                        : 0.3,
                     }}
                   >
                     <IconChevronLeft size={28} />
@@ -1503,23 +1520,35 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
                     color="dark"
                     size="xl"
                     radius="xl"
-                    disabled={!hasPageNext && !hasNext}
-                    onClick={() => goPage(1)}
-                    aria-label={hasPageNext ? 'Next page' : 'Next chapter'}
+                    disabled={isRtl ? !hasPagePrev && !hasPrev : !hasPageNext && !hasNext}
+                    onClick={() => goPage(isRtl ? -1 : 1)}
+                    aria-label={
+                      isRtl
+                        ? hasPagePrev
+                          ? 'Previous page'
+                          : 'Previous chapter'
+                        : hasPageNext
+                        ? 'Next page'
+                        : 'Next chapter'
+                    }
                     style={{
                       position: 'absolute',
                       right: 16,
                       top: '50%',
                       transform: 'translateY(-50%)',
                       zIndex: 5,
-                      opacity: hasPageNext || hasNext ? 0.85 : 0.3,
+                      opacity: (isRtl ? hasPagePrev || hasPrev : hasPageNext || hasNext)
+                        ? 0.85
+                        : 0.3,
                     }}
                   >
                     <IconChevronRight size={28} />
                   </ActionIcon>
 
                   <div className={styles.readerPagesSpread}>
-                    {visiblePanels.map((panel) => renderPanel(panel))}
+                    {(isRtl ? [...visiblePanels].reverse() : visiblePanels).map((panel) =>
+                      renderPanel(panel)
+                    )}
                   </div>
                 </div>
               )
@@ -1556,7 +1585,7 @@ function ChapterReader({ project, chapterDbPos }: { project: Project; chapterDbP
             {/* Comments section — togglable from header. Hidden when */}
             {/* `commentsVisible` is false; the toggle button preserves the */}
             {/* user's choice across navigation via localStorage. */}
-            {activeChapter && commentsVisible && (
+            {activeChapter && (commentsVisible || hasCommentHighlight) && (
               <Container size="sm" py="xl">
                 <ChapterComments
                   projectId={project.id}

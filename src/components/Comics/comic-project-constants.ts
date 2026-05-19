@@ -105,4 +105,8 @@ export type BulkPanelItem = {
   sourceImage?: { url: string; cfId: string; width: number; height: number; preview: string };
   prompt: string;
   aspectRatio: string;
+  // Generation metadata from the source image (PNG tags for file uploads,
+  // workflow step meta for generator picks). Forwarded to bulkCreatePanels
+  // so the underlying Image carries proper resource attribution.
+  meta?: Record<string, unknown>;
 };

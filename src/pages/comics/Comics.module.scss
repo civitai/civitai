@@ -512,9 +512,8 @@
     }
   }
 
-  /* Scope to direct panel images only — avoid bleeding into blur-effect images */
   > * > img,
-  > * > div > img:first-child:not([aria-hidden]) {
+  > * > div > img:first-child {
     width: 100%;
     height: auto;
     max-height: calc(100dvh - 172px);
@@ -547,22 +546,6 @@
   position: relative;
   width: 100%;
   overflow: hidden;
-
-  /* First img is an invisible sizer that maintains aspect ratio */
-  > img:first-child {
-    width: 100%;
-    display: block;
-    visibility: hidden;
-  }
-}
-
-.readerPanelBlurred {
-  position: absolute;
-  inset: -10%;
-  width: 120%;
-  height: 120%;
-  object-fit: cover;
-  filter: blur(32px);
 }
 
 .readerEmpty {

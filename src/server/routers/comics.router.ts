@@ -53,7 +53,12 @@ import {
   BlockedUsers,
   HiddenUsers,
 } from '~/server/services/user-preferences.service';
-import { createImage, ingestImageById } from '~/server/services/image.service';
+import {
+  createImage,
+  createImageResources,
+  ingestImageById,
+} from '~/server/services/image.service';
+import { imageMetaSchema } from '~/server/schema/image.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { planChapterPanels } from '~/server/services/comics/story-plan';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
@@ -641,6 +646,14 @@ const bulkCreatePanelsSchema = z.object({
         // For import mode (existing image ID)
         imageId: z.number().int().optional(),
         aspectRatio: z.string().default('3:4'),
+        // Source-image generation metadata. Populated by the client when
+        // available — generator picks supply `civitaiResources` from the
+        // workflow step, and dropped files supply whatever PNG/EXIF
+        // metadata we can extract. Passed straight into `createImage` so
+        // the underlying Image carries proper attribution, and used to
+        // write `ImageResourceNew` rows directly for the View-details
+        // drawer to surface the model used.
+        meta: imageMetaSchema.optional(),
       })
     )
     .min(1)
@@ -3836,15 +3849,27 @@ export const comicsRouter = router({
             };
           }
 
-          // Create Image record via standard pipeline (ingestion + flags)
+          // Create Image record via standard pipeline (ingestion + flags).
+          // Pull `civitaiResources` straight off the workflow's step so the
+          // Image carries the exact resources the orchestrator ran (checkpoint
+          // + any LoRAs / additional networks), then let `createImageResources`
+          // materialize the ImageResourceNew rows from that meta.
+          const civitaiResources = (firstStep?.resources ?? []).map((r) => ({
+            modelVersionId: r.id,
+            type: r.model.type,
+            weight: r.strength,
+          }));
           const image = await createImage({
             url: s3ImageKey,
             type: 'image',
             userId: ctx.user!.id,
             width: imgWidth,
             height: imgHeight,
-            meta: { prompt: panel.prompt } as any,
+            meta: { prompt: panel.prompt, civitaiResources } as any,
           });
+          await createImageResources({ imageId: image.id }).catch((e) =>
+            console.error(`Failed to materialize resources for panel image ${image.id}:`, e)
+          );
 
           const updated = await dbWrite.comicPanel.update({
             where: { id: panel.id },
@@ -4059,14 +4084,22 @@ export const comicsRouter = router({
           throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
         }
 
+        const civitaiResources = (firstStep?.resources ?? []).map((r) => ({
+          modelVersionId: r.id,
+          type: r.model.type,
+          weight: r.strength,
+        }));
         const image = await createImage({
           url: s3Key,
           type: 'image',
           userId: ctx.user!.id,
           width: imgWidth,
           height: imgHeight,
-          meta: { prompt: panel.prompt } as any,
+          meta: { prompt: panel.prompt, civitaiResources } as any,
         });
+        await createImageResources({ imageId: image.id }).catch((e) =>
+          console.error(`Failed to materialize resources for unlocked panel image ${image.id}:`, e)
+        );
 
         const { blockedReason: _drop, ...metaWithoutBlock } = meta;
         const updated = await dbWrite.comicPanel.update({
@@ -4258,6 +4291,35 @@ export const comicsRouter = router({
       const imgWidth = genParams?.width ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).width;
       const imgHeight = genParams?.height ?? getAspectRatioDimensions(DEFAULT_ASPECT_RATIO).height;
 
+      // Pull the orchestrator's resources for the workflow that produced these
+      // candidates so the Image we mint carries the actual checkpoint + any
+      // additional networks. All candidates of a multi-image gen share one
+      // workflow, so a single re-fetch covers whichever the user picked.
+      let civitaiResources: Array<{ modelVersionId: number; type: string; weight?: number }> = [];
+      if (panel.workflowId) {
+        try {
+          const token = await getOrchestratorToken(ctx.user!.id, ctx);
+          const workflow = await getWorkflow({ token, path: { workflowId: panel.workflowId } });
+          const [normalized] = await formatGenerationResponse2([workflow as any], ctx.user);
+          const domainFlags: Record<ColorDomain, boolean> = colorDomainNames.reduce(
+            (acc, c) => ({ ...acc, [c]: false }),
+            {} as Record<ColorDomain, boolean>
+          );
+          domainFlags[ctx.domain as ColorDomain] = true;
+          const wfData = new WorkflowData(normalized as any, {
+            domain: domainFlags,
+            nsfwEnabled: !!ctx.user!.showNsfw,
+          });
+          civitaiResources = (wfData.steps[0]?.resources ?? []).map((r) => ({
+            modelVersionId: r.id,
+            type: r.model.type,
+            weight: r.strength,
+          }));
+        } catch (e) {
+          console.error(`Failed to fetch workflow resources for panel ${panel.id}:`, e);
+        }
+      }
+
       // Create Image record for the selected candidate
       const image = await createImage({
         url: input.selectedImageKey,
@@ -4265,8 +4327,11 @@ export const comicsRouter = router({
         userId: ctx.user!.id,
         width: imgWidth,
         height: imgHeight,
-        meta: { prompt: panel.prompt } as any,
+        meta: { prompt: panel.prompt, civitaiResources } as any,
       });
+      await createImageResources({ imageId: image.id }).catch((e) =>
+        console.error(`Failed to materialize resources for selected panel image ${image.id}:`, e)
+      );
 
       // Keep candidates in metadata so user can change selection later
       const updated = await dbWrite.comicPanel.update({
@@ -5922,13 +5987,26 @@ export const comicsRouter = router({
 
         // Mode 2: Source image without prompt — create directly (free)
         if (panelDef.sourceImageUrl && (!panelDef.prompt || !panelDef.prompt.trim())) {
+          // Forward whatever generation metadata the client extracted (PNG
+          // tags for file uploads, workflow step meta for generator picks).
+          // `createImageResources` reads the meta + hashes via the
+          // `get_image_resources(imageId)` DB function and materializes the
+          // matching `ImageResourceNew` rows — so resource attribution
+          // survives the import without us re-implementing the matching.
           const image = await createImage({
             url: panelDef.sourceImageUrl,
             type: 'image',
             userId: ctx.user!.id,
             width: panelDef.sourceImageWidth ?? 512,
             height: panelDef.sourceImageHeight ?? 512,
+            meta: panelDef.meta,
           });
+          await createImageResources({ imageId: image.id }).catch((e) =>
+            console.error(
+              `Failed to materialize resources for bulk-created panel image ${image.id}:`,
+              e
+            )
+          );
 
           const panel = await dbWrite.comicPanel.create({
             data: {
@@ -6481,6 +6559,8 @@ export const comicsRouter = router({
             comicProjectName: project.name,
             chapterName: chapter?.name ?? `Chapter ${input.chapterPosition + 1}`,
             commenterUsername: ctx.user.username ?? 'Someone',
+            chapterPosition: input.chapterPosition,
+            commentId: comment.id,
           },
         }).catch((e) => console.error('Failed to send comic comment notification:', e));
       }

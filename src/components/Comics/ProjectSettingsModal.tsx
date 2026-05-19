@@ -3,6 +3,7 @@ import {
   Button,
   Group,
   Modal,
+  SegmentedControl,
   Select,
   Stack,
   Switch,
@@ -78,6 +79,7 @@ export function ProjectSettingsModal({
   const [pickingHero, setPickingHero] = useState(false);
   const [editHeroPosition, setEditHeroPosition] = useState(50);
   const [editAllowDownload, setEditAllowDownload] = useState(false);
+  const [editReadingDirection, setEditReadingDirection] = useState<'ltr' | 'rtl'>('ltr');
   const { uploadToCF, files: coverUploadFiles, resetFiles: resetCoverFiles } = useCFImageUpload();
   const {
     uploadToCF: uploadHeroToCF,
@@ -98,6 +100,7 @@ export function ProjectSettingsModal({
       setEditHeroImageId(project.heroImage?.id ?? null);
       setEditHeroPosition(project.heroImagePosition ?? 50);
       setEditAllowDownload(project.meta?.allowDownload ?? false);
+      setEditReadingDirection(project.meta?.readingDirection ?? 'ltr');
       resetCoverFiles();
       resetHeroFiles();
     }
@@ -164,8 +167,7 @@ export function ProjectSettingsModal({
     onSave({
       name: editName.trim() || undefined,
       description: editDescription.trim() || null,
-      genre:
-        editGenre !== (project.genre ?? null) ? ((editGenre as ComicGenre) ?? null) : undefined,
+      genre: editGenre !== (project.genre ?? null) ? (editGenre as ComicGenre) ?? null : undefined,
       baseModel:
         editBaseModel !== (project.baseModel ?? null) ? (editBaseModel as any) ?? null : undefined,
       coverUrl: editCoverUrl !== (project.coverImage?.url ?? null) ? editCoverUrl : undefined,
@@ -173,8 +175,13 @@ export function ProjectSettingsModal({
       heroImagePosition:
         editHeroPosition !== (project.heroImagePosition ?? 50) ? editHeroPosition : undefined,
       meta:
-        editAllowDownload !== (project.meta?.allowDownload ?? false)
-          ? { ...project.meta, allowDownload: editAllowDownload }
+        editAllowDownload !== (project.meta?.allowDownload ?? false) ||
+        editReadingDirection !== (project.meta?.readingDirection ?? 'ltr')
+          ? {
+              ...project.meta,
+              allowDownload: editAllowDownload,
+              readingDirection: editReadingDirection,
+            }
           : undefined,
     });
   };
@@ -295,6 +302,25 @@ export function ProjectSettingsModal({
           checked={editAllowDownload}
           onChange={(e) => setEditAllowDownload(e.currentTarget.checked)}
         />
+
+        <div>
+          <Text size="sm" fw={500} mb={4}>
+            Reading direction
+          </Text>
+          <Text size="xs" c="dimmed" mb={8}>
+            Right-to-left ("manga mode") flips the page spread and arrow keys for readers who prefer
+            that layout.
+          </Text>
+          <SegmentedControl
+            fullWidth
+            value={editReadingDirection}
+            onChange={(v) => setEditReadingDirection(v as 'ltr' | 'rtl')}
+            data={[
+              { label: 'Left-to-right', value: 'ltr' },
+              { label: 'Right-to-left (Manga)', value: 'rtl' },
+            ]}
+          />
+        </div>
 
         <div>
           <Text size="sm" fw={500} mb={4}>

@@ -1,6 +1,7 @@
 import { Button, Center, Group, Loader, Stack, Text, Textarea } from '@mantine/core';
 import { IconSend } from '@tabler/icons-react';
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
 
 import { Comment } from '~/components/CommentsV2/Comment/Comment';
@@ -12,6 +13,7 @@ import {
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ThreadSort } from '~/server/common/enums';
+import { parseNumericString } from '~/utils/query-string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 
 export function ChapterComments({
@@ -24,6 +26,8 @@ export function ChapterComments({
   userId: number;
 }) {
   const currentUser = useCurrentUser();
+  const router = useRouter();
+  const highlighted = parseNumericString(router.query.highlight);
   const [sort, setSort] = useState<ThreadSort>(ThreadSort.Oldest);
   const expanded = useNewCommentStore((state) => state.expandedComments);
   const toggleExpanded = useNewCommentStore((state) => state.toggleExpanded);
@@ -88,7 +92,7 @@ export function ChapterComments({
           badges: [{ userId, label: 'op', color: 'violet' }],
           showMore: false,
           toggleShowMore: () => {},
-          highlighted: undefined,
+          highlighted,
           hiddenCount: 0,
           forceLocked: undefined,
           sort,
@@ -113,10 +117,7 @@ export function ChapterComments({
                   Comments are locked for this chapter.
                 </Text>
               ) : currentUser ? (
-                <ComicCreateComment
-                  projectId={projectId}
-                  chapterPosition={chapterPosition}
-                />
+                <ComicCreateComment projectId={projectId} chapterPosition={chapterPosition} />
               ) : (
                 <Text size="sm" c="dimmed">
                   <Link href="/login" className="text-blue-400 hover:underline">

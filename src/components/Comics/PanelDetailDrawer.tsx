@@ -20,6 +20,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getNsfwLabel } from '~/components/Comics/PanelCard';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
+import { ImageResources } from '~/components/Image/DetailV2/ImageResources';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import { BlockedReason, NsfwLevel } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -399,6 +400,14 @@ export function PanelDetailDrawer({
                   </div>
                 );
               })()}
+
+              {/* Resources used — model/checkpoint + LoRAs etc. that produced
+                  this panel. Sourced from the Image's resource helper via
+                  trpc.image.getGenerationData. Only shown for Ready panels
+                  with an underlying image record. */}
+              {detailPanel.imageId && detailPanel.status === 'Ready' && (
+                <ImageResources imageId={detailPanel.imageId} />
+              )}
 
               {/* Actions */}
               <div className={styles.detailActions}>

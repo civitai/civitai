@@ -107,8 +107,7 @@ function ProjectWorkspace() {
   const [chapterSettingsOpened, { open: openChapterSettings, close: closeChapterSettings }] =
     useDisclosure(false);
   const [smartModalOpened, { open: openSmartModal, close: closeSmartModal }] = useDisclosure(false);
-  const [importRefsOpened, { open: openImportRefs, close: closeImportRefs }] =
-    useDisclosure(false);
+  const [importRefsOpened, { open: openImportRefs, close: closeImportRefs }] = useDisclosure(false);
 
   // ── Welcome modal (show once per user) ──
   const [welcomeOpened, setWelcomeOpened] = useState(() => {
@@ -133,7 +132,9 @@ function ProjectWorkspace() {
   });
   const setAspectRatio = (val: string) => {
     setAspectRatioState(val);
-    try { localStorage.setItem(`comic-aspect-ratio-${projectId}`, val); } catch {}
+    try {
+      localStorage.setItem(`comic-aspect-ratio-${projectId}`, val);
+    } catch {}
   };
   const [generationModel, setGenerationModel] = useState<
     | 'NanoBanana2'
@@ -228,17 +229,13 @@ function ProjectWorkspace() {
   // `getChapter` so we don't drag every chapter's panels along on every
   // mount. Mutations route their cache writes to whichever query owns the
   // affected data; in most cases we just invalidate both.
-  const {
-    data: project,
-    isLoading,
-  } = trpc.comics.getProjectShell.useQuery(
+  const { data: project, isLoading } = trpc.comics.getProjectShell.useQuery(
     { id: projectId },
     { enabled: projectId > 0 }
   );
 
   const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana2';
   const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana2;
-
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
@@ -269,18 +266,16 @@ function ProjectWorkspace() {
 
   const activeChapterPosition = activeShellChapter?.position ?? null;
 
-  const {
-    data: activeChapterData,
-    isLoading: isActiveChapterLoading,
-  } = trpc.comics.getChapter.useQuery(
-    {
-      projectId,
-      chapterPosition: activeChapterPosition ?? -1,
-    },
-    {
-      enabled: projectId > 0 && activeChapterPosition != null,
-    }
-  );
+  const { data: activeChapterData, isLoading: isActiveChapterLoading } =
+    trpc.comics.getChapter.useQuery(
+      {
+        projectId,
+        chapterPosition: activeChapterPosition ?? -1,
+      },
+      {
+        enabled: projectId > 0 && activeChapterPosition != null,
+      }
+    );
 
   // Combine the shell's chapter metadata with the `getChapter` query's full
   // panel data. Components that need panels read `.panels`; components that
@@ -405,9 +400,7 @@ function ProjectWorkspace() {
     }
 
     // Filter out removed images, add new ones
-    const next = selectedImageIds
-      .filter((id) => !removedImageIds.has(id))
-      .concat(addedImageIds);
+    const next = selectedImageIds.filter((id) => !removedImageIds.has(id)).concat(addedImageIds);
 
     // If result is empty (shouldn't happen normally), reset to null
     setSelectedImageIds(next.length > 0 ? next : null);
@@ -429,7 +422,11 @@ function ProjectWorkspace() {
     [mentionedReferences]
   );
 
-  const { data: costEstimate, isLoading: isCostLoading, error: costError } = trpc.comics.getGenerationCostEstimate.useQuery(
+  const {
+    data: costEstimate,
+    isLoading: isCostLoading,
+    error: costError,
+  } = trpc.comics.getGenerationCostEstimate.useQuery(
     {
       baseModel: effectiveModel,
       referenceIds: mentionedReferenceIds,
@@ -505,7 +502,8 @@ function ProjectWorkspace() {
             utils.comics.pollReferenceStatus.fetch({ referenceId: cid })
           )
         );
-        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed')) invalidateProjectQueries();
+        if (results.some((r) => r.status === 'Ready' || r.status === 'Failed'))
+          invalidateProjectQueries();
       } catch {
         /* ignore */
       }
@@ -599,9 +597,8 @@ function ProjectWorkspace() {
       await utils.comics.getProjectShell.cancel({ id: projectId });
       utils.comics.getProjectShell.setData({ id: projectId }, (prev) => {
         if (!prev) return prev;
-        const nextPosition = prev.chapters.length > 0
-          ? Math.max(...prev.chapters.map((ch) => ch.position)) + 1
-          : 0;
+        const nextPosition =
+          prev.chapters.length > 0 ? Math.max(...prev.chapters.map((ch) => ch.position)) + 1 : 0;
         const placeholder = {
           id: -Date.now(),
           name: 'New Chapter',
@@ -853,6 +850,10 @@ function ProjectWorkspace() {
           sourceImageWidth: item.sourceImage?.width,
           sourceImageHeight: item.sourceImage?.height,
           aspectRatio: item.aspectRatio,
+          // Source-image generation metadata (PNG tags from file uploads or
+          // workflow step meta from generator picks). The server attaches
+          // it to the new Image so resource attribution survives the import.
+          meta: item.meta as any,
         })),
       },
       { onSettled: () => setIsSubmitting(false) }
@@ -860,7 +861,14 @@ function ProjectWorkspace() {
   };
 
   const handleImportSubmit = (
-    items: { url: string; cfId: string; width: number; height: number; preview: string }[]
+    items: {
+      url: string;
+      cfId: string;
+      width: number;
+      height: number;
+      preview: string;
+      meta?: Record<string, unknown>;
+    }[]
   ) => {
     if (!activeChapter || items.length === 0 || isSubmitting) return;
     setIsSubmitting(true);
@@ -874,6 +882,7 @@ function ProjectWorkspace() {
           sourceImageWidth: img.width,
           sourceImageHeight: img.height,
           aspectRatio: '3:4',
+          meta: img.meta as any,
         })),
       },
       { onSettled: () => setIsSubmitting(false) }
@@ -999,9 +1008,13 @@ function ProjectWorkspace() {
   };
 
   const handleTogglePublish = (chapterPosition: number, currentStatus: string) => {
-    if (currentStatus === ComicChapterStatus.Published || currentStatus === ComicChapterStatus.Scheduled) {
+    if (
+      currentStatus === ComicChapterStatus.Published ||
+      currentStatus === ComicChapterStatus.Scheduled
+    ) {
       openConfirmModal({
-        title: currentStatus === ComicChapterStatus.Scheduled ? 'Cancel Schedule' : 'Unpublish Chapter',
+        title:
+          currentStatus === ComicChapterStatus.Scheduled ? 'Cancel Schedule' : 'Unpublish Chapter',
         children: (
           <Text size="sm">
             {currentStatus === ComicChapterStatus.Scheduled
@@ -1092,8 +1105,8 @@ function ProjectWorkspace() {
       title: 'Delete Reference Permanently',
       children: (
         <Text size="sm">
-          This will permanently delete &quot;{referenceName}&quot; from ALL your projects.
-          This cannot be undone. Existing panels will be preserved but unlinked.
+          This will permanently delete &quot;{referenceName}&quot; from ALL your projects. This
+          cannot be undone. Existing panels will be preserved but unlinked.
         </Text>
       ),
       labels: { confirm: 'Delete Permanently', cancel: 'Cancel' },
@@ -1130,7 +1143,12 @@ function ProjectWorkspace() {
     openPanelModal();
   };
 
-  const handleOpenIterativeEditor = (panel: { id: number; position: number; imageUrl: string | null; image?: { width: number; height: number } | null }) => {
+  const handleOpenIterativeEditor = (panel: {
+    id: number;
+    position: number;
+    imageUrl: string | null;
+    image?: { width: number; height: number } | null;
+  }) => {
     const params = new URLSearchParams({
       chapter: String(activeChapterPosition ?? 0),
       panelId: String(panel.id),
@@ -1172,7 +1190,9 @@ function ProjectWorkspace() {
       <Container size="xl" py="xl">
         <Stack align="center" gap="md" py={60}>
           <Loader color="yellow" />
-          <Text size="sm" c="dimmed">Loading project...</Text>
+          <Text size="sm" c="dimmed">
+            Loading project...
+          </Text>
         </Stack>
       </Container>
     );
@@ -1271,14 +1291,14 @@ function ProjectWorkspace() {
                   )}
                   {!projectTos && tosChapters.length > 0 && (
                     <Text size="sm">
-                      The following chapters were flagged for a Terms of Service violation and
-                      are hidden from readers: <b>{tosChapters.map((c) => c.name).join(', ')}</b>.
+                      The following chapters were flagged for a Terms of Service violation and are
+                      hidden from readers: <b>{tosChapters.map((c) => c.name).join(', ')}</b>.
                     </Text>
                   )}
                   {reviewChapters.length > 0 && (
                     <Text size="sm">
-                      The following chapters have one or more panel images awaiting moderator
-                      review and won't appear publicly until they're cleared:{' '}
+                      The following chapters have one or more panel images awaiting moderator review
+                      and won't appear publicly until they're cleared:{' '}
                       <b>{reviewChapters.map((c) => c.name).join(', ')}</b>. They'll publish
                       automatically once approved.
                     </Text>
@@ -1304,11 +1324,7 @@ function ProjectWorkspace() {
                   variant="subtle"
                   size="sm"
                   component={Link}
-                  href={
-                    currentUser?.username
-                      ? `/user/${currentUser.username}/comics`
-                      : '/comics'
-                  }
+                  href={currentUser?.username ? `/user/${currentUser.username}/comics` : '/comics'}
                   c="dimmed"
                 >
                   <IconArrowLeft size={16} />
@@ -1327,8 +1343,7 @@ function ProjectWorkspace() {
               <div className="flex gap-3 items-center flex-wrap">
                 <span className={styles.statPill}>
                   <span className={styles.statDot} />
-                  {project.chapters.length}{' '}
-                  {project.chapters.length === 1 ? 'chapter' : 'chapters'}
+                  {project.chapters.length} {project.chapters.length === 1 ? 'chapter' : 'chapters'}
                 </span>
                 <span className={styles.statPill}>
                   <span className={styles.statDot} />
@@ -1378,10 +1393,7 @@ function ProjectWorkspace() {
                   </Tooltip>
                 )}
                 {project.metrics?.hiddenCount > 0 && (
-                  <Tooltip
-                    label="Users who have hidden this comic from their feed"
-                    withArrow
-                  >
+                  <Tooltip label="Users who have hidden this comic from their feed" withArrow>
                     <span className={styles.statPill}>
                       <IconEyeOff size={12} />
                       {abbreviateNumber(project.metrics.hiddenCount)}
@@ -1422,12 +1434,7 @@ function ProjectWorkspace() {
                 <span>References</span>
                 <Group gap={4}>
                   <Tooltip label="Import from other projects" withArrow>
-                    <ActionIcon
-                      variant="subtle"
-                      size="sm"
-                      onClick={openImportRefs}
-                      color="blue"
-                    >
+                    <ActionIcon variant="subtle" size="sm" onClick={openImportRefs} color="blue">
                       <IconDownload size={16} />
                     </ActionIcon>
                   </Tooltip>
@@ -1460,10 +1467,7 @@ function ProjectWorkspace() {
                           <IconPlus size={14} />
                           Add Reference
                         </button>
-                        <button
-                          className={styles.gradientBtn}
-                          onClick={openImportRefs}
-                        >
+                        <button className={styles.gradientBtn} onClick={openImportRefs}>
                           <IconDownload size={14} />
                           Import
                         </button>
@@ -1503,9 +1507,7 @@ function ProjectWorkspace() {
                 {project.chapters.length > 1 && (
                   <Tooltip
                     label={
-                      chapterReorderMode
-                        ? 'Done — click a chapter to open it'
-                        : 'Reorder chapters'
+                      chapterReorderMode ? 'Done — click a chapter to open it' : 'Reorder chapters'
                     }
                     withArrow
                     position="top"
@@ -1628,7 +1630,8 @@ function ProjectWorkspace() {
                                       disabled={
                                         hasInProgressPanels ||
                                         (duplicateChapterMutation.isPending &&
-                                          duplicateChapterMutation.variables?.chapterPosition === chapter.position)
+                                          duplicateChapterMutation.variables?.chapterPosition ===
+                                            chapter.position)
                                       }
                                       onClick={(e: React.MouseEvent) => {
                                         e.stopPropagation();
@@ -1645,7 +1648,8 @@ function ProjectWorkspace() {
                                       }}
                                     >
                                       {duplicateChapterMutation.isPending &&
-                                      duplicateChapterMutation.variables?.chapterPosition === chapter.position ? (
+                                      duplicateChapterMutation.variables?.chapterPosition ===
+                                        chapter.position ? (
                                         <Loader size={12} />
                                       ) : (
                                         <IconCopy size={12} />
@@ -1674,7 +1678,11 @@ function ProjectWorkspace() {
                                 <Tooltip
                                   label={
                                     chapter.status === ComicChapterStatus.Scheduled
-                                      ? `Scheduled · ${chapter.publishedAt ? new Date(chapter.publishedAt).toLocaleDateString() : ''}`
+                                      ? `Scheduled · ${
+                                          chapter.publishedAt
+                                            ? new Date(chapter.publishedAt).toLocaleDateString()
+                                            : ''
+                                        }`
                                       : chapter.status === ComicChapterStatus.Published
                                       ? isEarlyAccess
                                         ? `Early Access · ${eaConfig!.buzzPrice} Buzz`
@@ -1687,13 +1695,14 @@ function ProjectWorkspace() {
                                   <span
                                     className="inline-block w-1.5 h-1.5 rounded-full"
                                     style={{
-                                      background: chapter.status === ComicChapterStatus.Scheduled
-                                        ? 'var(--mantine-color-blue-5)'
-                                        : isEarlyAccess
-                                        ? 'var(--mantine-color-yellow-5)'
-                                        : chapter.status === ComicChapterStatus.Published
-                                        ? 'var(--mantine-color-green-5)'
-                                        : 'var(--mantine-color-gray-5)',
+                                      background:
+                                        chapter.status === ComicChapterStatus.Scheduled
+                                          ? 'var(--mantine-color-blue-5)'
+                                          : isEarlyAccess
+                                          ? 'var(--mantine-color-yellow-5)'
+                                          : chapter.status === ComicChapterStatus.Published
+                                          ? 'var(--mantine-color-green-5)'
+                                          : 'var(--mantine-color-gray-5)',
                                     }}
                                   />
                                 </Tooltip>
@@ -1722,7 +1731,9 @@ function ProjectWorkspace() {
                                   >
                                     <Badge
                                       size="xs"
-                                      color={chapter.hiddenReason === 'tosViolation' ? 'red' : 'orange'}
+                                      color={
+                                        chapter.hiddenReason === 'tosViolation' ? 'red' : 'orange'
+                                      }
                                       variant="filled"
                                       ml={2}
                                       leftSection={<IconAlertCircle size={10} />}
@@ -1745,11 +1756,7 @@ function ProjectWorkspace() {
                   onClick={() => createChapterMutation.mutate({ projectId })}
                   disabled={createChapterMutation.isLoading}
                 >
-                  {createChapterMutation.isLoading ? (
-                    <Loader size={14} />
-                  ) : (
-                    <IconPlus size={14} />
-                  )}
+                  {createChapterMutation.isLoading ? <Loader size={14} /> : <IconPlus size={14} />}
                   {createChapterMutation.isLoading ? 'Adding...' : 'Add Chapter'}
                 </button>
 
@@ -1809,11 +1816,11 @@ function ProjectWorkspace() {
                               : 'green'
                           }
                           leftSection={
-                            isScheduled
-                              ? <IconCalendar size={10} />
-                              : isActiveEarlyAccess
-                              ? <IconLock size={10} />
-                              : undefined
+                            isScheduled ? (
+                              <IconCalendar size={10} />
+                            ) : isActiveEarlyAccess ? (
+                              <IconLock size={10} />
+                            ) : undefined
                           }
                           rightSection={
                             isActiveEarlyAccess ? (
@@ -1832,7 +1839,11 @@ function ProjectWorkspace() {
                           }
                         >
                           {isScheduled
-                            ? `Scheduled · ${activeChapter.publishedAt ? new Date(activeChapter.publishedAt).toLocaleDateString() : ''}`
+                            ? `Scheduled · ${
+                                activeChapter.publishedAt
+                                  ? new Date(activeChapter.publishedAt).toLocaleDateString()
+                                  : ''
+                              }`
                             : isActiveEarlyAccess
                             ? `Early Access · ${activeEaConfig!.buzzPrice} Buzz`
                             : isDraft
@@ -1863,7 +1874,13 @@ function ProjectWorkspace() {
                             variant={isDraft ? 'filled' : 'light'}
                             color={isDraft ? 'green' : isScheduled ? 'blue' : 'yellow'}
                             leftSection={
-                              isDraft ? <IconWorld size={14} /> : isScheduled ? <IconCalendar size={14} /> : <IconEyeOff size={14} />
+                              isDraft ? (
+                                <IconWorld size={14} />
+                              ) : isScheduled ? (
+                                <IconCalendar size={14} />
+                              ) : (
+                                <IconEyeOff size={14} />
+                              )
                             }
                             disabled={isDraft && activeChapter.panels.length === 0}
                             loading={isPublishing}
@@ -1892,9 +1909,9 @@ function ProjectWorkspace() {
                       No panels yet. Create your first panel!
                     </Text>
                     <Text c="dimmed" size="xs" maw={360}>
-                      Use <b>Generate</b> to create panels from a text prompt, or{' '}
-                      <b>Enhance</b> to transform an existing image into a comic panel. Add{' '}
-                      <b>References</b> to maintain character consistency across panels.
+                      Use <b>Generate</b> to create panels from a text prompt, or <b>Enhance</b> to
+                      transform an existing image into a comic panel. Add <b>References</b> to
+                      maintain character consistency across panels.
                     </Text>
                   </div>
                 ))}
@@ -1943,7 +1960,9 @@ function ProjectWorkspace() {
                             openPanelModal();
                           }}
                           onClick={() => setDetailPanelId(panel.id)}
-                          onIterativeEdit={() => handleOpenIterativeEditor({ ...panel, position: index } as any)}
+                          onIterativeEdit={() =>
+                            handleOpenIterativeEditor({ ...panel, position: index } as any)
+                          }
                           onRatingChange={() => refetchRef.current()}
                         />
                       </SortablePanel>
@@ -2002,7 +2021,10 @@ function ProjectWorkspace() {
           const panelIndex = activeChapter
             ? activeChapter.panels.findIndex((p) => p.id === panel.id)
             : -1;
-          handleOpenIterativeEditor({ ...panel, position: panelIndex >= 0 ? panelIndex : 0 } as any);
+          handleOpenIterativeEditor({
+            ...panel,
+            position: panelIndex >= 0 ? panelIndex : 0,
+          } as any);
         }}
       />
 
@@ -2017,12 +2039,10 @@ function ProjectWorkspace() {
         chapterPosition={activeChapter?.position ?? 0}
         referencePanelId={referencePanelId}
         setReferencePanelId={setReferencePanelId}
-        availablePanels={
-          (activeChapter?.panels ?? [])
-            .map((p, idx) => ({ ...p, idx }))
-            .filter((p) => p.status === 'Ready' && p.imageUrl)
-            .map((p) => ({ id: p.id, imageUrl: p.imageUrl!, position: p.idx }))
-        }
+        availablePanels={(activeChapter?.panels ?? [])
+          .map((p, idx) => ({ ...p, idx }))
+          .filter((p) => p.status === 'Ready' && p.imageUrl)
+          .map((p) => ({ id: p.id, imageUrl: p.imageUrl!, position: p.idx }))}
         layoutImagePath={layoutImagePath}
         setLayoutImagePath={setLayoutImagePath}
         quantity={quantity}
@@ -2068,7 +2088,11 @@ function ProjectWorkspace() {
           planPanelsMutation.mutate({ projectId, storyDescription: story, panelCount })
         }
         isPlanningPanels={planPanelsMutation.isPending}
-        planError={planPanelsMutation.isError ? (planPanelsMutation.error?.message ?? 'Failed to plan panels') : null}
+        planError={
+          planPanelsMutation.isError
+            ? planPanelsMutation.error?.message ?? 'Failed to plan panels'
+            : null
+        }
         plannedPanels={planPanelsMutation.data?.panels ?? null}
         onCreateChapter={(data) =>
           smartCreateMutation.mutate({
@@ -2081,7 +2105,11 @@ function ProjectWorkspace() {
           })
         }
         isCreating={smartCreateMutation.isPending}
-        createError={smartCreateMutation.isError ? (smartCreateMutation.error?.message ?? 'Failed to create chapter') : null}
+        createError={
+          smartCreateMutation.isError
+            ? smartCreateMutation.error?.message ?? 'Failed to create chapter'
+            : null
+        }
       />
 
       <ChapterSettingsModal
@@ -2115,11 +2143,12 @@ function ProjectWorkspace() {
           heroImagePosition: (project as any).heroImagePosition,
           meta: (project as any).meta,
         }}
-        onSave={(data) => updateProjectMutation.mutate({ id: projectId, ...data, baseModel: data.baseModel as any })}
+        onSave={(data) =>
+          updateProjectMutation.mutate({ id: projectId, ...data, baseModel: data.baseModel as any })
+        }
         onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}
         isSaving={updateProjectMutation.isLoading}
       />
-
     </>
   );
 }

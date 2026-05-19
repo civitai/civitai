@@ -58,6 +58,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { fetchAndUploadGeneratorImage } from '~/utils/comic-image-picker';
+import { getMetadata } from '~/utils/metadata';
 import { trpc } from '~/utils/trpc';
 import { useComicsQueueStatus } from '~/components/Comics/hooks/useComicsQueueStatus';
 import styles from '~/pages/comics/project/[id]/ProjectWorkspace.module.scss';
@@ -178,7 +179,17 @@ interface PanelModalProps {
   }) => void;
   onBulkCreate: (items: BulkPanelItem[], enhance: boolean) => void;
   onImportSubmit: (
-    items: { url: string; cfId: string; width: number; height: number; preview: string }[]
+    items: {
+      url: string;
+      cfId: string;
+      width: number;
+      height: number;
+      preview: string;
+      // Carries source-image generation metadata (civitaiResources, prompt,
+      // sampler, etc.) so the server can attribute the new Image to the
+      // model that produced it.
+      meta?: Record<string, unknown>;
+    }[]
   ) => void;
   // Loading states
   isCreatePending: boolean;
@@ -302,7 +313,14 @@ export function PanelModal({
   // Import tab state
   const [importUploading, setImportUploading] = useState(false);
   const [importSelected, setImportSelected] = useState<
-    { url: string; cfId: string; width: number; height: number; preview: string }[]
+    {
+      url: string;
+      cfId: string;
+      width: number;
+      height: number;
+      preview: string;
+      meta?: Record<string, unknown>;
+    }[]
   >([]);
   const { uploadToCF: uploadImportToCF } = useCFImageUpload();
 
@@ -472,6 +490,18 @@ export function PanelModal({
           img.src = objectUrl;
         }).catch(() => ({ width: 512, height: 512 }));
 
+        // Try to extract embedded generation metadata (Automatic1111 /
+        // ComfyUI / SwarmUI / RuinedFooocus PNG tags) so we can attribute
+        // the panel's Image to whatever model produced the upload. Failures
+        // here are non-fatal — we just continue without meta.
+        let extractedMeta: Record<string, unknown> | undefined;
+        try {
+          const parsed = await getMetadata(file);
+          if (parsed && Object.keys(parsed).length > 0) extractedMeta = parsed;
+        } catch (err) {
+          console.error('Failed to extract metadata from uploaded image:', err);
+        }
+
         const result = await uploadBulkToCF(file);
         newItems.push({
           id: `bulk-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -484,6 +514,7 @@ export function PanelModal({
           },
           prompt: '',
           aspectRatio: '3:4',
+          meta: extractedMeta,
         });
       }
       setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
@@ -539,6 +570,10 @@ export function PanelModal({
                 },
                 prompt: '',
                 aspectRatio: '3:4',
+                // Same plumbing as the Import tab — keep the workflow step
+                // meta around so the panel's Image carries proper attribution
+                // even when this is being used as a bulk source (no prompt).
+                meta: img.meta,
               });
             }
             setBulkItems((prev) => [...prev, ...newItems].slice(0, 20));
@@ -600,6 +635,10 @@ export function PanelModal({
                   width,
                   height,
                   preview: getEdgeUrl(cfId, { width: 120 }) ?? cfId,
+                  // Preserve the full workflow step meta (civitaiResources,
+                  // prompt, sampler, …) so the server can attribute the new
+                  // Image record to the model that produced it.
+                  meta: img.meta,
                 });
               } catch (err) {
                 console.error('Failed to upload import image:', err);

@@ -186,6 +186,11 @@ function ComicReader() {
   const activeChapter = chapters[activeChapterIdx];
   const panels = activeChapter?.panels ?? [];
 
+  // RTL ("manga mode") flips the page spread, the chevron actions, and the
+  // arrow-key direction so creators can preview exactly what readers will
+  // see on the public reader.
+  const isRtl = project?.meta?.readingDirection === 'rtl';
+
   // Page-spread state — same shape as the public reader's pages mode. Two
   // panels per spread, fills the viewport, edge-anchored arrows. Reset to
   // page 0 on every chapter switch.
@@ -257,15 +262,15 @@ function ComicReader() {
       if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) return;
       if (e.key === 'ArrowLeft') {
         e.preventDefault();
-        goPage(-1);
+        goPage(isRtl ? 1 : -1);
       } else if (e.key === 'ArrowRight') {
         e.preventDefault();
-        goPage(1);
+        goPage(isRtl ? -1 : 1);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [goPage]);
+  }, [goPage, isRtl]);
 
   const redHandoffUrl = useMemo(() => {
     if (!redDomain) return null;
@@ -414,21 +419,34 @@ function ComicReader() {
             </div>
 
             {/* Edge-anchored prev/next; cross to adjacent chapters at boundaries. */}
+            {/* Under RTL (manga) layout the left chevron means "next" and the */}
+            {/* right chevron means "previous" — physical icons keep their */}
+            {/* left/right positions so they always convey direction-of-travel. */}
             <ActionIcon
               variant="filled"
               color="dark"
               size="xl"
               radius="xl"
-              disabled={!hasPagePrev && !hasPrevChapter}
-              onClick={() => goPage(-1)}
-              aria-label={hasPagePrev ? 'Previous page' : 'Previous chapter'}
+              disabled={isRtl ? !hasPageNext && !hasNextChapter : !hasPagePrev && !hasPrevChapter}
+              onClick={() => goPage(isRtl ? 1 : -1)}
+              aria-label={
+                isRtl
+                  ? hasPageNext
+                    ? 'Next page'
+                    : 'Next chapter'
+                  : hasPagePrev
+                  ? 'Previous page'
+                  : 'Previous chapter'
+              }
               style={{
                 position: 'absolute',
                 left: 16,
                 top: '50%',
                 transform: 'translateY(-50%)',
                 zIndex: 5,
-                opacity: hasPagePrev || hasPrevChapter ? 0.85 : 0.3,
+                opacity: (isRtl ? hasPageNext || hasNextChapter : hasPagePrev || hasPrevChapter)
+                  ? 0.85
+                  : 0.3,
               }}
             >
               <IconChevronLeft size={28} />
@@ -438,16 +456,26 @@ function ComicReader() {
               color="dark"
               size="xl"
               radius="xl"
-              disabled={!hasPageNext && !hasNextChapter}
-              onClick={() => goPage(1)}
-              aria-label={hasPageNext ? 'Next page' : 'Next chapter'}
+              disabled={isRtl ? !hasPagePrev && !hasPrevChapter : !hasPageNext && !hasNextChapter}
+              onClick={() => goPage(isRtl ? -1 : 1)}
+              aria-label={
+                isRtl
+                  ? hasPagePrev
+                    ? 'Previous page'
+                    : 'Previous chapter'
+                  : hasPageNext
+                  ? 'Next page'
+                  : 'Next chapter'
+              }
               style={{
                 position: 'absolute',
                 right: 16,
                 top: '50%',
                 transform: 'translateY(-50%)',
                 zIndex: 5,
-                opacity: hasPageNext || hasNextChapter ? 0.85 : 0.3,
+                opacity: (isRtl ? hasPagePrev || hasPrevChapter : hasPageNext || hasNextChapter)
+                  ? 0.85
+                  : 0.3,
               }}
             >
               <IconChevronRight size={28} />
@@ -456,7 +484,7 @@ function ComicReader() {
             {/* Spread layout — uses the shared Comics SCSS so this matches */}
             {/* the public reader's pages mode. */}
             <div className={sharedStyles.readerPagesSpread} style={{ height: '100%' }}>
-              {visiblePanels.map((panel) =>
+              {(isRtl ? [...visiblePanels].reverse() : visiblePanels).map((panel) =>
                 renderOwnerPanel(panel, features.isGreen, redHandoffUrl)
               )}
             </div>
