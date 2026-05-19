@@ -576,6 +576,15 @@ function EditorBody({
           // out so the editor's own selection logic handles caret
           // placement at the click position.
           if (!editor || disabled) return;
+          // React events bubble through portals back to their React-tree
+          // parent. Tiptap's suggestion popover is rendered with
+          // `createPortal`, so clicking the snippet category picker (or
+          // any other portaled descendant) fires this handler even though
+          // the click is DOM-wise outside the shell. Refocusing the
+          // editor in that case would move the cursor to `'end'`, kick
+          // the selection out of the suggestion's trigger range, and
+          // dismiss the popover before the row's onClick can run.
+          if (!(e.currentTarget as Node).contains(e.target as Node)) return;
           const editorEl = editor.view.dom;
           if (editorEl.contains(e.target as Node)) return;
           e.preventDefault();

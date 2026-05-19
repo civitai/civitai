@@ -2153,6 +2153,7 @@ model OauthClient {
   description    String         @default("")
   logoUrl        String?
   redirectUris   String[]       @default([])
+  allowedOrigins String[]       @default([])
   grants         String[]       @default(["authorization_code", "refresh_token"])
   allowedScopes  Int            @default(33554431)
   isConfidential Boolean        @default(true)

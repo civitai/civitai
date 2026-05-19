@@ -2,6 +2,7 @@ import type {
   AuthorizationCode,
   Client,
   RefreshToken,
+  Request,
   Token,
   User,
 } from '@node-oauth/oauth2-server';
@@ -13,6 +14,7 @@ import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { ACCESS_TOKEN_TTL, AUTH_CODE_TTL, REFRESH_TOKEN_TTL } from './constants';
 import { createOAuthTokenPair } from './token-helpers';
+import { OriginNotAllowedError } from './errors';
 
 /** Hash auth code for Redis storage (separate from API key hashing) */
 function hashCode(code: string): string {
@@ -36,7 +38,11 @@ function stringToScope(scope: string | string[] | undefined): number {
 export const oauthModel = {
   // ─── Client ─────────────────────────────────────────────────
 
-  async getClient(clientId: string, clientSecret: string | null): Promise<Client | false> {
+  async getClient(
+    clientId: string,
+    clientSecret: string | null,
+    request?: Request
+  ): Promise<Client | false> {
     const client = await dbRead.oauthClient.findUnique({ where: { id: clientId } });
     if (!client) return false;
 
@@ -50,6 +56,49 @@ export const oauthModel = {
         const hashedSecret = generateSecretHash(clientSecret);
         if (!timingSafeEqual(Buffer.from(hashedSecret), Buffer.from(client.secret))) return false;
       }
+    }
+
+    // For public clients on the token-exchange path, enforce the per-client
+    // origin allowlist — but only when the request actually carries an
+    // Origin header. Confidential clients skip this entirely; their auth
+    // boundary is `client_secret`, not the browser.
+    //
+    // Policy: an Origin that *is* sent must be in the registered allowlist.
+    // A missing Origin is allowed because:
+    //   - Native/mobile PKCE clients don't send one — they're public clients
+    //     too and must work through the same /token endpoint as browser SPAs.
+    //   - A browser that mysteriously strips its own Origin is already
+    //     compromised at a level where this check can't help.
+    // This also lets a single OAuth client back both a browser SPA (covered
+    // by the allowlist) and a native app (covered by the no-Origin branch)
+    // so end users don't have to consent twice.
+    //
+    // The /authorize flow also calls getClient with a Request (constructed
+    // server-side with synthetic headers) but it's a top-level browser nav,
+    // not an XHR, so PKCE alone handles its security boundary. Detect
+    // token-exchange by the presence of `grant_type` in the request body —
+    // set on /api/auth/oauth/token requests. /revoke uses
+    // `token`/`token_type_hint` per RFC 7009 and doesn't go through this
+    // model at all (it's hand-coded against dbRead.oauthClient directly).
+    const body = request ? (request as Request & { body?: unknown }).body : undefined;
+    const isTokenExchange =
+      body !== null &&
+      typeof body === 'object' &&
+      typeof (body as { grant_type?: unknown }).grant_type === 'string';
+    if (request && !client.isConfidential && isTokenExchange) {
+      const headers = (request as Request).headers;
+      const origin =
+        headers && typeof headers.origin === 'string' ? (headers.origin as string) : undefined;
+      if (origin && !client.allowedOrigins.includes(origin)) {
+        throw new OriginNotAllowedError(client.id, origin);
+      }
+    }
+
+    // Stash the looked-up client on the Request so the handler can drive
+    // post-success CORS without a second DB lookup. The OAuth library treats
+    // `request` as an opaque carrier, so attaching a property is safe.
+    if (request) {
+      (request as Request & { oauthClient?: typeof client }).oauthClient = client;
     }
 
     return {

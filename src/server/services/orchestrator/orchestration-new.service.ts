@@ -1821,9 +1821,14 @@ export function formatStepOutputs(
             width = ar.width;
             height = ar.height;
           } else if (typeof aspectRatio === 'string') {
+            // "w:h" is a ratio, not pixel dims — scale so the larger side is 512
+            // so width/height are sane display values while preserving aspect.
             const [w, h] = aspectRatio.split(':').map(Number);
-            width = w;
-            height = h;
+            if (w > 0 && h > 0) {
+              const scale = 512 / Math.max(w, h);
+              width = Math.round(w * scale);
+              height = Math.round(h * scale);
+            }
           }
         }
 

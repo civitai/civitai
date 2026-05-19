@@ -70,25 +70,26 @@ export function createSnippetCategorySuggestion(
 
         onKeyDown: (props) => {
           if (props.event.key === 'Escape') {
-            component?.element.remove();
-            component?.destroy();
-            component = null;
-            latestProps = null;
+            cleanup();
             return true;
           }
           return component?.ref?.onKeyDown(props) ?? false;
         },
 
         onExit: () => {
-          if (!component) return;
-          component.element.remove();
-          component.destroy();
-          component = null;
-          latestProps = null;
+          cleanup();
         },
       };
     },
   };
+
+  function cleanup() {
+    if (!component) return;
+    component.element.remove();
+    component.destroy();
+    component = null;
+    latestProps = null;
+  }
 
   const refresh = () => {
     if (!component || !latestProps) return;
