@@ -36,6 +36,12 @@ export interface SourceMetadata {
   /** Cached image dimensions (set when image loads in input component) */
   width?: number;
   height?: number;
+  /**
+   * Marks that EXIF extraction has been attempted for this URL.
+   * Set true regardless of whether extraction yielded params/resources so we
+   * don't refetch and reparse the file for images without generation EXIF.
+   */
+  exifExtracted?: boolean;
   /** Additional flags from the original generation (remixOfId, etc.) */
   [key: string]: unknown;
 }

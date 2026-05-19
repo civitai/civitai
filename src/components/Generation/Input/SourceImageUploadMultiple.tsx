@@ -474,13 +474,17 @@ export function SourceImageUploadMultiple({
     });
   }, [value, uploads]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Extract generation metadata for images not in store (separate concern)
+  // Extract generation metadata for images we haven't tried yet. Use the `exifExtracted`
+  // sentinel on the store entry (persisted to sessionStorage) so we don't refetch+reparse
+  // across remounts/navigation. Checking the store for `params/resources` alone wouldn't
+  // work — the dimension-resolution effect above writes dim-only entries, and images
+  // without generation EXIF would re-trigger extraction on every value change.
   useEffect(() => {
     if (!value?.length) return;
     for (const { url } of value) {
-      if (sourceMetadataStore.getMetadata(url)) continue;
+      if (sourceMetadataStore.getMetadata(url)?.exifExtracted) continue;
       extractSourceMetadataFromUrl(url).then((metadata) => {
-        if (metadata) sourceMetadataStore.setMetadata(url, metadata);
+        sourceMetadataStore.setMetadata(url, { ...(metadata ?? {}), exifExtracted: true });
       });
     }
   }, [value]);

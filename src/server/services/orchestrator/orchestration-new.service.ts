@@ -1985,8 +1985,11 @@ function formatStep(
     }
   }
 
-  // For dimension resolution, use step params or fall back to workflow params
-  const paramsForDimensions = finalParams ?? (workflowMetadata?.params as Record<string, unknown>);
+  // For dimension resolution, prefer step params per-field but fall back to workflow params
+  // when the step's params don't carry dimension fields (e.g. img2img:upscale step params
+  // are copied from the source generation and lack `images/width/height/aspectRatio`).
+  const wfParams = (workflowMetadata?.params ?? {}) as Record<string, unknown>;
+  const paramsForDimensions = { ...wfParams, ...(finalParams ?? {}) };
 
   // Format outputs
   const { output, errors } = formatStepOutputs(step as StepWithOutput, paramsForDimensions);
@@ -2199,10 +2202,13 @@ export async function getWorkflowStatusUpdate({
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
-        // For dimension resolution, prefer step params (legacy format stores upscale dims there),
-        // fall back to workflow-level params (new format stores them on workflow.metadata).
+        // For dimension resolution, prefer step params (legacy format stores upscale dims there)
+        // but fall back per-field to workflow-level params. Steps with source lineage (e.g.
+        // img2img:upscale) have stepParams populated with the source generation's params, which
+        // lack `images/width/height/aspectRatio` — those live on workflow.metadata.params and
+        // must remain reachable.
         const stepParams = (metadata.params ?? {}) as Record<string, unknown>;
-        const paramsForDimensions = Object.keys(stepParams).length > 0 ? stepParams : wfParams;
+        const paramsForDimensions = { ...wfParams, ...stepParams };
 
         // Format step outputs using the shared utility
         const { output, errors } = formatStepOutputs(step as StepWithOutput, paramsForDimensions);
