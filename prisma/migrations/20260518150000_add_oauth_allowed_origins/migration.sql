@@ -8,22 +8,36 @@
 -- clients.
 --
 -- For existing rows we backfill the allowedOrigins set from the origin part of
--- every redirectUri, so any currently-registered app continues to work without
--- a manual update from the owner. Confidential clients (the bulk of today's
--- traffic) skip the new check entirely.
-ALTER TABLE "OauthClient" ADD COLUMN "allowedOrigins" TEXT[] DEFAULT ARRAY[]::TEXT[];
+-- every redirectUri (lowercased host, default ports stripped) so any
+-- currently-registered app keeps working without a manual update. Custom-scheme
+-- URIs (e.g. myapp://) yield no origin and fall back to the empty default —
+-- owner must set via UI. Confidential clients (the bulk of today's traffic)
+-- skip the runtime check entirely.
+ALTER TABLE "OauthClient"
+  ADD COLUMN "allowedOrigins" TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
 
 UPDATE "OauthClient"
 SET "allowedOrigins" = sub.origins
 FROM (
   SELECT
-    id,
+    "OauthClient".id,
     COALESCE(
       ARRAY(
         SELECT DISTINCT
-          regexp_replace(uri, '^(https?://[^/]+).*$', '\1')
-        FROM unnest("redirectUris") AS uri
-        WHERE uri ~ '^https?://[^/]+'
+          CASE
+            WHEN lo LIKE 'https://%:443' THEN regexp_replace(lo, ':443$', '')
+            WHEN lo LIKE 'http://%:80'   THEN regexp_replace(lo, ':80$', '')
+            ELSE lo
+          END
+        FROM (
+          -- `[^/?#]+` stops at the first /, ?, or # so URIs like
+          -- `https://example.com?foo=1` don't backfill `https://example.com?foo=1`
+          -- (browser Origin strips query/fragment). Case-insensitive on the
+          -- scheme so `HTTPS://...` URIs aren't skipped before lowercasing.
+          SELECT lower(regexp_replace(uri, '^(https?://[^/?#]+).*$', '\1')) AS lo
+          FROM unnest("redirectUris") AS uri
+          WHERE uri ~* '^https?://[^/?#]+'
+        ) AS normalized
       ),
       ARRAY[]::TEXT[]
     ) AS origins

@@ -56,8 +56,12 @@ export function deriveAllowedOriginsFromRedirectUris(redirectUris: string[]): st
   const result: string[] = [];
   for (const uri of redirectUris) {
     try {
-      const origin = new URL(uri).origin;
-      if (origin === 'null') continue; // file://, data:, etc.
+      const parsed = new URL(uri);
+      // originSchema only permits http/https. Filter here so the derive helper
+      // never produces an entry the schema would reject.
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') continue;
+      const origin = parsed.origin;
+      if (origin === 'null') continue;
       if (seen.has(origin)) continue;
       seen.add(origin);
       result.push(origin);

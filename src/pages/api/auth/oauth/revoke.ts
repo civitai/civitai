@@ -11,8 +11,8 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   const origin = typeof req.headers.origin === 'string' ? req.headers.origin : undefined;
 
-  // Preflights stay permissive — we can't know whether the caller is public
-  // or confidential until we see the client_id on the actual POST.
+  // Preflight stays permissive — we can't classify the caller until we see the
+  // client_id on the actual POST.
   if (req.method === 'OPTIONS') {
     const shouldStop = addCorsHeaders(req, res, ['POST']);
     if (shouldStop) return;
@@ -23,40 +23,56 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const { token, token_type_hint, client_id, client_secret } = req.body;
+  const ip = requestIp.getClientIp(req) ?? 'unknown';
 
-  // Mirror the token endpoint: public clients must come from a registered
-  // origin. Confidential clients keep the existing wildcard CORS.
-  let isConfidentialClient = true;
-  if (typeof client_id === 'string') {
-    const lookedUp = await dbRead.oauthClient.findUnique({
-      where: { id: client_id },
-      select: { id: true, isConfidential: true, allowedOrigins: true },
-    });
-    if (lookedUp) {
-      isConfidentialClient = lookedUp.isConfidential;
-      if (!lookedUp.isConfidential) {
-        if (!origin || !lookedUp.allowedOrigins.includes(origin)) {
-          logOAuthEvent({
-            type: 'origin.rejected',
-            clientId: lookedUp.id,
-            ip: requestIp.getClientIp(req) ?? undefined,
-            metadata: { origin: origin ?? null, endpoint: 'revoke' },
-          });
-          return res.status(403).json({
-            error: 'origin_not_allowed',
-            error_description:
-              'Origin is not in the registered allowedOrigins for this client.',
-          });
-        }
-        res.setHeader('Access-Control-Allow-Origin', origin);
-        res.setHeader('Vary', 'Origin');
-        res.setHeader('Access-Control-Allow-Credentials', 'true');
-        res.setHeader('Access-Control-Allow-Headers', '*');
-        res.setHeader('Access-Control-Allow-Methods', 'POST');
-      }
+  // Rate-limit by IP before any DB work so a malicious origin can't drive cost
+  // via repeated lookups + audit-log writes.
+  const allowed = await checkOAuthRateLimit(req, res, 'revoke', ip);
+  if (!allowed) return sendRateLimitResponse(res);
+
+  // Single lookup covers both origin enforcement (public clients) and secret
+  // validation (confidential clients without an authenticated session).
+  const client =
+    typeof client_id === 'string'
+      ? await dbRead.oauthClient.findUnique({
+          where: { id: client_id },
+          select: {
+            id: true,
+            userId: true,
+            secret: true,
+            isConfidential: true,
+            allowedOrigins: true,
+          },
+        })
+      : null;
+
+  // Public clients with an Origin header must match the registered allowlist.
+  // A missing Origin is allowed (native/mobile public clients don't send
+  // one); same policy as oauthModel.getClient on /token.
+  if (client && !client.isConfidential && origin) {
+    if (!client.allowedOrigins.includes(origin)) {
+      logOAuthEvent({
+        type: 'origin.rejected',
+        clientId: client.id,
+        ip,
+        metadata: { origin, endpoint: 'revoke' },
+      });
+      return res.status(403).json({
+        error: 'origin_not_allowed',
+        error_description:
+          'Origin is not in the registered allowedOrigins for this client.',
+      });
     }
-  }
-  if (isConfidentialClient) {
+    // Per-origin CORS for approved public-client browser callers. No
+    // Allow-Credentials — public clients use Bearer tokens, not cookies.
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Headers', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST');
+  } else {
+    // Confidential, unknown, or no-Origin (native) caller — keep wildcard
+    // CORS. Native callers ignore CORS; browser callers without an Origin
+    // header are non-XHR and don't read response headers anyway.
     addCorsHeaders(req, res, ['POST']);
   }
 
@@ -66,28 +82,21 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .json({ error: 'invalid_request', error_description: 'Missing token parameter' });
   }
 
-  // Authenticate the caller — require either a valid session or client credentials
+  // Authenticate the caller — require either a valid session or client credentials.
   const session = await getServerAuthSession({ req, res });
   let authenticatedUserId: number | null = session?.user?.id ?? null;
 
-  // If no session, require client_id + client_secret
-  if (!authenticatedUserId && client_id) {
-    const client = await dbWrite.oauthClient.findUnique({
-      where: { id: client_id },
-      select: { userId: true, secret: true, isConfidential: true },
-    });
-    if (client?.isConfidential && client.secret && client_secret) {
-      const hashedSecret = generateSecretHash(client_secret);
-      if (timingSafeEqual(Buffer.from(hashedSecret), Buffer.from(client.secret))) {
-        authenticatedUserId = client.userId;
-      }
+  if (
+    !authenticatedUserId &&
+    client?.isConfidential &&
+    client.secret &&
+    client_secret
+  ) {
+    const hashedSecret = generateSecretHash(client_secret);
+    if (timingSafeEqual(Buffer.from(hashedSecret), Buffer.from(client.secret))) {
+      authenticatedUserId = client.userId;
     }
   }
-
-  // Rate limit by IP (not client_id, to prevent bypass)
-  const ip = requestIp.getClientIp(req) ?? 'unknown';
-  const allowed = await checkOAuthRateLimit(req, res, 'revoke', ip);
-  if (!allowed) return sendRateLimitResponse(res);
 
   try {
     const hash = generateSecretHash(token);

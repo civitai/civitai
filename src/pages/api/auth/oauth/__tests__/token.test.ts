@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { OriginNotAllowedError } from '~/server/oauth/errors';
 
 // Minimal NextApiRequest/Response stand-in. Same shape used in
 // retool-endpoint.test.ts so behaviour stays consistent across OAuth tests.
@@ -39,10 +40,10 @@ function createMocks({
   return { req, res };
 }
 
-const { mockFindUnique, mockOauthToken, mockLogEvent } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
+const { mockOauthToken, mockLogEvent, mockFindUnique } = vi.hoisted(() => ({
   mockOauthToken: vi.fn(),
   mockLogEvent: vi.fn(),
+  mockFindUnique: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -66,8 +67,8 @@ vi.mock('~/server/oauth/constants', () => ({
   ACCESS_TOKEN_TTL: 3600,
 }));
 
-// addCorsHeaders pulls in the full server env. Stub it to a behaviour-only
-// double so we don't drag the real env loader into a unit test.
+// addCorsHeaders pulls in the full server env. Stub to behaviour-only so the
+// unit doesn't drag the real env loader in.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   addCorsHeaders: (
     req: { method?: string },
@@ -89,10 +90,25 @@ vi.mock('request-ip', () => ({
 }));
 
 // `@node-oauth/oauth2-server` constructs Request/Response objects with internal
-// validation we don't care about for this unit. Stub them to passthrough shells.
+// validation we don't care about for this unit. Stub them to passthrough shells
+// that preserve the headers field so handler/model can read it.
 vi.mock('@node-oauth/oauth2-server', () => ({
   Request: class {
-    constructor(public init: unknown) {}
+    headers: Record<string, string>;
+    body: unknown;
+    method: string;
+    query: Record<string, string>;
+    constructor(init: {
+      headers: Record<string, string>;
+      body: unknown;
+      method: string;
+      query: Record<string, string>;
+    }) {
+      this.headers = init.headers;
+      this.body = init.body;
+      this.method = init.method;
+      this.query = init.query;
+    }
   },
   Response: class {
     constructor(public res: unknown) {}
@@ -107,18 +123,18 @@ beforeEach(() => {
 });
 
 describe('POST /api/auth/oauth/token — origin enforcement', () => {
-  it('returns 200 for a public client when Origin is in allowedOrigins', async () => {
-    mockFindUnique.mockResolvedValue({
-      id: 'pub-1',
-      isConfidential: false,
-      allowedOrigins: ['https://app.example.com'],
-    });
-    mockOauthToken.mockResolvedValue({
-      accessToken: 'at',
-      refreshToken: 'rt',
-      scope: '1',
-      user: { id: 42 },
-      accessTokenLifetime: 3600,
+  it('returns 200 + per-origin CORS for a public client on success', async () => {
+    // Simulate what oauthModel.getClient does: stash the client on the
+    // Request so the handler can read it back for CORS.
+    mockOauthToken.mockImplementation(async (request: any) => {
+      request.oauthClient = { id: 'pub-1', isConfidential: false };
+      return {
+        accessToken: 'at',
+        refreshToken: 'rt',
+        scope: '1',
+        user: { id: 42 },
+        accessTokenLifetime: 3600,
+      };
     });
 
     const { req, res } = createMocks({
@@ -131,18 +147,16 @@ describe('POST /api/auth/oauth/token — origin enforcement', () => {
     expect(res._getStatusCode()).toBe(200);
     expect(res._getHeaders()['Access-Control-Allow-Origin']).toBe('https://app.example.com');
     expect(res._getHeaders()['Vary']).toBe('Origin');
-    expect(res._getHeaders()['Access-Control-Allow-Credentials']).toBe('true');
+    expect(res._getHeaders()['Access-Control-Allow-Credentials']).toBeUndefined();
     expect(mockLogEvent).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'origin.rejected' })
     );
   });
 
-  it('returns 403 for a public client when Origin is not in allowedOrigins', async () => {
-    mockFindUnique.mockResolvedValue({
-      id: 'pub-1',
-      isConfidential: false,
-      allowedOrigins: ['https://app.example.com'],
-    });
+  it('returns 403 + logs origin.rejected when getClient throws OriginNotAllowedError', async () => {
+    mockOauthToken.mockRejectedValue(
+      new OriginNotAllowedError('pub-1', 'https://evil.example.com')
+    );
 
     const { req, res } = createMocks({
       method: 'POST',
@@ -153,41 +167,27 @@ describe('POST /api/auth/oauth/token — origin enforcement', () => {
 
     expect(res._getStatusCode()).toBe(403);
     expect((res._getJSONData() as { error: string }).error).toBe('origin_not_allowed');
-    expect(mockOauthToken).not.toHaveBeenCalled();
+    // No CORS header set on a rejected origin — browser surfaces a network
+    // error rather than reading the 403 body.
+    expect(res._getHeaders()['Access-Control-Allow-Origin']).toBeUndefined();
     expect(mockLogEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'origin.rejected', clientId: 'pub-1' })
+      expect.objectContaining({
+        type: 'origin.rejected',
+        clientId: 'pub-1',
+        metadata: expect.objectContaining({ origin: 'https://evil.example.com', endpoint: 'token' }),
+      })
     );
   });
 
-  it('returns 403 for a public client when Origin header is missing', async () => {
-    mockFindUnique.mockResolvedValue({
-      id: 'pub-1',
-      isConfidential: false,
-      allowedOrigins: ['https://app.example.com'],
-    });
-
-    const { req, res } = createMocks({
-      method: 'POST',
-      headers: {},
-      body: { client_id: 'pub-1', grant_type: 'authorization_code' },
-    });
-    await handler(req as never, res as never);
-
-    expect(res._getStatusCode()).toBe(403);
-    expect(mockOauthToken).not.toHaveBeenCalled();
-  });
-
-  it('keeps wildcard CORS for confidential clients regardless of Origin', async () => {
-    mockFindUnique.mockResolvedValue({
-      id: 'conf-1',
-      isConfidential: true,
-      allowedOrigins: [],
-    });
-    mockOauthToken.mockResolvedValue({
-      accessToken: 'at',
-      refreshToken: 'rt',
-      scope: '1',
-      user: { id: 42 },
+  it('keeps wildcard CORS for confidential clients on success', async () => {
+    mockOauthToken.mockImplementation(async (request: any) => {
+      request.oauthClient = { id: 'conf-1', isConfidential: true };
+      return {
+        accessToken: 'at',
+        refreshToken: 'rt',
+        scope: '1',
+        user: { id: 42 },
+      };
     });
 
     const { req, res } = createMocks({
@@ -198,21 +198,18 @@ describe('POST /api/auth/oauth/token — origin enforcement', () => {
     await handler(req as never, res as never);
 
     expect(res._getStatusCode()).toBe(200);
-    // The stubbed addCorsHeaders always emits the wildcard.
     expect(res._getHeaders()['Access-Control-Allow-Origin']).toBe('*');
   });
 
   it('keeps wildcard CORS for confidential clients even when an Origin is sent', async () => {
-    mockFindUnique.mockResolvedValue({
-      id: 'conf-1',
-      isConfidential: true,
-      allowedOrigins: [],
-    });
-    mockOauthToken.mockResolvedValue({
-      accessToken: 'at',
-      refreshToken: 'rt',
-      scope: '1',
-      user: { id: 42 },
+    mockOauthToken.mockImplementation(async (request: any) => {
+      request.oauthClient = { id: 'conf-1', isConfidential: true };
+      return {
+        accessToken: 'at',
+        refreshToken: 'rt',
+        scope: '1',
+        user: { id: 42 },
+      };
     });
 
     const { req, res } = createMocks({
@@ -226,16 +223,66 @@ describe('POST /api/auth/oauth/token — origin enforcement', () => {
     expect(res._getHeaders()['Access-Control-Allow-Origin']).toBe('*');
   });
 
+  it('falls back to wildcard CORS on non-origin errors so callers can read the error body', async () => {
+    const err = Object.assign(new Error('Invalid grant'), {
+      name: 'invalid_grant',
+      statusCode: 400,
+    });
+    mockOauthToken.mockRejectedValue(err);
+
+    const { req, res } = createMocks({
+      method: 'POST',
+      headers: {},
+      body: { client_id: 'conf-1', grant_type: 'authorization_code' },
+    });
+    await handler(req as never, res as never);
+
+    expect(res._getStatusCode()).toBe(400);
+    expect(res._getHeaders()['Access-Control-Allow-Origin']).toBe('*');
+    expect((res._getJSONData() as { error: string }).error).toBe('invalid_grant');
+  });
+
   it('returns 405 for non-POST/OPTIONS methods', async () => {
     const { req, res } = createMocks({ method: 'GET' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(405);
   });
 
-  it('handles OPTIONS preflight without touching the client lookup', async () => {
+  it('handles OPTIONS preflight without invoking the OAuth server', async () => {
     const { req, res } = createMocks({ method: 'OPTIONS' });
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
-    expect(mockFindUnique).not.toHaveBeenCalled();
+    expect(mockOauthToken).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with a fallback lookup if the OAuth library skipped stashing', async () => {
+    // Simulate a library/grant where getClient didn't run with our wiring —
+    // no oauthClient is attached. Handler must do a fallback DB lookup and
+    // pick the correct CORS policy rather than defaulting to wildcard.
+    mockOauthToken.mockResolvedValue({
+      accessToken: 'at',
+      refreshToken: 'rt',
+      scope: '1',
+      user: { id: 42 },
+      accessTokenLifetime: 3600,
+    });
+    mockFindUnique.mockResolvedValueOnce({
+      id: 'pub-1',
+      isConfidential: false,
+      allowedOrigins: ['https://app.example.com'],
+    });
+
+    const { req, res } = createMocks({
+      method: 'POST',
+      headers: { origin: 'https://app.example.com' },
+      body: { client_id: 'pub-1', grant_type: 'authorization_code' },
+    });
+    await handler(req as never, res as never);
+
+    expect(res._getStatusCode()).toBe(200);
+    expect(mockFindUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'pub-1' } })
+    );
+    expect(res._getHeaders()['Access-Control-Allow-Origin']).toBe('https://app.example.com');
   });
 });
