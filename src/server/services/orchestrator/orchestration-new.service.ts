@@ -206,7 +206,8 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
   let raw: string | null | undefined;
   try {
     raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
-  } catch {
+  } catch (err) {
+    console.warn('[getGenerationStatus orchestration-new] sysRedis hGet failed, using defaults:', err);
     raw = undefined;
   }
   return generationStatusSchema.parse(JSON.parse(raw ?? '{}')) as GenerationStatus;

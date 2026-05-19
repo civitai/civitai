@@ -119,7 +119,8 @@ export async function getSystemPermissions(): Promise<Record<string, number[]>> 
   let cachedPermissions: string | null;
   try {
     cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
-  } catch {
+  } catch (err) {
+    console.warn('[getSystemPermissions] sysRedis get failed, returning empty:', err);
     return {};
   }
   if (cachedPermissions) return JSON.parse(cachedPermissions);
@@ -255,7 +256,8 @@ export async function getBrowsingSettingAddons() {
   let cached: string | null;
   try {
     cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
-  } catch {
+  } catch (err) {
+    console.warn('[getBrowsingSettingAddons] sysRedis get failed, returning defaults:', err);
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
   }
   if (cached) {
@@ -270,7 +272,8 @@ export async function getLiveFeatureFlags() {
   let cached: string | null;
   try {
     cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
-  } catch {
+  } catch (err) {
+    console.warn('[getLiveFeatureFlags] sysRedis get failed, returning defaults:', err);
     return DEFAULT_LIVE_FEATURE_FLAGS;
   }
   if (cached) {

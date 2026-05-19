@@ -70,8 +70,17 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
 
   // Handle explicit invalidation
   if (tokenState === 'invalid') {
-    // Remove the user token tracking since it's invalid
-    await sysRedis.hDel(userTokenKey as any, tokenId);
+    // Remove the user token tracking since it's invalid. Best-effort: if
+    // sysRedis is mid-flap (read returned, write fails), still emit the
+    // needsCookieRefresh signal — the TOKEN_STATE='invalid' record already
+    // gates this token, so the tracking-hash delete is a cleanup, not a
+    // correctness requirement.
+    await sysRedis.hDel(userTokenKey as any, tokenId).catch((err) => {
+      console.warn(
+        `[refreshToken] hDel failed userId=${user.id} tokenId=${tokenId}:`,
+        err
+      );
+    });
     // Keep the 'invalid' state in TOKEN_STATE - it will expire naturally after 30 days
     // This ensures subsequent requests with the same token continue to be rejected
     // Signal client to refresh cookie - when it does, it will get empty session and be logged out
@@ -154,10 +163,20 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
   token.id = tokenId;
   token.signedAt = Date.now();
 
-  // Track this token for the user
+  // Track this token for the user. Best-effort: a sysRedis write failure
+  // here would lose the refresh work above and 500 the request — degrade
+  // to "refreshed in memory, tracking will catch up on next successful
+  // call" instead.
   if (session.id) {
     const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`;
-    await sysRedis.hSet(key as any, tokenId, Date.now());
-    await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+    try {
+      await sysRedis.hSet(key as any, tokenId, Date.now());
+      await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+    } catch (err) {
+      console.warn(
+        `[setToken] sysRedis tracking write failed userId=${session.id} tokenId=${tokenId}:`,
+        err
+      );
+    }
   }
 }

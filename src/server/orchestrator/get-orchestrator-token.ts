@@ -22,7 +22,8 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
       TOKEN_STORE === 'redis'
         ? await sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
         : getEncryptedCookie(ctx, generationServiceCookie.name);
-  } catch {
+  } catch (err) {
+    console.warn('[getOrchestratorToken] sysRedis hGet failed, minting fresh token:', err);
     token = null;
   }
 
@@ -36,10 +37,16 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
       userId,
     });
     if (TOKEN_STORE === 'redis') {
+      // Cache populate is best-effort: if sysRedis is down we still return
+      // the freshly-minted token. Without this catch, the writeback would
+      // 500 every call during a sysRedis outage — defeating the read-side
+      // fail-open above.
       await Promise.all([
         sysRedis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
         sysRedis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
-      ]);
+      ]).catch((err) => {
+        console.warn('[getOrchestratorToken] sysRedis cache writeback failed:', err);
+      });
     } else
       setEncryptedCookie(ctx, {
         name: generationServiceCookie.name,

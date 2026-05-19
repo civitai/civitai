@@ -230,7 +230,8 @@ export async function getGenerationStatus() {
   let raw: string | null | undefined;
   try {
     raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
-  } catch {
+  } catch (err) {
+    console.warn('[getGenerationStatus generation.service] sysRedis hGet failed, using defaults:', err);
     raw = undefined;
   }
   const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));

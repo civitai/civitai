@@ -69,7 +69,8 @@ async function needsUpdate(req?: NextApiRequest) {
   let client: Record<string, string>;
   try {
     client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
-  } catch {
+  } catch (err) {
+    console.warn('[needsUpdate] sysRedis hGetAll failed, skipping client-version check:', err);
     return false;
   }
   if (client.version) {
