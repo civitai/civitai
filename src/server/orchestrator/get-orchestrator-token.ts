@@ -14,10 +14,17 @@ const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 
 export async function getOrchestratorToken(userId: number, ctx: Context) {
   const redisKey = userId.toString();
-  let token: string | null =
-    TOKEN_STORE === 'redis'
-      ? await sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
-      : getEncryptedCookie(ctx, generationServiceCookie.name);
+  // Fail open on sysRedis: fall through to the getTemporaryUserApiKey
+  // fallback path below by setting token=null on error.
+  let token: string | null;
+  try {
+    token =
+      TOKEN_STORE === 'redis'
+        ? await sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
+        : getEncryptedCookie(ctx, generationServiceCookie.name);
+  } catch {
+    token = null;
+  }
 
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {

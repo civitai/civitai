@@ -202,12 +202,14 @@ export type GenerationContextResult = {
 };
 
 async function getGenerationStatus(): Promise<GenerationStatus> {
-  return generationStatusSchema.parse(
-    JSON.parse(
-      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
-        '{}'
-    )
-  ) as GenerationStatus;
+  // Fail open: a sysRedis outage shouldn't crash generation context build.
+  let raw: string | null | undefined;
+  try {
+    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  } catch {
+    raw = undefined;
+  }
+  return generationStatusSchema.parse(JSON.parse(raw ?? '{}')) as GenerationStatus;
 }
 
 /**

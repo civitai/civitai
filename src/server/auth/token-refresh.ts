@@ -38,15 +38,26 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
   const userTokenKey = `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`;
 
   // Use Redis pipeline to batch all read operations into a single round trip
-  // This reduces network latency from 3 sequential calls to 1 call
-  const pipeline = sysRedis.multi();
-  pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
-  pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
-  pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
+  // This reduces network latency from 3 sequential calls to 1 call.
+  // If sysRedis is unreachable, fail open: keep the existing session rather
+  // than 500ing every authenticated request.
+  let results;
+  try {
+    const pipeline = sysRedis.multi();
+    pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
+    pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
+    pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
+    results = await pipeline.exec();
+  } catch (err) {
+    log(
+      `sysRedis pipeline threw for token ${tokenId} user ${user.id}: ${
+        (err as Error)?.message ?? 'unknown'
+      } — allowing session to continue`
+    );
+    return { token, needsCookieRefresh: false };
+  }
 
-  const results = await pipeline.exec();
-
-  // Handle pipeline errors
+  // Handle pipeline errors (null result is distinct from a throw)
   if (!results) {
     log(`Pipeline failed for token ${tokenId}, allowing session to continue`);
     return { token, needsCookieRefresh: false };

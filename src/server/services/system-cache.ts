@@ -114,7 +114,14 @@ export async function getReplacedTagIds(): Promise<number[]> {
 }
 
 export async function getSystemPermissions(): Promise<Record<string, number[]>> {
-  const cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
+  // Fail open on sysRedis outage. getSystemPermissions is called on session
+  // cache-miss; throwing here breaks cold-cache login flows.
+  let cachedPermissions: string | null;
+  try {
+    cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
+  } catch {
+    return {};
+  }
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
   return {};
@@ -245,7 +252,12 @@ export async function getLiveNow() {
 }
 
 export async function getBrowsingSettingAddons() {
-  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+  let cached: string | null;
+  try {
+    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+  } catch {
+    return DEFAULT_BROWSING_SETTINGS_ADDONS;
+  }
   if (cached) {
     const data = JSON.parse(cached) as BrowsingSettingsAddon[];
     return data;
@@ -255,7 +267,12 @@ export async function getBrowsingSettingAddons() {
 }
 
 export async function getLiveFeatureFlags() {
-  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+  let cached: string | null;
+  try {
+    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+  } catch {
+    return DEFAULT_LIVE_FEATURE_FLAGS;
+  }
   if (cached) {
     const data = JSON.parse(cached) as LiveFeatureFlags;
     return data;

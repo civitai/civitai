@@ -226,12 +226,14 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 }
 
 export async function getGenerationStatus() {
-  const status = generationStatusSchema.parse(
-    JSON.parse(
-      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
-        '{}'
-    )
-  );
+  // Fail open: a sysRedis outage shouldn't crash generation API calls.
+  let raw: string | null | undefined;
+  try {
+    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  } catch {
+    raw = undefined;
+  }
+  const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
 
   return status as GenerationStatus;
 }
