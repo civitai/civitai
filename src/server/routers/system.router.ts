@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { publicProcedure, router } from '~/server/trpc';
 import {
   getBrowsingSettingAddons,
+  getCreationBlockedTags,
   getLiveFeatureFlags,
   getLiveNow,
 } from '~/server/services/system-cache';
@@ -21,6 +22,10 @@ export const systemRouter = router({
   getLiveFeatureFlags: publicProcedure.meta({ requiredScope: TokenScope.Full }).query(() => {
     return getLiveFeatureFlags();
   }),
+  getCreationBlockedTags: publicProcedure
+    .meta({ requiredScope: TokenScope.Full })
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(() => getCreationBlockedTags()),
   getDbKV: publicProcedure
     .meta({ requiredScope: TokenScope.Full })
     .input(z.object({ key: z.string() }))

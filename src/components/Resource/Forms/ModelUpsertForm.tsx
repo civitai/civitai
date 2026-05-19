@@ -21,7 +21,7 @@ import {
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import React, { useEffect } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -165,6 +165,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
   const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
+  const watchedTags = form.watch('tagsOnModels') ?? [];
   const allowCommercialUse = form.watch('allowCommercialUse') as CommercialUse[] | undefined;
   const availability = form.watch('availability');
   const isPrivate = availability === Availability.Private;
@@ -189,8 +190,33 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
     sort: TagSort.MostModels,
     limit: 100,
   });
+  const isModerator = !!currentUser?.isModerator;
+  const { data: blockedTagsData } = trpc.system.getCreationBlockedTags.useQuery(undefined, {
+    enabled: !isModerator,
+  });
+  const blockedTagIds = useMemo(
+    () => (isModerator ? new Set<number>() : new Set((blockedTagsData ?? []).map((t) => t.id))),
+    [blockedTagsData, isModerator]
+  );
+  const blockedTagNames = useMemo(
+    () => (isModerator ? new Set<string>() : new Set((blockedTagsData ?? []).map((t) => t.name))),
+    [blockedTagsData, isModerator]
+  );
+  const isBlockedTag = (tag: { id?: number; name?: string | null }) => {
+    if (isModerator) return false;
+    if (tag.id && blockedTagIds.has(tag.id)) return true;
+    const name = tag.name?.toLowerCase().trim();
+    return !!name && blockedTagNames.has(name);
+  };
+  const blockedTagsOnModel = useMemo(
+    () => (Array.isArray(watchedTags) ? watchedTags.filter((t) => isBlockedTag(t)) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [watchedTags, blockedTagIds, blockedTagNames, isModerator]
+  );
   const categories =
-    data?.items.map((tag) => ({ label: titleCase(tag.name), value: tag.id })) ?? [];
+    data?.items
+      .filter((tag) => !blockedTagIds.has(tag.id))
+      .map((tag) => ({ label: titleCase(tag.name), value: tag.id })) ?? [];
 
   const handleModelTypeChange = (value: ModelType) => {
     form.setValue('checkpointType', null);
@@ -228,6 +254,24 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
         { message: 'Required', type: 'required' },
         { shouldFocus: true }
       );
+
+    const offending = (tagsOnModels ?? []).filter((tag) => isBlockedTag(tag));
+    if (offending.length) {
+      const names = offending.map((t) => t.name).join(', ');
+      form.setError(
+        'tagsOnModels',
+        {
+          message: `Remove these tags before saving: ${names}`,
+          type: 'manual',
+        },
+        { shouldFocus: true }
+      );
+      showErrorNotification({
+        title: 'Blocked tags present',
+        error: new Error(`Remove these tags before saving: ${names}`),
+      });
+      return;
+    }
 
     const bountyId = result.success ? result.data.bountyId : undefined;
     if (isDirty || bountyId) {
@@ -358,10 +402,25 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               }
               description="Search or create tags for your model"
               target={[TagTarget.Model]}
-              filter={(tag) =>
-                data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
-              }
+              filter={(tag) => {
+                if (tag.name && isBlockedTag({ name: tag.name })) return false;
+                return data && tag.name
+                  ? !data.items.map((cat) => cat.name).includes(tag.name)
+                  : true;
+              }}
             />
+            {blockedTagsOnModel.length > 0 && (
+              <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationMark />}>
+                <Text size="sm">
+                  The following tags can no longer be applied to models and must be removed before
+                  saving:{' '}
+                  <Text component="span" fw={600}>
+                    {blockedTagsOnModel.map((t) => t.name).join(', ')}
+                  </Text>
+                  .
+                </Text>
+              </AlertWithIcon>
+            )}
             <InputRTE
               name="description"
               label="Description"

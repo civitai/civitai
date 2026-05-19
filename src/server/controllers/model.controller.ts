@@ -95,7 +95,7 @@ import {
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
-import { getCategoryTags } from '~/server/services/system-cache';
+import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -277,8 +277,7 @@ export const getModelHandler = async ({
         model.mode !== ModelModifier.Archived &&
         entityAccessForVersion?.hasAccess &&
         (!earlyAccessDeadline ||
-          (entityAccessForVersion?.permissions ?? 0) >=
-            EntityAccessPermission.EarlyAccessDownload);
+          (entityAccessForVersion?.permissions ?? 0) >= EntityAccessPermission.EarlyAccessDownload);
 
       const canGenerate =
         getResourceCanGenerate({
@@ -326,9 +325,7 @@ export const getModelHandler = async ({
         .filter((file) =>
           (['Model', 'Pruned Model'] as ModelFileType[]).includes(file.type as ModelFileType)
         )
-        .map((file) =>
-          file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase()
-        )
+        .map((file) => file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase())
         .filter(isDefined);
 
       const versionMetrics = version.metrics[0];
@@ -524,6 +521,31 @@ export const getModelVersionsHandler = async ({ input }: { input: GetModelVersio
   }
 };
 
+async function throwIfBlockedTags({
+  tagsOnModels,
+  isModerator,
+}: {
+  tagsOnModels: { id?: number; name: string }[];
+  isModerator?: boolean;
+}) {
+  if (isModerator || !tagsOnModels.length) return;
+  const blockedTags = await getCreationBlockedTags();
+  if (!blockedTags.length) return;
+  const blockedIds = new Set(blockedTags.map((t) => t.id));
+  const blockedNames = new Set(blockedTags.map((t) => t.name));
+  const offending = tagsOnModels.filter((tag) => {
+    if (tag.id && blockedIds.has(tag.id)) return true;
+    const name = tag.name?.toLowerCase().trim();
+    return !!name && blockedNames.has(name);
+  });
+  if (!offending.length) return;
+  throw throwBadRequestError(
+    `The following tags can no longer be applied to models: ${offending
+      .map((tag) => tag.name)
+      .join(', ')}. Please remove them and try again.`
+  );
+}
+
 export const upsertModelHandler = async ({
   input,
   ctx,
@@ -561,6 +583,8 @@ export const upsertModelHandler = async ({
             .map((tag) => tag.name)
             .join(', ')}`
         );
+
+      await throwIfBlockedTags({ tagsOnModels, isModerator: ctx.user.isModerator });
     }
 
     const { gallerySettings } = await getUserSettings(userId);
@@ -1921,6 +1945,8 @@ export const privateModelFromTrainingHandler = async ({
             .map((tag) => tag.name)
             .join(', ')}`
         );
+
+      await throwIfBlockedTags({ tagsOnModels, isModerator: ctx.user.isModerator });
     }
 
     const model = await privateModelFromTraining({

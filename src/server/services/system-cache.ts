@@ -254,6 +254,58 @@ export async function getBrowsingSettingAddons() {
   return DEFAULT_BROWSING_SETTINGS_ADDONS;
 }
 
+export type CreationBlockedTag = { id: number; name: string };
+// Tags that creators cannot apply to their own models. Stored verbatim in
+// sysRedis key `system:creation-blocked-tags` as a JSON array of
+// `{id, name}` objects. No in-code default — when unset, no tags are blocked.
+// Independent of BrowsingSettingsAddons (addons gate viewing, this gates
+// authoring). Ops seed/update via `/api/admin/creation-blocked-tags`.
+export async function getCreationBlockedTags(): Promise<CreationBlockedTag[]> {
+  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (x): x is CreationBlockedTag => !!x && typeof x.id === 'number' && typeof x.name === 'string'
+    );
+  } catch {
+    return [];
+  }
+}
+
+async function resolveBlockedTags(tagIds: number[]): Promise<CreationBlockedTag[]> {
+  const uniqueIds = Array.from(new Set(tagIds.filter((x) => Number.isInteger(x) && x > 0)));
+  if (!uniqueIds.length) return [];
+  const rows = await dbRead.tag.findMany({
+    where: { id: { in: uniqueIds } },
+    select: { id: true, name: true },
+  });
+  // Preserve caller's order when possible
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return uniqueIds.map((id) => byId.get(id)).filter((x): x is CreationBlockedTag => !!x);
+}
+
+export async function setCreationBlockedTags(tagIds: number[]): Promise<CreationBlockedTag[]> {
+  const tags = await resolveBlockedTags(tagIds);
+  await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS, JSON.stringify(tags));
+  return tags;
+}
+
+export async function addCreationBlockedTags(tagIds: number[]): Promise<CreationBlockedTag[]> {
+  const current = await getCreationBlockedTags();
+  const currentIds = new Set(current.map((t) => t.id));
+  const newIds = tagIds.filter((id) => !currentIds.has(id));
+  if (!newIds.length) return current;
+  return setCreationBlockedTags([...current.map((t) => t.id), ...newIds]);
+}
+
+export async function removeCreationBlockedTags(tagIds: number[]): Promise<CreationBlockedTag[]> {
+  const current = await getCreationBlockedTags();
+  const toRemove = new Set(tagIds);
+  return setCreationBlockedTags(current.map((t) => t.id).filter((id) => !toRemove.has(id)));
+}
+
 export async function getLiveFeatureFlags() {
   const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
   if (cached) {
