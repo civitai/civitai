@@ -71,6 +71,15 @@ const DEFAULT_BATCH_COUNT = 1;
 // submission can't produce 100s of steps unintentionally) and cost.
 const HARD_BATCH_CAP = 10;
 
+// Max depth for nested `#ref` resolution. Wildcard packs commonly compose
+// macros (e.g. `#character_f` whose value contains `#booru_hair_color`,
+// `#booru_eye_color`, etc.); the resolver substitutes top-level refs, then
+// walks the result looking for more refs and substitutes again. Bounded
+// depth prevents pathological cycles (`#a` → `#b` → `#a` → …) from
+// looping forever — once we hit the cap, any remaining refs pass through
+// to the prompt as literal `#name` tokens.
+const MAX_NESTED_DEPTH = 4;
+
 /**
  * Top-level entry. Given a snippets node + the templates that reference it
  * (`prompt`, `negativePrompt`, future `musicDescription`, etc.) plus a
@@ -136,11 +145,18 @@ export async function expandSnippetsToTargets({
     };
   }
 
-  // 2. Bulk-fetch all category rows that match (a) any of the loaded sets the
-  //    user is authorized for and (b) any of the referenced category names.
-  //    The `.com` NSFW gate folds into the `where` clause as a simple boolean
-  //    predicate — Prisma can't express a bitwise `&` cleanly, but a boolean
-  //    column is trivial.
+  // 2. Bulk-fetch every Clean category in any loaded set the user is
+  //    authorized for. We deliberately do NOT filter by `name IN [...]` here:
+  //    nested resolution (step 5 below) needs to look up categories the
+  //    user's top-level template never mentions — `#character_f` may
+  //    substitute to text containing `#booru_hair_color`, and we won't know
+  //    about `booru_hair_color` until after the first substitution pass.
+  //    Loading the whole set into memory is fine for typical pack sizes
+  //    (≤low-100s of categories per set) and avoids per-depth DB roundtrips.
+  //
+  //    The `.com` NSFW gate folds into the `where` clause as a simple
+  //    boolean predicate — Prisma can't express a bitwise `&` cleanly, but
+  //    a boolean column is trivial.
   const categoryRows = await dbRead.wildcardSetCategory.findMany({
     where: {
       // Strict gate: only Clean rows resolve. Pending/Dirty are never
@@ -148,7 +164,6 @@ export async function expandSnippetsToTargets({
       auditStatus: 'Clean',
       // .com hides any NSFW-flagged category; .red surfaces everything Clean.
       ...(isGreen ? { nsfw: false } : {}),
-      name: { in: [...uniqueLookupKeys] }, // citext = case-insensitive
       wildcardSet: {
         id: { in: snippets.wildcardSetIds },
         isInvalidated: false,
@@ -209,6 +224,8 @@ export async function expandSnippetsToTargets({
       targetTemplates,
       referencesByTarget,
       poolsByTargetAndKey,
+      sourcesByLookupKey,
+      diagnostics,
     });
     return { expansions, diagnostics };
   }
@@ -220,6 +237,7 @@ export async function expandSnippetsToTargets({
     targetTemplates,
     referencesByTarget,
     poolsByTargetAndKey,
+    sourcesByLookupKey,
     diagnostics,
   });
 }
@@ -280,12 +298,16 @@ function sampleRandom({
   targetTemplates,
   referencesByTarget,
   poolsByTargetAndKey,
+  sourcesByLookupKey,
+  diagnostics,
 }: {
   seed: number;
   batchCount: number;
   targetTemplates: Record<string, string>;
   referencesByTarget: Map<string, ResolvedReference[]>;
   poolsByTargetAndKey: Map<string, string[]>;
+  sourcesByLookupKey: Map<string, { categoryId: number; values: string[] }[]>;
+  diagnostics: ResolverDiagnostics;
 }): ExpansionStep[] {
   const expansions: ExpansionStep[] = [];
   for (let stepIndex = 0; stepIndex < batchCount; stepIndex++) {
@@ -306,9 +328,79 @@ function sampleRandom({
       }
       step[targetKey] = substitute(template, refs, pickByLookupKey);
     }
+    // Resolve nested `#refs` introduced by the first-pass substitutions.
+    // Pack authors compose macros (e.g. `#character_f` whose value contains
+    // `#booru_hair_color`); without this pass those nested refs would
+    // appear literally in the final prompt.
+    resolveNestedRefs({ step, sourcesByLookupKey, seed, stepIndex, diagnostics });
     expansions.push(step);
   }
   return expansions;
+}
+
+/**
+ * Iteratively substitute any `#refs` that remain in the step's text after
+ * the first sampling pass. Walks each target up to `MAX_NESTED_DEPTH` times;
+ * stops early when a depth pass produces no substitutions. Refs that have
+ * no matching category in the loaded sets are left as literal `#name`
+ * tokens (and recorded in `diagnostics.unresolved`).
+ *
+ * Mutates `step` in place. Picks are seeded by `(seed, stepIndex, depth,
+ * targetKey, lookupKey)` so values vary across depth levels while staying
+ * deterministic for a given seed.
+ */
+function resolveNestedRefs({
+  step,
+  sourcesByLookupKey,
+  seed,
+  stepIndex,
+  diagnostics,
+}: {
+  step: ExpansionStep;
+  sourcesByLookupKey: Map<string, { categoryId: number; values: string[] }[]>;
+  seed: number;
+  stepIndex: number;
+  diagnostics: ResolverDiagnostics;
+}): void {
+  for (let depth = 1; depth <= MAX_NESTED_DEPTH; depth++) {
+    let anyChange = false;
+    for (const targetKey of Object.keys(step)) {
+      const text = step[targetKey];
+      const nestedRefs = parsePromptSnippetReferences(text).map<ResolvedReference>((r) => ({
+        ...r,
+        lookupKey: r.category.toLowerCase(),
+      }));
+      if (nestedRefs.length === 0) continue;
+      const pickByLookupKey = new Map<string, string>();
+      for (const ref of nestedRefs) {
+        if (pickByLookupKey.has(ref.lookupKey)) continue;
+        const sources = sourcesByLookupKey.get(ref.lookupKey) ?? [];
+        if (sources.length === 0) {
+          // Track once per (target, lookupKey) so the diagnostics surface
+          // matches the top-level format. Skip duplicates if already noted.
+          const diagKey = `${targetKey}:${ref.lookupKey}`;
+          if (!diagnostics.unresolved.includes(diagKey)) {
+            diagnostics.unresolved.push(diagKey);
+          }
+          continue;
+        }
+        // Nested refs don't carry per-target selections — the user can only
+        // narrow categories they referenced explicitly at the top level.
+        // Macro-introduced nested refs always draw from the full pool.
+        const pool = computeEffectivePool(sources, []);
+        if (pool.length === 0) continue;
+        const rng = mulberry32(mixSeed(seed, stepIndex, `${targetKey}@d${depth}`, ref.lookupKey));
+        pickByLookupKey.set(ref.lookupKey, pool[Math.floor(rng() * pool.length)]);
+      }
+      if (pickByLookupKey.size === 0) continue;
+      const next = substitute(text, nestedRefs, pickByLookupKey);
+      if (next !== text) {
+        step[targetKey] = next;
+        anyChange = true;
+      }
+    }
+    if (!anyChange) break;
+  }
 }
 
 function sampleBatch({
@@ -317,6 +409,7 @@ function sampleBatch({
   targetTemplates,
   referencesByTarget,
   poolsByTargetAndKey,
+  sourcesByLookupKey,
   diagnostics,
 }: {
   seed: number;
@@ -324,6 +417,7 @@ function sampleBatch({
   targetTemplates: Record<string, string>;
   referencesByTarget: Map<string, ResolvedReference[]>;
   poolsByTargetAndKey: Map<string, string[]>;
+  sourcesByLookupKey: Map<string, { categoryId: number; values: string[] }[]>;
   diagnostics: ResolverDiagnostics;
 }): ExpandSnippetsResult {
   // Cartesian variables = unique (target, lookupKey) groups. Each group
@@ -369,8 +463,7 @@ function sampleBatch({
       // No-repeat permutation when pool can cover every slot; fall back to
       // independent product (allows repeats) only when the pool is too small.
       const slotMode: 'permute' | 'product' = k <= n ? 'permute' : 'product';
-      const cardinality =
-        slotMode === 'permute' ? permutationCount(n, k) : repeatedDrawCount(n, k);
+      const cardinality = slotMode === 'permute' ? permutationCount(n, k) : repeatedDrawCount(n, k);
       vars.push({ targetKey, lookupKey, pool, slotPositions, cardinality, mode: slotMode });
     }
   }
@@ -388,9 +481,14 @@ function sampleBatch({
 
   // No reference-vars — degenerate batch (templates have no #refs). Replicate
   // the templates batchCount times so the caller still gets the expected
-  // step count.
+  // step count. Nested resolution still applies in case any value contains
+  // `#refs` introduced by another mechanism.
   if (vars.length === 0 || cartesianTotal === BigInt(0)) {
-    const expansions = Array.from({ length: batchCount }, () => ({ ...targetTemplates }));
+    const expansions = Array.from({ length: batchCount }, (_, stepIndex) => {
+      const step = { ...targetTemplates };
+      resolveNestedRefs({ step, sourcesByLookupKey, seed, stepIndex, diagnostics });
+      return step;
+    });
     return { expansions, diagnostics };
   }
 
@@ -404,7 +502,7 @@ function sampleBatch({
       : seededDistinctIndices(seed, total, batchCount);
   diagnostics.sampled = BigInt(batchCount) < total;
 
-  const expansions: ExpansionStep[] = selectedIndices.map((idx) => {
+  const expansions: ExpansionStep[] = selectedIndices.map((idx, stepIndex) => {
     // Walk vars in insertion order, peeling one sub-index at a time in mixed
     // radix (each var's cardinality is its base). Decode each sub-index into
     // a per-slot value array via permutation or product enumeration.
@@ -440,6 +538,10 @@ function sampleBatch({
       const targetPicks = picksByTarget.get(targetKey) ?? [];
       step[targetKey] = substituteByPosition(template, refs, targetPicks);
     }
+    // Resolve any `#refs` that appeared inside the substituted values. Each
+    // combination gets its own nested resolution pass keyed by `stepIndex`
+    // so different combinations roll different nested values.
+    resolveNestedRefs({ step, sourcesByLookupKey, seed, stepIndex, diagnostics });
     return step;
   });
 
