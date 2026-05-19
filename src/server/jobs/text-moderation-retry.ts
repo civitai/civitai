@@ -1,42 +1,10 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
-import { resolveEntityContentBulk } from '~/server/services/entity-moderation.service';
-import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { submitWildcardCategoryAudit } from '~/server/services/wildcard-category-audit.service';
+import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 import { decreaseDate } from '~/utils/date-helpers';
-
-// Per-entityType resubmit dispatch. Different content types have different
-// xguard label sets, callback URL conventions, and per-entity bookkeeping —
-// the bulk-resolve step above is uniform, but the actual submission needs to
-// route to the type's owner service. Registering here keeps the retry-job
-// loop dumb: it doesn't have to know what `Article` vs `WildcardSetCategory`
-// means structurally, just which submit function to call.
-const resubmitters: Record<
-  string,
-  (args: {
-    entityId: number;
-    content: string;
-  }) => Promise<{ id?: string | null } | null | undefined>
-> = {
-  Article: ({ entityId, content }) =>
-    submitTextModeration({
-      entityType: 'Article',
-      entityId,
-      content,
-      labels: ['nsfw'],
-      priority: 'low',
-    }),
-  // Wildcard audits use a different label set + callback dispatch; the
-  // submit fn reads its own content from the DB, but we still let the
-  // bulk resolver run first so missing-content cleanup is unified above.
-  WildcardSetCategory: async ({ entityId }) => {
-    const id = await submitWildcardCategoryAudit(entityId);
-    return id ? { id } : undefined;
-  },
-};
 
 const TEXT_MODERATION_RETRY_DELAY_MINUTES = 60; // 1 hour for terminal failures
 const TEXT_MODERATION_PENDING_TIMEOUT_MINUTES = 30; // 30 min for stuck Pending rows
@@ -113,15 +81,15 @@ export const retryFailedTextModeration = createJob(
     const missingRowIds: number[] = [];
 
     for (const [entityType, items] of byType) {
-      const resubmit = resubmitters[entityType];
-      if (!resubmit) {
+      const adapter = getModerationAdapter(entityType);
+      if (!adapter) {
         // Unknown entityType — likely a row left over after an entity was
-        // removed from the resubmitters registry. Log loudly and skip.
+        // removed from the adapter registry. Log loudly and skip.
         errors += items.length;
         await logToAxiom({
           name: 'retry-failed-text-moderation',
           type: 'error',
-          message: `no resubmitter registered for entityType: ${entityType}`,
+          message: `no moderation adapter registered for entityType: ${entityType}`,
           entityType,
           count: items.length,
         });
@@ -130,10 +98,7 @@ export const retryFailedTextModeration = createJob(
 
       let contentMap: Map<number, string>;
       try {
-        contentMap = await resolveEntityContentBulk({
-          entityType,
-          entityIds: items.map((x) => x.entityId),
-        });
+        contentMap = await adapter.resolveContent(items.map((x) => x.entityId));
       } catch (error) {
         errors += items.length;
         await logToAxiom({
@@ -158,7 +123,7 @@ export const retryFailedTextModeration = createJob(
         }
 
         try {
-          const workflow = await resubmit({ entityId: item.entityId, content });
+          const workflow = await adapter.submit({ entityId: item.entityId, content });
           if (workflow?.id) retried++;
           else errors++;
         } catch (error) {

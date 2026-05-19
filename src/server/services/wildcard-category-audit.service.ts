@@ -3,6 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import {
   recordEntityModerationFailure,
   recordEntityModerationSuccess,
@@ -526,3 +527,40 @@ function serializeMetadata(meta: WildcardCategoryMetadata): Prisma.InputJsonValu
   if (meta.retryCount && meta.retryCount > 0) out.retryCount = meta.retryCount;
   return out as Prisma.InputJsonValue;
 }
+
+// WildcardSetCategory-side hooks for the EntityModeration pipeline. The
+// `applyResult` / `applyFailure` methods aren't called by the webhook yet
+// (the webhook still has a wildcard-specific dispatch branch via the
+// `?type=wildcardCategoryValue` query param). The unified dispatch in
+// follow-up cleanup #2 will route through this adapter; registering it
+// here now lets the registry be entity-agnostic.
+export const wildcardCategoryModerationAdapter: ModerationAdapter = {
+  resolveContent: async (ids) => {
+    // Wildcard category content = its `values` joined with newlines, the
+    // same shape the audit submit path sends to XGuard. Categories whose
+    // `values` is empty are excluded (the resolver returns nothing for
+    // them) so the retry job's missing-content path treats them as gone —
+    // empty categories get marked Clean directly at the audit-submit
+    // boundary and never reach the retry queue with content to resolve.
+    const rows = await dbRead.wildcardSetCategory.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, values: true },
+    });
+    return new Map(
+      rows.filter((r) => r.values && r.values.length > 0).map((r) => [r.id, r.values.join('\n')])
+    );
+  },
+
+  submit: async ({ entityId }) => {
+    const id = await submitWildcardCategoryAudit(entityId);
+    return id ? { id } : undefined;
+  },
+
+  applyResult: async ({ entityId, workflowId, output }) => {
+    await applyWildcardCategoryAuditSuccess({ categoryId: entityId, workflowId, output });
+  },
+
+  applyFailure: async ({ entityId, workflowId, status }) => {
+    await applyWildcardCategoryAuditFailure({ categoryId: entityId, workflowId, status });
+  },
+};

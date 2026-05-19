@@ -193,55 +193,63 @@ export async function recordEntityModerationFailure(
 }
 
 /**
- * Bulk-resolves the current text content for a set of entities of a given type.
- * Returns a Map keyed by entityId. Entities that no longer exist will be absent
- * from the map. Throws if the entityType is unknown.
+ * Per-entity moderation hooks. One adapter per `entityType` that flows through
+ * `EntityModeration`. Lets the webhook, the retry cron, and any future
+ * consumer route operations through a single registry instead of three
+ * parallel maps keyed by entityType.
+ *
+ * Adapters live in their owning service file (e.g. Article's lives next to
+ * the article service; Wildcard's lives in `wildcard-category-audit.service`)
+ * and get wired into a central registry in `moderation-adapters.ts`. This
+ * file deliberately does NOT import the adapter implementations — the
+ * registry file does, to keep the dependency direction one-way.
  */
-type BulkContentResolver = (ids: number[]) => Promise<Map<number, string>>;
+export type ModerationAdapter = {
+  /**
+   * Bulk-resolve the current text content for entities of this type. Used by
+   * the retry job to batch-fetch content across many entities in one DB
+   * round-trip. Entities whose underlying record is gone (or, for wildcards,
+   * empty) should be absent from the returned map — the retry job treats
+   * absence as "the entity went away, clean up the EM row."
+   */
+  resolveContent: (ids: number[]) => Promise<Map<number, string>>;
 
-const bulkContentResolvers: Record<string, BulkContentResolver> = {
-  Article: async (ids) => {
-    const rows = await dbRead.article.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, content: true },
-    });
-    return new Map(rows.map((r) => [r.id, r.content]));
-  },
-  // Wildcard category content = its `values` joined with newlines, the same
-  // shape the audit submit path sends to XGuard. Categories whose `values`
-  // is empty are excluded (the resolver returns nothing for them) so the
-  // retry job's missing-content path treats them as gone — empty categories
-  // get marked Clean directly at the audit-submit boundary, never reach the
-  // retry queue with content to resolve.
-  WildcardSetCategory: async (ids) => {
-    const rows = await dbRead.wildcardSetCategory.findMany({
-      where: { id: { in: ids } },
-      select: { id: true, values: true },
-    });
-    return new Map(
-      rows
-        .filter((r) => r.values && r.values.length > 0)
-        .map((r) => [r.id, r.values.join('\n')])
-    );
-  },
+  /**
+   * Submit (or resubmit) one entity for moderation. The EM upsert is owned
+   * by `createXGuardModerationRequest`, so adapters typically just call the
+   * appropriate wrapper helper (`submitTextModeration`,
+   * `submitWildcardCategoryAudit`, etc.). Returns the workflow info or null
+   * when the submit failed (in which case the helper has already written
+   * the EM row as Failed for the retry job to pick up).
+   */
+  submit: (args: {
+    entityId: number;
+    content: string;
+  }) => Promise<{ id?: string | null } | null | undefined>;
+
+  /**
+   * Optional: business logic to apply after a successful moderation
+   * callback has been recorded onto EM (e.g. publish/unpublish, notify,
+   * recompute downstream aggregates).
+   */
+  applyResult?: (args: {
+    entityId: number;
+    workflowId: string;
+    blocked: boolean;
+    triggeredLabels: string[];
+    output: XGuardModerationOutput;
+  }) => Promise<void>;
+
+  /**
+   * Optional: business logic to apply after a terminal-failure callback
+   * (Failed/Expired/Canceled) has been recorded onto EM.
+   */
+  applyFailure?: (args: {
+    entityId: number;
+    workflowId: string;
+    status: 'failed' | 'expired' | 'canceled';
+  }) => Promise<void>;
 };
-
-export function getSupportedModerationEntityTypes() {
-  return Object.keys(bulkContentResolvers);
-}
-
-export async function resolveEntityContentBulk({
-  entityType,
-  entityIds,
-}: {
-  entityType: string;
-  entityIds: number[];
-}): Promise<Map<number, string>> {
-  const resolver = bulkContentResolvers[entityType];
-  if (!resolver) throw new Error(`No content resolver for entityType: ${entityType}`);
-  if (!entityIds.length) return new Map();
-  return resolver(entityIds);
-}
 
 /**
  * Returns the entity's text moderation row joined with the max nsfwLevel
