@@ -53,6 +53,9 @@ export const prepaidTokenSchema = z.object({
   unlockedAt: z.string().optional(), // ISO date — when the token was actually unlocked
   claimedAt: z.string().optional(), // ISO date — when the user claimed it
   buzzTransactionId: z.string().optional(),
+  // Human-readable label for historical virtual tokens (e.g. "Annual · Aug 2025",
+  // "Membership · Sep 2025", or the original support-ticket description).
+  description: z.string().optional(),
 });
 export type PrepaidToken = z.infer<typeof prepaidTokenSchema>;
 

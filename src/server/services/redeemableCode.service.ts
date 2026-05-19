@@ -28,13 +28,7 @@ import {
 import { invalidateSubscriptionCaches, getPrepaidTokens } from '~/server/utils/subscription.utils';
 import type { GiftNotice } from '~/server/schema/redeemableCode.schema';
 import { dbRead } from '~/server/db/client';
-
-// Membership tier to Buzz conversion rates (per month)
-const MEMBERSHIP_BUZZ_VALUES = {
-  bronze: 10000,
-  silver: 25000,
-  gold: 50000,
-} as const;
+import { TIER_BUZZ_AMOUNTS } from '~/shared/utils/subscription-tokens';
 
 /**
  * Creates an array of PrepaidToken objects for a redeemed membership code.
@@ -80,12 +74,12 @@ function convertCodeValueToBuzz(
   }
 
   if (type === RedeemableCodeType.Membership && tierName) {
-    const tier = tierName.toLowerCase() as keyof typeof MEMBERSHIP_BUZZ_VALUES;
-    const buzzPerMonth = MEMBERSHIP_BUZZ_VALUES[tier];
+    const tier = tierName.toLowerCase() as keyof typeof TIER_BUZZ_AMOUNTS;
+    const buzzPerMonth = TIER_BUZZ_AMOUNTS[tier];
 
     if (!buzzPerMonth) {
       // Unknown tier, default to bronze
-      return unitValue * MEMBERSHIP_BUZZ_VALUES.bronze;
+      return unitValue * TIER_BUZZ_AMOUNTS.bronze;
     }
 
     return unitValue * buzzPerMonth;

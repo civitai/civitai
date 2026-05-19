@@ -1,10 +1,20 @@
 import type { PrepaidToken, SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
 
-// Buzz amounts per tier per month
-const TIER_BUZZ_AMOUNTS: Record<string, number> = {
+/** Paid membership tiers — the subset of ProductTier that has a monthly Buzz allocation. */
+export type MembershipTier = 'bronze' | 'silver' | 'gold';
+
+/** Buzz amounts delivered per month for each membership tier. Canonical source. */
+export const TIER_BUZZ_AMOUNTS: Record<MembershipTier, number> = {
   bronze: 10000,
   silver: 25000,
   gold: 50000,
+};
+
+/** Inverse of TIER_BUZZ_AMOUNTS: map a single-month Buzz amount back to its tier. */
+export const BUZZ_AMOUNT_TO_TIER: Record<number, MembershipTier> = {
+  10000: 'bronze',
+  25000: 'silver',
+  50000: 'gold',
 };
 
 /**

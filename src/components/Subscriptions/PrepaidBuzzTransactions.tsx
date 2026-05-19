@@ -20,6 +20,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { BUZZ_AMOUNT_TO_TIER } from '~/shared/utils/subscription-tokens';
 import styles from './PrepaidTimelineProgress.module.scss';
 
 const TIER_COLORS: Record<string, string> = {
@@ -28,14 +29,8 @@ const TIER_COLORS: Record<string, string> = {
   bronze: 'orange',
 };
 
-const BUZZ_TO_TIER: Record<number, string> = {
-  50000: 'gold',
-  25000: 'silver',
-  10000: 'bronze',
-};
-
 function inferTierFromAmount(amount: number): string {
-  return BUZZ_TO_TIER[amount] ?? 'unknown';
+  return BUZZ_AMOUNT_TO_TIER[amount] ?? 'unknown';
 }
 
 /** Mask a code like MB-ABCD-EFGH → MB-AB...EFGH */
@@ -277,7 +272,12 @@ function CodeGroupCard({ group }: { group: CodeGroup }) {
             <Text size="sm" fw={600} ff="monospace">
               {maskCode(code.code)}
             </Text>
-            <Badge size="sm" variant="light" color={TIER_COLORS[code.tier] ?? 'gray'} tt="capitalize">
+            <Badge
+              size="sm"
+              variant="light"
+              color={TIER_COLORS[code.tier] ?? 'gray'}
+              tt="capitalize"
+            >
               {code.tier}
             </Badge>
             <Text size="xs" c="dimmed">

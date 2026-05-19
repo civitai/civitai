@@ -21,15 +21,10 @@ import { IconCopy, IconCheck, IconGift, IconTicket } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
+import { TIER_BUZZ_AMOUNTS } from '~/shared/utils/subscription-tokens';
 
 const DEFAULT_PAGE_SIZE = 10;
 const COMPACT_PAGE_SIZE = 3;
-
-const MEMBERSHIP_BUZZ_PER_MONTH: Record<string, number> = {
-  bronze: 10000,
-  silver: 25000,
-  gold: 50000,
-};
 
 type PurchasedCode = {
   code: string;
@@ -85,13 +80,13 @@ function CopyableCode({ code }: { code: string }) {
         <Tooltip label={copied ? 'Copied!' : 'Click to copy'} position="top">
           <UnstyledButton
             onClick={copy}
-            className="flex items-center gap-1.5 rounded px-1.5 py-0.5 font-mono text-[10px] tracking-wider text-gray-500 dark:text-gray-400 bg-black/5 hover:bg-black/10 dark:bg-black/20 dark:hover:bg-black/30 transition-colors"
+            className="font-mono flex items-center gap-1.5 rounded bg-black/5 px-1.5 py-0.5 text-[10px] tracking-wider text-gray-500 transition-colors hover:bg-black/10 dark:bg-black/20 dark:text-gray-400 dark:hover:bg-black/30"
           >
             <span>{code}</span>
             {copied ? (
-              <IconCheck size={11} stroke={1.5} className="text-teal-400 shrink-0" />
+              <IconCheck size={11} stroke={1.5} className="shrink-0 text-teal-400" />
             ) : (
-              <IconCopy size={11} stroke={1.5} className="opacity-50 shrink-0" />
+              <IconCopy size={11} stroke={1.5} className="shrink-0 opacity-50" />
             )}
           </UnstyledButton>
         </Tooltip>
@@ -111,7 +106,7 @@ function CodeRow({ item, onInvalidate }: CodeRowProps) {
       p="sm"
       radius="sm"
       withBorder
-      className="bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10"
+      className="border border-gray-200 bg-gray-50 dark:border-white/10 dark:bg-white/[0.03]"
       style={{
         borderLeft: `3px solid ${accentColor}`,
       }}
@@ -169,7 +164,9 @@ function MembershipSummary({ codes }: { codes: PurchasedCode[] }) {
         groups.set(key, { tier, months: code.unitValue, count: 1 });
       }
       totalBuzzPayments += code.unitValue;
-      totalBuzz += code.unitValue * (MEMBERSHIP_BUZZ_PER_MONTH[tier] ?? 10000);
+      totalBuzz +=
+        code.unitValue *
+        (TIER_BUZZ_AMOUNTS[tier as keyof typeof TIER_BUZZ_AMOUNTS] ?? TIER_BUZZ_AMOUNTS.bronze);
     }
 
     return { groups: Array.from(groups.values()), totalBuzzPayments, totalBuzz };
@@ -182,7 +179,7 @@ function MembershipSummary({ codes }: { codes: PurchasedCode[] }) {
       p="sm"
       radius="sm"
       withBorder
-      className="bg-blue-50/50 dark:bg-blue-500/[0.06] border-blue-200 dark:border-blue-500/20"
+      className="border-blue-200 bg-blue-50/50 dark:border-blue-500/20 dark:bg-blue-500/[0.06]"
     >
       <Stack gap={4}>
         <Text size="xs" fw={600} c="blue">
@@ -261,7 +258,7 @@ export function PurchasedCodesCard({
                 p="sm"
                 radius="sm"
                 withBorder
-                className="bg-gray-50 dark:bg-white/[0.03] border border-gray-200 dark:border-white/10"
+                className="border border-gray-200 bg-gray-50 dark:border-white/10 dark:bg-white/[0.03]"
                 style={{ borderLeft: '3px solid var(--mantine-color-gray-4)' }}
               >
                 <Group justify="space-between" wrap="nowrap" align="center">

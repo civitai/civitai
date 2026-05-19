@@ -18,6 +18,11 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { CacheTTL } from '~/server/common/constants';
+import {
+  BUZZ_AMOUNT_TO_TIER,
+  TIER_BUZZ_AMOUNTS,
+  type MembershipTier,
+} from '~/shared/utils/subscription-tokens';
 
 // const baseUrl = getBaseUrl();
 // const log = createLogger('subscriptions', 'blue');
@@ -899,10 +904,51 @@ export const unlockPrepaidTokensForDate = async ({ date }: { date: Date }) => {
   };
 };
 
-const BUZZ_TO_TIER: Record<number, string> = {
-  50000: 'gold',
-  25000: 'silver',
-  10000: 'bronze',
+// Paddle-era annual subscription product codes that map to a known tier.
+// Used to infer tier from `annual-sub-payment-YYYY-MM:userId:productCode` rows.
+const ANNUAL_PRODUCT_CODE_TO_TIER: Record<string, MembershipTier> = {
+  pro_01j6d5x820zmcs1ycgwnwa9rk5: 'bronze',
+  pro_01j6d72j9eaf5sqsvha0xbafgv: 'silver',
+  pro_01j6d7mvn41ynah2qrbeg29fh5: 'gold',
+};
+
+// Legacy lookup window. annual-sub-payment txns only existed during the Paddle
+// migration era; reward-based comp tickets cluster here too. Bounding the date
+// range keeps the buzzTransactions scan tractable (~10s vs 2min for full 24mo).
+const LEGACY_QUERY_START_DATE = '2025-05-01';
+const LEGACY_QUERY_END_DATE = '2025-09-01';
+
+const isMembershipCompReward = (description: string | null | undefined): boolean => {
+  if (!description) return false;
+  const d = description.toLowerCase();
+  // Exclude reward types that occasionally mention "membership" but are not
+  // membership-buzz comp (challenge prizes, contests, generation credits, etc.)
+  if (d.includes('challenge')) return false;
+  if (d.includes('contest')) return false;
+  if (d.includes('generation reward')) return false;
+  if (d.includes('deleted account')) return false;
+  if (d.includes('onboarding')) return false;
+  if (d.includes('crypto')) return false;
+  // Every legitimate migration-era comp ticket includes "membership" in its
+  // description. Matching on "missing X buzz" alone produced false positives
+  // (e.g. "Missing Gift Card Buzz" — not membership-related).
+  if (d.includes('membership')) return true;
+  return false;
+};
+
+const inferTierFromAmount = (amount: number, fallbackTier?: MembershipTier): MembershipTier => {
+  const direct = BUZZ_AMOUNT_TO_TIER[amount];
+  if (direct) return direct;
+  // Multi-month comp — prefer the user's own annual tier if amount divides evenly
+  if (fallbackTier && amount % TIER_BUZZ_AMOUNTS[fallbackTier] === 0) {
+    return fallbackTier;
+  }
+  // Heuristic: smallest tier that divides evenly
+  if (amount % TIER_BUZZ_AMOUNTS.bronze === 0 && amount % TIER_BUZZ_AMOUNTS.silver !== 0)
+    return 'bronze';
+  if (amount % TIER_BUZZ_AMOUNTS.gold === 0) return 'gold';
+  if (amount % TIER_BUZZ_AMOUNTS.silver === 0) return 'silver';
+  return 'bronze';
 };
 
 export const getHistoricalPrepaidDeliveries = async ({
@@ -914,21 +960,23 @@ export const getHistoricalPrepaidDeliveries = async ({
 }): Promise<PrepaidToken[]> => {
   if (!clickhouse) return [];
 
-  // This ClickHouse query is slow (~45s) because the buzzTransactions table primary key
-  // starts with (date, fromAccountId, toAccountId) and filtering by toAccountId requires
-  // scanning ~170K granules across 24 months. The byToAccount projection exists but can't
-  // be used with SharedReplacingMergeTree. Cache aggressively since membership payments
-  // change at most once per month.
-  const cacheKey =
-    `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}` as RedisKeyTemplateCache;
-  try {
-    const cached = await redis.get(cacheKey);
-    if (cached) return JSON.parse(cached) as PrepaidToken[];
-  } catch {
-    // Redis down — fall through to ClickHouse
-  }
+  // Two ClickHouse queries run in parallel:
+  //   1. membership_prepaid_deliveries (materialized view) → civitai-membership rows. Fast (~0.5s).
+  //   2. buzzTransactions (raw, yellow only, narrow date window) → annual-sub-payment + reward
+  //      rows from the Paddle migration era. Slow (~10s) due to the table being sorted by
+  //      (date, fromAccountId, toAccountId); the date filter limits the scan. The byToAccount
+  //      projection exists but can't be used with SharedReplacingMergeTree.
+  // Cache aggressively since legacy txns are historical and don't change.
+  // const cacheKey =
+  //   `${REDIS_KEYS.SYSTEM.BLOCKLIST}:prepaid-deliveries:${userId}:${accountType}:v2` as RedisKeyTemplateCache;
+  // try {
+  //   const cached = await redis.get(cacheKey);
+  //   if (cached) return JSON.parse(cached) as PrepaidToken[];
+  // } catch {
+  //   // Redis down — fall through to ClickHouse
+  // }
 
-  const results = await clickhouse.$query<{
+  const membershipPromise = clickhouse.$query<{
     date: string;
     amount: number;
     externalTransactionId: string;
@@ -946,14 +994,67 @@ export const getHistoricalPrepaidDeliveries = async ({
     ORDER BY date DESC
   `;
 
-  const tokens = results.map((tx) => {
-    let tier = BUZZ_TO_TIER[tx.amount] ?? 'silver';
+  // Legacy annual-sub-payment + migration-era reward comps. Description-based
+  // filtering for rewards happens server-side (below) to keep the SQL fast.
+  const legacyPromise =
+    accountType === 'yellow'
+      ? clickhouse.$query<{
+          date: string;
+          type: string;
+          amount: number;
+          externalTransactionId: string;
+          description: string;
+        }>`
+          SELECT date, type, amount, externalTransactionId, description
+          FROM buzzTransactions
+          WHERE date >= '${LEGACY_QUERY_START_DATE}'
+            AND date < '${LEGACY_QUERY_END_DATE}'
+            AND toAccountId = ${userId}
+            AND toAccountType = '${accountType}'
+            AND (
+              (type = 'purchase' AND externalTransactionId LIKE 'annual-sub-payment%')
+              OR type = 'reward'
+            )
+          ORDER BY date DESC
+        `
+      : Promise.resolve([] as never[]);
+
+  const [membershipRows, legacyRows] = await Promise.all([membershipPromise, legacyPromise]);
+  console.log(legacyRows, 'asadasd');
+  // Pull the YYYY-MM period out of `civitai-membership:YYYY-MM:...` or
+  // `annual-sub-payment-YYYY-MM:...` so we can label the token by month.
+  const formatPeriod = (yyyyMm: string | undefined): string | undefined => {
+    if (!yyyyMm || !/^\d{4}-\d{2}$/.test(yyyyMm)) return undefined;
+    const [year, month] = yyyyMm.split('-');
+    const monthNames = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    const m = monthNames[parseInt(month, 10) - 1];
+    return m ? `${m} ${year}` : undefined;
+  };
+
+  const tokens: PrepaidToken[] = membershipRows.map((tx) => {
+    let tier: MembershipTier | 'silver' = BUZZ_AMOUNT_TO_TIER[tx.amount] ?? 'silver';
     try {
       const parsed = JSON.parse(tx.details);
       if (parsed?.tier) tier = parsed.tier;
     } catch {
       // details may not be valid JSON
     }
+
+    // externalTransactionId: `civitai-membership:YYYY-MM:userId:tier[:variant]`
+    const periodLabel = formatPeriod(tx.externalTransactionId.split(':')[1]);
 
     return {
       id: `history_${tx.externalTransactionId}`,
@@ -964,15 +1065,84 @@ export const getHistoricalPrepaidDeliveries = async ({
       // so parsing doesn't skew by the server's local timezone.
       claimedAt: new Date(`${tx.date.replace(' ', 'T')}Z`).toISOString(),
       buzzTransactionId: tx.externalTransactionId,
+      description: periodLabel ? `Membership · ${periodLabel}` : 'Membership',
     };
   });
 
-  // Cache for 1 hour — membership payments happen at most once per month
-  try {
-    await redis.set(cacheKey, JSON.stringify(tokens), { EX: CacheTTL.hour });
-  } catch {
-    // Redis down — result still returned
+  // Derive user's annual tier from any annual-sub-payment row so multi-month
+  // reward comps (e.g. "Missing May, June, July Membership Buzz" = 30k bronze)
+  // get the correct tier when amount alone is ambiguous.
+  let userAnnualTier: MembershipTier | undefined;
+  for (const tx of legacyRows) {
+    if (tx.externalTransactionId.startsWith('annual-sub-payment-')) {
+      const parts = tx.externalTransactionId.split(':');
+      const productCode = parts[2];
+      if (productCode && ANNUAL_PRODUCT_CODE_TO_TIER[productCode]) {
+        userAnnualTier = ANNUAL_PRODUCT_CODE_TO_TIER[productCode];
+        break;
+      }
+    }
   }
+
+  legacyRows.forEach((tx, idx) => {
+    const claimedAt = new Date(`${tx.date.replace(' ', 'T')}Z`).toISOString();
+
+    if (tx.type === 'purchase' && tx.externalTransactionId.startsWith('annual-sub-payment-')) {
+      const productCode = tx.externalTransactionId.split(':')[2];
+      const tier: MembershipTier =
+        (productCode && ANNUAL_PRODUCT_CODE_TO_TIER[productCode]) ||
+        BUZZ_AMOUNT_TO_TIER[tx.amount] ||
+        'silver';
+      // externalTransactionId: `annual-sub-payment-YYYY-MM:userId:productCode`
+      const yyyyMm = tx.externalTransactionId.split(':')[0]?.replace('annual-sub-payment-', '');
+      const periodLabel = formatPeriod(yyyyMm);
+      tokens.push({
+        id: `history_${tx.externalTransactionId}`,
+        tier: tier as PrepaidToken['tier'],
+        status: 'claimed',
+        buzzAmount: tx.amount,
+        claimedAt,
+        buzzTransactionId: tx.externalTransactionId,
+        description: periodLabel ? `Annual · ${periodLabel}` : 'Annual subscription',
+      });
+      return;
+    }
+
+    if (tx.type === 'reward' && tx.amount > 0 && isMembershipCompReward(tx.description)) {
+      const tier = inferTierFromAmount(tx.amount, userAnnualTier);
+      const monthly = TIER_BUZZ_AMOUNTS[tier];
+      // Multi-month comps (e.g. "Missing May, June, July Membership Buzz" = 30k
+      // bronze) should surface as one token per month rather than a single
+      // odd-amount token. Split when the amount divides evenly into the
+      // inferred tier; otherwise keep as one token at the raw amount.
+      const months = monthly && tx.amount % monthly === 0 ? tx.amount / monthly : 1;
+      // Reward externalTransactionIds are often empty/non-unique; synthesize a
+      // stable virtual id so React keys don't collide.
+      const virtualTxId = tx.externalTransactionId || `reward:${tx.date}:${tx.amount}:${idx}`;
+      const baseId = tx.date.replace(/\s/g, '_');
+      const baseDescription = tx.description || 'Membership comp';
+      for (let i = 0; i < months; i++) {
+        tokens.push({
+          id: `history_reward_${baseId}_${tx.amount}_${idx}_${i}`,
+          tier,
+          status: 'claimed',
+          buzzAmount: months > 1 ? monthly : tx.amount,
+          claimedAt,
+          // Only mark the first split token with the buzzTransactionId so
+          // metadata-side dedup still works without dropping the siblings.
+          buzzTransactionId: i === 0 ? virtualTxId : undefined,
+          description: months > 1 ? `${baseDescription} (${i + 1}/${months})` : baseDescription,
+        });
+      }
+    }
+  });
+
+  // Cache for 1 hour — historical/migration txns don't change
+  // try {
+  //   await redis.set(cacheKey, JSON.stringify(tokens), { EX: CacheTTL.hour });
+  // } catch {
+  //   // Redis down — result still returned
+  // }
 
   return tokens;
 };
