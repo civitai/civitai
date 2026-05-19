@@ -23,11 +23,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // User must be authenticated (via session cookie)
+    // User must be authenticated (via session cookie).
+    // Use 303 so a POST from the consent form is downgraded to a GET to /login —
+    // Next.js's res.redirect() defaults to 307 which would preserve the POST method.
     const session = await getServerAuthSession({ req, res });
     if (!session?.user) {
       const returnUrl = encodeURIComponent(req.url ?? '/');
-      return res.redirect(`/login?returnUrl=${returnUrl}`);
+      // Don't `return res.redirect(...)` — res.redirect returns the res
+      // object, and a non-undefined handler return value triggers Next.js's
+      // "API handler should not return a value, received object" warning.
+      res.redirect(303, `/login?returnUrl=${returnUrl}`);
+      return;
     }
 
     // Rate limit by user ID
@@ -141,12 +147,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
     } else if (!existingConsent || existingConsent.scope !== requestedScope) {
-      // No prior consent (or scope changed) — redirect to consent page
+      // No prior consent (or scope changed) — redirect to consent page.
+      // Use 303 so the browser always follows with GET, matching the consent
+      // page's expectation of query-string params (regardless of how we arrived).
       const consentUrl = new URL('/login/oauth/authorize', process.env.NEXTAUTH_URL);
       for (const [key, value] of Object.entries(params)) {
         if (typeof value === 'string') consentUrl.searchParams.set(key, value);
       }
-      return res.redirect(consentUrl.toString());
+      res.redirect(303, consentUrl.toString());
+      return;
     }
 
     // Issue authorization code
@@ -176,11 +185,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ip,
     });
 
-    // Use validated redirect_uri (from our check, not raw params)
+    // Use validated redirect_uri (from our check, not raw params).
+    // RFC 6749 §4.1.2 specifies a GET redirect back to the client. Next.js's
+    // res.redirect() defaults to 307, which preserves the POST method and 405s
+    // on standard OAuth callbacks that only define GET handlers — so force 303
+    // to coerce the browser to GET the redirect_uri.
     const redirectUrl = new URL(redirectUri);
     redirectUrl.searchParams.set('code', code.authorizationCode);
     redirectUrl.searchParams.set('state', params.state as string);
-    return res.redirect(redirectUrl.toString());
+    res.redirect(303, redirectUrl.toString());
+    return;
   } catch (err: any) {
     const status = err.statusCode || err.code || 500;
     return res.status(typeof status === 'number' ? status : 500).json({

@@ -9,7 +9,8 @@ export type OAuthEventType =
   | 'authorization.denied'
   | 'token.issued'
   | 'token.refreshed'
-  | 'token.revoked';
+  | 'token.revoked'
+  | 'origin.rejected';
 
 interface OAuthAuditEvent {
   type: OAuthEventType;
