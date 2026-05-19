@@ -44,8 +44,8 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { fetchDocumentsAbortable, metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
-import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
 import { leakingContentCounter } from '~/server/prom/client';
+import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import {
   getBaseModelFromResources,
   getUserFollows,
@@ -1643,7 +1643,6 @@ export const getAllImages = async (
       )
   `;
 
-  const engines = Object.keys(videoGenerationConfig2);
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const query = Prisma.sql`
     ${queryWith}
@@ -1671,16 +1670,7 @@ export const getAllImages = async (
           ELSE FALSE
         END
       ) AS "hasPositivePrompt",
-      (
-        CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
-            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
-              ${Prisma.join(engines)}
-            ]::text[])
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) as "onSite",
+      ${imageOnSiteSql()} as "onSite",
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
       GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
@@ -4177,7 +4167,6 @@ export const getImage = async ({
     }
   }
 
-  const engines = Object.keys(videoGenerationConfig2);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
       i.id,
@@ -4216,16 +4205,7 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) AS "hasPositivePrompt",
-      (
-        CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
-            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
-              ${Prisma.join(engines)}
-            ]::text[])
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) as "onSite",
+      ${imageOnSiteSql()} as "onSite",
       i."meta"->'extra'->'remixOfId' as "remixOfId",
       u.id as "userId",
       u.username,
@@ -4437,7 +4417,6 @@ export const getImagesForModelVersion = async ({
     );
   }
 
-  const engines = Object.keys(videoGenerationConfig2);
   const query = Prisma.sql`
      WITH targets AS (
       SELECT
@@ -4493,16 +4472,7 @@ export const getImagesForModelVersion = async ({
           ELSE FALSE
         END
       ) AS "hasPositivePrompt",
-      (
-        CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
-            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
-              ${Prisma.join(engines)}
-            ]::text[])
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) as "onSite",
+      ${imageOnSiteSql()} as "onSite",
       i."meta"->'extra'->'remixOfId' as "remixOfId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id
@@ -4714,7 +4684,6 @@ export const getImagesForPosts = async ({
     }
   }
 
-  const engines = Object.keys(videoGenerationConfig2);
   const images = await dbRead.$queryRaw<
     {
       id: number;
@@ -4764,16 +4733,7 @@ export const getImagesForPosts = async ({
           ELSE FALSE
         END
       ) AS "hasPositivePrompt",
-      (
-        CASE
-          WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version') AND NOT (i.meta ? 'Model'))
-            OR i.meta->>'engine' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
-                ${Prisma.join(engines)}
-              ]::text[])
-          THEN TRUE
-          ELSE FALSE
-        END
-      ) as "onSite",
+      ${imageOnSiteSql()} as "onSite",
       i.metadata->>'remixOfId' as "remixOfId",
       i.minor,
       i.poi
@@ -6745,13 +6705,9 @@ export async function getImageGenerationData({ id }: { id: number }) {
   let process: string | undefined | null = undefined;
   let hasControlNet = false;
   if (meta) {
-    if ('civitaiResources' in meta && !('Version' in meta) && !('Model' in meta)) onSite = true;
-    else if ('engine' in meta && meta.engine === 'openai') onSite = true;
-    else if ('engine' in meta) {
+    onSite = isImageMetaOnSite(meta);
+    if ('engine' in meta) {
       process = meta.process ?? meta.type;
-      if (process) {
-        onSite = true;
-      }
     }
 
     if (meta.comfy) {
