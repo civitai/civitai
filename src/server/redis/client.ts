@@ -704,6 +704,7 @@ export const REDIS_SYS_KEYS = {
     DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
     FEATURE_STATUS: 'system:feature-status',
     BROWSING_SETTING_ADDONS: 'system:browsing-setting-addons',
+    CREATION_BLOCKED_TAGS: 'system:creation-blocked-tags',
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
     SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
     /*
