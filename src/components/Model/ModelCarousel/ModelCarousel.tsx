@@ -2,6 +2,7 @@ import { Card, Center, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
@@ -27,10 +28,15 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
 import clsx from 'clsx';
 
 export function ModelCarousel(props: Props) {
+  const currentUser = useCurrentUser();
+  const forceMinorLevel = props.minor && !currentUser?.isModerator;
+
   return (
-    <BrowsingLevelProvider forcedBrowsingLevel={props.minor ? publicBrowsingLevelsFlag : undefined}>
+    <BrowsingLevelProvider
+      forcedBrowsingLevel={forceMinorLevel ? publicBrowsingLevelsFlag : undefined}
+    >
       <BrowsingSettingsAddonsProvider>
-        {props.minor ? (
+        {forceMinorLevel ? (
           <HiddenPreferencesProvider>
             <ModelCarouselContent {...props} />
           </HiddenPreferencesProvider>
