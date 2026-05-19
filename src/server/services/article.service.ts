@@ -74,7 +74,6 @@ import { getContentMedia } from '~/server/services/article-content-cleanup.servi
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { hashContent } from '~/server/services/entity-moderation.service';
 
 type ArticleRaw = {
   id: number;
@@ -1173,12 +1172,13 @@ export const upsertArticle = async ({
       }
     }
 
-    // Submit for text moderation if content or title changed (non-blocking).
-    // If the article's text was emptied out entirely, drop any stale
-    // EntityModeration row — otherwise the retry cron would keep re-submitting
-    // and recomputeArticleIngestion could still read the old blocked/error
-    // state (the hasText guard inside recompute handles the latter, but we
-    // don't want a ghost row in either case).
+    // Submit for text moderation (non-blocking). `submitTextModeration` →
+    // `createXGuardModerationRequest` handles contentHash dedup internally,
+    // so a save that doesn't change `title` or `content` is a no-op
+    // orchestrator-wise. If the article's text was emptied out entirely,
+    // drop any stale EntityModeration row — otherwise the retry cron would
+    // keep re-submitting and `recomputeArticleIngestion` could still read
+    // the old blocked/error state.
     {
       const currentTitle = data.title ?? article.title ?? '';
       const currentContent = data.content ?? article.content ?? '';
@@ -1192,29 +1192,21 @@ export const upsertArticle = async ({
         const textForModeration = [currentTitle, removeTags(currentContent)]
           .filter(Boolean)
           .join(' ');
-        const newHash = hashContent(textForModeration);
 
-        const existingModeration = await dbRead.entityModeration.findUnique({
-          where: { entityType_entityId: { entityType: 'Article', entityId: id } },
-          select: { contentHash: true },
+        submitTextModeration({
+          entityType: 'Article',
+          entityId: id,
+          content: textForModeration,
+          labels: ['nsfw'],
+          recordForReview: true,
+        }).catch((e) => {
+          logToAxiom({
+            type: 'error',
+            name: 'article-text-moderation',
+            message: (e as Error).message,
+            articleId: id,
+          }).catch();
         });
-
-        if (!existingModeration || existingModeration.contentHash !== newHash) {
-          submitTextModeration({
-            entityType: 'Article',
-            entityId: id,
-            content: textForModeration,
-            labels: ['nsfw'],
-            recordForReview: true,
-          }).catch((e) => {
-            logToAxiom({
-              type: 'error',
-              name: 'article-text-moderation',
-              message: (e as Error).message,
-              articleId: id,
-            }).catch();
-          });
-        }
       }
     }
 
@@ -2200,12 +2192,11 @@ export async function rescanArticle({
     );
   }
 
-  // --- Clear content hash and re-submit text moderation ---
-  await dbWrite.entityModeration.updateMany({
-    where: { entityType: 'Article', entityId: id },
-    data: { contentHash: null },
-  });
-
+  // --- Force a fresh text moderation scan ---
+  // `forceRescan: true` bypasses the contentHash dedup in
+  // `createXGuardModerationRequest` so a moderator-initiated rescan
+  // produces a new orchestrator workflow even when the article's text
+  // is unchanged.
   if (article.content) {
     const textForModeration = [article.title, removeTags(article.content)]
       .filter(Boolean)
@@ -2217,6 +2208,7 @@ export async function rescanArticle({
       content: textForModeration,
       labels: ['nsfw'],
       recordForReview: true,
+      forceRescan: true,
     }).catch((e) => {
       logToAxiom({
         type: 'error',

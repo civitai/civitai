@@ -1680,6 +1680,7 @@ export interface OauthClient {
   description: string;
   logoUrl: string | null;
   redirectUris: string[];
+  allowedOrigins: string[];
   grants: string[];
   allowedScopes: number;
   isConfidential: boolean;

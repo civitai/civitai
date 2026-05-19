@@ -1,6 +1,5 @@
 import type { XGuardModerationOutput } from '@civitai/client';
 import type { Prisma } from '@prisma/client';
-import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
@@ -16,9 +15,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 
 // Entity type stamped onto every wildcard-category audit workflow's metadata
-// via `createXGuardModerationRequest`. The webhook reads this (plus the
-// `?type=wildcardCategoryValue` query param on the callback URL) to dispatch
-// to the wildcard handler instead of the default entity-moderation flow.
+// via `createXGuardModerationRequest`. The webhook reads this off the workflow
+// metadata to dispatch through the moderation-adapter registry.
 const WILDCARD_CATEGORY_ENTITY_TYPE = 'WildcardSetCategory';
 
 // XGuard labels that flip a category to Dirty when triggered. These are the
@@ -33,6 +31,7 @@ const WILDCARD_AUDIT_FAIL_LABELS = [
   'scat',
   'menstruation',
   'bestiality',
+  'incest',
 ] as const;
 const FAIL_LABEL_SET = new Set<string>(WILDCARD_AUDIT_FAIL_LABELS);
 
@@ -43,12 +42,8 @@ const FAIL_LABEL_SET = new Set<string>(WILDCARD_AUDIT_FAIL_LABELS);
 // true; nothing finer is recorded. If/when XGuard's text classifiers can
 // reliably bucket severity, we can switch to a bitwise nsfwLevel column —
 // for now boolean is the only honest representation.
-const WILDCARD_AUDIT_LEVEL_LABELS = ['nsfw', 'young', 'sexual'] as const;
+const WILDCARD_AUDIT_LEVEL_LABELS = ['nsfw', 'young', 'suggestive', 'explicit'] as const;
 const LEVEL_LABEL_SET = new Set<string>(WILDCARD_AUDIT_LEVEL_LABELS);
-
-// Discriminator on the shared text-moderation callback URL so this subsystem's
-// results don't bleed into the entity-moderation flow used by Articles.
-const CALLBACK_TYPE = 'wildcardCategoryValue';
 
 // Open-ended container persisted on `WildcardSetCategory.metadata`. Treat
 // unknown fields as additive — readers should default missing fields rather
@@ -71,26 +66,12 @@ export type WildcardCategoryMetadata = {
   retryCount?: number;
 };
 
-function buildCallbackUrl(): string {
-  const base =
-    env.TEXT_MODERATION_CALLBACK ??
-    `${env.NEXTAUTH_URL}/api/webhooks/text-moderation-result?token=${env.WEBHOOK_TOKEN}`;
-  // URL-aware concat: `TEXT_MODERATION_CALLBACK` may already include `?token`,
-  // so we let URL.searchParams handle the `?` vs `&` choice instead of
-  // string-templating it.
-  const url = new URL(base);
-  url.searchParams.set('type', CALLBACK_TYPE);
-  return url.toString();
-}
-
 /**
  * Submit one wildcard category for XGuard audit via the shared
  * `createXGuardModerationRequest` helper. The category's `values` are joined
  * with newlines into the text payload; `entityType` / `entityId` flow through
- * the helper onto workflow metadata so the webhook can look the category up.
- * The callback URL carries `?type=wildcardCategoryValue` so the webhook
- * dispatches to the wildcard handler instead of the default entity-moderation
- * flow.
+ * the helper onto workflow metadata so the webhook can look the category up
+ * and dispatch through the moderation-adapter registry.
  *
  * EntityModeration is the source of truth for moderation state. The submit's
  * EM upsert (Pending on success, Failed on submit failure) is owned by
@@ -128,7 +109,6 @@ export async function submitWildcardCategoryAudit(categoryId: number): Promise<s
     content: text,
     labels: [...WILDCARD_AUDIT_FAIL_LABELS, ...WILDCARD_AUDIT_LEVEL_LABELS],
     priority: 'low',
-    callbackUrl: buildCallbackUrl(),
   });
 
   if (!workflow?.id) {
@@ -323,12 +303,18 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
   const triggeredFailLabels = triggeredFailResults.map((r) => r.label);
 
   // Synthetic CSAM: XGuard's text classifiers don't ship a dedicated `csam`
-  // label, but `young` + `sexual` co-triggered is the policy equivalent.
-  // Treat that combination as a hard fail (Dirty), same as an explicit CSAM
-  // match. Either label alone just contributes to the `nsfw` flag below.
+  // label, but `young` co-triggered with any sexual signal is the policy
+  // equivalent. Treat that combination as a hard fail (Dirty), same as an
+  // explicit CSAM match. Either side alone just contributes to the `nsfw`
+  // flag below. Sexual signal = suggestive OR explicit (suggestive is the
+  // broader label; explicit is included defensively in case the model fires
+  // explicit without firing suggestive).
   const youngResult = results.find((r) => r.label === 'young' && isTriggered(r));
-  const sexualResult = results.find((r) => r.label === 'sexual' && isTriggered(r));
-  const syntheticCsamResults = youngResult && sexualResult ? [youngResult, sexualResult] : [];
+  const suggestiveResult = results.find((r) => r.label === 'suggestive' && isTriggered(r));
+  const explicitResult = results.find((r) => r.label === 'explicit' && isTriggered(r));
+  const sexualSignalResult = suggestiveResult ?? explicitResult;
+  const syntheticCsamResults =
+    youngResult && sexualSignalResult ? [youngResult, sexualSignalResult] : [];
   const syntheticCsam = syntheticCsamResults.length > 0;
 
   const blocked = triggeredFailResults.length > 0 || syntheticCsam;
@@ -339,10 +325,11 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
   const nsfw = results.some((r) => LEVEL_LABEL_SET.has(r.label) && isTriggered(r));
 
   // Labels surfaced to moderators on Dirty rows. Synthetic CSAM gets its own
-  // pseudo-label so the audit note reads "Blocked: csam (young+sexual)"
-  // instead of looking empty when no real fail label fired on its own.
+  // pseudo-label so the audit note reads "Blocked: csam (young+suggestive)" or
+  // "csam (young+explicit)" instead of looking empty when no real fail label
+  // fired on its own.
   const blockingLabels = syntheticCsam
-    ? [...triggeredFailLabels, 'csam (young+sexual)']
+    ? [...triggeredFailLabels, `csam (young+${sexualSignalResult!.label})`]
     : triggeredFailLabels;
 
   // Terms that any blocking result matched — fail labels plus the

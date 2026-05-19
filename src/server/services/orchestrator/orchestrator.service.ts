@@ -7,7 +7,7 @@ import type {
 import { submitWorkflow } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
@@ -213,6 +213,14 @@ type XGuardModerationArgs = {
    * doesn't need any other signal.
    */
   recordForReview?: boolean;
+  /**
+   * Skip the contentHash dedup check and always submit a fresh workflow.
+   * Default false. Pass `true` for moderator-initiated rescans where the
+   * previous verdict shouldn't be reused even though the content hasn't
+   * changed (e.g. `rescanArticle`, manual rechecks after policy updates).
+   * Only meaningful when `entityType` + `entityId` are set.
+   */
+  forceRescan?: boolean;
 } & (
   | { mode: 'text'; content: string }
   | {
@@ -253,6 +261,38 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
   if (entityId !== undefined) metadata.entityId = entityId;
   if (userId !== undefined) metadata.userId = userId;
 
+  // contentHash dedup: skip the orchestrator round-trip when this entity
+  // already has a Succeeded EM row for the same content. Authors save
+  // articles multiple times per lifecycle (draft, edits, publish, metadata
+  // tweaks) — without this guard, every save burns an audit. Wildcards get
+  // the same treatment for free.
+  //
+  // Guards:
+  //   - `existing.status === Succeeded`: don't skip on Pending (might be
+  //     stuck in flight) or terminal failures (we want to retry those).
+  //   - `existing.contentHash === currentHash`: content actually unchanged.
+  //   - `existing.workflowId`: backfilled rows have null workflowIds and we
+  //     can't return a meaningful id from those; treat as cache miss.
+  //   - `!forceRescan`: caller-side escape hatch for moderator-initiated
+  //     rechecks (`rescanArticle`, policy-version-bump rescans, etc.).
+  const contentHash = args.mode === 'text' ? hashContent(args.content) : undefined;
+  if (!args.forceRescan && entityType && entityId !== undefined && contentHash) {
+    const existing = await dbRead.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType, entityId } },
+      select: { status: true, contentHash: true, workflowId: true },
+    });
+    if (
+      existing?.status === EntityModerationStatus.Succeeded &&
+      existing.contentHash === contentHash &&
+      existing.workflowId
+    ) {
+      // Return a stand-in shaped like `submitWorkflow`'s data so callers
+      // (which only read `.id`) see no difference between a fresh submission
+      // and a cache hit.
+      return { id: existing.workflowId } as Awaited<ReturnType<typeof submitWorkflow>>['data'];
+    }
+  }
+
   // Pass `labels` through as a filter so the orchestrator only evaluates the
   // ones we ask about. Policies + thresholds + actions are owned orchestrator-
   // side; per-label policyHash comes back on each result and is what we record
@@ -274,40 +314,59 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           storeFullResponse: true,
         };
 
-  const { data, error, response } = await submitWorkflow({
-    client: internalOrchestratorClient,
-    query: wait ? { wait } : undefined,
-    body: {
-      metadata,
-      currencies: [],
-      steps: [
-        {
-          $type: 'xGuardModeration',
-          name: args.mode === 'text' ? 'textModeration' : 'promptModeration',
-          metadata,
-          priority,
-          input,
-        } as XGuardModerationStepTemplate,
-      ],
-      callbacks: effectiveCallbackUrl
-        ? [
-            {
-              url: effectiveCallbackUrl,
-              type: [
-                'workflow:succeeded',
-                'workflow:failed',
-                'workflow:expired',
-                'workflow:canceled',
-              ],
-            },
-          ]
-        : undefined,
-    },
-  });
+  // The orchestrator submit can either return `{ data: null, error }` for a
+  // controlled failure (4xx/5xx surfaced through the client) or throw for an
+  // uncontrolled one (network timeout, DNS, etc.). Both are equivalent from
+  // our perspective — "no workflow created" — so we normalize via try/catch
+  // and let the unified branch below write the terminal Failed state. If we
+  // let the throw escape, the EM upsert never runs and the row stays in
+  // whatever pre-submit state it had (Pending+NULL in the retry-cron path),
+  // which leaks rows that look like stuck in-flight workflows.
+  let data: Awaited<ReturnType<typeof submitWorkflow>>['data'] = undefined;
+  let response: Awaited<ReturnType<typeof submitWorkflow>>['response'] | undefined;
+  let error: unknown = null;
+  try {
+    const result = await submitWorkflow({
+      client: internalOrchestratorClient,
+      query: wait ? { wait } : undefined,
+      body: {
+        metadata,
+        currencies: [],
+        steps: [
+          {
+            $type: 'xGuardModeration',
+            name: args.mode === 'text' ? 'textModeration' : 'promptModeration',
+            metadata,
+            priority,
+            input,
+          } as XGuardModerationStepTemplate,
+        ],
+        callbacks: effectiveCallbackUrl
+          ? [
+              {
+                url: effectiveCallbackUrl,
+                type: [
+                  'workflow:succeeded',
+                  'workflow:failed',
+                  'workflow:expired',
+                  'workflow:canceled',
+                ],
+              },
+            ]
+          : undefined,
+      },
+    });
+    data = result.data;
+    response = result.response;
+    error = result.error;
+  } catch (e) {
+    error = e;
+  }
 
   const serverTiming = response?.headers?.get('Server-Timing');
+  const submitSucceeded = !!data?.id;
 
-  if (!data) {
+  if (!submitSucceeded) {
     logToAxiom({
       type: 'error',
       name: 'xguard-moderation',
@@ -316,50 +375,58 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
       entityId,
       responseStatus: response?.status,
       serverTiming,
-      error,
+      error: error instanceof Error ? error.message : error,
     });
   }
 
-  // Centralized EntityModeration bookkeeping. Callers used to do their own
-  // upsert dance around this function, which left a window where the EM row
-  // sat at Pending+NULL workflowId while a previous workflow could still call
-  // back — the callback would update WSC/Article but no-op the EM mirror. By
-  // owning the upsert here, the EM row is never Pending+NULL: success path
-  // writes the new workflowId in one statement; failure path writes a
-  // terminal Failed status so the retry job can act on it.
+  // Centralized EntityModeration bookkeeping. The success path writes
+  // Pending with the new workflowId in one statement; the failure path
+  // writes a terminal Failed status with retryCount incremented so the
+  // existing `retry-failed-text-moderation` cron picks it up with backoff
+  // and respects the 9-retry cap.
   //
   // Gated on (entityType, entityId): ad-hoc scans (e.g. the prompt shadow
   // scan from orchestration-new.service.ts which passes entityType='prompt'
   // with no entityId) get no EM row, matching prior behavior.
+  // On submit success, write Pending with the new workflow id and reset
+  // the result fields (preparing for the new workflow's callback). On
+  // submit failure, write Failed with retryCount incremented so the retry
+  // cron's terminal-failure branch picks it up with backoff and respects
+  // the 9-retry cap. The result fields are left alone in the failure
+  // branch — preserving any prior verdict until the rescan lands.
   if (entityType && entityId !== undefined) {
-    const contentHash = args.mode === 'text' ? hashContent(args.content) : undefined;
+    const workflowId = submitSucceeded ? data?.id ?? null : null;
+    const status = submitSucceeded ? EntityModerationStatus.Pending : EntityModerationStatus.Failed;
     await dbWrite.entityModeration
       .upsert({
         where: { entityType_entityId: { entityType, entityId } },
         create: {
           entityType,
           entityId,
-          workflowId: data?.id ?? null,
+          workflowId,
           contentHash,
-          status: EntityModerationStatus.Pending,
+          status,
+          ...(submitSucceeded ? {} : { retryCount: 1 }),
         },
         update: {
-          workflowId: data?.id ?? null,
+          workflowId,
           contentHash,
-          status: EntityModerationStatus.Pending,
-          blocked: null,
-          triggeredLabels: [],
-          result: Prisma.JsonNull,
+          status,
+          ...(submitSucceeded
+            ? { blocked: null, triggeredLabels: [], result: Prisma.JsonNull }
+            : { retryCount: { increment: 1 } }),
         },
       })
       .catch((e) =>
         logToAxiom({
           type: 'error',
           name: 'xguard-moderation',
-          message: 'failed to upsert EntityModeration on submit success',
+          message: `failed to upsert EntityModeration on submit ${
+            submitSucceeded ? 'success' : 'failure'
+          }`,
           entityType,
           entityId,
-          workflowId: data?.id ?? null,
+          workflowId,
           error: e instanceof Error ? e.message : String(e),
         }).catch(() => undefined)
       );

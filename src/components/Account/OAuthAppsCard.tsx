@@ -218,15 +218,64 @@ function SecretDisplay({
   );
 }
 
+// Origin entries are exact-matched against the browser's `Origin` header, so
+// they must be a bare scheme://host[:port]. We pre-validate on the client to
+// give a fast inline error; the server enforces the same rule.
+function parseOriginList(
+  text: string
+): { value: string[]; error: string | null } {
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const cleaned: string[] = [];
+  for (const line of lines) {
+    try {
+      const url = new URL(line);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        return { value: [], error: `Origin must use http(s): ${line}` };
+      }
+      if (line !== url.origin) {
+        return {
+          value: [],
+          error: `Origin must be scheme://host[:port] with no path: ${line}`,
+        };
+      }
+      cleaned.push(url.origin);
+    } catch {
+      return { value: [], error: `Invalid origin: ${line}` };
+    }
+  }
+  return { value: cleaned, error: null };
+}
+
+function deriveOriginsFromRedirectUrisClient(uris: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const uri of uris) {
+    try {
+      const origin = new URL(uri).origin;
+      if (origin === 'null' || seen.has(origin)) continue;
+      seen.add(origin);
+      out.push(origin);
+    } catch {
+      // ignore — URI was already validated
+    }
+  }
+  return out;
+}
+
 function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () => void }) {
   const utils = trpc.useUtils();
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [redirectUrisText, setRedirectUrisText] = useState('');
+  const [allowedOriginsText, setAllowedOriginsText] = useState('');
   const [isConfidential, setIsConfidential] = useState(true);
   const [tokenScope, setTokenScope] = useState(TokenScope.Full);
   const [result, setResult] = useState<{ clientId: string; clientSecret: string } | null>(null);
   const [uriError, setUriError] = useState<string | null>(null);
+  const [originError, setOriginError] = useState<string | null>(null);
 
   const createMutation = trpc.oauthClient.create.useMutation({
     onSuccess(data) {
@@ -248,10 +297,12 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
     setName('');
     setDescription('');
     setRedirectUrisText('');
+    setAllowedOriginsText('');
     setIsConfidential(true);
     setTokenScope(TokenScope.Full);
     setResult(null);
     setUriError(null);
+    setOriginError(null);
   };
 
   const handleClose = () => {
@@ -285,10 +336,24 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
     if (!uris) return;
     if (!name.trim()) return;
 
+    // Public clients require origins. If the user left the field blank, the
+    // server will backfill from redirectUris — mirror that here so the call
+    // site is the same in both branches.
+    const originsParsed = parseOriginList(allowedOriginsText);
+    if (originsParsed.error) {
+      setOriginError(originsParsed.error);
+      return;
+    }
+    const allowedOrigins =
+      originsParsed.value.length > 0
+        ? originsParsed.value
+        : deriveOriginsFromRedirectUrisClient(uris);
+
     createMutation.mutate({
       name: name.trim(),
       description: description.trim(),
       redirectUris: uris,
+      allowedOrigins,
       isConfidential,
       allowedScopes: tokenScope,
     });
@@ -339,6 +404,22 @@ function RegisterAppModal({ opened, onClose }: { opened: boolean; onClose: () =>
             }}
             error={uriError}
           />
+          <Textarea
+            label="Allowed origins"
+            description={
+              isConfidential
+                ? 'Optional. Used only if you later switch this app to a public client.'
+                : 'Required for public clients. One origin per line (e.g. https://app.example.com). Leave blank to derive from redirect URIs.'
+            }
+            placeholder={'https://app.example.com\nhttp://localhost:5173'}
+            minRows={2}
+            value={allowedOriginsText}
+            onChange={(e) => {
+              setAllowedOriginsText(e.currentTarget.value);
+              setOriginError(null);
+            }}
+            error={originError}
+          />
           <Radio.Group
             label="Client type"
             value={isConfidential ? 'confidential' : 'public'}
@@ -380,6 +461,7 @@ function EditAppModal({
     name: string;
     description: string | null;
     redirectUris: string[];
+    allowedOrigins: string[];
     allowedScopes: number;
   };
 }) {
@@ -387,8 +469,12 @@ function EditAppModal({
   const [name, setName] = useState(client.name);
   const [description, setDescription] = useState(client.description ?? '');
   const [redirectUrisText, setRedirectUrisText] = useState(client.redirectUris.join('\n'));
+  const [allowedOriginsText, setAllowedOriginsText] = useState(
+    client.allowedOrigins.join('\n')
+  );
   const [tokenScope, setTokenScope] = useState(client.allowedScopes);
   const [uriError, setUriError] = useState<string | null>(null);
+  const [originError, setOriginError] = useState<string | null>(null);
 
   const updateMutation = trpc.oauthClient.update.useMutation({
     onSuccess() {
@@ -429,11 +515,18 @@ function EditAppModal({
     if (!uris) return;
     if (!name.trim()) return;
 
+    const originsParsed = parseOriginList(allowedOriginsText);
+    if (originsParsed.error) {
+      setOriginError(originsParsed.error);
+      return;
+    }
+
     updateMutation.mutate({
       id: client.id,
       name: name.trim(),
       description: description.trim(),
       redirectUris: uris,
+      allowedOrigins: originsParsed.value,
       allowedScopes: tokenScope,
     });
   };
@@ -476,6 +569,18 @@ function EditAppModal({
           }}
           error={uriError}
         />
+        <Textarea
+          label="Allowed origins"
+          description="One origin per line (e.g. https://app.example.com). Enforced for public clients."
+          placeholder={'https://app.example.com'}
+          minRows={2}
+          value={allowedOriginsText}
+          onChange={(e) => {
+            setAllowedOriginsText(e.currentTarget.value);
+            setOriginError(null);
+          }}
+          error={originError}
+        />
         <ScopeSelector tokenScope={tokenScope} onChange={setTokenScope} />
         <Group justify="space-between">
           <Button variant="default" onClick={onClose} disabled={updateMutation.isLoading}>
@@ -498,6 +603,7 @@ export function OAuthAppsCard() {
     name: string;
     description: string | null;
     redirectUris: string[];
+    allowedOrigins: string[];
     allowedScopes: number;
   } | null>(null);
   const [rotatedSecret, setRotatedSecret] = useState<string | null>(null);
@@ -630,6 +736,7 @@ export function OAuthAppsCard() {
                               name: client.name,
                               description: client.description,
                               redirectUris: client.redirectUris,
+                              allowedOrigins: client.allowedOrigins ?? [],
                               allowedScopes: client.allowedScopes,
                             })
                           }

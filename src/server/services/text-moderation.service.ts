@@ -13,6 +13,7 @@ export async function submitTextModeration({
   priority,
   wait,
   recordForReview = false,
+  forceRescan = false,
 }: {
   entityType: string;
   entityId: number;
@@ -21,6 +22,12 @@ export async function submitTextModeration({
   priority?: Priority;
   wait?: number;
   recordForReview?: boolean;
+  /**
+   * Bypass the contentHash dedup in `createXGuardModerationRequest`. Use
+   * for moderator-initiated rescans (`rescanArticle`, etc.) where the
+   * previous verdict shouldn't be reused.
+   */
+  forceRescan?: boolean;
 }) {
   return createXGuardModerationRequest({
     mode: 'text',
@@ -31,5 +38,6 @@ export async function submitTextModeration({
     priority,
     wait,
     recordForReview,
+    forceRescan,
   });
 }

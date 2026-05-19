@@ -18,6 +18,7 @@ import { cloneElement, useMemo, useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
+import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import type { ImageGenerationProcess } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
@@ -87,8 +88,7 @@ export function ImageMeta({
       hasControlNet = (meta.controlNets as string[])?.length > 0;
     }
 
-    // TODO check for generationFormWorkflowConfigurations?
-    const onSite = 'civitaiResources' in meta;
+    const onSite = isImageMetaOnSite(meta);
     const software =
       meta.software?.toString() ?? (onSite ? 'Civitai Generator' : 'External Generator');
 

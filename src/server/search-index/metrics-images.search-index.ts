@@ -10,7 +10,7 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import type { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { videoGenerationConfig2 } from '~/server/orchestrator/generation/generation.config';
+import { imageOnSiteSql } from '~/server/utils/image-onsite';
 
 const READ_BATCH_SIZE = 100000;
 const MEILISEARCH_DOCUMENT_BATCH_SIZE = READ_BATCH_SIZE;
@@ -314,8 +314,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     logger(`PullData :: ${indexName} :: Pulling data for batch ::`, batchLogKey);
 
     if (step === 0) {
-      const engines = Object.keys(videoGenerationConfig2);
-
       const images = await db.$queryRaw<SearchBaseImage[]>`
       SELECT
         i."id",
@@ -354,16 +352,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ELSE FALSE
           END
         ) AS "hasPositivePrompt",
-        (
-          CASE
-            WHEN (i.meta->>'civitaiResources' IS NOT NULL AND NOT (i.meta ? 'Version'))
-              OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'engine' = ANY(ARRAY[
-                ${Prisma.join(engines)}
-              ]::text[])
-            THEN TRUE
-            ELSE FALSE
-          END
-        ) as "onSite",
+        ${imageOnSiteSql()} as "onSite",
         p."modelVersionId" as "postedToId",
         i."meta"->'extra'->'remixOfId' as "remixOfId"
         FROM "Image" i
