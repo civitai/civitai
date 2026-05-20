@@ -100,8 +100,7 @@ export function MediaFiltersDropdown({
   const clearFilters = useCallback(() => {
     // All values must be `undefined` so `removeEmpty` strips them from the URL
     // (when onChange writes to query params) and from the Zustand store. Using
-    // `false` here would leave keys like `?withMeta=false` on the URL, and
-    // `period: AllTime` would leave `?period=AllTime`.
+    // `false` here would leave keys like `?withMeta=false` on the URL.
     const reset = {
       types: undefined,
       withMeta: undefined,
@@ -114,7 +113,6 @@ export function MediaFiltersDropdown({
       hideAutoResources: undefined,
       tools: undefined,
       techniques: undefined,
-      period: undefined,
       baseModels: undefined,
       remixesOnly: undefined,
       nonRemixesOnly: undefined,
@@ -125,8 +123,12 @@ export function MediaFiltersDropdown({
       includePG13: undefined,
     };
 
-    if (onChange) onChange(reset);
-    else setFilters(reset);
+    // `period` is special: the URL path needs `undefined` so `removeEmpty`
+    // strips `?period=AllTime`, but the Zustand store needs `AllTime` so
+    // `PeriodFilter` keeps rendering its chips (it returns null when period
+    // is undefined).
+    if (onChange) onChange({ ...reset, period: undefined });
+    else setFilters({ ...reset, period: MetricTimeframe.AllTime });
   }, [onChange, setFilters]);
 
   const handleChange: Props['onChange'] = (value) => {

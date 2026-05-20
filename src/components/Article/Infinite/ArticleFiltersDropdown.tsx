@@ -38,7 +38,6 @@ export function ArticleFiltersDropdown({ query, onChange, ...buttonProps }: Prop
 
   const clearFilters = useCallback(() => {
     const reset = {
-      followed: false,
       period: MetricTimeframe.AllTime,
     };
 
