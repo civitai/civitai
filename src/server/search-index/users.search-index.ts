@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { USERS_SEARCH_INDEX } from '~/server/common/constants';
 import { updateDocs } from '~/server/meilisearch/client';
 
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, setSearchCutoffMs } from '~/server/meilisearch/util';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 
@@ -72,6 +72,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       updateFilterableAttributesTask
     );
   }
+
+  // 10.9M docs. Bound query time so a slow lookup can't tie up the read lock.
+  await setSearchCutoffMs({ index, ms: 1000 });
 
   console.log('onIndexSetup :: all tasks completed');
 };

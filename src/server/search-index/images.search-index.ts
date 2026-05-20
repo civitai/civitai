@@ -7,7 +7,7 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { getOrCreateIndex, setSearchCutoffMs } from '~/server/meilisearch/util';
 import {
   tagCache,
   tagIdsForImagesCache,
@@ -101,6 +101,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       updateFilterableAttributesTask
     );
   }
+
+  // images_v6 is the largest index (60M+ docs, ~740 GB on disk). Cap query
+  // time so a pathological filter cannot hold the read lock while hourly
+  // writebacks pile up.
+  await setSearchCutoffMs({ index, ms: 2000 });
 
   console.log('onIndexSetup :: all tasks completed');
 };
