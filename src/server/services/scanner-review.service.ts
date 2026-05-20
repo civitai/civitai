@@ -13,11 +13,7 @@ import { TRPCError } from '@trpc/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { ReviewVerdict } from '~/shared/utils/prisma/enums';
-import type {
-  QueueView,
-  ScanContentBody,
-  Scanner,
-} from '~/server/schema/scanner-review.schema';
+import type { QueueView, ScanContentBody, Scanner } from '~/server/schema/scanner-review.schema';
 import {
   getScanContents,
   snapshotScanContent,
@@ -98,6 +94,7 @@ type ListInput = {
   lookbackDays?: number;
   limit: number;
   offset: number;
+  latestVersionOnly: boolean;
 };
 
 export async function listScans(
@@ -124,6 +121,19 @@ export async function listScans(
   if (input.version) {
     conditions.push('version = {version:String}');
     params.version = input.version;
+  } else if (input.latestVersionOnly) {
+    // Restrict to the most recent `policyHash` per (scanner, label) inside
+    // the same lookback window. argMax(version, lastSeenAt) is constant per
+    // (scanner, label) group, so the IN-predicate is selective enough to
+    // prune merge work before the outer aggregate.
+    conditions.push(`
+      (scanner, label, version) IN (
+        SELECT scanner, label, argMax(version, lastSeenAt) AS version
+        FROM scanner_label_results
+        WHERE lastSeenAt > now() - INTERVAL ${lookback} DAY
+        GROUP BY scanner, label
+      )
+    `);
   }
 
   // HAVING references aggregate functions directly (not the SELECT aliases) so
@@ -281,11 +291,13 @@ export async function upsertLabelVerdict(input: {
   // dangling if the process dies between writes. Snapshot is idempotent
   // (first writer per contentHash wins via Postgres unique PK).
   if (input.contentSnapshot) {
-    await snapshotScanContent(input.contentSnapshot && {
-      contentHash: input.contentHash,
-      scanner: input.contentSnapshot.scanner,
-      body: input.contentSnapshot.body,
-    });
+    await snapshotScanContent(
+      input.contentSnapshot && {
+        contentHash: input.contentHash,
+        scanner: input.contentSnapshot.scanner,
+        body: input.contentSnapshot.body,
+      }
+    );
   }
 
   return dbWrite.scannerLabelReview.upsert({
@@ -328,6 +340,7 @@ export async function focusedRun(input: {
   limit: number;
   nearMissGap: number;
   userId: number;
+  latestVersionOnly: boolean;
 }): Promise<{
   items: AggregatedScanRow[];
   totalAvailable: number;
@@ -348,6 +361,18 @@ export async function focusedRun(input: {
     OR (anyLast(threshold) IS NOT NULL AND anyLast(threshold) - anyLast(score) <= {nearMissGap:Float32})
   `;
 
+  // When `latestVersionOnly` is true (default), scope to the latest policyHash
+  // for this label so mods don't review stale-policy results.
+  const versionFilter = input.latestVersionOnly
+    ? `AND version = (
+         SELECT argMax(version, lastSeenAt)
+         FROM scanner_label_results
+         WHERE scanner = {scanner:String}
+           AND label = {label:String}
+           AND lastSeenAt > now() - INTERVAL ${lookback} DAY
+       )`
+    : '';
+
   const resp = await ch.query({
     query: `
       SELECT ${AGGREGATE_SELECT}
@@ -355,6 +380,7 @@ export async function focusedRun(input: {
       WHERE scanner = {scanner:String}
         AND label = {label:String}
         AND lastSeenAt > now() - INTERVAL ${lookback} DAY
+        ${versionFilter}
       GROUP BY contentHash, version, label
       HAVING ${havingClause}
       ORDER BY max(lastSeenAt) DESC

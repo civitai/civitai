@@ -22,6 +22,11 @@ export const listScansSchema = z.object({
   lookbackDays: z.number().int().min(1).max(365).optional(),
   limit: z.number().int().min(1).max(500).default(50),
   offset: z.number().int().min(0).default(0),
+  /** Filter to only the latest `policyHash` per (scanner, label). Defaults true
+   * — mods reviewing the queue should only see results from current policies.
+   * Pass false to see historical policy versions (e.g. for FP-rate comparison
+   * pre/post a policy change). Ignored when an explicit `version` is passed. */
+  latestVersionOnly: z.boolean().default(true),
 });
 
 export const getScanDetailSchema = z.object({
@@ -82,6 +87,9 @@ export const focusedRunSchema = z.object({
    * unless `threshold - score <= nearMissGap`. Triggered rows are always
    * included. */
   nearMissGap: z.number().min(0).max(1).default(0.05),
+  /** Filter to only the latest `policyHash` (version) for this label.
+   * Defaults true — focused review shows current-policy results only. */
+  latestVersionOnly: z.boolean().default(true),
 });
 
 /** Single-item content resolver for the focused page. Called per-item as the
