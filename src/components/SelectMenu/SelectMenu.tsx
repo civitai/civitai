@@ -78,7 +78,7 @@ export function SelectMenuV2<T extends string | number>({
   const target = (
     <FilterButton
       disabled={disabled}
-      icon={IconSortDescending}
+      icon={icon || IconSortDescending}
       onClick={() => setOpened((o) => !o)}
       {...buttonProps}
     >
