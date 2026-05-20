@@ -127,6 +127,103 @@ export async function submitWildcardCategoryAudit(categoryId: number): Promise<s
   return workflow.id;
 }
 
+// Concurrency for orphan-category processing. Per-category work is dominated
+// by the orchestrator submit's network round-trip (~hundreds of ms each), so
+// running a small batch in parallel cuts wall time roughly proportionally
+// and — more importantly — keeps the import-time fire-and-forget from
+// holding open a sequential loop long enough for the Node process to be
+// recycled mid-run. Kept modest (5) so the burst doesn't crowd the
+// orchestrator or starve other request handlers.
+const ORPHAN_PROCESSING_CONCURRENCY = 5;
+
+type OrphanCategory = { id: number; valueCount: number; wildcardSetId: number };
+type OrphanResult =
+  | { kind: 'cleaned-empty'; wildcardSetId: number }
+  | { kind: 'submitted'; wildcardSetId: number }
+  | { kind: 'skipped'; wildcardSetId: number }
+  | { kind: 'error'; wildcardSetId: number };
+
+/**
+ * Process one orphan category. Either marks it Clean directly (empty
+ * categories: nothing to audit, short-circuit so the set rollup counts it)
+ * or submits it for XGuard audit via the shared helper, which lands the
+ * EntityModeration row regardless of submit success/failure.
+ *
+ * Wrapped in try/catch so a thrown error on a single category can't kill the
+ * caller's iteration over the rest of the batch. Errors are logged with the
+ * category id for triage and counted in the caller's `errors` tally.
+ */
+async function processOrphanCategory(category: OrphanCategory): Promise<OrphanResult> {
+  try {
+    if (category.valueCount === 0) {
+      await dbWrite.wildcardSetCategory.update({
+        where: { id: category.id },
+        data: {
+          auditStatus: WildcardSetCategoryAuditStatus.Clean,
+          auditedAt: new Date(),
+        },
+      });
+      return { kind: 'cleaned-empty', wildcardSetId: category.wildcardSetId };
+    }
+    const workflowId = await submitWildcardCategoryAudit(category.id);
+    return {
+      kind: workflowId ? 'submitted' : 'skipped',
+      wildcardSetId: category.wildcardSetId,
+    };
+  } catch (err) {
+    logToAxiom({
+      type: 'error',
+      name: 'wildcard-category-audit',
+      message: 'unhandled error processing orphan category',
+      wildcardSetCategoryId: category.id,
+      wildcardSetId: category.wildcardSetId,
+      error: err instanceof Error ? err.message : String(err),
+    }).catch(() => undefined);
+    return { kind: 'error', wildcardSetId: category.wildcardSetId };
+  }
+}
+
+/**
+ * Iterate `categories` in bounded-concurrency chunks. Each chunk awaits its
+ * full set of in-flight submissions before the next chunk starts — keeps
+ * the in-flight count at most `ORPHAN_PROCESSING_CONCURRENCY` so we don't
+ * burst-fan-out the orchestrator on large sets.
+ */
+async function processOrphanCategoriesChunked(
+  categories: OrphanCategory[]
+): Promise<OrphanResult[]> {
+  const results: OrphanResult[] = [];
+  for (let i = 0; i < categories.length; i += ORPHAN_PROCESSING_CONCURRENCY) {
+    const chunk = categories.slice(i, i + ORPHAN_PROCESSING_CONCURRENCY);
+    const chunkResults = await Promise.all(chunk.map(processOrphanCategory));
+    results.push(...chunkResults);
+  }
+  return results;
+}
+
+function tallyOrphanResults(results: OrphanResult[]): {
+  submitted: number;
+  skipped: number;
+  markedCleanEmpty: number;
+  errors: number;
+  setsTouched: Set<number>;
+} {
+  const setsTouched = new Set<number>();
+  let submitted = 0;
+  let skipped = 0;
+  let markedCleanEmpty = 0;
+  let errors = 0;
+  for (const r of results) {
+    if (r.kind === 'submitted') submitted++;
+    else if (r.kind === 'skipped') skipped++;
+    else if (r.kind === 'cleaned-empty') {
+      markedCleanEmpty++;
+      setsTouched.add(r.wildcardSetId);
+    } else errors++;
+  }
+  return { submitted, skipped, markedCleanEmpty, errors, setsTouched };
+}
+
 /**
  * Submit every Pending category in a set that doesn't already have an
  * EntityModeration row. Used at import-time (fire-and-forget after
@@ -134,6 +231,18 @@ export async function submitWildcardCategoryAudit(categoryId: number): Promise<s
  *
  * Empty categories (zero values) are short-circuited to Clean directly —
  * there's nothing to audit, and we want them counted in the set rollup.
+ *
+ * Iterates in bounded-concurrency chunks (see `processOrphanCategoriesChunked`)
+ * with per-category try/catch so a thrown error during one category can't
+ * strand the rest of the batch.
+ *
+ * **Orphan query uses `dbWrite` (primary) deliberately.** Provisioning fires
+ * this function immediately after the WSC create transaction commits to the
+ * primary; querying the replica is virtually guaranteed to return zero rows
+ * during high-write windows, silently no-op'ing the entire submission and
+ * leaving every category as an orphan until the cron picks them up an hour
+ * later. The cron variant (`submitPendingWildcardCategoryAudits`) stays on
+ * the replica since by then the lag has settled.
  *
  * Gate on EM-row absence (not WSC.metadata.workflowId) so EntityModeration
  * stays the single source of truth for moderation lifecycle. Categories
@@ -145,9 +254,10 @@ export async function submitWildcardSetAudit(setId: number): Promise<{
   submitted: number;
   skipped: number;
   markedCleanEmpty: number;
+  errors: number;
 }> {
-  const orphans = await dbRead.$queryRaw<Array<{ id: number; valueCount: number }>>`
-    SELECT wsc.id, wsc."valueCount"
+  const orphans = await dbWrite.$queryRaw<Array<OrphanCategory>>`
+    SELECT wsc.id, wsc."valueCount", wsc."wildcardSetId"
     FROM "WildcardSetCategory" wsc
     LEFT JOIN "EntityModeration" em
       ON em."entityType" = ${WILDCARD_CATEGORY_ENTITY_TYPE}
@@ -158,33 +268,14 @@ export async function submitWildcardSetAudit(setId: number): Promise<{
     ORDER BY wsc.id ASC
   `;
 
-  let submitted = 0;
-  let skipped = 0;
-  let markedCleanEmpty = 0;
-  let touchedSet = false;
-  for (const category of orphans) {
-    if (category.valueCount === 0) {
-      await dbWrite.wildcardSetCategory.update({
-        where: { id: category.id },
-        data: {
-          auditStatus: WildcardSetCategoryAuditStatus.Clean,
-          auditedAt: new Date(),
-        },
-      });
-      markedCleanEmpty++;
-      touchedSet = true;
-      continue;
-    }
-    const workflowId = await submitWildcardCategoryAudit(category.id);
-    if (workflowId) submitted++;
-    else skipped++;
-  }
+  const results = await processOrphanCategoriesChunked(orphans);
+  const { submitted, skipped, markedCleanEmpty, errors, setsTouched } = tallyOrphanResults(results);
 
-  if (touchedSet) {
+  if (setsTouched.size > 0) {
     await recomputeWildcardSetAuditStatus(setId);
   }
 
-  return { submitted, skipped, markedCleanEmpty };
+  return { submitted, skipped, markedCleanEmpty, errors };
 }
 
 /**
@@ -194,19 +285,20 @@ export async function submitWildcardSetAudit(setId: number): Promise<{
  * which the row is owned by the EM-driven path.
  *
  * Capped per call so the cron isn't unbounded; rerun until `scanned == 0`
- * to drain.
+ * to drain. Uses the same chunked-concurrency + per-category try/catch path
+ * as `submitWildcardSetAudit` so one bad category can't drop the rest of
+ * the cron's batch.
  */
 export async function submitPendingWildcardCategoryAudits(opts?: { limit?: number }): Promise<{
   scanned: number;
   submitted: number;
   skipped: number;
   markedCleanEmpty: number;
+  errors: number;
 }> {
   const limit = Math.max(1, Math.min(opts?.limit ?? 100, 500));
 
-  const orphans = await dbRead.$queryRaw<
-    Array<{ id: number; valueCount: number; wildcardSetId: number }>
-  >`
+  const orphans = await dbRead.$queryRaw<Array<OrphanCategory>>`
     SELECT wsc.id, wsc."valueCount", wsc."wildcardSetId"
     FROM "WildcardSetCategory" wsc
     LEFT JOIN "EntityModeration" em
@@ -218,34 +310,14 @@ export async function submitPendingWildcardCategoryAudits(opts?: { limit?: numbe
     LIMIT ${limit}
   `;
 
-  const setsToRecompute = new Set<number>();
-  let submitted = 0;
-  let skipped = 0;
-  let markedCleanEmpty = 0;
+  const results = await processOrphanCategoriesChunked(orphans);
+  const { submitted, skipped, markedCleanEmpty, errors, setsTouched } = tallyOrphanResults(results);
 
-  for (const c of orphans) {
-    if (c.valueCount === 0) {
-      await dbWrite.wildcardSetCategory.update({
-        where: { id: c.id },
-        data: {
-          auditStatus: WildcardSetCategoryAuditStatus.Clean,
-          auditedAt: new Date(),
-        },
-      });
-      markedCleanEmpty++;
-      setsToRecompute.add(c.wildcardSetId);
-      continue;
-    }
-    const workflowId = await submitWildcardCategoryAudit(c.id);
-    if (workflowId) submitted++;
-    else skipped++;
-  }
-
-  for (const setId of setsToRecompute) {
+  for (const setId of setsTouched) {
     await recomputeWildcardSetAuditStatus(setId);
   }
 
-  return { scanned: orphans.length, submitted, skipped, markedCleanEmpty };
+  return { scanned: orphans.length, submitted, skipped, markedCleanEmpty, errors };
 }
 
 /**

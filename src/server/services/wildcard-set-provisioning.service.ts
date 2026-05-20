@@ -355,7 +355,16 @@ function stripUtf8Bom(bytes: Uint8Array): Uint8Array {
 }
 
 function decodeUtf8(bytes: Uint8Array): string {
-  return new TextDecoder().decode(stripUtf8Bom(bytes));
+  // Strip NUL bytes (U+0000). JavaScript happily carries them in strings,
+  // but Postgres `text` / `text[]` columns reject them with SQLSTATE 22021
+  // ("invalid byte sequence for encoding UTF8: 0x00") — one stray NUL in
+  // any line aborts the entire `WildcardSetCategory.createMany` and the
+  // import fails. We've observed real wildcard zips with embedded NULs
+  // (looks like editor saves that include a trailing null terminator, or
+  // files copied from binary sources). Strip at the decode boundary so
+  // every downstream consumer (txt splitter, yaml parser, binary sniffer)
+  // sees clean text.
+  return new TextDecoder().decode(stripUtf8Bom(bytes)).replace(/\0/g, '');
 }
 
 // Magic-byte signatures for binary formats that occasionally show up in
