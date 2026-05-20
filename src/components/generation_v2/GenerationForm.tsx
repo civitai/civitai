@@ -39,6 +39,7 @@ import clsx from 'clsx';
 import React, { useCallback, useMemo, useState, useRef, useEffect } from 'react';
 
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useGatedEcosystems } from './hooks/useGatedEcosystems';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
@@ -139,6 +140,7 @@ export function GenerationForm() {
   const graph = useGraph<GenerationGraphTypes>();
   const workflowHistory = useWorkflowHistoryStore();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const gatedEcosystems = useGatedEcosystems();
   const isMember = !!currentUser && (currentUser.tier !== 'free' || !!currentUser.isModerator);
   // Access graph snapshot directly for workflow/ecosystem (they exist in discriminated branches)
@@ -1256,19 +1258,22 @@ export function GenerationForm() {
 
             {/* Advanced section */}
             <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
-              {/* ControlNets — only rendered for ecosystems that declare the node */}
-              <Controller
-                graph={graph}
-                name="controlNets"
-                render={({ value, meta, onChange, error }) => (
-                  <ControlNetsInput
-                    value={value as ControlNetsInputProps['value']}
-                    onChange={onChange as ControlNetsInputProps['onChange']}
-                    meta={meta as ControlNetsInputProps['meta']}
-                    error={error?.message}
-                  />
-                )}
-              />
+              {/* ControlNets — gated behind the `controlNets` Flipt flag, then
+                  only rendered for ecosystems that declare the node */}
+              {features.controlNets && (
+                <Controller
+                  graph={graph}
+                  name="controlNets"
+                  render={({ value, meta, onChange, error }) => (
+                    <ControlNetsInput
+                      value={value as ControlNetsInputProps['value']}
+                      onChange={onChange as ControlNetsInputProps['onChange']}
+                      meta={meta as ControlNetsInputProps['meta']}
+                      error={error?.message}
+                    />
+                  )}
+                />
+              )}
 
               {/* Frame Guide Strength (LTXV2/LTXV23 img2vid with both frames) */}
               <Controller

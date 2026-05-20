@@ -367,18 +367,6 @@ function ControlNetEditor({
         'bg-white dark:bg-dark-7'
       )}
     >
-      <Group gap={6} wrap="nowrap" className="min-w-0">
-        <Text fz="xs" c="dimmed" tt="uppercase" fw={600} className="tracking-wide">
-          Editing
-        </Text>
-        <Text fz="sm" fw={600} className="truncate">
-          {preprocessorInfo.label}
-        </Text>
-        <Badge size="xs" variant="light" color="gray" className="shrink-0">
-          {controlNetCategories[currentCategory].label}
-        </Badge>
-      </Group>
-
       <ImageUploadMultipleInput
         value={entry.image?.url ? [entry.image as ImageValue] : []}
         onChange={handleImageChange}
