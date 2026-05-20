@@ -261,9 +261,13 @@ export default MixedAuthEndpoint(async function handler(
         }
       : undefined;
 
-  const creatorTips =
-    !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisableTips) &&
-    !Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.DisableTips);
+  const payoutEnabled =
+    !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
+    !Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.DisablePayout);
+  // DEPRECATED: `creatorTips` is kept for backwards compatibility with the
+  // orchestrator. Once orchestrator switches to `payoutEnabled` (which also
+  // governs creator compensation, not just tips), drop this field.
+  const creatorTips = payoutEnabled;
 
   const data = {
     air,
@@ -289,7 +293,8 @@ export default MixedAuthEndpoint(async function handler(
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
     fee,
-    creatorTips,
+    payoutEnabled,
+    creatorTips, // DEPRECATED: alias of payoutEnabled, remove after orchestrator migrates
   };
   res.status(200).json(data);
 });

@@ -29,6 +29,8 @@ import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
+import { Flags } from '~/shared/utils/flags';
 import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type {
   MergeVersionsInput,
@@ -252,6 +254,18 @@ export const upsertModelVersion = async ({
 }) => {
   if (data.description) await throwOnBlockedLinkDomain(data.description);
 
+  // Versions with a license fee earn through that channel, so they opt out of
+  // tip + creator-comp payouts. We only ever ADD the flag — clearing the fee
+  // doesn't strip it, since a creator may have set the bit independently.
+  let flagsOverride: number | undefined;
+  if (data.licensingFee != null && data.licensingFee > 0) {
+    const existingFlags = id
+      ? (await dbRead.modelVersion.findUnique({ where: { id }, select: { flags: true } }))?.flags ??
+        0
+      : 0;
+    flagsOverride = Flags.addFlag(existingFlags, ModelVersionFlag.DisablePayout);
+  }
+
   // Get model information to check NSFW + restricted base model combination
   const model = await dbWrite.model.findUniqueOrThrow({
     where: { id: data.modelId },
@@ -325,6 +339,7 @@ export const upsertModelVersion = async ({
       dbWrite.modelVersion.create({
         data: {
           ...data,
+          flags: flagsOverride,
           availability: [ModelStatus.Published, ModelStatus.Scheduled].some(
             (s) => s === data?.status
           )
@@ -476,6 +491,7 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
+        flags: flagsOverride,
         availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
         earlyAccessConfig:
           updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
