@@ -8,6 +8,7 @@ import {
   recordEntityModerationSuccess,
 } from '~/server/services/entity-moderation.service';
 import { createXGuardModerationRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { applyDerivedLabels } from '~/server/services/scanner-derived-labels.service';
 import {
   EntityModerationStatus,
   WildcardSetAuditStatus,
@@ -21,11 +22,13 @@ const WILDCARD_CATEGORY_ENTITY_TYPE = 'WildcardSetCategory';
 
 // XGuard labels that flip a category to Dirty when triggered. These are the
 // hard-fail policy violations — content matching any of these is unusable
-// regardless of site context. `csam` isn't in this list because XGuard's
-// text classifiers don't ship a dedicated CSAM label; instead the verdict
-// path treats a `young` + `sexual` co-trigger from the level-label set as
-// synthetic CSAM and flips the category Dirty.
+// regardless of site context. `csam` is a derived label synthesized by
+// `applyDerivedLabels` from a `young` + sexual-signal co-trigger; XGuard's
+// text classifiers don't ship a dedicated CSAM label, but the derived row
+// appears in `output.results` after the transform runs, so it slots in here
+// like any other fail label.
 const WILDCARD_AUDIT_FAIL_LABELS = [
+  'csam',
   'urine',
   'diaper',
   'scat',
@@ -250,10 +253,11 @@ export async function submitPendingWildcardCategoryAudits(opts?: { limit?: numbe
  * recompute the parent set's aggregate. Two derived values come out of the
  * per-label results:
  *
- *   - `auditStatus`: Dirty iff any of `WILDCARD_AUDIT_FAIL_LABELS` triggered,
- *     OR if `young` + `sexual` co-triggered (synthetic CSAM — XGuard's text
- *     classifiers don't ship a dedicated `csam` label, so we infer it from
- *     the co-trigger). Computed from per-label `triggered` flags — we
+ *   - `auditStatus`: Dirty iff any of `WILDCARD_AUDIT_FAIL_LABELS` triggered.
+ *     Includes the derived `csam` row (synthesized from young + sexual signal
+ *     by `applyDerivedLabels`) — XGuard's text classifiers don't ship a
+ *     dedicated csam label, but the transform produces one when the
+ *     co-trigger fires. Computed from per-label `triggered` flags — we
  *     deliberately ignore `output.blocked` because it counts triggered level
  *     labels too, which would falsely flip Dirty for ordinary NSFW content.
  *   - `nsfw`: true iff any `WILDCARD_AUDIT_LEVEL_LABELS` triggered. Boolean,
@@ -288,60 +292,52 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
   }
   const meta = (current.metadata ?? {}) as WildcardCategoryMetadata;
 
-  // Partition the per-label results: fail labels drive Dirty; level labels
-  // drive the `nsfw` boolean. Falling back to score-vs-threshold for the
-  // trigger check makes the code resilient to results that ship without
-  // the explicit `triggered` flag set.
-  const results = output.results ?? [];
-  const isTriggered = (r: (typeof results)[number]) =>
+  // Apply derived-label rules so `csam` (synthesized from young + sexual
+  // signal) and any suppressions (e.g. `suggestive` when `explicit` also
+  // triggered) are reflected in the result set before we partition into
+  // fail / level labels. After this transform, the rest of the function
+  // treats derived rows like any other label — `csam` is just another
+  // entry in `FAIL_LABEL_SET`. See scanner-derived-labels.service.ts and
+  // docs/features/scanner-derived-labels-plan.md.
+  const rawResults = output.results ?? [];
+  const rawIsTriggered = (r: (typeof rawResults)[number]) =>
     r.triggered || (typeof r.score === 'number' && r.score >= r.threshold);
+  const derivedInput = rawResults.map((r) => ({
+    label: r.label,
+    score: r.score ?? 0,
+    threshold: r.threshold ?? null,
+    triggered: (rawIsTriggered(r) ? 1 : 0) as 0 | 1,
+    version: r.policyHash ?? '',
+    matchedText: r.matchedTerms?.text ?? [],
+    matchedPositivePrompt: r.matchedTerms?.positivePrompt ?? [],
+    matchedNegativePrompt: r.matchedTerms?.negativePrompt ?? [],
+  }));
+  const results = applyDerivedLabels(derivedInput, 'text');
+  const isTriggered = (r: (typeof results)[number]) => r.triggered === 1;
 
-  // Cache the fail-result subset since we use it twice — once to derive the
-  // triggered labels (for the audit note) and again to extract matched terms
-  // (for the forensic metadata on Dirty rows).
+  // Partition the per-label results: fail labels drive Dirty; level labels
+  // drive the `nsfw` boolean.
   const triggeredFailResults = results.filter((r) => FAIL_LABEL_SET.has(r.label) && isTriggered(r));
   const triggeredFailLabels = triggeredFailResults.map((r) => r.label);
 
-  // Synthetic CSAM: XGuard's text classifiers don't ship a dedicated `csam`
-  // label, but `young` co-triggered with any sexual signal is the policy
-  // equivalent. Treat that combination as a hard fail (Dirty), same as an
-  // explicit CSAM match. Either side alone just contributes to the `nsfw`
-  // flag below. Sexual signal = suggestive OR explicit (suggestive is the
-  // broader label; explicit is included defensively in case the model fires
-  // explicit without firing suggestive).
-  const youngResult = results.find((r) => r.label === 'young' && isTriggered(r));
-  const suggestiveResult = results.find((r) => r.label === 'suggestive' && isTriggered(r));
-  const explicitResult = results.find((r) => r.label === 'explicit' && isTriggered(r));
-  const sexualSignalResult = suggestiveResult ?? explicitResult;
-  const syntheticCsamResults =
-    youngResult && sexualSignalResult ? [youngResult, sexualSignalResult] : [];
-  const syntheticCsam = syntheticCsamResults.length > 0;
-
-  const blocked = triggeredFailResults.length > 0 || syntheticCsam;
+  const blocked = triggeredFailResults.length > 0;
 
   // Boolean OR across triggered level labels. False when nothing triggered —
   // purely textual content with no NSFW signal is treated as SFW. Distinct
   // from auditStatus = Pending (which means "not yet audited").
   const nsfw = results.some((r) => LEVEL_LABEL_SET.has(r.label) && isTriggered(r));
 
-  // Labels surfaced to moderators on Dirty rows. Synthetic CSAM gets its own
-  // pseudo-label so the audit note reads "Blocked: csam (young+suggestive)" or
-  // "csam (young+explicit)" instead of looking empty when no real fail label
-  // fired on its own.
-  const blockingLabels = syntheticCsam
-    ? [...triggeredFailLabels, `csam (young+${sexualSignalResult!.label})`]
-    : triggeredFailLabels;
+  // Labels surfaced to moderators on Dirty rows. Derived `csam` shows up here
+  // alongside real fail labels because it's in FAIL_LABEL_SET.
+  const blockingLabels = triggeredFailLabels;
 
-  // Terms that any blocking result matched — fail labels plus the
-  // young+sexual co-trigger. Only kept for Dirty categories so a moderator
-  // can see what triggered. Level-label matches that didn't co-fire as CSAM
-  // aren't surfaced; their signal is already captured in `nsfw`.
-  const blockingResults = [...triggeredFailResults, ...syntheticCsamResults];
+  // Terms that any blocking result matched. For derived rows the matchedText
+  // is the union of contributing-label terms (assembled by applyDerivedLabels).
   const triggeredTerms = blocked
     ? Array.from(
         new Set(
-          blockingResults
-            .flatMap((r) => r.matchedTerms?.text ?? [])
+          triggeredFailResults
+            .flatMap((r) => r.matchedText)
             .filter((t): t is string => typeof t === 'string' && t.length > 0)
         )
       )

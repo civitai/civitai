@@ -15,6 +15,11 @@ import crypto from 'crypto';
 import type { Workflow, XGuardModerationStep } from '@civitai/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
+import {
+  applyDerivedLabels,
+  type DerivedLabelInput,
+  type DerivedLabelMode,
+} from '~/server/services/scanner-derived-labels.service';
 
 /**
  * Age-classifier topK band names that count as minor. Includes Teenager 13-20
@@ -50,6 +55,11 @@ type LabelRowSeed = {
   matchedText: string[];
   matchedPositivePrompt: string[];
   matchedNegativePrompt: string[];
+  /** True for derivation-synthesized rows (see scanner-derived-labels.service).
+   * Defaults to false everywhere else. */
+  synthetic?: boolean;
+  /** Contributing input label names for synthetic rows. Empty for non-synthetic. */
+  derivedFrom?: string[];
 };
 
 type WriteParams = {
@@ -124,6 +134,8 @@ async function insertRows({
     occurrences: 1,
     workflowIds: [workflowId],
     entityIds: entityId ? [entityId] : [],
+    synthetic: l.synthetic ? 1 : 0,
+    derivedFrom: l.derivedFrom ?? [],
   }));
 
   try {
@@ -208,6 +220,36 @@ export async function recordXGuardScanFromWorkflow(workflow: Workflow) {
   const entityType = (workflow.metadata.entityType as string | undefined) ?? '';
   const entityIdRaw = workflow.metadata.entityId as number | string | undefined;
 
+  // Apply derived-label rules — suppress redundant rows (e.g. `suggestive`
+  // when `explicit` also triggered) and synthesize computed rows (e.g.
+  // `csam` from `young` + sexual-signal). The transform is mode-scoped and
+  // pure; see scanner-derived-labels.service.ts and
+  // docs/features/scanner-derived-labels-plan.md.
+  const derivedInput: DerivedLabelInput[] = labels.map((l) => ({
+    label: l.label,
+    score: l.score,
+    threshold: l.threshold,
+    triggered: l.triggered,
+    version: l.version,
+    matchedText: l.matchedText,
+    matchedPositivePrompt: l.matchedPositivePrompt,
+    matchedNegativePrompt: l.matchedNegativePrompt,
+  }));
+  const derived = applyDerivedLabels(derivedInput, mode as DerivedLabelMode);
+  const derivedLabels: LabelRowSeed[] = derived.map((d) => ({
+    label: d.label,
+    labelValue: '',
+    score: d.score,
+    threshold: d.threshold,
+    triggered: d.triggered,
+    version: d.version,
+    matchedText: d.matchedText,
+    matchedPositivePrompt: d.matchedPositivePrompt,
+    matchedNegativePrompt: d.matchedNegativePrompt,
+    synthetic: d.synthetic,
+    derivedFrom: d.derivedFrom,
+  }));
+
   await insertRows({
     workflowId: workflow.id,
     scanner: mode === 'text' ? 'xguard_text' : 'xguard_prompt',
@@ -217,7 +259,7 @@ export async function recordXGuardScanFromWorkflow(workflow: Workflow) {
     modelVersion: (workflow.metadata.version as string | undefined) ?? '1',
     startedAt: workflow.startedAt,
     completedAt: workflow.completedAt,
-    labels,
+    labels: derivedLabels,
   });
 }
 
