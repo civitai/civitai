@@ -2632,86 +2632,57 @@ export async function getImagesFromFeedSearch(
 
 /**
  * Second-pass Meili query returning the current user's own excluded content:
- * images that the strict main query would have filtered out (nsfwLevel=0, or
- * unpublished/scheduled). Applies the same content-scoping (modelVersionId,
- * postId, tags, baseModels, etc.) so the merge stays relevant to the view.
+ * images the strict main query would have filtered out (unscanned, unpublished,
+ * scheduled, private, blocked, or POI when disablePoi is on).
  *
- * Safe to call without a cursor-scoped window — we always fetch the user's
- * full excluded set for the current view (usually < 100 items). Merge logic
- * in the caller handles dedup + re-sort.
+ * Intentionally UNSCOPED — the cache key collapses to roughly
+ * `userId × sort × disablePoi`, so the same response is reused across every
+ * page/view the user visits (model galleries, feed, profiles, etc). Content
+ * scoping (modelVersionId, postId, tags, etc) is applied in the caller via
+ * `contentScopeUserOwnHits` after the results come back. Mirrors the BitDex
+ * cacheability trick (image.service.ts:fetchBitdexPrimary).
  *
- * Returns [] when there's no currentUserId or when metricsSearchClient is down.
+ * Returns [] when there's no currentUserId, when viewing another user's
+ * profile (userId !== currentUserId), or when metricsSearchClient is down.
  */
 async function fetchMeiliUserOwnPass(
   input: ImageSearchInput,
-  nsfwLevelField: MetricsImageFilterableAttribute
+  nsfwLevelField: MetricsImageFilterableAttribute,
+  resolvedUserId?: number
 ): Promise<ImageMetricsSearchIndexRecord[]> {
-  const {
-    currentUserId,
-    modelVersionId,
-    postId,
-    postIds = [],
-    types,
-    tags,
-    tools,
-    techniques,
-    baseModels,
-    remixOfId,
-    withMeta,
-    fromPlatform,
-    disablePoi,
-    disableMinor,
-    hideAutoResources,
-    hideManualResources,
-    sort,
-  } = input;
+  const { currentUserId, disablePoi, sort } = input;
   if (!currentUserId || !metricsSearchClient) return [];
+  // Skip when viewing another user's profile — second pass is current-user
+  // scoped, so unscoped results would leak my excluded content into their view.
+  // `resolvedUserId` is the userId after username -> id lookup; fall back to raw input.
+  const targetUserId = resolvedUserId ?? input.userId;
+  if (targetUserId != null && targetUserId !== currentUserId) return [];
 
   const filters: string[] = [];
   filters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
   filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
 
-  // Excluded content = unscanned OR unpublished OR scheduled. What the strict
-  // main query would have filtered out.
+  // Excluded set = anything the strict main query would have removed for a
+  // non-owner: unscanned, unpublished, scheduled, private, blocked, or POI
+  // (when disablePoi is on). Mirrors the BitDex second-pass excluded OR.
   const now = Date.now();
-  const excludedOr = [
-    makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
-    makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'),
-    makeMeiliImageSearchFilter('publishedAtUnix', `> ${now}`),
+  const blockedReasonList = [
+    BlockedReason.TOS,
+    BlockedReason.Moderated,
+    BlockedReason.CSAM,
+    BlockedReason.AiNotVerified,
+  ]
+    .map((r) => `'${r}'`)
+    .join(',');
+  const excludedOr: string[] = [
+    makeMeiliImageSearchFilter(nsfwLevelField, `= 0`) as string,
+    makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS') as string,
+    makeMeiliImageSearchFilter('publishedAtUnix', `> ${now}`) as string,
+    `availability = ${Availability.Private}`,
+    `blockedFor IN [${blockedReasonList}]`,
   ];
+  if (disablePoi) excludedOr.push('poi = true');
   filters.push(`(${excludedOr.join(' OR ')})`);
-
-  // Content-scoping — mirror what the main query applies
-  if (modelVersionId) {
-    const vClauses: string[] = [
-      makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`),
-    ];
-    if (!hideAutoResources)
-      vClauses.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
-    if (!hideManualResources)
-      vClauses.push(
-        makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
-      );
-    filters.push(`(${vClauses.join(' OR ')})`);
-  }
-  const effectivePostIds = postId ? [...postIds, postId] : postIds;
-  if (effectivePostIds.length)
-    filters.push(makeMeiliImageSearchFilter('postId', `IN [${effectivePostIds.join(',')}]`));
-  if (types?.length)
-    filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
-  if (tags?.length)
-    filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
-  if (tools?.length)
-    filters.push(makeMeiliImageSearchFilter('toolIds', `IN [${tools.join(',')}]`));
-  if (techniques?.length)
-    filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
-  if (baseModels?.length)
-    filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
-  if (remixOfId) filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
-  if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
-  if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
-  if (disablePoi) filters.push(`(NOT poi = true)`);
-  if (disableMinor) filters.push(`(NOT minor = true)`);
 
   // Match the main query's sort so the merge produces stable ordering
   let userSort: MeiliImageSort;
@@ -2741,13 +2712,76 @@ async function fetchMeiliUserOwnPass(
 }
 
 /**
+ * Narrow unscoped second-pass user-own hits down to the current view. Run
+ * client-side after fetchMeiliUserOwnPass so the query itself stays cacheable.
+ * Mirrors fetchBitdexPrimary's post-fetch content-scope step.
+ */
+function contentScopeUserOwnHits(
+  hits: ImageMetricsSearchIndexRecord[],
+  input: ImageSearchInput
+): ImageMetricsSearchIndexRecord[] {
+  if (!hits.length) return hits;
+  const {
+    modelVersionId,
+    postId,
+    postIds,
+    types,
+    tags,
+    tools,
+    techniques,
+    baseModels,
+    remixOfId,
+    withMeta,
+    fromPlatform,
+    hideAutoResources,
+    hideManualResources,
+  } = input;
+
+  let scoped = hits;
+  if (modelVersionId) {
+    scoped = scoped.filter((h) => {
+      if (h.postedToId === modelVersionId) return true;
+      if (!hideAutoResources && h.modelVersionIds?.includes(modelVersionId)) return true;
+      if (!hideManualResources && h.modelVersionIdsManual?.includes(modelVersionId)) return true;
+      return false;
+    });
+  }
+  const effectivePostIds = postId != null ? [...(postIds ?? []), postId] : postIds ?? [];
+  if (effectivePostIds.length) {
+    const set = new Set(effectivePostIds);
+    scoped = scoped.filter((h) => h.postId != null && set.has(h.postId));
+  }
+  if (types?.length) {
+    const set = new Set<string>(types as unknown as string[]);
+    scoped = scoped.filter((h) => set.has(h.type));
+  }
+  if (tags?.length) {
+    const set = new Set(tags);
+    scoped = scoped.filter((h) => h.tagIds?.some((t) => set.has(t)));
+  }
+  if (tools?.length) {
+    const set = new Set(tools);
+    scoped = scoped.filter((h) => h.toolIds?.some((t) => set.has(t)));
+  }
+  if (techniques?.length) {
+    const set = new Set(techniques);
+    scoped = scoped.filter((h) => h.techniqueIds?.some((t) => set.has(t)));
+  }
+  if (baseModels?.length) {
+    const set = new Set<string>(baseModels);
+    scoped = scoped.filter((h) => set.has(h.baseModel));
+  }
+  if (remixOfId) scoped = scoped.filter((h) => h.remixOfId === remixOfId);
+  if (withMeta) scoped = scoped.filter((h) => h.hasMeta === true);
+  if (fromPlatform) scoped = scoped.filter((h) => h.onSite === true);
+  return scoped;
+}
+
+/**
  * Sort key extractor — mirrors each ImageSort option's underlying field.
  * Used to merge-sort two hit sets returned from parallel Meili queries.
  */
-function meiliHitSortKey(
-  hit: ImageMetricsSearchIndexRecord,
-  sort: ImageSort | undefined
-): number {
+function meiliHitSortKey(hit: ImageMetricsSearchIndexRecord, sort: ImageSort | undefined): number {
   if (sort === ImageSort.MostComments) return hit.commentCount ?? 0;
   if (sort === ImageSort.MostReactions) return hit.reactionCount ?? 0;
   if (sort === ImageSort.MostCollected) return hit.collectedCount ?? 0;
@@ -2836,19 +2870,20 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   // Only show images that belong to a post
   filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
 
+  // User-own-pass mode drops the inline `OR userId=currentUserId` carve-outs
+  // (availability, blockedFor, poi) so the main filter stays strict + cacheable.
+  // User's own private/blocked/poi content comes from fetchMeiliUserOwnPass.
+  const ownCarveOut =
+    !input.meiliUserOwnPass && currentUserId ? ` OR "userId" = ${currentUserId}` : '';
   if (!isModerator) {
     filters.push(
       // Avoids exposing private resources to the public
-      `((NOT availability = ${Availability.Private})${
-        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
-      })`
+      `((NOT availability = ${Availability.Private})${ownCarveOut})`
     );
 
     filters.push(
       // Avoids blocked resources to the public
-      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS)${
-        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
-      })`
+      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS)${ownCarveOut})`
     );
   }
 
@@ -2857,7 +2892,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(NOT poi = true${currentUserId ? ` OR "userId" = ${currentUserId}` : ''})`);
+    filters.push(`(NOT poi = true${ownCarveOut})`);
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
@@ -2955,10 +2990,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   // Cache-ops mode: gate behind includesNsfwContent. The outer nsfwLevel IN filter
   // already excludes [4,8,16,32] on SFW queries, so this compound is a no-op but
   // still costs per-query. Mirrors the BitDex fix.
-  if (
-    nsfwRestrictedBaseModels.length > 0 &&
-    (!input.meiliCacheOps || includesNsfwContent)
-  ) {
+  if (nsfwRestrictedBaseModels.length > 0 && (!input.meiliCacheOps || includesNsfwContent)) {
     const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
 
     // Exclude images that have BOTH restricted NSFW levels AND restricted base models
@@ -3178,7 +3210,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
               .getDocuments<ImageMetricsSearchIndexRecord>(request)
       ),
       runUserOwnPass
-        ? fetchMeiliUserOwnPass(input, nsfwLevelField)
+        ? fetchMeiliUserOwnPass(input, nsfwLevelField, userId)
         : Promise.resolve([] as ImageMetricsSearchIndexRecord[]),
     ]);
     let results = mainResult.results;
@@ -3192,9 +3224,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     }
 
     // Merge user-own hits with the main results, dedupe, re-sort, and re-trim.
-    // User-own items slot in by the active sort key (newest-first by default).
+    // Second pass is fetched unscoped so its cache key stays small — apply
+    // view-specific content scoping here, before the merge.
     if (userOwnHits.length) {
-      results = mergeMeiliHitsBySort(results, userOwnHits, sort).slice(0, limit);
+      const scopedOwn = contentScopeUserOwnHits(userOwnHits, input);
+      if (scopedOwn.length) {
+        results = mergeMeiliHitsBySort(results, scopedOwn, sort).slice(0, limit);
+      }
     }
 
     const filteredHits = results.filter((hit) => {
@@ -3819,10 +3855,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   // NSFW License Restrictions Filter — gate behind includesNsfwContent in cache-ops
   // mode. On SFW queries the outer nsfwLevel filter already excludes restricted levels,
   // so this compound is a no-op but still costs per-query.
-  if (
-    nsfwRestrictedBaseModels.length > 0 &&
-    (!input.meiliCacheOps || includesNsfwContent)
-  ) {
+  if (nsfwRestrictedBaseModels.length > 0 && (!input.meiliCacheOps || includesNsfwContent)) {
     const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
 
     // Exclude images that have BOTH restricted NSFW levels AND restricted base models
@@ -4023,7 +4056,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   // on the first page (no offset) to keep the merge simple.
   const runUserOwnPass = !!input.meiliUserOwnPass && !!currentUserId && !offset;
   const userOwnHitsPromise: Promise<ImageMetricsSearchIndexRecord[]> = runUserOwnPass
-    ? fetchMeiliUserOwnPass(input, nsfwLevelField)
+    ? fetchMeiliUserOwnPass(input, nsfwLevelField, userId)
     : Promise.resolve([]);
 
   try {
@@ -4129,11 +4162,13 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     postFilterDocsProcessed.inc({ route }, totalProcessed);
     postFilterFilterRatio.observe({ route }, overallFilterRatio);
 
-    // Merge user-own hits from the second-pass into the accumulated results,
-    // dedupe, and re-sort by the active sort field. Runs on first page only.
+    // Merge user-own hits from the second-pass into the accumulated results.
+    // Second pass is unscoped (cacheable) — narrow it to the current view here,
+    // then dedupe and re-sort by the active sort field. Runs on first page only.
     const userOwnHits = await userOwnHitsPromise;
-    const mergedHits = userOwnHits.length
-      ? mergeMeiliHitsBySort(accumulatedHits, userOwnHits, sort)
+    const scopedOwn = userOwnHits.length ? contentScopeUserOwnHits(userOwnHits, input) : [];
+    const mergedHits = scopedOwn.length
+      ? mergeMeiliHitsBySort(accumulatedHits, scopedOwn, sort)
       : accumulatedHits;
 
     // Update nextCursor based on whether we have more results than requested
