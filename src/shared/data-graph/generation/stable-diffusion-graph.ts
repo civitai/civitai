@@ -9,6 +9,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  controlNetsNode,
   createCheckpointGraph,
   createResourcesGraph,
   createVaeGraph,
@@ -25,6 +26,10 @@ import {
   sdxlAspectRatioBuckets,
   sd1AspectRatioBuckets,
 } from '~/shared/constants/generation.constants';
+import {
+  sd1ControlNetPreprocessors,
+  sdxlControlNetPreprocessors,
+} from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
 // Constants
@@ -111,6 +116,16 @@ export const stableDiffusionGraph = new DataGraph<
     })
   )
   .node('clipSkip', sliderNode({ min: 1, max: 3, defaultValue: 2 }))
+  // ControlNets — SD1 has its own preprocessor list; SDXL/Pony/Illustrious/NoobAI/SDXLDistilled share SDXL's.
+  .node(
+    'controlNets',
+    (ctx) => {
+      const preprocessors =
+        ctx.ecosystem === 'SD1' ? sd1ControlNetPreprocessors : sdxlControlNetPreprocessors;
+      return controlNetsNode({ preprocessors });
+    },
+    ['ecosystem']
+  )
   .node('seed', seedNode())
   // Denoise is shown for face-fix/hires-fix (always) or img2img/txt2img when images are present
   // Max is 0.75 when no images (text-only), 1.0 when images are present

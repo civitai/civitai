@@ -13,7 +13,7 @@ import {
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconInfoCircle } from '@tabler/icons-react';
+import { IconAlertTriangle, IconInfoCircle } from '@tabler/icons-react';
 import { getQueryKey } from '@trpc/react-query';
 import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -220,6 +220,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const { isDirty } = form.formState;
   const earlyAccessConfig = form.watch('earlyAccessConfig');
   const usageControl = form.watch('usageControl');
+  const currentLicensingFee = form.watch('licensingFee') ?? 0;
   const existingSettlementCurrency = version?.licensingFeeSettlementCurrency ?? null;
   const hasExistingLicensingFee = (version?.licensingFee ?? 0) > 0;
   const showLicensingFeeBlock =
@@ -788,6 +789,19 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   ]}
                   allowDeselect={false}
                 />
+              )}
+              {currentLicensingFee > 0 && (
+                <Group gap="xs" wrap="nowrap" align="flex-start">
+                  <IconAlertTriangle
+                    size={14}
+                    className="text-yellow-500"
+                    style={{ flexShrink: 0, marginTop: 2 }}
+                  />
+                  <Text size="xs" c="yellow">
+                    With a license fee set, this version stops earning creator compensation and
+                    tips — you earn through the license fee instead.
+                  </Text>
+                </Group>
               )}
               <Divider my="md" />
             </Stack>

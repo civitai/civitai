@@ -34,6 +34,7 @@ import {
   updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -323,6 +324,11 @@ export const getInfiniteImagesHandler = async ({
         // Forward pre-evaluated variant so getImagesFromSearch can skip a
         // duplicate Flipt evaluation. `null` means "skipBitdex" path.
         bitdexMode,
+        actor: buildSearchActor({
+          userId: user?.id,
+          ip: ctx.ip,
+          userAgent: ctx.req.headers['user-agent'],
+        }),
       });
     } else {
       return await getAllImages({
@@ -437,6 +443,12 @@ export const getImagesAsPostsInfiniteHandler = async ({
       }
     }
 
+    const actor = buildSearchActor({
+      userId: user?.id,
+      ip: ctx.ip,
+      userAgent: ctx.req.headers['user-agent'],
+    });
+
     while (true) {
       // TODO handle/remove all these (headers, include, ids)
       const { nextCursor, items } = await fetchFn({
@@ -453,6 +465,7 @@ export const getImagesAsPostsInfiniteHandler = async ({
         // Forward pre-evaluated variant â€” getImagesFromSearch ignores it on the
         // DB path (getAllImages doesn't read it).
         bitdexMode,
+        actor,
       });
 
       // Merge images by postId

@@ -261,9 +261,9 @@ export default MixedAuthEndpoint(async function handler(
         }
       : undefined;
 
-  const creatorTips =
-    !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisableTips) &&
-    !Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.DisableTips);
+  const payoutEnabled =
+    !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
+    !Flags.hasFlag(modelVersion.versionFlags, ModelVersionFlag.DisablePayout);
 
   const data = {
     air,
@@ -289,7 +289,7 @@ export default MixedAuthEndpoint(async function handler(
     minor: modelVersion.minor,
     sfwOnly: modelVersion.sfwOnly,
     fee,
-    creatorTips,
+    payoutEnabled,
   };
   res.status(200).json(data);
 });
