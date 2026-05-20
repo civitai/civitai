@@ -259,7 +259,13 @@ export const trainingModelInfo: {
     description:
       "HiDream.ai's 8B pixel-level unified transformer for text-to-image. Preview — settings, pricing, and results are subject to change.",
     air: 'urn:air:hidreamo1:checkpoint:civitai:2618495@2939946',
-    baseModel: 'HiDream O1',
+    // Must match the canonical ecosystem key in basemodel.constants.ts
+    // (`key: 'HiDream-O1'`). The value flows into ModelVersion.baseModel
+    // on training completion and is then consumed by stringifyAIR; a space
+    // here produces a malformed AIR (urn segments are colon-separated) and
+    // the orchestrator's URN parser falls back to `unknown`, failing the
+    // scan workflow with 400.
+    baseModel: 'HiDream-O1',
     isNew: true,
     aiToolkit: { ecosystem: 'hidream-o1' },
   },
