@@ -97,6 +97,7 @@ import { showNotification } from '@mantine/notifications';
 import { trpc } from '~/utils/trpc';
 import { AspectRatioInput } from './inputs/AspectRatioInput';
 import { SliderInput } from './inputs/SliderInput';
+import { ControlNetsInput, type ControlNetsInputProps } from './inputs/ControlNetsInput';
 import { SelectInput } from './inputs/SelectInput';
 import { SeedInput } from './inputs/SeedInput';
 import {
@@ -1255,6 +1256,20 @@ export function GenerationForm() {
 
             {/* Advanced section */}
             <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
+              {/* ControlNets — only rendered for ecosystems that declare the node */}
+              <Controller
+                graph={graph}
+                name="controlNets"
+                render={({ value, meta, onChange, error }) => (
+                  <ControlNetsInput
+                    value={value as ControlNetsInputProps['value']}
+                    onChange={onChange as ControlNetsInputProps['onChange']}
+                    meta={meta as ControlNetsInputProps['meta']}
+                    error={error?.message}
+                  />
+                )}
+              />
+
               {/* Frame Guide Strength (LTXV2/LTXV23 img2vid with both frames) */}
               <Controller
                 graph={graph}

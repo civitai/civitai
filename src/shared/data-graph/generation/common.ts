@@ -26,6 +26,13 @@ import type { GenerationCtx } from './context';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { isWorkflowAvailable, getWorkflowsForEcosystem, workflowConfigByKey } from './config';
+import {
+  controlNetPreprocessors,
+  controlNetCategoryLabels,
+  type ControlNetPreprocessorKey,
+  type ControlNetCategory,
+  type ControlNetPreprocessorInfo,
+} from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
 // Helper Functions
@@ -1376,6 +1383,206 @@ export function imagesNode({
       warnOnMissingAiMetadata,
       aspectRatios,
       cropToFirstImage,
+    },
+  };
+}
+
+// =============================================================================
+// ControlNets Node Builder
+// =============================================================================
+
+/** Default weight bounds — matches orchestrator clamp. */
+const CONTROLNET_WEIGHT_MIN = 0;
+const CONTROLNET_WEIGHT_MAX = 2;
+const CONTROLNET_WEIGHT_DEFAULT = 1;
+const CONTROLNET_STEP_MIN = 0;
+const CONTROLNET_STEP_MAX = 1;
+
+const controlNetImageObjectSchema = z.object({
+  url: z.string(),
+  width: z.number().optional(),
+  height: z.number().optional(),
+});
+
+// Image is optional on the input — users may stage an entry (pick category /
+// preprocessor) before they've uploaded a reference. Entries without an image
+// are filtered out at the array level before reaching `output`.
+const controlNetImageInputSchema = z.union([z.string(), controlNetImageObjectSchema]);
+
+const controlNetEntryInputSchema = z.object({
+  preprocessor: z.string(),
+  image: controlNetImageInputSchema.optional(),
+  weight: z.coerce.number().min(CONTROLNET_WEIGHT_MIN).max(CONTROLNET_WEIGHT_MAX).optional(),
+  startStep: z.coerce.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX).optional(),
+  endStep: z.coerce.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX).optional(),
+});
+
+const controlNetEntryOutputSchema = z.object({
+  preprocessor: z.string(),
+  image: controlNetImageObjectSchema,
+  weight: z.number().min(CONTROLNET_WEIGHT_MIN).max(CONTROLNET_WEIGHT_MAX),
+  startStep: z.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX),
+  endStep: z.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX),
+});
+
+/** Runtime value type for a single ControlNet entry. */
+export type ControlNetEntryValue = z.infer<typeof controlNetEntryOutputSchema>;
+
+/** Runtime value type for the controlNets node — a flat array of entries. */
+export type ControlNetsNodeValue = ControlNetEntryValue[];
+
+/** Option type emitted in node meta for the UI to render select items. */
+export type ControlNetPreprocessorOption = {
+  value: ControlNetPreprocessorKey;
+  label: string;
+  description: string;
+  category: ControlNetCategory;
+  recommended: boolean;
+  requiresPreprocessedImage: boolean;
+};
+
+/** Grouping of options under a category label, for grouped selects. */
+export type ControlNetPreprocessorGroup = {
+  category: ControlNetCategory;
+  label: string;
+  options: ControlNetPreprocessorOption[];
+};
+
+function toPreprocessorOption(
+  key: ControlNetPreprocessorKey,
+  info: ControlNetPreprocessorInfo
+): ControlNetPreprocessorOption {
+  return {
+    value: key,
+    label: info.label,
+    description: info.description,
+    category: info.category,
+    recommended: info.recommended ?? false,
+    requiresPreprocessedImage: info.requiresPreprocessedImage ?? false,
+  };
+}
+
+/**
+ * Creates a controlNets node.
+ *
+ * Pass the list of preprocessor keys the current ecosystem/model supports — the
+ * node looks each one up in `controlNetPreprocessors` to build the select
+ * options (with label, description, category, recommended flag) and groups
+ * them by category for the UI. Any key not in the shared dictionary is dropped
+ * with a warning rather than throwing, so a backend rollout that adds a new
+ * preprocessor before the constants file is updated degrades gracefully.
+ *
+ * Meta exposes:
+ * - `options`: flat list of preprocessor options (in input order)
+ * - `groups`: same options grouped by category, with category labels
+ * - `limit`: max number of controlnets that can be added at once
+ * - `weight` / `step`: bounds + defaults for the per-entry sliders
+ *
+ * Output is an array of validated entries with defaults applied for
+ * `weight` (1), `startStep` (0), `endStep` (1).
+ *
+ * @example
+ * .node(
+ *   'controlNets',
+ *   () => controlNetsNode({
+ *     preprocessors: ['canny', 'depthAnythingV2', 'dwpose', 'openpose'],
+ *   }),
+ *   []
+ * )
+ */
+export function controlNetsNode({
+  preprocessors,
+  limit = 4,
+}: {
+  preprocessors: readonly ControlNetPreprocessorKey[];
+  limit?: number;
+}) {
+  // Preserve caller-supplied order, dedupe, and drop unknown keys defensively.
+  const seen = new Set<ControlNetPreprocessorKey>();
+  const validKeys: ControlNetPreprocessorKey[] = [];
+  for (const key of preprocessors) {
+    if (seen.has(key)) continue;
+    if (!controlNetPreprocessors[key]) continue;
+    seen.add(key);
+    validKeys.push(key);
+  }
+
+  const options = validKeys.map((key) => toPreprocessorOption(key, controlNetPreprocessors[key]));
+
+  // Group by category, preserving the first-seen category order from `options`
+  // so ecosystems that prioritize (e.g.) edges-first stay edges-first in the UI.
+  const groupMap = new Map<ControlNetCategory, ControlNetPreprocessorOption[]>();
+  for (const opt of options) {
+    const bucket = groupMap.get(opt.category);
+    if (bucket) bucket.push(opt);
+    else groupMap.set(opt.category, [opt]);
+  }
+  const groups: ControlNetPreprocessorGroup[] = [...groupMap.entries()].map(([category, opts]) => ({
+    category,
+    label: controlNetCategoryLabels[category],
+    options: opts,
+  }));
+
+  const allowedKeys = new Set(validKeys);
+  // Refines `preprocessor: string` down to the ecosystem-allowed subset.
+  const refinedInputSchema = controlNetEntryInputSchema.refine(
+    (e) => allowedKeys.has(e.preprocessor as ControlNetPreprocessorKey),
+    { message: 'Unsupported ControlNet preprocessor for this model', path: ['preprocessor'] }
+  );
+
+  return {
+    input: refinedInputSchema
+      .array()
+      .max(limit)
+      .optional()
+      .transform((arr) => {
+        if (!arr) return undefined;
+        return arr.map((entry) => {
+          const image = typeof entry.image === 'string' ? { url: entry.image } : entry.image;
+          // Normalize a missing or empty-url image to `undefined` so the
+          // array-level filter on `output` can drop incomplete entries.
+          const normalizedImage = image?.url ? image : undefined;
+          return {
+            preprocessor: entry.preprocessor,
+            image: normalizedImage,
+            weight: entry.weight ?? CONTROLNET_WEIGHT_DEFAULT,
+            startStep: entry.startStep ?? CONTROLNET_STEP_MIN,
+            endStep: entry.endStep ?? CONTROLNET_STEP_MAX,
+          };
+        });
+      }),
+    // Filter out entries without an image, then validate the remaining
+    // entries against the output schema (where `image` is required).
+    output: z
+      .array(z.unknown())
+      .max(limit, `Maximum ${limit} ControlNets allowed`)
+      .optional()
+      .transform((arr) =>
+        arr?.filter(
+          (e): e is { image: { url: string } } =>
+            typeof e === 'object' &&
+            e !== null &&
+            'image' in e &&
+            !!(e as { image?: { url?: string } }).image?.url
+        )
+      )
+      .pipe(controlNetEntryOutputSchema.array().optional()),
+    defaultValue: [] as ControlNetsNodeValue,
+    meta: {
+      options,
+      groups,
+      limit,
+      weight: {
+        min: CONTROLNET_WEIGHT_MIN,
+        max: CONTROLNET_WEIGHT_MAX,
+        default: CONTROLNET_WEIGHT_DEFAULT,
+        step: 0.05,
+      },
+      step: {
+        min: CONTROLNET_STEP_MIN,
+        max: CONTROLNET_STEP_MAX,
+        step: 0.05,
+      },
     },
   };
 }

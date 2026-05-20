@@ -13,7 +13,9 @@ import { maxRandomSeed } from '~/server/common/constants';
 import { fluxUltraAir, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
+import type { ControlNetsNodeValue } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
+import { mapControlNetsToJobInput } from './controlnets.helper';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -104,6 +106,10 @@ export const createFluxInput = defineHandler<FluxCtx, [TextToImageStepTemplate]>
   // Get scheduler (Flux uses Euler by default)
   const scheduler = samplersToSchedulers['undefined'] as Scheduler;
 
+  const controlNets = mapControlNetsToJobInput(
+    (data as { controlNets?: ControlNetsNodeValue }).controlNets
+  );
+
   return [
     {
       $type: 'textToImage',
@@ -120,6 +126,7 @@ export const createFluxInput = defineHandler<FluxCtx, [TextToImageStepTemplate]>
         quantity,
         batchSize: 1,
         outputFormat: data.outputFormat,
+        ...(controlNets?.length ? { controlNets } : {}),
       },
     } as TextToImageStepTemplate,
   ];

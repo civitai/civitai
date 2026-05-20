@@ -10,6 +10,7 @@
 
 import type {
   ComfyStepTemplate,
+  ImageJobControlNet,
   ImageJobNetworkParams,
   Scheduler,
   TextToImageStep,
@@ -19,10 +20,14 @@ import { samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import { maxRandomSeed } from '~/server/common/constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import type {
+  ControlNetsNodeValue,
+  ResourceData,
+} from '~/shared/data-graph/generation/common';
 import type { GenerationHandlerCtx } from '.';
 import { createComfyInput } from './comfy-input';
 import { defineHandler } from './handler-factory';
+import { mapControlNetsToJobInput } from './controlnets.helper';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -114,10 +119,11 @@ function createTextToImageInput(
     outputFormat?: string;
     /** Draft LoRA AIR to add (if in draft mode) */
     draftLoraAir?: string;
+    controlNets?: ImageJobControlNet[];
   },
   ctx: GenerationHandlerCtx
 ): TextToImageStepTemplate {
-  const { model, resources = [], vae, draftLoraAir, ...rest } = args;
+  const { model, resources = [], vae, draftLoraAir, controlNets, ...rest } = args;
 
   // Build additionalNetworks from resources + vae
   const additionalNetworks: Record<string, ImageJobNetworkParams> = {};
@@ -143,6 +149,7 @@ function createTextToImageInput(
       model: ctx.airs.getOrThrow(model.id),
       additionalNetworks,
       ...rest,
+      ...(controlNets?.length ? { controlNets } : {}),
     },
   } as TextToImageStepTemplate;
 }
@@ -251,6 +258,10 @@ export const createStableDiffusionInput = defineHandler<
     ];
   }
 
+  const controlNets = mapControlNetsToJobInput(
+    (data as { controlNets?: ControlNetsNodeValue }).controlNets
+  );
+
   return [
     createTextToImageInput(
       {
@@ -270,6 +281,7 @@ export const createStableDiffusionInput = defineHandler<
         batchSize,
         outputFormat: data.outputFormat,
         draftLoraAir,
+        controlNets,
       },
       ctx
     ),
