@@ -21,6 +21,7 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  controlNetsNode,
   createCheckpointGraph,
   createResourcesGraph,
   promptGraph,
@@ -31,6 +32,7 @@ import {
   type ResourceData,
 } from './common';
 import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
+import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
 // Flux Mode Constants
@@ -111,6 +113,7 @@ const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: fluxGuidancePresets })
   )
   .node('steps', sliderNode({ min: 20, max: 50, defaultValue: 25 }))
+  .node('controlNets', controlNetsNode({ preprocessors: fluxControlNetPreprocessors }))
   .node('seed', seedNode());
 
 /**

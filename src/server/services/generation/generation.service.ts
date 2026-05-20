@@ -1101,25 +1101,10 @@ export async function getResourceData(
     ? filtered.filter((r) => r.model.type === 'Wildcards').map((r) => r.id)
     : [];
   if (wildcardVersionIds.length > 0) {
-    const wildcardSets = await dbRead.wildcardSet.findMany({
-      where: {
-        kind: 'System',
-        modelVersionId: { in: wildcardVersionIds },
-        isInvalidated: false,
-        // Strict gate: Mixed sets stay visible (they have at least one
-        // Clean category), Dirty sets hide. Matches the resolver and the
-        // picker read paths.
-        auditStatus: { not: 'Dirty' },
-        // .com hides any set containing NSFW content; .red surfaces both.
-        ...(sfwOnly ? { nsfw: false } : {}),
-      },
-      select: { id: true, modelVersionId: true },
-    });
-    const visibleSetIdByVersionId = new Map<number, number>();
-    for (const set of wildcardSets) {
-      if (!set.modelVersionId) continue;
-      visibleSetIdByVersionId.set(set.modelVersionId, set.id);
-    }
+    const visibleSetIdByVersionId = await getVisibleSystemWildcardSetIdsByVersionId(
+      wildcardVersionIds,
+      { sfwOnly }
+    );
     for (const resource of filtered) {
       if (resource.model.type !== 'Wildcards') continue;
       const setId = visibleSetIdByVersionId.get(resource.id);
@@ -1133,6 +1118,53 @@ export async function getResourceData(
   }
 
   return filtered;
+}
+
+/**
+ * Look up visible System-kind `WildcardSet`s for a list of `Wildcards`-type
+ * ModelVersion ids. Visibility predicate matches the read-path used by the
+ * resolver and the picker:
+ *   - `kind = 'System'`
+ *   - `modelVersionId IN ids`
+ *   - `isInvalidated = false`
+ *   - `auditStatus != 'Dirty'` (Mixed sets stay visible — at least one Clean
+ *     category exists; only fully-Dirty sets hide)
+ *   - On `.com` (`sfwOnly = true`): `nsfw = false`. On `.red`: no NSFW gate.
+ *
+ * Returns a `Map<modelVersionId, wildcardSetId>` for every version that has a
+ * currently-visible set.
+ *
+ * Used by both `getResourceData` (to stamp `wildcardSetId` + override
+ * `canGenerate` on returned GenerationResources) and `modelVersion.getById`
+ * (to override `canGenerate` on the model detail page). v1 design rule: a
+ * `Wildcards`-type ModelVersion's "can generate" status is gated by whether
+ * its source WildcardSet is currently visible — NOT by the standard
+ * `isBaseModelGenerationSupported` path (Wildcards baseModels aren't on the
+ * generation-supported list, so that path always returns false). See
+ * docs/features/prompt-snippets-v1.md §"Wildcards models vs generation
+ * resources".
+ */
+export async function getVisibleSystemWildcardSetIdsByVersionId(
+  modelVersionIds: number[],
+  { sfwOnly }: { sfwOnly: boolean }
+): Promise<Map<number, number>> {
+  if (modelVersionIds.length === 0) return new Map();
+  const wildcardSets = await dbRead.wildcardSet.findMany({
+    where: {
+      kind: 'System',
+      modelVersionId: { in: modelVersionIds },
+      isInvalidated: false,
+      auditStatus: { not: 'Dirty' },
+      ...(sfwOnly ? { nsfw: false } : {}),
+    },
+    select: { id: true, modelVersionId: true },
+  });
+  const map = new Map<number, number>();
+  for (const set of wildcardSets) {
+    if (!set.modelVersionId) continue;
+    map.set(set.modelVersionId, set.id);
+  }
+  return map;
 }
 
 // =============================================================================

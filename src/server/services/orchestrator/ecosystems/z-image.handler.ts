@@ -13,8 +13,12 @@ import type {
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import type {
+  ControlNetsNodeValue,
+  ResourceData,
+} from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
+import { mapControlNetsToJobInput } from './controlnets.helper';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -47,9 +51,17 @@ export const createZImageInput = defineHandler<ZImageCtx, [ImageGenStepTemplate]
     }
   }
 
+  const controlNets = mapControlNetsToJobInput(
+    (data as { controlNets?: ControlNetsNodeValue }).controlNets
+  );
+
   return [
     {
       $type: 'imageGen',
+      // Cast: `controlNets` is not yet declared on ZImage*ImageGenInput in the
+      // @civitai/client types but is accepted by the orchestrator for ZImage
+      // workflows. Drop the cast once the client SDK is regenerated with the
+      // field on SdCpp imageGen inputs.
       input: removeEmpty({
         engine: 'sdcpp',
         ecosystem: 'zImage',
@@ -67,6 +79,7 @@ export const createZImageInput = defineHandler<ZImageCtx, [ImageGenStepTemplate]
         seed: data.seed,
         loras: Object.keys(loras).length > 0 ? loras : undefined,
         diffuserModel: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+        ...(controlNets?.length ? { controlNets } : {}),
       }) as ZImageInput,
     },
   ];

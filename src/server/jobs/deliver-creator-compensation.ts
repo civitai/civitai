@@ -9,7 +9,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { CASH_SETTLED_ALIASES, TransactionType } from '~/shared/constants/buzz.constants';
 import {
   creatorCompAmountPaidCounter,
   creatorCompCreatorsPaidCounter,
@@ -62,13 +62,14 @@ export const updateCreatorResourceCompensation = createJob(
 );
 
 type UserVersions = { userId: number; modelVersionIds: number[] };
-// Compensation rows ride either as 'compensation' (default) or 'tip' — both
-// settle into the same payout transaction. 'license' rows settle separately.
+// Orchestrator ships PascalCase accountType (e.g. 'Yellow', 'CashSettled'); the
+// buzz API tolerates the aliases so we forward them as-is and only branch on
+// cashSettled below for the pennies conversion.
 type ResourceRow = {
   modelVersionId: number;
   amount: number;
   accountType: BuzzAccountType;
-  source: 'tip' | 'compensation' | 'license';
+  source: 'tip' | 'compensation' | 'licenseFee';
 };
 
 const BATCH_SIZE = 100;
@@ -144,9 +145,8 @@ export async function runPayout(lastUpdate: Date) {
     return;
   }
 
-  // Two transaction kinds emitted per (user, accountType):
-  //   compensation+tip → unified Compensation tx
-  //   license          → separate LicenseFee tx
+  // cashSettled rows arrive in tenths-of-a-penny; the cashSettled account
+  // ledger uses pennies, so we divide by 10 before minting.
   const transactions = Object.entries(creatorsToPay)
     .flatMap(([userIdStr, userRows]) => {
       const userId = Number(userIdStr);
@@ -154,8 +154,11 @@ export async function runPayout(lastUpdate: Date) {
       const licenseTotals: Partial<Record<BuzzAccountType, number>> = {};
 
       for (const row of userRows) {
-        const bucket = row.source === 'license' ? licenseTotals : compTotals;
-        bucket[row.accountType] = (bucket[row.accountType] || 0) + row.amount;
+        const bucket = row.source === 'licenseFee' ? licenseTotals : compTotals;
+        const isCash = CASH_SETTLED_ALIASES.has(row.accountType);
+        const amount =
+          row.source === 'licenseFee' && isCash ? Math.floor(row.amount / 10) : row.amount;
+        bucket[row.accountType] = (bucket[row.accountType] || 0) + amount;
       }
 
       const compTx = Object.entries(compTotals).map(([accountType, amount]) => ({
@@ -179,7 +182,7 @@ export async function runPayout(lastUpdate: Date) {
         description: `License fee payout (${formatDate(date, 'MMM D, YYYY', true)})`,
         type: TransactionType.LicenseFee,
         externalTransactionId: `license-fee-${dateStr}-${userId}-${accountType}`,
-        source: 'license' as const,
+        source: 'licenseFee' as const,
       }));
 
       return [...compTx, ...licenseTx];
@@ -224,7 +227,7 @@ export async function runPayout(lastUpdate: Date) {
         {} as Record<
           string,
           {
-            source: 'compensation' | 'license';
+            source: 'compensation' | 'licenseFee';
             accountType: BuzzAccountType;
             creators: Set<number>;
             amount: number;
@@ -233,7 +236,7 @@ export async function runPayout(lastUpdate: Date) {
       );
 
       Object.values(batchStats).forEach(({ source, accountType, creators, amount }) => {
-        if (source === 'license') {
+        if (source === 'licenseFee') {
           licenseFeeCreatorsPaidCounter.inc({ account_type: accountType }, creators.size);
           licenseFeeAmountPaidCounter.inc({ account_type: accountType }, amount);
         } else {

@@ -9,6 +9,8 @@ export interface StorageBackend {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
   removeItem(key: string): void;
+  /** Optional: enumerate all stored keys (used by `clear` to wipe scoped slots). */
+  keys?(): string[];
 }
 
 /** Base properties shared by all storage groups */
@@ -78,6 +80,7 @@ export function createMemoryStorage(): StorageBackend {
     getItem: (key) => store.get(key) ?? null,
     setItem: (key, value) => store.set(key, value),
     removeItem: (key) => store.delete(key),
+    keys: () => [...store.keys()],
   };
 }
 
@@ -323,23 +326,81 @@ class LocalStorageAdapter<Ctx extends Record<string, unknown>> implements Storag
     }
   }
 
-  clear(): void {
-    const ctx = this.graph.ctx;
-
-    for (const group of this.options.groups) {
-      const storageKey = this.buildStorageKey(group.name, group.scope, ctx);
-      if (storageKey) {
-        this.cachedRemoveItem(storageKey);
-      }
-    }
-  }
-
   /**
    * Remove a storage key from both live storage and the in-memory cache.
    * Use this instead of direct localStorage.removeItem() to keep the cache in sync.
    */
   removeKey(key: string): void {
     this.cachedRemoveItem(key);
+  }
+
+  /**
+   * Remove all keys (other than `preserveKeys`) from every storage slot owned
+   * by this adapter — scoped or not. Used by `graph.reset` so a reset wipes
+   * stale values out of *every* scope variant, not just the slot the
+   * post-reset ctx happens to land on.
+   *
+   * Slots that become empty are removed entirely.
+   */
+  clear(preserveKeys: string[]): void {
+    const preserve = new Set(preserveKeys);
+    const prefix = this.options.prefix;
+    const allKeys = this.enumerateStorageKeys().filter(
+      (k) => k === prefix || k.startsWith(`${prefix}.`)
+    );
+
+    for (const storageKey of allKeys) {
+      const raw = this.cachedGetItem(storageKey);
+      if (!raw) continue;
+      let values: Record<string, unknown>;
+      try {
+        values = JSON.parse(raw);
+      } catch {
+        // Not our JSON-shaped data — leave it alone.
+        continue;
+      }
+      if (typeof values !== 'object' || values === null) continue;
+
+      let touched = false;
+      for (const key of Object.keys(values)) {
+        if (!preserve.has(key)) {
+          delete values[key];
+          touched = true;
+        }
+      }
+      if (!touched) continue;
+
+      if (Object.keys(values).length === 0) {
+        this.cachedRemoveItem(storageKey);
+      } else {
+        this.cachedSetItem(storageKey, JSON.stringify(values));
+      }
+    }
+  }
+
+  /**
+   * Enumerate every key in the underlying storage backend. Prefers the
+   * optional `keys()` method on the backend (memory storage / custom shims),
+   * falling back to localStorage's `length`/`key(i)` pair when running in the
+   * browser. Returns an empty list if neither is available.
+   */
+  private enumerateStorageKeys(): string[] {
+    const backend = this.options.storage;
+    if (typeof backend.keys === 'function') {
+      return backend.keys();
+    }
+    // Fall back to the Web Storage iteration API when backend looks like
+    // `localStorage`/`sessionStorage`.
+    const indexed = backend as unknown as { length?: number; key?(i: number): string | null };
+    if (typeof indexed.length === 'number' && typeof indexed.key === 'function') {
+      const keys: string[] = [];
+      for (let i = 0; i < indexed.length; i++) {
+        const k = indexed.key(i);
+        if (k !== null) keys.push(k);
+      }
+      return keys;
+    }
+    return [];
   }
 
   getStorageKeys(): string[] {

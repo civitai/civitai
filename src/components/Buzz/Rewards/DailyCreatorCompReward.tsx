@@ -62,6 +62,8 @@ const startDate = dayjs('2024-08-01').toDate();
 const monthsUntilNow = getDatesAsList(startDate, now.toDate(), 'month');
 
 // get date options as month from start of year to now
+const CASH_COLOR = '#26a269';
+
 const dateOptions = monthsUntilNow.reverse().map((month) => {
   const date = dayjs(month).startOf('month').add(15, 'day');
   return {
@@ -80,7 +82,7 @@ export function DailyCreatorCompReward({
   const mobile = useIsMobile({ breakpoint: 'sm' });
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateOptions[0].value);
-  const [source, setSource] = useState<'compensation' | 'license'>('compensation');
+  const [source, setSource] = useState<'compensation' | 'licenseFee'>('compensation');
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
 
@@ -89,32 +91,61 @@ export function DailyCreatorCompReward({
     { enabled: features.buzz }
   );
 
-  // Peek at license earnings so the segment only renders when the creator has any.
   const { data: licenseProbe = [] } = trpc.buzz.getDailyBuzzCompensation.useQuery(
-    { date: selectedDate, source: 'license' },
+    { date: selectedDate, source: 'licenseFee' },
     { enabled: features.buzz && source === 'compensation' }
   );
-  const hasLicenseEarnings = licenseProbe.length > 0 || source === 'license';
+  const hasLicenseEarnings = licenseProbe.length > 0 || source === 'licenseFee';
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const labelColor = colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
   const minSelectedDate = dayjs(selectedDate).startOf('month').toDate();
   const maxSelectedDate = dayjs(selectedDate).endOf('month').toDate();
 
+  const hasCashDatasets =
+    source === 'licenseFee' && resources.some((r) => (r.cashData?.length ?? 0) > 0);
+  const hasBuzzDatasets = resources.some((r) => (r.data?.length ?? 0) > 0);
+  const cashOnlyChart = hasCashDatasets && !hasBuzzDatasets;
+
   const options = useMemo<ChartOptions<'bar'>>(() => {
     return {
       responsive: true,
       aspectRatio: mobile ? 1 : 1.4,
       scales: {
-        y: {
-          stacked: true,
-          beginAtZero: true,
-          ticks: {
-            color: labelColor,
-            callback: abbreviateValue,
-          },
-          grid: { color: 'rgba(128, 128, 128, 0.1)' },
-        },
+        ...(cashOnlyChart
+          ? {}
+          : {
+              y: {
+                stacked: true,
+                beginAtZero: true,
+                position: 'left' as const,
+                ticks: {
+                  color: labelColor,
+                  callback: abbreviateValue,
+                },
+                grid: { color: 'rgba(128, 128, 128, 0.1)' },
+                title: hasCashDatasets
+                  ? { display: true, text: 'Buzz', color: labelColor }
+                  : undefined,
+              },
+            }),
+        ...(hasCashDatasets
+          ? {
+              y1: {
+                stacked: true,
+                beginAtZero: true,
+                position: cashOnlyChart ? ('left' as const) : ('right' as const),
+                ticks: {
+                  color: labelColor,
+                  callback: (val: number | string) => `$${Number(val).toFixed(0)}`,
+                },
+                grid: cashOnlyChart ? { color: 'rgba(128, 128, 128, 0.1)' } : { display: false },
+                title: cashOnlyChart
+                  ? undefined
+                  : { display: true, text: 'USD', color: labelColor },
+              },
+            }
+          : {}),
         x: {
           stacked: true,
           type: 'time' as const,
@@ -130,12 +161,9 @@ export function DailyCreatorCompReward({
         },
       },
       plugins: {
-        legend: { display: false },
+        legend: { display: hasCashDatasets },
         tooltip: {
-          ...chartTooltipDefaults({
-            accentColor: buzzConfig.color,
-            formatValue: (val) => formatCurrencyForDisplay(val, 'BUZZ'),
-          }),
+          ...chartTooltipDefaults({ accentColor: buzzConfig.color }),
           callbacks: {
             title(tooltipItems) {
               if (!filteredVersionIds.length) return '';
@@ -145,7 +173,10 @@ export function DailyCreatorCompReward({
               return `${formatDate(tooltipItems[0].parsed.x)}`;
             },
             label(tooltipItem) {
-              return `${formatCurrencyForDisplay(tooltipItem.parsed.y ?? 0, 'BUZZ')}`;
+              const value = tooltipItem.parsed.y ?? 0;
+              const currency = (tooltipItem.dataset as { currency?: 'BUZZ' | 'USD' }).currency;
+              if (currency === 'USD') return `$${value.toFixed(2)}`;
+              return `${formatCurrencyForDisplay(value, 'BUZZ')}`;
             },
           },
         },
@@ -153,6 +184,8 @@ export function DailyCreatorCompReward({
     };
   }, [
     filteredVersionIds.length,
+    hasCashDatasets,
+    cashOnlyChart,
     labelColor,
     mobile,
     maxSelectedDate,
@@ -162,32 +195,70 @@ export function DailyCreatorCompReward({
 
   const datasets = useMemo(() => {
     if (filteredVersionIds.length > 0) {
-      const data = resources.filter((v) => filteredVersionIds.includes(v.id));
-
-      return data.map((resource) => ({
-        label: `${resource.modelName} - ${resource.name}`,
-        data: (resource.data ?? []).map((data) => ({ x: data.createdAt, y: data.total })),
-      }));
+      const selected = resources.filter((v) => filteredVersionIds.includes(v.id));
+      return selected.flatMap((r) => {
+        const out = [];
+        if (r.data?.length) {
+          out.push({
+            label: `${r.modelName} - ${r.name}`,
+            data: r.data.map((d) => ({ x: d.createdAt, y: d.total })),
+            backgroundColor: buzzConfig.color,
+            borderColor: buzzConfig.color,
+            yAxisID: 'y',
+            currency: 'BUZZ' as const,
+          });
+        }
+        if (source === 'licenseFee' && r.cashData?.length) {
+          out.push({
+            label: `${r.modelName} - ${r.name} (cash)`,
+            data: r.cashData.map((d) => ({ x: d.createdAt, y: d.total / 100 })),
+            backgroundColor: CASH_COLOR,
+            borderColor: CASH_COLOR,
+            yAxisID: 'y1',
+            currency: 'USD' as const,
+          });
+        }
+        return out;
+      });
     }
 
-    const data = resources
-      .flatMap((resource) => resource.data)
-      .reduce((acc, resource) => {
-        const existing = acc.find((x) => x.createdAt === resource.createdAt);
-        if (existing) existing.total += resource.total;
-        else acc.push({ ...resource });
+    const aggregate = (rows: { createdAt: string; total: number }[]) =>
+      Array.from(
+        rows
+          .reduce(
+            (acc, r) => acc.set(r.createdAt, (acc.get(r.createdAt) ?? 0) + r.total),
+            new Map<string, number>()
+          )
+          .entries()
+      );
 
-        return acc;
-      }, [] as { createdAt: string; total: number }[]);
-
-    return [
-      {
+    const out = [];
+    const buzzAgg = aggregate(resources.flatMap((r) => r.data ?? []));
+    if (buzzAgg.length) {
+      out.push({
+        label: 'Buzz',
+        data: buzzAgg.map(([x, y]) => ({ x, y })),
         backgroundColor: buzzConfig.color,
         borderColor: buzzConfig.color,
-        data: data.map((resource) => ({ x: resource.createdAt, y: resource.total })),
-      },
-    ];
-  }, [filteredVersionIds, resources, buzzConfig.color]);
+        yAxisID: 'y',
+        currency: 'BUZZ' as const,
+      });
+    }
+    if (source === 'licenseFee') {
+      const cashAgg = aggregate(resources.flatMap((r) => r.cashData ?? []));
+      if (cashAgg.length) {
+        out.push({
+          label: 'Cash',
+          data: cashAgg.map(([x, y]) => ({ x, y: y / 100 })),
+          backgroundColor: CASH_COLOR,
+          borderColor: CASH_COLOR,
+          yAxisID: 'y1',
+          currency: 'USD' as const,
+        });
+      }
+    }
+    return out;
+  }, [filteredVersionIds, resources, buzzConfig.color, source]);
 
   const selectedResources = resources.filter((v) => filteredVersionIds.includes(v.id));
   const combinedResources = [
@@ -199,11 +270,16 @@ export function DailyCreatorCompReward({
         v.modelName.toLowerCase().includes(debouncedSearch.trim().toLowerCase())
       )
     : combinedResources.slice(0, 20);
-  const totalBuzz = combinedResources.reduce((acc, resource) => {
-    if (filteredVersionIds.length > 0 && !filteredVersionIds.includes(resource.id)) return acc;
-
-    return acc + resource.totalSum;
-  }, 0);
+  const { totalBuzz, totalCashCents } = combinedResources.reduce(
+    (acc, r) => {
+      if (filteredVersionIds.length > 0 && !filteredVersionIds.includes(r.id)) return acc;
+      acc.totalBuzz += r.totalSum;
+      acc.totalCashCents += r.cashCents ?? 0;
+      return acc;
+    },
+    { totalBuzz: 0, totalCashCents: 0 }
+  );
+  const showCashTotal = source === 'licenseFee' && totalCashCents > 0;
 
   return (
     <>
@@ -231,20 +307,20 @@ export function DailyCreatorCompReward({
           <Stack gap={0} p="md" pb={0}>
             <Group gap={8} justify="space-between">
               <h3 className="text-xl font-bold">
-                {source === 'license' ? 'License Fees Earned' : 'Generation Buzz Earned'}
+                {source === 'licenseFee' ? 'License Fees Earned' : 'Generation Buzz Earned'}
               </h3>
               <Group gap={8} wrap="nowrap">
                 {hasLicenseEarnings && (
                   <SegmentedControl
                     value={source}
                     onChange={(value) => {
-                      setSource(value as 'compensation' | 'license');
+                      setSource(value as 'compensation' | 'licenseFee');
                       setSearch('');
                       setFilteredVersionIds([]);
                     }}
                     data={[
                       { value: 'compensation', label: 'Compensation' },
-                      { value: 'license', label: 'License Fees' },
+                      { value: 'licenseFee', label: 'License Fees' },
                     ]}
                     size="xs"
                   />
@@ -263,16 +339,25 @@ export function DailyCreatorCompReward({
               </Group>
             </Group>
             {!isLoading && resources.length > 0 && (
-              <Group justify="flex-start" gap={4}>
-                <CurrencyIcon currency={Currency.BUZZ} size={24} type={buzzAccountType} />
-                <Text
-                  size="xl"
-                  c={buzzConfig.color}
-                  fw="bold"
-                  style={{ fontVariant: 'tabular-nums' }}
-                >
-                  {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
-                </Text>
+              <Group justify="flex-start" gap="md" wrap="nowrap">
+                {totalBuzz > 0 && (
+                  <Group gap={4} wrap="nowrap">
+                    <CurrencyIcon currency={Currency.BUZZ} size={24} type={buzzAccountType} />
+                    <Text
+                      size="xl"
+                      c={buzzConfig.color}
+                      fw="bold"
+                      style={{ fontVariant: 'tabular-nums' }}
+                    >
+                      {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
+                    </Text>
+                  </Group>
+                )}
+                {showCashTotal && (
+                  <Text size="xl" c={CASH_COLOR} fw="bold" style={{ fontVariant: 'tabular-nums' }}>
+                    ${formatCurrencyForDisplay(totalCashCents, Currency.USD)}
+                  </Text>
+                )}
               </Group>
             )}
           </Stack>
@@ -393,21 +478,30 @@ export function DailyCreatorCompReward({
                                 {version.name}
                               </Text>
                             </Stack>
-                            <Group gap={4} wrap="nowrap">
-                              <CurrencyIcon
-                                currency={Currency.BUZZ}
-                                size={16}
-                                type={buzzAccountType}
-                              />
-                              <Text
-                                size="sm"
-                                c={buzzConfig.color}
-                                fw="bold"
-                                style={{ fontVariant: 'tabular-nums' }}
-                              >
-                                {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
-                              </Text>
-                            </Group>
+                            <Stack gap={2} align="flex-end">
+                              {(version.totalSum > 0 || source !== 'licenseFee') && (
+                                <Group gap={4} wrap="nowrap">
+                                  <CurrencyIcon
+                                    currency={Currency.BUZZ}
+                                    size={16}
+                                    type={buzzAccountType}
+                                  />
+                                  <Text
+                                    size="sm"
+                                    c={buzzConfig.color}
+                                    fw="bold"
+                                    style={{ fontVariant: 'tabular-nums' }}
+                                  >
+                                    {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
+                                  </Text>
+                                </Group>
+                              )}
+                              {source === 'licenseFee' && (version.cashCents ?? 0) > 0 && (
+                                <Text size="xs" fw="bold" style={{ fontVariant: 'tabular-nums' }}>
+                                  ${formatCurrencyForDisplay(version.cashCents ?? 0, Currency.USD)}
+                                </Text>
+                              )}
+                            </Stack>
                           </Group>
                         </UnstyledButton>
                       );

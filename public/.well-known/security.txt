@@ -1,0 +1,10 @@
+# Civitai Security Policy
+# See SECURITY.md in our repository for full details:
+# https://github.com/civitai/civitai/blob/main/SECURITY.md
+
+Contact: mailto:security@civitai.com
+Expires: 2027-05-20T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://civitai.com/.well-known/security.txt
+Policy: https://github.com/civitai/civitai/blob/main/SECURITY.md
+Acknowledgments: https://github.com/civitai/civitai/blob/main/SECURITY.md

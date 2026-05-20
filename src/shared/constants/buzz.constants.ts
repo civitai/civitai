@@ -100,6 +100,8 @@ const buzzTypeConfig: Record<BuzzAccountType, BuzzTypeConfig> = {
 };
 
 export const buzzAccountTypes = Object.keys(buzzTypeConfig) as BuzzAccountType[];
+// CH-side accountType aliases that resolve to the cashSettled buzz account.
+export const CASH_SETTLED_ALIASES = new Set<string>(['CashSettled', 'cashSettled', 'cash-settled']);
 export const buzzSpendTypes = buzzAccountTypes.filter(
   (type) => buzzTypeConfig[type].type === 'spend' && !buzzTypeConfig[type].disabled
 ) as BuzzSpendType[];
