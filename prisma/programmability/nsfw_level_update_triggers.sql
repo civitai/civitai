@@ -100,8 +100,23 @@ BEGIN
     -- When a model is deleted, schedule removal of FKs (collectionItems)
     PERFORM create_job_queue_record(OLD.id, 'Model', 'CleanUp');
   -- On model publish, create a job to update the nsfw level of the related entities (collectionItems)
-  ELSIF ((NEW.status = 'Published' AND OLD.status != 'Published') OR (NEW."nsfw" != OLD."nsfw" AND NEW.status = 'Published')) THEN
+  ELSIF ((NEW.status = 'Published' AND OLD.status != 'Published')
+         OR (NEW."nsfw" IS DISTINCT FROM OLD."nsfw" AND NEW.status = 'Published')) THEN
     PERFORM create_job_queue_record(OLD."id", 'Model', 'UpdateNsfwLevel');
+    -- When Model.nsfw flips, the rollup that stamps every version to
+    -- nsfwBrowsingLevelsFlag (60) is stale: a true->false transition
+    -- leaves versions at 60, so bit_or of versions = 60 and the Model
+    -- rollup short-circuits at 60 forever. Enqueue version recomputes
+    -- so the next cron tick recomputes from actual image data first,
+    -- then re-rolls up to Model (batch order in updateNsfwLevels
+    -- processes versions before models in the same run).
+    IF NEW."nsfw" IS DISTINCT FROM OLD."nsfw" THEN
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type")
+      SELECT mv.id, 'ModelVersion'::"EntityType", 'UpdateNsfwLevel'::"JobQueueType"
+      FROM "ModelVersion" mv
+      WHERE mv."modelId" = NEW.id AND mv.status = 'Published'
+      ON CONFLICT DO NOTHING;
+    END IF;
   END IF;
   RETURN NULL;
 END;
