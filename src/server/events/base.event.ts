@@ -9,11 +9,20 @@ import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/s
 // const manualAssignments: Record<string, Record<string, string>> = {};
 async function getManualAssignments(event: string) {
   // if (manualAssignments[event]) return manualAssignments[event];
-  const assignments = await sysRedis.hGetAll(
-    `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
-  );
-  // manualAssignments[event] = assignments;
-  return assignments;
+  // Fail open: called via getUserTeam → getUserCosmeticId on every
+  // user-cosmetic resolution during active events. A sysRedis outage
+  // shouldn't 500 every cosmetic lookup — degrade to "no manual
+  // assignments" for the outage window.
+  try {
+    const assignments = await sysRedis.hGetAll(
+      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
+    );
+    // manualAssignments[event] = assignments;
+    return assignments;
+  } catch (err) {
+    console.warn(`[getManualAssignments] sysRedis hGetAll failed for event=${event}:`, err);
+    return {} as Record<string, string>;
+  }
 }
 export async function addManualAssignments(event: string, team: string, users: string[]) {
   const userIds = await dbWrite.user.findMany({
@@ -92,7 +101,16 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
   async function getDiscordRoles() {
     const cacheKey =
       `${REDIS_SYS_KEYS.EVENT}:${name}:${REDIS_SUB_KEYS.EVENT.DISCORD_ROLES}` as const;
-    const roleCache = await sysRedis.hGetAll(cacheKey);
+    // Fail open: degrade to "no discord roles" rather than 500 the
+    // caller. Writeback to sysRedis is also wrapped — if cache populate
+    // fails we still return what we resolved from discord.
+    let roleCache: Record<string, string>;
+    try {
+      roleCache = await sysRedis.hGetAll(cacheKey);
+    } catch (err) {
+      console.warn(`[getDiscordRoles] sysRedis hGetAll failed for event=${name}:`, err);
+      return {} as Record<string, string>;
+    }
     if (Object.keys(roleCache).length > 0) return roleCache;
 
     // Cache is empty, so we need to populate it
@@ -102,7 +120,11 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
       if (!role) continue;
       roleCache[team] = role.id;
     }
-    await sysRedis.hSet(cacheKey, roleCache);
+    try {
+      await sysRedis.hSet(cacheKey, roleCache);
+    } catch (err) {
+      console.warn(`[getDiscordRoles] sysRedis hSet writeback failed for event=${name}:`, err);
+    }
 
     return roleCache;
   }

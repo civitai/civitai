@@ -17,10 +17,22 @@ export type RefreshTokenResult = {
 /**
  * Clear the refresh marker for a specific token.
  * Call this after the JWT cookie has been successfully updated (i.e., in JWT callback with trigger='update')
+ *
+ * Best-effort: a sysRedis write failure here just means the marker
+ * sticks around (the next refreshToken pipeline will surface it as
+ * tokenState === 'refresh' again, signaling another cookie refresh).
+ * Throwing would 500 the JWT update callback during a sysRedis blip.
  */
 export async function clearTokenRefreshMarker(tokenId: string) {
-  await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
-  log(`Cleared refresh marker for token ${tokenId}`);
+  try {
+    await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
+    log(`Cleared refresh marker for token ${tokenId}`);
+  } catch (err) {
+    console.warn(
+      `[clearTokenRefreshMarker] sysRedis hDel failed for tokenId=${tokenId}, leaving marker in place:`,
+      err
+    );
+  }
 }
 
 export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
@@ -38,15 +50,25 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
   const userTokenKey = `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`;
 
   // Use Redis pipeline to batch all read operations into a single round trip
-  // This reduces network latency from 3 sequential calls to 1 call
-  const pipeline = sysRedis.multi();
-  pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
-  pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
-  pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
+  // This reduces network latency from 3 sequential calls to 1 call.
+  // If sysRedis is unreachable, fail open: keep the existing session rather
+  // than 500ing every authenticated request.
+  let results;
+  try {
+    const pipeline = sysRedis.multi();
+    pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
+    pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
+    pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
+    results = await pipeline.exec();
+  } catch (err) {
+    console.warn(
+      `[refreshToken] sysRedis pipeline failed userId=${user.id} tokenId=${tokenId}, allowing session to continue:`,
+      err
+    );
+    return { token, needsCookieRefresh: false };
+  }
 
-  const results = await pipeline.exec();
-
-  // Handle pipeline errors
+  // Handle pipeline errors (null result is distinct from a throw)
   if (!results) {
     log(`Pipeline failed for token ${tokenId}, allowing session to continue`);
     return { token, needsCookieRefresh: false };
@@ -59,8 +81,17 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
 
   // Handle explicit invalidation
   if (tokenState === 'invalid') {
-    // Remove the user token tracking since it's invalid
-    await sysRedis.hDel(userTokenKey as any, tokenId);
+    // Remove the user token tracking since it's invalid. Best-effort: if
+    // sysRedis is mid-flap (read returned, write fails), still emit the
+    // needsCookieRefresh signal — the TOKEN_STATE='invalid' record already
+    // gates this token, so the tracking-hash delete is a cleanup, not a
+    // correctness requirement.
+    await sysRedis.hDel(userTokenKey as any, tokenId).catch((err) => {
+      console.warn(
+        `[refreshToken] hDel failed userId=${user.id} tokenId=${tokenId}:`,
+        err
+      );
+    });
     // Keep the 'invalid' state in TOKEN_STATE - it will expire naturally after 30 days
     // This ensures subsequent requests with the same token continue to be rejected
     // Signal client to refresh cookie - when it does, it will get empty session and be logged out
@@ -143,10 +174,28 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
   token.id = tokenId;
   token.signedAt = Date.now();
 
-  // Track this token for the user
+  // Track this token for the user. Best-effort: a sysRedis write failure
+  // here would lose the refresh work above and 500 the request — degrade
+  // to "refreshed in memory, tracking will catch up on next successful
+  // call" instead.
+  //
+  // Known perf cliff: during a partial sysRedis outage (reads succeed,
+  // writes fail), every authenticated request hits this path because
+  // the `exists` lookup above (from the refreshToken pipeline) returns
+  // 0 on the next call, which forces shouldRefresh=true and triggers
+  // getSessionUser (a DB hit) each time. Correctness preserved, but
+  // throughput degrades. Acceptable for the migration window; revisit
+  // if partial flaps become a sustained pattern.
   if (session.id) {
     const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`;
-    await sysRedis.hSet(key as any, tokenId, Date.now());
-    await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+    try {
+      await sysRedis.hSet(key as any, tokenId, Date.now());
+      await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+    } catch (err) {
+      console.warn(
+        `[setToken] sysRedis tracking write failed userId=${session.id} tokenId=${tokenId}:`,
+        err
+      );
+    }
   }
 }

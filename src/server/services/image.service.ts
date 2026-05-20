@@ -3041,8 +3041,17 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
       const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
 
-      // Check cached results first (1 minute TTL)
-      const cachedResults = await sysRedis.packed.mGet(cacheKeys);
+      // Check cached results first (1 minute TTL). Fail open: image feed
+      // is the highest-traffic endpoint, a sysRedis outage shouldn't 500
+      // it. Treat a throw as full cache miss (everything falls through
+      // to DB — slower but correct).
+      let cachedResults: (string | null)[];
+      try {
+        cachedResults = await sysRedis.packed.mGet(cacheKeys);
+      } catch (err) {
+        console.warn('[checkImageExistence] sysRedis mGet failed, falling through to DB:', err);
+        cachedResults = new Array(uniqueIds.length).fill(null);
+      }
 
       // Separate cached and uncached IDs
       const uncachedIds: number[] = [];
@@ -3091,11 +3100,19 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
           cachedMap.set(id, exists);
         }
 
+        // Best-effort cache populate. Without this catch, the read-side
+        // fail-open above is defeated: every partial-cache-miss request
+        // during a sysRedis outage would still 500 here.
         await Promise.all(
           Object.entries(cacheUpdates).map(([key, value]) =>
             sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
           )
-        );
+        ).catch((err) => {
+          console.warn(
+            '[checkImageExistence] sysRedis cache populate failed (response still served from DB):',
+            err
+          );
+        });
       }
 
       // Filter hits based on existence check while preserving order
@@ -3960,8 +3977,15 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
       const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
 
-      // Check cached results first (1 minute TTL)
-      const cachedResults = cacheKeys.length > 0 ? await sysRedis.packed.mGet(cacheKeys) : [];
+      // Check cached results first (1 minute TTL). Fail open — see the
+      // sibling checkImageExistence call site above for the same pattern.
+      let cachedResults: (string | null)[];
+      try {
+        cachedResults = cacheKeys.length > 0 ? await sysRedis.packed.mGet(cacheKeys) : [];
+      } catch (err) {
+        console.warn('[checkImageExistence] sysRedis mGet failed, falling through to DB:', err);
+        cachedResults = new Array(uniqueIds.length).fill(null);
+      }
 
       // Separate cached and uncached IDs
       const uncachedIds: number[] = [];
@@ -4010,11 +4034,19 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
           cachedMap.set(id, exists);
         }
 
+        // Best-effort cache populate — same pattern as the sibling
+        // checkImageExistence above. Defeats the read-side fail-open if
+        // not wrapped.
         await Promise.all(
           Object.entries(cacheUpdates).map(([key, value]) =>
             sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
           )
-        );
+        ).catch((err) => {
+          console.warn(
+            '[checkImageExistence] sysRedis cache populate failed (response still served from DB):',
+            err
+          );
+        });
       }
 
       // Filter hits based on existence check while preserving order

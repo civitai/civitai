@@ -10,7 +10,17 @@ export interface GenerationEngine {
 }
 
 export async function getGenerationEngines() {
-  const enginesJson = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.ENGINES);
+  // Fail open: called from trpc.generation.getGenerationEngines used by
+  // VideoGenerationProvider on every video gen mount and /search/tools.
+  // Returns an empty list on sysRedis error so the UI degrades to "no
+  // engines available" rather than throwing a 500.
+  let enginesJson: Record<string, string>;
+  try {
+    enginesJson = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.ENGINES);
+  } catch (err) {
+    console.warn('[getGenerationEngines] sysRedis hGetAll failed, returning empty list:', err);
+    return [];
+  }
   return Object.values(enginesJson).map((engineJson) => JSON.parse(engineJson) as GenerationEngine);
 }
 

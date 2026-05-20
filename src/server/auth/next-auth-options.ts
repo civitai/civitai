@@ -227,7 +227,22 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           // Clear cache first, then fetch fresh user data to avoid getting stale cached data
           // Also mark all user's tokens for refresh in case they have multiple sessions
           // Don't send signal here - this IS the response to a signal, sending another would create a loop
-          await refreshSession(Number(token.sub), { sendSignal: false });
+          //
+          // Fail open: refreshSession writes to sysRedis (marks tokens as
+          // 'refresh' in TOKEN_STATE). During a sysRedis flap this would
+          // 500 the JWT update callback — same class of issue caught for
+          // getOrchestratorToken writebacks. Other callers of
+          // refreshSession (jobs, services) keep strict throwing so they
+          // can retry / alert; only the user-facing update path is
+          // softened here.
+          try {
+            await refreshSession(Number(token.sub), { sendSignal: false });
+          } catch (err) {
+            console.warn(
+              `[next-auth jwt update] refreshSession failed for userId=${token.sub}, continuing without marking tokens:`,
+              err
+            );
+          }
           // Now fetch fresh user data (cache is cleared, so this will hit the database)
           const freshUser = await getSessionUser({ userId: Number(token.sub) });
           if (freshUser) {

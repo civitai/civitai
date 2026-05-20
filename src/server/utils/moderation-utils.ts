@@ -53,10 +53,18 @@ export async function getModWordBlocklist() {
 
   const blocklist = [] as Awaited<ReturnType<typeof adjustModWordBlocklist>>[];
   for (const wordlist of wordlists) {
-    const words = await sysRedis.packed.hGet<string[]>(
-      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS,
-      wordlist
-    );
+    // Inner read can throw during a partial sysRedis flap even though
+    // the outer .catch above returned a populated wordlists array.
+    // Treat it the same as wordlist-not-found.
+    let words: string[] | null = null;
+    try {
+      words = await sysRedis.packed.hGet<string[]>(
+        REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS,
+        wordlist
+      );
+    } catch (err) {
+      console.warn(`[getModWordBlocklist] sysRedis hGet failed for wordlist=${wordlist}:`, err);
+    }
     if (words) {
       for (const word of words) {
         blocklist.push(await adjustModWordBlocklist(word));
@@ -82,10 +90,16 @@ export async function getModURLBlocklist() {
 
   const blocklist = [] as Awaited<ReturnType<typeof adjustModWordBlocklist>>[];
   for (const urllist of urllists) {
-    const urls = await sysRedis.packed.hGet<string[]>(
-      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS,
-      urllist
-    );
+    // Same partial-flap concern as getModWordBlocklist above.
+    let urls: string[] | null = null;
+    try {
+      urls = await sysRedis.packed.hGet<string[]>(
+        REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS,
+        urllist
+      );
+    } catch (err) {
+      console.warn(`[getModURLBlocklist] sysRedis hGet failed for urllist=${urllist}:`, err);
+    }
     if (urls) {
       for (const url of urls) {
         blocklist.push([{ re: new RegExp(`.*${url}.*`, 'i'), word: url }]);

@@ -130,7 +130,19 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   const version = ctx.req?.headers['x-client-version'] as string;
   if (!version || version === 'unknown') return result;
 
-  const genClient = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT);
+  // Fail open: this middleware runs on every generation tRPC call. A
+  // sysRedis outage would otherwise 500 every gen request — defeating
+  // the rest of the generation-path fail-open coverage in this PR.
+  let genClient: Record<string, string>;
+  try {
+    genClient = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT);
+  } catch (err) {
+    console.warn(
+      '[enforceGenerationVersion] sysRedis hGetAll failed, skipping gen-version check:',
+      err
+    );
+    return result;
+  }
 
   if (genClient.version && semver.lt(version, genClient.version)) {
     ctx.res?.setHeader('x-generation-update-required', genClient.version);
