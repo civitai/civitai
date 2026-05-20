@@ -77,6 +77,9 @@ export function ControlNetsInput({ value, onChange, meta, error }: ControlNetsIn
   // Which chip is selected for editing. Defaults to the first entry; falls
   // back to a neighboring entry when the active one is removed.
   const [activeIndex, setActiveIndex] = useState<number>(0);
+  // Whether the editor pane below the tiles is expanded. Re-clicking the
+  // active tile toggles this; the chevron in the editor header does too.
+  const [editorOpen, setEditorOpen] = useState<boolean>(true);
   useEffect(() => {
     if (entries.length === 0) {
       if (activeIndex !== 0) setActiveIndex(0);
@@ -84,6 +87,17 @@ export function ControlNetsInput({ value, onChange, meta, error }: ControlNetsIn
     }
     if (activeIndex >= entries.length) setActiveIndex(entries.length - 1);
   }, [entries.length, activeIndex]);
+
+  function handleSelectTile(index: number) {
+    if (index === activeIndex) {
+      // Re-clicking the active tile toggles the editor.
+      setEditorOpen((open) => !open);
+    } else {
+      // Switching to a different tile always opens the editor.
+      setActiveIndex(index);
+      setEditorOpen(true);
+    }
+  }
 
   // Group preprocessors by category for the dependent select.
   const { categoryOptions, preprocessorsByCategory } = useMemo(() => {
@@ -124,6 +138,7 @@ export function ControlNetsInput({ value, onChange, meta, error }: ControlNetsIn
     };
     onChange?.([...entries, newEntry]);
     setActiveIndex(entries.length);
+    setEditorOpen(true);
   }
 
   const activeEntry = entries[activeIndex];
@@ -182,7 +197,7 @@ export function ControlNetsInput({ value, onChange, meta, error }: ControlNetsIn
                   key={`cn-${index}`}
                   entry={entry}
                   isActive={index === activeIndex}
-                  onSelect={() => setActiveIndex(index)}
+                  onSelect={() => handleSelectTile(index)}
                   onRemove={() => removeEntry(index)}
                 />
               ))}
@@ -207,7 +222,7 @@ export function ControlNetsInput({ value, onChange, meta, error }: ControlNetsIn
           </div>
         )}
 
-        {activeEntry && (
+        {activeEntry && editorOpen && (
           <ControlNetEditor
             entry={activeEntry}
             meta={meta}
