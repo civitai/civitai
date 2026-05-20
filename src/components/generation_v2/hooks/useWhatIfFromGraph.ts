@@ -16,39 +16,12 @@ import type { NodeError } from '~/libs/data-graph/data-graph';
 import { useGraph } from '~/libs/data-graph/react';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import { workflowConfigByKey } from '~/shared/data-graph/generation/config/workflows';
+import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-fingerprints';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
 import { trpc } from '~/utils/trpc';
 import { useResourceDataContext } from '../inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '../utils';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
-
-// =============================================================================
-// Constants
-// =============================================================================
-
-/**
- * Graph keys that don't affect cost estimation at all.
- * Changes to these fields will NOT trigger a new whatIf query.
- * Note: 'prompt' is now ignored because the site identity (not prompt content)
- * determines the buzz type, and prompt moderation happens at submission time.
- */
-const IGNORED_KEYS_FOR_WHATIF = [
-  'prompt',
-  'negativePrompt',
-  'seed',
-  'denoise',
-  'musicDescription',
-  'lyrics',
-] as const;
-
-/** Strip resource strength values from a snapshot so they don't trigger whatIf re-fetches. */
-function stripResourceStrengths(snapshot: Record<string, unknown>): Record<string, unknown> {
-  if (!Array.isArray(snapshot.resources)) return snapshot;
-  return {
-    ...snapshot,
-    resources: snapshot.resources.map((r: Record<string, unknown>) => omit(r, ['strength'])),
-  };
-}
 
 // =============================================================================
 // Helper Functions
@@ -93,16 +66,20 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
   const prevSnapshotRef = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    const keysToOmit = [...IGNORED_KEYS_FOR_WHATIF, ...graph.getComputedKeys()];
+    // Per-node fingerprints (declared in whatif-fingerprints.ts) project each
+    // value to the slice that actually affects cost — stripping sub-fields
+    // like `strength` on resources or `weight`/`startStep`/`endStep` on
+    // controlNets, and dropping content-only fields like `prompt`/`seed`.
+    // Computed keys are stripped on top because they're derived from other
+    // nodes' values, so they'd cause double-counting.
+    const computedKeys = graph.getComputedKeys();
+    const buildRelevant = () =>
+      omit(applyWhatIfFingerprints(graph.getSnapshot() as Record<string, unknown>), computedKeys);
 
-    // Initialize with current snapshot
-    const initialSnapshot = graph.getSnapshot() as Record<string, unknown>;
-    prevSnapshotRef.current = stripResourceStrengths(omit(initialSnapshot, keysToOmit));
+    prevSnapshotRef.current = buildRelevant();
 
     return graph.subscribe(() => {
-      const snapshot = graph.getSnapshot() as Record<string, unknown>;
-      const relevantSnapshot = stripResourceStrengths(omit(snapshot, keysToOmit));
-
+      const relevantSnapshot = buildRelevant();
       if (!isEqual(relevantSnapshot, prevSnapshotRef.current)) {
         prevSnapshotRef.current = relevantSnapshot;
         incrementRevision();
