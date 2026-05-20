@@ -2,12 +2,14 @@ import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import requestIp from 'request-ip';
 import * as z from 'zod';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isProd } from '~/env/other';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { buildFliptContext, getFeatureFlags } from '~/server/services/feature-flags.service';
+import { buildSearchActor } from '~/server/meilisearch/client';
 import {
   getAllImages,
   getAllImagesIndex,
@@ -136,6 +138,12 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     // those sorts are honored.
     const useLegacyMethod = data.imageId || (data.modelId && !data.modelVersionId);
 
+    const actor = buildSearchActor({
+      userId: session?.user?.id,
+      ip: requestIp.getClientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
+
     const { items, nextCursor } = useLegacyMethod
       ? await getAllImages({
           ...data,
@@ -171,6 +179,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           disablePoi: true,
           headers: { src: '/api/v1/images' },
           dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+          actor,
         })
       : await getImagesFromFeedSearch({
           ...data,
@@ -187,6 +196,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           useCombinedNsfwLevel: !features.canViewNsfw,
           disableMinor: true,
           disablePoi: true,
+          actor,
         });
 
     const metadata: Metadata = {

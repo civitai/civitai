@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { EnqueuedTask, DocumentsQuery, ResourceResults } from 'meilisearch';
 import { MeiliSearch } from 'meilisearch';
 import { env } from '~/env/server';
@@ -24,6 +25,38 @@ export const metricsSearchClient = shouldConnectToMetricsSearch
     })
   : null;
 
+export const SEARCH_ACTOR_HEADER = 'X-Search-Actor';
+
+export function buildSearchActor({
+  userId,
+  ip,
+  userAgent,
+}: {
+  userId?: number | null;
+  ip?: string | null;
+  userAgent?: string | null;
+}) {
+  if (userId) return `user:${userId}`;
+  const fp = createHash('sha256')
+    .update(`${ip ?? ''}|${userAgent ?? ''}`)
+    .digest('hex')
+    .slice(0, 16);
+  return `anon:${fp}`;
+}
+
+// Returns a fresh MeiliSearch instance with the X-Search-Actor header pinned
+// for the lifetime of the call. The SDK applies requestConfig.headers to every
+// request, so we create one per logical caller rather than mutating a shared
+// instance. Construction is cheap — config-only, no socket pool.
+export function getMetricsSearchClient(actor: string) {
+  if (!shouldConnectToMetricsSearch) return null;
+  return new MeiliSearch({
+    host: env.METRICS_SEARCH_HOST as string,
+    apiKey: env.METRICS_SEARCH_API_KEY,
+    requestConfig: { headers: { [SEARCH_ACTOR_HEADER]: actor } },
+  });
+}
+
 /**
  * Fetch documents via a raw HTTP call that honors an AbortSignal. The
  * meilisearch-js client we're on (<=0.34) doesn't expose signal on
@@ -33,14 +66,15 @@ export const metricsSearchClient = shouldConnectToMetricsSearch
 export async function fetchDocumentsAbortable<T>(
   indexName: string,
   params: DocumentsQuery<T>,
-  options: { host: string; apiKey?: string; signal?: AbortSignal }
+  options: { host: string; apiKey?: string; signal?: AbortSignal; actor?: string }
 ): Promise<ResourceResults<T[]>> {
-  const { host, apiKey, signal } = options;
+  const { host, apiKey, signal, actor } = options;
   const res = await fetch(`${host}/indexes/${indexName}/documents/fetch`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+      ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
     },
     body: JSON.stringify(params),
     signal,

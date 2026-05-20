@@ -42,7 +42,11 @@ import {
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
-import { fetchDocumentsAbortable, metricsSearchClient } from '~/server/meilisearch/client';
+import {
+  fetchDocumentsAbortable,
+  getMetricsSearchClient,
+  metricsSearchClient,
+} from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
@@ -1086,6 +1090,9 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the controller — pass-through
   // to avoid a second Flipt evaluation inside getImagesFromSearch.
   bitdexMode?: string | null;
+  // Caller identity forwarded to Meili via X-Search-Actor for abuse/rate
+  // correlation. Built upstream via buildSearchActor().
+  actor?: string;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
 export const getAllImages = async (
@@ -2172,6 +2179,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   // Pre-evaluated BITDEX_IMAGE_SEARCH variant from the caller (controller).
   // When provided, getImagesFromSearch skips its own Flipt evaluation.
   bitdexMode?: string | null;
+  actor?: string;
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -2942,6 +2950,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   requestTotal.inc({ route }); // count every request up front
 
   try {
+    const actor = input.actor;
+
     // Use the abortable raw fetch when a signal is available so client
     // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
     // underlying Meili request. The meilisearch-js client on 0.33/0.34 doesn't
@@ -2952,8 +2962,9 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
             host: env.METRICS_SEARCH_HOST as string,
             apiKey: env.METRICS_SEARCH_API_KEY,
             signal: input.signal,
+            actor,
           })
-        : metricsSearchClient!
+        : (actor ? getMetricsSearchClient(actor) : metricsSearchClient)!
             .index(METRICS_SEARCH_INDEX)
             .getDocuments<ImageMetricsSearchIndexRecord>(request)
     );
@@ -3775,6 +3786,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     sort: sorts,
   };
 
+  const actor = input.actor;
+  const actorClient = actor ? getMetricsSearchClient(actor) : metricsSearchClient;
+
   try {
     while (accumulatedHits.length < limit + 1 && iteration < MAX_ITERATIONS) {
       // Safety check for total processed results
@@ -3796,9 +3810,10 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
               host: env.METRICS_SEARCH_HOST as string,
               apiKey: env.METRICS_SEARCH_API_KEY,
               signal: input.signal,
+              actor,
             }
           )
-        : await metricsSearchClient
+        : await actorClient!
             .index(METRICS_SEARCH_INDEX)
             .getDocuments<ImageMetricsSearchIndexRecord>(request);
 
