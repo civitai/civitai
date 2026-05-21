@@ -143,9 +143,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateTypoToleranceTask created', updateTypoToleranceTask);
   }
 
-  // Bound query time so a slow lookup can't tie up the read lock while
-  // sustained 5-minute writebacks pile up.
-  await setSearchCutoffMs({ index, ms: 1000 });
+  // Safety net against pathological queries. Set above the observed tail
+  // so legitimate refinement queries on /models are unaffected.
+  await setSearchCutoffMs({ index, ms: 8000 });
 };
 
 type Model = Prisma.ModelGetPayload<{

@@ -73,8 +73,9 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     );
   }
 
-  // 10.9M docs. Bound query time so a slow lookup can't tie up the read lock.
-  await setSearchCutoffMs({ index, ms: 1000 });
+  // 10.9M docs. Most queries are username typeahead (<100ms), but some
+  // refinement queries are slower. Set as a safety net well above P95.
+  await setSearchCutoffMs({ index, ms: 5000 });
 
   console.log('onIndexSetup :: all tasks completed');
 };
