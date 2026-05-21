@@ -1,4 +1,5 @@
 import { dbKV } from '~/server/db/db-helpers';
+import { logToAxiom } from '~/server/logging/client';
 import blockedWords from '~/utils/metadata/lists/blocked-words.json';
 import displayBootstrap from '~/utils/metadata/lists/profanity-display.json';
 
@@ -31,8 +32,27 @@ export async function loadProfanityList(kind: ProfanityListKind): Promise<string
   let words: string[];
   try {
     const stored = await dbKV.get<string[]>(KV_KEY[kind]);
-    words = Array.isArray(stored) && stored.length > 0 ? stored : BOOTSTRAP[kind];
-  } catch {
+    if (Array.isArray(stored) && stored.length > 0 && stored.every((w) => typeof w === 'string')) {
+      words = stored;
+    } else {
+      if (stored != null) {
+        logToAxiom(
+          { type: 'profanity-list-loader', kind, reason: 'invalid-kv-payload' },
+          'webhooks'
+        ).catch(() => undefined);
+      }
+      words = BOOTSTRAP[kind];
+    }
+  } catch (error) {
+    logToAxiom(
+      {
+        type: 'profanity-list-loader',
+        kind,
+        reason: 'kv-fetch-failed',
+        error: error instanceof Error ? error.message : String(error),
+      },
+      'webhooks'
+    ).catch(() => undefined);
     words = BOOTSTRAP[kind];
   }
 

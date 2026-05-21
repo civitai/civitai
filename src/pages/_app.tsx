@@ -59,6 +59,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import { ProfanityListsProvider } from '~/providers/ProfanityListsProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 
 import '~/styles/globals.css';
@@ -73,10 +74,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
-import {
-  parseVerifiedBotHeader,
-  VERIFIED_BOT_HEADER,
-} from '~/server/utils/bot-detection/header';
+import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
 applyNodeOverrides();
@@ -134,23 +132,25 @@ function MyApp(props: CustomAppProps) {
       <FeatureLayout conditional={Component?.features}>
         <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
           <BrowsingSettingsAddonsProvider>
-            {Component.getLayout?.(page) ?? (
-              <AppLayout
-                left={Component.left}
-                right={Component.right}
-                subNav={Component.subNav}
-                scrollable={Component.scrollable}
-                header={Component.header}
-                footer={Component.footer}
-                announcements={Component.announcements}
-              >
-                {Component.InnerLayout ? (
-                  <Component.InnerLayout>{page}</Component.InnerLayout>
-                ) : (
-                  page
-                )}
-              </AppLayout>
-            )}
+            <ProfanityListsProvider>
+              {Component.getLayout?.(page) ?? (
+                <AppLayout
+                  left={Component.left}
+                  right={Component.right}
+                  subNav={Component.subNav}
+                  scrollable={Component.scrollable}
+                  header={Component.header}
+                  footer={Component.footer}
+                  announcements={Component.announcements}
+                >
+                  {Component.InnerLayout ? (
+                    <Component.InnerLayout>{page}</Component.InnerLayout>
+                  ) : (
+                    page
+                  )}
+                </AppLayout>
+              )}
+            </ProfanityListsProvider>
           </BrowsingSettingsAddonsProvider>
         </BrowsingLevelProviderOptional>
       </FeatureLayout>
@@ -192,37 +192,39 @@ function MyApp(props: CustomAppProps) {
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
                           <BrowsingSettingsAddonsProvider>
-                            <SignalsProviderStack>
-                              <ActivityReportingProvider>
-                                <ReferralsProvider {...cookies.referrals}>
-                                  <FiltersProvider>
-                                    <AdsProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <BrowserRouterProvider>
-                                            <IntersectionObserverProvider>
-                                              <ToursProvider>
-                                                <AuctionContextProvider>
-                                                  <BaseLayout>
-                                                    {isProd && <TrackPageView />}
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </BaseLayout>
-                                                </AuctionContextProvider>
-                                              </ToursProvider>
-                                            </IntersectionObserverProvider>
-                                          </BrowserRouterProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </AdsProvider>
-                                  </FiltersProvider>
-                                </ReferralsProvider>
-                              </ActivityReportingProvider>
-                            </SignalsProviderStack>
+                            <ProfanityListsProvider>
+                              <SignalsProviderStack>
+                                <ActivityReportingProvider>
+                                  <ReferralsProvider {...cookies.referrals}>
+                                    <FiltersProvider>
+                                      <AdsProvider>
+                                        <HiddenPreferencesProvider>
+                                          <CivitaiLinkProvider>
+                                            <BrowserRouterProvider>
+                                              <IntersectionObserverProvider>
+                                                <ToursProvider>
+                                                  <AuctionContextProvider>
+                                                    <BaseLayout>
+                                                      {isProd && <TrackPageView />}
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </BaseLayout>
+                                                  </AuctionContextProvider>
+                                                </ToursProvider>
+                                              </IntersectionObserverProvider>
+                                            </BrowserRouterProvider>
+                                          </CivitaiLinkProvider>
+                                        </HiddenPreferencesProvider>
+                                      </AdsProvider>
+                                    </FiltersProvider>
+                                  </ReferralsProvider>
+                                </ActivityReportingProvider>
+                              </SignalsProviderStack>
+                            </ProfanityListsProvider>
                           </BrowsingSettingsAddonsProvider>
                         </BrowsingLevelProvider>
                       </BrowserSettingsProvider>

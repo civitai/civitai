@@ -7,9 +7,8 @@ import { DEFAULT_ALLOWED_ATTRIBUTES, sanitizeHtml } from '~/utils/html-sanitize-
 import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
-import { createProfanityFilter } from '~/libs/profanity-simple';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { trpc } from '~/utils/trpc';
+import { useProfanityFilter } from '~/providers/ProfanityListsProvider';
 
 export function RenderHtml({
   html,
@@ -23,20 +22,11 @@ export function RenderHtml({
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
 
   const shouldFilter = withProfanityFilter && blurNsfw;
-  const { data: profanityLists } = trpc.system.getProfanityLists.useQuery(undefined, {
-    enabled: shouldFilter,
-    staleTime: 1000 * 60 * 60,
-    cacheTime: 1000 * 60 * 60 * 24,
-  });
-
-  const profanityFilter = useMemo(() => {
-    if (!shouldFilter || !profanityLists) return null;
-    return createProfanityFilter({ blockedWords: profanityLists.display });
-  }, [shouldFilter, profanityLists]);
+  const profanityFilter = useProfanityFilter('display');
 
   html = useMemo(() => {
     let processedHtml = html;
-    if (shouldFilter && profanityFilter) {
+    if (shouldFilter) {
       // Preserve mentions (entire span + content) and all HTML tag markup so
       // the filter only operates on visible text content. Capturing entire
       // tags also protects href/src attribute values, since the whole opening

@@ -1,8 +1,8 @@
 import { useMemo } from 'react';
-import { createProfanityFilter, type ProfanityFilterOptions } from '~/libs/profanity-simple';
-import { trpc } from '~/utils/trpc';
+import type { ProfanityFilterOptions } from '~/libs/profanity-simple';
+import { useProfanityFilter, type ProfanityListKind } from '~/providers/ProfanityListsProvider';
 
-export type ProfanityListKind = 'display' | 'search';
+export type { ProfanityListKind };
 
 export interface UseCheckProfanityOptions extends Partial<ProfanityFilterOptions> {
   /** Whether to enable profanity checking. When false, returns clean results */
@@ -38,29 +38,19 @@ const EMPTY_ANALYSIS = (text: string): ProfanityAnalysis => ({
 /**
  * Hook to check text for profanity and return analysis results.
  *
- * Pulls the configured word list (display or search) from the system tRPC
- * endpoint so the lists can be updated via the KeyValue store without a
- * redeploy. Until the list resolves, analysis returns a passthrough result.
+ * Pulls the filter from `ProfanityListsProvider`, which boots from the bundled
+ * lists synchronously and swaps to the KV-backed list once the system query
+ * resolves. No per-call-site filter construction.
  */
 export function useCheckProfanity(
   text: string,
   options: UseCheckProfanityOptions = {}
 ): ProfanityAnalysis {
-  const { enabled = true, kind = 'display', replacementStyle } = options;
-
-  const { data } = trpc.system.getProfanityLists.useQuery(undefined, {
-    enabled,
-    staleTime: 1000 * 60 * 60,
-    cacheTime: 1000 * 60 * 60 * 24,
-  });
-
-  const profanityFilter = useMemo(() => {
-    if (!data) return null;
-    return createProfanityFilter({ blockedWords: data[kind], replacementStyle });
-  }, [data, kind, replacementStyle]);
+  const { enabled = true, kind = 'display' } = options;
+  const profanityFilter = useProfanityFilter(kind);
 
   return useMemo((): ProfanityAnalysis => {
-    if (!enabled || !text.trim() || !profanityFilter) {
+    if (!enabled || !text.trim()) {
       return EMPTY_ANALYSIS(text);
     }
 
