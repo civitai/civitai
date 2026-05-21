@@ -15,11 +15,10 @@ export function GenerateButton({
   onClick,
   epochNumber,
   versionId,
+  wildcardSetId,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();
-
-  const vId = versionId;
 
   const opened = useGenerationPanelStore((state) => state.opened);
   const onClickHandler = () => {
@@ -29,13 +28,16 @@ export function GenerateButton({
     }
     if (mode === 'toggle' && opened) return generationGraphPanel.close();
 
-    vId
-      ? generationGraphPanel.open({
-          type: 'modelVersion',
-          id: vId,
-          epoch: epochNumber,
-        })
-      : generationGraphPanel.open();
+    // Wildcards-type versions: short-circuit straight to the snippets node
+    // — no `getGenerationData` round-trip required, since a wildcard set
+    // doesn't need enriched resource data on the form side.
+    if (wildcardSetId != null) {
+      generationGraphPanel.open({ type: 'wildcard', wildcardSetId });
+    } else if (versionId != null) {
+      generationGraphPanel.open({ type: 'modelVersion', id: versionId, epoch: epochNumber });
+    } else {
+      generationGraphPanel.open();
+    }
 
     onClick?.();
   };
@@ -121,4 +123,11 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   onClick?: () => void;
   epochNumber?: number;
   versionId?: number;
+  /**
+   * When set, the button opens the panel directly with this wildcard set
+   * id loaded into the snippets node. Takes precedence over `versionId`.
+   * Use for Wildcards-type model versions, where `model.getById` /
+   * `modelVersion.getById` stamps `wildcardSetId` on the version response.
+   */
+  wildcardSetId?: number;
 };

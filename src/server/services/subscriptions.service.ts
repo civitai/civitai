@@ -438,7 +438,6 @@ export const claimPrepaidToken = async ({
     const subscription = await tx.customerSubscription.findFirst({
       where: {
         userId,
-        status: { in: ['active', 'expired_claimable'] },
         product: { provider: 'Civitai' },
         buzzType: 'yellow', // Prepaid tokens are only for yellow tier
       },
@@ -545,7 +544,6 @@ export const claimAllPrepaidTokens = async ({ userId }: { userId: number }) => {
     const subscription = await tx.customerSubscription.findFirst({
       where: {
         userId,
-        status: { in: ['active', 'expired_claimable'] },
         product: { provider: 'Civitai' },
       },
       select: {
@@ -668,7 +666,6 @@ export const unlockTokensForUser = async ({
   const subscription = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
-      status: 'active',
       product: { provider: 'Civitai' },
     },
     select: {

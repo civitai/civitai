@@ -179,9 +179,13 @@ This creates a normalization rule: anywhere a `Wildcards`-type ModelVersion show
 
 **Two layers of server-side support; the client owns the routing.**
 
-1. **`getResourceData` stamps `wildcardSetId` and computes `canGenerate`.** When enriching a list of ModelVersion ids, any row whose `model.type === 'Wildcards'` gets:
-   - `wildcardSetId?: number` stamped on the returned `GenerationResource`, resolved to the corresponding System-kind `WildcardSet.id`.
-   - `canGenerate` overridden to reflect WildcardSet visibility at the request's site context. A non-invalidated set with `auditStatus != 'Dirty'` AND (on `.com`) `nsfw = false` — or any non-Dirty set on `.red` — is `canGenerate: true`. The standard `getResourceCanGenerate` path returns false for Wildcards baseModels (they're not on the generation-supported list), so this override is what lets the model detail page enable its "Generate" button for a published, visible wildcard set. The visibility check is a single-table query against `WildcardSet` columns — see "Set-level rollups" below for why this avoids a category sub-query.
+1. **Read surface — shared `getVisibleSystemWildcardSetIdsByVersionId` helper.** All four canGenerate read surfaces (`getResourceData`, `model.getById`, `modelVersion.getById`, `getAssociatedResourcesCardDataHandler`) route through one helper in [src/server/services/generation/version-generation-state.service.ts](../../src/server/services/generation/version-generation-state.service.ts). It takes a list of Wildcards-type ModelVersion ids plus a `sfwOnly` flag and returns `Map<versionId, wildcardSetId>` — one batched query against `WildcardSet` filtering on `kind='System' AND !isInvalidated AND usable=true AND (sfwOnly ? !nsfw : true)`. Lands as part of [Phase 2 of the wildcard moderation pipeline cleanup](../wildcard-moderation-pipeline-cleanup.md#read-path-typed-helper-over-wildcardset), which also adds the new `WildcardSet.usable` column the helper filters on.
+
+   `canGenerate` for a `Wildcards`-type version is a Map lookup: `visibleSetIdByVersionId.get(version.id) != null`. The helper returns the set id alongside, so callers also use it to stamp `wildcardSetId` onto the response.
+
+   `Wildcards` baseModels still aren't on the generation-supported list (the v1 invariant "Wildcards aren't generation resources" stands), so the standard `getResourceCanGenerate` path keeps returning `false` for them. The helper is what flips the gate back on for the surfaces that should enable the Generate button.
+
+   **Why one helper, not a denormalized mirror.** We considered mirroring the visibility booleans onto `ModelFile.metadata.wildcardSet` so reads skip the cross-table query entirely. Rejected because the saved round-trip didn't justify the sync contract (every `WildcardSet.{usable,nsfw,isInvalidated}` write would need to bundle a `ModelFile.metadata` update + a reconciliation cron to catch drift). The helper keeps the visibility predicate explicit in one place, with the `WildcardSet.usable` column already making it a flat indexed lookup.
 
 2. **Resource picker filters by `hasGenerationSupport`.** The form's resource picker passes `generation: true` to `getResourceData`, which strips out anything whose baseModel isn't generation-supported — Wildcards models are filtered out at this gate. Users can't add a Wildcards model to the `resources` array through the picker; it never shows up as an option.
 
@@ -196,12 +200,13 @@ This creates a normalization rule: anywhere a `Wildcards`-type ModelVersion show
 - `auditStatus` (`Pending | Clean | Mixed | Dirty`) — buckets the set based on its categories. `Dirty` = nothing usable, everywhere else = at least one Clean (or Pending) category exists.
 - `nsfw` (Boolean) — true iff any non-Dirty category's `nsfw` flag is set. Single-column predicate answers "does this set contain any NSFW content?" Deliberately boolean rather than the bitwise `nsfwLevel` bucket used by images/models: XGuard's text classifiers can't reliably distinguish PG / R / X for arbitrary text, so the boolean is the only honest representation of the signal we actually have.
 
-Both aggregates are recomputed in `recomputeWildcardSetAuditStatus` whenever any category's `auditStatus` or `nsfw` changes. This means hot-path checks like the model detail page's Generate button gate (`auditStatus != 'Dirty' && (sfwOnly ? !nsfw : true)`) hit one row, no JOIN.
+Both aggregates are recomputed in `recomputeWildcardSetAuditStatus` whenever any category's `auditStatus` or `nsfw` changes. **Phase 2** of the moderation cleanup ([docs/wildcard-moderation-pipeline-cleanup.md](../wildcard-moderation-pipeline-cleanup.md)) collapses `auditStatus` out of the schema (replaced by per-category `nsfw IS NULL` / `blocked` booleans) and adds a `WildcardSet.usable` rollup ("≥1 Clean category exists") so the canGenerate hot path can answer visibility as a flat column predicate without sub-querying categories.
 
 **Implementation status.**
 
 - ✅ `getResourceData` stamping + canGenerate override — see `src/server/services/generation/generation.service.ts`.
 - ✅ Set-level `nsfw` rollup — `WildcardSet.nsfw` column + `recomputeWildcardSetAuditStatus` maintenance + backfill in the migration.
+- ✅ Shared `getVisibleSystemWildcardSetIdsByVersionId` helper wired into all four read surfaces (`getResourceData`, `model.getById`, `modelVersion.getById`, `getAssociatedResourcesCardDataHandler`).
 - 🚧 Form-side routing — TODO. After the form fetches enriched resources via `ResourceDataProvider`, entries with `wildcardSetId` should be dispatched into `snippets.wildcardSetIds` rather than appended to `resources`. Handled at the form's hydration boundary (preset load, remix, model-detail-page "Generate" handoff). Without this, a `wildcardSetId`-stamped resource that arrives via a preset would sit visible in the resources list until the user re-renders.
 
 ### Provisioning + audit

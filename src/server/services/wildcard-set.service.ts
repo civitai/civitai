@@ -134,6 +134,13 @@ export async function getWildcardSets({
     },
     select: {
       ...wildcardSetSelect,
+      // System-kind sets surface their backing model so the active-wildcards
+      // chip can deep-link to `/models/{modelId}/{slug}?modelVersionId=…`.
+      // User-kind sets have `modelVersion = null` and the chip renders
+      // without a link.
+      modelVersion: {
+        select: { id: true, modelId: true, model: { select: { name: true } } },
+      },
       categories: {
         // Strict gate: only Clean categories are surfaced to the picker.
         // Pending categories aren't ready yet (no verdict, nsfw unknown) and
@@ -169,6 +176,12 @@ export async function getMyUserWildcardSet({ userId }: { userId: number }) {
     where: { kind: 'User' as const, ownerUserId: userId },
     select: {
       ...wildcardSetSelect,
+      // Always `null` for User-kind sets; selected for shape parity with
+      // `getWildcardSets` so the union the form's hook builds carries a
+      // consistent type.
+      modelVersion: {
+        select: { id: true, modelId: true, model: { select: { name: true } } },
+      },
       categories: {
         // Strict gate matching getWildcardSets — see the comment there.
         where: { auditStatus: 'Clean' as const },

@@ -189,7 +189,39 @@ The framing: with EM as the source of truth, the WSC audit columns are mostly de
 **`WildcardSet`** rollup becomes:
 
 - `nsfw: boolean` — `true` iff any non-blocked category has `nsfw=true` (denormalized for the picker).
-- "Fully audited" is derivable: `NOT EXISTS (SELECT 1 FROM WildcardSetCategory WHERE wildcardSetId = ws.id AND nsfw IS NULL AND blocked = false)`. If we need this in hot reads we can add a denormalized boolean later.
+- `usable: boolean` — `true` iff at least one category has `nsfw IS NOT NULL AND blocked = false` (i.e. at least one Clean category exists). Denormalized so the canGenerate hot path can answer "is this set usable for generation?" without walking categories. Maintained by the same path as `nsfw` (the audit-verdict and invalidation handlers recompute both together).
+- "Fully audited" stays derivable when needed (rare): `NOT EXISTS (SELECT 1 FROM WildcardSetCategory WHERE wildcardSetId = ws.id AND nsfw IS NULL AND blocked = false)`.
+
+### Read-path: typed helper over `WildcardSet`
+
+Background context: see [prompt-snippets-v1.md §"Wildcards models vs generation resources"](features/prompt-snippets-v1.md#wildcards-models-vs-generation-resources). The v1 read path queries `WildcardSet` per surface that gates a Generate button (model detail page, version detail, picker, list handlers, `/api/generation/resources`). v1 only wired that query into `getResourceData`; every other surface missed it.
+
+Phase 2 fixes the read side by routing all four read surfaces through one shared helper — `getVisibleSystemWildcardSetIdsByVersionId(modelVersionIds, { sfwOnly })` in [src/server/services/generation/version-generation-state.service.ts](../src/server/services/generation/version-generation-state.service.ts). One batched `WildcardSet` query per request, backed by the new `WildcardSet.usable` column so the visibility predicate is a flat column scan with no category sub-query:
+
+```sql
+SELECT id, "modelVersionId"
+FROM "WildcardSet"
+WHERE kind = 'System'
+  AND "modelVersionId" = ANY($1)
+  AND "isInvalidated" = false
+  AND "usable" = true
+  -- AND "nsfw" = false   (only on .com / sfwOnly)
+```
+
+`canGenerate` for `Wildcards`-type versions becomes a Map lookup: `visibleSetIdByVersionId.get(version.id) != null`. The helper returns the set id alongside, so callers also use it to stamp `wildcardSetId` onto the response.
+
+We considered a denormalized mirror onto `ModelFile.metadata.wildcardSet` to skip the cross-table query entirely (one less round-trip per request). Rejected because:
+
+- The query is already small (one column-indexed table, one round-trip regardless of N).
+- A mirror introduces a sync contract — every site that touches `WildcardSet.{usable,nsfw,isInvalidated}` would have to bundle a `ModelFile.metadata` update in the same transaction, plus a reconciliation cron to catch drift. The complexity dwarfs the saved query.
+- The helper makes the visibility predicate explicit (it's one function readers can grep for), where a mirror hides it behind whichever `wildcardSet` field a future reader trusted.
+
+**Write sites maintaining the columns.** The new helper depends on `WildcardSet.usable` and `WildcardSetCategory.blocked` being correct:
+
+1. **`applyWildcardCategoryAuditSuccess`** (audit verdict handler) — writes `WSC.blocked` alongside `WSC.auditStatus` from the same `blocked` boolean computed from triggered fail labels.
+2. **`recomputeWildcardSetAuditStatus`** — recomputes `WildcardSet.usable` (true iff ≥1 Clean category) and writes it alongside `auditStatus`/`nsfw`/`auditedAt`.
+
+Both columns default to `false`. The schema migration's one-shot backfill seeds them from current `WildcardSet`/`WildcardSetCategory` state.
 
 ### Why this is OK
 
@@ -199,10 +231,10 @@ The framing: with EM as the source of truth, the WSC audit columns are mostly de
 
 ### Migration shape
 
-1. Add new columns (`nsfw: boolean?` already exists; `blocked: boolean default false` is new on WSC). Backfill from current `auditStatus`/`nsfw`.
-2. Switch all readers to the new columns. Old columns still maintained in parallel.
-3. Switch all writers to the new columns + EM only. Stop writing the old columns.
-4. Drop the old columns and the remaining metadata fields. (`metadata.workflowId` was already dropped in Phase 1; `metadata.retryCount` / `metadata.triggeredTerms` / `metadata.triggeredLabels` get dropped here.)
+1. **Schema add + backfill.** New columns: `WildcardSetCategory.blocked: boolean default false`, `WildcardSet.usable: boolean default false`. (`WSC.nsfw: boolean?` and `WildcardSet.nsfw: boolean` already exist.) Same migration backfills `WildcardSet.usable = EXISTS(...Clean category)` and `WSC.blocked = (auditStatus='Dirty')`. Idempotent.
+2. **Reader switch.** All four canGenerate read sites (`getResourceData`, `model.getById`, `modelVersion.getById`, `getAssociatedResourcesCardDataHandler`) route through the shared `getVisibleSystemWildcardSetIdsByVersionId` helper, which filters on the new `WildcardSet.usable` column.
+3. **Writer switch.** `applyWildcardCategoryAuditSuccess` writes `WSC.blocked` alongside `auditStatus`. `recomputeWildcardSetAuditStatus` writes `WildcardSet.usable` alongside `auditStatus`/`nsfw`. Old columns still maintained in parallel for the moment.
+4. **Drop.** Drop `WSC.auditStatus`, `auditedAt`, `auditNote`, `auditRuleVersion`. Drop the same on `WildcardSet`. Drop `WSC.metadata.workflowId` (Phase 1 already), `metadata.retryCount`, `metadata.triggeredTerms`, `metadata.triggeredLabels`.
 
 Phase 1 should ship first to stabilize the pipeline; Phase 2 is a follow-up once the inconsistency counts are at zero.
 

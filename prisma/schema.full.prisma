@@ -5569,6 +5569,13 @@ model WildcardSet {
   // the signal we actually have.
   nsfw Boolean @default(false)
 
+  // Phase 2 rollup: true iff at least one of this set's categories is usable
+  // (i.e. has been audited and isn't blocked). Powers the post-Phase-2 read
+  // path that gates the model detail page's Generate button without
+  // sub-querying categories. Maintained by `recomputeWildcardSetAuditStatus`
+  // alongside `nsfw`. See docs/wildcard-moderation-pipeline-cleanup.md §Phase 2.
+  usable Boolean @default(false)
+
   isInvalidated      Boolean   @default(false)
   invalidationReason String?
   invalidatedAt      DateTime?
@@ -5589,6 +5596,7 @@ model WildcardSet {
   @@index([auditStatus])
   @@index([isInvalidated])
   @@index([nsfw])
+  @@index([usable])
 }
 
 model WildcardSetCategory {
@@ -5609,6 +5617,14 @@ model WildcardSetCategory {
   // (currently just `nsfw`). See WildcardSet.nsfw for why this isn't bitwise.
   nsfw Boolean @default(false)
 
+  // Phase 2 mirror of `EntityModeration.blocked` for this category — denormalized
+  // so the picker / read paths can hide Dirty content without joining EM. Kept
+  // in sync from `applyWildcardCategoryAuditSuccess` alongside `nsfw`. Default
+  // `false` so pre-Phase-2 rows backfill correctly (no row was ever Dirty until
+  // the audit verdict explicitly says so). See
+  // docs/wildcard-moderation-pipeline-cleanup.md §Phase 2.
+  blocked Boolean @default(false)
+
   // Open-ended container for category-scoped audit data we don't want to model
   // as columns yet. Shape today (see WildcardCategoryMetadata in
   // wildcard-category-audit.service): `{ workflowId?, triggeredTerms?,
@@ -5624,6 +5640,7 @@ model WildcardSetCategory {
   @@unique([wildcardSetId, name])
   @@index([wildcardSetId])
   @@index([wildcardSetId, auditStatus])
+  @@index([wildcardSetId, blocked])
   @@index([auditStatus])
 }
 

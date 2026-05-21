@@ -7,10 +7,8 @@ import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbWrite } from '~/server/db/client';
 import {
-  getGenerationEcosystemConfig,
-  getResourceCanGenerate,
   getShouldChargeForResources,
-  getUnavailableResources,
+  resolveCanGenerateForVersions,
 } from '~/server/services/generation/generation.service';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
@@ -220,24 +218,26 @@ export default MixedAuthEndpoint(async function handler(
   }
   const { format } = targetFile.metadata;
 
-  const [unavailableResources, ecosystemConfig] = await Promise.all([
-    getUnavailableResources(),
-    getGenerationEcosystemConfig({ id: user?.id, isModerator: user?.isModerator }),
-  ]);
-  const canGenerate = getResourceCanGenerate({
-    resource: {
-      id: modelVersion.id,
-      status: modelVersion.status,
-      availability: modelVersion.availability,
-      usageControl: modelVersion.usageControl,
-      baseModel: modelVersion.baseModel,
-      covered: modelVersion.covered ?? false,
-      modelUserId: modelVersion.modelUserId,
-    },
-    user: { id: user?.id, isModerator: user?.isModerator },
-    unavailableResources,
-    ecosystemConfig,
-  });
+  const genStates = await resolveCanGenerateForVersions(
+    [
+      {
+        id: modelVersion.id,
+        status: modelVersion.status,
+        availability: modelVersion.availability,
+        usageControl: modelVersion.usageControl,
+        baseModel: modelVersion.baseModel,
+        covered: modelVersion.covered ?? false,
+        modelUserId: modelVersion.modelUserId,
+        modelType: modelVersion.type,
+      },
+    ],
+    {
+      user: { id: user?.id, isModerator: user?.isModerator },
+      sfwOnly: false,
+      wildcardsEnabled: false,
+    }
+  );
+  const canGenerate = genStates.get(modelVersion.id)?.canGenerate ?? false;
 
   // Check if should charge
   const shouldChargeResult = await getShouldChargeForResources([
