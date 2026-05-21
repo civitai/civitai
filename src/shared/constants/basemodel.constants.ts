@@ -745,16 +745,16 @@ const sdxlSiblingAddonTypes = [
 export const ecosystemSupport: EcosystemSupport[] = [
   // SD1 - full addon support
   { ecosystemId: ECO.SD1, supportType: 'generation', modelTypes: fullAddonTypes },
-  { ecosystemId: ECO.SD1, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.SD1, supportType: 'training', modelTypes: loraOnly },
 
   // SDXL - full addon support (Pony, Illustrious, NoobAI inherit this)
   { ecosystemId: ECO.SDXL, supportType: 'generation', modelTypes: fullAddonTypes },
-  { ecosystemId: ECO.SDXL, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.SDXL, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.SDXL, supportType: 'auction', modelTypes: checkpointAndLora },
 
   // Flux1 - checkpoint and LORA only
   { ecosystemId: ECO.Flux1, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.Flux1, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.Flux1, supportType: 'training', modelTypes: loraOnly },
 
   // FluxKrea - checkpoint and LORA
   { ecosystemId: ECO.FluxKrea, supportType: 'generation', modelTypes: checkpointAndLora },
@@ -773,11 +773,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Chroma - full addon support
   { ecosystemId: ECO.Chroma, supportType: 'generation', modelTypes: fullAddonTypes },
-  { ecosystemId: ECO.Chroma, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.Chroma, supportType: 'training', modelTypes: loraOnly },
 
   // Qwen - checkpoint and LORA
   { ecosystemId: ECO.Qwen, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.Qwen, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.Qwen, supportType: 'training', modelTypes: loraOnly },
 
   // Qwen 2 - checkpoint only
   { ecosystemId: ECO.Qwen2, supportType: 'generation', modelTypes: [ModelType.Checkpoint] },
@@ -816,11 +816,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // HiDream - checkpoint and LORA
   { ecosystemId: ECO.HiDream, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.HiDream, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.HiDream, supportType: 'training', modelTypes: loraOnly },
 
   // HiDream-O1 - checkpoint and LORA
   { ecosystemId: ECO.HiDreamO1, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.HiDreamO1, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.HiDreamO1, supportType: 'training', modelTypes: loraOnly },
 
   // NanoBanana - checkpoint only
   { ecosystemId: ECO.NanoBanana, supportType: 'generation', modelTypes: checkpointOnly },
@@ -842,7 +842,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Ernie - checkpoint and LORA
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
   // Sora2 - checkpoint only
   { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
@@ -864,19 +864,19 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Anima - checkpoint, LORA generation, LORA training
   { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: loraOnly },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // ZImageTurbo - checkpoint and LORA
   { ecosystemId: ECO.ZImageTurbo, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.ZImageTurbo, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.ZImageTurbo, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageTurbo, supportType: 'auction', modelTypes: checkpointAndLora },
 
   // ZImageBase - checkpoint and LORA
   { ecosystemId: ECO.ZImageBase, supportType: 'generation', modelTypes: checkpointAndLora },
-  { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: [ModelType.LORA] },
+  { ecosystemId: ECO.ZImageBase, supportType: 'training', modelTypes: loraOnly },
   { ecosystemId: ECO.ZImageBase, supportType: 'auction', modelTypes: checkpointAndLora },
 
   // LTXV - checkpoint only (parent ecosystem)
@@ -1447,21 +1447,21 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.WanVideo22_T2V_A14B,
     targetEcosystemId: ECO.WanVideo14B_T2V,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo22_I2V_A14B,
     targetEcosystemId: ECO.WanVideo14B_T2V,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo22_TI2V_5B,
     targetEcosystemId: ECO.WanVideo14B_T2V,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1470,21 +1470,21 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.WanVideo22_T2V_A14B,
     targetEcosystemId: ECO.WanVideo14B_I2V_480p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo22_I2V_A14B,
     targetEcosystemId: ECO.WanVideo14B_I2V_480p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo22_TI2V_5B,
     targetEcosystemId: ECO.WanVideo14B_I2V_480p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1493,21 +1493,21 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.WanVideo22_T2V_A14B,
     targetEcosystemId: ECO.WanVideo14B_I2V_720p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo22_I2V_A14B,
     targetEcosystemId: ECO.WanVideo14B_I2V_720p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo22_TI2V_5B,
     targetEcosystemId: ECO.WanVideo14B_I2V_720p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1516,21 +1516,21 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.WanVideo14B_T2V,
     targetEcosystemId: ECO.WanVideo22_T2V_A14B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo14B_I2V_480p,
     targetEcosystemId: ECO.WanVideo22_T2V_A14B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo14B_I2V_720p,
     targetEcosystemId: ECO.WanVideo22_T2V_A14B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1539,21 +1539,21 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.WanVideo14B_T2V,
     targetEcosystemId: ECO.WanVideo22_I2V_A14B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo14B_I2V_480p,
     targetEcosystemId: ECO.WanVideo22_I2V_A14B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo14B_I2V_720p,
     targetEcosystemId: ECO.WanVideo22_I2V_A14B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1562,21 +1562,21 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.WanVideo14B_T2V,
     targetEcosystemId: ECO.WanVideo22_TI2V_5B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo14B_I2V_480p,
     targetEcosystemId: ECO.WanVideo22_TI2V_5B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo14B_I2V_720p,
     targetEcosystemId: ECO.WanVideo22_TI2V_5B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1588,14 +1588,14 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.WanVideo14B_I2V_480p,
     targetEcosystemId: ECO.WanVideo14B_I2V_720p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   {
     sourceEcosystemId: ECO.WanVideo14B_I2V_720p,
     targetEcosystemId: ECO.WanVideo14B_I2V_480p,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1607,7 +1607,7 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.ZImageBase,
     targetEcosystemId: ECO.ZImageTurbo,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1619,7 +1619,7 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.Flux2Klein_4B_base,
     targetEcosystemId: ECO.Flux2Klein_4B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
   // Flux2 Klein 9B has partial support for Flux2 Klein 9B-base
@@ -1627,7 +1627,7 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.Flux2Klein_9B_base,
     targetEcosystemId: ECO.Flux2Klein_9B,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 
@@ -1639,7 +1639,7 @@ export const crossEcosystemRules: CrossEcosystemRule[] = [
     sourceEcosystemId: ECO.AuraFlow,
     targetEcosystemId: ECO.PonyV7,
     supportType: 'generation',
-    modelTypes: [ModelType.LORA],
+    modelTypes: loraOnly,
     support: 'partial',
   },
 ];
