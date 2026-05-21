@@ -77,9 +77,8 @@ const BugReportButton = ({
   bug: Bug;
   onReported: (newCount: number) => void;
 }) => {
-  const [reportedStorageKey] = useState(`bug-reported-${bug.id}`);
   const [reportedAt, setReportedAt] = useLocalStorage<number>({
-    key: reportedStorageKey,
+    key: `bug-reported-${bug.id}`,
     defaultValue: 0,
     getInitialValueInEffect: false,
   });
@@ -581,9 +580,7 @@ export function Bugs() {
           {canEdit && (
             <Button
               size="compact-sm"
-              leftSection={
-                createOpened ? <IconMinus size={14} /> : <IconPlus size={14} />
-              }
+              leftSection={createOpened ? <IconMinus size={14} /> : <IconPlus size={14} />}
               onClick={() => {
                 if (createOpened) setEditingItem(undefined);
                 setCreateOpened((o) => !o);
@@ -679,8 +676,8 @@ export function Bugs() {
               All clear
             </Text>
             <Text c="dimmed" maw={420}>
-              No known issues right now. Everything we&apos;re aware of is working as expected.
-              If something looks broken, hit the Support button below to let us know.
+              No known issues right now. Everything we&apos;re aware of is working as expected. If
+              something looks broken, hit the Support button below to let us know.
             </Text>
           </Stack>
         </Paper>

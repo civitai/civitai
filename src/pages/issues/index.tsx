@@ -5,7 +5,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
-  resolver: async ({ ssg }) => {
+  resolver: async ({ ssg, features }) => {
+    if (!features?.bugsPage) return { notFound: true };
     await ssg?.bug.getInfinite.prefetch({});
   },
 });
