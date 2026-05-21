@@ -330,6 +330,7 @@ export function buildFliptContext(user?: SessionUser): Record<string, string> {
     ctx.isModerator = String(!!user.isModerator);
     ctx.tier = user.tier ?? 'free';
     ctx.isLoggedIn = 'true';
+    ctx.isMember = String(!!user.tier && user.tier !== 'free');
   } else {
     ctx.isLoggedIn = 'false';
   }

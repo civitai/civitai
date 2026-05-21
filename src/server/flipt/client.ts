@@ -28,6 +28,7 @@ export enum FLIPT_FEATURE_FLAGS {
   FLUX2_KLEIN_TRAINING = 'flux2-klein-training',
   LTX2_TRAINING = 'ltx2-training',
   LTX23_TRAINING = 'ltx23-training',
+  WAN22_TRAINING = 'wan22-training',
   IMAGE_TRAINING_RESULTS = 'image-training-results',
   CHALLENGE_PLATFORM_ENABLED = 'challenge-platform-enabled',
   B2_UPLOAD_DEFAULT = 'b2-upload-default',
