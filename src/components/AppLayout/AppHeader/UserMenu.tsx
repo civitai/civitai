@@ -240,7 +240,7 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
   return (
     <>
       {items
-        .filter((x) => x.visible !== false)
+        .filter((x) => !('visible' in x) || !!x.visible)
         .map((item, index) => {
           const content = (
             <>
