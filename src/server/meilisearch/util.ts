@@ -1,4 +1,4 @@
-import type { IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
+import type { Index, IndexOptions, MeiliSearchErrorInfo, Task, MeiliSearch } from 'meilisearch';
 import { MeiliSearchTimeOutError } from 'meilisearch';
 import { searchClient, metricsSearchClient } from '~/server/meilisearch/client';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -287,4 +287,30 @@ export const processUserContentRemovalQueue = async () => {
   return { processed: entries.length };
 };
 
-export { swapIndex, getOrCreateIndex, onSearchIndexDocumentsCleanup, waitForTasksWithRetries };
+/**
+ * Set `searchCutoffMs` on an index. Without this, a single expensive query
+ * (deep nested filter, large facet expansion, etc.) can hold a read lock
+ * indefinitely while writebacks pile up — which has cost us NVMe saturation
+ * cascades on the search host. Meilisearch returns partial results once the
+ * cutoff is reached; the user-visible signal is an `estimatedTotalHits` and
+ * a `processingTimeMs` close to the cutoff.
+ *
+ * The dedicated endpoint is `PUT /indexes/{uid}/settings/search-cutoff-ms`.
+ * It exists on Meilisearch server >=1.8 but is not typed in meilisearch-js
+ * v0.33, so we call it via the client's internal http request.
+ */
+const setSearchCutoffMs = async ({ index, ms }: { index: Index; ms: number }) => {
+  const url = `indexes/${index.uid}/settings/search-cutoff-ms`;
+  const current = await index.httpRequest.get<number | null>(url).catch(() => null);
+  if (current === ms) return;
+  await index.httpRequest.put(url, ms);
+  console.log(`setSearchCutoffMs :: ${index.uid} -> ${ms}ms (was ${current ?? 'null'})`);
+};
+
+export {
+  swapIndex,
+  getOrCreateIndex,
+  onSearchIndexDocumentsCleanup,
+  waitForTasksWithRetries,
+  setSearchCutoffMs,
+};
