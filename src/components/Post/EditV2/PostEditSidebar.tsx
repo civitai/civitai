@@ -156,7 +156,35 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     });
   };
 
+  const imagesInReview = useMemo(
+    () => addedImages.filter((image) => !!image.needsReview),
+    [addedImages]
+  );
+
+  const handleShowReviewWarning = (date?: Date, confirmPublish = params.confirmPublish) => {
+    const count = imagesInReview.length;
+    const isPlural = count > 1;
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: 'Images pending review',
+        message: (
+          <>
+            <Text>
+              {count} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'} currently
+              flagged for moderation review and will remain hidden from other users until approved.
+            </Text>
+            <Text mt="sm">Do you want to publish anyway?</Text>
+          </>
+        ),
+        labels: { confirm: 'Publish anyway', cancel: 'Cancel' },
+        onConfirm: () => (confirmPublish ? handleShowConfirmPublish(date) : publish(date)),
+      },
+    });
+  };
+
   const handlePublish = (date?: Date, confirmPublish = params.confirmPublish) => {
+    if (imagesInReview.length > 0) return handleShowReviewWarning(date, confirmPublish);
     confirmPublish ? handleShowConfirmPublish(date) : publish(date);
   };
 

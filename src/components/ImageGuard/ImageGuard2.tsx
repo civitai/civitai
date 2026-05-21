@@ -76,6 +76,7 @@ const ImageGuardCtx = createContext<{
   nsfw: boolean;
   userId?: number;
   imageFlag?: string;
+  needsReview?: string | null;
 } | null>(null);
 
 function useImageGuardContext() {
@@ -93,7 +94,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const { blurLevels } = useBrowsingLevelContext();
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
-  const { nsfwLevel = 0, tosViolation } = useImageStore(image);
+  const { nsfwLevel = 0, tosViolation, needsReview } = useImageStore(image);
   const blurNsfw = Flags.hasFlag(blurLevels, nsfwLevel);
 
   const showConnect = useShowConnectionStore(
@@ -118,8 +119,21 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
       userId,
       imageFlag: image.minor ? 'Minor' : image.poi ? 'POI' : undefined,
       tosViolation,
+      needsReview: needsReview ?? null,
     }),
-    [safe, show, nsfwLevel, image.id, key, nsfw, userId, image.minor, image.poi, tosViolation]
+    [
+      safe,
+      show,
+      nsfwLevel,
+      image.id,
+      key,
+      nsfw,
+      userId,
+      image.minor,
+      image.poi,
+      tosViolation,
+      needsReview,
+    ]
   );
 }
 
@@ -245,7 +259,7 @@ function BlurToggle({
   alwaysVisible?: boolean;
 }) {
   const currentUser = useCurrentUser();
-  const { safe, show, browsingLevel, imageId, key, nsfw, userId, imageFlag } =
+  const { safe, show, browsingLevel, imageId, key, nsfw, userId, imageFlag, needsReview } =
     useImageGuardContext();
 
   const toggle = (event: React.MouseEvent<HTMLElement, MouseEvent>) =>
@@ -268,7 +282,9 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
-  const showImageFlag = currentUser?.isModerator && imageFlag;
+  const isOwner = !!userId && currentUser?.id === userId;
+  const ownerCanSeeFlag = isOwner && !needsReview;
+  const showImageFlag = (currentUser?.isModerator || ownerCanSeeFlag) && imageFlag;
   const imageFlagRight = showImageFlag ? <ImageFlagSection label={imageFlag} /> : undefined;
   const imageFlagStyles = showImageFlag ? { section: imageFlagRightSectionStyles } : undefined;
 

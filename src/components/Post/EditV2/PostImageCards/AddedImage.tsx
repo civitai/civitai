@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconAlertTriangle,
   IconArrowBackUp,
   IconCopyPlus,
   IconChevronDown,
@@ -35,6 +36,7 @@ import {
 import { getQueryKey } from '@trpc/react-query';
 import { remove, uniq } from 'lodash-es';
 import React, { createContext, useContext, useMemo, useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/triggers/set-browsing-level';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -108,6 +110,8 @@ type State = {
   otherImages: PostEditImageDetail[];
   allowedResources: AllowedResource[];
   isPendingManualAssignment: boolean;
+  needsReview: string | null;
+  isMinor: boolean;
   onDelete: () => void;
   onEditMetaClick: () => void;
   isDeleting: boolean;
@@ -181,7 +185,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     state.post?.id,
   ]);
 
-  const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type } = storedImage;
+  const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
+  const minor = image.minor ?? false;
   const otherImages = images
     .map((img) => (img.type === 'added' ? img.data : null))
     .filter(isDefined)
@@ -200,6 +205,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
   const isBlocked = false;
+  const isMinor = minor && !needsReview;
   const canAdd = canAddFunc(type, meta);
   // #endregion
 
@@ -295,6 +301,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         canAdd,
         otherImages,
         allowedResources,
+        needsReview: needsReview ?? null,
+        isMinor,
         onDelete: handleDelete,
         onEditMetaClick: handleEditMetaClick,
         isDeleting: deleteImageMutation.isLoading,
@@ -607,6 +615,8 @@ function EditDetail() {
     isUpdating,
     toggleHidePrompt,
     isPendingManualAssignment,
+    needsReview,
+    isMinor,
   } = useAddedImageContext();
   const postId = usePostEditStore((state) => state.post?.id);
   const updateImage = usePostEditStore((state) => state.updateImage);
@@ -649,6 +659,30 @@ function EditDetail() {
     <div className="relative @container">
       <div className={`flex flex-col gap-3 p-3  ${!showPreview ? '@sm:gap-4 @sm:p-6' : ''}`}>
         <LoadingOverlay visible={isDeleting} />
+        {needsReview && (
+          <AlertWithIcon
+            icon={<IconAlertTriangle size={20} />}
+            color="yellow"
+            iconColor="yellow"
+            title={needsReview === 'appeal' ? 'Under appeal' : 'Flagged for review'}
+            size="sm"
+          >
+            {needsReview === 'appeal'
+              ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our moderators.`
+              : `This image won't be visible to other users until it's reviewed by our moderators.`}
+          </AlertWithIcon>
+        )}
+        {isMinor && (
+          <AlertWithIcon
+            icon={<IconAlertTriangle size={20} />}
+            color="yellow"
+            iconColor="yellow"
+            title="Flagged as minor"
+            size="sm"
+          >
+            This image has been flagged as containing a minor and has restricted visibility.
+          </AlertWithIcon>
+        )}
         <div
           className={`flex flex-row-reverse flex-wrap gap-3 ${
             !showPreview ? '@sm:flex-nowrap @sm:gap-6' : ''
@@ -1116,8 +1150,10 @@ function EditDetail() {
 
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
-  const { image, isBlocked, onDelete, isDeleting, onEditMetaClick } = useAddedImageContext();
-  const { metadata, url, type, id, nsfwLevel } = image;
+  const { image, isBlocked, onDelete, isDeleting, onEditMetaClick, needsReview, isMinor } =
+    useAddedImageContext();
+  const { metadata, url, type, id, nsfwLevel, poi } = image;
+  const imageFlag = isMinor ? 'Minor' : !needsReview && poi ? 'POI' : undefined;
   return (
     <div className={`relative`}>
       <div
@@ -1140,14 +1176,21 @@ function PostImage() {
       </div>
       <div className="absolute inset-x-0 top-0 z-10 h-12 bg-gradient-to-b from-black opacity-25" />
       {!!nsfwLevel && (
-        <BrowsingLevelBadge
-          browsingLevel={nsfwLevel}
-          size="lg"
-          onClick={
-            !isBlocked ? () => openSetBrowsingLevelModal({ imageId: id, nsfwLevel }) : undefined
-          }
-          className={`absolute left-2 top-2 z-20 ${!isBlocked ? 'cursor-pointer' : ''}`}
-        />
+        <div className="absolute left-2 top-2 z-20 flex items-center gap-1">
+          <BrowsingLevelBadge
+            browsingLevel={nsfwLevel}
+            size="lg"
+            onClick={
+              !isBlocked ? () => openSetBrowsingLevelModal({ imageId: id, nsfwLevel }) : undefined
+            }
+            className={!isBlocked ? 'cursor-pointer' : ''}
+          />
+          {imageFlag && (
+            <Badge size="lg" color="yellow" variant="filled">
+              {imageFlag}
+            </Badge>
+          )}
+        </div>
       )}
       <div className="absolute right-2 top-2 z-20 flex gap-1">
         <Menu withArrow position="bottom-end">
