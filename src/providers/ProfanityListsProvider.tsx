@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo } from 'react';
 import { createProfanityFilter, type SimpleProfanityFilter } from '~/libs/profanity-simple';
-import blockedWordsBootstrap from '~/utils/metadata/lists/blocked-words.json';
 import displayBootstrap from '~/utils/metadata/lists/profanity-display.json';
+import searchBootstrap from '~/utils/metadata/lists/profanity-search.json';
 import { trpc } from '~/utils/trpc';
 
 export type ProfanityListKind = 'display' | 'search';
@@ -12,7 +12,7 @@ interface ProfanityFiltersContextValue {
 
 const BOOTSTRAP_LISTS: Record<ProfanityListKind, string[]> = {
   display: displayBootstrap,
-  search: blockedWordsBootstrap,
+  search: searchBootstrap,
 };
 
 // Build bootstrap filters once at module load so the initial render is
