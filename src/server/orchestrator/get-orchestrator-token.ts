@@ -53,14 +53,21 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
       // 500 every call during a sysRedis outage — defeating the read-side
       // fail-open above.
       //
-      // Known partial-failure window: if hSet succeeds and hExpire fails
-      // (narrow sysRedis flap between the two commands), the cached token
-      // entry has no TTL and lingers past generationServiceCookie.maxAge.
+      // Partial-failure window is wider than "sysRedis flap between
+      // commands". Promise.all fires hSet and hExpire concurrently as
+      // independent commands (not a Redis MULTI), so:
+      //   - If HEXPIRE arrives before HSET, the field doesn't exist yet
+      //     → Redis returns 0 (no rejection), then HSET writes without
+      //     TTL. Result: no-TTL key even on a healthy server.
+      //   - If both succeed in either order, key has TTL.
+      //   - If hSet succeeds and hExpire rejects, no-TTL key.
       // Blast radius is bounded — the underlying API key from
       // getTemporaryUserApiKey has its own DB-side expiresAt, so requests
-      // fall through to regen once the DB key expires. TODO: collapse
-      // set+expire into a single atomic operation (HEXPIRE NX or Lua) to
-      // close this window.
+      // fall through to regen once the DB key expires. TODO before HA
+      // cutover: collapse set+expire into a single atomic operation
+      // (HEXPIRE NX with prior HSET, or a Lua script). Same TODO applies
+      // to the 5 other hSet+hExpire pairs catalogued in PR #2286
+      // round-8 audit.
       await Promise.all([
         sysRedis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
         sysRedis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),

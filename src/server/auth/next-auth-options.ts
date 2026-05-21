@@ -22,6 +22,7 @@ import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
 import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { clearSessionCache } from '~/server/auth/session-cache';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   getRequestDomainColor,
@@ -236,6 +237,13 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           // refreshSession (jobs, services) keep strict throwing so they
           // can retry / alert; only the user-facing update path is
           // softened here.
+          //
+          // Critical: refreshSession → updateSessionState calls
+          // sysRedis.hGetAll BEFORE clearSessionCache, so a sysRedis
+          // read failure skips the cache clear and getSessionUser below
+          // would return the stale entry — defeating the entire purpose
+          // of trigger==='update'. Call clearSessionCache directly in
+          // the catch (it uses regular redis, unaffected by sysRedis).
           try {
             await refreshSession(Number(token.sub), { sendSignal: false });
           } catch (err) {
@@ -245,6 +253,14 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
               err,
               { userId: Number(token.sub), action: 'continuing-without-marking-tokens' }
             );
+            await clearSessionCache(Number(token.sub)).catch((cacheErr) => {
+              logSysRedisFailOpen(
+                'write-degraded',
+                'next-auth jwt update clearSessionCache fallback',
+                cacheErr,
+                { userId: Number(token.sub) }
+              );
+            });
           }
           // Now fetch fresh user data (cache is cleared, so this will hit the database)
           const freshUser = await getSessionUser({ userId: Number(token.sub) });

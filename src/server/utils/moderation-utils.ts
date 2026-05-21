@@ -131,7 +131,16 @@ export async function getBlocklists() {
     const modWordBlocklist = await getModWordBlocklist();
     const modURLBlocklist = await getModURLBlocklist();
     if (!modWordBlocklist.length && !modURLBlocklist.length) {
-      throw new Error('No blocklists found');
+      // Both lists empty: either genuinely no lists configured, OR a
+      // partial sysRedis flap let the outer toggle read succeed while
+      // every inner per-wordlist hGet failed open. Pre-PR this threw;
+      // post-PR we fail-open consistent with the inner reads. Caller
+      // (entity-moderation job) treats `use: false` as no-op rather
+      // than blowing up the job batch on transient sysRedis health.
+      logSysRedisFailOpen('read-degraded', 'getBlocklists empty', null, {
+        action: 'returning-use-false',
+      });
+      return { use: false, modWordBlocklist: [], modURLBlocklist: [] };
     }
     return { use: true, modWordBlocklist, modURLBlocklist };
   } else {

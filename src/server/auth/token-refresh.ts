@@ -184,6 +184,14 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
   // getSessionUser (a DB hit) each time. Correctness preserved, but
   // throughput degrades. Acceptable for the migration window; revisit
   // if partial flaps become a sustained pattern.
+  //
+  // Known accumulation pattern: if hSet succeeds and hExpire fails, the
+  // tokenId field on USER_TOKENS:userId persists without TTL. It's only
+  // cleaned up by the explicit hDel in the tokenState === 'invalid'
+  // branch above or a full session invalidation. After sustained
+  // partial-flap windows, per-user USER_TOKENS hashes can accumulate
+  // orphaned entries. Bounded per user but non-trivial in aggregate.
+  // Same atomic-set+expire fix tracked for HA cutover.
   if (session.id) {
     const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`;
     try {

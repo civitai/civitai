@@ -42,9 +42,16 @@ export async function logToAxiom(data: MixedObject, datastream?: string) {
     datastream ??= env.AXIOM_DATASTREAM;
     if (!datastream) return;
 
-    await axiom.ingestEvents(datastream, sendData);
+    // Write stderr BEFORE awaiting Axiom — when Axiom is degraded,
+    // ingestEvents rejects and the rest of this function never runs.
+    // Loki ingest depends on the stderr line; without this ordering,
+    // the Grafana alerts that consume `{ "name": "sysredis-fail-open",
+    // ... }` go silent during the exact multi-service incident class
+    // they exist to handle (sysRedis + Axiom both down).
     if (process.env.LOG_ERRORS_TO_STDOUT === 'true')
       console.error(JSON.stringify({ _axiom: datastream, ...sendData }));
+
+    await axiom.ingestEvents(datastream, sendData);
   } else {
     console.log('logToAxiom', sendData);
   }
