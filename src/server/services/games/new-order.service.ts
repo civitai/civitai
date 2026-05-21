@@ -237,10 +237,13 @@ export async function smitePlayer({
 const AUTO_SMITE_DEDUPE_TTL = 24 * 60 * 60; // 24h
 
 /**
- * Issue a smite from the system user with per-day dedupe so a single user
- * can only be auto-smited once in a 24h rolling window regardless of how
- * many times they trip a rate-limit or detection-job signal that day.
- * Returns the smite (or undefined if deduped/no-op).
+ * Issue a smite from the system user with per-source / per-day dedupe so each
+ * source (rate-limit, detection-job) can smite the same user at most once in
+ * a 24h rolling window. Two vectors firing on the same user in the same day
+ * is intentional — accumulating active smites accelerates the 3-strike reset.
+ * Returns `true` if a smite was issued (including when it triggered a reset),
+ * `false` when deduped. Cleans up the dedupe key if `smitePlayer` throws so
+ * enforcement is not stranded for 24h after a transient failure.
  */
 export async function autoSmitePlayer({
   playerId,
@@ -250,14 +253,14 @@ export async function autoSmitePlayer({
   playerId: number;
   reason: string;
   source: 'rate-limit' | 'detection-job';
-}) {
-  if (!sysRedis) return;
+}): Promise<boolean> {
+  if (!sysRedis) return false;
 
   const dedupeKey = `${REDIS_SYS_KEYS.NEW_ORDER.AUTO_SMITE_DEDUPE}:${source}:${playerId}` as const;
 
-  // SET NX with TTL → atomic "first hit today" check
+  // SET NX with TTL → atomic "first hit per source per day" check
   const acquired = await sysRedis.set(dedupeKey, '1', { NX: true, EX: AUTO_SMITE_DEDUPE_TTL });
-  if (!acquired) return;
+  if (!acquired) return false;
 
   await logToAxiom({
     type: 'warning',
@@ -266,12 +269,20 @@ export async function autoSmitePlayer({
     message: `Auto-smite issued for player ${playerId} (${source})`,
   }).catch(() => null);
 
-  return smitePlayer({
-    playerId,
-    modId: constants.system.user.id,
-    reason,
-    size: 1,
-  });
+  try {
+    await smitePlayer({
+      playerId,
+      modId: constants.system.user.id,
+      reason,
+      size: 1,
+    });
+    return true;
+  } catch (e) {
+    // Smite write failed — release the dedupe key so the next signal can retry
+    // instead of leaving the player un-enforced for 24h.
+    await sysRedis.del(dedupeKey).catch(() => null);
+    throw e;
+  }
 }
 
 export async function cleanseAllSmites({
@@ -405,24 +416,25 @@ async function processImageRating({
       checkVotingRateLimit(playerId)
     );
 
-    const rateLimitConfig = await getVotingRateLimitConfig();
-    const autoSmiteEnabled = rateLimitConfig?.autoSmiteEnabled === true;
-
     // Auto-smite escalation: issue a system smite when the player breaches the
     // daily voting limit. The 3-active-smites rule in smitePlayer triggers a
     // career reset on the third strike. Per-minute and per-hour breaches are
     // throttled (rejected below) without escalation; only sustained daily
-    // abuse warrants a smite.
-    if (autoSmiteEnabled && rateLimitResult.dayLimitExceeded) {
-      await autoSmitePlayer({
-        playerId,
-        reason: 'Voting exceeded daily limit. Three smites trigger a career reset.',
-        source: 'rate-limit',
-      }).catch((e) => handleLogError(e as Error, 'auto-smite-from-rate-limit'));
+    // abuse warrants a smite. Config is fetched only on a daily-limit breach
+    // to avoid a sysRedis read on the hot path of every vote.
+    if (rateLimitResult.dayLimitExceeded) {
+      const rateLimitConfig = await getVotingRateLimitConfig();
+      if (rateLimitConfig?.autoSmiteEnabled === true) {
+        await autoSmitePlayer({
+          playerId,
+          reason: 'Voting exceeded daily limit. Three smites trigger a career reset.',
+          source: 'rate-limit',
+        }).catch((e) => handleLogError(e as Error, 'auto-smite-from-rate-limit'));
 
-      throw throwBadRequestError(
-        'You have exceeded the daily voting limit. A smite has been applied; further violations will reset your career.'
-      );
+        throw throwBadRequestError(
+          'You have exceeded the daily voting limit. A smite has been applied; further violations will reset your career.'
+        );
+      }
     }
 
     // Standard rate limiting

@@ -794,12 +794,22 @@ export async function checkVotingRateLimit(userId: number): Promise<{
   }
 
   const limits = await getVotingRateLimitConfig();
-  if (!limits) {
+  if (
+    !limits ||
+    typeof limits.perMinute !== 'number' ||
+    typeof limits.perHour !== 'number' ||
+    typeof limits.perDay !== 'number'
+  ) {
+    // Partial / missing config would make limit comparisons against `undefined`
+    // return false, which flips `dayLimitExceeded` to true and could trigger
+    // mass auto-smites. Treat any missing numeric limit the same as no config.
     logToAxiom({
       type: 'error',
       name: 'new-order-rate-limit-unavailable',
-      details: { userId, reason: 'config-not-set' },
-      message: `Rate limiter denied vote for user ${userId}: rate limit config not set in Redis`,
+      details: { userId, reason: limits ? 'config-incomplete' : 'config-not-set' },
+      message: `Rate limiter denied vote for user ${userId}: rate limit config ${
+        limits ? 'is missing required numeric limits' : 'not set in Redis'
+      }`,
     }).catch(() => null);
     return DENIED_RESPONSE;
   }
