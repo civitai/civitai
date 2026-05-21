@@ -3042,7 +3042,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
       const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
 
-      // Check cached results first (1 minute TTL). Fail open: image feed
+      // Check cached results first (10 minute TTL — see EX: 600 below). Fail open: image feed
       // is the highest-traffic endpoint, a sysRedis outage shouldn't 500
       // it. Treat a throw as full cache miss (everything falls through
       // to DB — slower but correct).
@@ -3093,7 +3093,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
         const dbIdSet = new Set(dbResults.map((r) => r.id));
 
-        // Update cache with DB results (1-minute TTL)
+        // Update cache with DB results (10-minute TTL, EX: 600)
         const cacheUpdates: Record<string, string> = {};
         for (const id of uncachedIds) {
           const exists = dbIdSet.has(id);
@@ -3975,7 +3975,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
       const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
 
-      // Check cached results first (1 minute TTL). Fail open — see the
+      // Check cached results first (10 minute TTL — see EX: 600 below). Fail open — see the
       // sibling checkImageExistence call site above for the same pattern.
       let cachedResults: (string | null)[];
       try {
@@ -4024,7 +4024,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
         const dbIdSet = new Set(dbResults.map((r) => r.id));
 
-        // Update cache with DB results (1-minute TTL)
+        // Update cache with DB results (10-minute TTL, EX: 600)
         const cacheUpdates: Record<string, string> = {};
         for (const id of uncachedIds) {
           const exists = dbIdSet.has(id);

@@ -57,12 +57,19 @@ export function logSysRedisFailOpen(
   err: unknown,
   extra?: Record<string, unknown>
 ): void {
-  void logToAxiom({
+  // .catch swallows Axiom-side failures. logToAxiom internally awaits
+  // axiom.ingestEvents which can reject if Axiom itself is degraded —
+  // discarding the promise with `void` alone would let that rejection
+  // bubble to unhandledRejection. Critical when this very logger fires
+  // most: a multi-service incident (sysRedis + Axiom both down).
+  logToAxiom({
     name: 'sysredis-fail-open',
     type: 'warning',
     subtype,
     fn,
     ...extra,
     ...safeError(err),
+  }).catch(() => {
+    /* fail-open logger never blocks the request */
   });
 }
