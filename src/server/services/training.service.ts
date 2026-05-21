@@ -22,6 +22,7 @@ import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type {
@@ -265,7 +266,7 @@ export async function getTrainingServiceStatus() {
   try {
     raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);
   } catch (err) {
-    console.warn('[getTrainingServiceStatus] sysRedis hGet failed, using defaults:', err);
+    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
     raw = undefined;
   }
   const result = trainingServiceStatusSchema.safeParse(JSON.parse(raw ?? '{}'));

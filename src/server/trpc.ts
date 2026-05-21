@@ -5,6 +5,7 @@ import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
@@ -70,7 +71,7 @@ async function needsUpdate(req?: NextApiRequest) {
   try {
     client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
   } catch (err) {
-    console.warn('[needsUpdate] sysRedis hGetAll failed, skipping client-version check:', err);
+    logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
     return false;
   }
   if (client.version) {

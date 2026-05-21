@@ -38,6 +38,7 @@ import {
 } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
@@ -207,7 +208,7 @@ async function getGenerationStatus(): Promise<GenerationStatus> {
   try {
     raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
   } catch (err) {
-    console.warn('[getGenerationStatus orchestration-new] sysRedis hGet failed, using defaults:', err);
+    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestration-new', err);
     raw = undefined;
   }
   return generationStatusSchema.parse(JSON.parse(raw ?? '{}')) as GenerationStatus;

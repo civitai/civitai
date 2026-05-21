@@ -20,6 +20,7 @@ import type * as z from 'zod';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type {
@@ -97,7 +98,7 @@ export async function getGenerationStatus() {
   try {
     raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
   } catch (err) {
-    console.warn('[getGenerationStatus orchestrator/common] sysRedis hGet failed, using defaults:', err);
+    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestrator/common', err);
     raw = undefined;
   }
   const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));

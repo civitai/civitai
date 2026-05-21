@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
@@ -25,7 +26,12 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
         .hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey)
         .then((x) => x ?? null);
     } catch (err) {
-      console.warn('[getOrchestratorToken] sysRedis hGet failed, minting fresh token:', err);
+      logSysRedisFailOpen(
+        'token-mint-amplification',
+        'getOrchestratorToken hGet',
+        err,
+        { userId, action: 'minting-fresh-token' }
+      );
       token = null;
     }
   } else {
@@ -59,7 +65,12 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
         sysRedis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
         sysRedis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
       ]).catch((err) => {
-        console.warn('[getOrchestratorToken] sysRedis cache writeback failed:', err);
+        logSysRedisFailOpen(
+          'write-degraded',
+          'getOrchestratorToken cache writeback',
+          err,
+          { userId }
+        );
       });
     } else
       setEncryptedCookie(ctx, {

@@ -1,6 +1,7 @@
 import type { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getSessionUser } from './session-user';
 import type { User } from '~/shared/utils/prisma/models';
 import { createLogger } from '~/utils/logging';
@@ -28,10 +29,7 @@ export async function clearTokenRefreshMarker(tokenId: string) {
     await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
     log(`Cleared refresh marker for token ${tokenId}`);
   } catch (err) {
-    console.warn(
-      `[clearTokenRefreshMarker] sysRedis hDel failed for tokenId=${tokenId}, leaving marker in place:`,
-      err
-    );
+    logSysRedisFailOpen('write-degraded', 'clearTokenRefreshMarker', err, { tokenId });
   }
 }
 
@@ -61,10 +59,10 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
     results = await pipeline.exec();
   } catch (err) {
-    console.warn(
-      `[refreshToken] sysRedis pipeline failed userId=${user.id} tokenId=${tokenId}, allowing session to continue:`,
-      err
-    );
+    logSysRedisFailOpen('read-degraded', 'refreshToken pipeline', err, {
+      userId: user.id,
+      tokenId,
+    });
     return { token, needsCookieRefresh: false };
   }
 
@@ -87,10 +85,10 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
     // gates this token, so the tracking-hash delete is a cleanup, not a
     // correctness requirement.
     await sysRedis.hDel(userTokenKey as any, tokenId).catch((err) => {
-      console.warn(
-        `[refreshToken] hDel failed userId=${user.id} tokenId=${tokenId}:`,
-        err
-      );
+      logSysRedisFailOpen('write-degraded', 'refreshToken hDel (invalid branch)', err, {
+        userId: user.id,
+        tokenId,
+      });
     });
     // Keep the 'invalid' state in TOKEN_STATE - it will expire naturally after 30 days
     // This ensures subsequent requests with the same token continue to be rejected
@@ -192,10 +190,10 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
       await sysRedis.hSet(key as any, tokenId, Date.now());
       await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
     } catch (err) {
-      console.warn(
-        `[setToken] sysRedis tracking write failed userId=${session.id} tokenId=${tokenId}:`,
-        err
-      );
+      logSysRedisFailOpen('tracking-write-cliff', 'setToken', err, {
+        userId: session.id,
+        tokenId,
+      });
     }
   }
 }

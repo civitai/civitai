@@ -70,6 +70,7 @@ import type { SessionUser } from 'next-auth';
 import { reviewConsumerStrikes } from '../http/orchestrator/flagged-consumers';
 import semver from 'semver';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -137,10 +138,7 @@ const enforceGenerationVersion = middleware(async ({ ctx, next }) => {
   try {
     genClient = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.CLIENT);
   } catch (err) {
-    console.warn(
-      '[enforceGenerationVersion] sysRedis hGetAll failed, skipping gen-version check:',
-      err
-    );
+    logSysRedisFailOpen('read-degraded', 'enforceGenerationVersion', err);
     return result;
   }
 
