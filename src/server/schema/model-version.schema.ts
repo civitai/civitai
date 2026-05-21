@@ -66,7 +66,11 @@ export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 export const trainingDetailsBaseModelsFlux2 = ['flux2_dev'] as const;
 // export const trainingDetailsBaseModelsFlux2Edit = ['flux2_dev_edit'] as const; // Disabled for now
 export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
-export const trainingDetailsBaseModelsWan = ['wan_2_1_i2v_14b_720p', 'wan_2_1_t2v_14b'] as const;
+export const trainingDetailsBaseModelsWan = [
+  'wan_2_1_i2v_14b_720p',
+  'wan_2_1_t2v_14b',
+  'wan_2_2_t2v_a14b',
+] as const;
 export const trainingDetailsBaseModelsChroma = ['chroma'] as const;
 export const trainingDetailsBaseModelsQwen = ['qwen_image'] as const;
 export const trainingDetailsBaseModelsZImage = ['zimageturbo', 'zimagebase'] as const;
@@ -124,6 +128,7 @@ export const baseModelToTraningDetailsBaseModelMap: Partial<
   'Wan Video 14B i2v 720p': 'wan_2_1_i2v_14b_720p',
   'Wan Video 14B i2v 480p': 'wan_2_1_i2v_14b_720p',
   'Wan Video 14B t2v': 'wan_2_1_t2v_14b',
+  'Wan Video 2.2 T2V-A14B': 'wan_2_2_t2v_a14b',
 };
 
 // Kohya-style training parameters (used by frontend and as legacy format)

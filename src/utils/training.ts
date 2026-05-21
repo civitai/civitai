@@ -198,6 +198,16 @@ export const trainingModelInfo: {
     disabled: true, // TODO remove
     aiToolkit: { ecosystem: 'wan', modelVariant: '2.1' },
   },
+  wan_2_2_t2v_a14b: {
+    label: '2.2 T2V [A14B]',
+    pretty: 'Wan 2.2 T2V [A14B]',
+    type: 'wan',
+    description: 'Latest Wan video generation with the 2.2 T2V A14B model.',
+    air: 'urn:air:wanvideo-22-t2v-a14b:checkpoint:civitai:1817671@2114154',
+    baseModel: 'Wan Video 2.2 T2V-A14B',
+    isNew: true,
+    aiToolkit: { ecosystem: 'wan', modelVariant: '2.2' },
+  },
   //
   chroma: {
     label: '1.0 HD',
@@ -602,7 +612,8 @@ export const getDefaultEngine = (
   if (baseType === 'hidream-o1') return 'ai-toolkit'; // HiDream O1 requires AI Toolkit
   if (baseType === 'anima') return 'ai-toolkit'; // Anima requires AI Toolkit
   if (baseType === 'acestep15' || baseType === 'acestep15xl') return 'ai-toolkit'; // Audio models require AI Toolkit
-  if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
+  if (baseType === 'wan') return 'ai-toolkit'; // Wan defaults to AI Toolkit
+  if (baseType === 'hunyuan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model
   if (baseType === 'flux2') {
     if (baseModel === 'flux2_dev_edit') return 'flux2-dev-edit';

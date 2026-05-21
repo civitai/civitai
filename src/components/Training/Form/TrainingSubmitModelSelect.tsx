@@ -637,6 +637,11 @@ export const ModelSelect = ({
                     makeDefaultParams={makeDefaultParams}
                     isVideo
                     isNew={new Date() < new Date('2025-04-30')}
+                    allowedKeys={[
+                      'wan_2_1_t2v_14b',
+                      'wan_2_1_i2v_14b_720p',
+                      ...(features.wan22Training ? ['wan_2_2_t2v_a14b'] : []),
+                    ]}
                   />
                   {features.ltx2Training && (
                     <ModelSelector
