@@ -84,6 +84,7 @@ export function DownloadVariantDropdown({
   const downloadUrl = activeFile
     ? createModelFileDownloadUrl({
         versionId,
+        fileId: activeFile.id,
         type: activeFile.type,
         meta: activeFile.metadata,
       })
@@ -200,6 +201,7 @@ export function DownloadVariantDropdown({
             .join(', ');
           const fileDownloadUrl = createModelFileDownloadUrl({
             versionId,
+            fileId: file.id,
             type: file.type,
             meta: file.metadata,
           });
