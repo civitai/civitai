@@ -2999,6 +2999,23 @@ export interface Changelog {
   domain: DomainColor[];
 }
 
+export interface Bug {
+  id: number;
+  title: string;
+  summary: string;
+  content: string | null;
+  status: string;
+  clickupUrl: string | null;
+  firstSeenAt: Date;
+  resolvedAt: Date | null;
+  publishedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  disabled: boolean;
+  domain: DomainColor[];
+  tags: string[];
+}
+
 export interface NewOrderPlayer {
   userId: number;
   user?: User;

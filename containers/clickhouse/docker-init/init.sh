@@ -1626,4 +1626,17 @@ clickhouse client -n <<-EOSQL
     engine = MergeTree()
         ORDER BY (createdAt, userId)
         SETTINGS index_granularity = 8192;
+
+    create table if not exists default.bugReports
+    (
+        bugId       UInt32,
+        userId      Int32   default 0,
+        status      LowCardinality(String),
+        createdAt   DateTime default now(),
+        ip          String   default '',
+        userAgent   String   default ''
+    )
+    engine = MergeTree()
+        ORDER BY (bugId, createdAt)
+        SETTINGS index_granularity = 8192;
 EOSQL

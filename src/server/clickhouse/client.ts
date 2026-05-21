@@ -425,6 +425,10 @@ export class Tracker {
     return this.track('activities', { activity });
   }
 
+  public bugReport(values: { bugId: number; status: string }) {
+    return this.track('bugReports', values);
+  }
+
   public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
     return this.track('modelEvents', values);
   }
