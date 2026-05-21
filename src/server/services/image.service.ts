@@ -60,6 +60,7 @@ import {
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { imageMetricsCache } from '~/server/redis/entity-metric-populate';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
@@ -3049,7 +3050,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       try {
         cachedResults = await sysRedis.packed.mGet(cacheKeys);
       } catch (err) {
-        console.warn('[checkImageExistence] sysRedis mGet failed, falling through to DB:', err);
+        logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
         cachedResults = new Array(uniqueIds.length).fill(null);
       }
 
@@ -3108,10 +3109,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
             sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
           )
         ).catch((err) => {
-          console.warn(
-            '[checkImageExistence] sysRedis cache populate failed (response still served from DB):',
-            err
-          );
+          logSysRedisFailOpen('write-degraded', 'checkImageExistence cache populate', err);
         });
       }
 
@@ -3983,7 +3981,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       try {
         cachedResults = cacheKeys.length > 0 ? await sysRedis.packed.mGet(cacheKeys) : [];
       } catch (err) {
-        console.warn('[checkImageExistence] sysRedis mGet failed, falling through to DB:', err);
+        logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
         cachedResults = new Array(uniqueIds.length).fill(null);
       }
 
@@ -4042,10 +4040,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
           )
         ).catch((err) => {
-          console.warn(
-            '[checkImageExistence] sysRedis cache populate failed (response still served from DB):',
-            err
-          );
+          logSysRedisFailOpen('write-degraded', 'checkImageExistence cache populate', err);
         });
       }
 

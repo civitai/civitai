@@ -7,6 +7,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { UserMeta, UserSubscriptionsByBuzzType } from '~/server/schema/user.schema';
 import { userSettingsSchema } from '~/server/schema/user.schema';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import type { UserTier } from '~/server/schema/user.schema';
@@ -170,9 +171,11 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
           if (value.includes(user.id)) permissions.push(key);
         }
       } catch (err) {
-        console.warn(
-          `[getSessionUser] getSystemPermissions failed for userId=${user.id}, deriving session with empty permissions and skipping cache write:`,
-          err
+        logSysRedisFailOpen(
+          'read-degraded',
+          'getSessionUser getSystemPermissions',
+          err,
+          { userId: user.id, action: 'skipping-cache-write' }
         );
         permissionsSourceDegraded = true;
       }

@@ -1,4 +1,5 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { OrchestratorEngine2 } from '~/server/orchestrator/generation/generation.config';
 
 export interface GenerationEngine {
@@ -18,7 +19,7 @@ export async function getGenerationEngines() {
   try {
     enginesJson = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.ENGINES);
   } catch (err) {
-    console.warn('[getGenerationEngines] sysRedis hGetAll failed, returning empty list:', err);
+    logSysRedisFailOpen('read-degraded', 'getGenerationEngines', err);
     return [];
   }
   return Object.values(enginesJson).map((engineJson) => JSON.parse(engineJson) as GenerationEngine);

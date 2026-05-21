@@ -1,6 +1,7 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
 import { TagType } from '~/shared/utils/prisma/enums';
@@ -256,7 +257,7 @@ export async function getBrowsingSettingAddons() {
   try {
     cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
   } catch (err) {
-    console.warn('[getBrowsingSettingAddons] sysRedis get failed, returning defaults:', err);
+    logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err);
     return DEFAULT_BROWSING_SETTINGS_ADDONS;
   }
   if (cached) {
@@ -282,7 +283,7 @@ export async function getCreationBlockedTags(): Promise<CreationBlockedTag[]> {
   try {
     raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
   } catch (err) {
-    console.warn('[getCreationBlockedTags] sysRedis get failed, returning empty:', err);
+    logSysRedisFailOpen('defaults-firing', 'getCreationBlockedTags', err);
     return [];
   }
   if (!raw) return [];
@@ -347,7 +348,7 @@ export async function getLiveFeatureFlags() {
   try {
     cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
   } catch (err) {
-    console.warn('[getLiveFeatureFlags] sysRedis get failed, returning defaults:', err);
+    logSysRedisFailOpen('read-degraded', 'getLiveFeatureFlags', err);
     return DEFAULT_LIVE_FEATURE_FLAGS;
   }
   if (cached) {

@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
@@ -20,7 +21,7 @@ async function getManualAssignments(event: string) {
     // manualAssignments[event] = assignments;
     return assignments;
   } catch (err) {
-    console.warn(`[getManualAssignments] sysRedis hGetAll failed for event=${event}:`, err);
+    logSysRedisFailOpen('read-degraded', 'getManualAssignments', err, { event });
     return {} as Record<string, string>;
   }
 }
@@ -108,7 +109,7 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     try {
       roleCache = await sysRedis.hGetAll(cacheKey);
     } catch (err) {
-      console.warn(`[getDiscordRoles] sysRedis hGetAll failed for event=${name}:`, err);
+      logSysRedisFailOpen('read-degraded', 'getDiscordRoles read', err, { event: name });
       return {} as Record<string, string>;
     }
     if (Object.keys(roleCache).length > 0) return roleCache;
@@ -123,7 +124,7 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
     try {
       await sysRedis.hSet(cacheKey, roleCache);
     } catch (err) {
-      console.warn(`[getDiscordRoles] sysRedis hSet writeback failed for event=${name}:`, err);
+      logSysRedisFailOpen('write-degraded', 'getDiscordRoles writeback', err, { event: name });
     }
 
     return roleCache;

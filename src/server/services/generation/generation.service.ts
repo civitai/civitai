@@ -10,6 +10,7 @@ import {
   wanGeneralBaseModelMap,
 } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
@@ -231,7 +232,7 @@ export async function getGenerationStatus() {
   try {
     raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
   } catch (err) {
-    console.warn('[getGenerationStatus generation.service] sysRedis hGet failed, using defaults:', err);
+    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
     raw = undefined;
   }
   const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));

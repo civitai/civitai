@@ -22,6 +22,7 @@ import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
 import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   getRequestDomainColor,
   isAliasHost,
@@ -238,9 +239,11 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           try {
             await refreshSession(Number(token.sub), { sendSignal: false });
           } catch (err) {
-            console.warn(
-              `[next-auth jwt update] refreshSession failed for userId=${token.sub}, continuing without marking tokens:`,
-              err
+            logSysRedisFailOpen(
+              'write-degraded',
+              'next-auth jwt update refreshSession',
+              err,
+              { userId: Number(token.sub), action: 'continuing-without-marking-tokens' }
             );
           }
           // Now fetch fresh user data (cache is cleared, so this will hit the database)

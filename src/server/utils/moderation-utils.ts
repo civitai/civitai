@@ -1,4 +1,5 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { fromJson } from '~/utils/json-helpers';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -63,7 +64,7 @@ export async function getModWordBlocklist() {
         wordlist
       );
     } catch (err) {
-      console.warn(`[getModWordBlocklist] sysRedis hGet failed for wordlist=${wordlist}:`, err);
+      logSysRedisFailOpen('read-degraded', 'getModWordBlocklist hGet', err, { wordlist });
     }
     if (words) {
       for (const word of words) {
@@ -98,7 +99,7 @@ export async function getModURLBlocklist() {
         urllist
       );
     } catch (err) {
-      console.warn(`[getModURLBlocklist] sysRedis hGet failed for urllist=${urllist}:`, err);
+      logSysRedisFailOpen('read-degraded', 'getModURLBlocklist hGet', err, { urllist });
     }
     if (urls) {
       for (const url of urls) {
