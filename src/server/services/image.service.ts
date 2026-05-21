@@ -3065,12 +3065,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   // User-own-pass mode: drop the inline `OR userId=currentUserId` branch. User's
   // unpublished/scheduled content comes from fetchMeiliUserOwnPass and gets merged
   // at the hit level.
+  const snappedNow = snapToInterval(Math.round(Date.now()));
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
+      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
-      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
       if (!input.meiliUserOwnPass && currentUserId) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
@@ -3080,7 +3081,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // Users should only see published stuff or things they own
     // convert to minutes for better caching
     const publishedFilters = [
-      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snapToInterval(Math.round(Date.now()))}`),
+      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
     ];
     if (!input.meiliUserOwnPass && currentUserId) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
@@ -3932,16 +3933,16 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
+      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
-      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
       if (!input.meiliUserOwnPass && currentUserId) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
   } else if (userId) {
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
     // For own user's content, allow seeing scheduled/notPublished content
     if (!input.meiliUserOwnPass && currentUserId && userId === currentUserId) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
