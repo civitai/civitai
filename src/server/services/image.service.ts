@@ -49,6 +49,7 @@ import {
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
+import { mergeOwnExcludedIntoFirstPage } from '~/server/services/image.search-merge';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import {
   getBaseModelFromResources,
@@ -1718,7 +1719,7 @@ export const getAllImages = async (
   // bustCacheTag('images-model:X' / 'images-modelVersion:X') is already wired in
   // post.service.ts on image upload/update events.
   const cacheable = queryCacheRaw(
-    async <Row,>(q: Prisma.Sql) => {
+    async <Row>(q: Prisma.Sql) => {
       const { rows } = await imageDb.query(q as any);
       return rows as Row[];
     },
@@ -2649,6 +2650,50 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
+  // User-agnostic primary filter: drop per-user OR clauses from the main Meili
+  // query so its cache key (xxhash of endpoint+index+body) is shared across
+  // logged-in users. The user's own private/blocked/unpublished/poi/nsfwLevel=0
+  // content is fetched in a parallel second-pass below and merged into the first
+  // page of results. Mirrors fetchBitdexPrimary's pattern.
+  //
+  // Skips:
+  //   - moderators: their primary filter already has no per-user OR clauses
+  //   - anonymous users: no per-user OR clauses to remove (cache already shared)
+  //   - cursor pages: second-pass runs on page 1 only (BitDex precedent)
+  //   - viewing another user's profile: own-content would be content-scoped out
+  //   - hidden/followed scope-narrowing queries: second-pass would pull
+  //     unrelated content; correctness preserved by leaving per-user clauses in
+  //   - moderator publish-filter branch: keep userId OR clause (mod-only edge case)
+  const fliptClient = await FliptSingleton.getInstance();
+  const userAgnosticFlagOn = fliptClient
+    ? fliptClient.evaluateBoolean({
+        flagKey: FLIPT_FEATURE_FLAGS.MEILI_USER_AGNOSTIC_PREFILTER,
+        entityId: currentUserId?.toString() || 'anonymous',
+        context: {},
+      }).enabled
+    : false;
+  const isFirstPage = !input.cursor && !offset;
+  const viewingSelf = currentUserId != null && (userId == null || userId === currentUserId);
+  const userAgnostic =
+    userAgnosticFlagOn &&
+    !isModerator &&
+    currentUserId != null &&
+    !hidden &&
+    !followed &&
+    viewingSelf;
+  // When the flag is on but we're not on page 1 (or viewing another user's
+  // profile), still use the user-agnostic primary filter so cache keys match,
+  // but skip the second-pass. The user trades visibility of their own
+  // private/blocked content past page 1 for the cache hit (matches BitDex).
+  //
+  // Note: this predicate intentionally does NOT include `viewingSelf`. Safe
+  // because non-self profile views force `userId=<profile>` at L2918, making
+  // the stripped `OR userId=current` clause inert (current user's own items
+  // could never have matched the targeted-profile filter anyway).
+  const useAgnosticPrimary =
+    userAgnosticFlagOn && !isModerator && currentUserId != null && !hidden && !followed;
+  const shouldRunSecondPass = userAgnostic && isFirstPage;
+
   // Only show images that belong to a post
   filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
 
@@ -2656,14 +2701,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(
       // Avoids exposing private resources to the public
       `((NOT availability = ${Availability.Private})${
-        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
+        currentUserId && !useAgnosticPrimary ? ` OR "userId" = ${currentUserId}` : ''
       })`
     );
 
     filters.push(
       // Avoids blocked resources to the public
       `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS)${
-        currentUserId ? ` OR "userId" = ${currentUserId}` : ''
+        currentUserId && !useAgnosticPrimary ? ` OR "userId" = ${currentUserId}` : ''
       })`
     );
   }
@@ -2673,7 +2718,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(NOT poi = true${currentUserId ? ` OR "userId" = ${currentUserId}` : ''})`);
+    filters.push(
+      `(NOT poi = true${
+        currentUserId && !useAgnosticPrimary ? ` OR "userId" = ${currentUserId}` : ''
+      })`
+    );
   }
   if (disableMinor) {
     filters.push(`(NOT minor = true)`);
@@ -2755,7 +2804,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
   const nsfwUserFilters = [makeMeiliImageSearchFilter(nsfwLevelField, `= 0`)];
-  if (currentUserId)
+  if (currentUserId && !useAgnosticPrimary)
     nsfwUserFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
 
   nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
@@ -2835,9 +2884,13 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
+      filters.push(
+        makeMeiliImageSearchFilter('publishedAtUnix', `> ${snapToInterval(Date.now(), 60000)}`)
+      );
     else {
-      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+      const publishedFilters = [
+        makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snapToInterval(Date.now(), 60000)}`),
+      ];
       if (currentUserId) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
@@ -2849,7 +2902,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     const publishedFilters = [
       makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snapToInterval(Math.round(Date.now()))}`),
     ];
-    if (currentUserId) {
+    if (currentUserId && !useAgnosticPrimary) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -2945,6 +2998,59 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     offset,
   };
 
+  // Second-pass query: fetch the user's own content that the strict primary
+  // filter excludes (private, blocked, unpublished/scheduled, nsfwLevel=0,
+  // and poi when disablePoi). Cache key depends only on (userId, sort,
+  // disablePoi, useCombinedNsfwLevel) — highly reusable across the user's
+  // sessions. Content-scoping (modelVersionId/postId/tags/etc) is applied at
+  // merge time below, NOT in this query.
+  //
+  // Only runs on page 1; subsequent pages skip this and accept that the user
+  // won't see their own private content past the first page (BitDex parity).
+  let ownExcludedPromise: Promise<{ results: ImageMetricsSearchIndexRecord[] } | null> | null =
+    null;
+  if (shouldRunSecondPass) {
+    const ownExcludedAnyOf: string[] = [
+      makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
+      `availability = ${Availability.Private}`,
+      `("blockedFor" = ${BlockedReason.TOS} OR "blockedFor" = ${BlockedReason.Moderated} OR "blockedFor" = ${BlockedReason.CSAM} OR "blockedFor" = ${BlockedReason.AiNotVerified})`,
+      `"publishedAtUnix" NOT EXISTS`,
+      `"publishedAtUnix" > ${snapToInterval(Math.round(Date.now()))}`,
+    ];
+    if (disablePoi) ownExcludedAnyOf.push('poi = true');
+    const ownExcludedFilter = [
+      makeMeiliImageSearchFilter('postId', 'IS NOT NULL'),
+      makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
+      `(${ownExcludedAnyOf.join(' OR ')})`,
+    ].join(' AND ');
+    const ownRequest: SearchParams = {
+      filter: ownExcludedFilter,
+      sort: sorts,
+      limit: 500, // cap own-excluded fetch — typical user has < 100
+    };
+    const actorForOwn = input.actor;
+    ownExcludedPromise = withSpan('image:meili:ownExcluded', () =>
+      input.signal
+        ? fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, ownRequest, {
+            host: env.METRICS_SEARCH_HOST as string,
+            apiKey: env.METRICS_SEARCH_API_KEY,
+            signal: input.signal,
+            actor: actorForOwn,
+          })
+        : (actorForOwn ? getMetricsSearchClient(actorForOwn) : metricsSearchClient)!
+            .index(METRICS_SEARCH_INDEX)
+            .getDocuments<ImageMetricsSearchIndexRecord>(ownRequest)
+    ).catch((err) => {
+      // Non-fatal: log and serve primary results only. The user just won't
+      // see their own private content this page (same as page 2+ behavior).
+      logToAxiom(
+        { type: 'own-excluded-error', error: (err as Error).message },
+        'temp-search'
+      ).catch();
+      return null;
+    });
+  }
+
   const route = 'getImagesFromSearch';
   const endTimer = requestDurationSeconds.startTimer({ route });
   requestTotal.inc({ route }); // count every request up front
@@ -2975,6 +3081,62 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       // - if we have no entrypoint, it's the first request, and set one for the future
       //   else keep it the same
       nextCursor = !entry ? results[0]?.sortAtUnix : entry;
+    }
+
+    // Merge own-excluded content (private/blocked/unpublished/poi/nsfwLevel=0
+    // items owned by currentUserId) into the primary result before the post-
+    // filter at L3082-3087. The post-filter passes own-userId hits through
+    // unconditionally (acceptableMinor and nsfwLevel branches both fall
+    // through for hit.userId === currentUserId), so merging here is safe.
+    //
+    // Runtime canary: if the second-pass returned own-content but none of it
+    // ends up in the post-filtered hit set, log a warning. This would catch a
+    // future regression where the merge call is silently dropped — i.e. the
+    // exact bug that shipped originally (helper imported but never invoked).
+    if (useAgnosticPrimary && ownExcludedPromise) {
+      const ownExcludedResp = await ownExcludedPromise;
+      const ownExcluded = ownExcludedResp?.results ?? [];
+      if (ownExcluded.length > 0) {
+        const beforeIds = new Set(results.map((r) => r.id));
+        const merged = mergeOwnExcludedIntoFirstPage(results, ownExcluded, {
+          sort,
+          limit,
+          modelVersionId,
+          hideAutoResources,
+          hideManualResources,
+          postId,
+          postIds,
+          types,
+          baseModels,
+          excludedTagIds,
+          excludedUserIds,
+          remixOfId,
+          remixesOnly,
+          nonRemixesOnly,
+          withMeta,
+          fromPlatform,
+        });
+        // Mutate `results` in place so downstream filters/existence-checks see
+        // the merged set. Avoids reassigning a const-shadowed variable later.
+        results.length = 0;
+        results.push(...merged);
+
+        const mergedIds = new Set(results.map((r) => r.id));
+        const addedFromOwn = ownExcluded.some((d) => !beforeIds.has(d.id) && mergedIds.has(d.id));
+        if (!addedFromOwn) {
+          // Either every own-content item was scoped out by the helper (legit),
+          // or the wiring is broken (regression). Log so we can distinguish.
+          logToAxiom(
+            {
+              type: 'own-excluded-merge-noop',
+              ownCount: ownExcluded.length,
+              primaryCount: beforeIds.size,
+              currentUserId,
+            },
+            'temp-search'
+          ).catch();
+        }
+      }
     }
 
     const filteredHits = results.filter((hit) => {
@@ -3671,16 +3833,16 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   if (isModerator) {
     if (notPublished) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
     else if (scheduled)
-      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${Date.now()}`));
+      filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
     else {
-      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
       if (currentUserId) {
         publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
       }
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
   } else if (userId) {
-    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${Date.now()}`)];
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
     // For own user's content, allow seeing scheduled/notPublished content
     if (currentUserId && userId === currentUserId) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));

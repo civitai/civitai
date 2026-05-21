@@ -41,6 +41,12 @@ export enum FLIPT_FEATURE_FLAGS {
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
   BITDEX_IMAGE_SEARCH = 'bitdex-image-search',
+  // Kill switch for the user-agnostic Meili PreFilter. When ON, the primary
+  // Meili query drops per-user OR clauses (availability/blockedFor/poi/published)
+  // for cacheability, and a second-pass query fetches the user's own
+  // private/blocked/unpublished/poi content for merge on the first page.
+  // Mirrors the BitDex pattern. Default off; flip on to enable cache sharing.
+  MEILI_USER_AGNOSTIC_PREFILTER = 'meili-user-agnostic-prefilter',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
   // replica while the DataPacket replica is missing historical backfill rows
   // for imageId < ~110M. Flip off once backfill is complete.
