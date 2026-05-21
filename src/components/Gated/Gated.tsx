@@ -112,10 +112,12 @@ export function useGated({
     return { state: 'redirect', isPaywalled: false };
   }
 
-  // Logged-out on civitai.red hitting non-safe content. Verified bots
-  // bypass: they see the page with paywall structured data so the URL is
-  // indexable. Humans get the login gate.
-  if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
+  // Logged-out browsing is PG-only across both sites. On civitai.red this
+  // catches PG13+ (the SFW site already redirected NSFW via `meetsAllowedLevel`
+  // and gated PG13 via the `isPG13Only` branch above). Verified bots bypass:
+  // they see the page with paywall structured data so the URL is indexable.
+  // Humans get the login gate.
+  if (!currentUser && !hasPublicBrowsingLevel(contentNsfwLevel)) {
     if (verifiedBot) return { state: 'page', isPaywalled: true };
     return { state: 'login', isPaywalled: false };
   }
