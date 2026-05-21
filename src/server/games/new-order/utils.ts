@@ -695,46 +695,18 @@ export async function setActiveSlot(
 
 export const getImageRatingsCounter = (imageId: number) => {
   const key = `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`;
+  // Cache-miss fallback returns zeros instead of a ClickHouse recompute.
+  // ClickHouse stores RAW vote rows; Redis stores WEIGHTED vote totals
+  // (voteWeight × 100 per voter). Reconstructing weighted scores from raw
+  // rows is not possible without persisting voteWeight in the rating table,
+  // and using raw `count()` here silently corrupts the consensus threshold.
+  // On a true cache miss (key TTL elapsed before consensus), we lose vote
+  // history for that image — a safer failure than producing wrong weights.
   const counter = createCounter<string>({
     key: key as NewOrderRedisKey,
     fetchCount: async (ids) => {
       const result = new Map<string, number>();
       for (const id of ids) result.set(id, 0);
-
-      if (!clickhouse || ids.length === 0) return result;
-
-      // IDs are in format "rank-nsfwLevel", e.g. "Knight-3"
-      // Parse and validate all IDs
-      const validIds = ids.filter((id) => {
-        const [rank, nsfwLevel] = id.split('-');
-        return rank && nsfwLevel;
-      });
-
-      if (validIds.length === 0) return result;
-
-      // Fetch all ratings for this image in one query
-      const data = await clickhouse.$query<{ rank: string; rating: number; count: number }>`
-        SELECT
-          argMax(rank, createdAt) as rank,
-          argMax(rating, createdAt) as rating,
-          count() as count
-        FROM knights_new_order_image_rating
-        WHERE imageId = ${imageId}
-        GROUP BY imageId, userId
-      `;
-
-      // Group counts by rank-rating combination
-      const countsByKey = new Map<string, number>();
-      for (const row of data) {
-        const key = `${row.rank}-${row.rating}`;
-        countsByKey.set(key, (countsByKey.get(key) ?? 0) + row.count);
-      }
-
-      // Populate results for requested IDs
-      for (const id of ids) {
-        result.set(id, countsByKey.get(id) ?? 0);
-      }
-
       return result;
     },
     ttl: CacheTTL.day,

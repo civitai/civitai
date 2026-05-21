@@ -511,6 +511,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
     uniqueRatings: number;
     dominantRating: number;
     dominantPct: number;
+    correctPct: number;
     avgPerMinute: number;
     maxPerMinute: number;
   }>`
@@ -544,6 +545,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         uniq(r.rating) as uniqueRatings,
         d.dominantRating,
         countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
+        countIf(r.status = 'Correct') / greatest(countIf(r.status IN ('Correct','Failed','Inconclusive')), 1) * 100 as correctPct,
         count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute,
         m.maxPerMinute
       FROM knights_new_order_image_rating r
@@ -567,8 +569,19 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
 
   // Strict signal: high-confidence bot pattern that warrants automated action.
   // avgPerMinute > 15 alone is excluded — power users can hit that during bursts.
-  const isStrictSignal = (s: (typeof suspects)[number]) =>
-    s.uniqueRatings === 1 || s.dominantPct >= 90 || s.maxPerMinute >= 50;
+  // Curator carve-out: a high-accuracy player (correctPct >= 70) is treated as
+  // legitimate even if their distribution looks skewed or their bursts spike.
+  // Real bots have low accuracy because they spam one rating value regardless
+  // of image content. Skip the auto-smite for accurate Knights so a curator
+  // who happens to vote on 200 PG images in a day doesn't get nuked.
+  const MIN_BOT_ACCURACY_PCT = 70;
+  const isStrictSignal = (s: (typeof suspects)[number]) => {
+    const skewedPattern = s.uniqueRatings === 1 || s.dominantPct >= 90 || s.maxPerMinute >= 50;
+    if (!skewedPattern) return false;
+    // High-accuracy players are protected from auto-smite even on skewed patterns.
+    if (s.correctPct >= MIN_BOT_ACCURACY_PCT) return false;
+    return true;
+  };
 
   const config = await getVotingRateLimitConfig();
   const autoSmiteEnabled = config?.autoSmiteFromDetectionJob === true;
@@ -610,6 +623,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         uniqueRatings: s.uniqueRatings,
         dominantRating: s.dominantRating,
         dominantPct: Math.round(s.dominantPct),
+        correctPct: Math.round(s.correctPct),
         avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
         maxPerMinute: s.maxPerMinute,
         smited: smitedUserIds.has(s.userId),
@@ -627,7 +641,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         const tag = smitedUserIds.has(s.userId) ? ' 🗡️ [auto-smited]' : '';
         return (
           `• **User ${s.userId}**${tag} — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
-          `${Math.round(s.dominantPct)}% same value, ${(
+          `${Math.round(s.dominantPct)}% same value, ${Math.round(s.correctPct)}% correct, ${(
             Math.round(s.avgPerMinute * 10) / 10
           ).toFixed(1)}/min avg, ${s.maxPerMinute}/min peak`
         );
