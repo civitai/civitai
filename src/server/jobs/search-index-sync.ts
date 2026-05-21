@@ -18,7 +18,7 @@ const searchIndexSets = {
 type SearchIndexSetKey = keyof typeof searchIndexSets;
 
 const cronTimeMap: Record<SearchIndexSetKey, string> = {
-  models: '*/5 * * * *',
+  models: '*/15 * * * *',
   users: '*/10 * * * *',
   articles: '*/5 * * * *',
   images: '5 8 * * *',
