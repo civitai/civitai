@@ -18,7 +18,7 @@ export function GeneratedOutput({
 
   return (
     <GeneratedOutputWrapper image={image} isLightbox={isLightbox} isActiveSlide={isActiveSlide}>
-      {({ onClick }) => {
+      {({ onClick, onLoaded, loaded }) => {
         // Discriminate on `image.type` (the blob container class), which maps 1:1 to the
         // child component's accepted prop type. The only divergence is video-typed audio
         // (aceStepAudio with a cover image bundles audio+cover into a webm VideoBlob),
@@ -36,6 +36,8 @@ export function GeneratedOutput({
                 isLightbox={isLightbox}
                 isActiveSlide={isActiveSlide}
                 onClick={onClick}
+                onLoaded={onLoaded}
+                loaded={loaded}
               />
             );
           case 'image':
@@ -45,6 +47,8 @@ export function GeneratedOutput({
                 step={step}
                 isLightbox={isLightbox}
                 onClick={onClick}
+                onLoaded={onLoaded}
+                loaded={loaded}
               />
             );
         }

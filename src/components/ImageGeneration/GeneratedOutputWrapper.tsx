@@ -1,7 +1,8 @@
-import { Checkbox, Menu, Text } from '@mantine/core';
+import { Checkbox, Loader, Menu, Text } from '@mantine/core';
 import { IconAlertTriangle, IconDotsVertical, IconInfoCircle } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
+import { useState } from 'react';
 
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
@@ -29,13 +30,18 @@ export function GeneratedOutputWrapper({
   image: ImageBlob | VideoBlob | AudioBlob;
   isLightbox?: boolean;
   isActiveSlide?: boolean;
-  children: (props: { onClick: () => void }) => ReactNode;
+  children: (props: {
+    onClick: () => void;
+    onLoaded: () => void;
+    loaded: boolean;
+  }) => ReactNode;
 }) {
   const step = image.step;
   const request = image.workflow;
   const [ref, inView] = useInViewDynamic({ id: image.id });
   const selected = orchestratorImageSelect.useIsSelected(image);
   const isSelecting = orchestratorImageSelect.useIsSelecting();
+  const [loaded, setLoaded] = useState(image.mediaType === 'audio');
 
   const { updateImages } = useUpdateImageStepMetadata();
   const { running, helpers } = useTourContext();
@@ -153,16 +159,10 @@ export function GeneratedOutputWrapper({
       ref={ref}
       className={clsx(
         'max-w-full border',
-        isLightbox ? 'max-h-[calc(100vh-32px)]' : 'w-full self-start',
+        isLightbox ? 'w-fit max-h-[calc(100vh-32px)]' : 'w-full self-start',
+        isLightbox && image.mediaType === 'audio' && 'w-full max-w-[512px]',
         selected && 'ring-2 ring-blue-5/60'
       )}
-      style={
-        isLightbox
-          ? {
-              width: `min(${image.width}px, 100%, calc((100vh - 76px) * ${image.aspect}))`,
-            }
-          : undefined
-      }
     >
       {!isLightbox && !inView && <div style={{ aspectRatio }} />}
       {(isLightbox || inView) && (
@@ -170,11 +170,21 @@ export function GeneratedOutputWrapper({
           <div
             className={clsx(
               'relative flex items-center justify-center',
-              isLightbox ? 'max-h-[calc(100vh-76px)]' : 'max-h-full'
+              isLightbox ? 'max-h-[calc(100vh-76px)]' : 'max-h-full',
+              isLightbox && !loaded && 'min-h-32 min-w-32'
             )}
-            style={{ aspectRatio }}
+            style={
+              isLightbox && image.mediaType !== 'audio' ? undefined : { aspectRatio }
+            }
           >
-            {children({ onClick: handleClick })}
+            {children({
+              onClick: handleClick,
+              onLoaded: () => setLoaded(true),
+              loaded,
+            })}
+            {isLightbox && !loaded && (
+              <Loader className="absolute inset-0 m-auto" size="lg" />
+            )}
 
             {!isLightbox && !image.blockedReason && (
               <label className="absolute left-3 top-3" data-tour="gen:select">

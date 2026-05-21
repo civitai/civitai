@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import type { DragEvent } from 'react';
 
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -12,12 +13,16 @@ export function GeneratedVideoOutput({
   isLightbox,
   isActiveSlide,
   onClick,
+  onLoaded,
+  loaded,
 }: {
   image: VideoBlob;
   step: StepData;
   isLightbox?: boolean;
   isActiveSlide?: boolean;
   onClick?: () => void;
+  onLoaded?: () => void;
+  loaded?: boolean;
 }) {
   function handleDragVideo(e: DragEvent<HTMLVideoElement>) {
     const url = image.url;
@@ -31,7 +36,12 @@ export function GeneratedVideoOutput({
       src={image.url}
       type="video"
       alt=""
-      className={`max-h-full min-h-0 w-auto max-w-full${!isLightbox ? ' cursor-pointer' : ''}`}
+      className={clsx(
+        'max-h-full min-h-0 w-auto max-w-full',
+        !isLightbox && 'cursor-pointer',
+        isLightbox && 'transition-opacity duration-200',
+        isLightbox && !loaded && 'opacity-0'
+      )}
       onClick={onClick}
       onMouseDown={(e) => {
         if (e.button === 1) window.open(image.url, '_blank');
@@ -48,8 +58,17 @@ export function GeneratedVideoOutput({
       disablePoster
       videoProps={{
         onDragStart: handleDragVideo,
+        onLoadedData: onLoaded,
         draggable: true,
         autoPlay: true,
+        ...(isLightbox && {
+          style: {
+            width: 'auto',
+            height: 'auto',
+            maxHeight: 'calc(100vh - 76px)',
+            maxWidth: 'calc(100vw - 32px)',
+          },
+        }),
       }}
     />
   );

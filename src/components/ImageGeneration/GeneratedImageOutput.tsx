@@ -1,3 +1,4 @@
+import clsx from 'clsx';
 import type { DragEvent, MouseEvent } from 'react';
 
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -11,11 +12,15 @@ export function GeneratedImageOutput({
   step,
   isLightbox,
   onClick,
+  onLoaded,
+  loaded,
 }: {
   image: ImageBlob;
   step: StepData;
   isLightbox?: boolean;
   onClick?: () => void;
+  onLoaded?: () => void;
+  loaded?: boolean;
 }) {
   function handleDragImage(e: DragEvent<HTMLImageElement>) {
     const url = image.url;
@@ -49,7 +54,12 @@ export function GeneratedImageOutput({
       src={isLightbox ? image.url : image.previewUrl ?? image.url}
       type="image"
       alt=""
-      className={`max-h-full min-h-0 w-auto max-w-full${!isLightbox ? ' cursor-pointer' : ''}`}
+      className={clsx(
+        'max-h-full min-h-0 w-auto max-w-full',
+        !isLightbox && 'cursor-pointer',
+        isLightbox && 'transition-opacity duration-200',
+        isLightbox && !loaded && 'opacity-0'
+      )}
       onClick={onClick}
       onMouseDown={(e) => {
         if (e.button === 1) window.open(image.url, '_blank');
@@ -63,9 +73,11 @@ export function GeneratedImageOutput({
       imageProps={{
         onDragStart: handleDragImage,
         onContextMenu: handleContextMenu,
+        onLoad: onLoaded,
         ...(isLightbox && {
           style: {
             width: 'auto',
+            height: 'auto',
             maxHeight: 'calc(100vh - 76px)',
             maxWidth: 'calc(100vw - 32px)',
           },
