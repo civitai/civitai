@@ -168,6 +168,7 @@ export function SearchLayout({
   // Check profanity in search query
   const profanityAnalysis = useCheckProfanity(searchQuery, {
     enabled: domainColor === 'green' && !isIllegalSearch && !!searchQuery,
+    kind: 'search',
   });
 
   // Track profanity search separately to avoid side effects in useMemo

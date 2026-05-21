@@ -9,6 +9,7 @@ import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/Ty
 import clsx from 'clsx';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { trpc } from '~/utils/trpc';
 
 export function RenderHtml({
   html,
@@ -21,11 +22,21 @@ export function RenderHtml({
   const colorScheme = useComputedColorScheme('dark');
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
 
+  const shouldFilter = withProfanityFilter && blurNsfw;
+  const { data: profanityLists } = trpc.system.getProfanityLists.useQuery(undefined, {
+    enabled: shouldFilter,
+    staleTime: 1000 * 60 * 60,
+    cacheTime: 1000 * 60 * 60 * 24,
+  });
+
+  const profanityFilter = useMemo(() => {
+    if (!shouldFilter || !profanityLists) return null;
+    return createProfanityFilter({ blockedWords: profanityLists.display });
+  }, [shouldFilter, profanityLists]);
+
   html = useMemo(() => {
     let processedHtml = html;
-    if (withProfanityFilter && blurNsfw) {
-      const profanityFilter = createProfanityFilter();
-
+    if (shouldFilter && profanityFilter) {
       // Preserve mentions (entire span + content) and all HTML tag markup so
       // the filter only operates on visible text content. Capturing entire
       // tags also protects href/src attribute values, since the whole opening
@@ -139,7 +150,7 @@ export function RenderHtml({
         },
       },
     });
-  }, [html, blurNsfw, allowCustomStyles, colorScheme, withMentions, withProfanityFilter]);
+  }, [html, allowCustomStyles, colorScheme, withMentions, shouldFilter, profanityFilter]);
 
   return (
     <TypographyStylesWrapper {...props} className={clsx(classes.htmlRenderer, className)}>

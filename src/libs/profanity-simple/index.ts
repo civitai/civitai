@@ -23,7 +23,7 @@ import {
   englishRecommendedWhitelistMatcherTransformers,
 } from 'obscenity';
 
-import { getCachedNsfwWords } from './word-processor';
+import { getCachedNsfwWords, processNsfwWords } from './word-processor';
 import { customLeetSpeakTransformer } from './custom-transformers';
 import whitelistWords from '~/utils/metadata/lists/whitelist-words.json';
 import { removeTags } from '~/utils/string-helpers';
@@ -33,6 +33,8 @@ import { constants } from '~/server/common/constants';
 export interface ProfanityFilterOptions {
   /** How to replace profane words */
   replacementStyle: 'asterisk' | 'grawlix' | 'remove';
+  /** Override the blocked word list. Defaults to the bundled `blocked-words.json`. */
+  blockedWords?: string[];
 }
 
 export interface ProfanityThresholdConfig {
@@ -115,8 +117,10 @@ export class SimpleProfanityFilter {
       ...options,
     };
 
-    // Cache NSFW words once during construction
-    this.nsfwWords = getCachedNsfwWords();
+    // Use the supplied list if provided; otherwise the cached default (full) list
+    this.nsfwWords = options.blockedWords
+      ? processNsfwWords(options.blockedWords)
+      : getCachedNsfwWords();
 
     // Initialize dataset with default English dictionary
     this.dataset = new DataSet();

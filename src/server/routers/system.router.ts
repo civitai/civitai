@@ -9,6 +9,7 @@ import {
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { CacheTTL } from '~/server/common/constants';
 import { dbKV } from '~/server/db/db-helpers';
+import { loadProfanityList } from '~/libs/profanity-simple/list-loader';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const systemRouter = router({
@@ -32,5 +33,15 @@ export const systemRouter = router({
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))
     .query(async ({ input }) => {
       return dbKV.get(input.key);
+    }),
+  getProfanityLists: publicProcedure
+    .meta({ requiredScope: TokenScope.Full })
+    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .query(async () => {
+      const [display, search] = await Promise.all([
+        loadProfanityList('display'),
+        loadProfanityList('search'),
+      ]);
+      return { display, search };
     }),
 });
