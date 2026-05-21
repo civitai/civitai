@@ -28,6 +28,7 @@ import {
   // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsAcestep15,
   trainingDetailsBaseModelsAcestep15Xl,
+  trainingDetailsBaseModelsAnima,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsErnie,
   trainingDetailsBaseModelsFlux,
@@ -418,6 +419,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsHiDreamO1 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelAnima =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsAnima as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelAcestep15 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsAcestep15 as ReadonlyArray<string>).includes(formBaseModel)
@@ -579,6 +585,17 @@ export const ModelSelect = ({
                       isNew
                     />
                   )}
+                  {features.animaTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="pink"
+                      name="Anima"
+                      value={baseModelAnima}
+                      baseType="anima"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'audio' && (
@@ -697,6 +714,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx2' ||
                   selectedRun.baseType === 'ltx23' ||
                   selectedRun.baseType === 'hidream-o1' ||
+                  selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'acestep15' ||
                   selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">

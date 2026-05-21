@@ -90,6 +90,10 @@ const aiToolkitTrainingParams = z
       ecosystem: z.literal('ernie'),
       modelVariant: z.undefined().optional(),
     }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('anima'),
+      modelVariant: z.undefined().optional(),
+    }),
     // SD3, Flux1, Flux2Klein, and Wan require modelVariant
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('sd3'),

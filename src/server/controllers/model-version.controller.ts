@@ -424,12 +424,12 @@ export const upsertModelVersionHandler = async ({
       });
 
       if (model) {
-        ctx.track.modelVersionEvent({
-          type: 'Create',
-          modelId: version.modelId,
-          modelVersionId: version.id,
-          nsfw: model.nsfw,
-        });
+        // ctx.track.modelVersionEvent({
+        //   type: 'Create',
+        //   modelId: version.modelId,
+        //   modelVersionId: version.id,
+        //   nsfw: model.nsfw,
+        // });
       }
 
       if (bountyId) {

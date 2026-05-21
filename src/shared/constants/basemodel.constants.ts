@@ -862,8 +862,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // HappyHorse - checkpoint only
   { ecosystemId: ECO.HappyHorse, supportType: 'generation', modelTypes: checkpointOnly },
 
-  // Anima - checkpoint only
+  // Anima - checkpoint, LORA generation, LORA training
   { ecosystemId: ECO.Anima, supportType: 'generation', modelTypes: checkpointAndLora },
+  { ecosystemId: ECO.Anima, supportType: 'training', modelTypes: [ModelType.LORA] },
 
   // PonyV7 - checkpoint and LORA (based on AuraFlow)
   { ecosystemId: ECO.PonyV7, supportType: 'generation', modelTypes: checkpointAndLora },
