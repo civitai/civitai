@@ -744,14 +744,22 @@ export const getImageRatingsCounter = (imageId: number) => {
   return counter;
 };
 
-type VotingRateLimitConfig = {
+export type VotingRateLimitConfig = {
   perMinute: number;
   perHour: number;
   perDay: number;
-  abuseThreshold: number;
+  /** Issue a system smite when `dayLimitExceeded` triggers. Off by default. */
+  autoSmiteEnabled?: boolean;
+  /** Have the daily abuse-detection job auto-smite suspects matching strict signals. Off by default. */
+  autoSmiteFromDetectionJob?: boolean;
 };
 
-const DENIED_RESPONSE = { allowed: false, remaining: 0, resetTime: 0, isAbuse: false } as const;
+const DENIED_RESPONSE = {
+  allowed: false,
+  remaining: 0,
+  resetTime: 0,
+  dayLimitExceeded: false,
+} as const;
 const MINUTE_WINDOW = 60 * 1000;
 const HOUR_WINDOW = 60 * MINUTE_WINDOW;
 const DAY_WINDOW = 24 * HOUR_WINDOW;
@@ -760,7 +768,7 @@ const DAY_WINDOW = 24 * HOUR_WINDOW;
  * Get rate limit config from Redis. Returns null if unavailable — callers
  * should deny the vote when config is not available.
  */
-async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
+export async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
   try {
     return await sysRedis.packed.get<VotingRateLimitConfig>(REDIS_SYS_KEYS.NEW_ORDER.CONFIG);
   } catch {
@@ -773,7 +781,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
   allowed: boolean;
   remaining: number;
   resetTime: number;
-  isAbuse: boolean;
+  dayLimitExceeded: boolean;
 }> {
   if (!redis) {
     logToAxiom({
@@ -820,8 +828,8 @@ export async function checkVotingRateLimit(userId: number): Promise<{
     const minuteAllowed = minuteCount < limits.perMinute;
     const hourAllowed = hourCount < limits.perHour;
     const dayAllowed = dayCount < limits.perDay;
-    const isAbuse = hourCount >= limits.abuseThreshold;
-    const allowed = minuteAllowed && hourAllowed && dayAllowed && !isAbuse;
+    const dayLimitExceeded = !dayAllowed;
+    const allowed = minuteAllowed && hourAllowed && dayAllowed;
 
     if (allowed) {
       // Add current request — use individual commands instead of multi() to avoid
@@ -843,7 +851,7 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       allowed,
       remaining: Math.max(0, limits.perMinute - minuteCount - (allowed ? 1 : 0)),
       resetTime: now + MINUTE_WINDOW,
-      isAbuse,
+      dayLimitExceeded,
     };
   } catch (error) {
     handleLogError(error as Error, `Rate limiting failed for user ${userId}`);

@@ -782,6 +782,7 @@ export const REDIS_SYS_KEYS = {
       FAILURES: 'new-order:sanity-failures',
     },
     CONFIG: 'new-order:config',
+    AUTO_SMITE_DEDUPE: 'new-order:auto-smite-issued',
     PROCESSING: {
       LAST_PROCESSED_AT: 'new-order:processing:last-processed-at',
       BATCH_CUTOFF: 'new-order:processing:batch-cutoff',

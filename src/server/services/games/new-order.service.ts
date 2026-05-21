@@ -1,7 +1,7 @@
 import dayjs from '~/shared/utils/dayjs';
 import type { Tracker } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
-import { CacheTTL, newOrderConfig } from '~/server/common/constants';
+import { CacheTTL, constants, newOrderConfig } from '~/server/common/constants';
 import type { NewOrderDamnedReason } from '~/server/common/enums';
 import {
   NewOrderImageRatingStatus,
@@ -23,6 +23,7 @@ import {
   fervorCounter,
   getActiveSlot,
   getImageRatingsCounter,
+  getVotingRateLimitConfig,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -233,6 +234,46 @@ export async function smitePlayer({
   return smite;
 }
 
+const AUTO_SMITE_DEDUPE_TTL = 24 * 60 * 60; // 24h
+
+/**
+ * Issue a smite from the system user with per-day dedupe so a single user
+ * can only be auto-smited once in a 24h rolling window regardless of how
+ * many times they trip a rate-limit or detection-job signal that day.
+ * Returns the smite (or undefined if deduped/no-op).
+ */
+export async function autoSmitePlayer({
+  playerId,
+  reason,
+  source,
+}: {
+  playerId: number;
+  reason: string;
+  source: 'rate-limit' | 'detection-job';
+}) {
+  if (!sysRedis) return;
+
+  const dedupeKey = `${REDIS_SYS_KEYS.NEW_ORDER.AUTO_SMITE_DEDUPE}:${source}:${playerId}` as const;
+
+  // SET NX with TTL → atomic "first hit today" check
+  const acquired = await sysRedis.set(dedupeKey, '1', { NX: true, EX: AUTO_SMITE_DEDUPE_TTL });
+  if (!acquired) return;
+
+  await logToAxiom({
+    type: 'warning',
+    name: 'new-order-auto-smite',
+    details: { playerId, source, reason },
+    message: `Auto-smite issued for player ${playerId} (${source})`,
+  }).catch(() => null);
+
+  return smitePlayer({
+    playerId,
+    modId: constants.system.user.id,
+    reason,
+    size: 1,
+  });
+}
+
 export async function cleanseAllSmites({
   playerId,
   cleansedReason,
@@ -364,28 +405,24 @@ async function processImageRating({
       checkVotingRateLimit(playerId)
     );
 
-    // If abuse threshold exceeded, reset player career
-    if (rateLimitResult.isAbuse) {
-      logToAxiom({
-        type: 'warning',
-        name: 'new-order-abuse-detection',
-        details: {
-          playerId,
-          imageId,
-          action: 'career-reset',
-          reason: 'excessive-voting',
-        },
-        message: `Player ${playerId} exceeded abuse threshold and was reset`,
-      }).catch(() => null);
+    const rateLimitConfig = await getVotingRateLimitConfig();
+    const autoSmiteEnabled = rateLimitConfig?.autoSmiteEnabled === true;
 
-      await resetPlayer({
+    // Auto-smite escalation: issue a system smite when the player breaches the
+    // daily voting limit. The 3-active-smites rule in smitePlayer triggers a
+    // career reset on the third strike. Per-minute and per-hour breaches are
+    // throttled (rejected below) without escalation; only sustained daily
+    // abuse warrants a smite.
+    if (autoSmiteEnabled && rateLimitResult.dayLimitExceeded) {
+      await autoSmitePlayer({
         playerId,
-        withNotification: true,
-        reason:
-          'Your account has been reset due to suspicious voting patterns. Please vote at a reasonable pace to avoid this in the future.',
-      });
+        reason: 'Voting exceeded daily limit. Three smites trigger a career reset.',
+        source: 'rate-limit',
+      }).catch((e) => handleLogError(e as Error, 'auto-smite-from-rate-limit'));
 
-      throw throwBadRequestError('Account has been reset due to suspicious voting patterns.');
+      throw throwBadRequestError(
+        'You have exceeded the daily voting limit. A smite has been applied; further violations will reset your career.'
+      );
     }
 
     // Standard rate limiting
@@ -619,7 +656,7 @@ async function processImageRating({
             // Smite player:
             await smitePlayer({
               playerId,
-              modId: -1, // System
+              modId: constants.system.user.id, // System
               reason: 'Exceeded wrong answer limit',
               size: newOrderConfig.smiteSize,
             });
@@ -1215,7 +1252,7 @@ export async function handleSanityCheckFailure({
       // Severe under-rating OR additional failure - apply smite immediately
       await smitePlayer({
         playerId,
-        modId: -1, // System
+        modId: constants.system.user.id, // System
         reason: isSevereUnderRating
           ? 'You severely under-rated a sanity check image. A smite penalty has been applied.'
           : 'You failed another sanity check within 24 hours. A smite penalty has been applied, reducing your vote weight.',

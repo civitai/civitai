@@ -12,6 +12,7 @@ import {
   expCounter,
   fervorCounter,
   getActiveSlot,
+  getVotingRateLimitConfig,
   pendingBuzzCounter,
   poolCounters,
   recentlyGrantedBuzzCounter,
@@ -21,6 +22,7 @@ import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import {
+  autoSmitePlayer,
   calculateFervor,
   cleanseSmite,
   clearRatedImages,
@@ -494,7 +496,11 @@ const newOrderChangeRateTarget = createJob(
 );
 
 // Periodic abuse detection: identify users with suspicious rating patterns
-// Runs daily at 23:00 UTC, logs to Axiom and Discord for monitoring
+// Runs daily at 23:00 UTC, logs to Axiom and Discord for monitoring.
+// When autoSmiteFromDetectionJob is enabled in Redis config, suspects matching
+// strict signals (uniqueRatings=1 OR dominantPct>=90 OR maxPerMinute>=50) are
+// auto-smited via the system actor. avgPerMinute>15 alone is a soft signal
+// and does not trigger an auto-smite.
 const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * *', async () => {
   if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
@@ -506,6 +512,7 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
     dominantRating: number;
     dominantPct: number;
     avgPerMinute: number;
+    maxPerMinute: number;
   }>`
       WITH user_dominant AS (
         SELECT
@@ -515,6 +522,21 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         WHERE createdAt >= now() - INTERVAL 24 HOUR
           AND rank != 'Acolyte'
         GROUP BY userId
+      ),
+      per_minute AS (
+        SELECT
+          userId,
+          toStartOfMinute(createdAt) as m,
+          count() as c
+        FROM knights_new_order_image_rating
+        WHERE createdAt >= now() - INTERVAL 24 HOUR
+          AND rank != 'Acolyte'
+        GROUP BY userId, m
+      ),
+      max_per_minute AS (
+        SELECT userId, max(c) as maxPerMinute
+        FROM per_minute
+        GROUP BY userId
       )
       SELECT
         r.userId,
@@ -522,69 +544,113 @@ const newOrderAbuseDetection = createJob('new-order-abuse-detection', '0 23 * * 
         uniq(r.rating) as uniqueRatings,
         d.dominantRating,
         countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
-        count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
+        count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute,
+        m.maxPerMinute
       FROM knights_new_order_image_rating r
       JOIN user_dominant d ON r.userId = d.userId
+      JOIN max_per_minute m ON r.userId = m.userId
       WHERE r.createdAt >= now() - INTERVAL 24 HOUR
         AND r.rank != 'Acolyte'
-      GROUP BY r.userId, d.dominantRating
+      GROUP BY r.userId, d.dominantRating, m.maxPerMinute
       HAVING totalRatings >= 100
-        AND (uniqueRatings = 1 OR dominantPct >= 90 OR avgPerMinute > 15)
+        AND (uniqueRatings = 1 OR dominantPct >= 90 OR avgPerMinute > 15 OR maxPerMinute >= 50)
       ORDER BY totalRatings DESC
       LIMIT 50
     `;
 
-  if (suspects.length > 0) {
-    log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
-    await logToAxiom({
-      type: 'warning',
-      name: 'new-order-abuse-detection-scan',
-      details: {
-        suspectCount: suspects.length,
-        suspects: suspects.map((s) => ({
-          userId: s.userId,
-          totalRatings: s.totalRatings,
-          uniqueRatings: s.uniqueRatings,
-          dominantRating: s.dominantRating,
-          dominantPct: Math.round(s.dominantPct),
-          avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
-        })),
-      },
-      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 24 hours`,
-    }).catch(() => null);
-
-    // Alert moderators via Discord webhook
-    if (env.DISCORD_WEBHOOK_MOD_ALERTS) {
-      const suspectLines = suspects
-        .slice(0, 10) // Cap at 10 to keep the embed manageable
-        .map(
-          (s) =>
-            `• **User ${s.userId}** — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
-            `${Math.round(s.dominantPct)}% same value, ${(
-              Math.round(s.avgPerMinute * 10) / 10
-            ).toFixed(1)}/min`
-        )
-        .join('\n');
-
-      await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [
-            {
-              title: `⚠️ KoN Abuse Detection (24h) — ${suspects.length} suspect(s)`,
-              description:
-                suspectLines +
-                (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),
-              color: 0xff9800,
-              timestamp: new Date().toISOString(),
-            },
-          ],
-        }),
-      }).catch(() => null);
-    }
-  } else {
+  if (suspects.length === 0) {
     log('AbuseDetection :: No suspicious users found');
+    return;
+  }
+
+  log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
+
+  // Strict signal: high-confidence bot pattern that warrants automated action.
+  // avgPerMinute > 15 alone is excluded — power users can hit that during bursts.
+  const isStrictSignal = (s: (typeof suspects)[number]) =>
+    s.uniqueRatings === 1 || s.dominantPct >= 90 || s.maxPerMinute >= 50;
+
+  const config = await getVotingRateLimitConfig();
+  const autoSmiteEnabled = config?.autoSmiteFromDetectionJob === true;
+
+  const smitedUserIds = new Set<number>();
+  if (autoSmiteEnabled) {
+    const tasks = suspects.filter(isStrictSignal).map((s) => async () => {
+      const reasonParts: string[] = [];
+      if (s.uniqueRatings === 1) reasonParts.push(`only ${s.uniqueRatings} unique rating value`);
+      if (s.dominantPct >= 90) reasonParts.push(`${Math.round(s.dominantPct)}% same rating value`);
+      if (s.maxPerMinute >= 50) reasonParts.push(`${s.maxPerMinute} votes in one minute`);
+      const reason = `Auto-smite from abuse detection scan: ${reasonParts.join(', ')}.`;
+
+      const result = await autoSmitePlayer({
+        playerId: s.userId,
+        reason,
+        source: 'detection-job',
+      }).catch(() => null);
+
+      if (result) smitedUserIds.add(s.userId);
+    });
+
+    if (tasks.length > 0) {
+      log(`AbuseDetection :: Auto-smiting ${tasks.length} strict-signal suspects`);
+      await limitConcurrency(tasks, 5);
+    }
+  }
+
+  await logToAxiom({
+    type: 'warning',
+    name: 'new-order-abuse-detection-scan',
+    details: {
+      suspectCount: suspects.length,
+      autoSmiteEnabled,
+      smitedCount: smitedUserIds.size,
+      suspects: suspects.map((s) => ({
+        userId: s.userId,
+        totalRatings: s.totalRatings,
+        uniqueRatings: s.uniqueRatings,
+        dominantRating: s.dominantRating,
+        dominantPct: Math.round(s.dominantPct),
+        avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
+        maxPerMinute: s.maxPerMinute,
+        smited: smitedUserIds.has(s.userId),
+      })),
+    },
+    message: `Abuse detection scan found ${suspects.length} suspicious users in the last 24 hours${
+      autoSmiteEnabled ? ` (${smitedUserIds.size} auto-smited)` : ''
+    }`,
+  }).catch(() => null);
+
+  if (env.DISCORD_WEBHOOK_MOD_ALERTS) {
+    const suspectLines = suspects
+      .slice(0, 10)
+      .map((s) => {
+        const tag = smitedUserIds.has(s.userId) ? ' 🗡️ [auto-smited]' : '';
+        return (
+          `• **User ${s.userId}**${tag} — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
+          `${Math.round(s.dominantPct)}% same value, ${(
+            Math.round(s.avgPerMinute * 10) / 10
+          ).toFixed(1)}/min avg, ${s.maxPerMinute}/min peak`
+        );
+      })
+      .join('\n');
+
+    await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        embeds: [
+          {
+            title: `⚠️ KoN Abuse Detection (24h) — ${suspects.length} suspect(s)${
+              autoSmiteEnabled ? `, ${smitedUserIds.size} auto-smited` : ''
+            }`,
+            description:
+              suspectLines + (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),
+            color: 0xff9800,
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      }),
+    }).catch(() => null);
   }
 });
 
