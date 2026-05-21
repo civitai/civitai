@@ -1,4 +1,4 @@
-import { getResource, invalidateResource } from '@civitai/client';
+import { getResource } from '@civitai/client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { getCurrentLSN } from '~/server/db/db-helpers';
@@ -27,24 +27,25 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   const currentLSN = await getCurrentLSN();
   const queryData = { etag: currentLSN };
 
-  const tasks = chunk(resources, 100).map((chunk) => async () => {
-    await Promise.all(
-      chunk.map(async (resource) => {
-        const air = stringifyAIR({
-          baseModel: resource.baseModel,
-          type: resource.model.type,
-          modelId: resource.model.id,
-          id: resource.id,
-        });
+  // @Luis: Commented out cause `invalidateResource` was removed from client.
+  // const tasks = chunk(resources, 100).map((chunk) => async () => {
+  //   await Promise.all(
+  //     chunk.map(async (resource) => {
+  //       const air = stringifyAIR({
+  //         baseModel: resource.baseModel,
+  //         type: resource.model.type,
+  //         modelId: resource.model.id,
+  //         id: resource.id,
+  //       });
 
-        await invalidateResource({
-          client: internalOrchestratorClient,
-          path: { air },
-          query: userId ? { ...queryData, userId: [userId] } : queryData,
-        });
-      })
-    );
-  });
+  //       await invalidateResource({
+  //         client: internalOrchestratorClient,
+  //         path: { air },
+  //         query: userId ? { ...queryData, userId: [userId] } : queryData,
+  //       });
+  //     })
+  //   );
+  // });
 
   await limitConcurrency(tasks, 3);
 }
