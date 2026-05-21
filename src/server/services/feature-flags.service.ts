@@ -76,6 +76,7 @@ const featureFlags = createFeatureFlags({
   ltx23Training: { availability: ['mod'], fliptKey: 'ltx23-training' },
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
+  animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
   audioTraining: { availability: ['mod'], fliptKey: 'audio-training' },
   trainingAutoLabelOrchestrator: {
     availability: ['mod'],

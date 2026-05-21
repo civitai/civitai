@@ -21,6 +21,7 @@ export const trainingBaseModelTypesImage = [
   'zimage',
   'ernie',
   'hidream-o1',
+  'anima',
 ] as const;
 export const trainingBaseModelTypesVideo = ['hunyuan', 'wan', 'ltx2', 'ltx23'] as const;
 export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl'] as const;
@@ -270,6 +271,18 @@ export const trainingModelInfo: {
     aiToolkit: { ecosystem: 'hidream-o1' },
   },
   //
+  anima: {
+    label: 'Standard',
+    pretty: 'Anima',
+    type: 'anima',
+    description:
+      "CircleStone Labs' Anima image model. Preview — settings, pricing, and results are subject to change.",
+    air: 'urn:air:anima:checkpoint:civitai:2458426@2945208',
+    baseModel: 'Anima',
+    isNew: true,
+    aiToolkit: { ecosystem: 'anima' },
+  },
+  //
   flux2klein_4b: {
     label: '4B Base',
     pretty: 'Flux.2 Klein 4B Base',
@@ -448,6 +461,7 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   ltx2: 'ltx2',
   ltx23: 'ltx23',
   'hidream-o1': 'hidream-o1',
+  anima: 'anima',
   acestep15: 'ace_step_15',
   acestep15xl: 'ace_step_15_xl',
 };
@@ -543,6 +557,7 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'ltx2',
     'ltx23',
     'hidream-o1',
+    'anima',
     'acestep15',
     'acestep15xl',
   ];
@@ -559,6 +574,7 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'ltx2',
     'ltx23',
     'hidream-o1',
+    'anima',
     'acestep15',
     'acestep15xl',
   ];
@@ -584,6 +600,7 @@ export const getDefaultEngine = (
   if (baseType === 'ltx2') return 'ai-toolkit'; // LTX2 requires AI Toolkit
   if (baseType === 'ltx23') return 'ai-toolkit'; // LTX 2.3 requires AI Toolkit
   if (baseType === 'hidream-o1') return 'ai-toolkit'; // HiDream O1 requires AI Toolkit
+  if (baseType === 'anima') return 'ai-toolkit'; // Anima requires AI Toolkit
   if (baseType === 'acestep15' || baseType === 'acestep15xl') return 'ai-toolkit'; // Audio models require AI Toolkit
   if (baseType === 'hunyuan' || baseType === 'wan') return 'musubi';
   // Flux2 uses its own rapid-like engines based on the specific model

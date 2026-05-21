@@ -28,6 +28,7 @@ import {
   // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsAcestep15,
   trainingDetailsBaseModelsAcestep15Xl,
+  trainingDetailsBaseModelsAnima,
   trainingDetailsBaseModelsChroma,
   trainingDetailsBaseModelsErnie,
   trainingDetailsBaseModelsFlux,
@@ -418,6 +419,11 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsHiDreamO1 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelAnima =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsAnima as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelAcestep15 =
     !!formBaseModel &&
     (trainingDetailsBaseModelsAcestep15 as ReadonlyArray<string>).includes(formBaseModel)
@@ -508,7 +514,6 @@ export const ModelSelect = ({
                       value={baseModelFlux2}
                       baseType="flux2"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   <ModelSelector
@@ -528,7 +533,6 @@ export const ModelSelect = ({
                       value={baseModelQwen}
                       baseType="qwen"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   {(features.zimageturboTraining || features.zimagebaseTraining) && (
@@ -539,7 +543,6 @@ export const ModelSelect = ({
                       value={baseModelZImage}
                       baseType="zimage"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                       allowedKeys={[
                         ...(features.zimageturboTraining ? ['zimageturbo'] : []),
                         ...(features.zimagebaseTraining ? ['zimagebase'] : []),
@@ -554,7 +557,6 @@ export const ModelSelect = ({
                       value={baseModelFlux2Klein}
                       baseType="flux2klein"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   {features.ernieTraining && (
@@ -565,7 +567,6 @@ export const ModelSelect = ({
                       value={baseModelErnie}
                       baseType="ernie"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   {features.hidreamO1Training && (
@@ -576,7 +577,19 @@ export const ModelSelect = ({
                       value={baseModelHiDreamO1}
                       baseType="hidream-o1"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
+                      isNew={new Date() < new Date('2026-06-15')}
+
+                    />
+                  )}
+                  {features.animaTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="pink"
+                      name="Anima"
+                      value={baseModelAnima}
+                      baseType="anima"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-06-25')}
                     />
                   )}
                 </>
@@ -697,6 +710,7 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx2' ||
                   selectedRun.baseType === 'ltx23' ||
                   selectedRun.baseType === 'hidream-o1' ||
+                  selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'acestep15' ||
                   selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
