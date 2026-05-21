@@ -62,13 +62,23 @@ export function logSysRedisFailOpen(
   // discarding the promise with `void` alone would let that rejection
   // bubble to unhandledRejection. Critical when this very logger fires
   // most: a multi-service incident (sysRedis + Axiom both down).
+  //
+  // Spread safeError(err) and extra FIRST: safeError returns
+  // { name: e.name, ... } where e.name is "Error" / "TypeError" / etc.
+  // Spreading it after the literal `name: 'sysredis-fail-open'` would
+  // overwrite the alert tag, silently invalidating every Grafana query
+  // that filters by `name="sysredis-fail-open"`. Same gotcha called out
+  // in src/server/services/file.service.ts:338-339.
+  //
+  // Literal fields (name/type/subtype/fn) come LAST so they always win,
+  // even if a caller accidentally passes one of those keys in `extra`.
   logToAxiom({
+    ...safeError(err),
+    ...extra,
     name: 'sysredis-fail-open',
     type: 'warning',
     subtype,
     fn,
-    ...extra,
-    ...safeError(err),
   }).catch(() => {
     /* fail-open logger never blocks the request */
   });

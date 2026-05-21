@@ -22,7 +22,7 @@ import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
 import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
-import { clearSessionCache } from '~/server/auth/session-cache';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   getRequestDomainColor,
@@ -242,23 +242,34 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           // sysRedis.hGetAll BEFORE clearSessionCache, so a sysRedis
           // read failure skips the cache clear and getSessionUser below
           // would return the stale entry — defeating the entire purpose
-          // of trigger==='update'. Call clearSessionCache directly in
-          // the catch (it uses regular redis, unaffected by sysRedis).
+          // of trigger==='update'. Inline the three regular-redis del
+          // calls in the catch as a fallback. NOT calling
+          // clearSessionCache directly because that function also fires
+          // invalidateCivitaiUser, which would reintroduce the
+          // orchestrator pile-on that session-user.ts:
+          // permissionsSourceDegraded was specifically designed to
+          // avoid. The orchestrator picks up the next legitimate
+          // refresh once sysRedis recovers.
           try {
             await refreshSession(Number(token.sub), { sendSignal: false });
           } catch (err) {
+            const userId = Number(token.sub);
             logSysRedisFailOpen(
               'write-degraded',
               'next-auth jwt update refreshSession',
               err,
-              { userId: Number(token.sub), action: 'continuing-without-marking-tokens' }
+              { userId, action: 'continuing-without-marking-tokens' }
             );
-            await clearSessionCache(Number(token.sub)).catch((cacheErr) => {
+            await Promise.all([
+              redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
+              redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
+              redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
+            ]).catch((cacheErr) => {
               logSysRedisFailOpen(
                 'write-degraded',
-                'next-auth jwt update clearSessionCache fallback',
+                'next-auth jwt update session-cache del fallback',
                 cacheErr,
-                { userId: Number(token.sub) }
+                { userId }
               );
             });
           }
