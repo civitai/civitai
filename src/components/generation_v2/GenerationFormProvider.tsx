@@ -17,7 +17,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { DataGraphProvider, useDataGraph } from '~/libs/data-graph/react';
 import { createLocalStorageAdapter } from '~/libs/data-graph/storage-adapter';
 import { generationGraph, type GenerationCtx } from '~/shared/data-graph/generation';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import type { ResourceData, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
 import {
   allEcosystemDefaultVersionIds,
   ecosystemByKey,
@@ -430,6 +430,22 @@ function InnerProvider({
           graph.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
           // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
           graph.set(remixValues as any);
+        }
+      } else if (data.runType === 'wildcard') {
+        // Add a wildcard set id to the snippets node, preserving the user's
+        // existing mode/batchCount/targets/seed. Idempotent — adding an
+        // already-loaded id is a no-op.
+        const wildcardSetId = data.params.wildcardSetId as number | undefined;
+        if (wildcardSetId != null) {
+          const snapshot = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
+          const existing = snapshot.snippets;
+          if (!existing?.wildcardSetIds.includes(wildcardSetId)) {
+            const nextSnippets: SnippetsNodeValue = existing
+              ? { ...existing, wildcardSetIds: [...existing.wildcardSetIds, wildcardSetId] }
+              : { wildcardSetIds: [wildcardSetId], mode: 'random', batchCount: 1, targets: {} };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- loose superset of discriminated union
+            graph.set({ snippets: nextSnippets } as any);
+          }
         }
       } else if (data.runType === 'append') {
         // Append: merge incoming images with existing, dedup by URL, cap at max

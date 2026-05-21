@@ -54,7 +54,12 @@ import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constant
 import { isDefined } from '~/utils/type-guards';
 import { getVeo3ProcessFromAir } from '~/server/orchestrator/veo3/veo3.schema';
 import type { BaseModelGroup } from '~/shared/constants/basemodel.constants';
-import { baseModelByName, ecosystemById } from '~/shared/constants/basemodel.constants';
+import {
+  baseModelByName,
+  ecosystemById,
+  isBaseModelGenerationSupported,
+} from '~/shared/constants/basemodel.constants';
+import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
 import type {
   GenerationEcosystemConfig,
   GenerationEcosystemContext,
@@ -784,6 +789,94 @@ export function getResourceCanGenerate({
   return canGenerate;
 }
 
+/**
+ * Resolve `canGenerate` for a batch of ModelVersions, routing through the
+ * appropriate gate per `modelType`:
+ *
+ *   - `Wildcards`-type versions: gated on a visible System-kind `WildcardSet`
+ *     (one batched query via `getVisibleSystemWildcardSetIdsByVersionId`),
+ *     since their baseModel isn't on the generation-supported list.
+ *   - Everything else: the standard `getResourceCanGenerate` +
+ *     `isBaseModelGenerationSupported` pair.
+ *
+ * Fetches `unavailableResources` + `ecosystemConfig` internally so call sites
+ * don't have to thread them through. Returns a Map keyed by `modelVersionId`;
+ * the `wildcardSetId` field is populated only for Wildcards-type entries
+ * whose set is visible at the current site context.
+ *
+ * Replaces the per-call-site "branch on model.type + maybe batch + override"
+ * boilerplate that the four canGenerate read paths used to repeat.
+ */
+export type ResolveCanGenerateVersion = {
+  id: number;
+  status: string;
+  availability: string;
+  usageControl?: string;
+  baseModel: string;
+  covered: boolean | null | undefined;
+  modelUserId: number;
+  modelType: ModelType;
+};
+
+export type ResolveCanGenerateContext = {
+  user: { id?: number; isModerator?: boolean };
+  sfwOnly: boolean;
+  wildcardsEnabled: boolean;
+};
+
+export type VersionGenerationState = {
+  canGenerate: boolean;
+  wildcardSetId?: number;
+};
+
+export async function resolveCanGenerateForVersions(
+  versions: ResolveCanGenerateVersion[],
+  ctx: ResolveCanGenerateContext
+): Promise<Map<number, VersionGenerationState>> {
+  const wildcardVersionIds = ctx.wildcardsEnabled
+    ? versions.filter((v) => v.modelType === 'Wildcards').map((v) => v.id)
+    : [];
+
+  const needsStandardGate = versions.some((v) => v.modelType !== 'Wildcards');
+  const [visibleWildcardSetIdByVersionId, unavailableResources, ecosystemConfig] =
+    await Promise.all([
+      getVisibleSystemWildcardSetIdsByVersionId(wildcardVersionIds, { sfwOnly: ctx.sfwOnly }),
+      needsStandardGate ? getUnavailableResources() : Promise.resolve<number[]>([]),
+      needsStandardGate
+        ? getGenerationEcosystemConfig(ctx.user, { isGreen: ctx.sfwOnly })
+        : Promise.resolve<GenerationEcosystemContext | null>(null),
+    ]);
+
+  const result = new Map<number, VersionGenerationState>();
+  for (const v of versions) {
+    if (v.modelType === 'Wildcards') {
+      // Wildcards baseModels aren't on the generation-supported list, so the
+      // standard gate always returns false for them. A visible System-kind
+      // set is the only way canGenerate can be true.
+      const wildcardSetId = visibleWildcardSetIdByVersionId.get(v.id);
+      result.set(v.id, { canGenerate: wildcardSetId != null, wildcardSetId });
+    } else {
+      const canGenerate =
+        getResourceCanGenerate({
+          resource: {
+            id: v.id,
+            status: v.status,
+            availability: v.availability,
+            usageControl: v.usageControl,
+            baseModel: v.baseModel,
+            covered: v.covered ?? null,
+            modelUserId: v.modelUserId,
+          },
+          user: ctx.user,
+          unavailableResources,
+          ecosystemConfig: ecosystemConfig as GenerationEcosystemContext,
+        }) && isBaseModelGenerationSupported(v.baseModel, v.modelType);
+      result.set(v.id, { canGenerate });
+    }
+  }
+  return result;
+}
+
 export async function getResourceData(
   versionIds: { id: number; epoch?: number }[] | number[],
   {
@@ -791,25 +884,11 @@ export async function getResourceData(
     generation = false,
     withPreview = false,
     sfwOnly = false,
-    wildcardsEnabled = false,
   }: {
     user?: { id?: number; isModerator?: boolean };
     generation?: boolean;
     withPreview?: boolean;
     sfwOnly?: boolean;
-    /**
-     * Mirrors the `wildcards` Flipt flag. When false (default), Wildcards-
-     * type ModelVersions skip the `wildcardSetId` stamp + `canGenerate`
-     * override below — they stay at the default `canGenerate: false` that
-     * `getResourceCanGenerate` returns for non-generation baseModels.
-     * Callers serving snippets-aware surfaces (the model detail page's
-     * Generate button, the form's resource hydration, the orchestrator's
-     * submit-time validation) pass `features.wildcards`; everyone else
-     * leaves it at false. Same flag the snippets graph node gates on, so
-     * the user-visible "can use this wildcard" signal stays consistent
-     * with whether the snippets node actually exists in the form's graph.
-     */
-    wildcardsEnabled?: boolean;
   } = {}
 ): Promise<(GenerationResource & { air: string })[]> {
   if (!versionIds.length) return [];
@@ -1071,100 +1150,7 @@ export async function getResourceData(
     ? resources.filter((resource) => hasGenerationSupport(resource.baseModel))
     : resources;
 
-  // Wildcards-type entries are NOT generation resources — they're handles to
-  // System-kind WildcardSets. Gated on the `wildcards` Flipt flag (passed in
-  // via `wildcardsEnabled`): when off, skip the stamping + canGenerate
-  // override entirely so a wildcard model's Generate button stays disabled,
-  // the orchestrator's canGenerate check rejects any Wildcards entry that
-  // somehow leaked into a submission, and the rest of the platform behaves
-  // as if the feature doesn't exist. The same flag governs the snippets
-  // graph node, keeping UI and validation aligned.
-  //
-  // When the flag IS on:
-  //   - Stamp `wildcardSetId` so consumers (form hydration when loading a
-  //     preset/remix; the "Generate" button on a Wildcards model page) can
-  //     route the id into `snippets.wildcardSetIds`.
-  //   - Override `canGenerate` to reflect "does this set have content visible
-  //     at the current site context?" — the standard `getResourceCanGenerate`
-  //     path returns false because Wildcards baseModels aren't generation-
-  //     supported, but a published wildcard set should enable the model
-  //     page's Generate button.
-  //
-  // Visibility uses the set-level `nsfw` rollup (boolean OR of every
-  // non-Dirty category's `nsfw`, maintained by the audit verdict path). On
-  // `.com` (sfwOnly), NSFW-flagged sets are hidden; on `.red`, every Clean/
-  // Mixed set is visible. Boolean, not bitwise nsfwLevel — XGuard's text
-  // classifiers can't reliably bucket PG / R / X for arbitrary text. See
-  // docs/features/prompt-snippets-v1.md §"Wildcards models vs generation
-  // resources".
-  const wildcardVersionIds = wildcardsEnabled
-    ? filtered.filter((r) => r.model.type === 'Wildcards').map((r) => r.id)
-    : [];
-  if (wildcardVersionIds.length > 0) {
-    const visibleSetIdByVersionId = await getVisibleSystemWildcardSetIdsByVersionId(
-      wildcardVersionIds,
-      { sfwOnly }
-    );
-    for (const resource of filtered) {
-      if (resource.model.type !== 'Wildcards') continue;
-      const setId = visibleSetIdByVersionId.get(resource.id);
-      if (setId != null) {
-        (resource as GenerationResource).wildcardSetId = setId;
-        resource.canGenerate = true;
-      }
-      // else: wildcardSetId stays undefined, canGenerate stays whatever
-      // getResourceCanGenerate returned (false for Wildcards baseModels).
-    }
-  }
-
   return filtered;
-}
-
-/**
- * Look up visible System-kind `WildcardSet`s for a list of `Wildcards`-type
- * ModelVersion ids. Visibility predicate matches the read-path used by the
- * resolver and the picker:
- *   - `kind = 'System'`
- *   - `modelVersionId IN ids`
- *   - `isInvalidated = false`
- *   - `auditStatus != 'Dirty'` (Mixed sets stay visible — at least one Clean
- *     category exists; only fully-Dirty sets hide)
- *   - On `.com` (`sfwOnly = true`): `nsfw = false`. On `.red`: no NSFW gate.
- *
- * Returns a `Map<modelVersionId, wildcardSetId>` for every version that has a
- * currently-visible set.
- *
- * Used by both `getResourceData` (to stamp `wildcardSetId` + override
- * `canGenerate` on returned GenerationResources) and `modelVersion.getById`
- * (to override `canGenerate` on the model detail page). v1 design rule: a
- * `Wildcards`-type ModelVersion's "can generate" status is gated by whether
- * its source WildcardSet is currently visible — NOT by the standard
- * `isBaseModelGenerationSupported` path (Wildcards baseModels aren't on the
- * generation-supported list, so that path always returns false). See
- * docs/features/prompt-snippets-v1.md §"Wildcards models vs generation
- * resources".
- */
-export async function getVisibleSystemWildcardSetIdsByVersionId(
-  modelVersionIds: number[],
-  { sfwOnly }: { sfwOnly: boolean }
-): Promise<Map<number, number>> {
-  if (modelVersionIds.length === 0) return new Map();
-  const wildcardSets = await dbRead.wildcardSet.findMany({
-    where: {
-      kind: 'System',
-      modelVersionId: { in: modelVersionIds },
-      isInvalidated: false,
-      auditStatus: { not: 'Dirty' },
-      ...(sfwOnly ? { nsfw: false } : {}),
-    },
-    select: { id: true, modelVersionId: true },
-  });
-  const map = new Map<number, number>();
-  for (const set of wildcardSets) {
-    if (!set.modelVersionId) continue;
-    map.set(set.modelVersionId, set.id);
-  }
-  return map;
 }
 
 // =============================================================================

@@ -462,6 +462,7 @@ export async function applyWildcardCategoryAuditSuccess(opts: {
     where: { id: categoryId },
     data: {
       auditStatus,
+      blocked,
       auditedAt: new Date(),
       auditNote,
       nsfw,
@@ -532,7 +533,11 @@ export async function applyWildcardCategoryAuditFailure(opts: {
  * sets are visible with their Dirty categories filtered at the picker layer.
  */
 export async function recomputeWildcardSetAuditStatus(setId: number): Promise<void> {
-  const categories = await dbRead.wildcardSetCategory.findMany({
+  // Read via dbWrite to avoid replica-lag returning stale category audit
+  // verdicts — this function is called immediately after writing one (the
+  // webhook handler's success/failure path), and the recompute MUST see
+  // those writes to produce a correct rollup.
+  const categories = await dbWrite.wildcardSetCategory.findMany({
     where: { wildcardSetId: setId },
     select: { auditStatus: true, nsfw: true },
   });
@@ -546,11 +551,18 @@ export async function recomputeWildcardSetAuditStatus(setId: number): Promise<vo
     (c) => c.auditStatus !== WildcardSetCategoryAuditStatus.Dirty && c.nsfw
   );
 
+  // Phase 2: `WildcardSet.usable = true` iff at least one Clean category
+  // exists. Drives the canGenerate gate without sub-querying categories.
+  const nextUsable = categories.some(
+    (c) => c.auditStatus === WildcardSetCategoryAuditStatus.Clean
+  );
+
   await dbWrite.wildcardSet.update({
     where: { id: setId },
     data: {
       auditStatus: nextStatus,
       nsfw: nextNsfw,
+      usable: nextUsable,
       auditedAt: nextStatus === WildcardSetAuditStatus.Pending ? null : new Date(),
     },
   });

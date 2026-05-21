@@ -373,7 +373,6 @@ export const orchestratorRouter = router({
         token: ctx.token,
         experimental: ctx.experimental,
         isGreen: ctx.features.isGreen,
-        wildcardsEnabled: ctx.features.wildcards,
         allowMatureContent: ctx.allowMatureContent,
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
         isModerator: ctx.user.isModerator,
