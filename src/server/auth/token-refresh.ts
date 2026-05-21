@@ -178,12 +178,18 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
   // call" instead.
   //
   // Known perf cliff: during a partial sysRedis outage (reads succeed,
-  // writes fail), every authenticated request hits this path because
-  // the `exists` lookup above (from the refreshToken pipeline) returns
-  // 0 on the next call, which forces shouldRefresh=true and triggers
-  // getSessionUser (a DB hit) each time. Correctness preserved, but
-  // throughput degrades. Acceptable for the migration window; revisit
-  // if partial flaps become a sustained pattern.
+  // writes fail), the next refreshToken pipeline sees `exists` return
+  // 0 and forces shouldRefresh=true. That triggers a fresh
+  // getSessionUser call. getSessionUser checks the regular-redis cache
+  // FIRST (session-user.ts:36) — on a partial flap, that cache is
+  // still being written normally, so most calls hit cache and skip DB.
+  //
+  // The DB amplification actually kicks in on a FULL sysRedis outage:
+  // session-user.ts permissionsSourceDegraded skips the regular-redis
+  // cache write, so every re-derivation cache-misses and goes to DB.
+  // Then this setToken catch fires (because sysRedis writes also fail),
+  // so each subsequent authed request repeats the cycle. The cliff is
+  // real but conditioned on the full-outage case, not partial flaps.
   //
   // Known accumulation pattern: if hSet succeeds and hExpire fails, the
   // tokenId field on USER_TOKENS:userId persists without TTL. It's only

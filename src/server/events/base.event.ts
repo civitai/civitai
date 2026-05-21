@@ -102,9 +102,10 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
   async function getDiscordRoles() {
     const cacheKey =
       `${REDIS_SYS_KEYS.EVENT}:${name}:${REDIS_SUB_KEYS.EVENT.DISCORD_ROLES}` as const;
-    // Fail open: degrade to "no discord roles" rather than 500 the
-    // caller. Writeback to sysRedis is also wrapped — if cache populate
-    // fails we still return what we resolved from discord.
+    // Read fail-open: if sysRedis is unreachable we early-return {}
+    // immediately and SKIP the Discord API call. Net result during an
+    // outage is "no discord roles for this event" — caller treats the
+    // missing map as no-op.
     let roleCache: Record<string, string>;
     try {
       roleCache = await sysRedis.hGetAll(cacheKey);
@@ -121,6 +122,11 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
       if (!role) continue;
       roleCache[team] = role.id;
     }
+    // Writeback fail-open (only reached when the read succeeded above):
+    // we already have the freshly-resolved roles in memory, so a cache-
+    // populate failure just means the next call will re-query Discord
+    // instead of getting a sysRedis cache hit. Caller gets the same
+    // roleCache return value regardless.
     try {
       await sysRedis.hSet(cacheKey, roleCache);
     } catch (err) {
