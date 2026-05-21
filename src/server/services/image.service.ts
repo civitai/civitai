@@ -2665,7 +2665,9 @@ async function fetchMeiliUserOwnPass(
   // Excluded set = anything the strict main query would have removed for a
   // non-owner: unscanned, unpublished, scheduled, private, blocked, or POI
   // (when disablePoi is on). Mirrors the BitDex second-pass excluded OR.
-  const now = Date.now();
+  // Snap to 60s so the cache key reuses across nearby requests — matches the
+  // pattern used by Pre/PostFilter publish filters.
+  const now = snapToInterval(Date.now());
   const blockedReasonList = [
     BlockedReason.TOS,
     BlockedReason.Moderated,
