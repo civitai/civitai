@@ -514,7 +514,6 @@ export const ModelSelect = ({
                       value={baseModelFlux2}
                       baseType="flux2"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   <ModelSelector
@@ -534,7 +533,6 @@ export const ModelSelect = ({
                       value={baseModelQwen}
                       baseType="qwen"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   {(features.zimageturboTraining || features.zimagebaseTraining) && (
@@ -545,7 +543,6 @@ export const ModelSelect = ({
                       value={baseModelZImage}
                       baseType="zimage"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                       allowedKeys={[
                         ...(features.zimageturboTraining ? ['zimageturbo'] : []),
                         ...(features.zimagebaseTraining ? ['zimagebase'] : []),
@@ -560,7 +557,6 @@ export const ModelSelect = ({
                       value={baseModelFlux2Klein}
                       baseType="flux2klein"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   {features.ernieTraining && (
@@ -571,7 +567,6 @@ export const ModelSelect = ({
                       value={baseModelErnie}
                       baseType="ernie"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
                     />
                   )}
                   {features.hidreamO1Training && (
@@ -582,7 +577,8 @@ export const ModelSelect = ({
                       value={baseModelHiDreamO1}
                       baseType="hidream-o1"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
+                      isNew={new Date() < new Date('2026-06-15')}
+
                     />
                   )}
                   {features.animaTraining && (
@@ -593,7 +589,7 @@ export const ModelSelect = ({
                       value={baseModelAnima}
                       baseType="anima"
                       makeDefaultParams={makeDefaultParams}
-                      isNew
+                      isNew={new Date() < new Date('2026-06-25')}
                     />
                   )}
                 </>
