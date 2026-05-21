@@ -15,7 +15,11 @@ import { getJSZip } from '~/utils/lazy';
 import { unzipTrainingData } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
+import {
+  getMimeTypeFromExt,
+  IMAGE_MIME_TYPE,
+  VIDEO_MIME_TYPE,
+} from '~/shared/constants/mime-types';
 import { useInView } from '~/hooks/useInView';
 import { EdgeVideo } from '~/components/EdgeMedia/EdgeVideo';
 import { EdgeVideoBase } from '~/components/EdgeMedia/EdgeVideoBase';
@@ -118,9 +122,7 @@ function ReviewTrainingData() {
         <LegacyActionIcon
           component={NextLink}
           href={
-            data?.modelId
-              ? getModelUrl({ modelId: data.modelId, modelVersionId: versionId })
-              : '#'
+            data?.modelId ? getModelUrl({ modelId: data.modelId, modelVersionId: versionId }) : '#'
           }
           target="_blank"
         >
@@ -211,21 +213,31 @@ function ReviewImages({
       <ScrollArea className="size-auto pt-0">
         <div className="container max-w-lg">
           <div className="grid grid-cols-3 gap-4">
-            {urls.map(({ url, ext }, index) => (
-              <div key={index} className="flex items-center justify-center card">
-                {IMAGE_MIME_TYPE.includes(`image/${ext}` as any) && (
-                  <>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={url} alt="" className="max-w-full" loading="lazy" />
-                  </>
-                )}
-                {VIDEO_MIME_TYPE.includes(`video/${ext}` as any) && (
-                  <video disablePictureInPicture playsInline controls muted loop preload="metadata">
-                    <source src={url} type={`video/${ext}`} />
-                  </video>
-                )}
-              </div>
-            ))}
+            {urls.map(({ url, ext }, index) => {
+              const mimeType = getMimeTypeFromExt(ext);
+              return (
+                <div key={index} className="flex items-center justify-center card">
+                  {IMAGE_MIME_TYPE.includes(mimeType as any) && (
+                    <>
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={url} alt="" className="max-w-full" loading="lazy" />
+                    </>
+                  )}
+                  {VIDEO_MIME_TYPE.includes(mimeType as any) && (
+                    <video
+                      disablePictureInPicture
+                      playsInline
+                      controls
+                      muted
+                      loop
+                      preload="metadata"
+                    >
+                      <source src={url} type={mimeType} />
+                    </video>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       </ScrollArea>
