@@ -1258,23 +1258,6 @@ export function GenerationForm() {
 
             {/* Advanced section */}
             <AccordionLayout label="Advanced" storeKey="data-graph-v2-advanced">
-              {/* ControlNets — gated behind the `controlNets` Flipt flag, then
-                  only rendered for ecosystems that declare the node */}
-              {features.controlNets && (
-                <Controller
-                  graph={graph}
-                  name="controlNets"
-                  render={({ value, meta, onChange, error }) => (
-                    <ControlNetsInput
-                      value={value as ControlNetsInputProps['value']}
-                      onChange={onChange as ControlNetsInputProps['onChange']}
-                      meta={meta as ControlNetsInputProps['meta']}
-                      error={error?.message}
-                    />
-                  )}
-                />
-              )}
-
               {/* Frame Guide Strength (LTXV2/LTXV23 img2vid with both frames) */}
               <Controller
                 graph={graph}
@@ -1766,6 +1749,23 @@ export function GenerationForm() {
                 />
               )}
             /> */}
+
+              {/* ControlNets — gated behind the `controlNets` Flipt flag, then
+                  only rendered for ecosystems that declare the node */}
+              {features.controlNets && (
+                <Controller
+                  graph={graph}
+                  name="controlNets"
+                  render={({ value, meta, onChange, error }) => (
+                    <ControlNetsInput
+                      value={value as ControlNetsInputProps['value']}
+                      onChange={onChange as ControlNetsInputProps['onChange']}
+                      meta={meta as ControlNetsInputProps['meta']}
+                      error={error?.message}
+                    />
+                  )}
+                />
+              )}
             </AccordionLayout>
           </>
           <GenerationFooter>

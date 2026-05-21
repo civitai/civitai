@@ -162,7 +162,7 @@ const storageAdapter = createLocalStorageAdapter({
     // a user's loaded wildcard packs persist across ecosystem and workflow
     // switches — a pack loaded while on SDXL stays available on Flux.
     {
-      keys: ['workflow', 'prompt', 'negativePrompt', 'seed', 'quantity', 'snippets'],
+      keys: ['workflow', 'prompt', 'negativePrompt', 'seed', 'quantity', 'snippets', 'controlNets'],
     },
     { name: 'output', keys: ['ecosystem'], scope: 'output' },
     // ecosystem is scoped to workflow (different workflows may use different ecosystems)
