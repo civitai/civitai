@@ -40,7 +40,20 @@ export const REMIX_WORKFLOW_OVERRIDES: Record<string, string> = {
 // Types
 // =============================================================================
 
-export type RunType = 'run' | 'remix' | 'replay' | 'patch' | 'append';
+export type RunType = 'run' | 'remix' | 'replay' | 'patch' | 'append' | 'wildcard';
+
+/**
+ * Open the panel directly to add a wildcard set to the snippets node. No
+ * network fetch — the caller (typically the Generate button on a Wildcards
+ * model page) already has the `wildcardSetId` from `model.getById`'s
+ * response, so a round-trip would just re-derive what we already know.
+ *
+ * The form provider's `wildcard` runType branch merges this id into the
+ * existing snippets node, preserving the user's mode/batchCount/targets/seed.
+ */
+export type GenerationGraphOpenInput =
+  | GetGenerationDataInput
+  | { type: 'wildcard'; wildcardSetId: number };
 
 /**
  * Graph-compatible generation data.
@@ -65,7 +78,7 @@ interface GenerationGraphState {
   /** Pending data to apply to the form */
   data?: GenerationGraphData;
   /** Open the generation sidebar, optionally fetching data for a model/image */
-  open: (input?: GetGenerationDataInput) => Promise<void>;
+  open: (input?: GenerationGraphOpenInput) => Promise<void>;
   /** Close the generation sidebar */
   close: () => void;
   /** Set generation data for the form to consume */
@@ -177,6 +190,22 @@ export const useGenerationGraphStore = create<GenerationGraphState>()(
         useGenerationPanelStore.setState({ opened: true });
         if (input) {
           useGenerationPanelStore.setState({ view: 'generate' });
+
+          // Wildcard entry point: no fetch required, just hand the
+          // wildcardSetId to the form provider's `wildcard` runType branch
+          // which merges it into the snippets node.
+          if (input.type === 'wildcard') {
+            set((state) => {
+              state.data = {
+                params: { wildcardSetId: input.wildcardSetId },
+                resources: [],
+                runType: 'wildcard',
+              };
+              state.counter++;
+            });
+            return;
+          }
+
           set((state) => {
             state.loading = true;
           });

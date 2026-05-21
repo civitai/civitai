@@ -1,6 +1,8 @@
 import { Loader, Text, Tooltip } from '@mantine/core';
 import { IconAlertTriangle, IconPackage, IconPlus, IconUser, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
+import Link from 'next/link';
+import { getModelUrl } from '~/utils/string-helpers';
 import { useSnippetCategories } from './useSnippetCategories';
 
 export type ActiveWildcardsProps = {
@@ -105,7 +107,23 @@ export function ActiveWildcards({
                   )}
                 >
                   <LeadIcon size={12} className="shrink-0" />
-                  <span>{set.name}</span>
+                  {set.modelVersion ? (
+                    // System-kind sets deep-link to their backing model page,
+                    // pre-selecting the originating version so the user lands
+                    // exactly on the source of the wildcard pack they loaded.
+                    <Link
+                      href={getModelUrl({
+                        modelId: set.modelVersion.modelId,
+                        modelName: set.modelVersion.model.name,
+                        modelVersionId: set.modelVersion.id,
+                      })}
+                      className="underline-offset-2 hover:underline"
+                    >
+                      {set.name}
+                    </Link>
+                  ) : (
+                    <span>{set.name}</span>
+                  )}
                   {removable ? (
                     <button
                       type="button"

@@ -1,10 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import type { BaseModelType } from '~/server/common/constants';
-import {
-  type BaseModel,
-  DEPRECATED_BASE_MODELS,
-  isBaseModelGenerationSupported,
-} from '~/shared/constants/basemodel.constants';
+import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
 import { baseModelLicenses, constants } from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
@@ -29,7 +25,7 @@ import type { DeclineReviewSchema, UnpublishModelSchema } from '~/server/schema/
 import type { ModelFileModel } from '~/server/selectors/modelFile.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getStaticContent } from '~/server/services/content.service';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import { resolveCanGenerateForVersions } from '~/server/services/generation/generation.service';
 import {
   addAdditionalLicensePermissions,
   createModelVersionPostFromTraining,
@@ -129,6 +125,7 @@ const loadModelVersion = async ({
         trainingStatus: true,
         uploadType: true,
         usageControl: true,
+        availability: true,
         licensingFee: true,
         licensingFeeType: true,
         licensingFeeSettlementCurrency: true,
@@ -240,7 +237,6 @@ const loadModelVersion = async ({
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
     const generationResources = await getResourceData(recommendedResourceIds, {
       user: ctx?.user,
-      wildcardsEnabled: ctx?.features.wildcards,
     }).then((data) =>
       data.map((item) => {
         const settings = (regularResources.find((x) => x.resource.id === item.id)?.settings ??
@@ -251,15 +247,33 @@ const loadModelVersion = async ({
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
-    const unavailableGenResources = await getUnavailableResources();
-    const canGenerate =
-      !!version.generationCoverage?.covered &&
-      !unavailableGenResources.includes(version.id) &&
-      isBaseModelGenerationSupported(version.baseModel, version.model.type);
+    const genStates = await resolveCanGenerateForVersions(
+      [
+        {
+          id: version.id,
+          status: version.status,
+          availability: version.availability,
+          usageControl: version.usageControl,
+          baseModel: version.baseModel,
+          covered: version.generationCoverage?.covered ?? false,
+          modelUserId: version.model.user.id,
+          modelType: version.model.type,
+        },
+      ],
+      {
+        user: { id: ctx?.user?.id, isModerator: ctx?.user?.isModerator },
+        sfwOnly: ctx?.domain === 'green',
+        wildcardsEnabled: !!ctx?.features.wildcards,
+      }
+    );
+    const versionState = genStates.get(version.id);
+    const canGenerate = versionState?.canGenerate ?? false;
+    const wildcardSetId = versionState?.wildcardSetId;
 
     return {
       ...version,
       canGenerate,
+      wildcardSetId,
       earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
       baseModel: version.baseModel as BaseModel,
       baseModelType: version.baseModelType as BaseModelType,

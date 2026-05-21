@@ -539,7 +539,7 @@ function parseYamlCategories(text: string, fileName: string): WildcardCategoryFi
   return out;
 }
 
-function pickPrimaryWildcardFile<T extends { name: string }>(files: T[]): T | undefined {
+export function pickPrimaryWildcardFile<T extends { name: string }>(files: T[]): T | undefined {
   const supported = files.filter((f) => getSupportedExtension(f.name) !== null);
   if (supported.length === 0) return undefined;
   const byPriority = (file: T) => {
@@ -550,6 +550,36 @@ function pickPrimaryWildcardFile<T extends { name: string }>(files: T[]): T | un
     return 3;
   };
   return supported.sort((a, b) => byPriority(a) - byPriority(b))[0];
+}
+
+/**
+ * Resolve the primary wildcard source `ModelFile` for a given `Wildcards`-type
+ * ModelVersion. This is the file that carries the post-Phase-2
+ * `metadata.wildcardSet` mirror — provisioning, the audit verdict path, the
+ * invalidation toggle, and the reconciliation cron all converge on this
+ * same predicate so exactly one file per version owns the blob.
+ *
+ * Returns `undefined` when the version has no supported wildcard file (or
+ * no files at all) — callers should treat that as "no mirror exists for this
+ * version" rather than an error.
+ *
+ * Accepts an optional `db` so writers can pass their transactional client
+ * (`prisma.$transaction(async (tx) => …)`) and get a consistent read of
+ * just-written rows; defaults to `dbWrite` so ad-hoc callers see the
+ * primary's state without replica lag.
+ *
+ * See docs/wildcard-moderation-pipeline-cleanup.md §Phase 2 "Sync contract"
+ * rule 2 (target-file identification) for the contract this implements.
+ */
+export async function getWildcardSourceFile(
+  modelVersionId: number,
+  db: Pick<typeof dbWrite, 'modelFile'> = dbWrite
+): Promise<{ id: number; name: string } | undefined> {
+  const files = await db.modelFile.findMany({
+    where: { modelVersionId },
+    select: { id: true, name: true },
+  });
+  return pickPrimaryWildcardFile(files);
 }
 
 /**

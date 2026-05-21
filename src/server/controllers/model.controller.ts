@@ -2,10 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
-import {
-  type BaseModel,
-  isBaseModelGenerationSupported,
-} from '~/shared/constants/basemodel.constants';
+import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
@@ -140,9 +137,9 @@ import { redis, REDIS_KEYS } from '../redis/client';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getGenerationEcosystemConfig,
-  getResourceCanGenerate,
   getResourceData,
   getUnavailableResources,
+  resolveCanGenerateForVersions,
 } from '../services/generation/generation.service';
 
 // TODO.Briant - determine all the logic to check when getting model versions
@@ -216,6 +213,25 @@ export const getModelHandler = async ({
       isGreen: features.isGreen,
     });
 
+    const sfwOnly = !!features.isGreen;
+    const versionGenStates = await resolveCanGenerateForVersions(
+      filteredVersions.map((v) => ({
+        id: v.id,
+        status: v.status,
+        availability: v.availability,
+        usageControl: v.usageControl,
+        baseModel: v.baseModel,
+        covered: v.generationCoverage?.covered ?? false,
+        modelUserId: model.user.id,
+        modelType: model.type,
+      })),
+      {
+        user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
+        sfwOnly,
+        wildcardsEnabled: !!ctx?.features.wildcards,
+      }
+    );
+
     const metrics = model.metrics[0];
     const canManage = ctx.user?.id === model.user.id || ctx.user?.isModerator;
     const entityAccess = await hasEntityAccess({
@@ -234,7 +250,6 @@ export const getModelHandler = async ({
       ) ?? [];
     const generationResources = await getResourceData(regularResourceIds, {
       user: ctx?.user,
-      wildcardsEnabled: ctx?.features.wildcards,
     });
 
     // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time
@@ -279,21 +294,9 @@ export const getModelHandler = async ({
         (!earlyAccessDeadline ||
           (entityAccessForVersion?.permissions ?? 0) >= EntityAccessPermission.EarlyAccessDownload);
 
-      const canGenerate =
-        getResourceCanGenerate({
-          resource: {
-            id: version.id,
-            status: version.status,
-            availability: version.availability,
-            usageControl: version.usageControl,
-            baseModel: version.baseModel,
-            covered: version.generationCoverage?.covered ?? false,
-            modelUserId: model.user.id,
-          },
-          user: { id: ctx.user?.id, isModerator: ctx.user?.isModerator },
-          unavailableResources: unavailableGenResources,
-          ecosystemConfig,
-        }) && isBaseModelGenerationSupported(version.baseModel, model.type);
+      const versionState = versionGenStates.get(version.id);
+      const canGenerate = versionState?.canGenerate ?? false;
+      const wildcardSetId = versionState?.wildcardSetId;
 
       // sort version files by file type, 'Model' type goes first
       // Note: VAE files from linked components are NOT pushed into version.files here
@@ -346,6 +349,7 @@ export const getModelHandler = async ({
         earlyAccessConfig: version.earlyAccessConfig as ModelVersionEarlyAccessConfig | null,
         canDownload,
         canGenerate,
+        wildcardSetId,
         files: files as Array<
           Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
         >,
@@ -1502,6 +1506,32 @@ export const getAssociatedResourcesCardDataHandler = async ({
     const ecosystemConfig = await getGenerationEcosystemConfig(user ?? {}, {
       isGreen: ctx.features.isGreen,
     });
+
+    const associatedSfwOnly = !!ctx.features.isGreen;
+    const associatedGenStates = await resolveCanGenerateForVersions(
+      models.flatMap((m) => {
+        const v = m.modelVersions[0];
+        return v
+          ? [
+              {
+                id: v.id,
+                status: v.status,
+                availability: v.availability,
+                baseModel: v.baseModel,
+                covered: v.covered,
+                modelUserId: m.user.id,
+                modelType: m.type,
+              },
+            ]
+          : [];
+      }),
+      {
+        user: { id: user?.id, isModerator: user?.isModerator },
+        sfwOnly: associatedSfwOnly,
+        wildcardsEnabled: !!ctx?.features.wildcards,
+      }
+    );
+
     const completeModels = models
       .map(({ hashes, modelVersions, rank, tagsOnModels, ...model }) => {
         const [version] = modelVersions;
@@ -1511,20 +1541,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
           (user?.isModerator || model.user.id === user?.id) &&
           (modelInput.user || modelInput.username);
         if (!versionImages.length && !showImageless) return null;
-        const canGenerate =
-          getResourceCanGenerate({
-            resource: {
-              id: version.id,
-              status: version.status,
-              availability: version.availability,
-              baseModel: version.baseModel,
-              covered: version.covered,
-              modelUserId: model.user.id,
-            },
-            user: { id: user?.id, isModerator: user?.isModerator },
-            unavailableResources: unavailableGenResources,
-            ecosystemConfig,
-          }) && isBaseModelGenerationSupported(version.baseModel, model.type);
+        const canGenerate = associatedGenStates.get(version.id)?.canGenerate ?? false;
 
         return {
           ...model,

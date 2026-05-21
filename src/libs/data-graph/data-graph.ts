@@ -140,13 +140,6 @@ export interface StorageAdapter<Ctx extends Record<string, unknown> = Record<str
   onInit(): void;
   /** Remove a storage key from both live storage and the in-memory cache */
   removeKey(key: string): void;
-  /**
-   * Remove all stored values except those listed in `preserveKeys`, across
-   * every scope/slot owned by this adapter. Called by `graph.reset` so a reset
-   * doesn't leave stale node values behind in scoped storage slots that the
-   * post-reset ctx happens not to be sitting on.
-   */
-  clear?(preserveKeys: string[]): void;
 }
 
 // ============================================================================
@@ -1424,15 +1417,6 @@ export class DataGraph<
           preservedValues[key] = stored;
         }
       }
-    }
-
-    // Wipe every non-excluded key out of *every* scoped storage slot before
-    // we re-init. Without this, the post-reset onSet would only overwrite the
-    // slot the post-reset ctx happens to land on (typically the default
-    // ecosystem) — any other scope variant the user transitions to via the
-    // next `set()` would still re-hydrate stale values via the valueProvider.
-    if (this.storageAdapter?.clear) {
-      this.storageAdapter.clear(exclude);
     }
 
     const result = this.init(preservedValues as Partial<Ctx>, this._ext, {
