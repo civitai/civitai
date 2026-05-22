@@ -5,6 +5,7 @@ import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuIte
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
@@ -133,6 +134,10 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
         {
           key: 'hide-button',
           component: <HideUserButton key="hide-button" as="menu-item" userId={data.user.id} />,
+        },
+        {
+          key: 'block-button',
+          component: <BlockUserButton key="block-button" as="menu-item" userId={data.user.id} />,
         },
         reportOption,
         reportImageOption,

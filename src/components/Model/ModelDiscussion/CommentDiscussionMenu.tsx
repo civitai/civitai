@@ -16,6 +16,8 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -219,16 +221,20 @@ export function CommentDiscussionMenu({
           </Menu.Item>
         )}
         {(!user || !isOwner) && (
-          <LoginRedirect reason="report-model">
-            <Menu.Item
-              leftSection={<IconFlag size={14} stroke={1.5} />}
-              onClick={() =>
-                openReportModal({ entityType: ReportEntity.Comment, entityId: comment.id })
-              }
-            >
-              Report
-            </Menu.Item>
-          </LoginRedirect>
+          <>
+            <HideUserButton as="menu-item" userId={comment.user.id} />
+            <BlockUserButton userId={comment.user.id} as="menu-item" />
+            <LoginRedirect reason="report-model">
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  openReportModal({ entityType: ReportEntity.Comment, entityId: comment.id })
+                }
+              >
+                Report
+              </Menu.Item>
+            </LoginRedirect>
+          </>
         )}
       </Menu.Dropdown>
     </Menu>

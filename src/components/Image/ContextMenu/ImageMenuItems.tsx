@@ -14,6 +14,7 @@ import React from 'react';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideImageButton } from '~/components/HideImageButton/HideImageButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { useDeleteImage } from '~/components/Image/hooks/useDeleteImage';
@@ -120,6 +121,7 @@ export function ImageMenuItems(props: ImageContextMenuProps & { disableDelete?: 
           </LoginRedirect>
           <HideImageButton as="menu-item" imageId={imageId} />
           {_userId && <HideUserButton as="menu-item" userId={_userId} />}
+          {_userId && <BlockUserButton userId={_userId} as="menu-item" />}
         </>
       )}
       {isModerator && (
