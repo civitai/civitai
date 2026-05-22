@@ -98,7 +98,11 @@ const purchaseFundsCancelSchema = z.object({
   type: z.literal('PurchaseFunds_Cancel'),
   details: z.object({ step: z.number() }).optional(),
 });
-const purchaseFundsConfirmSchema = z.object({
+// Exported so server-side emitters (e.g. crypto payment webhooks via
+// `Tracker.actionAsSystem`) can validate their payload against the same shape
+// the tRPC `track.addAction` path enforces — keeps server emits from silently
+// desyncing if a required field is added here.
+export const purchaseFundsConfirmSchema = z.object({
   type: z.literal('PurchaseFunds_Confirm'),
   details: z
     .object({
