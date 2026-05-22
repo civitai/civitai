@@ -119,6 +119,11 @@ export function InteractiveTipBuzzButton({
   const [buzzCounter, setBuzzCounter] = useState(0);
   const startTimerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const confirmTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Tracks whether the current confirm flow was opened by a real user gesture
+  // (a click or hold that started + ended on the button). Used to gate the
+  // TipInteractive_* analytics events so they don't fire on stray pointer
+  // events (e.g. onMouseLeave while scrolling a feed).
+  const gestureCommittedRef = useRef(false);
   const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
   const [showCountDown, setShowCountDown] = useState(false);
 
@@ -164,10 +169,16 @@ export function InteractiveTipBuzzButton({
 
     setStatus('pending');
     const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
-    trackAction({
-      type: 'TipInteractive_Cancel',
-      details: { toUserId, entityId, entityType, amount },
-    }).catch(() => undefined);
+    // Only emit a Cancel for a confirm flow that was actually opened by a real
+    // user gesture. This stops phantom Cancel events from pointer/lifecycle
+    // churn that never represented a deliberate tip attempt.
+    if (gestureCommittedRef.current) {
+      trackAction({
+        type: 'TipInteractive_Cancel',
+        details: { toUserId, entityId, entityType, amount },
+      }).catch(() => undefined);
+    }
+    gestureCommittedRef.current = false;
 
     setTimeout(() => reset(), 100);
   };
@@ -185,6 +196,9 @@ export function InteractiveTipBuzzButton({
     amount ??= buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
 
     const performTransaction = () => {
+      // The confirm flow resolved with a real tip — it is no longer a
+      // pending cancelable gesture.
+      gestureCommittedRef.current = false;
       trackAction({
         type: 'Tip_Confirm',
         details: { toUserId, entityType, entityId, amount },
@@ -251,6 +265,10 @@ export function InteractiveTipBuzzButton({
     setStatus('confirming');
     setShowCountDown(true);
     confirmTimeoutRef.current = setTimeout(() => {
+      // Auto-dismiss after inactivity. This is a timeout, not a deliberate
+      // user cancel, so no TipInteractive_Cancel is emitted — just clear the
+      // gesture flag so it can't leak into the next confirm flow.
+      gestureCommittedRef.current = false;
       setTimeout(() => reset(), 100);
       setStatus('pending');
     }, CONFIRMATION_TIMEOUT);
@@ -285,6 +303,20 @@ export function InteractiveTipBuzzButton({
   const clickEnd = (e: React.MouseEvent | React.TouchEvent) => {
     if (isTouchDevice() && e.type == 'mouseup') return;
 
+    // onMouseLeave is wired to clickEnd so an in-progress press is cleaned up
+    // when the pointer drags off the button (common while scrolling a feed).
+    // Leaving the button is NOT a deliberate tip gesture, so abort instead of
+    // completing it — completing here is what produced phantom
+    // TipInteractive_Click events (and the Cancel/timeout churn that follows).
+    if (e.type === 'mouseleave') {
+      if (startTimerTimeoutRef.current !== null) {
+        clearTimeout(startTimerTimeoutRef.current);
+        startTimerTimeoutRef.current = null;
+      }
+      if (interval.active) interval.stop();
+      return;
+    }
+
     if (startTimerTimeoutRef.current !== null) {
       // Was click
       setBuzzCounter((x) => Math.min(buzzConstants.maxTipAmount, x + CLICK_AMOUNT));
@@ -314,6 +346,11 @@ export function InteractiveTipBuzzButton({
     } else {
       return;
     }
+
+    // A genuine tap or hold-and-release on the button that opens the tip
+    // confirm UI. Mark the confirm flow as user-initiated so a later cancel
+    // is recorded as a real TipInteractive_Cancel.
+    gestureCommittedRef.current = true;
 
     startConfirming();
   };
