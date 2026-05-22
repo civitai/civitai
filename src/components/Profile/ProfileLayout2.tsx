@@ -3,8 +3,12 @@ import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 
 import React, { useCallback, useMemo, useRef } from 'react';
 
-import { Box, Text } from '@mantine/core';
-import { IconBan } from '@tabler/icons-react';
+import { Box, Menu, Text } from '@mantine/core';
+import { IconBan, IconDotsVertical, IconFlag } from '@tabler/icons-react';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { env } from '~/env/client';
@@ -200,9 +204,34 @@ function BlockedByThemPanel({
   return (
     <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
       <div
-        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
+        className="relative flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
         style={outerCardStyle}
       >
+        <Menu position="bottom-end" withinPortal>
+          <Menu.Target>
+            <LegacyActionIcon
+              variant="subtle"
+              color="gray"
+              radius="xl"
+              className="absolute right-3 top-3 z-20 text-gray-0/80 hover:bg-white/10 hover:text-white"
+              aria-label="Blocked user actions"
+            >
+              <IconDotsVertical size={18} />
+            </LegacyActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <LoginRedirect reason="report-user">
+              <Menu.Item
+                leftSection={<IconFlag size={14} stroke={1.5} />}
+                onClick={() =>
+                  openReportModal({ entityType: ReportEntity.User, entityId: user.id })
+                }
+              >
+                Report user
+              </Menu.Item>
+            </LoginRedirect>
+          </Menu.Dropdown>
+        </Menu>
         <div
           className="relative flex w-full flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-b from-red-9/30 via-red-9/15 to-red-9/5 px-10 py-12 md:w-2/5 md:bg-gradient-to-br"
           onMouseMove={handleMouseMove}
