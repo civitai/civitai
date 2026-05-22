@@ -1176,13 +1176,11 @@ const StripePaymentForm = ({
         // double-counting completions. onSuccess is intentionally left
         // unguarded — it runs every time and is idempotent on the server.
         // The emit reads buzz-specific fields off `metadata` (buzzAmount,
-        // unitAmount). The StripePaymentForm is a shared component, so only emit
-        // once we have payment metadata to read those fields from. Both metadata
-        // `type` values ('buzzPurchase' and 'clubMembershipPayment') carry the
-        // same buzzAmount/unitAmount shape, so a presence check is sufficient —
-        // the previous `=== 'buzzPurchase'` check narrowed nothing and would
-        // have silently dropped a legitimate clubMembershipPayment purchase.
-        if (!hasTrackedConfirmRef.current && metadata.type !== undefined) {
+        // unitAmount). Both metadata `type` values ('buzzPurchase' and
+        // 'clubMembershipPayment') carry the same buzzAmount/unitAmount shape,
+        // so no per-type narrowing is needed — `metadata` is always present and
+        // typed via PaymentIntentMetadataSchema.
+        if (!hasTrackedConfirmRef.current) {
           hasTrackedConfirmRef.current = true;
 
           // On the confirm path `payment_method` is the expanded PaymentMethod
