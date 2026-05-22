@@ -9,7 +9,14 @@ import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hi
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { showSuccessNotification } from '~/utils/notifications';
 
-export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props }: Props) {
+export function BlockUserButton({
+  userId,
+  as = 'button',
+  onToggleHide,
+  label,
+  unblockLabel,
+  ...props
+}: Props) {
   const currentUser = useCurrentUser();
 
   const users = useHiddenPreferencesData().blockedUsers;
@@ -70,7 +77,7 @@ export function BlockUserButton({ userId, as = 'button', onToggleHide, ...props 
         loading={toggleHiddenMutation.isLoading}
         {...props}
       >
-        {isBlocked ? 'Unblock' : 'Block'}
+        {isBlocked ? unblockLabel ?? 'Unblock' : label ?? 'Block'}
       </Button>
     </LoginRedirect>
   ) : (
@@ -96,4 +103,6 @@ type Props = Omit<ButtonProps, 'onClick'> & {
   userId: number;
   as?: 'menu-item' | 'button';
   onToggleHide?: () => void;
+  label?: string;
+  unblockLabel?: string;
 };
