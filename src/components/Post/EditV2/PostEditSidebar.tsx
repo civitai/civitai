@@ -145,52 +145,41 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       }
     );
 
-  const handleShowConfirmPublish = (date?: Date, reviewAcknowledged = false) => {
-    dialogStore.trigger({
-      component: ConfirmDialog,
-      props: {
-        title: params.confirmTitle,
-        message: params.confirmMessage ?? 'Are you sure you want to publish this post?',
-        onConfirm: () => handlePublish(date, false, reviewAcknowledged),
-      },
-    });
-  };
-
   const imagesInReview = useMemo(
     () => addedImages.filter((image) => !!image.needsReview),
     [addedImages]
   );
 
-  const handleShowReviewWarning = (date?: Date, confirmPublish = params.confirmPublish) => {
-    const count = imagesInReview.length;
-    const isPlural = count > 1;
+  const handleShowConfirmPublish = (date?: Date) => {
+    const reviewCount = imagesInReview.length;
+    const isPlural = reviewCount > 1;
+    const hasReview = reviewCount > 0;
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
-        title: 'Images pending review',
-        message: (
+        title: hasReview ? 'Images pending review' : params.confirmTitle,
+        message: hasReview ? (
           <>
             <Text>
-              {count} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'} currently
-              flagged for moderation review and will remain hidden from other users until approved.
+              {reviewCount} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'}{' '}
+              currently flagged for moderation review and will remain hidden from other users until
+              approved.
             </Text>
+            {params.confirmMessage && <Text mt="sm">{params.confirmMessage}</Text>}
             <Text mt="sm">Do you want to publish anyway?</Text>
           </>
+        ) : (
+          params.confirmMessage ?? 'Are you sure you want to publish this post?'
         ),
-        labels: { confirm: 'Publish anyway', cancel: 'Cancel' },
-        onConfirm: () => (confirmPublish ? handleShowConfirmPublish(date, true) : publish(date)),
+        labels: hasReview ? { confirm: 'Publish anyway', cancel: 'Cancel' } : undefined,
+        onConfirm: () => publish(date),
       },
     });
   };
 
-  const handlePublish = (
-    date?: Date,
-    confirmPublish = params.confirmPublish,
-    reviewAcknowledged = false
-  ) => {
-    if (!reviewAcknowledged && imagesInReview.length > 0)
-      return handleShowReviewWarning(date, confirmPublish);
-    confirmPublish ? handleShowConfirmPublish(date, reviewAcknowledged) : publish(date);
+  const handlePublish = (date?: Date, confirmPublish = params.confirmPublish) => {
+    const needsConfirm = confirmPublish || imagesInReview.length > 0;
+    needsConfirm ? handleShowConfirmPublish(date) : publish(date);
   };
 
   const handleScheduleClick = () => {
