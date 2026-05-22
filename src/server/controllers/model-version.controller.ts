@@ -45,6 +45,7 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
+import { bustBaseModelLicensingFeeCache } from '~/server/services/base-model-licensing-fee.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
@@ -443,6 +444,13 @@ export const upsertModelVersionHandler = async ({
       trainingDetails: input.trainingDetails,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
+
+    // The base-model fee cache snapshots the recipient version's licensingFee.
+    // Bust whenever a versions's licensingFee is touched so the rule cache picks
+    // up the new amount (and any newly-zeroed fees stop showing as inherited).
+    if (input.licensingFee !== undefined) {
+      await bustBaseModelLicensingFeeCache();
+    }
 
     // Just update early access deadline if updating the model version
     if (input.id)

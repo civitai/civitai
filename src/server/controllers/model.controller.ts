@@ -63,6 +63,10 @@ import { getCollectionById, getCollectionItemCount } from '~/server/services/col
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
+import {
+  buildLicensingFeeLookup,
+  getBaseModelLicensingFeeRules,
+} from '~/server/services/base-model-licensing-fee.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
 import {
   copyGallerySettingsToAllModelsByUser,
@@ -281,6 +285,9 @@ export const getModelHandler = async ({
         });
     }
 
+    const licensingFeeRules = await getBaseModelLicensingFeeRules();
+    const lookupInheritedFee = buildLicensingFeeLookup(licensingFeeRules);
+
     const mappedVersions = filteredVersions.map((version) => {
       let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
       if (earlyAccessDeadline && new Date() > earlyAccessDeadline) earlyAccessDeadline = undefined;
@@ -333,9 +340,12 @@ export const getModelHandler = async ({
 
       const versionMetrics = version.metrics[0];
 
+      const inheritedLicensingFee = lookupInheritedFee(version.baseModel, model.type, version.id);
+
       return {
         ...version,
         metrics: undefined,
+        inheritedLicensingFee,
         rank: {
           generationCountAllTime: versionMetrics?.generationCount ?? 0,
           downloadCountAllTime: versionMetrics?.downloadCount ?? 0,

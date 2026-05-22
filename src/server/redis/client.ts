@@ -900,6 +900,7 @@ export const REDIS_KEYS = {
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
     BASIC_USERS: 'packed:caches:basic-users',
     BASIC_TAGS: 'packed:caches:basic-tags',
+    BASE_MODEL_LICENSING_FEE_RULES: 'packed:caches:base-model-licensing-fee-rules',
     ENTITY_AVAILABILITY: {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
