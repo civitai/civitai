@@ -25,7 +25,7 @@ import {
   IconMoodDollar,
   IconTrendingUp,
 } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Fragment } from 'react';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
@@ -1157,6 +1157,11 @@ const StripePaymentForm = ({
   metadata: PaymentIntentMetadataSchema;
 }) => {
   const { trackAction } = useTrackEvent();
+  // PurchaseFunds_Confirm must fire at most once per payment. onPaymentSuccess
+  // can run more than once on the polling-resolution path (a poll tick may
+  // observe `succeeded` again before the interval is torn down), so the
+  // analytics emit is guarded by this one-shot ref.
+  const hasTrackedConfirmRef = useRef(false);
   const { errorMessage, onConfirmPayment, processingPayment, paymentIntentStatus } =
     useStripeTransaction({
       clientSecret,
@@ -1166,24 +1171,32 @@ const StripePaymentForm = ({
         // providers and the legacy StripeTransactionModal (which carried it)
         // stopped being used.
         //
-        // On the confirm path `payment_method` is the expanded PaymentMethod
-        // object (Stripe.js expands it via confirmParams.expand). On the
-        // polling-resolution path it comes back as an unexpanded string ID —
-        // the client-side retrievePaymentIntent API cannot expand it — so fall
-        // back to payment_method_types[0] (e.g. 'card') for an accurate method
-        // dimension instead of the generic provider name.
-        const paymentMethodType =
-          typeof paymentIntent.payment_method === 'object'
-            ? paymentIntent.payment_method?.type
-            : paymentIntent.payment_method_types?.[0];
-        trackAction({
-          type: 'PurchaseFunds_Confirm',
-          details: {
-            buzzAmount: metadata.buzzAmount,
-            unitAmount: metadata.unitAmount,
-            method: paymentMethodType ?? 'stripe',
-          },
-        }).catch(() => undefined);
+        // onPaymentSuccess can fire more than once on the polling-resolution
+        // path, so the emit is guarded by a one-shot ref to avoid
+        // double-counting completions. onSuccess is intentionally left
+        // unguarded — it runs every time and is idempotent on the server.
+        if (!hasTrackedConfirmRef.current) {
+          hasTrackedConfirmRef.current = true;
+
+          // On the confirm path `payment_method` is the expanded PaymentMethod
+          // object (Stripe.js expands it via confirmParams.expand). On the
+          // polling-resolution path it comes back as an unexpanded string ID —
+          // the client-side retrievePaymentIntent API cannot expand it — so
+          // fall back to payment_method_types[0] (e.g. 'card') for the method
+          // dimension instead of the generic provider name.
+          const paymentMethodType =
+            typeof paymentIntent.payment_method === 'object'
+              ? paymentIntent.payment_method?.type
+              : paymentIntent.payment_method_types?.[0];
+          trackAction({
+            type: 'PurchaseFunds_Confirm',
+            details: {
+              buzzAmount: metadata.buzzAmount,
+              unitAmount: metadata.unitAmount,
+              method: paymentMethodType ?? 'stripe',
+            },
+          }).catch(() => undefined);
+        }
 
         if (onSuccess) {
           await onSuccess(paymentIntent.id);
