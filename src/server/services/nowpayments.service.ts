@@ -236,26 +236,28 @@ export const processDeposit = async (
         // confirmed deposit with a fresh buzz grant, so webhook retries and
         // reconciliation reruns (which short-circuit to `already_granted`)
         // don't double-count. `unitAmount` mirrors the client convention of
-        // 10 buzz = 1 cent. Fire-and-forget — analytics must never block or
-        // fail the deposit confirmation.
-        try {
-          await new Tracker().action({
-            type: 'PurchaseFunds_Confirm',
-            userId,
-            // `unitAmount` is a *derived estimate* in cents (10 buzz = 1 cent
-            // convention), NOT the actual fiat amount billed. Crypto / partial
-            // payments won't always settle to clean multiples of 10 buzz, so
-            // treat this figure as approximate for analytics purposes.
-            details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'nowpayments' },
-          });
-        } catch (err) {
-          await log({
-            message: 'Failed to track PurchaseFunds_Confirm for nowpayments deposit',
-            paymentId,
-            userId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+        // 10 buzz = 1 cent.
+        //
+        // `actionAsSystem` is the session-less server-side emit path: it
+        // requires an explicit `userId`, validates the payload against the
+        // shared zod schema, and never throws — it is fire-and-forget
+        // internally, so no try/catch is needed here (a wrapping catch would
+        // be unreachable).
+        new Tracker().actionAsSystem({
+          userId,
+          type: 'PurchaseFunds_Confirm',
+          // NOTE: `buzzAmount` here is the pre-multiplier *base* buzz the user
+          // purchased — `bonusBuzz` (the purchase-multiplier bonus) is tracked
+          // separately and intentionally excluded. `PurchaseFunds_Confirm` is
+          // a revenue signal, and revenue tracks the base purchase, not the
+          // bonus buzz granted on top.
+          //
+          // `unitAmount` is a *derived estimate* in cents (10 buzz = 1 cent
+          // convention), NOT the actual fiat amount billed. Crypto / partial
+          // payments won't always settle to clean multiples of 10 buzz, so
+          // treat this figure as approximate for analytics purposes.
+          details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'nowpayments' },
+        });
       }
     }
   }

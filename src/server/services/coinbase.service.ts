@@ -171,27 +171,26 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
     // cover it. Reached only after a successful `grantBuzzPurchase`; duplicate
     // `charge:confirmed` webhooks throw on the transaction conflict before
     // this point, so it cannot double-count. `unitAmount` mirrors the client
-    // convention of 10 buzz = 1 cent. Fire-and-forget — analytics must never
-    // block or fail the buzz grant.
-    try {
-      await new Tracker().action({
-        type: 'PurchaseFunds_Confirm',
-        userId,
-        // `unitAmount` is a *derived estimate* in cents (10 buzz = 1 cent
-        // convention), NOT the actual fiat amount billed. Crypto / partial
-        // payments won't always settle to clean multiples of 10 buzz, so
-        // treat this figure as approximate for analytics purposes.
-        details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'coinbase' },
-      });
-    } catch (err) {
-      await log({
-        message: 'Failed to track PurchaseFunds_Confirm for coinbase buzz purchase',
-        userId,
-        buzzAmount,
-        orderId: internalOrderId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
+    // convention of 10 buzz = 1 cent.
+    //
+    // `actionAsSystem` is the session-less server-side emit path: it requires
+    // an explicit `userId`, validates the payload against the shared zod
+    // schema, and never throws — it is fire-and-forget internally, so no
+    // try/catch is needed here (a wrapping catch would be unreachable).
+    new Tracker().actionAsSystem({
+      userId,
+      type: 'PurchaseFunds_Confirm',
+      // NOTE: `buzzAmount` here is the pre-multiplier *base* buzz the user
+      // purchased — not the credited total (base + any purchase-multiplier
+      // bonus). This is intentional: `PurchaseFunds_Confirm` is a revenue
+      // signal, and revenue tracks the base purchase, not bonus buzz.
+      //
+      // `unitAmount` is a *derived estimate* in cents (10 buzz = 1 cent
+      // convention), NOT the actual fiat amount billed. Crypto / partial
+      // payments won't always settle to clean multiples of 10 buzz, so
+      // treat this figure as approximate for analytics purposes.
+      details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'coinbase' },
+    });
 
     await log({
       message: 'Buzz purchase granted successfully',
