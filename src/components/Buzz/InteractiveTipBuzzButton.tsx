@@ -124,6 +124,14 @@ export function InteractiveTipBuzzButton({
   // TipInteractive_* analytics events so they don't fire on stray pointer
   // events (e.g. onMouseLeave while scrolling a feed).
   const gestureCommittedRef = useRef(false);
+  // Tracks whether the primary pointer is currently held down as part of a
+  // press that *originated on this button*. clickReenter consults this so it
+  // only re-arms a press that genuinely started here — a press begun elsewhere
+  // and dragged across the button has pressActiveRef.current === false and is
+  // ignored, keeping the round-1 phantom-event fix intact. Set in clickStart;
+  // cleared by a global pointerup/pointercancel so a release anywhere (even
+  // off the button, which fires no mouseup here) ends the press.
+  const pressActiveRef = useRef(false);
   const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
   const [showCountDown, setShowCountDown] = useState(false);
 
@@ -312,6 +320,10 @@ export function InteractiveTipBuzzButton({
       confirmTimeoutRef.current = null;
     }
 
+    // A press has genuinely begun on this button (mousedown/touchstart cleared
+    // the guards above). Record it so clickReenter can tell a continued press
+    // apart from an unrelated press dragged over the button.
+    pressActiveRef.current = true;
     startTimerTimeoutRef.current = setTimeout(() => {
       interval.start();
       startTimerTimeoutRef.current = null;
@@ -326,15 +338,22 @@ export function InteractiveTipBuzzButton({
   // back onto the button does nothing (mousedown already fired and won't fire
   // again), so the tip would be silently dropped.
   //
-  // We only re-arm when the primary mouse button is still held (e.buttons === 1).
-  // A bare hover with no button pressed — e.g. the cursor passing over the
-  // button while scrolling a feed — has e.buttons === 0 and is ignored, so this
-  // does not reintroduce the phantom events the round-1 fix removed. Mouse only:
-  // touch has no equivalent enter event and is intentionally left unchanged.
+  // We only re-arm when the primary mouse button is still held (e.buttons === 1)
+  // AND that press originated on this button (pressActiveRef). A bare hover with
+  // no button pressed — e.g. the cursor passing over the button while scrolling
+  // a feed — has e.buttons === 0 and is ignored; a press that began elsewhere
+  // and was dragged onto the button has pressActiveRef === false and is also
+  // ignored. Together these keep the round-1 phantom-event fix intact. Mouse
+  // only: touch has no equivalent enter event and is intentionally left
+  // unchanged.
   const clickReenter = (e: React.MouseEvent) => {
     if (isTouchDevice()) return;
     // Primary button not held — a stray hover, not a continued press.
     if (e.buttons !== 1) return;
+    // A button is down, but e.buttons === 1 alone does not prove this button
+    // started the press. Without this check a press begun elsewhere and
+    // dragged over the tip button would re-arm and emit a phantom tip.
+    if (!pressActiveRef.current) return;
     // Already mid-press or mid-confirm — nothing to re-arm.
     if (
       interval.active ||
@@ -421,6 +440,23 @@ export function InteractiveTipBuzzButton({
   useEffect(() => {
     return () => interval.stop(); // when App is unmounted we should stop counter
   }, [interval]);
+
+  useEffect(() => {
+    // A pointer release anywhere ends the current press. Clearing the flag
+    // globally (rather than in this component's own handlers) is what makes the
+    // pressActiveRef origin check sound: a press released off the button fires
+    // no mouseup on this element, so without this listener the flag would stay
+    // stale-true and clickReenter could re-arm a later, unrelated press.
+    const clearPress = () => {
+      pressActiveRef.current = false;
+    };
+    window.addEventListener('pointerup', clearPress);
+    window.addEventListener('pointercancel', clearPress);
+    return () => {
+      window.removeEventListener('pointerup', clearPress);
+      window.removeEventListener('pointercancel', clearPress);
+    };
+  }, []);
 
   if (!features.buzz) return null;
 
