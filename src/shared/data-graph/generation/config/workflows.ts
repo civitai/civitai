@@ -235,6 +235,9 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Run a ControlNet preprocessor on an image (canny, openpose, depth, etc.)',
     category: 'image',
     showBackButton: true,
+    // Same gate as the ControlNets UI itself — this workflow only makes sense
+    // for users who can attach the preprocessed output to a ControlNet.
+    featureFlag: 'controlNets',
     ecosystemIds: [],
   },
 
@@ -554,6 +557,27 @@ export function filterWorkflowsByGatedEcosystems<T extends { workflows: Workflow
         const key = ecosystemById.get(id)?.key;
         return !key || !gatedEcosystemKeys.has(key);
       });
+    }),
+  }));
+}
+
+/**
+ * Drop workflow options whose `featureFlag` is set to a flag that's disabled
+ * for this user. Workflows without a `featureFlag` are always kept.
+ *
+ * Used by `WorkflowInput` so e.g. `img2img:preprocess` disappears when the
+ * `controlNets` Flipt flag is off.
+ */
+export function filterWorkflowsByFeatureFlags<T extends { workflows: WorkflowOption[] }>(
+  grouped: T[],
+  features: Record<string, boolean | undefined>
+): T[] {
+  return grouped.map((group) => ({
+    ...group,
+    workflows: group.workflows.filter((w) => {
+      const flag = workflowConfigByKey.get(w.graphKey)?.featureFlag;
+      if (!flag) return true;
+      return features[flag] === true;
     }),
   }));
 }

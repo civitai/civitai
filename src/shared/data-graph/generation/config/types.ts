@@ -72,6 +72,17 @@ export interface WorkflowConfig {
    */
   showBackButton?: boolean;
 
+  /**
+   * If set, the workflow is hidden from the picker unless the matching
+   * Flipt feature flag is enabled. Must be a key from `useFeatureFlags()`
+   * (the returned `features` object). String-typed rather than strictly
+   * typed to keep server-side workflow configs free of client-only types.
+   *
+   * @example
+   *   featureFlag: 'controlNets'  // hide unless features.controlNets is true
+   */
+  featureFlag?: string;
+
   /** Whether this workflow requires membership */
   memberOnly?: boolean;
 

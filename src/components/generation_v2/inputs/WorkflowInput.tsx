@@ -25,12 +25,14 @@ import { RequireMembership } from '~/components/RequireMembership/RequireMembers
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
 import { useGatedEcosystems } from '~/components/generation_v2/hooks/useGatedEcosystems';
 import {
+  filterWorkflowsByFeatureFlags,
   filterWorkflowsByGatedEcosystems,
   getAllWorkflowsGrouped,
   workflowOptionById,
   workflowConfigByKey,
   getWorkflowLabelForEcosystem,
 } from '~/shared/data-graph/generation/config/workflows';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 // =============================================================================
 // Types
@@ -413,10 +415,15 @@ export function WorkflowInput({
   // are all gated for this user (so e.g. the Audio segment disappears when the
   // only audio ecosystem is mod-only and the user is not a mod).
   const gatedEcosystems = useGatedEcosystems();
+  const features = useFeatureFlags();
   const options = useMemo(() => {
     const all = getAllWorkflowsGrouped();
-    return filterWorkflowsByGatedEcosystems(all, new Set(gatedEcosystems));
-  }, [gatedEcosystems]);
+    const ecoFiltered = filterWorkflowsByGatedEcosystems(all, new Set(gatedEcosystems));
+    return filterWorkflowsByFeatureFlags(
+      ecoFiltered,
+      features as unknown as Record<string, boolean | undefined>
+    );
+  }, [gatedEcosystems, features]);
   const selected = getSelectedWorkflow(options, value, ecosystemId);
 
   // Separate image, video, and audio categories
