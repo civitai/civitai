@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldAbortPressOnLeave } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { shouldAbortPressOnLeave } from '~/components/Buzz/InteractiveTipBuzzButton.utils';
 
 /**
  * Regression coverage for the phantom `TipInteractive_Click`/`TipInteractive_Cancel`
