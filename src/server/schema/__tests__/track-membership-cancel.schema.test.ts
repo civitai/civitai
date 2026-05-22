@@ -9,28 +9,35 @@ import { trackActionSchema } from '../track.schema';
  * call for it. PR #2306 re-instruments it in the Stripe/Paddle cancel success
  * handlers in `src/components/Stripe/MembershipChangePrevention.tsx`.
  *
- * A full React render test of that component is not feasible in this harness
- * (vitest runs in the `node` environment, only `*.test.ts` is collected, and
- * there is no @testing-library/react dependency). Instead this asserts the
- * payload contract the cancel path must satisfy: the exact `{ type, details }`
- * shape both buttons pass to `trackAction` must be a valid `trackActionSchema`
- * input — the same schema `trpc.track.addAction` validates against server-side.
- * If the emitted shape ever drifts from the schema (the failure mode that made
- * the event silently disappear), this test fails.
+ * Note: the original regression was a *missing caller* — the only
+ * `trackAction` call was deleted — which a schema test cannot detect (it can
+ * only check a payload that is actually passed to it). A full React render
+ * test of the component, which could catch a missing caller, is not feasible
+ * in this harness (vitest runs in the `node` environment, only `*.test.ts` is
+ * collected, and there is no @testing-library/react dependency).
+ *
+ * What this test does cover is the *payload contract*: the exact
+ * `{ type, details }` shape both buttons pass to `trackAction` must be a valid
+ * `trackActionSchema` input — the same schema `trpc.track.addAction` validates
+ * against server-side. If the emitted shape ever drifts from the schema, the
+ * event would again silently fail validation, and this test catches that.
  */
 describe('Membership_Cancel trackAction payload', () => {
   it('accepts the cancel-path payload emitted by MembershipChangePrevention', () => {
-    // Mirrors the literal object both StripeCancelMembershipButton and
-    // PaddleCancelMembershipButton pass to trackAction on confirmed cancel.
-    const payload = {
-      type: 'Membership_Cancel' as const,
-      details: { reason: '', from: 'gold' },
-    };
+    // Mirrors the literal object StripeCancelMembershipButton (method: 'stripe')
+    // and PaddleCancelMembershipButton (method: 'paddle') pass to trackAction on
+    // confirmed cancel.
+    for (const method of ['stripe', 'paddle'] as const) {
+      const payload = {
+        type: 'Membership_Cancel' as const,
+        details: { reason: '', from: 'gold', method },
+      };
 
-    const result = trackActionSchema.safeParse(payload);
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.type).toBe('Membership_Cancel');
+      const result = trackActionSchema.safeParse(payload);
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.data.type).toBe('Membership_Cancel');
+      }
     }
   });
 

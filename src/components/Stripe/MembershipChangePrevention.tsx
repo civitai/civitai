@@ -250,7 +250,7 @@ export const StripeCancelMembershipButton = ({
             hasTrackedRef.current = true;
             trackAction({
               type: 'Membership_Cancel',
-              details: { reason: '', from: fromTier ?? '' },
+              details: { reason: '', from: fromTier ?? '', method: 'stripe' },
             }).catch(() => undefined);
           }
 
@@ -316,28 +316,27 @@ export const PaddleCancelMembershipButton = ({
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
     cancelSubscription({
-      onSuccess: (canceled) => {
-        if (canceled) {
-          // paddle.cancelSubscription maps to cancelEmailHandler, which marks
-          // the subscription cancelAtPeriodEnd and emails Paddle to action the
-          // cancellation — it always resolves truthy. So this is a confirmed
-          // in-app cancellation *request*, not a Paddle-side confirmation (the
-          // subscription stays active until period end). Emit once.
-          if (!hasTrackedRef.current) {
-            hasTrackedRef.current = true;
-            trackAction({
-              type: 'Membership_Cancel',
-              details: { reason: '', from: fromTier ?? '' },
-            }).catch(() => undefined);
-          }
-
-          onClose();
-          showSuccessNotification({
-            title: 'You have been successfully downgraded to our Free tier.',
-            message: 'You will no longer be billed for your subscription',
-          });
-          window?.location.reload();
+      onSuccess: () => {
+        // paddle.cancelSubscription maps to cancelEmailHandler, which marks the
+        // subscription cancelAtPeriodEnd and emails Paddle to action the
+        // cancellation. It either throws (handled by onError) or resolves
+        // truthy, so reaching onSuccess is itself the confirmed in-app
+        // cancellation *request* — not a Paddle-side confirmation (the
+        // subscription stays active until period end). Emit once.
+        if (!hasTrackedRef.current) {
+          hasTrackedRef.current = true;
+          trackAction({
+            type: 'Membership_Cancel',
+            details: { reason: '', from: fromTier ?? '', method: 'paddle' },
+          }).catch(() => undefined);
         }
+
+        onClose();
+        showSuccessNotification({
+          title: 'You have been successfully downgraded to our Free tier.',
+          message: 'You will no longer be billed for your subscription',
+        });
+        window?.location.reload();
       },
       // Match the Stripe sibling handler: a failed cancellation must surface an
       // error notification instead of producing an unhandled rejection that

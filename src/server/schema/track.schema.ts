@@ -120,6 +120,7 @@ const membershipCancelSchema = z.object({
     .object({
       reason: z.string(),
       from: z.string(),
+      method: z.string().optional(),
     })
     .passthrough()
     .optional(),
