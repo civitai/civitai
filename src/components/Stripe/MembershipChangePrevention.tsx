@@ -246,12 +246,20 @@ export const StripeCancelMembershipButton = ({
             onRefreshingChange?.(true);
             try {
               await Promise.resolve(onContinue());
+              // Success path: onClose() unmounts this component, so any
+              // refreshing-state reset belongs only in catch (see below).
               onClose();
             } catch {
-              window.location.reload();
-            } finally {
+              // Outer fallback layer: onContinue is a generic () => void, so
+              // a callback that throws/rejects unguarded would otherwise strand
+              // the user on stale membership UI. (The inner layer lives in
+              // CancelMembershipAction.handleRefresh, whose own catch reloads
+              // on a failed refresh — this backstops any other onContinue.)
+              // Reset refreshing state here only: on the success path the
+              // modal is already unmounted, so resetting in finally was dead.
               setRefreshing(false);
               onRefreshingChange?.(false);
+              window.location.reload();
             }
           } else {
             window.location.reload();
@@ -320,12 +328,20 @@ export const PaddleCancelMembershipButton = ({
             onRefreshingChange?.(true);
             try {
               await Promise.resolve(onContinue());
+              // Success path: onClose() unmounts this component, so any
+              // refreshing-state reset belongs only in catch (see below).
               onClose();
             } catch {
-              window?.location.reload();
-            } finally {
+              // Outer fallback layer: onContinue is a generic () => void, so
+              // a callback that throws/rejects unguarded would otherwise strand
+              // the user on stale membership UI. (The inner layer lives in
+              // CancelMembershipAction.handleRefresh, whose own catch reloads
+              // on a failed refresh — this backstops any other onContinue.)
+              // Reset refreshing state here only: on the success path the
+              // modal is already unmounted, so resetting in finally was dead.
               setRefreshing(false);
               onRefreshingChange?.(false);
+              window?.location.reload();
             }
           } else {
             window?.location.reload();
