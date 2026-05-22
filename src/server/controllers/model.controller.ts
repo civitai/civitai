@@ -65,6 +65,7 @@ import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.se
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import {
   buildLicensingFeeLookup,
+  bustBaseModelLicensingFeeCache,
   getBaseModelLicensingFeeRules,
 } from '~/server/services/base-model-licensing-fee.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
@@ -736,6 +737,14 @@ export const deleteModelHandler = async ({
     const { id, permanently } = input;
     if (permanently && !ctx.user.isModerator) throw throwAuthorizationError();
 
+    // Soft-delete sets ModelVersion.deletedAt, which is filtered out by the
+    // rule cache query. Permanent delete cascades into BaseModelLicensingFee.
+    // Either way, bust if any of this model's versions was a recipient.
+    const wasRecipient = !!(await dbRead.baseModelLicensingFee.findFirst({
+      where: { modelVersion: { modelId: id } },
+      select: { baseModel: true },
+    }));
+
     const deleteModel = permanently ? permaDeleteModelById : deleteModelById;
     const model = await deleteModel({ id, userId: ctx.user.id, isModerator: ctx.user.isModerator });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
@@ -747,6 +756,7 @@ export const deleteModelHandler = async ({
     });
 
     await dataForModelsCache.refresh(id);
+    if (wasRecipient) await bustBaseModelLicensingFeeCache();
 
     return model;
   } catch (error) {

@@ -35,6 +35,9 @@ const CACHE_KEY = REDIS_KEYS.CACHES.BASE_MODEL_LICENSING_FEE_RULES;
 const CACHE_TTL = CacheTTL.hour;
 
 async function fetchRules(): Promise<BaseModelLicensingFeeRule[]> {
+  // Only surface rules whose recipient is a live, publicly-visible model+version.
+  // If the recipient is unpublished, deleted, or private we drop the rule rather
+  // than leak its name/id through `inheritedLicensingFee` on derivatives.
   const rows = await dbRead.$queryRaw<RuleRow[]>`
     SELECT
       bmlf."baseModel",
@@ -48,7 +51,14 @@ async function fetchRules(): Promise<BaseModelLicensingFeeRule[]> {
     FROM "BaseModelLicensingFee" bmlf
     JOIN "ModelVersion" rmv ON rmv.id = bmlf."modelVersionId"
     JOIN "Model" rm ON rm.id = rmv."modelId"
-    WHERE rmv."licensingFee" IS NOT NULL AND rmv."licensingFee" > 0
+    WHERE rmv."licensingFee" IS NOT NULL
+      AND rmv."licensingFee" > 0
+      AND rmv."status" = 'Published'
+      AND rmv."deletedAt" IS NULL
+      AND rmv."availability" <> 'Private'
+      AND rm."status" = 'Published'
+      AND rm."deletedAt" IS NULL
+      AND rm."availability" <> 'Private'
   `;
   return rows.map((r) => ({
     baseModel: r.baseModel,
