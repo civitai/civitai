@@ -1,5 +1,6 @@
 import { env } from '~/env/server';
 import { logToAxiom } from '../logging/client';
+import { Tracker } from '~/server/clickhouse/client';
 import {
   getMultipliersForUser,
   getTransactionByExternalId,
@@ -226,6 +227,31 @@ export const processDeposit = async (
             error: err instanceof Error ? err.message : String(err),
           });
         });
+
+        // Re-instrument the `PurchaseFunds_Confirm` analytics event for the
+        // crypto purchase flow. ~87% of buzz purchase volume is crypto, which
+        // completes off-site and credits via this webhook — there is no
+        // client-side confirmation moment, so PR #2308 (which restored the
+        // Stripe + Paddle in-app emits) could not cover it. Emitted only on a
+        // confirmed deposit with a fresh buzz grant, so webhook retries and
+        // reconciliation reruns (which short-circuit to `already_granted`)
+        // don't double-count. `unitAmount` mirrors the client convention of
+        // 10 buzz = 1 cent. Fire-and-forget — analytics must never block or
+        // fail the deposit confirmation.
+        try {
+          await new Tracker().action({
+            type: 'PurchaseFunds_Confirm',
+            userId,
+            details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'nowpayments' },
+          });
+        } catch (err) {
+          await log({
+            message: 'Failed to track PurchaseFunds_Confirm for nowpayments deposit',
+            paymentId,
+            userId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
       }
     }
   }

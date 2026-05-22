@@ -13,6 +13,7 @@ import { redeemableCodePurchaseEmail } from '~/server/email/templates/redeemable
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
+import { Tracker } from '~/server/clickhouse/client';
 
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'coinbase-service', type: 'error', ...data }).catch();
@@ -160,6 +161,31 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       await grantCosmetics({
         userId,
         cosmeticIds,
+      });
+    }
+
+    // Re-instrument the `PurchaseFunds_Confirm` analytics event for the
+    // Coinbase crypto purchase flow. Crypto purchases complete off-site and
+    // credit via this webhook — there is no client-side confirmation moment,
+    // so PR #2308 (which restored the Stripe + Paddle in-app emits) could not
+    // cover it. Reached only after a successful `grantBuzzPurchase`; duplicate
+    // `charge:confirmed` webhooks throw on the transaction conflict before
+    // this point, so it cannot double-count. `unitAmount` mirrors the client
+    // convention of 10 buzz = 1 cent. Fire-and-forget — analytics must never
+    // block or fail the buzz grant.
+    try {
+      await new Tracker().action({
+        type: 'PurchaseFunds_Confirm',
+        userId,
+        details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'coinbase' },
+      });
+    } catch (err) {
+      await log({
+        message: 'Failed to track PurchaseFunds_Confirm for coinbase buzz purchase',
+        userId,
+        buzzAmount,
+        orderId: internalOrderId,
+        error: err instanceof Error ? err.message : String(err),
       });
     }
 

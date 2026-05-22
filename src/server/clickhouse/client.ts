@@ -469,10 +469,15 @@ export class Tracker {
     });
   }
 
-  public action(values: { type: ActionType; details?: any }) {
-    const { details, ...rest } = values;
+  public action(values: { type: ActionType; details?: any; userId?: number }) {
+    const { details, userId, ...rest } = values;
+    // `userId` is optional — when provided it overrides the actor-resolved
+    // userId. This is needed for server-side emits with no request session
+    // (e.g. payment webhooks) where the acting user is known explicitly.
+    // It spreads after `actorMeta` in `track()`, so the override is honored.
     return this.track('actions', {
       ...rest,
+      ...(userId != null ? { userId } : {}),
       details:
         details != null ? (typeof details === 'string' ? details : JSON.stringify(details)) : '',
     });
