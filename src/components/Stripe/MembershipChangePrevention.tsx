@@ -218,9 +218,11 @@ export function CancelMembershipFeedbackModal() {
 export const StripeCancelMembershipButton = ({
   onClose,
   hasUsedVaultStorage,
+  onContinue,
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
+  onContinue?: () => void;
 }) => {
   const { mutate, isLoading: connectingToStripe } =
     trpc.stripe.cancelSubscriptionWithFallback.useMutation({
@@ -234,7 +236,8 @@ export const StripeCancelMembershipButton = ({
             title: 'Subscription cancelled',
             message: 'Your subscription has been cancelled successfully.',
           });
-          window.location.reload();
+          if (onContinue) onContinue();
+          else window.location.reload();
         }
       },
       onError(error) {
@@ -369,6 +372,7 @@ export const CancelMembershipBenefitsModal = ({ onContinue }: { onContinue?: () 
               <StripeCancelMembershipButton
                 onClose={handleClose}
                 hasUsedVaultStorage={hasUsedVaultStorage}
+                onContinue={onContinue}
               />
             )}
             {subscriptionPaymentProvider === PaymentProvider.Paddle && (
