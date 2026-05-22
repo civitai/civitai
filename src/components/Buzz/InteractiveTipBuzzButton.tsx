@@ -421,15 +421,15 @@ export function InteractiveTipBuzzButton({
     let amount: number;
 
     if (startTimerTimeoutRef.current !== null) {
-      // Was click (quick tap). Derive the tracked amount from the functional
-      // updater's resolved value so it matches what buzzCounter actually
-      // becomes — the closure-captured `buzzCounter` may be stale here.
-      let resolvedAmount = 0;
-      setBuzzCounter((x) => {
-        resolvedAmount = Math.min(buzzConstants.maxTipAmount, x + CLICK_AMOUNT);
-        return resolvedAmount;
-      });
-      amount = resolvedAmount;
+      // Was click (quick tap). Derive the tracked amount directly from the
+      // closure value, exactly as the hold branch does below. A quick tap never
+      // started the hold interval, so buzzCounter is still 0 here and this
+      // resolves to CLICK_AMOUNT. The setBuzzCounter functional updater below is
+      // queued by React 18 for the next render — its result is NOT available
+      // synchronously, so it must NOT be used to source the analytics amount
+      // (doing so emitted TipInteractive_Click with amount: 0 on every tap).
+      amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
+      setBuzzCounter((x) => Math.min(buzzConstants.maxTipAmount, x + CLICK_AMOUNT));
       clearTimeout(startTimerTimeoutRef.current);
       startTimerTimeoutRef.current = null;
 
