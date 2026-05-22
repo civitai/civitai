@@ -18,7 +18,7 @@ import {
 } from '@mantine/core';
 import { IconAlertTriangle, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import Router from 'next/router';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -226,6 +226,11 @@ export const StripeCancelMembershipButton = ({
   fromTier?: ProductTier;
 }) => {
   const { trackAction } = useTrackEvent();
+  // Membership_Cancel must fire at most once per cancellation. onSuccess
+  // reloads the page, but the reload is async — a repeat click or a slow
+  // navigation leaves a window where the handler could run again. A one-shot
+  // ref keeps the metric from being double-counted.
+  const hasTrackedRef = useRef(false);
   const { mutate, isLoading: connectingToStripe } =
     trpc.stripe.cancelSubscriptionWithFallback.useMutation({
       async onSuccess(data) {
@@ -238,11 +243,14 @@ export const StripeCancelMembershipButton = ({
           Router.push(data.url);
         } else {
           // Direct in-app cancellation completed — this is a confirmed
-          // cancellation, so emit the tracking event now.
-          trackAction({
-            type: 'Membership_Cancel',
-            details: { reason: '', from: fromTier ?? '' },
-          }).catch(() => undefined);
+          // cancellation, so emit the tracking event now (once).
+          if (!hasTrackedRef.current) {
+            hasTrackedRef.current = true;
+            trackAction({
+              type: 'Membership_Cancel',
+              details: { reason: '', from: fromTier ?? '' },
+            }).catch(() => undefined);
+          }
 
           onClose();
           showSuccessNotification({
@@ -295,17 +303,26 @@ export const PaddleCancelMembershipButton = ({
   fromTier?: ProductTier;
 }) => {
   const { trackAction } = useTrackEvent();
+  // See StripeCancelMembershipButton — one-shot guard so a repeat click or a
+  // slow window.location.reload() can't emit Membership_Cancel twice.
+  const hasTrackedRef = useRef(false);
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
     cancelSubscription({
       onSuccess: (canceled) => {
         if (canceled) {
-          // Paddle cancellation completed in-app — this is a confirmed
-          // cancellation, so emit the tracking event now.
-          trackAction({
-            type: 'Membership_Cancel',
-            details: { reason: '', from: fromTier ?? '' },
-          }).catch(() => undefined);
+          // paddle.cancelSubscription maps to cancelEmailHandler, which marks
+          // the subscription cancelAtPeriodEnd and emails Paddle to action the
+          // cancellation — it always resolves truthy. So this is a confirmed
+          // in-app cancellation *request*, not a Paddle-side confirmation (the
+          // subscription stays active until period end). Emit once.
+          if (!hasTrackedRef.current) {
+            hasTrackedRef.current = true;
+            trackAction({
+              type: 'Membership_Cancel',
+              details: { reason: '', from: fromTier ?? '' },
+            }).catch(() => undefined);
+          }
 
           onClose();
           showSuccessNotification({
