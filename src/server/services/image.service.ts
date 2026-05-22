@@ -43,6 +43,7 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
+  SEARCH_ACTOR_HEADER,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
   metricsSearchClient,
@@ -2538,6 +2539,9 @@ export async function getImagesFromFeedSearch(
         new MeiliSearch({
           host,
           apiKey,
+          requestConfig: input.actor
+            ? { headers: { [SEARCH_ACTOR_HEADER]: input.actor } }
+            : undefined,
         }) as IMeilisearch,
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
