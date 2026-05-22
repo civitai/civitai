@@ -57,6 +57,10 @@ type VersionRow = {
   licensingFee: number | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
+  baseLicensingFeeRecipientId: number | null;
+  baseLicensingFee: number | null;
+  baseLicensingFeeType: LicensingFeeType | null;
+  baseLicensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
   versionFlags: number;
   userFlags: number;
 };
@@ -106,6 +110,10 @@ export default MixedAuthEndpoint(async function handler(
       mv."licensingFee",
       mv."licensingFeeType",
       mv."licensingFeeSettlementCurrency",
+      bmlf."modelVersionId" AS "baseLicensingFeeRecipientId",
+      rmv."licensingFee" AS "baseLicensingFee",
+      rmv."licensingFeeType" AS "baseLicensingFeeType",
+      rmv."licensingFeeSettlementCurrency" AS "baseLicensingFeeSettlementCurrency",
       mv."flags" AS "versionFlags",
       u."flags" AS "userFlags",
       (
@@ -134,6 +142,9 @@ export default MixedAuthEndpoint(async function handler(
     FROM "ModelVersion" mv
     JOIN "Model" m ON m.id = mv."modelId"
     JOIN "User" u ON u.id = m."userId"
+    LEFT JOIN "BaseModelLicensingFee" bmlf
+      ON bmlf."baseModel" = mv."baseModel" AND bmlf."modelType" = m."type"
+    LEFT JOIN "ModelVersion" rmv ON rmv.id = bmlf."modelVersionId"
     WHERE ${Prisma.join(where, ' AND ')}
   `;
   if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
@@ -252,14 +263,28 @@ export default MixedAuthEndpoint(async function handler(
     .map((fm) => fm.modelId)
     .includes(modelVersion.modelId);
 
-  const fee =
-    modelVersion.licensingFee != null && modelVersion.licensingFee > 0
-      ? {
-          amount: modelVersion.licensingFee,
-          type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
-          settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
-        }
-      : undefined;
+  // Base-model rule wins over the version's own fee: derivatives inherit the
+  // base model's licensing, and the base version itself resolves to its own row.
+  const hasBaseRule =
+    modelVersion.baseLicensingFeeRecipientId != null &&
+    modelVersion.baseLicensingFee != null &&
+    modelVersion.baseLicensingFee > 0;
+  const hasOwnFee = modelVersion.licensingFee != null && modelVersion.licensingFee > 0;
+  const fee = hasBaseRule
+    ? {
+        amount: modelVersion.baseLicensingFee!,
+        type: lowerFirst(modelVersion.baseLicensingFeeType ?? 'PerImageBuzz'),
+        settlementCurrency: lowerFirst(modelVersion.baseLicensingFeeSettlementCurrency ?? 'Buzz'),
+        recipientModelVersionId: modelVersion.baseLicensingFeeRecipientId!,
+      }
+    : hasOwnFee
+    ? {
+        amount: modelVersion.licensingFee!,
+        type: lowerFirst(modelVersion.licensingFeeType ?? 'PerImageBuzz'),
+        settlementCurrency: lowerFirst(modelVersion.licensingFeeSettlementCurrency ?? 'Buzz'),
+        recipientModelVersionId: modelVersion.id,
+      }
+    : undefined;
 
   const payoutEnabled =
     !Flags.hasFlag(modelVersion.userFlags, UserFlag.DisablePayout) &&
