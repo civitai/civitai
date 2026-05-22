@@ -315,6 +315,11 @@ export const PaddleCancelMembershipButton = ({
   const hasTrackedRef = useRef(false);
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
+    // useMutatePaddle's cancelSubscription wraps mutateAsync, which rejects on
+    // failure. Without catching the returned promise, a failed cancellation
+    // would produce an unhandled rejection even though onError already shows
+    // the notification. The Stripe sibling avoids this by using mutate (which
+    // never rejects); catching here makes the Paddle path behave the same.
     cancelSubscription({
       onSuccess: () => {
         // paddle.cancelSubscription maps to cancelEmailHandler, which marks the
@@ -338,15 +343,19 @@ export const PaddleCancelMembershipButton = ({
         });
         window?.location.reload();
       },
-      // Match the Stripe sibling handler: a failed cancellation must surface an
-      // error notification instead of producing an unhandled rejection that
-      // leaves the modal silently open.
+      // A failed cancellation must surface an error notification instead of
+      // leaving the modal silently open. The Stripe sibling's mutation handler
+      // does the same in its onError callback.
       onError: (error) => {
         showErrorNotification({
           title: 'Failed to cancel subscription',
           error: new Error(error.message),
         });
       },
+    }).catch(() => {
+      // onError above already surfaces the failure to the user; swallow the
+      // rejected mutateAsync promise so it does not become an unhandled
+      // rejection.
     });
   };
 
