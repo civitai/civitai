@@ -26,7 +26,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { purchaseFundsConfirmSchema } from '~/server/schema/track.schema';
+import { trackActionSchema } from '~/server/schema/track.schema';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -489,12 +489,11 @@ export class Tracker {
    * method, which *requires* `userId` explicitly.
    *
    * Unlike the ad-hoc `userId` override on `bounty()` / `bountyEntry()`, this
-   * path validates the full payload against the same zod schema the tRPC
-   * `track.addAction` endpoint enforces, so a future required-field change to
-   * the schema cannot silently desync server-side emits.
-   *
-   * Currently scoped to `PurchaseFunds_Confirm` (the only event with a
-   * server-side emit). Extend the validation switch when adding more.
+   * path validates the full payload against `trackActionSchema` — the exact
+   * same zod schema the tRPC `track.addAction` endpoint enforces. That schema
+   * is a discriminated union keyed on `type`, so the correct per-action shape
+   * is selected automatically from `type`; a future required-field change to
+   * any action's schema cannot silently desync server-side emits.
    *
    * Fire-and-forget: never throws — a bad payload or transport failure is
    * logged, not surfaced, so analytics can never block or fail its caller.
@@ -506,41 +505,25 @@ export class Tracker {
   }): void {
     const { userId, type, details } = values;
 
-    // Validate against the shared schema before emitting. Keeps server-side
-    // emits in lockstep with the tRPC `track.addAction` contract.
-    let validated: { type: ActionType; details?: any };
-    switch (type) {
-      case 'PurchaseFunds_Confirm': {
-        const result = purchaseFundsConfirmSchema.safeParse({ type, details });
-        if (!result.success) {
-          logToAxiom(
-            {
-              type: 'error',
-              name: 'actionAsSystem payload validation failed',
-              details: { actionType: type, userId, error: result.error.message },
-              message: 'Server-side action emit failed schema validation',
-            },
-            'clickhouse'
-          ).catch(() => {});
-          return;
-        }
-        validated = result.data;
-        break;
-      }
-      default:
-        logToAxiom(
-          {
-            type: 'error',
-            name: 'actionAsSystem unsupported type',
-            details: { actionType: type, userId },
-            message: `actionAsSystem has no validator for action type "${type}"`,
-          },
-          'clickhouse'
-        ).catch(() => {});
-        return;
+    // Validate against the shared `track.addAction` schema before emitting.
+    // The discriminated union selects the right per-`type` schema (e.g.
+    // `PurchaseFunds_Confirm`, `Membership_Cancel`) automatically — no
+    // parallel server-side schema, no per-type switch to keep in sync.
+    const result = trackActionSchema.safeParse({ type, details });
+    if (!result.success) {
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'actionAsSystem payload validation failed',
+          details: { actionType: type, userId, error: result.error.message },
+          message: 'Server-side action emit failed schema validation',
+        },
+        'clickhouse'
+      ).catch(() => {});
+      return;
     }
 
-    const { details: validatedDetails } = validated;
+    const validatedDetails = 'details' in result.data ? result.data.details : undefined;
     // `userId` spreads after `actorMeta` in `track()`, so it overrides the
     // (zero) actor userId for this session-less Tracker.
     void this.track('actions', {

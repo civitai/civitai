@@ -33,6 +33,7 @@ import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions
 import { TransactionType, buzzConstants } from '~/shared/constants/buzz.constants';
 import { invalidateSubscriptionCaches } from '~/server/utils/subscription.utils';
 import { userUpdateCounter } from '~/server/prom/client';
+import { Tracker } from '~/server/clickhouse/client';
 
 const baseUrl = getBaseUrl('green'); // Stripe lives in civitai green
 const log = createLogger('stripe', 'blue');
@@ -545,6 +546,54 @@ export const upsertSubscription = async (
     log('Subscription canceled immediately');
     await dbWrite.customerSubscription.delete({ where: { id: mainSubscription.id } });
     await invalidateSubscriptionCaches(user.id);
+
+    // Emit the `Membership_Cancel` analytics event server-side. The common
+    // Stripe cancellation path is a redirect to the Stripe billing portal —
+    // the cancellation completes off-site and civitai only learns about it
+    // via this `customer.subscription.deleted` webhook, so the client-side
+    // emit (PR #2306) structurally cannot capture it. Placed after the
+    // `customerSubscription.delete` above, inside the `mainSubscription`
+    // guard: a Stripe webhook retry arriving once the row is already gone
+    // hits the early `return` above and never reaches here, so it cannot
+    // double-count. `from` is the prior tier resolved from the deleted
+    // subscription's product metadata; `reason` is empty — the webhook
+    // carries no cancellation reason. `method: 'stripe'` keeps the row shape
+    // aligned with PR #2306's client-side `Membership_Cancel` emit.
+    //
+    // `actionAsSystem` (PR #2310) is the session-less emit path: it requires
+    // an explicit `userId` (unspoofable — there is no request session here),
+    // validates the payload against the shared `track.addAction` schema, and
+    // is fully fire-and-forget — it never throws. The `try/catch` here only
+    // guards the prior-tier `dbRead.product` lookup, so a transient DB error
+    // resolving `from` can never fail the cancellation webhook itself.
+    //
+    // `price.product` is `string | Stripe.Product`: Stripe returns the bare
+    // product id unless the request expanded it. This webhook does not
+    // expand (`getServerStripe` sets no `expand`, and `constructEvent`
+    // replays the raw delivered payload), but a future expansion would make
+    // an `as string` cast silently resolve to a `[object Object]`-shaped id
+    // and zero out tier attribution. Normalise both shapes defensively, the
+    // same way `upsertPriceRecord` already does for `price.product`.
+    try {
+      const canceledProductRef = subscription.items.data[0]?.price.product;
+      const canceledProductId =
+        typeof canceledProductRef === 'string' ? canceledProductRef : canceledProductRef?.id;
+      const canceledProduct = canceledProductId
+        ? await dbRead.product.findFirst({ where: { id: canceledProductId } })
+        : null;
+      const fromTier = subscriptionProductMetadataSchema.safeParse(canceledProduct?.metadata);
+      new Tracker().actionAsSystem({
+        type: 'Membership_Cancel',
+        userId: user.id,
+        details: {
+          from: fromTier.success ? fromTier.data.tier : '',
+          reason: '',
+          method: 'stripe',
+        },
+      });
+    } catch (err) {
+      log('Failed to track Membership_Cancel for stripe subscription cancellation', err);
+    }
     return;
   }
 
