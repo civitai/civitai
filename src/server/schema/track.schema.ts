@@ -120,6 +120,12 @@ const membershipCancelSchema = z.object({
     .object({
       reason: z.string(),
       from: z.string(),
+      // Origin of the cancellation. The server-side Stripe webhook emit
+      // (`Tracker.actionAsSystem`) sets this to `'stripe'`. Declared as an
+      // explicit optional field — not left to `.passthrough()` — so the
+      // contract is self-documenting and survives validation independently
+      // of `.passthrough()` and of PR #2306's draft client-side emit.
+      method: z.string().optional(),
     })
     .passthrough()
     .optional(),
