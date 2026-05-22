@@ -34,6 +34,8 @@ import {
 } from '~/components/CommentsV2/CommentsProvider';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -243,6 +245,8 @@ export function CommentContent({
                   {comment.pinnedAt ? 'Unpin comment' : 'Pin comment'}
                 </Menu.Item>
               )}
+              <HideUserButton as="menu-item" userId={comment.user.id} />
+              <BlockUserButton userId={comment.user.id} as="menu-item" />
               {canReport && (
                 <LoginRedirect reason="report-model">
                   <Menu.Item
