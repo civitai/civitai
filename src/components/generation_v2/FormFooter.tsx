@@ -936,8 +936,14 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         invalidateWhatIf();
       }
 
-      // Clear media inputs for enhancement workflows so they don't persist in localStorage
-      if (needsSourceMetadata) {
+      // Clear media inputs after submit for one-shot enhancement workflows
+      // (upscale, remove-bg) so they don't persist in localStorage. Iterative
+      // workflows (preprocess) keep the source image so the user can try a
+      // different `kind` on the same image — gated by `returnAfterSubmit`.
+      const returnAfterSubmit =
+        !!snapshot.workflow &&
+        workflowConfigByKey.get(snapshot.workflow)?.returnAfterSubmit === true;
+      if (returnAfterSubmit) {
         const clear: Record<string, unknown> = {};
         if (snapshot.images?.length) clear.images = [];
         if (snapshot.video) clear.video = undefined;

@@ -17,6 +17,8 @@ export {
 export {
   isWorkflowAvailable,
   isEnhancementWorkflow,
+  shouldReturnAfterSubmit,
+  shouldShowBackButton,
   isWorkflowOrVariant,
   getWorkflowsForEcosystem,
   getWorkflowsWithCompatibility,

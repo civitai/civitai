@@ -1409,8 +1409,23 @@ const controlNetImageObjectSchema = z.object({
 // are filtered out at the array level before reaching `output`.
 const controlNetImageInputSchema = z.union([z.string(), controlNetImageObjectSchema]);
 
+/**
+ * Mode for an individual ControlNet entry:
+ * - `auto` (default): the uploaded image is raw — the backend runs the
+ *   preprocessor on it before feeding it into the matching ControlNet model.
+ * - `preprocessed`: the user uploaded an already-preprocessed control image
+ *   (e.g. they ran canny themselves) — skip preprocessing and route the image
+ *   straight to the matching ControlNet model.
+ *
+ * The `preprocessor` field still picks the ControlNet model in both modes;
+ * mode only governs whether preprocessing runs.
+ */
+export const controlNetModes = ['auto', 'preprocessed'] as const;
+export type ControlNetMode = (typeof controlNetModes)[number];
+
 const controlNetEntryInputSchema = z.object({
   preprocessor: z.string(),
+  mode: z.enum(controlNetModes).optional(),
   image: controlNetImageInputSchema.optional(),
   weight: z.coerce.number().min(CONTROLNET_WEIGHT_MIN).max(CONTROLNET_WEIGHT_MAX).optional(),
   startStep: z.coerce.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX).optional(),
@@ -1419,6 +1434,7 @@ const controlNetEntryInputSchema = z.object({
 
 const controlNetEntryOutputSchema = z.object({
   preprocessor: z.string(),
+  mode: z.enum(controlNetModes),
   image: controlNetImageObjectSchema,
   weight: z.number().min(CONTROLNET_WEIGHT_MIN).max(CONTROLNET_WEIGHT_MAX),
   startStep: z.number().min(CONTROLNET_STEP_MIN).max(CONTROLNET_STEP_MAX),
@@ -1542,8 +1558,14 @@ export function controlNetsNode({
           // Normalize a missing or empty-url image to `undefined` so the
           // array-level filter on `output` can drop incomplete entries.
           const normalizedImage = image?.url ? image : undefined;
+          // Force mode to 'preprocessed' for preprocessors that require it;
+          // otherwise default unset values to 'auto'.
+          const info = controlNetPreprocessors[entry.preprocessor as ControlNetPreprocessorKey];
+          const requiresPreprocessed = info?.requiresPreprocessedImage ?? false;
+          const mode: ControlNetMode = requiresPreprocessed ? 'preprocessed' : entry.mode ?? 'auto';
           return {
             preprocessor: entry.preprocessor,
+            mode,
             image: normalizedImage,
             weight: entry.weight ?? CONTROLNET_WEIGHT_DEFAULT,
             startStep: entry.startStep ?? CONTROLNET_STEP_MIN,

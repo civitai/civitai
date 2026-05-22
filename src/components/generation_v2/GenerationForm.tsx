@@ -27,6 +27,7 @@ import {
   Menu,
   Paper,
   Radio,
+  Select,
   Switch,
   Text,
   Textarea,
@@ -62,7 +63,8 @@ import {
 import { getWorkflowModes } from '~/shared/data-graph/generation/config';
 import {
   getOutputTypeForWorkflow,
-  isEnhancementWorkflow,
+  shouldReturnAfterSubmit,
+  shouldShowBackButton,
   workflowConfigByKey,
 } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemById } from '~/shared/constants/basemodel.constants';
@@ -505,7 +507,7 @@ export function GenerationForm() {
                       workflowId={value as string}
                       ecosystemId={compatibility.currentEcosystemId}
                       onBack={
-                        isEnhancementWorkflow(value as string) ? handleNavigationBack : undefined
+                        shouldShowBackButton(value as string) ? handleNavigationBack : undefined
                       }
                     />
                     {modes.length > 0 && (
@@ -821,6 +823,98 @@ export function GenerationForm() {
               render={({ value, meta, onChange }) => (
                 <UpscaleDimensionsInput value={value} onChange={onChange} meta={meta} />
               )}
+            />
+
+            {/* Preprocessor kind (img2img:preprocess) */}
+            <Controller
+              graph={graph}
+              name="preprocessKind"
+              render={({ value, meta, onChange }) => (
+                <Select
+                  label="Preprocessor"
+                  description="Choose which control signal to extract from the source image."
+                  data={meta.options}
+                  value={value}
+                  onChange={(v) => v && onChange(v as typeof value)}
+                  allowDeselect={false}
+                  searchable
+                  comboboxProps={{ withinPortal: true }}
+                />
+              )}
+            />
+
+            {/* Preprocessor output resolution (img2img:preprocess) */}
+            <Controller
+              graph={graph}
+              name="preprocessResolution"
+              render={({ value, meta, onChange }) => (
+                <SliderInput
+                  label="Resolution"
+                  value={value}
+                  onChange={onChange}
+                  min={meta.min}
+                  max={meta.max}
+                  step={meta.step}
+                />
+              )}
+            />
+
+            {/* Per-kind parameters (img2img:preprocess) — renders one input
+                per spec in the active kind's `preprocessKindParamSpecs`. */}
+            <Controller
+              graph={graph}
+              name="kindParams"
+              render={({ value, meta, onChange }) => {
+                const specs = meta.specs;
+                if (!specs?.length) return null;
+                const params = (value ?? {}) as Record<string, unknown>;
+                const setParam = (key: string, v: unknown) => onChange({ ...params, [key]: v });
+                return (
+                  <div className="flex flex-col gap-2">
+                    {specs.map((spec) => {
+                      if (spec.type === 'slider') {
+                        const current =
+                          (params[spec.key] as number | undefined) ?? spec.defaultValue;
+                        return (
+                          <SliderInput
+                            key={spec.key}
+                            label={spec.label}
+                            value={current}
+                            onChange={(v) => setParam(spec.key, v)}
+                            min={spec.min}
+                            max={spec.max}
+                            step={spec.step ?? 1}
+                          />
+                        );
+                      }
+                      if (spec.type === 'boolean') {
+                        const current =
+                          (params[spec.key] as boolean | undefined) ?? spec.defaultValue;
+                        return (
+                          <Switch
+                            key={spec.key}
+                            label={spec.label}
+                            checked={current}
+                            onChange={(e) => setParam(spec.key, e.currentTarget.checked)}
+                          />
+                        );
+                      }
+                      const current = (params[spec.key] as string | undefined) ?? spec.defaultValue;
+                      return (
+                        <Select
+                          key={spec.key}
+                          label={spec.label}
+                          data={spec.options.map((o) => ({ label: o, value: o }))}
+                          value={current}
+                          onChange={(v) => v && setParam(spec.key, v)}
+                          allowDeselect={false}
+                          comboboxProps={{ withinPortal: true }}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              }}
             />
 
             {/* ACE Audio mode picker (simple | custom) — only renders for Ace ecosystem */}
@@ -1771,7 +1865,7 @@ export function GenerationForm() {
           <GenerationFooter>
             <FormFooter
               onSubmitSuccess={
-                snapshot.workflow && isEnhancementWorkflow(snapshot.workflow)
+                snapshot.workflow && shouldReturnAfterSubmit(snapshot.workflow)
                   ? handleNavigationBack
                   : undefined
               }

@@ -8,14 +8,19 @@
  * different handling for draft/pro/ultra modes.
  */
 
-import type { ImageJobNetworkParams, Scheduler, TextToImageStepTemplate } from '@civitai/client';
+import type {
+  ImageJobNetworkParams,
+  PreprocessImageStepTemplate,
+  Scheduler,
+  TextToImageStepTemplate,
+} from '@civitai/client';
 import { maxRandomSeed } from '~/server/common/constants';
 import { fluxUltraAir, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ControlNetsNodeValue } from '~/shared/data-graph/generation/common';
 import { defineHandler } from './handler-factory';
-import { mapControlNetsToJobInput } from './controlnets.helper';
+import { buildControlNetSteps } from './controlnets.helper';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -67,7 +72,10 @@ function getFluxMode(modelId?: number): FluxMode {
  * - pro: No user resources, uses pro model
  * - ultra: Special aspect ratios, raw mode option
  */
-export const createFluxInput = defineHandler<FluxCtx, [TextToImageStepTemplate]>((data, ctx) => {
+export const createFluxInput = defineHandler<
+  FluxCtx,
+  (TextToImageStepTemplate | PreprocessImageStepTemplate)[]
+>((data, ctx) => {
   if (!data.aspectRatio) throw new Error('Aspect ratio is required for Flux workflows');
 
   const modelId = data.model?.id;
@@ -106,30 +114,31 @@ export const createFluxInput = defineHandler<FluxCtx, [TextToImageStepTemplate]>
   // Get scheduler (Flux uses Euler by default)
   const scheduler = samplersToSchedulers['undefined'] as Scheduler;
 
-  const controlNets = mapControlNetsToJobInput(
-    (data as { controlNets?: ControlNetsNodeValue }).controlNets
+  const { preprocessSteps, controlNets } = buildControlNetSteps(
+    (data as { controlNets?: ControlNetsNodeValue }).controlNets,
+    ctx.baseStepIndex
   );
 
-  return [
-    {
-      $type: 'textToImage',
-      input: {
-        model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
-        additionalNetworks,
-        scheduler,
-        prompt: data.prompt,
-        steps,
-        cfgScale,
-        seed,
-        width: data.aspectRatio.width,
-        height: data.aspectRatio.height,
-        quantity,
-        batchSize: 1,
-        outputFormat: data.outputFormat,
-        ...(controlNets?.length ? { controlNets } : {}),
-      },
-    } as TextToImageStepTemplate,
-  ];
+  const genStep: TextToImageStepTemplate = {
+    $type: 'textToImage',
+    input: {
+      model: data.model ? ctx.airs.getOrThrow(data.model.id) : undefined,
+      additionalNetworks,
+      scheduler,
+      prompt: data.prompt,
+      steps,
+      cfgScale,
+      seed,
+      width: data.aspectRatio.width,
+      height: data.aspectRatio.height,
+      quantity,
+      batchSize: 1,
+      outputFormat: data.outputFormat,
+      ...(controlNets.length ? { controlNets } : {}),
+    },
+  } as TextToImageStepTemplate;
+
+  return [...preprocessSteps, genStep];
 });
 
 /**

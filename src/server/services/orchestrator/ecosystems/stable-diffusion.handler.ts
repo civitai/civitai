@@ -12,6 +12,7 @@ import type {
   ComfyStepTemplate,
   ImageJobControlNet,
   ImageJobNetworkParams,
+  PreprocessImageStepTemplate,
   Scheduler,
   TextToImageStep,
   TextToImageStepTemplate,
@@ -27,7 +28,7 @@ import type {
 import type { GenerationHandlerCtx } from '.';
 import { createComfyInput } from './comfy-input';
 import { defineHandler } from './handler-factory';
-import { mapControlNetsToJobInput } from './controlnets.helper';
+import { buildControlNetSteps, mapControlNetsToJobInput } from './controlnets.helper';
 
 // Types derived from generation graph
 type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosystem: string }>;
@@ -167,7 +168,7 @@ function createTextToImageInput(
  */
 export const createStableDiffusionInput = defineHandler<
   SDFamilyCtx,
-  [TextToImageStepTemplate | ComfyStepTemplate]
+  (TextToImageStepTemplate | ComfyStepTemplate | PreprocessImageStepTemplate)[]
 >(async (data, ctx) => {
   if (!data.model) throw new Error('Model is required for SD family workflows');
   if (!data.aspectRatio && !data.images?.length)
@@ -258,32 +259,33 @@ export const createStableDiffusionInput = defineHandler<
     ];
   }
 
-  const controlNets = mapControlNetsToJobInput(
-    (data as { controlNets?: ControlNetsNodeValue }).controlNets
+  const { preprocessSteps, controlNets } = buildControlNetSteps(
+    (data as { controlNets?: ControlNetsNodeValue }).controlNets,
+    ctx.baseStepIndex
   );
 
-  return [
-    createTextToImageInput(
-      {
-        model: data.model,
-        resources: userResources,
-        vae: data.vae,
-        prompt: data.prompt,
-        negativePrompt: data.negativePrompt,
-        scheduler,
-        steps,
-        cfgScale,
-        clipSkip: data.clipSkip,
-        seed,
-        width: data.aspectRatio?.width,
-        height: data.aspectRatio?.height,
-        quantity,
-        batchSize,
-        outputFormat: data.outputFormat,
-        draftLoraAir,
-        controlNets,
-      },
-      ctx
-    ),
-  ];
+  const genStep = createTextToImageInput(
+    {
+      model: data.model,
+      resources: userResources,
+      vae: data.vae,
+      prompt: data.prompt,
+      negativePrompt: data.negativePrompt,
+      scheduler,
+      steps,
+      cfgScale,
+      clipSkip: data.clipSkip,
+      seed,
+      width: data.aspectRatio?.width,
+      height: data.aspectRatio?.height,
+      quantity,
+      batchSize,
+      outputFormat: data.outputFormat,
+      draftLoraAir,
+      controlNets: controlNets.length ? controlNets : undefined,
+    },
+    ctx
+  );
+
+  return [...preprocessSteps, genStep];
 });

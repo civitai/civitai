@@ -12,13 +12,19 @@
  *    - vid2vid:upscale → videoUpscaler step
  *    - img2img:upscale → comfy step (img2img-upscale)
  *    - img2img:remove-background → comfy step
+ *    - img2img:preprocess → preprocessImage step
  *    - All other workflows → ecosystem discriminator
  *
  * 2. ecosystem DISCRIMINATOR (second level - via ecosystemGraph):
  *    - Routes to appropriate step type based on ecosystem
  */
 
-import type { WorkflowCost, WorkflowStepTemplate } from '@civitai/client';
+import type {
+  PreprocessImageInput,
+  PreprocessImageStepTemplate,
+  WorkflowCost,
+  WorkflowStepTemplate,
+} from '@civitai/client';
 import { TimeSpan } from '@civitai/client';
 import {
   generationGraph,
@@ -178,6 +184,17 @@ export type GenerationHandlerCtx = {
    * The user initiating the generation request.
    */
   user: { id: number; isModerator: boolean };
+  /**
+   * Index in the final flat steps array at which this handler's first step
+   * will sit. Handlers that emit cross-step `$ref` objects (e.g. preprocess
+   * → gen step) must use this as the base when computing ref indices —
+   * variants from the snippets-overlay loop are concatenated into one array,
+   * so per-variant local indices would resolve to the wrong step.
+   *
+   * Defaults to 0 when not threaded (e.g. legacy single-variant callers or
+   * what-if cost estimation, where refs aren't resolved).
+   */
+  baseStepIndex: number;
 };
 
 // =============================================================================
@@ -580,6 +597,39 @@ async function createImageRemoveBackgroundInput(
   return { ...step, resolvedSource: buildResolvedSource(sourceImage.url, sourceCtx) };
 }
 
+/**
+ * Handle img2img:preprocess workflow.
+ *
+ * The graph stores kind-specific params as a free-form `kindParams` record
+ * (per-kind specs live in `preprocessKindParamSpecs`). This handler merges
+ * the kind discriminator and the params record into a `PreprocessImageInput`.
+ * The orchestrator validates the resulting shape against the typed union.
+ */
+async function createImagePreprocessInput(
+  data: Extract<GenerationGraphOutput, { workflow: 'img2img:preprocess' }>,
+  sourceCtx?: SourceCtx
+): Promise<StepInput> {
+  const sourceImage = data.images?.[0];
+  if (!sourceImage?.url) {
+    throw new Error('Image URL is required for preprocess');
+  }
+
+  const input = removeEmpty({
+    kind: data.preprocessKind,
+    image: sourceImage.url,
+    resolution: data.preprocessResolution,
+    ...(data.kindParams ?? {}),
+  }) as unknown as PreprocessImageInput;
+
+  const step: StepInput = {
+    $type: 'preprocessImage',
+    input,
+  } as PreprocessImageStepTemplate as StepInput;
+
+  if (!sourceCtx) return step;
+  return { ...step, resolvedSource: buildResolvedSource(sourceImage.url, sourceCtx) };
+}
+
 // =============================================================================
 // Main Router
 // =============================================================================
@@ -637,6 +687,10 @@ async function createStepInputs(
 
     case 'img2img:remove-background':
       rawResult = await createImageRemoveBackgroundInput(data, metadataCtx.sourceCtx);
+      break;
+
+    case 'img2img:preprocess':
+      rawResult = await createImagePreprocessInput(data, metadataCtx.sourceCtx);
       break;
 
     default: {
@@ -845,6 +899,8 @@ export async function createWorkflowStepsFromGraph({
   const handlerCtx: GenerationHandlerCtx = {
     airs,
     user: { id: user?.id ?? 0, isModerator: !!user?.isModerator },
+    // Updated per variant inside the snippets-overlay loop below.
+    baseStepIndex: 0,
   };
 
   // Resolve seed before creating step input and metadata so both use the same value.
@@ -912,11 +968,18 @@ export async function createWorkflowStepsFromGraph({
       ? buildVariantStepMetadata(variantData, computedKeys)
       : stepMetadata;
 
-    const variantSteps = await createStepInputs(variantData, handlerCtx, {
-      stepMetadata: variantStepMetadata,
-      isWhatIf,
-      sourceCtx,
-    });
+    // Advance baseStepIndex per variant so cross-step `$ref` objects (e.g.
+    // preprocess → gen wiring inside controlnet handlers) resolve to the
+    // correct global step position after concatenation.
+    const variantSteps = await createStepInputs(
+      variantData,
+      { ...handlerCtx, baseStepIndex: steps.length },
+      {
+        stepMetadata: variantStepMetadata,
+        isWhatIf,
+        sourceCtx,
+      }
+    );
 
     // Per-step metadata for snippet variants records ONLY the substituted
     // snippet-target fields (e.g. `prompt`, `negativePrompt`) — the
@@ -1666,6 +1729,7 @@ function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] {
     case 'textToImage':
       return output.images?.map((img) => ({ ...img, type: 'image' as const })) ?? [];
     case 'imageUpscaler':
+    case 'preprocessImage':
       return output.blob ? [{ ...(output.blob as ImageBlob), type: 'image' as const }] : [];
     case 'videoGen': {
       // LTX 2.3 batches multiple videos in a single job — primary in `video`,

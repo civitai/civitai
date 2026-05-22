@@ -53,6 +53,25 @@ export interface WorkflowConfig {
   /** Whether this is an enhancement workflow (e.g. upscale, remove-background) */
   enhancement?: boolean;
 
+  /**
+   * When true, the form auto-navigates back to the previous workflow after
+   * submit and clears the source media. Suits one-shot enhancement flows
+   * (upscale, remove-background) where the user popped in to do one thing.
+   *
+   * Leave unset for workflows where users typically iterate on the same
+   * source (e.g. preprocess — try a different `kind` on the same image).
+   * Independent of `enhancement` so source-metadata lineage and picker
+   * placement aren't bundled with the post-submit UX.
+   */
+  returnAfterSubmit?: boolean;
+
+  /**
+   * When true, the workflow header renders a back-button so the user can
+   * leave. Set this for any workflow without an ecosystem picker or other
+   * obvious in-form navigation path (upscale, remove-bg, preprocess, etc.).
+   */
+  showBackButton?: boolean;
+
   /** Whether this workflow requires membership */
   memberOnly?: boolean;
 

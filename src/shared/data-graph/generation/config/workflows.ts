@@ -214,6 +214,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Increase image resolution',
     category: 'image',
     enhancement: true,
+    returnAfterSubmit: true,
+    showBackButton: true,
     ecosystemIds: [ECO.Upscaler],
   },
 
@@ -222,8 +224,18 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Remove the background from an image',
     category: 'image',
     enhancement: true,
+    returnAfterSubmit: true,
+    showBackButton: true,
     ecosystemIds: [],
     memberOnly: true,
+  },
+
+  'img2img:preprocess': {
+    label: 'Control Preprocessor',
+    description: 'Run a ControlNet preprocessor on an image (canny, openpose, depth, etc.)',
+    category: 'image',
+    showBackButton: true,
+    ecosystemIds: [],
   },
 
   // ===========================================================================
@@ -591,6 +603,23 @@ export function isEnhancementWorkflow(workflowId: string): boolean {
 }
 
 /**
+ * Whether the form should auto-navigate back to the previous workflow and
+ * clear the source media after a successful submit. See
+ * `WorkflowConfig.returnAfterSubmit` for the rationale.
+ */
+export function shouldReturnAfterSubmit(workflowId: string): boolean {
+  return workflowConfigByKey.get(workflowId)?.returnAfterSubmit === true;
+}
+
+/**
+ * Whether the workflow header should render a back-button.
+ * See `WorkflowConfig.showBackButton` for the rationale.
+ */
+export function shouldShowBackButton(workflowId: string): boolean {
+  return workflowConfigByKey.get(workflowId)?.showBackButton === true;
+}
+
+/**
  * Get the display label for a workflow on a specific ecosystem (alias-aware).
  * Returns the alias label when the ecosystem matches an alias entry,
  * otherwise returns the primary config label.
@@ -633,6 +662,9 @@ type NewFormOnlyRule = true | ((ecosystemId: number, modelId?: number) => boolea
 const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
   // Upscale workflow — legacy form has no upscaler node
   ['img2img:upscale', true],
+
+  // Preprocess workflow — new form only (no legacy equivalent)
+  ['img2img:preprocess', true],
 
   // Kling V3 and Vidu Q3 on standard video workflows (legacy doesn't support these versions)
   [

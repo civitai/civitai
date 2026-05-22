@@ -16,7 +16,18 @@
  * per-category preprocessor lists from that.
  */
 
-import { Badge, Group, Input, RangeSlider, Select, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  Badge,
+  Group,
+  Input,
+  RangeSlider,
+  SegmentedControl,
+  Select,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { IconPhoto, IconPlus, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -33,8 +44,11 @@ import { ImageUploadMultipleInput, type ImageValue } from './ImageUploadMultiple
 // Types
 // =============================================================================
 
+export type ControlNetMode = 'auto' | 'preprocessed';
+
 export type ControlNetEntry = {
   preprocessor: ControlNetPreprocessorKey;
+  mode: ControlNetMode;
   // Optional on the client — entries without an image are filtered out of the
   // graph's output before validation, so they never reach the orchestrator.
   image?: { url: string; width?: number; height?: number };
@@ -132,6 +146,7 @@ export function ControlNetsInput({ value, onChange, meta, error }: ControlNetsIn
 
     const newEntry: ControlNetEntry = {
       preprocessor: recommended.value,
+      mode: recommended.requiresPreprocessedImage ? 'preprocessed' : 'auto',
       weight: meta.weight.default,
       startStep: meta.step.min,
       endStep: meta.step.max,
@@ -356,13 +371,29 @@ function ControlNetEditor({
     if (!nextCategory || nextCategory === currentCategory) return;
     const pool = preprocessorsByCategory.get(nextCategory as ControlNetCategory) ?? [];
     const next = pool.find((p) => p.recommended) ?? pool[0];
-    if (next) onChange({ preprocessor: next.value });
+    if (next) {
+      onChange({
+        preprocessor: next.value,
+        mode: next.requiresPreprocessedImage ? 'preprocessed' : 'auto',
+      });
+    }
   }
 
   function handlePreprocessorChange(nextValue: string | null) {
     if (!nextValue) return;
-    onChange({ preprocessor: nextValue as ControlNetPreprocessorKey });
+    const info = controlNetPreprocessors[nextValue as ControlNetPreprocessorKey];
+    const patch: Partial<ControlNetEntry> = {
+      preprocessor: nextValue as ControlNetPreprocessorKey,
+    };
+    if (info?.requiresPreprocessedImage) patch.mode = 'preprocessed';
+    onChange(patch);
   }
+
+  function handleModeChange(next: string) {
+    onChange({ mode: next as ControlNetMode });
+  }
+
+  const modeLocked = preprocessorInfo.requiresPreprocessedImage;
 
   function handleImageChange(images: ImageValue[]) {
     const image = images[0];
@@ -447,14 +478,43 @@ function ControlNetEditor({
       <Text fz="xs" c="dimmed" mt={-6}>
         {preprocessorInfo.description}
       </Text>
-      {preprocessorInfo.requiresPreprocessedImage && (
+      <Input.Wrapper
+        label="Image source"
+        description={
+          entry.mode === 'preprocessed'
+            ? 'Your image is sent to the ControlNet as-is.'
+            : 'Your image is preprocessed before being sent to the ControlNet.'
+        }
+      >
+        <SegmentedControl
+          fullWidth
+          value={entry.mode}
+          onChange={handleModeChange}
+          disabled={modeLocked}
+          data={[
+            { value: 'auto', label: 'Auto-preprocess' },
+            { value: 'preprocessed', label: 'Already preprocessed' },
+          ]}
+          mt={4}
+        />
+      </Input.Wrapper>
+      {modeLocked && (
         <Text fz="xs" c="yellow">
-          This preprocessor requires an image you have already processed (no auto-preprocess).
+          This preprocessor only accepts an image you have already processed.
         </Text>
       )}
 
       <SliderInput
-        label="Weight"
+        label={
+          <div className="flex items-center gap-1">
+            <Text component="span" fz="sm" fw={500}>
+              Weight
+            </Text>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              How strongly the generated image should follow the controlnet.
+            </InfoPopover>
+          </div>
+        }
         value={entry.weight}
         onChange={(v) => onChange({ weight: v })}
         min={meta.weight.min}
@@ -465,11 +525,16 @@ function ControlNetEditor({
       <Input.Wrapper
         label={
           <Group justify="space-between" className="w-full">
-            <Text component="span" fz="sm" fw={500}>
-              Active steps
-            </Text>
+            <div className="flex items-center gap-1">
+              <Text component="span" fz="sm" fw={500}>
+                Active steps
+              </Text>
+              <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                Of the generation steps, what portion of them should be guided by the controlnet.
+              </InfoPopover>
+            </div>
             <Text component="span" fz="xs" c="dimmed">
-              {stepRange[0].toFixed(2)} – {stepRange[1].toFixed(2)}
+              {Math.round(stepRange[0] * 100)}% – {Math.round(stepRange[1] * 100)}%
             </Text>
           </Group>
         }
@@ -486,13 +551,13 @@ function ControlNetEditor({
           onChange={setStepRange}
           onChangeEnd={([startStep, endStep]) => onChange({ startStep, endStep })}
           marks={[
-            { value: 0, label: '0' },
+            { value: 0, label: '0%' },
             { value: 0.25, label: '' },
-            { value: 0.5, label: '0.5' },
+            { value: 0.5, label: '50%' },
             { value: 0.75, label: '' },
-            { value: 1, label: '1' },
+            { value: 1, label: '100%' },
           ]}
-          label={(v) => v.toFixed(2)}
+          label={(v) => `${Math.round(v * 100)}%`}
           mt={6}
           mb={20}
         />
