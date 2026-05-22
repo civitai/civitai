@@ -112,7 +112,6 @@ const BuzzPurchasePaymentButton = ({
   const paymentProvider = usePaymentProvider();
   const currentUser = useCurrentUser();
   const buzzConfig = useBuzzCurrencyConfig(buzzType);
-  const { trackAction } = useTrackEvent();
 
   const successMessage = useMemo(
     () =>
@@ -227,12 +226,6 @@ const BuzzPurchasePaymentButton = ({
         successMessage,
         onSuccess: async (transactionId) => {
           await processCompleteBuzzTransaction({ id: transactionId });
-          // Re-instrument the purchase-completion analytics event for the
-          // Paddle flow. See claudedocs/deep-dive-monetization-funnel.md.
-          trackAction({
-            type: 'PurchaseFunds_Confirm',
-            details: { buzzAmount, unitAmount, method: 'paddle' },
-          }).catch(() => undefined);
           onPurchaseSuccess?.();
         },
       },
@@ -1171,11 +1164,18 @@ const StripePaymentForm = ({
         // Re-instrument the purchase-completion analytics event. This emit
         // regressed on 2024-08-30 when buzz purchases moved to redirect-based
         // providers and the legacy StripeTransactionModal (which carried it)
-        // stopped being used. See claudedocs/deep-dive-monetization-funnel.md.
+        // stopped being used.
+        //
+        // On the confirm path `payment_method` is the expanded PaymentMethod
+        // object (Stripe.js expands it via confirmParams.expand). On the
+        // polling-resolution path it comes back as an unexpanded string ID —
+        // the client-side retrievePaymentIntent API cannot expand it — so fall
+        // back to payment_method_types[0] (e.g. 'card') for an accurate method
+        // dimension instead of the generic provider name.
         const paymentMethodType =
           typeof paymentIntent.payment_method === 'object'
             ? paymentIntent.payment_method?.type
-            : undefined;
+            : paymentIntent.payment_method_types?.[0];
         trackAction({
           type: 'PurchaseFunds_Confirm',
           details: {
