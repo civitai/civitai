@@ -265,6 +265,10 @@ export default MixedAuthEndpoint(async function handler(
 
   // Base-model rule wins over the version's own fee: derivatives inherit the
   // base model's licensing, and the base version itself resolves to its own row.
+  // TODO: support coexisting base-model + per-version fees (split payouts,
+  // additive amounts, derivative opt-out, etc.). Today the upsert path blocks
+  // children from setting their own fee when a rule covers them, so this branch
+  // only sees one or the other in practice.
   const hasBaseRule =
     modelVersion.baseLicensingFeeRecipientId != null &&
     modelVersion.baseLicensingFee != null &&
