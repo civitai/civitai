@@ -219,11 +219,14 @@ export const StripeCancelMembershipButton = ({
   onClose,
   hasUsedVaultStorage,
   onContinue,
+  onRefreshingChange,
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
   onContinue?: () => void;
+  onRefreshingChange?: (refreshing: boolean) => void;
 }) => {
+  const [refreshing, setRefreshing] = useState(false);
   const { mutate, isLoading: connectingToStripe } =
     trpc.stripe.cancelSubscriptionWithFallback.useMutation({
       async onSuccess(data) {
@@ -231,13 +234,25 @@ export const StripeCancelMembershipButton = ({
           onClose();
           Router.push(data.url);
         } else {
-          onClose();
           showSuccessNotification({
             title: 'Subscription cancelled',
             message: 'Your subscription has been cancelled successfully.',
           });
           if (onContinue) {
-            Promise.resolve(onContinue()).catch(() => window.location.reload());
+            // Keep the modal mounted with a loading state until the async
+            // refresh resolves — closing first races the ~1-2s refresh and
+            // leaves the user on stale "still a member" UI with no spinner.
+            setRefreshing(true);
+            onRefreshingChange?.(true);
+            try {
+              await Promise.resolve(onContinue());
+              onClose();
+            } catch {
+              window.location.reload();
+            } finally {
+              setRefreshing(false);
+              onRefreshingChange?.(false);
+            }
           } else {
             window.location.reload();
           }
@@ -269,7 +284,7 @@ export const StripeCancelMembershipButton = ({
         }
       }}
       radius="xl"
-      loading={connectingToStripe}
+      loading={connectingToStripe || refreshing}
     >
       Proceed to Cancel
     </Button>
@@ -280,23 +295,38 @@ export const PaddleCancelMembershipButton = ({
   onClose,
   hasUsedVaultStorage,
   onContinue,
+  onRefreshingChange,
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
   onContinue?: () => void;
+  onRefreshingChange?: (refreshing: boolean) => void;
 }) => {
+  const [refreshing, setRefreshing] = useState(false);
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
     cancelSubscription({
-      onSuccess: (canceled) => {
+      onSuccess: async (canceled) => {
         if (canceled) {
-          onClose();
           showSuccessNotification({
             title: 'You have been successfully downgraded to our Free tier.',
             message: 'You will no longer be billed for your subscription',
           });
           if (onContinue) {
-            Promise.resolve(onContinue()).catch(() => window?.location.reload());
+            // Keep the modal mounted with a loading state until the async
+            // refresh resolves — closing first races the ~1-2s refresh and
+            // leaves the user on stale "still a member" UI with no spinner.
+            setRefreshing(true);
+            onRefreshingChange?.(true);
+            try {
+              await Promise.resolve(onContinue());
+              onClose();
+            } catch {
+              window?.location.reload();
+            } finally {
+              setRefreshing(false);
+              onRefreshingChange?.(false);
+            }
           } else {
             window?.location.reload();
           }
@@ -323,7 +353,7 @@ export const PaddleCancelMembershipButton = ({
         }
       }}
       radius="xl"
-      loading={cancelingSubscription}
+      loading={cancelingSubscription || refreshing}
     >
       Proceed to Cancel
     </Button>
@@ -334,6 +364,9 @@ export const CancelMembershipBenefitsModal = ({ onContinue }: { onContinue?: () 
   const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
+  // While a successful cancel's async refresh is in flight, keep the modal up
+  // and lock dismissal so the user can't escape into stale membership UI.
+  const [refreshing, setRefreshing] = useState(false);
   const [mainBuzzType] = useAvailableBuzz();
   const { vault, isLoading: vaultLoading } = useQueryVault();
   const { subscription, subscriptionLoading, subscriptionPaymentProvider } = useActiveSubscription({
@@ -348,6 +381,10 @@ export const CancelMembershipBenefitsModal = ({ onContinue }: { onContinue?: () 
   return (
     <Modal
       {...dialog}
+      onClose={refreshing ? () => undefined : dialog.onClose}
+      closeOnClickOutside={!refreshing}
+      closeOnEscape={!refreshing}
+      withCloseButton={!refreshing}
       size="md"
       title="You will lose the following if you cancel"
       radius="md"
@@ -379,6 +416,7 @@ export const CancelMembershipBenefitsModal = ({ onContinue }: { onContinue?: () 
                 onClose={handleClose}
                 hasUsedVaultStorage={hasUsedVaultStorage}
                 onContinue={onContinue}
+                onRefreshingChange={setRefreshing}
               />
             )}
             {subscriptionPaymentProvider === PaymentProvider.Paddle && (
@@ -386,9 +424,10 @@ export const CancelMembershipBenefitsModal = ({ onContinue }: { onContinue?: () 
                 onClose={handleClose}
                 hasUsedVaultStorage={hasUsedVaultStorage}
                 onContinue={onContinue}
+                onRefreshingChange={setRefreshing}
               />
             )}
-            <Button color="blue" onClick={handleClose} radius="xl">
+            <Button color="blue" onClick={handleClose} radius="xl" disabled={refreshing}>
               Don&rsquo;t cancel plan
             </Button>
           </Group>
