@@ -87,6 +87,10 @@ export namespace NOWPayments {
       outcome_amount: z.number().nullish(),
       outcome_currency: z.string().nullish(),
       actually_paid: z.union([z.number(), z.string()]).nullish(),
+      // Real fiat the customer paid, supplied on the payment-status response.
+      // Threaded into PurchaseFunds_Confirm so reconcile/recovery paths emit
+      // true fiat instead of the buzz-derived estimate.
+      actually_paid_at_fiat: z.number().nullish(),
       parent_payment_id: z.number().nullish(),
     })
     .passthrough();

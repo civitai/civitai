@@ -35,6 +35,41 @@ const log = async (data: MixedObject) => {
 /** Max number of concurrent requests when fetching min amounts for currencies */
 const MAX_CONCURRENT_MIN_AMOUNT_REQUESTS = 10;
 
+/**
+ * Build the `details` payload for a `PurchaseFunds_Confirm` analytics event
+ * from a NOWPayments crypto purchase.
+ *
+ * Single source of truth so the live webhook path AND every reconcile/recovery
+ * path (`reprocessDeposit`, `reconcileSinglePayment`, `retryFailedDeposits`,
+ * `reconcileUserDeposits`) emit identical, comparable rows:
+ *
+ * - `buzzAmount` — the pre-multiplier *base* buzz the user purchased. The
+ *   purchase-multiplier bonus is tracked separately and intentionally excluded;
+ *   this event is a revenue signal and revenue tracks the base purchase.
+ * - `unitAmount` — the real fiat NOWPayments settled, in integer cents
+ *   (`actually_paid_at_fiat` × 100). Card-purchase rows in this same ClickHouse
+ *   column carry true billed fiat, so the `buzzAmount / 10` estimate
+ *   (reverse-computed from settled crypto, fee-exclusive) is not summable
+ *   alongside them. The estimate is used ONLY as a fallback when NOWPayments
+ *   genuinely omits the fiat figure, so the field is never null.
+ *
+ * Earlier this helper was inlined only in the webhook path; the reconcile
+ * paths built their event objects without `actually_paid_at_fiat`, silently
+ * falling back to the estimate on every missed-webhook recovery and mixing
+ * true and estimated fiat in revenue dashboards.
+ */
+const buildPurchaseConfirmDetails = (
+  buzzAmount: number,
+  actuallyPaidAtFiat: number | null | undefined
+) => ({
+  buzzAmount,
+  unitAmount:
+    actuallyPaidAtFiat != null
+      ? Math.round(actuallyPaidAtFiat * 100)
+      : Math.round(buzzAmount / 10),
+  method: 'nowpayments' as const,
+});
+
 export const getDepositAddress = async (userId: number, chain = 'evm') => {
   // Use explicit config if available, otherwise fall back to chain name as targetCurrency
   const config = getChainConfig(chain) ?? {
@@ -259,29 +294,12 @@ export const processDeposit = async (
           new Tracker().actionAsSystem({
             userId,
             type: 'PurchaseFunds_Confirm',
-            // NOTE: `buzzAmount` here is the pre-multiplier *base* buzz the
-            // user purchased — `bonusBuzz` (the purchase-multiplier bonus) is
-            // tracked separately and intentionally excluded. This event is a
-            // revenue signal, and revenue tracks the base purchase, not the
-            // bonus buzz granted on top.
-            //
-            // `unitAmount` is the real fiat NOWPayments settled, in cents
-            // (review #2). Card-purchase rows in this same ClickHouse column
-            // carry true billed fiat, so the prior `buzzAmount / 10` estimate
-            // (reverse-computed from settled crypto, fee-exclusive) was not
-            // summable alongside them. `actually_paid_at_fiat` is the fiat
-            // value the customer actually paid; converted from a decimal
-            // amount to integer cents to match the card convention. Falls back
-            // to the 10-buzz-per-cent estimate only if NOWPayments omits the
-            // fiat figure, so the field is never null.
-            details: {
-              buzzAmount,
-              unitAmount:
-                event.actually_paid_at_fiat != null
-                  ? Math.round(event.actually_paid_at_fiat * 100)
-                  : Math.round(buzzAmount / 10),
-              method: 'nowpayments',
-            },
+            // Payload built by the shared `buildPurchaseConfirmDetails` helper
+            // so the live webhook path and every reconcile/recovery path emit
+            // identical rows — real `actually_paid_at_fiat` fiat in cents, with
+            // the buzz-derived estimate used only as a fallback. See the
+            // helper's docblock for the full rationale.
+            details: buildPurchaseConfirmDetails(buzzAmount, event.actually_paid_at_fiat),
           });
         }
       }
@@ -427,7 +445,9 @@ export const reprocessDeposit = async (paymentId: number) => {
     throw new Error(`Payment ${paymentId} has invalid order_id: ${orderId}`);
   }
 
-  // Build a webhook-like event from the GET response
+  // Build a webhook-like event from the GET response. `actually_paid_at_fiat`
+  // is threaded through so the PurchaseFunds_Confirm emit uses real fiat, not
+  // the buzz-derived estimate, on missed-webhook recoveries.
   const event: NOWPayments.WebhookEvent = {
     payment_id:
       typeof payment.payment_id === 'string'
@@ -437,6 +457,7 @@ export const reprocessDeposit = async (paymentId: number) => {
     order_id: payment.order_id,
     outcome_amount: payment.outcome_amount,
     actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+    actually_paid_at_fiat: payment.actually_paid_at_fiat,
     pay_currency: payment.pay_currency,
     pay_address: payment.pay_address,
     parent_payment_id: payment.parent_payment_id,
@@ -591,7 +612,8 @@ async function reconcileSinglePayment(
     };
   }
 
-  // Process the deposit
+  // Process the deposit. `actually_paid_at_fiat` is threaded through so the
+  // PurchaseFunds_Confirm emit uses real fiat, not the buzz-derived estimate.
   try {
     const event: NOWPayments.WebhookEvent = {
       payment_id: typeof paymentId === 'string' ? parseInt(paymentId, 10) : paymentId,
@@ -599,6 +621,7 @@ async function reconcileSinglePayment(
       order_id: payment.order_id,
       outcome_amount: payment.outcome_amount ?? undefined,
       actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+      actually_paid_at_fiat: payment.actually_paid_at_fiat,
       pay_currency: payment.pay_currency,
       pay_address: payment.pay_address,
       parent_payment_id: payment.parent_payment_id,
@@ -664,12 +687,15 @@ export const retryFailedDeposits = async () => {
         continue;
       }
 
+      // `actually_paid_at_fiat` threaded through so the retry-sweep recovery
+      // emits real fiat in PurchaseFunds_Confirm, not the buzz-derived estimate.
       const event: NOWPayments.WebhookEvent = {
         payment_id: numericId,
         payment_status: payment.payment_status,
         order_id: payment.order_id,
         outcome_amount: payment.outcome_amount,
         actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+        actually_paid_at_fiat: payment.actually_paid_at_fiat,
         pay_currency: payment.pay_currency,
         pay_address: payment.pay_address,
         parent_payment_id: payment.parent_payment_id,
@@ -967,12 +993,15 @@ export const reconcileUserDeposits = async (userId: number) => {
       }
 
       try {
+        // `actually_paid_at_fiat` threaded through so self-service
+        // reconciliation emits real fiat in PurchaseFunds_Confirm.
         const event: NOWPayments.WebhookEvent = {
           payment_id: numericId,
           payment_status: payment.payment_status,
           order_id: payment.order_id,
           outcome_amount: payment.outcome_amount,
           actually_paid: payment.actually_paid ? Number(payment.actually_paid) : undefined,
+          actually_paid_at_fiat: payment.actually_paid_at_fiat,
           pay_currency: payment.pay_currency,
           pay_address: payment.pay_address,
           parent_payment_id: payment.parent_payment_id,
