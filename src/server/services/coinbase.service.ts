@@ -145,7 +145,7 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       throw new Error('Invalid userId or buzzAmount from Coinbase webhook event');
     }
 
-    // Grant buzz/cosmetics
+    // Grant buzz
     const transactionId = await grantBuzzPurchase({
       userId,
       amount: buzzAmount,
@@ -156,14 +156,6 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       type: 'info',
     });
 
-    const cosmeticIds = specialCosmeticRewards.crypto;
-    if (cosmeticIds.length > 0) {
-      await grantCosmetics({
-        userId,
-        cosmeticIds,
-      });
-    }
-
     // Re-instrument the `PurchaseFunds_Confirm` analytics event for the
     // Coinbase crypto purchase flow. Crypto purchases complete off-site and
     // credit via this webhook — there is no client-side confirmation moment,
@@ -172,6 +164,13 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
     // `charge:confirmed` webhooks throw on the transaction conflict before
     // this point, so it cannot double-count. `unitAmount` mirrors the client
     // convention of 10 buzz = 1 cent.
+    //
+    // This emit runs *immediately after the buzz grant succeeds and before
+    // `grantCosmetics`* (audit finding #2): if `grantCosmetics` throws, control
+    // jumps to the catch block, the webhook 409s on the already-granted buzz on
+    // retry, and the emit is never reached — a paid purchase that produces zero
+    // revenue rows. The cosmetic grant is non-critical, so the revenue signal
+    // must not be downstream of it.
     //
     // `actionAsSystem` is the session-less server-side emit path: it requires
     // an explicit `userId`, validates the payload against the shared zod
@@ -191,6 +190,17 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       // treat this figure as approximate for analytics purposes.
       details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'coinbase' },
     });
+
+    // Grant cosmetics last — non-critical, and must run AFTER the revenue emit
+    // so a cosmetic-grant failure cannot strand a paid purchase without a
+    // PurchaseFunds_Confirm row (see the emit comment above).
+    const cosmeticIds = specialCosmeticRewards.crypto;
+    if (cosmeticIds.length > 0) {
+      await grantCosmetics({
+        userId,
+        cosmeticIds,
+      });
+    }
 
     await log({
       message: 'Buzz purchase granted successfully',
