@@ -7,6 +7,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type { UserMeta, UserSubscriptionsByBuzzType } from '~/server/schema/user.schema';
 import { userSettingsSchema } from '~/server/schema/user.schema';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import type { UserTier } from '~/server/schema/user.schema';
@@ -154,9 +155,29 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
       const { profilePicture, profilePictureId, publicSettings, settings, ...rest } = user;
 
       const permissions: string[] = [];
-      const systemPermissions = await getSystemPermissions();
-      for (const [key, value] of Object.entries(systemPermissions)) {
-        if (value.includes(user.id)) permissions.push(key);
+      // Fail-open on sysRedis: derive a session with empty permissions so
+      // the request can complete, but flag the result as degraded so the
+      // 4h cache write below is skipped. Caching an empty-permissions
+      // SessionUser would silently strip moderator / beta privileges for
+      // up to 4 hours after sysRedis recovers, and the staleness would
+      // persist until each affected user's cache entry naturally expired.
+      // Re-derive on every request during the outage instead — DB load
+      // is the trade-off, but it bounds the staleness to the outage
+      // window itself.
+      let permissionsSourceDegraded = false;
+      try {
+        const systemPermissions = await getSystemPermissions();
+        for (const [key, value] of Object.entries(systemPermissions)) {
+          if (value.includes(user.id)) permissions.push(key);
+        }
+      } catch (err) {
+        logSysRedisFailOpen(
+          'read-degraded',
+          'getSessionUser getSystemPermissions',
+          err,
+          { userId: user.id, action: 'skipping-cache-write' }
+        );
+        permissionsSourceDegraded = true;
       }
 
       const userSettings = userSettingsSchema.safeParse(settings ?? {});
@@ -179,8 +200,19 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
             : undefined,
       };
 
-      await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
-      await invalidateCivitaiUser({ userId });
+      // Skip the 4h cache write when permissions came from the fail-open
+      // path (sysRedis was unreachable). Next request will re-derive — DB
+      // cost during the outage window, but no stale permission cache once
+      // sysRedis recovers. Also skip the orchestrator invalidation: during
+      // a sysRedis outage every authenticated request re-derives the
+      // session, and firing invalidateCivitaiUser on each would pile N
+      // orchestrator requests per user per request on an already-stressed
+      // system. The orchestrator picks up the next legitimate refresh
+      // once sysRedis recovers.
+      if (!permissionsSourceDegraded) {
+        await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
+        await invalidateCivitaiUser({ userId });
+      }
 
       return sessionUser;
     },

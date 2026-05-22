@@ -20,6 +20,7 @@ import type * as z from 'zod';
 import { type VideoGenerationSchema2 } from '~/server/orchestrator/generation/generation.config';
 import { wan21BaseModelMap } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type {
@@ -88,12 +89,19 @@ type WorkflowStepAggregate =
   | AceStepAudioStep;
 
 export async function getGenerationStatus() {
-  const status = generationStatusSchema.parse(
-    JSON.parse(
-      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
-        '{}'
-    )
-  );
+  // Fail open: a sysRedis outage shouldn't crash generation API calls.
+  // Defaults parsed from '{}' match the existing null-case behavior.
+  // Note: schema '{}' default resolves to available=true — a sysRedis
+  // outage during an admin-disabled window will surface generation as
+  // enabled. Matches pre-PR behavior on cache miss.
+  let raw: string | null | undefined;
+  try {
+    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  } catch (err) {
+    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestrator/common', err);
+    raw = undefined;
+  }
+  const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
 
   return status as GenerationStatus;
 }

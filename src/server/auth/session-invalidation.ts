@@ -71,6 +71,19 @@ export async function refreshSession(userId: number, { sendSignal = true } = {})
   }
 }
 
+/**
+ * Mark a user's tokens as invalid in sysRedis and signal active sessions
+ * to log out. Throws on sysRedis unreachable — intentional: refusing to
+ * silently fail-open is a security property of this function.
+ *
+ * SECURITY/IR NOTE: during a sysRedis outage, this call throws and the
+ * invalidation does not take effect. Callers that need guaranteed
+ * invalidation (stolen-token reports, account-takeover response) MUST
+ * retry after sysRedis recovery. The refreshToken pipeline in
+ * token-refresh.ts is fail-open on read errors, so `tokenState === 'invalid'`
+ * is never observed during the outage window even if a prior successful
+ * call wrote it — the read itself fails open and the session continues.
+ */
 export async function invalidateSession(userId: number) {
   const userTokens = await updateSessionState(userId, 'invalid');
   await sendSessionSignal(userId, 'invalid');

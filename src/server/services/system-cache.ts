@@ -1,6 +1,7 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import type { TagsOnTagsType } from '~/shared/utils/prisma/enums';
 import { TagType } from '~/shared/utils/prisma/enums';
@@ -114,6 +115,13 @@ export async function getReplacedTagIds(): Promise<number[]> {
 }
 
 export async function getSystemPermissions(): Promise<Record<string, number[]>> {
+  // Throws on sysRedis error. Callers decide fail-open behavior:
+  //   - session-user.ts wraps the call and skips the 4h cache write on
+  //     error, to avoid poisoning the SessionUser cache with empty
+  //     permissions for hours after sysRedis recovers.
+  //   - addSystemPermission / removeSystemPermission MUST throw to avoid
+  //     overwriting the real permission set with a partial mutation
+  //     (read returns {} during outage, write later succeeds → wipe).
   const cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
@@ -245,7 +253,13 @@ export async function getLiveNow() {
 }
 
 export async function getBrowsingSettingAddons() {
-  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+  let cached: string | null;
+  try {
+    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'getBrowsingSettingAddons', err);
+    return DEFAULT_BROWSING_SETTINGS_ADDONS;
+  }
   if (cached) {
     const data = JSON.parse(cached) as BrowsingSettingsAddon[];
     return data;
@@ -261,7 +275,17 @@ export type CreationBlockedTag = { id: number; name: string };
 // Independent of BrowsingSettingsAddons (addons gate viewing, this gates
 // authoring). Ops seed/update via `/api/admin/creation-blocked-tags`.
 export async function getCreationBlockedTags(): Promise<CreationBlockedTag[]> {
-  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
+  // Fail open: called on every model upsert (ModelUpsertForm tRPC) and
+  // from model.controller.ts. A sysRedis outage would otherwise 500
+  // every model upload. Empty list matches the unset-key behavior — no
+  // tags blocked during the outage window.
+  let raw: string | null;
+  try {
+    raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
+  } catch (err) {
+    logSysRedisFailOpen('defaults-firing', 'getCreationBlockedTags', err);
+    return [];
+  }
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -292,8 +316,21 @@ export async function setCreationBlockedTags(tagIds: number[]): Promise<Creation
   return tags;
 }
 
+// Throws on sysRedis error so a read failure during a flap can't combine
+// with a successful write to wipe the existing list. Admin retries after
+// recovery. Bypasses the fail-open getCreationBlockedTags() above.
+async function getCreationBlockedTagsRaw(): Promise<CreationBlockedTag[]> {
+  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.CREATION_BLOCKED_TAGS);
+  if (!raw) return [];
+  const parsed = JSON.parse(raw);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.filter(
+    (x): x is CreationBlockedTag => !!x && typeof x.id === 'number' && typeof x.name === 'string'
+  );
+}
+
 export async function addCreationBlockedTags(tagIds: number[]): Promise<CreationBlockedTag[]> {
-  const current = await getCreationBlockedTags();
+  const current = await getCreationBlockedTagsRaw();
   const currentIds = new Set(current.map((t) => t.id));
   const newIds = tagIds.filter((id) => !currentIds.has(id));
   if (!newIds.length) return current;
@@ -301,13 +338,19 @@ export async function addCreationBlockedTags(tagIds: number[]): Promise<Creation
 }
 
 export async function removeCreationBlockedTags(tagIds: number[]): Promise<CreationBlockedTag[]> {
-  const current = await getCreationBlockedTags();
+  const current = await getCreationBlockedTagsRaw();
   const toRemove = new Set(tagIds);
   return setCreationBlockedTags(current.map((t) => t.id).filter((id) => !toRemove.has(id)));
 }
 
 export async function getLiveFeatureFlags() {
-  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+  let cached: string | null;
+  try {
+    cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.LIVE_FEATURE_FLAGS);
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'getLiveFeatureFlags', err);
+    return DEFAULT_LIVE_FEATURE_FLAGS;
+  }
   if (cached) {
     const data = JSON.parse(cached) as LiveFeatureFlags;
     return data;

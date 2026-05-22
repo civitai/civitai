@@ -5,6 +5,7 @@ import superjson from 'superjson';
 import { OnboardingSteps } from '~/server/common/enums';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
@@ -63,7 +64,16 @@ async function needsUpdate(req?: NextApiRequest) {
   const date = req?.headers['x-client-date'] as string;
 
   if (type !== 'web') return false;
-  const client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+  // Fail open: if sysRedis is unreachable, don't force a client update —
+  // every tRPC call runs through enforceClientVersion, so a throw here
+  // would 500 every authenticated request during a sysRedis incident.
+  let client: Record<string, string>;
+  try {
+    client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'needsUpdate', err);
+    return false;
+  }
   if (client.version) {
     if (!version || version === 'unknown') return true;
     return semver.lt(version, client.version);

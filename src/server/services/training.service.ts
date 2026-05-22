@@ -22,6 +22,7 @@ import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type {
@@ -258,11 +259,17 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
 };
 
 export async function getTrainingServiceStatus() {
-  const result = trainingServiceStatusSchema.safeParse(
-    JSON.parse(
-      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)) ?? '{}'
-    )
-  );
+  // Fail open: symmetric with the three getGenerationStatus fixes in this
+  // PR. A sysRedis outage shouldn't crash the training status endpoint or
+  // training submission. Falls back to the schema's '{}' default.
+  let raw: string | null | undefined;
+  try {
+    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);
+  } catch (err) {
+    logSysRedisFailOpen('defaults-firing', 'getTrainingServiceStatus', err);
+    raw = undefined;
+  }
+  const result = trainingServiceStatusSchema.safeParse(JSON.parse(raw ?? '{}'));
   if (!result.success) return trainingServiceStatusSchema.parse({});
 
   return result.data as TrainingServiceStatus;
@@ -272,7 +279,14 @@ export async function setTrainingServiceStatus(input: {
   available: boolean;
   message?: string | null;
 }) {
-  const current = await getTrainingServiceStatus();
+  // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
+  // getTrainingServiceStatus() here: if its read failed open and the
+  // hSet succeeded, ops-configured blockedModels / blockedCustomModels
+  // would be wiped back to schema defaults. Fail-loud is the right
+  // behavior for admin writes.
+  const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS);
+  const parsed = trainingServiceStatusSchema.safeParse(JSON.parse(raw ?? '{}'));
+  const current = parsed.success ? parsed.data : trainingServiceStatusSchema.parse({});
   const next: TrainingServiceStatus = {
     ...current,
     available: input.available,

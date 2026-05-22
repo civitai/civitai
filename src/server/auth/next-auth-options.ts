@@ -22,6 +22,8 @@ import { getProtocol } from '~/server/utils/request-helpers';
 import { trackToken } from '~/server/auth/token-tracking';
 import { refreshToken, clearTokenRefreshMarker } from '~/server/auth/token-refresh';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
   getRequestDomainColor,
   isAliasHost,
@@ -227,7 +229,50 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           // Clear cache first, then fetch fresh user data to avoid getting stale cached data
           // Also mark all user's tokens for refresh in case they have multiple sessions
           // Don't send signal here - this IS the response to a signal, sending another would create a loop
-          await refreshSession(Number(token.sub), { sendSignal: false });
+          //
+          // Fail open: refreshSession writes to sysRedis (marks tokens as
+          // 'refresh' in TOKEN_STATE). During a sysRedis flap this would
+          // 500 the JWT update callback — same class of issue caught for
+          // getOrchestratorToken writebacks. Other callers of
+          // refreshSession (jobs, services) keep strict throwing so they
+          // can retry / alert; only the user-facing update path is
+          // softened here.
+          //
+          // Critical: refreshSession → updateSessionState calls
+          // sysRedis.hGetAll BEFORE clearSessionCache, so a sysRedis
+          // read failure skips the cache clear and getSessionUser below
+          // would return the stale entry — defeating the entire purpose
+          // of trigger==='update'. Inline the three regular-redis del
+          // calls in the catch as a fallback. NOT calling
+          // clearSessionCache directly because that function also fires
+          // invalidateCivitaiUser, which would reintroduce the
+          // orchestrator pile-on that session-user.ts:
+          // permissionsSourceDegraded was specifically designed to
+          // avoid. The orchestrator picks up the next legitimate
+          // refresh once sysRedis recovers.
+          try {
+            await refreshSession(Number(token.sub), { sendSignal: false });
+          } catch (err) {
+            const userId = Number(token.sub);
+            logSysRedisFailOpen(
+              'write-degraded',
+              'next-auth jwt update refreshSession',
+              err,
+              { userId, action: 'continuing-without-marking-tokens' }
+            );
+            await Promise.all([
+              redis.del(`${REDIS_KEYS.USER.SESSION}:${userId}`),
+              redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
+              redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
+            ]).catch((cacheErr) => {
+              logSysRedisFailOpen(
+                'write-degraded',
+                'next-auth jwt update session-cache del fallback',
+                cacheErr,
+                { userId }
+              );
+            });
+          }
           // Now fetch fresh user data (cache is cleared, so this will hit the database)
           const freshUser = await getSessionUser({ userId: Number(token.sub) });
           if (freshUser) {

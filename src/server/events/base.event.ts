@@ -4,16 +4,26 @@ import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
 async function getManualAssignments(event: string) {
   // if (manualAssignments[event]) return manualAssignments[event];
-  const assignments = await sysRedis.hGetAll(
-    `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
-  );
-  // manualAssignments[event] = assignments;
-  return assignments;
+  // Fail open: called via getUserTeam → getUserCosmeticId on every
+  // user-cosmetic resolution during active events. A sysRedis outage
+  // shouldn't 500 every cosmetic lookup — degrade to "no manual
+  // assignments" for the outage window.
+  try {
+    const assignments = await sysRedis.hGetAll(
+      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
+    );
+    // manualAssignments[event] = assignments;
+    return assignments;
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'getManualAssignments', err, { event });
+    return {} as Record<string, string>;
+  }
 }
 export async function addManualAssignments(event: string, team: string, users: string[]) {
   const userIds = await dbWrite.user.findMany({
@@ -92,7 +102,17 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
   async function getDiscordRoles() {
     const cacheKey =
       `${REDIS_SYS_KEYS.EVENT}:${name}:${REDIS_SUB_KEYS.EVENT.DISCORD_ROLES}` as const;
-    const roleCache = await sysRedis.hGetAll(cacheKey);
+    // Read fail-open: if sysRedis is unreachable we early-return {}
+    // immediately and SKIP the Discord API call. Net result during an
+    // outage is "no discord roles for this event" — caller treats the
+    // missing map as no-op.
+    let roleCache: Record<string, string>;
+    try {
+      roleCache = await sysRedis.hGetAll(cacheKey);
+    } catch (err) {
+      logSysRedisFailOpen('read-degraded', 'getDiscordRoles read', err, { event: name });
+      return {} as Record<string, string>;
+    }
     if (Object.keys(roleCache).length > 0) return roleCache;
 
     // Cache is empty, so we need to populate it
@@ -102,7 +122,16 @@ export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayE
       if (!role) continue;
       roleCache[team] = role.id;
     }
-    await sysRedis.hSet(cacheKey, roleCache);
+    // Writeback fail-open (only reached when the read succeeded above):
+    // we already have the freshly-resolved roles in memory, so a cache-
+    // populate failure just means the next call will re-query Discord
+    // instead of getting a sysRedis cache hit. Caller gets the same
+    // roleCache return value regardless.
+    try {
+      await sysRedis.hSet(cacheKey, roleCache);
+    } catch (err) {
+      logSysRedisFailOpen('write-degraded', 'getDiscordRoles writeback', err, { event: name });
+    }
 
     return roleCache;
   }
