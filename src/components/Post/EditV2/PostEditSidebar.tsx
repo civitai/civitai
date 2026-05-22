@@ -145,13 +145,13 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       }
     );
 
-  const handleShowConfirmPublish = (date?: Date) => {
+  const handleShowConfirmPublish = (date?: Date, reviewAcknowledged = false) => {
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
         title: params.confirmTitle,
         message: params.confirmMessage ?? 'Are you sure you want to publish this post?',
-        onConfirm: () => handlePublish(date, false),
+        onConfirm: () => handlePublish(date, false, reviewAcknowledged),
       },
     });
   };
@@ -178,14 +178,19 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           </>
         ),
         labels: { confirm: 'Publish anyway', cancel: 'Cancel' },
-        onConfirm: () => (confirmPublish ? handleShowConfirmPublish(date) : publish(date)),
+        onConfirm: () => (confirmPublish ? handleShowConfirmPublish(date, true) : publish(date)),
       },
     });
   };
 
-  const handlePublish = (date?: Date, confirmPublish = params.confirmPublish) => {
-    if (imagesInReview.length > 0) return handleShowReviewWarning(date, confirmPublish);
-    confirmPublish ? handleShowConfirmPublish(date) : publish(date);
+  const handlePublish = (
+    date?: Date,
+    confirmPublish = params.confirmPublish,
+    reviewAcknowledged = false
+  ) => {
+    if (!reviewAcknowledged && imagesInReview.length > 0)
+      return handleShowReviewWarning(date, confirmPublish);
+    confirmPublish ? handleShowConfirmPublish(date, reviewAcknowledged) : publish(date);
   };
 
   const handleScheduleClick = () => {
