@@ -4,7 +4,7 @@ import type { TypoTolerance } from 'meilisearch';
 import { type BaseModel, isBaseModelGenerationSupported } from '~/shared/constants/basemodel.constants';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex, setSearchCutoffMs } from '~/server/meilisearch/util';
+import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { modelTagCache } from '~/server/redis/caches';
 import { imagesForModelVersionsCache } from '~/server/services/image.service';
 import type { ModelFileMetadata } from '~/server/schema/model-file.schema';
@@ -142,10 +142,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     const updateTypoToleranceTask = await index.updateTypoTolerance(typoTolerance);
     console.log('onIndexSetup :: updateTypoToleranceTask created', updateTypoToleranceTask);
   }
-
-  // Safety net against pathological queries. Set above the observed tail
-  // so legitimate refinement queries on /models are unaffected.
-  await setSearchCutoffMs({ index, ms: 8000 });
 };
 
 type Model = Prisma.ModelGetPayload<{
