@@ -560,6 +560,29 @@ export const upsertSubscription = async (
     // carries no cancellation reason. `method: 'stripe'` keeps the row shape
     // aligned with PR #2306's client-side `Membership_Cancel` emit.
     //
+    // GATING — count only *immediate* cancellations, never overcount:
+    // `customer.subscription.deleted` fires for two distinct cases, and the
+    // enclosing `cancel_at === null` check ALONE does not separate them:
+    //   1. Immediate cancel  — API/portal `cancel()` with no future date.
+    //   2. Period-end cancel — `cancel_at_period_end: true` was set earlier;
+    //      `deleted` fires later when the billing period actually elapses.
+    // Verified against Stripe v11 (the pinned major) semantics: once a
+    // period-end cancellation transitions to `status: canceled`, Stripe
+    // CLEARS `cancel_at` back to `null` (it is defined as "a date in the
+    // *future*" — the future date has now passed). So a period-end `deleted`
+    // event ALSO arrives with `cancel_at === null` and would fall into this
+    // branch — wrongly counted as an immediate cancel, breaking the
+    // "undercount only" guarantee.
+    // The reliable discriminator is `cancel_at_period_end`: its type doc is
+    // explicit that it reflects whether the subscription "will (if
+    // status=active) or DID (if status=canceled) cancel at the end of the
+    // current billing period" — i.e. it RETAINS `true` on the period-end
+    // `deleted` event, whereas an immediate cancel leaves it `false`. So we
+    // additionally require `cancel_at_period_end === false` before emitting.
+    // A period-end cancellation is a separate (already-anticipated) event
+    // and is intentionally not counted here; missing it keeps us on the
+    // safe side of the undercount guarantee.
+    //
     // `actionAsSystem` (PR #2310) is the session-less emit path: it requires
     // an explicit `userId` (unspoofable — there is no request session here),
     // validates the payload against the shared `track.addAction` schema, and
@@ -574,25 +597,29 @@ export const upsertSubscription = async (
     // an `as string` cast silently resolve to a `[object Object]`-shaped id
     // and zero out tier attribution. Normalise both shapes defensively, the
     // same way `upsertPriceRecord` already does for `price.product`.
-    try {
-      const canceledProductRef = subscription.items.data[0]?.price.product;
-      const canceledProductId =
-        typeof canceledProductRef === 'string' ? canceledProductRef : canceledProductRef?.id;
-      const canceledProduct = canceledProductId
-        ? await dbRead.product.findFirst({ where: { id: canceledProductId } })
-        : null;
-      const fromTier = subscriptionProductMetadataSchema.safeParse(canceledProduct?.metadata);
-      new Tracker().actionAsSystem({
-        type: 'Membership_Cancel',
-        userId: user.id,
-        details: {
-          from: fromTier.success ? fromTier.data.tier : '',
-          reason: '',
-          method: 'stripe',
-        },
-      });
-    } catch (err) {
-      log('Failed to track Membership_Cancel for stripe subscription cancellation', err);
+    if (subscription.cancel_at_period_end) {
+      log('Subscription deletion is a period-end cancellation; skipping Membership_Cancel emit');
+    } else {
+      try {
+        const canceledProductRef = subscription.items.data[0]?.price.product;
+        const canceledProductId =
+          typeof canceledProductRef === 'string' ? canceledProductRef : canceledProductRef?.id;
+        const canceledProduct = canceledProductId
+          ? await dbRead.product.findFirst({ where: { id: canceledProductId } })
+          : null;
+        const fromTier = subscriptionProductMetadataSchema.safeParse(canceledProduct?.metadata);
+        new Tracker().actionAsSystem({
+          type: 'Membership_Cancel',
+          userId: user.id,
+          details: {
+            from: fromTier.success ? fromTier.data.tier : '',
+            reason: '',
+            method: 'stripe',
+          },
+        });
+      } catch (err) {
+        log('Failed to track Membership_Cancel for stripe subscription cancellation', err);
+      }
     }
     return;
   }
