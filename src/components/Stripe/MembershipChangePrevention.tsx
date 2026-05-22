@@ -226,10 +226,12 @@ export const StripeCancelMembershipButton = ({
   fromTier?: ProductTier;
 }) => {
   const { trackAction } = useTrackEvent();
-  // Membership_Cancel must fire at most once per cancellation. onSuccess
-  // reloads the page, but the reload is async — a repeat click or a slow
-  // navigation leaves a window where the handler could run again. A one-shot
-  // ref keeps the metric from being double-counted.
+  // Idempotency guard for the Membership_Cancel emit. A resolved onSuccess
+  // closure cannot re-run on its own, so this does not defend against a single
+  // mutation double-firing. It guards the case where the modal stays mounted
+  // after a cancellation (e.g. the window.location.reload() is slow or blocked)
+  // and the button is clicked again, kicking off a second mutation whose
+  // onSuccess would re-emit Membership_Cancel for the same cancelled subscription.
   const hasTrackedRef = useRef(false);
   const { mutate, isLoading: connectingToStripe } =
     trpc.stripe.cancelSubscriptionWithFallback.useMutation({
@@ -303,8 +305,13 @@ export const PaddleCancelMembershipButton = ({
   fromTier?: ProductTier;
 }) => {
   const { trackAction } = useTrackEvent();
-  // See StripeCancelMembershipButton — one-shot guard so a repeat click or a
-  // slow window.location.reload() can't emit Membership_Cancel twice.
+  // Idempotency guard for the Membership_Cancel emit. The mutation's onSuccess
+  // closure cannot itself re-run once resolved, so this does not defend against
+  // a single mutation double-firing. It guards the case where the modal stays
+  // mounted after a cancellation (e.g. the window.location.reload() is slow or
+  // is blocked) and the button is clicked a second time, kicking off another
+  // mutation whose onSuccess would emit Membership_Cancel again for the same
+  // already-cancelled subscription.
   const hasTrackedRef = useRef(false);
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
@@ -331,6 +338,15 @@ export const PaddleCancelMembershipButton = ({
           });
           window?.location.reload();
         }
+      },
+      // Match the Stripe sibling handler: a failed cancellation must surface an
+      // error notification instead of producing an unhandled rejection that
+      // leaves the modal silently open.
+      onError: (error) => {
+        showErrorNotification({
+          title: 'Failed to cancel subscription',
+          error: new Error(error.message),
+        });
       },
     });
   };
