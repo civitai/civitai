@@ -25,7 +25,7 @@ import {
   IconMoodDollar,
   IconTrendingUp,
 } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Fragment } from 'react';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
@@ -79,6 +79,7 @@ import { syncAccount } from '~/utils/sync-account';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -1133,6 +1134,7 @@ const StripeTransactionModal = ({
               onSuccess={onSuccess}
               onCancel={dialog.onClose}
               successMessage={successMessage}
+              metadata={metadata}
             />
           </Elements>
         )}
@@ -1146,16 +1148,65 @@ const StripePaymentForm = ({
   onSuccess,
   onCancel,
   successMessage,
+  metadata,
 }: {
   clientSecret: string;
   onSuccess?: (paymentIntentId: string) => Promise<void>;
   onCancel: () => void;
   successMessage?: React.ReactNode;
+  metadata: PaymentIntentMetadataSchema;
 }) => {
+  const { trackAction } = useTrackEvent();
+  // PurchaseFunds_Confirm must fire at most once per payment. onPaymentSuccess
+  // can run more than once on the polling-resolution path (a poll tick may
+  // observe `succeeded` again before the interval is torn down), so the
+  // analytics emit is guarded by this one-shot ref.
+  const hasTrackedConfirmRef = useRef(false);
   const { errorMessage, onConfirmPayment, processingPayment, paymentIntentStatus } =
     useStripeTransaction({
       clientSecret,
       onPaymentSuccess: async (paymentIntent) => {
+        // Re-instrument the purchase-completion analytics event. This emit
+        // regressed on 2024-08-30 when buzz purchases moved to redirect-based
+        // providers and the legacy StripeTransactionModal (which carried it)
+        // stopped being used.
+        //
+        // onPaymentSuccess can fire more than once on the polling-resolution
+        // path, so the emit is guarded by a one-shot ref to avoid
+        // double-counting completions. onSuccess is intentionally left
+        // unguarded — it runs every time and is idempotent on the server.
+        // The emit reads buzz-specific fields off `metadata` (buzzAmount,
+        // unitAmount). Both metadata `type` values ('buzzPurchase' and
+        // 'clubMembershipPayment') carry the same buzzAmount/unitAmount shape,
+        // so no per-type narrowing is needed — `metadata` is always present and
+        // typed via PaymentIntentMetadataSchema.
+        if (!hasTrackedConfirmRef.current) {
+          hasTrackedConfirmRef.current = true;
+
+          // On the confirm path `payment_method` is the expanded PaymentMethod
+          // object (Stripe.js expands it via confirmParams.expand). On the
+          // polling-resolution path it comes back as an unexpanded string ID —
+          // the client-side retrievePaymentIntent API cannot expand it — and it
+          // may also be null. Only treat it as expanded when it is a non-null
+          // object; for a string ID, null, or undefined fall back to
+          // payment_method_types[0] (e.g. 'card') instead of the generic
+          // provider name. (typeof null === 'object', so the null check is
+          // required to avoid silently skipping the fallback.)
+          const pm = paymentIntent.payment_method;
+          const paymentMethodType =
+            typeof pm === 'object' && pm !== null
+              ? pm.type
+              : paymentIntent.payment_method_types?.[0];
+          trackAction({
+            type: 'PurchaseFunds_Confirm',
+            details: {
+              buzzAmount: metadata.buzzAmount,
+              unitAmount: metadata.unitAmount,
+              method: paymentMethodType ?? 'stripe',
+            },
+          }).catch(() => undefined);
+        }
+
         if (onSuccess) {
           await onSuccess(paymentIntent.id);
         }
