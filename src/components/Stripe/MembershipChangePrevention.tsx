@@ -236,8 +236,11 @@ export const StripeCancelMembershipButton = ({
             title: 'Subscription cancelled',
             message: 'Your subscription has been cancelled successfully.',
           });
-          if (onContinue) onContinue();
-          else window.location.reload();
+          if (onContinue) {
+            Promise.resolve(onContinue()).catch(() => window.location.reload());
+          } else {
+            window.location.reload();
+          }
         }
       },
       onError(error) {
@@ -292,8 +295,11 @@ export const PaddleCancelMembershipButton = ({
             title: 'You have been successfully downgraded to our Free tier.',
             message: 'You will no longer be billed for your subscription',
           });
-          if (onContinue) onContinue();
-          else window?.location.reload();
+          if (onContinue) {
+            Promise.resolve(onContinue()).catch(() => window?.location.reload());
+          } else {
+            window?.location.reload();
+          }
         }
       },
     });
