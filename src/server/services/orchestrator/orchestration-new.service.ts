@@ -44,6 +44,7 @@ import {
 } from '~/server/services/generation/generation.service';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
@@ -211,12 +212,15 @@ export type GenerationContextResult = {
 };
 
 async function getGenerationStatus(): Promise<GenerationStatus> {
-  return generationStatusSchema.parse(
-    JSON.parse(
-      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
-        '{}'
-    )
-  ) as GenerationStatus;
+  // Fail open: a sysRedis outage shouldn't crash generation context build.
+  let raw: string | null | undefined;
+  try {
+    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  } catch (err) {
+    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus orchestration-new', err);
+    raw = undefined;
+  }
+  return generationStatusSchema.parse(JSON.parse(raw ?? '{}')) as GenerationStatus;
 }
 
 /**

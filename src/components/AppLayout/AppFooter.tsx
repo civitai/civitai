@@ -1,4 +1,5 @@
 import { Button, Indicator, Text } from '@mantine/core';
+import { useLocalStorage } from '@mantine/hooks';
 import { IconArrowUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
@@ -12,6 +13,7 @@ import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsPro
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import { trpc } from '~/utils/trpc';
 
 const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   domains?: ColorDomain[];
@@ -35,12 +37,12 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Safety',
     features: (features) => features.safety,
   },
-  {
-    key: 'newsroom',
-    href: '/newsroom',
-    children: 'Newsroom',
-    features: (features) => features.newsroom,
-  },
+  // {
+  //   key: 'newsroom',
+  //   href: '/newsroom',
+  //   children: 'Newsroom',
+  //   features: (features) => features.newsroom,
+  // },
   {
     key: 'api',
     href: 'https://developer.civitai.com/',
@@ -56,11 +58,18 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Status',
   },
   {
+    key: 'issues',
+    href: '/issues',
+    children: 'Known Issues',
+    indicator: true,
+    features: (features) => features.bugsPage,
+  },
+  {
     key: 'education',
     href: '/education',
     target: '_blank',
     rel: 'nofollow noreferrer',
-    children: '💡 Education',
+    children: 'Education',
   },
   {
     key: 'creator-program',
@@ -68,11 +77,11 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     color: 'blue',
     children: 'Creators',
   },
-  {
-    key: 'careers',
-    href: '/content/careers',
-    children: 'Careers',
-  },
+  // {
+  //   key: 'careers',
+  //   href: '/content/careers',
+  //   children: 'Careers',
+  // },
   {
     key: '2257',
     href: '/content/2257',
@@ -93,6 +102,17 @@ export function AppFooter() {
       setShowFooter(node.scrollTop <= 100);
     },
   });
+
+  const [lastSeenBug] = useLocalStorage<number>({
+    key: 'last-seen-bug',
+    defaultValue: 0,
+    getInitialValueInEffect: false,
+  });
+  const { data: latestBugUpdate } = trpc.bug.getLatest.useQuery(undefined, {
+    enabled: features.bugsPage,
+    staleTime: 1000 * 60,
+  });
+  const showBugDot = !!latestBugUpdate && latestBugUpdate > lastSeenBug;
 
   return (
     <footer
@@ -137,20 +157,21 @@ export function AppFooter() {
                 !(browsingSettingsAddons.settings.excludedFooterLinks ?? []).includes(item.key)
             )
             .map(({ features, key, indicator, ...props }, i) => {
+              const showIndicator = indicator && (key === 'issues' ? showBugDot : true);
               let button = (
                 <Button
                   key={key ?? i}
                   component={(props.target === '_blank' ? 'a' : Link) as typeof Link}
                   {...props}
                   className={clsx('px-2.5 @max-sm:px-1', {
-                    'pr-3.5': indicator,
+                    'pr-3.5': showIndicator,
                   })}
                   size="xs"
                   variant="subtle"
                   color="gray"
                 />
               );
-              if (indicator) {
+              if (showIndicator) {
                 button = (
                   <Indicator
                     key={key ?? i}

@@ -1,4 +1,5 @@
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { fromJson } from '~/utils/json-helpers';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -53,10 +54,18 @@ export async function getModWordBlocklist() {
 
   const blocklist = [] as Awaited<ReturnType<typeof adjustModWordBlocklist>>[];
   for (const wordlist of wordlists) {
-    const words = await sysRedis.packed.hGet<string[]>(
-      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS,
-      wordlist
-    );
+    // Inner read can throw during a partial sysRedis flap even though
+    // the outer .catch above returned a populated wordlists array.
+    // Treat it the same as wordlist-not-found.
+    let words: string[] | null = null;
+    try {
+      words = await sysRedis.packed.hGet<string[]>(
+        REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.WORDS,
+        wordlist
+      );
+    } catch (err) {
+      logSysRedisFailOpen('read-degraded', 'getModWordBlocklist hGet', err, { wordlist });
+    }
     if (words) {
       for (const word of words) {
         blocklist.push(await adjustModWordBlocklist(word));
@@ -82,10 +91,16 @@ export async function getModURLBlocklist() {
 
   const blocklist = [] as Awaited<ReturnType<typeof adjustModWordBlocklist>>[];
   for (const urllist of urllists) {
-    const urls = await sysRedis.packed.hGet<string[]>(
-      REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS,
-      urllist
-    );
+    // Same partial-flap concern as getModWordBlocklist above.
+    let urls: string[] | null = null;
+    try {
+      urls = await sysRedis.packed.hGet<string[]>(
+        REDIS_SYS_KEYS.ENTITY_MODERATION.WORDLISTS.URLS,
+        urllist
+      );
+    } catch (err) {
+      logSysRedisFailOpen('read-degraded', 'getModURLBlocklist hGet', err, { urllist });
+    }
     if (urls) {
       for (const url of urls) {
         blocklist.push([{ re: new RegExp(`.*${url}.*`, 'i'), word: url }]);
@@ -116,7 +131,16 @@ export async function getBlocklists() {
     const modWordBlocklist = await getModWordBlocklist();
     const modURLBlocklist = await getModURLBlocklist();
     if (!modWordBlocklist.length && !modURLBlocklist.length) {
-      throw new Error('No blocklists found');
+      // Both lists empty: either genuinely no lists configured, OR a
+      // partial sysRedis flap let the outer toggle read succeed while
+      // every inner per-wordlist hGet failed open. Pre-PR this threw;
+      // post-PR we fail-open consistent with the inner reads. Caller
+      // (entity-moderation job) treats `use: false` as no-op rather
+      // than blowing up the job batch on transient sysRedis health.
+      logSysRedisFailOpen('read-degraded', 'getBlocklists empty', null, {
+        action: 'returning-use-false',
+      });
+      return { use: false, modWordBlocklist: [], modURLBlocklist: [] };
     }
     return { use: true, modWordBlocklist, modURLBlocklist };
   } else {

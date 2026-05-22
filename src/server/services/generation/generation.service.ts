@@ -10,6 +10,7 @@ import {
   wanGeneralBaseModelMap,
 } from '~/server/orchestrator/wan/wan.schema';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CheckResourcesCoverageSchema,
@@ -231,18 +232,28 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 }
 
 export async function getGenerationStatus() {
-  const status = generationStatusSchema.parse(
-    JSON.parse(
-      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
-        '{}'
-    )
-  );
+  // Fail open: a sysRedis outage shouldn't crash generation API calls.
+  let raw: string | null | undefined;
+  try {
+    raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  } catch (err) {
+    logSysRedisFailOpen('defaults-firing', 'getGenerationStatus generation.service', err);
+    raw = undefined;
+  }
+  const status = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
 
   return status as GenerationStatus;
 }
 
 export async function setGenerationStatus(input: { available: boolean; message?: string | null }) {
-  const current = await getGenerationStatus();
+  // Read raw and throw on sysRedis error. We MUST NOT use the fail-open
+  // getGenerationStatus() here: if its read failed open to '{}' and the
+  // subsequent hSet succeeded, schema defaults (charge: true, limits:
+  // defaultsByTier) would overwrite the real ops-tuned values. Fail-loud
+  // is the right behavior for admin writes — the admin sees the 500 and
+  // retries after sysRedis recovers.
+  const raw = await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS);
+  const current = generationStatusSchema.parse(JSON.parse(raw ?? '{}'));
   const next: GenerationStatus = {
     ...current,
     available: input.available,

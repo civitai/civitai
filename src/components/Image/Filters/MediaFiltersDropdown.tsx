@@ -231,6 +231,16 @@ export function MediaFiltersDropdown({
           >
             <span>Made On-site</span>
           </FilterChip>
+          {currentUser && !isModerator && (
+            <FilterChip
+              checked={!!mergedFilters.scheduled}
+              onChange={(checked) => handleChange({ scheduled: checked ? checked : undefined })}
+            >
+              <Tooltip label="Show your scheduled posts in feeds">
+                <span>Scheduled</span>
+              </Tooltip>
+            </FilterChip>
+          )}
           <FilterChip
             checked={mergedFilters.nonRemixesOnly}
             onChange={(checked) => {
@@ -298,7 +308,7 @@ export function MediaFiltersDropdown({
                 <span>Disable Minor</span>
               </FilterChip>
               <FilterChip
-                checked={mergedFilters.notPublished}
+                checked={!!mergedFilters.notPublished}
                 onChange={(checked) =>
                   handleChange({ notPublished: checked ? checked : undefined })
                 }
@@ -306,7 +316,7 @@ export function MediaFiltersDropdown({
                 <span>Not Published</span>
               </FilterChip>
               <FilterChip
-                checked={mergedFilters.scheduled}
+                checked={!!mergedFilters.scheduled}
                 onChange={(checked) => handleChange({ scheduled: checked ? checked : undefined })}
               >
                 <span>Scheduled</span>

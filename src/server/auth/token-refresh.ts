@@ -1,6 +1,7 @@
 import type { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getSessionUser } from './session-user';
 import type { User } from '~/shared/utils/prisma/models';
 import { createLogger } from '~/utils/logging';
@@ -17,10 +18,19 @@ export type RefreshTokenResult = {
 /**
  * Clear the refresh marker for a specific token.
  * Call this after the JWT cookie has been successfully updated (i.e., in JWT callback with trigger='update')
+ *
+ * Best-effort: a sysRedis write failure here just means the marker
+ * sticks around (the next refreshToken pipeline will surface it as
+ * tokenState === 'refresh' again, signaling another cookie refresh).
+ * Throwing would 500 the JWT update callback during a sysRedis blip.
  */
 export async function clearTokenRefreshMarker(tokenId: string) {
-  await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
-  log(`Cleared refresh marker for token ${tokenId}`);
+  try {
+    await sysRedis.hDel(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId);
+    log(`Cleared refresh marker for token ${tokenId}`);
+  } catch (err) {
+    logSysRedisFailOpen('write-degraded', 'clearTokenRefreshMarker', err, { tokenId });
+  }
 }
 
 export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
@@ -38,15 +48,25 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
   const userTokenKey = `${REDIS_KEYS.SESSION.USER_TOKENS}:${user.id}`;
 
   // Use Redis pipeline to batch all read operations into a single round trip
-  // This reduces network latency from 3 sequential calls to 1 call
-  const pipeline = sysRedis.multi();
-  pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
-  pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
-  pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
+  // This reduces network latency from 3 sequential calls to 1 call.
+  // If sysRedis is unreachable, fail open: keep the existing session rather
+  // than 500ing every authenticated request.
+  let results;
+  try {
+    const pipeline = sysRedis.multi();
+    pipeline.hGet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, tokenId); // [0] Check token state
+    pipeline.hExists(userTokenKey as any, tokenId); // [1] Check if token exists in tracking
+    pipeline.get(REDIS_SYS_KEYS.SESSION.ALL); // [2] Check global invalidation date
+    results = await pipeline.exec();
+  } catch (err) {
+    logSysRedisFailOpen('read-degraded', 'refreshToken pipeline', err, {
+      userId: user.id,
+      tokenId,
+    });
+    return { token, needsCookieRefresh: false };
+  }
 
-  const results = await pipeline.exec();
-
-  // Handle pipeline errors
+  // Handle pipeline errors (null result is distinct from a throw)
   if (!results) {
     log(`Pipeline failed for token ${tokenId}, allowing session to continue`);
     return { token, needsCookieRefresh: false };
@@ -59,8 +79,17 @@ export async function refreshToken(token: JWT): Promise<RefreshTokenResult> {
 
   // Handle explicit invalidation
   if (tokenState === 'invalid') {
-    // Remove the user token tracking since it's invalid
-    await sysRedis.hDel(userTokenKey as any, tokenId);
+    // Remove the user token tracking since it's invalid. Best-effort: if
+    // sysRedis is mid-flap (read returned, write fails), still emit the
+    // needsCookieRefresh signal — the TOKEN_STATE='invalid' record already
+    // gates this token, so the tracking-hash delete is a cleanup, not a
+    // correctness requirement.
+    await sysRedis.hDel(userTokenKey as any, tokenId).catch((err) => {
+      logSysRedisFailOpen('write-degraded', 'refreshToken hDel (invalid branch)', err, {
+        userId: user.id,
+        tokenId,
+      });
+    });
     // Keep the 'invalid' state in TOKEN_STATE - it will expire naturally after 30 days
     // This ensures subsequent requests with the same token continue to be rejected
     // Signal client to refresh cookie - when it does, it will get empty session and be logged out
@@ -143,10 +172,42 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
   token.id = tokenId;
   token.signedAt = Date.now();
 
-  // Track this token for the user
+  // Track this token for the user. Best-effort: a sysRedis write failure
+  // here would lose the refresh work above and 500 the request — degrade
+  // to "refreshed in memory, tracking will catch up on next successful
+  // call" instead.
+  //
+  // Known perf cliff: during a partial sysRedis outage (reads succeed,
+  // writes fail), the next refreshToken pipeline sees `exists` return
+  // 0 and forces shouldRefresh=true. That triggers a fresh
+  // getSessionUser call. getSessionUser checks the regular-redis cache
+  // FIRST (session-user.ts:36) — on a partial flap, that cache is
+  // still being written normally, so most calls hit cache and skip DB.
+  //
+  // The DB amplification actually kicks in on a FULL sysRedis outage:
+  // session-user.ts permissionsSourceDegraded skips the regular-redis
+  // cache write, so every re-derivation cache-misses and goes to DB.
+  // Then this setToken catch fires (because sysRedis writes also fail),
+  // so each subsequent authed request repeats the cycle. The cliff is
+  // real but conditioned on the full-outage case, not partial flaps.
+  //
+  // Known accumulation pattern: if hSet succeeds and hExpire fails, the
+  // tokenId field on USER_TOKENS:userId persists without TTL. It's only
+  // cleaned up by the explicit hDel in the tokenState === 'invalid'
+  // branch above or a full session invalidation. After sustained
+  // partial-flap windows, per-user USER_TOKENS hashes can accumulate
+  // orphaned entries. Bounded per user but non-trivial in aggregate.
+  // Same atomic-set+expire fix tracked for HA cutover.
   if (session.id) {
     const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`;
-    await sysRedis.hSet(key as any, tokenId, Date.now());
-    await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+    try {
+      await sysRedis.hSet(key as any, tokenId, Date.now());
+      await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+    } catch (err) {
+      logSysRedisFailOpen('tracking-write-cliff', 'setToken', err, {
+        userId: session.id,
+        tokenId,
+      });
+    }
   }
 }

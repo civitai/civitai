@@ -946,6 +946,7 @@ export const REDIS_KEYS = {
     REDEMPTION_ATTEMPTS: 'counters:redemption-attempts',
     EMAIL_VERIFICATIONS: 'counters:email-verifications',
     HISTORY_DOWNLOADS: 'counters:history-downloads',
+    BUG_REPORTS: 'counters:bug-reports',
   },
   LIVE_NOW: 'live-now',
   DAILY_CHALLENGE: {

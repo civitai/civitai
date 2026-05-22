@@ -7,7 +7,7 @@ import type { NsfwLevel } from '~/server/common/enums';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { getOrCreateIndex, setSearchCutoffMs } from '~/server/meilisearch/util';
+import { getOrCreateIndex } from '~/server/meilisearch/util';
 import {
   tagCache,
   tagIdsForImagesCache,
@@ -101,14 +101,6 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
       updateFilterableAttributesTask
     );
   }
-
-  // images_v6 is the largest index (60M+ docs, ~740 GB on disk). Cap query
-  // time as a safety net against pathological queries — set well above the
-  // observed P95 (~9s during disk pressure, lower in normal state) so the
-  // long tail of legitimate facet-heavy queries on /search/images is not
-  // silently truncated. Per Meilisearch metrics over 24h, ~95% of meili
-  // queries finish under 10s; 15s here only catches truly runaway requests.
-  await setSearchCutoffMs({ index, ms: 15000 });
 
   console.log('onIndexSetup :: all tasks completed');
 };
