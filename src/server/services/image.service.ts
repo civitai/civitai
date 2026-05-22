@@ -2794,9 +2794,11 @@ function contentScopeUserOwnHits(
   // Defense-in-depth: drop own scheduled/unpublished hits when the caller did
   // not opt in via `scheduled` or `notPublished`. Belt-and-suspenders against
   // a stale second-pass query forgetting to gate the publish clause.
+  // `publishedAtUnix` is stored in ms (`publishedAt.getTime()`) to match the
+  // rest of the publish filter logic which compares against `snappedNow` in ms.
   if (!input.scheduled && !input.notPublished) {
-    const nowSec = Math.floor(Date.now() / 1000);
-    scoped = scoped.filter((h) => h.publishedAtUnix != null && h.publishedAtUnix <= nowSec);
+    const nowMs = Date.now();
+    scoped = scoped.filter((h) => h.publishedAtUnix != null && h.publishedAtUnix <= nowMs);
   }
   return scoped;
 }
