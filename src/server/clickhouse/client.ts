@@ -26,7 +26,7 @@ import type {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { trackActionSchema } from '~/server/schema/track.schema';
+import { trackActionSchema, type TrackActionInput } from '~/server/schema/track.schema';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -500,7 +500,7 @@ export class Tracker {
    */
   public actionAsSystem(values: {
     userId: number;
-    type: ActionType;
+    type: TrackActionInput['type'];
     details?: any;
   }): void {
     const { userId, type, details } = values;
