@@ -178,8 +178,8 @@ export function InteractiveTipBuzzButton({
         details: { toUserId, entityId, entityType, amount },
       }).catch(() => undefined);
     }
-    gestureCommittedRef.current = false;
 
+    // reset() clears gestureCommittedRef — see its single authoritative reset.
     setTimeout(() => reset(), 100);
   };
 
@@ -196,9 +196,8 @@ export function InteractiveTipBuzzButton({
     amount ??= buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
 
     const performTransaction = () => {
-      // The confirm flow resolved with a real tip — it is no longer a
-      // pending cancelable gesture.
-      gestureCommittedRef.current = false;
+      // The confirm flow resolved with a real tip. The gesture flag is cleared
+      // by reset() in onSettled below (single authoritative reset point).
       trackAction({
         type: 'Tip_Confirm',
         details: { toUserId, entityType, entityId, amount },
@@ -254,6 +253,11 @@ export function InteractiveTipBuzzButton({
       clearTimeout(confirmTimeoutRef.current);
       confirmTimeoutRef.current = null;
     }
+    // Single authoritative reset point for the gesture-committed flag. Every
+    // path that ends a tip flow (cancel, confirm, auto-dismiss, mouseleave
+    // abort, insufficient-funds-then-abandon) routes through reset(), so the
+    // flag cannot leak into the next confirm flow.
+    gestureCommittedRef.current = false;
   };
 
   const startConfirming = () => {
@@ -266,9 +270,8 @@ export function InteractiveTipBuzzButton({
     setShowCountDown(true);
     confirmTimeoutRef.current = setTimeout(() => {
       // Auto-dismiss after inactivity. This is a timeout, not a deliberate
-      // user cancel, so no TipInteractive_Cancel is emitted — just clear the
-      // gesture flag so it can't leak into the next confirm flow.
-      gestureCommittedRef.current = false;
+      // user cancel, so no TipInteractive_Cancel is emitted. reset() clears
+      // the gesture flag (single authoritative reset point).
       setTimeout(() => reset(), 100);
       setStatus('pending');
     }, CONFIRMATION_TIMEOUT);
@@ -303,17 +306,28 @@ export function InteractiveTipBuzzButton({
   const clickEnd = (e: React.MouseEvent | React.TouchEvent) => {
     if (isTouchDevice() && e.type == 'mouseup') return;
 
-    // onMouseLeave is wired to clickEnd so an in-progress press is cleaned up
-    // when the pointer drags off the button (common while scrolling a feed).
-    // Leaving the button is NOT a deliberate tip gesture, so abort instead of
-    // completing it — completing here is what produced phantom
-    // TipInteractive_Click events (and the Cancel/timeout churn that follows).
-    if (e.type === 'mouseleave') {
-      if (startTimerTimeoutRef.current !== null) {
-        clearTimeout(startTimerTimeoutRef.current);
-        startTimerTimeoutRef.current = null;
-      }
+    // onMouseLeave is wired to clickEnd so an in-progress press is handled when
+    // the pointer drags off the button. We must distinguish two cases:
+    //
+    //  - PHANTOM press: the pointer left before the 150ms hold timer fired, so
+    //    the press never committed (startTimerTimeoutRef is still pending). This
+    //    is a stray pointer event from scrolling a feed, not a tip gesture —
+    //    abort it. Completing here is what produced phantom TipInteractive_Click
+    //    events (and the Cancel/timeout churn that follows).
+    //
+    //  - COMMITTED hold: the press was held past the 150ms timer (the interval
+    //    is active and has been incrementing buzzCounter). That is a genuine,
+    //    intentional hold — if the cursor then drifts off the small button
+    //    before release, the user still meant to tip. Fall through to complete
+    //    the gesture (emit TipInteractive_Click, open the confirm popover) as
+    //    the pre-PR onMouseLeave did, so a real hold-and-drift is not dropped.
+    if (e.type === 'mouseleave' && startTimerTimeoutRef.current !== null) {
+      // Phantom press — not yet committed. Abort: clear the hold timer and
+      // reset state so the stranded buzzCounter doesn't pollute the next tip.
+      clearTimeout(startTimerTimeoutRef.current);
+      startTimerTimeoutRef.current = null;
       if (interval.active) interval.stop();
+      reset();
       return;
     }
 
