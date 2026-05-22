@@ -166,7 +166,7 @@ export default function WildcardPreviewModal({
                       {target.label}
                     </Text>
                   </Group>
-                  <div className="whitespace-pre-wrap rounded-md border border-dark-4 bg-dark-7 px-4 py-3 text-sm leading-relaxed text-gray-2">
+                  <div className="whitespace-pre-wrap break-words rounded-md border border-dark-4 bg-dark-7 px-4 py-3 text-sm leading-relaxed text-gray-2">
                     {resolved !== undefined ? (
                       <ResolvedText original={target.text} resolved={resolved} />
                     ) : (

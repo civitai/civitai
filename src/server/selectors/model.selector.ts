@@ -6,6 +6,7 @@ import {
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { Availability, MetricTimeframe, ModelStatus } from '~/shared/utils/prisma/enums';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import type { ModelFileType } from '../common/constants';
 import { profileImageSelect } from './image.selector';
 import { modelFileSelect } from './modelFile.selector';
@@ -225,7 +226,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   hashes: {
     select: modelHashSelect,
     where: {
-      fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+      fileType: { in: primaryModelFileTypes as ModelFileType[] },
       hashType: { notIn: ['AutoV1'] as ModelHashType[] },
     },
   },

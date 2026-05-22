@@ -273,10 +273,23 @@ export const primaryFileTypesByModelType: Record<ModelType, readonly ModelFileTy
   Other: ['Archive', 'Config', 'Model'],
 };
 
-const DEFAULT_PRIMARY_FILE_TYPES: readonly ModelFileType[] = ['Model', 'Pruned Model'];
+/**
+ * File types that contain the actual model weights for a Checkpoint-style version.
+ * Use this when filtering for "the main weights file" — e.g. coverage gates,
+ * primary-file scoring, hash-based resource lookups. Also used as the fallback
+ * for getPrimaryFileTypes() when the ModelType is unknown. Includes newer
+ * 'Diffusion Model' / 'UNet' types used by Flux / Wan / ZImage / Anima / Ernie
+ * checkpoints.
+ */
+export const primaryModelFileTypes: readonly ModelFileType[] = [
+  'Model',
+  'Pruned Model',
+  'Diffusion Model',
+  'UNet',
+];
 
 /** Returns the primary ModelFileType allow-list for a given ModelType. */
 export function getPrimaryFileTypes(modelType?: ModelType | null): readonly ModelFileType[] {
-  if (!modelType) return DEFAULT_PRIMARY_FILE_TYPES;
-  return primaryFileTypesByModelType[modelType] ?? DEFAULT_PRIMARY_FILE_TYPES;
+  if (!modelType) return primaryModelFileTypes;
+  return primaryFileTypesByModelType[modelType] ?? primaryModelFileTypes;
 }

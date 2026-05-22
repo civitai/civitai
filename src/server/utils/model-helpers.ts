@@ -2,7 +2,7 @@ import { startCase } from 'lodash-es';
 import type { ModelFileType } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { getPrimaryFileTypes } from '~/utils/file-display-helpers';
+import { getPrimaryFileTypes, primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type FileFormatType = {
@@ -40,8 +40,8 @@ export function getPrimaryFile<T extends FileFormatType>(
       else score -= weight;
     }
 
-    // Give priority to model files
-    if (file.type === 'Model' || file.type === 'Pruned Model') score += 1000;
+    // Give priority to files containing the main model weights
+    if (file.type && primaryModelFileTypes.includes(file.type as ModelFileType)) score += 1000;
 
     return score;
   };
