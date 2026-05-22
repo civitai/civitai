@@ -1,9 +1,9 @@
 import type { UnstyledButtonProps } from '@mantine/core';
-import { Group, Popover, Stack, Text, UnstyledButton, Button } from '@mantine/core';
+import { Group, Popover, Stack, Text, UnstyledButton } from '@mantine/core';
 import { useInterval, useLocalStorage } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -36,6 +36,44 @@ type Props = UnstyledButtonProps &
 
 const CLICK_AMOUNT = 10;
 const CONFIRMATION_TIMEOUT = 5000;
+// Pointer-movement tolerance (px) for the onMouseLeave abort decision. A real
+// scroll/drag moves the pointer well beyond this; an incidental few-pixel drift
+// off the edge of a small feed button while the user holds a quick tap stays
+// within it. Only movement past this radius is treated as a genuine drag.
+const PRESS_MOVE_TOLERANCE = 10;
+
+/**
+ * Decides whether an `onMouseLeave` firing mid-press should abort the gesture.
+ *
+ * Pure so it can be unit-tested without rendering the component. Abort only
+ * when BOTH are true:
+ *  - the press has not committed yet (the 150ms hold timer is still pending),
+ *    i.e. `pressUncommitted` — a committed hold is a deliberate tip and is
+ *    completed even if the cursor then drifts off; and
+ *  - the pointer genuinely moved past `PRESS_MOVE_TOLERANCE` from where the
+ *    press started — a real scroll/drag. An incidental few-pixel drift off the
+ *    small button edge is NOT a drag, so the quick tap is allowed to complete.
+ *
+ * When the press origin is unknown (`origin` null) we cannot measure drift, so
+ * we conservatively treat the leave as a real drag and abort.
+ */
+export function shouldAbortPressOnLeave({
+  pressUncommitted,
+  origin,
+  current,
+  tolerance = PRESS_MOVE_TOLERANCE,
+}: {
+  pressUncommitted: boolean;
+  origin: { x: number; y: number } | null;
+  current: { x: number; y: number };
+  tolerance?: number;
+}): boolean {
+  if (!pressUncommitted) return false;
+  if (!origin) return true;
+  const dx = current.x - origin.x;
+  const dy = current.y - origin.y;
+  return dx * dx + dy * dy > tolerance * tolerance;
+}
 
 /**NOTES**
  Why use zustand?
@@ -124,6 +162,11 @@ export function InteractiveTipBuzzButton({
   // TipInteractive_* analytics events so they don't fire on stray pointer
   // events (e.g. onMouseLeave while scrolling a feed).
   const gestureCommittedRef = useRef(false);
+  // Pointer coordinates captured when a press starts on the button. Used by the
+  // onMouseLeave handler to tell a genuine scroll/drag (pointer moved well past
+  // PRESS_MOVE_TOLERANCE) apart from an incidental few-pixel drift off the small
+  // button edge during a real quick tap — see shouldAbortPressOnLeave().
+  const pressOriginRef = useRef<{ x: number; y: number } | null>(null);
   const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
   const [showCountDown, setShowCountDown] = useState(false);
 
@@ -273,6 +316,7 @@ export function InteractiveTipBuzzButton({
     // sendTip must call reset() when conditionalPerformTransaction returns
     // false; otherwise the flag would leak `true` into the next confirm flow.
     gestureCommittedRef.current = false;
+    pressOriginRef.current = null;
   };
 
   const startConfirming = () => {
@@ -312,6 +356,13 @@ export function InteractiveTipBuzzButton({
       confirmTimeoutRef.current = null;
     }
 
+    // Record where the press started so onMouseLeave can measure pointer drift
+    // and distinguish a real scroll/drag from an incidental edge drift.
+    const point = 'touches' in e ? e.touches[0] : e;
+    pressOriginRef.current = point
+      ? { x: point.clientX, y: point.clientY }
+      : null;
+
     startTimerTimeoutRef.current = setTimeout(() => {
       interval.start();
       startTimerTimeoutRef.current = null;
@@ -322,28 +373,39 @@ export function InteractiveTipBuzzButton({
     if (isTouchDevice() && e.type == 'mouseup') return;
 
     // onMouseLeave is wired to clickEnd so an in-progress press is handled when
-    // the pointer drags off the button. We must distinguish two cases:
+    // the pointer drags off the button. For an uncommitted press (the 150ms
+    // hold timer is still pending) we must distinguish two cases:
     //
-    //  - PHANTOM press: the pointer left before the 150ms hold timer fired, so
-    //    the press never committed (startTimerTimeoutRef is still pending). This
-    //    is a stray pointer event from scrolling a feed, not a tip gesture —
-    //    abort it. Completing here is what produced phantom TipInteractive_Click
-    //    events (and the Cancel/timeout churn that follows).
+    //  - PHANTOM press / real drag: the pointer genuinely moved away from where
+    //    the press started — a feed scroll or drag, not a tip gesture. Abort it
+    //    (clear the hold timer, reset state). Completing here is what produced
+    //    the phantom TipInteractive_Click events (and the Cancel/timeout churn
+    //    that follows).
     //
-    //  - COMMITTED hold: the press was held past the 150ms timer (the interval
-    //    is active and has been incrementing buzzCounter). That is a genuine,
-    //    intentional hold — if the cursor then drifts off the small button
-    //    before release, the user still meant to tip. Fall through to complete
-    //    the gesture (emit TipInteractive_Click, open the confirm popover) as
-    //    the pre-PR onMouseLeave did, so a real hold-and-drift is not dropped.
+    //  - INCIDENTAL drift on a quick tap: the pointer barely moved (within
+    //    PRESS_MOVE_TOLERANCE) but still slipped off the edge of the small feed
+    //    button. That is a deliberate quick tap, not a scroll — do NOT abort.
+    //    Fall through so the tap still registers and opens the confirm popover.
+    //    Dropping it here is the UX regression a prior revision introduced.
+    //
+    // A press that has already committed (held past the 150ms timer) is always
+    // a genuine intentional hold; if the cursor then drifts off before release
+    // the user still meant to tip, so it also falls through to complete.
     if (e.type === 'mouseleave' && startTimerTimeoutRef.current !== null) {
-      // Phantom press — not yet committed. Abort: clear the hold timer and
-      // reset state so the stranded buzzCounter doesn't pollute the next tip.
-      clearTimeout(startTimerTimeoutRef.current);
-      startTimerTimeoutRef.current = null;
-      if (interval.active) interval.stop();
-      reset();
-      return;
+      const moved = shouldAbortPressOnLeave({
+        pressUncommitted: true,
+        origin: pressOriginRef.current,
+        current: { x: e.clientX, y: e.clientY },
+      });
+      if (moved) {
+        // Real scroll/drag — not a tip gesture. Abort: clear the hold timer and
+        // reset state so the stranded buzzCounter doesn't pollute the next tip.
+        clearTimeout(startTimerTimeoutRef.current);
+        startTimerTimeoutRef.current = null;
+        reset();
+        return;
+      }
+      // Incidental edge drift on a real quick tap — fall through to complete it.
     }
 
     if (startTimerTimeoutRef.current !== null) {
