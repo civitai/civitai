@@ -273,9 +273,11 @@ export const StripeCancelMembershipButton = ({
 export const PaddleCancelMembershipButton = ({
   onClose,
   hasUsedVaultStorage,
+  onContinue,
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
+  onContinue?: () => void;
 }) => {
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
@@ -287,7 +289,8 @@ export const PaddleCancelMembershipButton = ({
             title: 'You have been successfully downgraded to our Free tier.',
             message: 'You will no longer be billed for your subscription',
           });
-          window?.location.reload();
+          if (onContinue) onContinue();
+          else window?.location.reload();
         }
       },
     });
@@ -318,7 +321,7 @@ export const PaddleCancelMembershipButton = ({
   );
 };
 
-export const CancelMembershipBenefitsModal = () => {
+export const CancelMembershipBenefitsModal = ({ onContinue }: { onContinue?: () => void } = {}) => {
   const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
@@ -372,6 +375,7 @@ export const CancelMembershipBenefitsModal = () => {
               <PaddleCancelMembershipButton
                 onClose={handleClose}
                 hasUsedVaultStorage={hasUsedVaultStorage}
+                onContinue={onContinue}
               />
             )}
             <Button color="blue" onClick={handleClose} radius="xl">
