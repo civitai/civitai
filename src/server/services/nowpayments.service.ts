@@ -262,46 +262,6 @@ export const processDeposit = async (
             error: err instanceof Error ? err.message : String(err),
           });
         });
-
-        // Re-instrument the `PurchaseFunds_Confirm` analytics event for the
-        // crypto purchase flow. ~87% of buzz purchase volume is crypto, which
-        // completes off-site and credits via this webhook — there is no
-        // client-side confirmation moment, so PR #2308 (which restored the
-        // Stripe + Paddle in-app emits) could not cover it.
-        //
-        // Gated to `webhookStatus === 'finished'` (review #1): NOWPayments can
-        // settle a payment in stages — a `partially_paid` webhook fires when
-        // the under-payment is credited, then a later `finished` webhook fires
-        // for the remainder. The remainder commonly arrives as a *separate*
-        // child `payment_id`, so its `np-deposit-<paymentId>` buzz grant does
-        // NOT 409 against the partial grant — it succeeds, reaches this block,
-        // and would emit a *second* `PurchaseFunds_Confirm` for one logical
-        // purchase. (Same-`payment_id` retries are already deduped: their
-        // grant 409s → `transactionId === 'already_granted'` → excluded by the
-        // guard above.) Emitting only on `finished` therefore yields exactly
-        // one revenue row per completed purchase. Buzz crediting itself is
-        // intentionally untouched and still happens on `partially_paid` via
-        // `isDepositComplete()` — a partial payment that never reaches
-        // `finished` legitimately gets buzz but does not produce a revenue
-        // event, which is correct (the purchase was not fully completed).
-        //
-        // `actionAsSystem` is the session-less server-side emit path: it
-        // requires an explicit `userId`, validates the payload against the
-        // shared zod schema, and never throws — it is fire-and-forget
-        // internally, so no try/catch is needed here (a wrapping catch would
-        // be unreachable).
-        if (webhookStatus === 'finished') {
-          new Tracker().actionAsSystem({
-            userId,
-            type: 'PurchaseFunds_Confirm',
-            // Payload built by the shared `buildPurchaseConfirmDetails` helper
-            // so the live webhook path and every reconcile/recovery path emit
-            // identical rows — real `actually_paid_at_fiat` fiat in cents, with
-            // the buzz-derived estimate used only as a fallback. See the
-            // helper's docblock for the full rationale.
-            details: buildPurchaseConfirmDetails(buzzAmount, event.actually_paid_at_fiat),
-          });
-        }
       }
     }
   }
@@ -369,6 +329,65 @@ export const processDeposit = async (
         message: 'Failed to upsert CryptoDeposit record',
         paymentId,
         error: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
+  // Re-instrument the `PurchaseFunds_Confirm` analytics event for the crypto
+  // purchase flow. ~87% of buzz purchase volume is crypto, which completes
+  // off-site and credits via this webhook — there is no client-side
+  // confirmation moment, so PR #2308 (which restored the Stripe + Paddle in-app
+  // emits) could not cover it.
+  //
+  // The emit must fire EXACTLY ONCE per completed purchase, and it is
+  // deliberately decoupled from the buzz-grant dedup. A previous review round
+  // gated the emit to `webhookStatus === 'finished'` *inside* the
+  // `transactionId !== 'already_granted'` referral-kickback guard. That
+  // produced a zero-rows gap: NOWPayments can settle a payment in stages — a
+  // `partially_paid` webhook credits buzz (`isDepositComplete()` accepts
+  // `partially_paid`), then the *same* `payment_id` later reports `finished`.
+  // On that `finished` webhook the `np-deposit-<paymentId>` grant 409s against
+  // the partial grant → `transactionId === 'already_granted'` → the old guard
+  // excluded the emit entirely. Net: a fully completed purchase produced zero
+  // `PurchaseFunds_Confirm` rows — the exact undercount this PR exists to fix.
+  //
+  // Dedup is therefore handled here by a dedicated per-`payment_id` Redis
+  // marker (`SET NX`), independent of whether buzz was already granted:
+  //   - Emit only when `webhookStatus === 'finished'` (the purchase is fully
+  //     complete). A `partially_paid` that never reaches `finished` legitimately
+  //     gets buzz but produces no revenue row — correct, the purchase was not
+  //     completed.
+  //   - `SET NX` succeeds only on the FIRST `finished` delivery for this
+  //     `payment_id`, so duplicate `finished` webhooks and reconcile/retry
+  //     reruns are deduped. (The `CryptoDeposit.status` field cannot serve as
+  //     the marker: `isDepositComplete()` collapses `partially_paid` into a
+  //     `finished` row status, so a prior `partially_paid` is indistinguishable
+  //     from a prior `finished` by status alone.)
+  //   - 90-day TTL comfortably outlives any staged settlement while bounding
+  //     key growth.
+  // Gated on `!buzzGrantFailed` so a genuine grant failure (not a 409) emits no
+  // revenue row. If Redis is unavailable the `.catch()` falls through to
+  // emitting — better one guaranteed row than a silent zero on an outage.
+  //
+  // `actionAsSystem` is the session-less server-side emit path: it requires an
+  // explicit `userId`, validates the payload against the shared zod schema, and
+  // never throws — fire-and-forget, so no try/catch is needed around it.
+  if (webhookStatus === 'finished' && buzzAmount > 0 && !buzzGrantFailed) {
+    const emitDedupKey =
+      `${REDIS_KEYS.CRYPTO.PURCHASE_CONFIRM_EMITTED}:nowpayments:${paymentId}` as RedisKeyTemplateCache;
+    const firstEmit = await redis
+      .set(emitDedupKey, '1', { NX: true, EX: CacheTTL.day * 90 })
+      .catch(() => 'OK' as const); // Redis down → fall through and emit once
+    if (firstEmit) {
+      new Tracker().actionAsSystem({
+        userId,
+        type: 'PurchaseFunds_Confirm',
+        // Payload built by the shared `buildPurchaseConfirmDetails` helper so
+        // the live webhook path and every reconcile/recovery path emit
+        // identical rows — real `actually_paid_at_fiat` fiat in cents, with the
+        // buzz-derived estimate used only as a fallback. See the helper's
+        // docblock for the full rationale.
+        details: buildPurchaseConfirmDetails(buzzAmount, event.actually_paid_at_fiat),
       });
     }
   }

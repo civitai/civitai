@@ -996,6 +996,13 @@ export const REDIS_KEYS = {
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
     EARNED: 'buzz:earned',
   },
+  CRYPTO: {
+    // Per-payment idempotency marker for the `PurchaseFunds_Confirm` analytics
+    // emit, so a completed crypto purchase produces exactly one revenue row
+    // regardless of how many `finished` webhook deliveries / reconcile reruns
+    // it receives. Suffixed with `:<provider>:<paymentId>` at the call site.
+    PURCHASE_CONFIRM_EMITTED: 'crypto:purchase-confirm-emitted',
+  },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',
