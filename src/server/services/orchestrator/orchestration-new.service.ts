@@ -942,8 +942,15 @@ export async function createWorkflowStepsFromGraph({
   }
 
   // Wrap with request-level concerns: priority, timeout, outputFormat
-  // isPrivateGeneration and remixOfId live on workflow.metadata, not per-step
-  // Intermediate steps (videoInterpolation) don't get outputFormat injected
+  // isPrivateGeneration lives on workflow.metadata, not per-step.
+  // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
+  // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
+  // (not workflow-level metadata) to thread the remix source id into the job
+  // record → MongoDB `prod.jobs.Properties.remixOfId` → CDC → ClickHouse
+  // `orchestration.jobs`, which is what makes the remix product loop measurable.
+  // See civitai-orchestration#216. Kept on workflow.metadata as well for the
+  // app's own replay/normalization path (NormalizedWorkflowMetadata.remixOfId).
+  // Intermediate steps (videoInterpolation) don't get outputFormat injected.
   const wrappedSteps = steps.map((step) => ({
     $type: step.$type,
     input: {
@@ -952,7 +959,12 @@ export async function createWorkflowStepsFromGraph({
     },
     priority: data.priority,
     timeout,
-    metadata: isWhatIf ? undefined : (step.metadata as object),
+    metadata: isWhatIf
+      ? undefined
+      : ({
+          ...((step.metadata as object) ?? {}),
+          ...(remixOfId != null ? { remixOfId } : {}),
+        } as object),
   })) as WorkflowStepTemplate[];
 
   // Build workflow-level metadata — the form input snapshot for workflow-level
