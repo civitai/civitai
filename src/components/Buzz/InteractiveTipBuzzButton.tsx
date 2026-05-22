@@ -405,6 +405,11 @@ export function InteractiveTipBuzzButton({
         // reset state so the stranded buzzCounter doesn't pollute the next tip.
         clearTimeout(startTimerTimeoutRef.current);
         startTimerTimeoutRef.current = null;
+        // Explicitly return the popover to its idle state. An uncommitted press
+        // means status is still 'pending' (clickStart's confirming guard would
+        // have rejected the press otherwise), but make that precondition local
+        // here rather than relying on a guard two functions away.
+        if (status !== 'pending') setStatus('pending');
         reset();
         return;
       }
@@ -416,9 +421,15 @@ export function InteractiveTipBuzzButton({
     let amount: number;
 
     if (startTimerTimeoutRef.current !== null) {
-      // Was click (quick tap)
-      amount = Math.min(buzzConstants.maxTipAmount, buzzCounter + CLICK_AMOUNT);
-      setBuzzCounter((x) => Math.min(buzzConstants.maxTipAmount, x + CLICK_AMOUNT));
+      // Was click (quick tap). Derive the tracked amount from the functional
+      // updater's resolved value so it matches what buzzCounter actually
+      // becomes — the closure-captured `buzzCounter` may be stale here.
+      let resolvedAmount = 0;
+      setBuzzCounter((x) => {
+        resolvedAmount = Math.min(buzzConstants.maxTipAmount, x + CLICK_AMOUNT);
+        return resolvedAmount;
+      });
+      amount = resolvedAmount;
       clearTimeout(startTimerTimeoutRef.current);
       startTimerTimeoutRef.current = null;
 
