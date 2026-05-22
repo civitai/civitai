@@ -124,14 +124,6 @@ export function InteractiveTipBuzzButton({
   // TipInteractive_* analytics events so they don't fire on stray pointer
   // events (e.g. onMouseLeave while scrolling a feed).
   const gestureCommittedRef = useRef(false);
-  // Tracks whether the primary pointer is currently held down as part of a
-  // press that *originated on this button*. clickReenter consults this so it
-  // only re-arms a press that genuinely started here — a press begun elsewhere
-  // and dragged across the button has pressActiveRef.current === false and is
-  // ignored, keeping the round-1 phantom-event fix intact. Set in clickStart;
-  // cleared by a global pointerup/pointercancel so a release anywhere (even
-  // off the button, which fires no mouseup here) ends the press.
-  const pressActiveRef = useRef(false);
   const [status, setStatus] = useState<'pending' | 'confirming' | 'confirmed'>('pending');
   const [showCountDown, setShowCountDown] = useState(false);
 
@@ -281,14 +273,6 @@ export function InteractiveTipBuzzButton({
     // sendTip must call reset() when conditionalPerformTransaction returns
     // false; otherwise the flag would leak `true` into the next confirm flow.
     gestureCommittedRef.current = false;
-    // Defense-in-depth: also clear the press flag here. The global
-    // pointerup/pointercancel window listener is the primary clear, but if a
-    // pointer release never reaches `window` (a context-menu opens, Alt+Tab
-    // mid-press), pressActiveRef would stay stale `true` and a later
-    // clickReenter could re-arm on an unrelated drag. reset() runs on every
-    // tip-flow termination path, so clearing it here belt-and-suspenders the
-    // window listener.
-    pressActiveRef.current = false;
   };
 
   const startConfirming = () => {
@@ -326,51 +310,6 @@ export function InteractiveTipBuzzButton({
       setShowCountDown(false);
       clearTimeout(confirmTimeoutRef.current);
       confirmTimeoutRef.current = null;
-    }
-
-    // A press has genuinely begun on this button (mousedown/touchstart cleared
-    // the guards above). Record it so clickReenter can tell a continued press
-    // apart from an unrelated press dragged over the button.
-    pressActiveRef.current = true;
-    startTimerTimeoutRef.current = setTimeout(() => {
-      interval.start();
-      startTimerTimeoutRef.current = null;
-    }, 150);
-  };
-
-  // Re-arm a press when the pointer drags back onto the button.
-  //
-  // A quick tap whose pointer wobbles off the (small) button before the 150ms
-  // hold timer fires is treated by clickEnd's mouseleave branch as a phantom
-  // press and aborted. Without this handler, dragging the still-held pointer
-  // back onto the button does nothing (mousedown already fired and won't fire
-  // again), so the tip would be silently dropped.
-  //
-  // We only re-arm when the primary mouse button is still held (e.buttons === 1)
-  // AND that press originated on this button (pressActiveRef). A bare hover with
-  // no button pressed — e.g. the cursor passing over the button while scrolling
-  // a feed — has e.buttons === 0 and is ignored; a press that began elsewhere
-  // and was dragged onto the button has pressActiveRef === false and is also
-  // ignored. Together these keep the round-1 phantom-event fix intact. Mouse
-  // only: touch has no equivalent enter event and is intentionally left
-  // unchanged.
-  const clickReenter = (e: React.MouseEvent) => {
-    if (isTouchDevice()) return;
-    // Primary button not held — a stray hover, not a continued press.
-    if (e.buttons !== 1) return;
-    // A button is down, but e.buttons === 1 alone does not prove this button
-    // started the press. Without this check a press begun elsewhere and
-    // dragged over the tip button would re-arm and emit a phantom tip.
-    if (!pressActiveRef.current) return;
-    // Already mid-press or mid-confirm — nothing to re-arm.
-    if (
-      interval.active ||
-      startTimerTimeoutRef.current ||
-      confirmTimeoutRef.current ||
-      status !== 'pending' ||
-      !currentUser
-    ) {
-      return;
     }
 
     startTimerTimeoutRef.current = setTimeout(() => {
@@ -442,37 +381,12 @@ export function InteractiveTipBuzzButton({
     // is recorded as a real TipInteractive_Cancel.
     gestureCommittedRef.current = true;
 
-    // The press has finished normally — release the press flag here too.
-    // clickEnd is wired to mouseup/mouseleave/touchend, none of which
-    // guarantee the global pointerup/pointercancel window listener also fires
-    // (e.g. context-menu, Alt+Tab). Clearing pressActiveRef on this normal
-    // completion path is defense-in-depth so a stale `true` cannot let a later
-    // clickReenter re-arm on an unrelated drag.
-    pressActiveRef.current = false;
-
     startConfirming();
   };
 
   useEffect(() => {
     return () => interval.stop(); // when App is unmounted we should stop counter
   }, [interval]);
-
-  useEffect(() => {
-    // A pointer release anywhere ends the current press. Clearing the flag
-    // globally (rather than in this component's own handlers) is what makes the
-    // pressActiveRef origin check sound: a press released off the button fires
-    // no mouseup on this element, so without this listener the flag would stay
-    // stale-true and clickReenter could re-arm a later, unrelated press.
-    const clearPress = () => {
-      pressActiveRef.current = false;
-    };
-    window.addEventListener('pointerup', clearPress);
-    window.addEventListener('pointercancel', clearPress);
-    return () => {
-      window.removeEventListener('pointerup', clearPress);
-      window.removeEventListener('pointercancel', clearPress);
-    };
-  }, []);
 
   if (!features.buzz) return null;
 
@@ -482,7 +396,6 @@ export function InteractiveTipBuzzButton({
         onTouchStart: clickStart,
         onMouseUp: clickEnd,
         onMouseLeave: clickEnd,
-        onMouseEnter: clickReenter,
         onTouchEnd: clickEnd,
       }
     : {};
