@@ -242,6 +242,10 @@ export const processDeposit = async (
           await new Tracker().action({
             type: 'PurchaseFunds_Confirm',
             userId,
+            // `unitAmount` is a *derived estimate* in cents (10 buzz = 1 cent
+            // convention), NOT the actual fiat amount billed. Crypto / partial
+            // payments won't always settle to clean multiples of 10 buzz, so
+            // treat this figure as approximate for analytics purposes.
             details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'nowpayments' },
           });
         } catch (err) {
