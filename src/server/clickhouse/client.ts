@@ -8,6 +8,7 @@ import { env } from '~/env/server';
 import type { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import type { AllModKeys } from '~/server/jobs/entity-moderation';
 import { logToAxiom } from '~/server/logging/client';
+import { sleep } from '~/utils/errorHandling';
 import type { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import type { ProhibitedSources } from '~/server/schema/user.schema';
 import type { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';
@@ -298,28 +299,84 @@ export class Tracker {
 
     const body =
       typeof data === 'function' ? data({ session: this.session, actor: this.actor }) : data;
+    const url = `${env.CLICKHOUSE_TRACKER_URL}/track/${table}`;
 
-    // Perform the clickhouse insert in the background
-    fetch(`${env.CLICKHOUSE_TRACKER_URL}/track/${table}`, {
-      method: 'POST',
-      body: JSON.stringify(body),
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    }).catch((e) => {
-      const error = e as Error;
+    // Fire-and-forget at the call site, but the inner attempt loop checks
+    // HTTP status (not just network errors) and retries 5xx with backoff.
+    // Prior version only handled network rejection from fetch(), so any
+    // 5xx response from the tracker — common when NATS publish ack times
+    // out — was silently dropped.
+    void this.sendWithRetry(url, body, table);
+  }
+
+  private async sendWithRetry(
+    url: string,
+    body: object,
+    table: string,
+    attempt = 1
+  ): Promise<void> {
+    const MAX_ATTEMPTS = 3;
+    const baseDelayMs = 250;
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (res.ok) return;
+
+      // 4xx: tracker rejected the payload. Retrying won't help. Log and bail.
+      if (res.status >= 400 && res.status < 500) {
+        const errBody = await res.text().catch(() => '');
+        logToAxiom(
+          {
+            type: 'warning',
+            name: 'Failed to track (4xx)',
+            details: { table, status: res.status, attempt, response: errBody.slice(0, 500) },
+            message: `Tracker returned ${res.status}`,
+          },
+          'clickhouse'
+        ).catch(() => {});
+        return;
+      }
+
+      // 5xx: transient — NATS publish timeout, JetStream rejection, etc.
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(baseDelayMs * 2 ** (attempt - 1) + Math.random() * baseDelayMs);
+        return this.sendWithRetry(url, body, table, attempt + 1);
+      }
+
+      const errBody = await res.text().catch(() => '');
       logToAxiom(
         {
           type: 'error',
-          name: 'Failed to track',
-          details: { table, data: JSON.stringify(data) },
+          name: 'Failed to track (5xx, exhausted)',
+          details: { table, status: res.status, attempts: attempt, response: errBody.slice(0, 500) },
+          message: `Tracker returned ${res.status} after ${attempt} attempts`,
+        },
+        'clickhouse'
+      ).catch(() => {});
+    } catch (e) {
+      const error = e as Error;
+      // Network-level failure. Retry the same as 5xx.
+      if (attempt < MAX_ATTEMPTS) {
+        await sleep(baseDelayMs * 2 ** (attempt - 1) + Math.random() * baseDelayMs);
+        return this.sendWithRetry(url, body, table, attempt + 1);
+      }
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to track (network, exhausted)',
+          details: { table, attempts: attempt },
           message: error.message,
           stack: error.stack,
           cause: error.cause,
         },
         'clickhouse'
-      ).catch();
-    });
+      ).catch(() => {});
+    }
   }
 
   private async sendMany(
