@@ -29,6 +29,7 @@ import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkMan
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -237,6 +238,10 @@ function ModelCategoryCardContent({
         {
           key: 'hide-button',
           component: <HideUserButton key="hide-button" as="menu-item" userId={user.id} />,
+        },
+        {
+          key: 'block-button',
+          component: <BlockUserButton key="block-button" as="menu-item" userId={user.id} />,
         },
         reportOption,
         reportImageOption,

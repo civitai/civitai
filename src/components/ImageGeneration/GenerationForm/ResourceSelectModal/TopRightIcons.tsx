@@ -5,6 +5,7 @@ import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -33,6 +34,7 @@ export function TopRightIcons({
       .concat([
         <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
         <HideUserButton key="hide-button" as="menu-item" userId={data.user.id} />,
+        <BlockUserButton key="block-button" as="menu-item" userId={data.user.id} />,
         <ReportMenuItem
           key="report-model"
           loginReason="report-model"
