@@ -32,6 +32,7 @@ import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { ProductTier } from '~/server/schema/subscriptions.schema';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import type { Price } from '~/shared/utils/prisma/models';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -222,16 +223,27 @@ export const StripeCancelMembershipButton = ({
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
-  fromTier?: string;
+  fromTier?: ProductTier;
 }) => {
   const { trackAction } = useTrackEvent();
   const { mutate, isLoading: connectingToStripe } =
     trpc.stripe.cancelSubscriptionWithFallback.useMutation({
       async onSuccess(data) {
         if (data.type === 'redirect') {
+          // The user is sent to the Stripe billing portal and may still
+          // abandon the cancellation there, so this is NOT a confirmed
+          // cancellation — do not emit Membership_Cancel here. Redirect-path
+          // cancellations must be captured server-side via webhook.
           onClose();
           Router.push(data.url);
         } else {
+          // Direct in-app cancellation completed — this is a confirmed
+          // cancellation, so emit the tracking event now.
+          trackAction({
+            type: 'Membership_Cancel',
+            details: { reason: '', from: fromTier ?? '' },
+          }).catch(() => undefined);
+
           onClose();
           showSuccessNotification({
             title: 'Subscription cancelled',
@@ -248,12 +260,6 @@ export const StripeCancelMembershipButton = ({
       },
     });
 
-  const trackCancel = () =>
-    trackAction({
-      type: 'Membership_Cancel',
-      details: { reason: '', from: fromTier ?? '' },
-    }).catch(() => undefined);
-
   return (
     <Button
       color="gray"
@@ -263,13 +269,11 @@ export const StripeCancelMembershipButton = ({
             component: VaultStorageDowngrade,
             props: {
               onContinue: () => {
-                trackCancel();
                 mutate();
               },
             },
           });
         } else {
-          trackCancel();
           mutate();
         }
       }}
@@ -288,7 +292,7 @@ export const PaddleCancelMembershipButton = ({
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
-  fromTier?: string;
+  fromTier?: ProductTier;
 }) => {
   const { trackAction } = useTrackEvent();
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
@@ -296,6 +300,13 @@ export const PaddleCancelMembershipButton = ({
     cancelSubscription({
       onSuccess: (canceled) => {
         if (canceled) {
+          // Paddle cancellation completed in-app — this is a confirmed
+          // cancellation, so emit the tracking event now.
+          trackAction({
+            type: 'Membership_Cancel',
+            details: { reason: '', from: fromTier ?? '' },
+          }).catch(() => undefined);
+
           onClose();
           showSuccessNotification({
             title: 'You have been successfully downgraded to our Free tier.',
@@ -307,12 +318,6 @@ export const PaddleCancelMembershipButton = ({
     });
   };
 
-  const trackCancel = () =>
-    trackAction({
-      type: 'Membership_Cancel',
-      details: { reason: '', from: fromTier ?? '' },
-    }).catch(() => undefined);
-
   return (
     <Button
       color="gray"
@@ -322,13 +327,11 @@ export const PaddleCancelMembershipButton = ({
             component: VaultStorageDowngrade,
             props: {
               onContinue: () => {
-                trackCancel();
                 handleCancelSubscription();
               },
             },
           });
         } else {
-          trackCancel();
           handleCancelSubscription();
         }
       }}
