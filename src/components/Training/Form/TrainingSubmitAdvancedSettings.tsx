@@ -30,6 +30,7 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import { audioSampleOverrideSchema } from '~/server/schema/model-version.schema';
 import {
   getDefaultTrainingStateFor,
   getDefaultTrainingParams,
@@ -529,6 +530,21 @@ export const AdvancedSettings = ({
                   }
                   doUpdate({ samplesOverrides: next });
                 };
+                // Derive per-field errors from the same zod schema the server uses,
+                // so out-of-range values surface inline instead of as a vague popup
+                // after submit.
+                const overrideIssues: Partial<Record<keyof AudioSampleOverride, string>> = isAudio
+                  ? (() => {
+                      const parsed = audioSampleOverrideSchema.safeParse(override);
+                      if (parsed.success) return {};
+                      const map: Partial<Record<keyof AudioSampleOverride, string>> = {};
+                      for (const issue of parsed.error.issues) {
+                        const key = issue.path[0] as keyof AudioSampleOverride | undefined;
+                        if (key && !map[key]) map[key] = issue.message;
+                      }
+                      return map;
+                    })()
+                  : {};
                 return (
                   <Stack key={idx} gap="xs">
                     <TextInputWrapper
@@ -555,14 +571,16 @@ export const AdvancedSettings = ({
                             maxRows={6}
                             placeholder="[Verse]&#10;...&#10;[Chorus]&#10;..."
                             value={override.lyrics ?? ''}
+                            error={overrideIssues.lyrics}
                             onChange={(e) => setOverrideAt({ lyrics: e.currentTarget.value })}
                           />
-                          <Group grow wrap="wrap">
+                          <Group grow wrap="wrap" align="flex-start">
                             <NumberInputWrapper
                               label="Duration (s)"
                               min={1}
-                              max={240}
+                              max={360}
                               value={override.duration ?? ''}
+                              error={overrideIssues.duration}
                               onChange={(v) =>
                                 setOverrideAt({ duration: typeof v === 'number' ? v : undefined })
                               }
@@ -572,6 +590,7 @@ export const AdvancedSettings = ({
                               min={20}
                               max={300}
                               value={override.bpm ?? ''}
+                              error={overrideIssues.bpm}
                               onChange={(v) =>
                                 setOverrideAt({ bpm: typeof v === 'number' ? v : undefined })
                               }
@@ -580,26 +599,29 @@ export const AdvancedSettings = ({
                               label="Time signature"
                               placeholder="4"
                               value={override.timeSignature ?? ''}
+                              error={overrideIssues.timeSignature}
                               onChange={(e) =>
                                 setOverrideAt({ timeSignature: e.currentTarget.value })
                               }
                             />
                           </Group>
-                          <Group grow wrap="wrap">
+                          <Group grow wrap="wrap" align="flex-start">
                             <TextInputWrapper
                               label="Language"
                               placeholder="en"
                               value={override.language ?? ''}
+                              error={overrideIssues.language}
                               onChange={(e) => setOverrideAt({ language: e.currentTarget.value })}
                             />
                             <TextInputWrapper
                               label="Key"
                               placeholder="A minor"
                               value={override.key ?? ''}
+                              error={overrideIssues.key}
                               onChange={(e) => setOverrideAt({ key: e.currentTarget.value })}
                             />
                           </Group>
-                          <Group grow wrap="wrap">
+                          <Group grow wrap="wrap" align="flex-start">
                             <NumberInputWrapper
                               label="Instrumental weight"
                               min={0}
@@ -607,6 +629,7 @@ export const AdvancedSettings = ({
                               step={0.1}
                               decimalScale={2}
                               value={override.instrumentalWeight ?? ''}
+                              error={overrideIssues.instrumentalWeight}
                               onChange={(v) =>
                                 setOverrideAt({
                                   instrumentalWeight: typeof v === 'number' ? v : undefined,
@@ -620,6 +643,7 @@ export const AdvancedSettings = ({
                               step={0.1}
                               decimalScale={2}
                               value={override.vocalWeight ?? ''}
+                              error={overrideIssues.vocalWeight}
                               onChange={(v) =>
                                 setOverrideAt({
                                   vocalWeight: typeof v === 'number' ? v : undefined,
@@ -627,12 +651,13 @@ export const AdvancedSettings = ({
                               }
                             />
                           </Group>
-                          <Group grow wrap="wrap">
+                          <Group grow wrap="wrap" align="flex-start">
                             <NumberInputWrapper
                               label="Steps"
                               min={1}
                               max={200}
                               value={override.steps ?? ''}
+                              error={overrideIssues.steps}
                               onChange={(v) =>
                                 setOverrideAt({ steps: typeof v === 'number' ? v : undefined })
                               }
@@ -644,6 +669,7 @@ export const AdvancedSettings = ({
                               step={0.5}
                               decimalScale={2}
                               value={override.cfg ?? ''}
+                              error={overrideIssues.cfg}
                               onChange={(v) =>
                                 setOverrideAt({ cfg: typeof v === 'number' ? v : undefined })
                               }

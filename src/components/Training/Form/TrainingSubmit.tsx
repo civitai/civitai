@@ -58,6 +58,7 @@ import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
+import { audioSampleOverrideSchema } from '~/server/schema/model-version.schema';
 import type { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
 import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -72,6 +73,7 @@ import type { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import {
+  formatTrainingValidationError,
   getTrainingFields,
   getAiToolkitEcosystem,
   getAiToolkitModelVariant,
@@ -460,6 +462,24 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         }
       }
 
+      if (r.samplesOverrides && r.samplesOverrides.length > 0) {
+        const badIndex = r.samplesOverrides.findIndex(
+          (o) => !audioSampleOverrideSchema.safeParse(o).success
+        );
+        if (badIndex !== -1) {
+          showErrorNotification({
+            error: new Error(
+              `Sample override #${
+                badIndex + 1
+              } has invalid values. Check the highlighted fields in Advanced Settings.`
+            ),
+            title: 'Invalid sample overrides',
+            autoClose: false,
+          });
+          return;
+        }
+      }
+
       if (r.params.targetSteps > maxSteps) {
         showErrorNotification({
           error: new Error(
@@ -687,8 +707,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             await doTrainingMut(fileModelVersionId, idx, run.id);
           } catch (e) {
             const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+            const formatted = formatTrainingValidationError(error.message);
             showErrorNotification({
-              error: new Error(error.message),
+              error: formatted ?? new Error(error.message),
               title: `Failed to create model file for run #${idx + 1}`,
               autoClose: false,
             });
@@ -699,8 +720,9 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         }
       } catch (e) {
         const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+        const formatted = formatTrainingValidationError(error.message);
         showErrorNotification({
-          error: new Error(error.message),
+          error: formatted ?? new Error(error.message),
           title: `Failed to save model version info for run #${idx + 1}`,
           autoClose: false,
         });

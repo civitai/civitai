@@ -208,7 +208,7 @@ export type TrainingDetailsParamsUnion = z.infer<typeof trainingDetailsParamsUni
 // can't bypass them.
 export const audioSampleOverrideSchema = z.object({
   lyrics: z.string().max(10000).optional(),
-  duration: z.number().min(1).max(240).optional(),
+  duration: z.number().min(1).max(360).optional(),
   bpm: z.number().min(20).max(300).optional(),
   timeSignature: z.string().max(16).optional(),
   language: z.string().max(64).optional(),

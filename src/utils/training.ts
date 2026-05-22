@@ -729,3 +729,67 @@ export const parseAudioCaption = (text: string | undefined | null): ParsedAudioC
   if (language && language.toLowerCase() !== 'unknown') result.language = language;
   return result;
 };
+
+const FIELD_LABELS: Record<string, string> = {
+  samplesOverrides: 'Sample overrides',
+  samplePrompts: 'Sample prompts',
+  trainingDetails: 'Training details',
+  lyrics: 'Lyrics',
+  duration: 'Duration',
+  bpm: 'BPM',
+  timeSignature: 'Time signature',
+  language: 'Language',
+  key: 'Key',
+  instrumentalWeight: 'Instrumental weight',
+  vocalWeight: 'Vocal weight',
+  steps: 'Steps',
+  cfg: 'CFG',
+  params: 'Parameters',
+  baseModel: 'Base model',
+  baseModelType: 'Base model type',
+  negativePrompt: 'Negative prompt',
+};
+
+const humanizePathSegment = (segment: string | number, index: number): string => {
+  if (typeof segment === 'number') {
+    // Sample override / prompt indices are far more useful as "#1" than "[0]".
+    return `#${segment + 1}`;
+  }
+  if (index === 0 && (segment === 'trainingDetails' || segment === 'params')) {
+    // Hide the top-level wrapper since the user doesn't think in those terms.
+    return '';
+  }
+  return FIELD_LABELS[segment] ?? segment;
+};
+
+type ZodLikeIssue = { path?: Array<string | number>; message?: string };
+
+/** Try to convert a TRPC/zod error.message (which is often a JSON-encoded
+ *  array of zod issues) into a human-readable list of `{ message }` items.
+ *  Returns `null` when the message isn't a zod payload so callers can fall
+ *  back to the raw text. */
+export const formatTrainingValidationError = (
+  raw: string | undefined | null
+): { message: string }[] | null => {
+  if (!raw) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) return null;
+  const issues = parsed as ZodLikeIssue[];
+  const lines = issues
+    .map((issue) => {
+      const path = (issue.path ?? [])
+        .map((seg, i) => humanizePathSegment(seg, i))
+        .filter((s) => s.length > 0)
+        .join(' → ');
+      const message = issue.message?.trim() || 'Invalid value';
+      return path ? { message: `${path}: ${message}` } : { message };
+    })
+    // De-dupe identical lines (zod can emit the same issue twice across unions).
+    .filter((line, i, arr) => arr.findIndex((l) => l.message === line.message) === i);
+  return lines.length > 0 ? lines : null;
+};
