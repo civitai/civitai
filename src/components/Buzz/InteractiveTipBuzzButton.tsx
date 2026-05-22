@@ -240,7 +240,8 @@ export function InteractiveTipBuzzButton({
 
     const performTransaction = () => {
       // The confirm flow resolved with a real tip. The gesture flag is cleared
-      // by reset() in onSettled below once the mutation settles.
+      // in onSuccess below the moment the tip is confirmed (and again, with the
+      // rest of the state, by reset() in onSettled once the mutation settles).
       trackAction({
         type: 'Tip_Confirm',
         details: { toUserId, entityType, entityId, amount },
@@ -262,6 +263,14 @@ export function InteractiveTipBuzzButton({
         {
           onSuccess: (_, { amount }) => {
             setStatus('confirmed');
+            // The tip is confirmed — the gesture is over. Drop the
+            // gesture-committed flag immediately rather than letting it linger
+            // `true` through the ~1500ms 'confirmed' display window below.
+            // onSettled's reset() still runs, but that fires 1500ms later; in
+            // the meantime a stray pointer/lifecycle event could otherwise be
+            // mis-attributed as a committed gesture (e.g. a phantom Cancel).
+            gestureCommittedRef.current = false;
+            pressOriginRef.current = null;
             if (entityType && entityId) {
               onTip({ entityType, entityId, amount });
             }
@@ -315,6 +324,9 @@ export function InteractiveTipBuzzButton({
     // early-returns do NOT route through here on their own, which is why
     // sendTip must call reset() when conditionalPerformTransaction returns
     // false; otherwise the flag would leak `true` into the next confirm flow.
+    // On the successful-confirm path the flag is additionally cleared eagerly
+    // in the mutation's onSuccess, so it does not stay stale-true through the
+    // ~1500ms 'confirmed' display window before onSettled's reset() fires.
     gestureCommittedRef.current = false;
     pressOriginRef.current = null;
   };
