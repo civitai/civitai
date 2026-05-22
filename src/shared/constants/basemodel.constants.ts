@@ -4301,7 +4301,9 @@ export function getCanAuctionForGeneration(baseModel?: string): boolean {
   const ecosystem = ecosystemById.get(record.ecosystemId);
   if (!ecosystem) return false;
 
-  // Ecosystems that don't support auction
-  const noAuctionEcosystems = ['Qwen', 'Other'];
+  // modelLocked ecosystems pin generation to a single checkpoint, so checkpoint auctions don't apply
+  if (getEcosystemSetting(record.ecosystemId, 'modelLocked')) return false;
+
+  const noAuctionEcosystems = ['Other'];
   return !noAuctionEcosystems.includes(ecosystem.key);
 }
