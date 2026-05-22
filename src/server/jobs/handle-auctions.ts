@@ -37,6 +37,7 @@ import {
   AuctionType,
   BuzzAccountType,
   HomeBlockType,
+  ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
@@ -182,6 +183,22 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
     if (auctionRow.bids.length > 0) {
       const sortedBids = prepareBids(auctionRow, true);
 
+      // Disqualify bids on non-Published ModelVersions so they get refunded as losers
+      const ineligibleEntityIds = new Set<number>();
+      if (auctionRow.auctionBase.type === AuctionType.Model) {
+        const entityIds = [...new Set(sortedBids.map((b) => b.entityId))];
+        if (entityIds.length) {
+          const ineligible = await dbWrite.modelVersion.findMany({
+            where: { id: { in: entityIds }, status: { not: ModelStatus.Published } },
+            select: { id: true },
+          });
+          for (const mv of ineligible) ineligibleEntityIds.add(mv.id);
+          if (ineligibleEntityIds.size) {
+            log('disqualified non-Published entity ids', [...ineligibleEntityIds].join(','));
+          }
+        }
+      }
+
       const { winners, losers } = sortedBids.reduce(
         (result, r) => {
           const matchUserIds = auctionRow.bids
@@ -189,7 +206,11 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
             .map((b) => b.userId);
           const bidDetails = { ...r, userIds: matchUserIds, auctionId: auctionRow.id };
 
-          if (r.totalAmount >= auctionRow.minPrice && r.position <= auctionRow.quantity) {
+          if (
+            r.totalAmount >= auctionRow.minPrice &&
+            r.position <= auctionRow.quantity &&
+            !ineligibleEntityIds.has(r.entityId)
+          ) {
             result.winners.push(bidDetails);
           } else {
             result.losers.push(bidDetails);

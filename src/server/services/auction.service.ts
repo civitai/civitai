@@ -407,6 +407,7 @@ export const createBid = async ({
         baseModel: true,
         availability: true,
         nsfwLevel: true,
+        status: true,
         model: {
           select: {
             type: true,
@@ -424,6 +425,9 @@ export const createBid = async ({
     if (!mv) throw throwBadRequestError('Could not find model version.');
 
     if (mv.availability === Availability.Private)
+      throw throwBadRequestError('Invalid model version.');
+
+    if (mv.status !== ModelStatus.Published)
       throw throwBadRequestError('Invalid model version.');
 
     if (mv.model.status !== ModelStatus.Published)
