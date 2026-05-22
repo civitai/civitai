@@ -232,32 +232,58 @@ export const processDeposit = async (
         // crypto purchase flow. ~87% of buzz purchase volume is crypto, which
         // completes off-site and credits via this webhook — there is no
         // client-side confirmation moment, so PR #2308 (which restored the
-        // Stripe + Paddle in-app emits) could not cover it. Emitted only on a
-        // confirmed deposit with a fresh buzz grant, so webhook retries and
-        // reconciliation reruns (which short-circuit to `already_granted`)
-        // don't double-count. `unitAmount` mirrors the client convention of
-        // 10 buzz = 1 cent.
+        // Stripe + Paddle in-app emits) could not cover it.
+        //
+        // Gated to `webhookStatus === 'finished'` (review #1): NOWPayments can
+        // settle a payment in stages — a `partially_paid` webhook fires when
+        // the under-payment is credited, then a later `finished` webhook fires
+        // for the remainder. The remainder commonly arrives as a *separate*
+        // child `payment_id`, so its `np-deposit-<paymentId>` buzz grant does
+        // NOT 409 against the partial grant — it succeeds, reaches this block,
+        // and would emit a *second* `PurchaseFunds_Confirm` for one logical
+        // purchase. (Same-`payment_id` retries are already deduped: their
+        // grant 409s → `transactionId === 'already_granted'` → excluded by the
+        // guard above.) Emitting only on `finished` therefore yields exactly
+        // one revenue row per completed purchase. Buzz crediting itself is
+        // intentionally untouched and still happens on `partially_paid` via
+        // `isDepositComplete()` — a partial payment that never reaches
+        // `finished` legitimately gets buzz but does not produce a revenue
+        // event, which is correct (the purchase was not fully completed).
         //
         // `actionAsSystem` is the session-less server-side emit path: it
         // requires an explicit `userId`, validates the payload against the
         // shared zod schema, and never throws — it is fire-and-forget
         // internally, so no try/catch is needed here (a wrapping catch would
         // be unreachable).
-        new Tracker().actionAsSystem({
-          userId,
-          type: 'PurchaseFunds_Confirm',
-          // NOTE: `buzzAmount` here is the pre-multiplier *base* buzz the user
-          // purchased — `bonusBuzz` (the purchase-multiplier bonus) is tracked
-          // separately and intentionally excluded. `PurchaseFunds_Confirm` is
-          // a revenue signal, and revenue tracks the base purchase, not the
-          // bonus buzz granted on top.
-          //
-          // `unitAmount` is a *derived estimate* in cents (10 buzz = 1 cent
-          // convention), NOT the actual fiat amount billed. Crypto / partial
-          // payments won't always settle to clean multiples of 10 buzz, so
-          // treat this figure as approximate for analytics purposes.
-          details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'nowpayments' },
-        });
+        if (webhookStatus === 'finished') {
+          new Tracker().actionAsSystem({
+            userId,
+            type: 'PurchaseFunds_Confirm',
+            // NOTE: `buzzAmount` here is the pre-multiplier *base* buzz the
+            // user purchased — `bonusBuzz` (the purchase-multiplier bonus) is
+            // tracked separately and intentionally excluded. This event is a
+            // revenue signal, and revenue tracks the base purchase, not the
+            // bonus buzz granted on top.
+            //
+            // `unitAmount` is the real fiat NOWPayments settled, in cents
+            // (review #2). Card-purchase rows in this same ClickHouse column
+            // carry true billed fiat, so the prior `buzzAmount / 10` estimate
+            // (reverse-computed from settled crypto, fee-exclusive) was not
+            // summable alongside them. `actually_paid_at_fiat` is the fiat
+            // value the customer actually paid; converted from a decimal
+            // amount to integer cents to match the card convention. Falls back
+            // to the 10-buzz-per-cent estimate only if NOWPayments omits the
+            // fiat figure, so the field is never null.
+            details: {
+              buzzAmount,
+              unitAmount:
+                event.actually_paid_at_fiat != null
+                  ? Math.round(event.actually_paid_at_fiat * 100)
+                  : Math.round(buzzAmount / 10),
+              method: 'nowpayments',
+            },
+          });
+        }
       }
     }
   }
