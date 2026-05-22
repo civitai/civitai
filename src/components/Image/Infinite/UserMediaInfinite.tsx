@@ -41,6 +41,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
       techniques = [],
       requiringMeta = false,
       notPublished = undefined,
+      scheduled = undefined,
       ...query
     },
   } = useImageQueryParams();
@@ -123,6 +124,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                     techniques,
                     requiringMeta,
                     notPublished,
+                    scheduled,
                   }}
                   filterType={isVideo ? 'videos' : 'images'}
                   onChange={(filters) => replace(filters)}
@@ -155,6 +157,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                   userId: viewingReactions ? undefined : user.id,
                   username: viewingReactions ? undefined : username,
                   notPublished,
+                  scheduled,
                   followed,
                   baseModels,
                   tools,

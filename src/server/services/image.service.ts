@@ -1720,7 +1720,7 @@ export const getAllImages = async (
   // bustCacheTag('images-model:X' / 'images-modelVersion:X') is already wired in
   // post.service.ts on image upload/update events.
   const cacheable = queryCacheRaw(
-    async <Row,>(q: Prisma.Sql) => {
+    async <Row>(q: Prisma.Sql) => {
       const { rows } = await imageDb.query(q as any);
       return rows as Row[];
     },
@@ -2277,8 +2277,13 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
           BlockedReason.AiNotVerified,
         ].map(_str)
       ),
-      _eq('isPublished', _bool(false)),
     ];
+    // Own scheduled/unpublished content only surfaces when the caller opts in
+    // via `scheduled` or `notPublished`. BitDex `isPublished=false` covers both
+    // (no separate scheduled vs unpublished signal), so the gate is unified.
+    if (input.scheduled || input.notPublished) {
+      ownExcludedClauses.push(_eq('isPublished', _bool(false)));
+    }
     if (input.disablePoi) ownExcludedClauses.push(_eq('poi', _bool(true)));
 
     // Unscoped second pass — fetch ALL of user's excluded content regardless of
@@ -2684,10 +2689,15 @@ async function fetchMeiliUserOwnPass(
   const excludedOr: string[] = [
     makeMeiliImageSearchFilter(nsfwLevelField, `= 0`) as string,
     makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS') as string,
-    makeMeiliImageSearchFilter('publishedAtUnix', `> ${now}`) as string,
     `availability = ${Availability.Private}`,
     `blockedFor IN [${blockedReasonList}]`,
   ];
+  // Own scheduled content is included in the second-pass only when the caller
+  // opted in via the `scheduled` flag. Without opt-in, owners no longer see
+  // their own scheduled images pinned to feeds.
+  if (input.scheduled) {
+    excludedOr.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${now}`) as string);
+  }
   if (disablePoi) excludedOr.push('poi = true');
   filters.push(`(${excludedOr.join(' OR ')})`);
 
@@ -2781,6 +2791,15 @@ function contentScopeUserOwnHits(
   if (remixOfId) scoped = scoped.filter((h) => h.remixOfId === remixOfId);
   if (withMeta) scoped = scoped.filter((h) => h.hasMeta === true);
   if (fromPlatform) scoped = scoped.filter((h) => h.onSite === true);
+  // Defense-in-depth: drop own scheduled/unpublished hits when the caller did
+  // not opt in via `scheduled` or `notPublished`. Belt-and-suspenders against
+  // a stale second-pass query forgetting to gate the publish clause.
+  // `publishedAtUnix` is stored in ms (`publishedAt.getTime()`) to match the
+  // rest of the publish filter logic which compares against `snappedNow` in ms.
+  if (!input.scheduled && !input.notPublished) {
+    const nowMs = Date.now();
+    scoped = scoped.filter((h) => h.publishedAtUnix != null && h.publishedAtUnix <= nowMs);
+  }
   return scoped;
 }
 
@@ -3085,12 +3104,12 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       filters.push(`(${publishedFilters.join(' OR ')})`);
     }
   } else {
-    // Users should only see published stuff or things they own
-    // convert to minutes for better caching
-    const publishedFilters = [
-      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
-    ];
-    if (!input.meiliUserOwnPass && currentUserId) {
+    // Non-mod path. By default, strict published-only — owners no longer see
+    // their own scheduled/unpublished content pinned to feeds. The `scheduled`
+    // flag is opt-in: when set, OR-in the owner carve-out so the user-own
+    // second pass surfaces own scheduled hits.
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    if (!input.meiliUserOwnPass && currentUserId && scheduled) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
@@ -3197,8 +3216,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
     // User-own-pass mode: run main query + user-own query in parallel, then merge.
     // Only runs on the first page (no cursor/entry/offset) to keep merge simple.
-    const runUserOwnPass =
-      !!input.meiliUserOwnPass && !!currentUserId && !entry && !offset;
+    const runUserOwnPass = !!input.meiliUserOwnPass && !!currentUserId && !entry && !offset;
 
     // Use the abortable raw fetch when a signal is available so client
     // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
@@ -3964,14 +3982,22 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     }
   } else if (userId) {
     const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-    // For own user's content, allow seeing scheduled/notPublished content
-    if (!input.meiliUserOwnPass && currentUserId && userId === currentUserId) {
+    // For own user's profile view, only surface own scheduled content when the
+    // caller explicitly opted in via the `scheduled` flag. Without opt-in, the
+    // strict published filter applies even to own profile.
+    if (!input.meiliUserOwnPass && currentUserId && userId === currentUserId && scheduled) {
       publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
     }
     filters.push(`(${publishedFilters.join(' OR ')})`);
   } else {
-    // General feed queries - apply published filter for caching
-    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`));
+    // General feed queries - strict published filter for caching by default.
+    // When `scheduled` is opt-in, OR-in the owner carve-out so own scheduled
+    // hits surface in the main feed.
+    const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
+    if (!input.meiliUserOwnPass && currentUserId && scheduled) {
+      publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
+    }
+    filters.push(`(${publishedFilters.join(' OR ')})`);
   }
 
   if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
@@ -4128,10 +4154,12 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         // User can see their own blocked content
         if (hit.blockedFor && !isOwnContent) return false;
 
-        // User can see their own scheduled or unpublished content
+        // Own scheduled/unpublished content only passes when the caller opted
+        // in via `scheduled` or `notPublished`. Without opt-in, even owners
+        // get the strict published filter applied.
         if (
           (!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) &&
-          (!isOwnContent || notPublished === false)
+          !(isOwnContent && (input.scheduled || input.notPublished))
         )
           return false;
 
