@@ -248,25 +248,28 @@ export const StripeCancelMembershipButton = ({
       },
     });
 
+  const trackCancel = () =>
+    trackAction({
+      type: 'Membership_Cancel',
+      details: { reason: '', from: fromTier ?? '' },
+    }).catch(() => undefined);
+
   return (
     <Button
       color="gray"
       onClick={() => {
-        trackAction({
-          type: 'Membership_Cancel',
-          details: { reason: '', from: fromTier ?? '' },
-        }).catch(() => undefined);
-
         if (hasUsedVaultStorage) {
           dialogStore.trigger({
             component: VaultStorageDowngrade,
             props: {
               onContinue: () => {
+                trackCancel();
                 mutate();
               },
             },
           });
         } else {
+          trackCancel();
           mutate();
         }
       }}
@@ -304,25 +307,28 @@ export const PaddleCancelMembershipButton = ({
     });
   };
 
+  const trackCancel = () =>
+    trackAction({
+      type: 'Membership_Cancel',
+      details: { reason: '', from: fromTier ?? '' },
+    }).catch(() => undefined);
+
   return (
     <Button
       color="gray"
       onClick={() => {
-        trackAction({
-          type: 'Membership_Cancel',
-          details: { reason: '', from: fromTier ?? '' },
-        }).catch(() => undefined);
-
         if (hasUsedVaultStorage) {
           dialogStore.trigger({
             component: VaultStorageDowngrade,
             props: {
               onContinue: () => {
+                trackCancel();
                 handleCancelSubscription();
               },
             },
           });
         } else {
+          trackCancel();
           handleCancelSubscription();
         }
       }}
