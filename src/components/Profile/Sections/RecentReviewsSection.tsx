@@ -106,7 +106,6 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
                                   style={{
                                     color: colorScheme === 'dark' ? 'white' : 'black',
                                   }}
-                                  withProfanityFilter
                                 />
                               </ContentClamp>
                             )}

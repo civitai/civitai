@@ -45,7 +45,7 @@ import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { getProfanityFilter } from '~/libs/profanity-simple/list-loader';
+import { getProfanityFilter } from '~/server/services/profanity.service';
 import { logToAxiom } from '~/server/logging/client';
 
 export const getBountyTransactionPrefix = (bountyId: number, userId: number) => {

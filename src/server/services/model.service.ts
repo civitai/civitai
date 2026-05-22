@@ -28,7 +28,7 @@ import {
   preventModelVersionLagBatch,
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
-import { getProfanityFilter } from '~/libs/profanity-simple/list-loader';
+import { getProfanityFilter } from '~/server/services/profanity.service';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';

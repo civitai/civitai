@@ -52,7 +52,7 @@ Automatically integrated in:
 - **Source of truth**: `KeyValue` Postgres table — rows `profanity:display-list` and `profanity:search-list`. Edit those rows to update the lists in production; changes propagate to each pod within ~5 min (in-process TTL) and to clients within ~5 min (React Query staleTime + edge cache).
 - **Bundled bootstraps**: `~/utils/metadata/lists/profanity-display.json` (display-block — trimmed) and `~/utils/metadata/lists/profanity-search.json` (search-block — full). Used as fallbacks when the KeyValue row is missing/empty so the filter is always functional.
 - **Display list** is used by `BlurText`, `RenderHtml`, and any other surface that asterisks text in SFW reading mode.
-- **Search list** is used by `AutocompleteSearch`, `SearchLayout`, and the server-side NSFW-threshold callers (`model.service`, `bounty.service`) via `getProfanityFilter('search')` in `~/libs/profanity-simple/list-loader`.
+- **Search list** is used by `AutocompleteSearch`, `SearchLayout`, and the server-side NSFW-threshold callers (`model.service`, `bounty.service`) via `getProfanityFilter('search')` in `~/server/services/profanity.service`.
 - **Format**: JSON array of strings, supports [obscenity patterns](https://github.com/jo3-l/obscenity/blob/main/docs/guide/patterns.md) like `|word` for word boundaries.
 - **Processing**: Words are cleaned, normalized, and expanded with variations.
 

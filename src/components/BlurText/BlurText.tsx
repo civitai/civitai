@@ -1,8 +1,9 @@
 import React, { forwardRef } from 'react';
 import type { TextProps } from '@mantine/core';
 import { createPolymorphicComponent, Text } from '@mantine/core';
+import clsx from 'clsx';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useCleanText } from '~/hooks/useCheckProfanity';
+import { useCheckProfanity } from '~/hooks/useCheckProfanity';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 interface BlurTextProps extends TextProps {
@@ -36,13 +37,26 @@ const _BlurText = forwardRef<HTMLParagraphElement, BlurTextProps>(
     // Get the full text content
     const fullText = extractTextContent(children);
 
-    // Use the hook to clean the text
-    const cleanedText = useCleanText(fullText, {
+    const { cleanedText, isLoading } = useCheckProfanity(fullText, {
       enabled: shouldBlur,
       replacementStyle: 'asterisk',
     });
 
-    // If no profanity filtering needed, return original children
+    // Blur the original text until the dynamic list resolves, so we don't
+    // flash uncensored content.
+    if (shouldBlur && isLoading) {
+      return (
+        <Text
+          component="span"
+          ref={ref}
+          {...props}
+          className={clsx(props.className, 'select-none blur-sm')}
+        >
+          {children}
+        </Text>
+      );
+    }
+
     if (!shouldBlur || cleanedText === fullText) {
       return (
         <Text component="span" ref={ref} {...props}>
@@ -51,7 +65,6 @@ const _BlurText = forwardRef<HTMLParagraphElement, BlurTextProps>(
       );
     }
 
-    // Return cleaned text for simple cases
     return (
       <Text component="span" ref={ref} {...props}>
         {cleanedText}

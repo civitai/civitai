@@ -8,7 +8,7 @@ import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useProfanityFilter } from '~/providers/ProfanityListsProvider';
+import { useProfanityFilter } from '~/hooks/useCheckProfanity';
 
 export function RenderHtml({
   html,
@@ -22,11 +22,14 @@ export function RenderHtml({
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
 
   const shouldFilter = withProfanityFilter && blurNsfw;
-  const profanityFilter = useProfanityFilter('display');
+  const { filter: profanityFilter, isLoading: profanityLoading } = useProfanityFilter(
+    'display',
+    shouldFilter
+  );
 
   html = useMemo(() => {
     let processedHtml = html;
-    if (shouldFilter) {
+    if (shouldFilter && profanityFilter) {
       // Preserve mentions (entire span + content) and all HTML tag markup so
       // the filter only operates on visible text content. Capturing entire
       // tags also protects href/src attribute values, since the whole opening
@@ -142,9 +145,17 @@ export function RenderHtml({
     });
   }, [html, allowCustomStyles, colorScheme, withMentions, shouldFilter, profanityFilter]);
 
+  // Blur (rather than hide) while the dynamic profanity list resolves so we
+  // don't flash uncensored content. The query is deduped, so consecutive
+  // RenderHtml instances unblur together when it arrives.
+  const blurWhileLoading = shouldFilter && profanityLoading;
+
   return (
     <TypographyStylesWrapper {...props} className={clsx(classes.htmlRenderer, className)}>
-      <div dangerouslySetInnerHTML={{ __html: html }} />
+      <div
+        className={clsx(blurWhileLoading && 'select-none blur-sm')}
+        dangerouslySetInnerHTML={{ __html: html }}
+      />
     </TypographyStylesWrapper>
   );
 }

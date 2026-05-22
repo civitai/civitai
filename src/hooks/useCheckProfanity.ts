@@ -1,6 +1,13 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useSyncExternalStore } from 'react';
 import type { ProfanityFilterOptions } from '~/libs/profanity-simple';
-import { useProfanityFilter, type ProfanityListKind } from '~/providers/ProfanityListsProvider';
+import {
+  getProfanityFilter,
+  setProfanityList,
+  subscribeProfanity,
+  type ProfanityListKind,
+} from '~/libs/profanity-simple/runtime';
+import { trpc } from '~/utils/trpc';
 
 export type { ProfanityListKind };
 
@@ -12,51 +19,66 @@ export interface UseCheckProfanityOptions extends Partial<ProfanityFilterOptions
 }
 
 export interface ProfanityAnalysis {
-  /** Whether the text contains profane words */
   hasProfanity: boolean;
-  /** Array of matched profane words/phrases from dataset */
   matches: string[];
-  /** Array of full words from input that contain profanity */
   matchedWords: string[];
-  /** Number of profane matches found */
   matchCount: number;
-  /** Text with profane words replaced */
   cleanedText: string;
-  /** Original text */
   originalText: string;
+  /** True until the dynamic list has loaded and the filter is ready. */
+  isLoading: boolean;
 }
 
-const EMPTY_ANALYSIS = (text: string): ProfanityAnalysis => ({
+const emptyAnalysis = (text: string, isLoading: boolean): ProfanityAnalysis => ({
   hasProfanity: false,
   matches: [],
   matchedWords: [],
   matchCount: 0,
   cleanedText: text,
   originalText: text,
+  isLoading,
 });
 
 /**
- * Hook to check text for profanity and return analysis results.
- *
- * Pulls the filter from `ProfanityListsProvider`, which boots from the bundled
- * lists synchronously and swaps to the KV-backed list once the system query
- * resolves. No per-call-site filter construction.
+ * Subscribe to the profanity filter singleton, firing a deduped fetch of the
+ * KV-backed list when `enabled`. Returns `{ filter, isLoading }`. While
+ * `isLoading` is true the filter is `null` and consumers should not render
+ * filter-dependent content (no bootstrap fallback on the client).
  */
+export function useProfanityFilter(kind: ProfanityListKind, enabled = true) {
+  const snapshot = () => getProfanityFilter(kind);
+  const serverSnapshot = () => null;
+  const filter = useSyncExternalStore(subscribeProfanity, snapshot, serverSnapshot);
+
+  const { data } = trpc.system.getProfanityLists.useQuery(undefined, {
+    enabled,
+    staleTime: 1000 * 60 * 5,
+    cacheTime: 1000 * 60 * 60 * 24,
+  });
+
+  useEffect(() => {
+    if (!data) return;
+    setProfanityList('display', data.display);
+    setProfanityList('search', data.search);
+  }, [data]);
+
+  return { filter, isLoading: enabled && filter === null };
+}
+
 export function useCheckProfanity(
   text: string,
   options: UseCheckProfanityOptions = {}
 ): ProfanityAnalysis {
   const { enabled = true, kind = 'display' } = options;
-  const profanityFilter = useProfanityFilter(kind);
+  const { filter, isLoading } = useProfanityFilter(kind, enabled);
 
   return useMemo((): ProfanityAnalysis => {
-    if (!enabled || !text.trim()) {
-      return EMPTY_ANALYSIS(text);
-    }
+    if (!enabled || !text.trim()) return emptyAnalysis(text, false);
+    if (!filter) return emptyAnalysis(text, isLoading);
 
     try {
-      const detailedAnalysis = profanityFilter.analyze(text);
-      const cleanedText = profanityFilter.clean(text);
+      const detailedAnalysis = filter.analyze(text);
+      const cleanedText = filter.clean(text);
 
       return {
         hasProfanity: detailedAnalysis.isProfane,
@@ -65,26 +87,19 @@ export function useCheckProfanity(
         matchCount: detailedAnalysis.matchCount,
         cleanedText,
         originalText: text,
+        isLoading: false,
       };
     } catch (error) {
       console.warn('Profanity analysis failed:', error);
-      return EMPTY_ANALYSIS(text);
+      return emptyAnalysis(text, false);
     }
-  }, [text, enabled, profanityFilter]);
+  }, [text, enabled, filter, isLoading]);
 }
 
-/**
- * Hook variant that only returns whether text contains profanity.
- */
 export function useIsProfane(text: string, options: UseCheckProfanityOptions = {}): boolean {
-  const { hasProfanity } = useCheckProfanity(text, options);
-  return hasProfanity;
+  return useCheckProfanity(text, options).hasProfanity;
 }
 
-/**
- * Hook variant that only returns cleaned text.
- */
 export function useCleanText(text: string, options: UseCheckProfanityOptions = {}): string {
-  const { cleanedText } = useCheckProfanity(text, options);
-  return cleanedText;
+  return useCheckProfanity(text, options).cleanedText;
 }
