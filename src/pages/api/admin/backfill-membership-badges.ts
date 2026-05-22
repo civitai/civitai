@@ -61,6 +61,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
   // When a specific cosmeticId is provided, look it up regardless of date range.
   // Otherwise, only find cosmetics that are currently active.
+  // Covers all payment providers (Stripe, Paddle, Civitai) — each provider has
+  // its own product/cosmetic per tier per month.
   const cosmetics = await dbRead.$queryRaw<MembershipCosmetic[]>`
     SELECT DISTINCT
       c.id,
@@ -70,8 +72,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       c."availableEnd"
     FROM "Cosmetic" c
     JOIN "Product" pr ON pr.id = c."productId"
-    WHERE pr.provider = 'Civitai'
-      AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+    WHERE pr.metadata->>'monthlyBuzz' IS NOT NULL
       AND (c."availableStart" IS NULL OR c."availableStart" <= NOW())
       ${
         cosmeticIds.length > 0
@@ -108,10 +109,12 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         cs."currentPeriodEnd"
       FROM "CustomerSubscription" cs
       JOIN "Product" pr ON pr.id = cs."productId"
-      LEFT JOIN "Product" cosmeticProduct ON cosmeticProduct.id = ${cosmetic.productId}
+      JOIN "Product" cosmeticProduct ON cosmeticProduct.id = ${cosmetic.productId}
       WHERE cs.status IN ('active', 'expired_claimable')
-        AND pr.provider = 'Civitai'
         AND pr.metadata->>'monthlyBuzz' IS NOT NULL
+        -- Cosmetic is provider-specific: only grant it to subs from the same provider
+        -- (mirrors the deliver-purchased-cosmetics job's pdl.provider = pr.provider rule).
+        AND pr.provider = cosmeticProduct.provider
         -- User's product level must be >= cosmetic's product level
         AND (
           jsonb_typeof(pr.metadata->'level') = 'undefined'
