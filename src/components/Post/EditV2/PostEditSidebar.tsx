@@ -145,19 +145,41 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       }
     );
 
+  const imagesInReview = useMemo(
+    () => addedImages.filter((image) => !!image.needsReview),
+    [addedImages]
+  );
+
   const handleShowConfirmPublish = (date?: Date) => {
+    const reviewCount = imagesInReview.length;
+    const isPlural = reviewCount > 1;
+    const hasReview = reviewCount > 0;
     dialogStore.trigger({
       component: ConfirmDialog,
       props: {
-        title: params.confirmTitle,
-        message: params.confirmMessage ?? 'Are you sure you want to publish this post?',
-        onConfirm: () => handlePublish(date, false),
+        title: hasReview ? 'Images pending review' : params.confirmTitle,
+        message: hasReview ? (
+          <>
+            <Text>
+              {reviewCount} image{isPlural ? 's' : ''} in this post {isPlural ? 'are' : 'is'}{' '}
+              currently flagged for moderation review and will remain hidden from other users until
+              approved.
+            </Text>
+            {params.confirmMessage && <Text mt="sm">{params.confirmMessage}</Text>}
+            <Text mt="sm">Do you want to publish anyway?</Text>
+          </>
+        ) : (
+          params.confirmMessage ?? 'Are you sure you want to publish this post?'
+        ),
+        labels: hasReview ? { confirm: 'Publish anyway', cancel: 'Cancel' } : undefined,
+        onConfirm: () => publish(date),
       },
     });
   };
 
   const handlePublish = (date?: Date, confirmPublish = params.confirmPublish) => {
-    confirmPublish ? handleShowConfirmPublish(date) : publish(date);
+    const needsConfirm = confirmPublish || imagesInReview.length > 0;
+    needsConfirm ? handleShowConfirmPublish(date) : publish(date);
   };
 
   const handleScheduleClick = () => {
