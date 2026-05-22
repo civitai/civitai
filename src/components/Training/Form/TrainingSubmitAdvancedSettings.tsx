@@ -299,12 +299,14 @@ export const AdvancedSettings = ({
 
     showInfoNotification({
       title: 'Sample prompts pre-filled',
-      message:
-        'Sample prompts have been pre-filled with random captions from your uploaded images.',
+      message: 'Sample prompts have been pre-filled with random labels from your uploaded images.',
       autoClose: 8000,
     });
+    // imageList is included so the prefill re-fires if the user picks an
+    // AI Toolkit model before their labels have been generated/loaded. The
+    // `allEmpty` guard above prevents overwriting user-edited prompts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedRun.params.engine, selectedRun.id]);
+  }, [selectedRun.params.engine, selectedRun.id, imageList]);
 
   // Apply feature-flag-driven default engine once per run.
   // The store's defaultRun always uses 'kohya' because it can't access feature flags,
