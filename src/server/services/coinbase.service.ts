@@ -211,7 +211,7 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
     await log({
       message: 'Failed to process Coinbase webhook event',
       error: error instanceof Error ? error.message : String(error),
-      event,
+      eventData,
     });
     console.error('Error processing Coinbase webhook event:', error);
     throw error; // Re-throw to handle it upstream if needed
