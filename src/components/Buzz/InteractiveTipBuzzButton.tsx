@@ -392,10 +392,13 @@ export function InteractiveTipBuzzButton({
     // a genuine intentional hold; if the cursor then drifts off before release
     // the user still meant to tip, so it also falls through to complete.
     if (e.type === 'mouseleave' && startTimerTimeoutRef.current !== null) {
+      // `mouseleave` only fires for mouse input, so `e` is a MouseEvent here —
+      // narrow the MouseEvent|TouchEvent union so clientX/clientY are typed.
+      const me = e as React.MouseEvent;
       const moved = shouldAbortPressOnLeave({
         pressUncommitted: true,
         origin: pressOriginRef.current,
-        current: { x: e.clientX, y: e.clientY },
+        current: { x: me.clientX, y: me.clientY },
       });
       if (moved) {
         // Real scroll/drag — not a tip gesture. Abort: clear the hold timer and
@@ -408,8 +411,13 @@ export function InteractiveTipBuzzButton({
       // Incidental edge drift on a real quick tap — fall through to complete it.
     }
 
+    // The tip amount the confirm UI opens with — set per branch, then used for a
+    // single TipInteractive_Click emit below (covering both gestures).
+    let amount: number;
+
     if (startTimerTimeoutRef.current !== null) {
-      // Was click
+      // Was click (quick tap)
+      amount = Math.min(buzzConstants.maxTipAmount, buzzCounter + CLICK_AMOUNT);
       setBuzzCounter((x) => Math.min(buzzConstants.maxTipAmount, x + CLICK_AMOUNT));
       clearTimeout(startTimerTimeoutRef.current);
       startTimerTimeoutRef.current = null;
@@ -429,18 +437,22 @@ export function InteractiveTipBuzzButton({
     } else if (interval.active) {
       // Was hold
       interval.stop();
-      const amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
-      trackAction({
-        type: 'TipInteractive_Click',
-        details: { toUserId, entityId, entityType, amount },
-      }).catch(() => undefined);
+      amount = buzzCounter > 0 ? buzzCounter : CLICK_AMOUNT;
     } else {
       return;
     }
 
-    // A genuine tap or hold-and-release on the button that opens the tip
-    // confirm UI. Mark the confirm flow as user-initiated so a later cancel
-    // is recorded as a real TipInteractive_Cancel.
+    // A genuine tap or hold-and-release on the button opens the tip confirm UI.
+    // Emit exactly one TipInteractive_Click — for BOTH the quick-tap and the hold
+    // gesture — and mark the confirm flow user-initiated so the matching
+    // TipInteractive_Cancel is recorded. Emitting the Click on quick taps too
+    // keeps the Click→Cancel funnel consistent: a real tap that is later
+    // cancelled now produces a Cancel WITH a preceding Click (the Click-less
+    // Cancels in the historical data were the phantom-scroll bug this PR fixes).
+    trackAction({
+      type: 'TipInteractive_Click',
+      details: { toUserId, entityId, entityType, amount },
+    }).catch(() => undefined);
     gestureCommittedRef.current = true;
 
     startConfirming();
