@@ -2,13 +2,12 @@ import type {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import type { AdFeedItem } from '~/components/Ads/ads.utils';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 export function useMasonryColumns<TData>(
   data: TData[],
@@ -20,8 +19,8 @@ export function useMasonryColumns<TData>(
   withAds?: boolean
 ) {
   const { adsEnabled } = useAdsContext();
-  const browsingLevel = useBrowsingLevelDebounced();
-  const adsReallyAreEnabled = adsEnabled && getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  const isMobile = useIsMobile();
+  const adsReallyAreEnabled = adsEnabled && isMobile && withAds;
   const createAdFeed = useCreateAdFeed();
 
   return useMemo(() => {

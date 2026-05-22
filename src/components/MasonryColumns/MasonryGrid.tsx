@@ -1,11 +1,6 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import {
-  Button,
-  useComputedColorScheme,
-  useMantineColorScheme,
-  useMantineTheme,
-} from '@mantine/core';
+import { Button, useComputedColorScheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
@@ -17,10 +12,9 @@ import { IconCaretRightFilled } from '@tabler/icons-react';
 import Image from 'next/image';
 import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import classes from './MasonryGrid.module.scss';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 type Props<TData> = {
   data: TData[];
@@ -41,10 +35,9 @@ export function MasonryGrid<TData>({
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
   const { adsEnabled, useDirectAds } = useAdsContext();
-  const browsingLevel = useBrowsingLevelDebounced();
   // Disable in-feed ads on civitai.red (direct ads) for now
-  const adsReallyAreEnabled =
-    adsEnabled && !useDirectAds && getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  const isMobile = useIsMobile();
+  const adsReallyAreEnabled = adsEnabled && !useDirectAds && isMobile && withAds;
   const createAdFeed = useCreateAdFeed();
   const items = useMemo(
     () =>

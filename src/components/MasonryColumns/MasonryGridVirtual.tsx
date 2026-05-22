@@ -7,13 +7,12 @@ import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useIsMobile } from '~/hooks/useIsMobile';
 
 // Matches the aspectRatioMap in ~/components/CardTemplates/AspectRatioCard.tsx.
 // Values are width/height ratios, so rowHeight = columnWidth / cardAspectRatio.
@@ -53,9 +52,8 @@ export function MasonryGridVirtual<TData>({
   const estimatedRowHeight = Math.round(columnWidth / cardAspectRatioMap[aspectRatio]);
 
   const { adsEnabled, useDirectAds } = useAdsContext();
-  const browsingLevel = useBrowsingLevelDebounced();
-  const adsReallyAreEnabled =
-    adsEnabled && !useDirectAds && getIsSafeBrowsingLevel(browsingLevel) && withAds;
+  const isMobile = useIsMobile();
+  const adsReallyAreEnabled = adsEnabled && !useDirectAds && isMobile && withAds;
   const createAdFeed = useCreateAdFeed();
   // Only interleave ads when they'll actually render. Otherwise AdUnitRenderable
   // short-circuits to null and leaves visible empty cells in the pre-sliced rows
