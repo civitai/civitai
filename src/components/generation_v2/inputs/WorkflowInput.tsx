@@ -6,7 +6,7 @@
  * Uses Popover on desktop and dialogStore modal on mobile.
  */
 
-import { Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
+import { Badge, Group, Modal, Popover, Text, UnstyledButton, Stack } from '@mantine/core';
 import { useDisclosure, useMediaQuery } from '@mantine/hooks';
 import {
   IconArrowLeft,
@@ -44,6 +44,7 @@ export interface WorkflowOption {
   description?: string;
   compatible: boolean;
   memberOnly?: boolean;
+  isNew?: boolean;
 }
 
 export interface WorkflowCategoryGroup {
@@ -142,6 +143,11 @@ function WorkflowMenuItem({
             <span className="flex items-center gap-1 text-sm leading-tight">
               {workflow.label}
               <IconDiamond size={14} className="shrink-0" />
+              {workflow.isNew && (
+                <Badge size="xs" color="green" variant="filled" radius="sm">
+                  New
+                </Badge>
+              )}
             </span>
             {workflow.description && (
               <span className="text-dimmed text-xs leading-tight opacity-70">
@@ -164,9 +170,16 @@ function WorkflowMenuItem({
     >
       <Group gap="sm" wrap="nowrap" justify="space-between">
         <div className="min-w-0 flex-1">
-          <Text size="sm" fw={isSelected ? 600 : 400}>
-            {workflow.label}
-          </Text>
+          <Group gap={6} wrap="nowrap">
+            <Text size="sm" fw={isSelected ? 600 : 400}>
+              {workflow.label}
+            </Text>
+            {workflow.isNew && (
+              <Badge size="xs" color="green" variant="filled" radius="sm">
+                New
+              </Badge>
+            )}
+          </Group>
           {workflow.description && (
             <Text size="xs" c="dimmed" className="mt-0.5">
               {workflow.description}

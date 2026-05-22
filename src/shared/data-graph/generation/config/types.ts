@@ -92,6 +92,9 @@ export interface WorkflowConfig {
   /** When true, this workflow is hidden from the workflow picker (triggered programmatically) */
   hidden?: boolean;
 
+  /** When true, the workflow picker shows a "New" badge next to the label */
+  isNew?: boolean;
+
   /** Short label for segmented mode control. Falls back to `label` if omitted. */
   modeLabel?: string;
 

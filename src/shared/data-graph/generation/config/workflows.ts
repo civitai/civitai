@@ -239,6 +239,7 @@ export const workflowConfigs: WorkflowConfigs = {
     // for users who can attach the preprocessed output to a ControlNet.
     featureFlag: 'controlNets',
     ecosystemIds: [],
+    isNew: true,
   },
 
   // ===========================================================================
@@ -412,6 +413,8 @@ export type WorkflowOption = {
   memberOnly?: boolean;
   /** Model version IDs that should NOT see this option */
   excludeModelVersionIds?: number[];
+  /** If true, render a "New" badge next to the label in the workflow picker */
+  isNew?: boolean;
 };
 
 /**
@@ -431,6 +434,7 @@ export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w
     enhancement: w.enhancement,
     memberOnly: w.memberOnly,
     excludeModelVersionIds: w.excludeModelVersionIds,
+    isNew: w.isNew,
   };
 
   const aliases: WorkflowOption[] = (w.aliases ?? []).map((alias, i) => ({
@@ -445,6 +449,7 @@ export const workflowOptions: WorkflowOption[] = workflowConfigsArray.flatMap((w
     enhancement: w.enhancement,
     memberOnly: w.memberOnly,
     excludeModelVersionIds: alias.excludeModelVersionIds,
+    isNew: w.isNew,
   }));
 
   return [primary, ...aliases];
