@@ -281,6 +281,14 @@ export function InteractiveTipBuzzButton({
     // sendTip must call reset() when conditionalPerformTransaction returns
     // false; otherwise the flag would leak `true` into the next confirm flow.
     gestureCommittedRef.current = false;
+    // Defense-in-depth: also clear the press flag here. The global
+    // pointerup/pointercancel window listener is the primary clear, but if a
+    // pointer release never reaches `window` (a context-menu opens, Alt+Tab
+    // mid-press), pressActiveRef would stay stale `true` and a later
+    // clickReenter could re-arm on an unrelated drag. reset() runs on every
+    // tip-flow termination path, so clearing it here belt-and-suspenders the
+    // window listener.
+    pressActiveRef.current = false;
   };
 
   const startConfirming = () => {
@@ -433,6 +441,14 @@ export function InteractiveTipBuzzButton({
     // confirm UI. Mark the confirm flow as user-initiated so a later cancel
     // is recorded as a real TipInteractive_Cancel.
     gestureCommittedRef.current = true;
+
+    // The press has finished normally — release the press flag here too.
+    // clickEnd is wired to mouseup/mouseleave/touchend, none of which
+    // guarantee the global pointerup/pointercancel window listener also fires
+    // (e.g. context-menu, Alt+Tab). Clearing pressActiveRef on this normal
+    // completion path is defense-in-depth so a stale `true` cannot let a later
+    // clickReenter re-arm on an unrelated drag.
+    pressActiveRef.current = false;
 
     startConfirming();
   };
