@@ -1,8 +1,10 @@
 import { trpc } from '~/utils/trpc';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 
-import React, { useMemo } from 'react';
+import React, { useCallback, useMemo, useRef } from 'react';
 
+import { Box, Text } from '@mantine/core';
+import { IconBan } from '@tabler/icons-react';
 import { Meta } from '~/components/Meta/Meta';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { env } from '~/env/client';
@@ -15,6 +17,10 @@ import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
 import { usePathname } from 'next/navigation';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { BlockUserButton } from '~/components/HideUserButton/BlockUserButton';
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
+import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -22,7 +28,11 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const { username } = router.query as { username: string };
 
   const { isInitialLoading, data: user } = trpc.userProfile.get.useQuery({ username });
-  const { data: overview } = trpc.userProfile.overview.useQuery({ username });
+  const blockedByThem = !!(user && 'blockedByThem' in user && user.blockedByThem);
+  const { data: overview } = trpc.userProfile.overview.useQuery(
+    { username },
+    { enabled: !blockedByThem }
+  );
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.some((x) => x.id === user?.id);
 
@@ -111,7 +121,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {user && user.username && stats ? (
+      {user && user.username && stats && !blockedByThem ? (
         <Meta
           title={`${user.username} Creator Profile | Civitai`}
           description={`Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
@@ -129,23 +139,29 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
           title={`${user?.username ?? username} Creator Profile | Civitai`}
           description={`Learn more about ${user?.username ?? username} on Civitai.`}
           canonical={pathname}
-          deIndex={deIndex}
+          deIndex
         />
       )}
-      {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}
+      {user && !blockedByThem && (
+        <TrackView entityId={user.id} entityType="User" type="ProfileView" />
+      )}
       <AppLayout
         loading={isInitialLoading}
         notFound={!user || !user.username}
         left={
-          <div className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6">
-            <ProfileSidebar username={username} />
-          </div>
+          blockedByThem ? null : (
+            <div className="scroll-area relative min-h-full w-[320px] border-r border-gray-3 bg-gray-0 @max-sm:hidden dark:border-dark-4 dark:bg-dark-6">
+              <ProfileSidebar username={username} />
+            </div>
+          )
         }
-        subNav={<ProfileNavigation username={username} />}
+        subNav={blockedByThem ? null : <ProfileNavigation username={username} />}
         announcements={false}
       >
         <div className="px-3">
-          {isBlocked ? (
+          {blockedByThem && user ? (
+            <BlockedByThemPanel user={user} />
+          ) : isBlocked ? (
             <div className="mx-auto flex h-full items-center">
               <NoContent message="Unable to display content because you have blocked this user" />
             </div>
@@ -158,6 +174,90 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
         </div>
       </AppLayout>
     </>
+  );
+}
+
+function BlockedByThemPanel({
+  user,
+}: {
+  user: Partial<UserWithCosmetics> & { id: number };
+}) {
+  const spotlightRef = useRef<HTMLDivElement>(null);
+  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const el = spotlightRef.current;
+    if (!el) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(239,68,68,0.18), transparent 70%)`;
+    el.style.opacity = '1';
+  }, []);
+  const handleMouseLeave = useCallback(() => {
+    const el = spotlightRef.current;
+    if (el) el.style.opacity = '0';
+  }, []);
+
+  return (
+    <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
+      <div
+        className="flex w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-dark-4 md:flex-row"
+        style={outerCardStyle}
+      >
+        <div
+          className="relative flex w-full flex-col items-center justify-center gap-4 overflow-hidden bg-gradient-to-b from-red-9/30 via-red-9/15 to-red-9/5 px-10 py-12 md:w-2/5 md:bg-gradient-to-br"
+          onMouseMove={handleMouseMove}
+          onMouseLeave={handleMouseLeave}
+        >
+          <div
+            ref={spotlightRef}
+            className="pointer-events-none absolute inset-0 transition-opacity duration-500"
+            style={{ opacity: 0 }}
+          />
+          <div className="pointer-events-none absolute -bottom-16 -left-16 size-48 rounded-full bg-red-9/10 blur-3xl" />
+          <div className="bg-orange-9/8 pointer-events-none absolute -right-12 -top-12 size-36 rounded-full blur-3xl" />
+
+          <Box className="relative rounded-full shadow-lg shadow-red-9/40 ring-4 ring-red-9/40 ring-offset-2 ring-offset-transparent">
+            <UserAvatar user={user} avatarSize={96} size="xl" radius={1000} />
+          </Box>
+
+          <Text
+            fw={800}
+            className="font-display relative text-center text-2xl leading-tight tracking-tight text-gray-0"
+          >
+            You&apos;ve been
+            <br />
+            blocked
+          </Text>
+        </div>
+
+        <div className="flex w-full flex-1 flex-col gap-6 border-t border-gray-200 px-8 py-10 md:border-l md:border-t-0 md:px-10 dark:border-white/5">
+          <div className="flex flex-col gap-1">
+            <Text size="lg" fw={600} className="text-gray-1">
+              <Text component="span" inherit fw={700} className="text-red-4">
+                {user.username}
+              </Text>{' '}
+              has blocked you
+            </Text>
+            <Text size="sm" className="text-dimmed">
+              Their profile and content are hidden from you. You can still block them on your end
+              to prevent further interactions on your own posts.
+            </Text>
+          </div>
+
+          <BlockUserButton
+            userId={user.id}
+            label="Block them"
+            unblockLabel="Unblock them"
+            variant="filled"
+            color="red"
+            size="lg"
+            radius="md"
+            leftSection={<IconBan size={18} />}
+            className="mt-1 w-full shadow-md shadow-red-9/25 md:w-auto md:self-start"
+          />
+        </div>
+      </div>
+    </div>
   );
 }
 

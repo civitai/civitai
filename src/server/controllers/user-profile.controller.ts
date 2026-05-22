@@ -1,9 +1,5 @@
 import { purgeCache } from '~/server/cloudflare/client';
-import {
-  throwAuthorizationError,
-  throwDbError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview,
   getUserWithProfile,
@@ -11,6 +7,8 @@ import {
 } from '~/server/services/user-profile.service';
 import type {
   GetUserProfileSchema,
+  PrivacySettingsSchema,
+  ProfileSectionSchema,
   ShowcaseItemSchema,
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
@@ -60,7 +58,33 @@ export const getUserProfileHandler = async ({
 
     if (ctx.user && !ctx.user.isModerator) {
       const blocked = await amIBlockedByUser({ userId: ctx.user.id, targetUserId: user.id });
-      if (blocked) throw throwNotFoundError();
+      if (blocked) {
+        // Return a minimal stub so the viewer can block back. Strip every field
+        // that could leak content the blocker doesn't want them to see.
+        return {
+          ...user,
+          blockedByThem: true as const,
+          muted: false,
+          links: [],
+          cosmetics: [],
+          rank: null,
+          leaderboardShowcase: null,
+          stats: null,
+          profile: {
+            userId: user.id,
+            bio: null,
+            message: null,
+            messageAddedAt: null,
+            coverImage: null,
+            coverImageId: null,
+            location: null,
+            nsfw: false,
+            showcaseItems: [] as ShowcaseItemSchema[],
+            profileSectionsSettings: [] as ProfileSectionSchema[],
+            privacySettings: {} as PrivacySettingsSchema,
+          },
+        };
+      }
     }
 
     return user;
