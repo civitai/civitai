@@ -10,6 +10,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   controlNetsNode,
+  CONTROLNET_LIMIT,
   createCheckpointGraph,
   createResourcesGraph,
   createVaeGraph,
@@ -122,7 +123,7 @@ export const stableDiffusionGraph = new DataGraph<
     (ctx) => {
       const preprocessors =
         ctx.ecosystem === 'SD1' ? sd1ControlNetPreprocessors : sdxlControlNetPreprocessors;
-      return controlNetsNode({ preprocessors });
+      return controlNetsNode({ preprocessors, limit: CONTROLNET_LIMIT });
     },
     ['ecosystem']
   )

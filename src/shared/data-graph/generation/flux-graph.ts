@@ -22,6 +22,7 @@ import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   controlNetsNode,
+  CONTROLNET_LIMIT,
   createCheckpointGraph,
   createResourcesGraph,
   promptGraph,
@@ -113,7 +114,10 @@ const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: fluxGuidancePresets })
   )
   .node('steps', sliderNode({ min: 20, max: 50, defaultValue: 25 }))
-  .node('controlNets', controlNetsNode({ preprocessors: fluxControlNetPreprocessors }))
+  .node(
+    'controlNets',
+    controlNetsNode({ preprocessors: fluxControlNetPreprocessors, limit: CONTROLNET_LIMIT })
+  )
   .node('seed', seedNode());
 
 /**
