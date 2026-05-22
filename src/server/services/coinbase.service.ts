@@ -162,8 +162,7 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
     // so PR #2308 (which restored the Stripe + Paddle in-app emits) could not
     // cover it. Reached only after a successful `grantBuzzPurchase`; duplicate
     // `charge:confirmed` webhooks throw on the transaction conflict before
-    // this point, so it cannot double-count. `unitAmount` mirrors the client
-    // convention of 10 buzz = 1 cent.
+    // this point, so it cannot double-count.
     //
     // This emit runs *immediately after the buzz grant succeeds and before
     // `grantCosmetics`* (audit finding #2): if `grantCosmetics` throws, control
@@ -176,6 +175,25 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
     // an explicit `userId`, validates the payload against the shared zod
     // schema, and never throws — it is fire-and-forget internally, so no
     // try/catch is needed here (a wrapping catch would be unreachable).
+    //
+    // `unitAmount` (review #3): the charge is created with a `fixed_price`
+    // `local_price` of `(unitAmount + COINBASE_FIXED_FEE) / 100` USD, so the
+    // amount the user actually agreed to pay is `local_price` — fee included.
+    // The webhook echoes that figure back as `pricing.local.amount` (USD
+    // string). Using it × 100 emits the *true total fiat billed* in cents,
+    // consistent with how the NOWPayments path now emits `actually_paid_at_fiat`
+    // and with the true billed fiat that card rows carry in this same
+    // ClickHouse column. The earlier `buzzAmount / 10` estimate excluded
+    // `COINBASE_FIXED_FEE`, so Coinbase rows under-reported fiat versus
+    // NOWPayments / card rows (silent today only because `COINBASE_FIXED_FEE`
+    // is currently 0 — this keeps the row correct if the fee is ever raised).
+    // The estimate remains a fallback for the unexpected case of a malformed /
+    // unparseable `pricing.local.amount`, so the field is never null.
+    const localPriceUsd = Number(eventData.pricing?.local?.amount);
+    const unitAmount =
+      Number.isFinite(localPriceUsd) && localPriceUsd > 0
+        ? Math.round(localPriceUsd * 100)
+        : Math.round(buzzAmount / 10);
     new Tracker().actionAsSystem({
       userId,
       type: 'PurchaseFunds_Confirm',
@@ -183,12 +201,7 @@ export const processBuzzOrder = async (eventData: Coinbase.WebhookEventSchema['e
       // purchased — not the credited total (base + any purchase-multiplier
       // bonus). This is intentional: `PurchaseFunds_Confirm` is a revenue
       // signal, and revenue tracks the base purchase, not bonus buzz.
-      //
-      // `unitAmount` is a *derived estimate* in cents (10 buzz = 1 cent
-      // convention), NOT the actual fiat amount billed. Crypto / partial
-      // payments won't always settle to clean multiples of 10 buzz, so
-      // treat this figure as approximate for analytics purposes.
-      details: { buzzAmount, unitAmount: Math.round(buzzAmount / 10), method: 'coinbase' },
+      details: { buzzAmount, unitAmount, method: 'coinbase' },
     });
 
     // Grant cosmetics last — non-critical, and must run AFTER the revenue emit
