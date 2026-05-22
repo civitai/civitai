@@ -1,5 +1,6 @@
 import { auctionRouter } from '~/server/routers/auction.router';
 import { blocklistRouter } from '~/server/routers/blocklist.router';
+import { bugRouter } from '~/server/routers/bug.router';
 import { changelogRouter } from '~/server/routers/changelog.router';
 import { clubRouter } from '~/server/routers/club.router';
 import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
@@ -172,6 +173,7 @@ export const appRouter = router({
   creatorProgram: creatorProgramRouter,
   auction: auctionRouter,
   changelog: changelogRouter,
+  bug: bugRouter,
   nowPayments: nowPaymentsRouter,
   coinbase: coinbaseRouter,
   emerchantpay: emerchantpayRouter,

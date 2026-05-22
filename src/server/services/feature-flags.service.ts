@@ -169,6 +169,8 @@ const featureFlags = createFeatureFlags({
   newOrderGame: ['blue', 'red', 'public'],
   newOrderReset: ['granted'],
   changelogEdit: ['granted'],
+  bugsPage: ['public'],
+  bugsEdit: ['granted'],
   annualMemberships: ['dev'],
   disablePayments: ['blue', 'red', 'public'],
   prepaidMemberships: ['public'],

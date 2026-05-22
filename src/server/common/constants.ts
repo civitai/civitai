@@ -1462,6 +1462,13 @@ export const CacheTTL = {
   month: 60 * 60 * 24 * 30,
 } as const;
 
+export const BUG_CLOSED_STATUSES = ['complete', 'closed', 'done', 'resolved'] as const;
+
+export const isBugClosed = (status: string) =>
+  (BUG_CLOSED_STATUSES as readonly string[]).includes(status.trim().toLowerCase());
+
+export const BUG_STATUS_SUGGESTIONS = ['Open', 'In Progress', 'In Review', 'Complete'] as const;
+
 export const RECAPTCHA_ACTIONS = {
   STRIPE_TRANSACTION: 'STRIPE_TRANSACTION',
   COMPLETE_ONBOARDING: 'COMPLETE_ONBOARDING',

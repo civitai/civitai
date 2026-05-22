@@ -3968,6 +3968,25 @@ model Changelog {
   domain      DomainColor[] @default([all])
 }
 
+model Bug {
+  id          Int           @id @default(autoincrement())
+  title       String
+  summary     String
+  content     String?
+  status      String        @default("Open")
+  clickupUrl  String?
+  firstSeenAt DateTime      @default(now())
+  resolvedAt  DateTime?
+  publishedAt DateTime?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  disabled    Boolean       @default(false)
+  domain      DomainColor[] @default([all])
+  tags        String[]      @default([])
+
+  @@index([status, publishedAt])
+}
+
 model NewOrderPlayer {
   userId        Int              @id @unique
   user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
