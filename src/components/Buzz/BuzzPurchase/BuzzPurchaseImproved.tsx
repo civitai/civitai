@@ -79,6 +79,7 @@ import { syncAccount } from '~/utils/sync-account';
 import { buzzConstants } from '~/shared/constants/buzz.constants';
 import { getAccountTypeLabel } from '~/utils/buzz';
 import { openGreenPurchaseAcknowledgement } from '~/components/Stripe/GreenPurchaseAcknowledgement';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -111,6 +112,7 @@ const BuzzPurchasePaymentButton = ({
   const paymentProvider = usePaymentProvider();
   const currentUser = useCurrentUser();
   const buzzConfig = useBuzzCurrencyConfig(buzzType);
+  const { trackAction } = useTrackEvent();
 
   const successMessage = useMemo(
     () =>
@@ -225,6 +227,12 @@ const BuzzPurchasePaymentButton = ({
         successMessage,
         onSuccess: async (transactionId) => {
           await processCompleteBuzzTransaction({ id: transactionId });
+          // Re-instrument the purchase-completion analytics event for the
+          // Paddle flow. See claudedocs/deep-dive-monetization-funnel.md.
+          trackAction({
+            type: 'PurchaseFunds_Confirm',
+            details: { buzzAmount, unitAmount, method: 'paddle' },
+          }).catch(() => undefined);
           onPurchaseSuccess?.();
         },
       },
@@ -1133,6 +1141,7 @@ const StripeTransactionModal = ({
               onSuccess={onSuccess}
               onCancel={dialog.onClose}
               successMessage={successMessage}
+              metadata={metadata}
             />
           </Elements>
         )}
@@ -1146,16 +1155,36 @@ const StripePaymentForm = ({
   onSuccess,
   onCancel,
   successMessage,
+  metadata,
 }: {
   clientSecret: string;
   onSuccess?: (paymentIntentId: string) => Promise<void>;
   onCancel: () => void;
   successMessage?: React.ReactNode;
+  metadata: PaymentIntentMetadataSchema;
 }) => {
+  const { trackAction } = useTrackEvent();
   const { errorMessage, onConfirmPayment, processingPayment, paymentIntentStatus } =
     useStripeTransaction({
       clientSecret,
       onPaymentSuccess: async (paymentIntent) => {
+        // Re-instrument the purchase-completion analytics event. This emit
+        // regressed on 2024-08-30 when buzz purchases moved to redirect-based
+        // providers and the legacy StripeTransactionModal (which carried it)
+        // stopped being used. See claudedocs/deep-dive-monetization-funnel.md.
+        const paymentMethodType =
+          typeof paymentIntent.payment_method === 'object'
+            ? paymentIntent.payment_method?.type
+            : undefined;
+        trackAction({
+          type: 'PurchaseFunds_Confirm',
+          details: {
+            buzzAmount: metadata.buzzAmount,
+            unitAmount: metadata.unitAmount,
+            method: paymentMethodType ?? 'stripe',
+          },
+        }).catch(() => undefined);
+
         if (onSuccess) {
           await onSuccess(paymentIntent.id);
         }
