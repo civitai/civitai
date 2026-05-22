@@ -84,10 +84,33 @@ export const useBuzzTransaction = (opts?: {
 
   const hasRequiredAmount = (buzzAmount: number) => total >= buzzAmount;
 
-  const conditionalPerformTransaction = (buzzAmount: number, onPerformTransaction: () => void) => {
-    if (!features.buzz) return onPerformTransaction();
+  /**
+   * Runs `onPerformTransaction` if the user can afford `buzzAmount`, otherwise
+   * routes into the not-enough-funds / buy-buzz flow.
+   *
+   * Returns `true` only when `onPerformTransaction` was actually invoked
+   * synchronously (the transaction proceeded). Returns `false` for every
+   * early-return branch where the transaction did NOT proceed:
+   *   - balance still loading (`isLoading`)
+   *   - insufficient funds, no purchasable account (error toast shown)
+   *   - insufficient funds, buy-buzz modal opened
+   *
+   * Callers that hold gesture/UI state (e.g. InteractiveTipBuzzButton's
+   * `gestureCommittedRef`) must inspect this return value: a `false` result
+   * means the gesture terminated here without going through the transaction's
+   * own cleanup (`onSettled`), so the caller is responsible for resetting its
+   * own state.
+   */
+  const conditionalPerformTransaction = (
+    buzzAmount: number,
+    onPerformTransaction: () => void
+  ): boolean => {
+    if (!features.buzz) {
+      onPerformTransaction();
+      return true;
+    }
 
-    if (isLoading) return;
+    if (isLoading) return false;
 
     const balance = total;
     const meetsRequirement = hasRequiredAmount(buzzAmount);
@@ -103,7 +126,7 @@ export const useBuzzTransaction = (opts?: {
           error: new Error(`You need at least ${buzzAmount} Buzz to perform this action.`),
         });
 
-        return;
+        return false;
       }
 
       onBuyBuzz({
@@ -115,12 +138,13 @@ export const useBuzzTransaction = (opts?: {
         initialBuzzType,
       });
 
-      return;
+      return false;
     }
 
-    // if
-
+    // Affordable — run the transaction. Its own lifecycle (e.g. mutation
+    // onSettled) is responsible for any post-transaction cleanup.
     onPerformTransaction();
+    return true;
   };
 
   return {

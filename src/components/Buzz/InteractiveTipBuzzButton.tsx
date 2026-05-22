@@ -179,7 +179,7 @@ export function InteractiveTipBuzzButton({
       }).catch(() => undefined);
     }
 
-    // reset() clears gestureCommittedRef — see its single authoritative reset.
+    // reset() clears gestureCommittedRef — see reset()'s doc comment.
     setTimeout(() => reset(), 100);
   };
 
@@ -197,7 +197,7 @@ export function InteractiveTipBuzzButton({
 
     const performTransaction = () => {
       // The confirm flow resolved with a real tip. The gesture flag is cleared
-      // by reset() in onSettled below (single authoritative reset point).
+      // by reset() in onSettled below once the mutation settles.
       trackAction({
         type: 'Tip_Confirm',
         details: { toUserId, entityType, entityId, amount },
@@ -233,7 +233,18 @@ export function InteractiveTipBuzzButton({
       );
     };
 
-    conditionalPerformTransaction(amount, performTransaction);
+    // conditionalPerformTransaction returns false on every branch where the
+    // transaction did NOT proceed: balance still loading, insufficient funds
+    // with no purchasable account, or the buy-buzz modal being opened. On those
+    // branches performTransaction is never called, so tipUserMutation.onSettled
+    // -> reset() never runs and gestureCommittedRef would otherwise leak `true`
+    // into the next confirm flow. Reset here so the gesture genuinely
+    // terminates and the popover returns to its idle state.
+    const transactionStarted = conditionalPerformTransaction(amount, performTransaction);
+    if (!transactionStarted) {
+      setStatus('pending');
+      reset();
+    }
   };
 
   const processEnteredNumber = (value: string) => {
@@ -253,10 +264,14 @@ export function InteractiveTipBuzzButton({
       clearTimeout(confirmTimeoutRef.current);
       confirmTimeoutRef.current = null;
     }
-    // Single authoritative reset point for the gesture-committed flag. Every
-    // path that ends a tip flow (cancel, confirm, auto-dismiss, mouseleave
-    // abort, insufficient-funds-then-abandon) routes through reset(), so the
-    // flag cannot leak into the next confirm flow.
+    // Clears the gesture-committed flag. reset() is invoked by every tip-flow
+    // termination path: cancel, successful confirm (mutation onSettled),
+    // auto-dismiss timeout, phantom mouseleave abort, and — via the explicit
+    // check in sendTip — the conditionalPerformTransaction early-returns
+    // (balance loading, insufficient funds, buy-buzz modal). Those
+    // early-returns do NOT route through here on their own, which is why
+    // sendTip must call reset() when conditionalPerformTransaction returns
+    // false; otherwise the flag would leak `true` into the next confirm flow.
     gestureCommittedRef.current = false;
   };
 
@@ -271,7 +286,7 @@ export function InteractiveTipBuzzButton({
     confirmTimeoutRef.current = setTimeout(() => {
       // Auto-dismiss after inactivity. This is a timeout, not a deliberate
       // user cancel, so no TipInteractive_Cancel is emitted. reset() clears
-      // the gesture flag (single authoritative reset point).
+      // the gesture flag.
       setTimeout(() => reset(), 100);
       setStatus('pending');
     }, CONFIRMATION_TIMEOUT);
@@ -295,6 +310,40 @@ export function InteractiveTipBuzzButton({
       setShowCountDown(false);
       clearTimeout(confirmTimeoutRef.current);
       confirmTimeoutRef.current = null;
+    }
+
+    startTimerTimeoutRef.current = setTimeout(() => {
+      interval.start();
+      startTimerTimeoutRef.current = null;
+    }, 150);
+  };
+
+  // Re-arm a press when the pointer drags back onto the button.
+  //
+  // A quick tap whose pointer wobbles off the (small) button before the 150ms
+  // hold timer fires is treated by clickEnd's mouseleave branch as a phantom
+  // press and aborted. Without this handler, dragging the still-held pointer
+  // back onto the button does nothing (mousedown already fired and won't fire
+  // again), so the tip would be silently dropped.
+  //
+  // We only re-arm when the primary mouse button is still held (e.buttons === 1).
+  // A bare hover with no button pressed — e.g. the cursor passing over the
+  // button while scrolling a feed — has e.buttons === 0 and is ignored, so this
+  // does not reintroduce the phantom events the round-1 fix removed. Mouse only:
+  // touch has no equivalent enter event and is intentionally left unchanged.
+  const clickReenter = (e: React.MouseEvent) => {
+    if (isTouchDevice()) return;
+    // Primary button not held — a stray hover, not a continued press.
+    if (e.buttons !== 1) return;
+    // Already mid-press or mid-confirm — nothing to re-arm.
+    if (
+      interval.active ||
+      startTimerTimeoutRef.current ||
+      confirmTimeoutRef.current ||
+      status !== 'pending' ||
+      !currentUser
+    ) {
+      return;
     }
 
     startTimerTimeoutRef.current = setTimeout(() => {
@@ -381,6 +430,7 @@ export function InteractiveTipBuzzButton({
         onTouchStart: clickStart,
         onMouseUp: clickEnd,
         onMouseLeave: clickEnd,
+        onMouseEnter: clickReenter,
         onTouchEnd: clickEnd,
       }
     : {};
