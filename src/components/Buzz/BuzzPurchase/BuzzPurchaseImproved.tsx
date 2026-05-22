@@ -1175,18 +1175,27 @@ const StripePaymentForm = ({
         // path, so the emit is guarded by a one-shot ref to avoid
         // double-counting completions. onSuccess is intentionally left
         // unguarded — it runs every time and is idempotent on the server.
-        if (!hasTrackedConfirmRef.current) {
+        // The emit reads buzz-specific fields off `metadata` (buzzAmount,
+        // unitAmount). The StripePaymentForm is a shared component, so guard the
+        // emit on the discriminated-union `type` — only fire for buzz purchases
+        // so a future non-buzz caller does not produce a silently zod-rejected
+        // (or zero-valued) PurchaseFunds_Confirm event.
+        if (!hasTrackedConfirmRef.current && metadata.type === 'buzzPurchase') {
           hasTrackedConfirmRef.current = true;
 
           // On the confirm path `payment_method` is the expanded PaymentMethod
           // object (Stripe.js expands it via confirmParams.expand). On the
           // polling-resolution path it comes back as an unexpanded string ID —
-          // the client-side retrievePaymentIntent API cannot expand it — so
-          // fall back to payment_method_types[0] (e.g. 'card') for the method
-          // dimension instead of the generic provider name.
+          // the client-side retrievePaymentIntent API cannot expand it — and it
+          // may also be null. Only treat it as expanded when it is a non-null
+          // object; for a string ID, null, or undefined fall back to
+          // payment_method_types[0] (e.g. 'card') instead of the generic
+          // provider name. (typeof null === 'object', so the null check is
+          // required to avoid silently skipping the fallback.)
+          const pm = paymentIntent.payment_method;
           const paymentMethodType =
-            typeof paymentIntent.payment_method === 'object'
-              ? paymentIntent.payment_method?.type
+            typeof pm === 'object' && pm !== null
+              ? pm.type
               : paymentIntent.payment_method_types?.[0];
           trackAction({
             type: 'PurchaseFunds_Confirm',
