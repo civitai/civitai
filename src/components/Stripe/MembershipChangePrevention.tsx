@@ -218,10 +218,13 @@ export function CancelMembershipFeedbackModal() {
 export const StripeCancelMembershipButton = ({
   onClose,
   hasUsedVaultStorage,
+  fromTier,
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
+  fromTier?: string;
 }) => {
+  const { trackAction } = useTrackEvent();
   const { mutate, isLoading: connectingToStripe } =
     trpc.stripe.cancelSubscriptionWithFallback.useMutation({
       async onSuccess(data) {
@@ -249,6 +252,11 @@ export const StripeCancelMembershipButton = ({
     <Button
       color="gray"
       onClick={() => {
+        trackAction({
+          type: 'Membership_Cancel',
+          details: { reason: '', from: fromTier ?? '' },
+        }).catch(() => undefined);
+
         if (hasUsedVaultStorage) {
           dialogStore.trigger({
             component: VaultStorageDowngrade,
@@ -273,10 +281,13 @@ export const StripeCancelMembershipButton = ({
 export const PaddleCancelMembershipButton = ({
   onClose,
   hasUsedVaultStorage,
+  fromTier,
 }: {
   onClose: () => void;
   hasUsedVaultStorage: boolean;
+  fromTier?: string;
 }) => {
+  const { trackAction } = useTrackEvent();
   const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
   const handleCancelSubscription = () => {
     cancelSubscription({
@@ -297,6 +308,11 @@ export const PaddleCancelMembershipButton = ({
     <Button
       color="gray"
       onClick={() => {
+        trackAction({
+          type: 'Membership_Cancel',
+          details: { reason: '', from: fromTier ?? '' },
+        }).catch(() => undefined);
+
         if (hasUsedVaultStorage) {
           dialogStore.trigger({
             component: VaultStorageDowngrade,
@@ -366,12 +382,14 @@ export const CancelMembershipBenefitsModal = () => {
               <StripeCancelMembershipButton
                 onClose={handleClose}
                 hasUsedVaultStorage={hasUsedVaultStorage}
+                fromTier={product?.metadata?.tier}
               />
             )}
             {subscriptionPaymentProvider === PaymentProvider.Paddle && (
               <PaddleCancelMembershipButton
                 onClose={handleClose}
                 hasUsedVaultStorage={hasUsedVaultStorage}
+                fromTier={product?.metadata?.tier}
               />
             )}
             <Button color="blue" onClick={handleClose} radius="xl">
