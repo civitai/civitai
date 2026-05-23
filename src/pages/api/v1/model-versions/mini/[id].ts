@@ -94,7 +94,7 @@ export default MixedAuthEndpoint(async function handler(
     SELECT
       mv.id,
       mv.name as "versionName",
-      "modelId",
+      mv."modelId",
       m.name as "modelName",
       mv."baseModel",
       mv.status,
