@@ -38,13 +38,19 @@ const ALLOWED_SANDBOX_TOKENS = new Set([
   'allow-modals',
   'allow-pointer-lock',
   'allow-downloads',
-  // 'allow-same-origin' deliberately excluded client-side; even
-  // internal-tier publishers should rely on the server gate.
 ]);
-function intersectSandbox(raw: string | undefined): string {
-  if (!raw) return 'allow-scripts';
-  const tokens = raw.split(/\s+/).filter((t) => ALLOWED_SANDBOX_TOKENS.has(t));
-  return tokens.length > 0 ? tokens.join(' ') : 'allow-scripts';
+
+// Auto-injected for trusted publishers. Unverified blocks still get an
+// opaque origin; verified/internal blocks need their real origin so the
+// host's explicit-targetOrigin postMessage + host-side origin allowlist
+// work as designed.
+const TRUSTED_TIERS: ReadonlySet<string> = new Set(['internal', 'verified']);
+
+function intersectSandbox(raw: string | undefined, trustTier: string): string {
+  const declared = (raw ?? '').split(/\s+/).filter((t) => ALLOWED_SANDBOX_TOKENS.has(t));
+  const tokens = new Set(declared.length > 0 ? declared : ['allow-scripts']);
+  if (TRUSTED_TIERS.has(trustTier)) tokens.add('allow-same-origin');
+  return Array.from(tokens).join(' ');
 }
 
 /**
@@ -327,12 +333,10 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
         // H-6: client-side sandbox allowlist intersection — defense in depth
         // against a future server-side bypass that lets a dangerous token
         // reach the iframe attribute.
-        sandbox={intersectSandbox(install.manifest.iframe?.sandbox)}
+        sandbox={intersectSandbox(install.manifest.iframe?.sandbox, install.trustTier)}
         // H-6: no-referrer keeps the model page URL out of the publisher's
-        // server logs; loading=lazy defers off-screen iframes (a model page
-        // can host up to 3 slots × 3 installs).
+        // server logs.
         referrerPolicy="no-referrer"
-        loading="lazy"
         title={install.manifest.name ?? install.blockId}
         data-testid="block-iframe"
         data-block-instance-id={install.blockInstanceId}
