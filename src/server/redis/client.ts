@@ -1005,6 +1005,11 @@ export const REDIS_KEYS = {
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
     POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
   },
+  CREATOR_EARNINGS: {
+    THIS_MONTH: 'packed:caches:creator-earnings:this-month',
+    MODEL_PERFORMANCE: 'packed:caches:creator-earnings:model-performance',
+    SOURCE_MIX: 'packed:caches:creator-earnings:source-mix',
+  },
   NEW_ORDER: {
     RATED: 'new-order:rated',
   },

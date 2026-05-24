@@ -8,6 +8,7 @@ import { clubPostRouter } from '~/server/routers/clubPost.router';
 import { commonRouter } from '~/server/routers/common.router';
 import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
+import { creatorRouter } from '~/server/routers/creator.router';
 import { creatorProgramRouter } from '~/server/routers/creator-program.router';
 import { csamRouter } from '~/server/routers/csam.router';
 import { challengeRouter } from '~/server/routers/challenge.router';
@@ -170,6 +171,7 @@ export const appRouter = router({
   challenge: challengeRouter,
   dailyChallenge: dailyChallengeRouter,
   vimeo: vimeoRouter,
+  creator: creatorRouter,
   creatorProgram: creatorProgramRouter,
   auction: auctionRouter,
   changelog: changelogRouter,
