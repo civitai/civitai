@@ -8,20 +8,6 @@ import type {
 } from '~/server/schema/blocks/workflow.schema';
 import type { GenerateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 
-// Per-family default checkpoint the host prepends to a block's resources
-// when the block's bound model isn't itself a Checkpoint (e.g. a LoRA).
-// Without an anchor Checkpoint the orchestrator rejects the workflow.
-//
-// v1 is intentionally narrow — only Flux1 is wired. Filling in SDXL/SD1/etc.
-// requires picking a "canonical" platform checkpoint for each family, which
-// is a product decision (which model gets attribution? what's the buzz
-// profile?). LoRAs from un-mapped families return BAD_REQUEST with a clear
-// message until the table grows.
-const DEFAULT_CHECKPOINT_VERSION_BY_FAMILY: Record<string, number | undefined> = {
-  // urn:air:flux1:checkpoint:civitai:618692@691639 — fluxStandardAir
-  Flux1: 691639,
-};
-
 // Map orchestrator-internal states the block contract doesn't expose to the
 // closest publicly-modeled status. `unassigned`/`preparing`/`scheduled` are
 // all "queued but not running" to the user; `processing` is the public name.
@@ -128,34 +114,31 @@ function defaultDimensions(baseModel: string): { width: number; height: number }
  * shape. Defaults are intentionally conservative — matches the comics-router
  * preset (sampler=Euler, steps=25, priority=low) so block submissions and
  * platform submissions share the same orchestrator cost profile.
+ *
+ * `checkpointVersionId` is now the caller's responsibility (passed by the
+ * router after `resolveBlockCheckpoint`). For Checkpoint-bound installs the
+ * resolver returns `body.modelVersionId` here, so the resources array has
+ * exactly one entry — the model is its own anchor. For LoRA installs the
+ * resolver returns a different versionId; we prepend that as the anchor
+ * and push the LoRA after it.
  */
 export function buildTextToImageInput(
   body: Extract<BlockWorkflowBody, { kind: 'textToImage' }>,
-  resolved: { baseModel: string; modelType: string }
+  resolved: { baseModel: string; modelType: string; checkpointVersionId: number }
 ): GenerateImageSchema {
   const dims = defaultDimensions(resolved.baseModel);
   const width = body.params.width ?? dims.width;
   const height = body.params.height ?? dims.height;
 
-  // Orchestrator requires a Checkpoint in resources to anchor the run.
-  // If the block's bound model is itself a Checkpoint, that's it. Otherwise
-  // (LoRA, LyCORIS, embedding) prepend the platform's per-family default —
-  // Flux1 only in v1, per DEFAULT_CHECKPOINT_VERSION_BY_FAMILY.
-  const resources: Array<{ id: number; strength: number }> = [];
+  const resources: Array<{ id: number; strength: number }> = [
+    { id: resolved.checkpointVersionId, strength: 1 },
+  ];
+  // Avoid duplicating the same versionId on both sides when the model is
+  // itself the anchor — that would double-bill the resource and double-
+  // count strength.
   if (resolved.modelType !== 'Checkpoint') {
-    const family = getBaseModelSetType(resolved.baseModel);
-    const fallback = DEFAULT_CHECKPOINT_VERSION_BY_FAMILY[family];
-    if (!fallback) {
-      throw new TRPCError({
-        code: 'BAD_REQUEST',
-        message:
-          `Blocks v1 has no default checkpoint configured for base model "${resolved.baseModel}". ` +
-          `Only Flux LoRAs are supported at this time.`,
-      });
-    }
-    resources.push({ id: fallback, strength: 1 });
+    resources.push({ id: body.modelVersionId, strength: 1 });
   }
-  resources.push({ id: body.modelVersionId, strength: 1 });
 
   return {
     params: {

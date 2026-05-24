@@ -184,10 +184,24 @@ describe('buildTextToImageInput', () => {
       quantity: 1,
     },
   };
-  const checkpointResolved = { baseModel: 'SDXL 1.0', modelType: 'Checkpoint' };
-  const sd1CheckpointResolved = { baseModel: 'SD 1.5', modelType: 'Checkpoint' };
-  const fluxLoraResolved = { baseModel: 'Flux.1 D', modelType: 'LORA' };
-  const sdxlLoraResolved = { baseModel: 'SDXL 1.0', modelType: 'LORA' };
+  // checkpointVersionId === body.modelVersionId for Checkpoint-bound installs
+  // (resolveBlockCheckpoint returns the model as its own anchor). For LoRAs
+  // the resolver returns a different versionId — represented here.
+  const checkpointResolved = {
+    baseModel: 'SDXL 1.0',
+    modelType: 'Checkpoint',
+    checkpointVersionId: 99,
+  };
+  const sd1CheckpointResolved = {
+    baseModel: 'SD 1.5',
+    modelType: 'Checkpoint',
+    checkpointVersionId: 99,
+  };
+  const fluxLoraResolved = {
+    baseModel: 'Flux.1 D',
+    modelType: 'LORA',
+    checkpointVersionId: 691639,
+  };
 
   it('fills SDXL/Flux-class defaults (1024x1024) when the block omits dimensions', () => {
     const out = buildTextToImageInput(baseBody as never, checkpointResolved);
@@ -226,19 +240,15 @@ describe('buildTextToImageInput', () => {
     expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
   });
 
-  it('prepends the Flux platform checkpoint when the bound model is a Flux LoRA', () => {
+  it('prepends the resolved checkpoint when the bound model is a LoRA', () => {
     const out = buildTextToImageInput(baseBody as never, fluxLoraResolved);
-    // Platform anchor first, then the LoRA the block is bound to.
+    // Resolver-supplied anchor first, then the LoRA the block is bound to.
+    // The resolver picks 691639 for Flux1 family (publisher default in this
+    // fixture); the host doesn't second-guess what the resolver returned.
     expect(out.resources).toEqual([
       { id: 691639, strength: 1 },
       { id: 99, strength: 1 },
     ]);
-  });
-
-  it('rejects non-Checkpoint models in un-mapped families with BAD_REQUEST', () => {
-    expect(() => buildTextToImageInput(baseBody as never, sdxlLoraResolved)).toThrow(
-      /no default checkpoint configured/i
-    );
   });
 
   it('forwards block-supplied sampler/steps/seed overrides', () => {

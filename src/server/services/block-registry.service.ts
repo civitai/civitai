@@ -1,10 +1,16 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  blockSettingsSchemaByBlockId,
+  blockUserSettingsSchema,
+  type BlockUserSettings,
+} from '~/server/schema/blocks/settings.schema';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
-  newBlockInstanceId,
-  newModelBlockInstallId,
-} from '~/server/utils/app-block-ids';
+  getRepresentativeBaseModel,
+  validateBlockCheckpoint,
+} from '~/server/services/blocks/checkpoint.service';
+import { newBlockInstanceId, newModelBlockInstallId } from '~/server/utils/app-block-ids';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 
 const CACHE_TTL_SECONDS = 60;
@@ -32,6 +38,22 @@ export interface BlockInstallRecord {
   enabled: boolean;
   renderMode: 'iframe' | 'inline';
   trustTier: 'unverified' | 'verified' | 'internal';
+  /**
+   * Publisher-configured default Checkpoint, joined from settings.
+   * `defaultCheckpointVersionId` at write time. Anon-safe: contains no
+   * user-specific information — the per-viewer override is delivered
+   * through a separate session-gated query.
+   * `null` when the publisher hasn't set one (LoRA installs that haven't
+   * been configured yet) — also the case for misconfigured Checkpoint
+   * installs that should never need this anyway.
+   */
+  defaultCheckpoint?: {
+    versionId: number;
+    modelId: number;
+    modelName: string;
+    versionName: string;
+    baseModel: string;
+  } | null;
 }
 
 interface ListForModelOpts {
@@ -209,9 +231,7 @@ export class BlockRegistry {
         // M-7: sentinel from getKillList() means sysRedis is unreachable;
         // suppress everything on this branch (cached path).
         if (kill.has('__KILL_LIST_UNREACHABLE__')) return [];
-        return kill.size === 0
-          ? cached
-          : cached.filter((r) => !kill.has(r.blockId));
+        return kill.size === 0 ? cached : cached.filter((r) => !kill.has(r.blockId));
       }
     } catch {
       // fail open — fall through to DB
@@ -315,7 +335,11 @@ export class BlockRegistry {
     // M-7: kill-list outage → suppress all blocks on this slot for the
     // cache TTL window.
     if (kill.has('__KILL_LIST_UNREACHABLE__')) return [];
-    const result: BlockInstallRecord[] = rows
+    // Inline carry-through type — the post-map needs raw settings to batch
+    // the checkpoint lookup, but those never reach the wire (stripped at
+    // the final map below).
+    type IntermediateRecord = BlockInstallRecord & { _rawSettings: Record<string, unknown> };
+    const result: IntermediateRecord[] = rows
       .filter((r: Row) => !kill.has(r.block_id))
       // I15: drop blocks whose manifest.contentRating exceeds the slot's
       // allowed ceiling. An x-rated block must never render on a pg page.
@@ -323,8 +347,7 @@ export class BlockRegistry {
       .filter((r: Row) => {
         const m = (r.manifest ?? {}) as { contentRating?: unknown };
         const rating =
-          typeof m.contentRating === 'string' &&
-          m.contentRating in CONTENT_RATING_INDEX
+          typeof m.contentRating === 'string' && m.contentRating in CONTENT_RATING_INDEX
             ? m.contentRating
             : 'g';
         return CONTENT_RATING_INDEX[rating] <= maxRatingIdx;
@@ -348,7 +371,8 @@ export class BlockRegistry {
                     ? iframeRaw.maxHeight
                     : null,
                 resizable: iframeRaw.resizable === true,
-                sandbox: typeof iframeRaw.sandbox === 'string' ? iframeRaw.sandbox : 'allow-scripts',
+                sandbox:
+                  typeof iframeRaw.sandbox === 'string' ? iframeRaw.sandbox : 'allow-scripts',
               }
             : undefined,
           scopes: Array.isArray(m.scopes)
@@ -378,6 +402,10 @@ export class BlockRegistry {
             publisherSettings[k] = rawSettings[k];
           }
         }
+        // Carry the raw settings forward (separately from publisherSettings
+        // which is publicly-projected) so the post-map step below can read
+        // `default_checkpoint_version_id` to batch the ModelVersion lookup.
+        // The raw settings never make it into the returned record.
         return {
           blockInstanceId: r.block_instance_id,
           blockId: r.block_id,
@@ -391,26 +419,84 @@ export class BlockRegistry {
             r.trust_tier
           ),
           trustTier: (r.trust_tier as BlockInstallRecord['trustTier']) ?? 'unverified',
+          _rawSettings: rawSettings,
         };
       });
 
+    // Single batched join to populate `defaultCheckpoint`. Collect every
+    // numeric default_checkpoint_version_id we see across all install rows,
+    // do one IN-query, then hydrate per row. Avoids N+1 lookups across
+    // installs even though MAX_BLOCKS_PER_SLOT caps us at 3 today.
+    const checkpointIds = result
+      .map((r) => {
+        const id = (r._rawSettings as { default_checkpoint_version_id?: unknown })
+          .default_checkpoint_version_id;
+        return typeof id === 'number' ? id : null;
+      })
+      .filter((x): x is number => x != null);
+    const checkpointMap = new Map<
+      number,
+      {
+        versionId: number;
+        modelId: number;
+        modelName: string;
+        versionName: string;
+        baseModel: string;
+      }
+    >();
+    if (checkpointIds.length > 0) {
+      const rows = await dbRead.modelVersion.findMany({
+        where: { id: { in: checkpointIds }, status: 'Published' },
+        select: {
+          id: true,
+          name: true,
+          baseModel: true,
+          modelId: true,
+          model: { select: { name: true, type: true } },
+        },
+      });
+      for (const row of rows) {
+        // Defensive: skip rows that don't actually point at a Checkpoint —
+        // publisher's stored value is stale (model type changed since
+        // install). Drop the field rather than misrepresent it to the iframe.
+        if (row.model.type !== 'Checkpoint') continue;
+        checkpointMap.set(row.id, {
+          versionId: row.id,
+          modelId: row.modelId,
+          modelName: row.model.name,
+          versionName: row.name,
+          baseModel: row.baseModel,
+        });
+      }
+    }
+    const hydrated: BlockInstallRecord[] = result.map((r) => {
+      const rawId = (r._rawSettings as { default_checkpoint_version_id?: unknown })
+        .default_checkpoint_version_id;
+      const checkpointId = typeof rawId === 'number' ? rawId : null;
+      const defaultCheckpoint =
+        checkpointId != null ? checkpointMap.get(checkpointId) ?? null : null;
+      const { _rawSettings: _unused, ...rest } = r;
+      return { ...rest, defaultCheckpoint };
+    });
+
     try {
-      await redis.packed.set(key, result, { EX: CACHE_TTL_SECONDS });
+      await redis.packed.set(key, hydrated, { EX: CACHE_TTL_SECONDS });
     } catch {
       // fail open
     }
 
-    return result;
+    return hydrated;
   }
 
   static async installOnModel(opts: InstallOpts): Promise<{ blockInstanceId: string }> {
     const { modelId, appBlockId, slotId, installedByUserId, settings } = opts;
 
     // Use dbWrite for the status check to avoid a replication-lag window
-    // where a freshly-suspended block could still be installed.
+    // where a freshly-suspended block could still be installed. Also
+    // SELECT blockId so we can look up the per-block settings schema.
     const block = await dbWrite.appBlock.findUnique({
       where: { id: appBlockId },
-      select: { status: true },
+      select: { status: true, blockId: true },
     });
     // throwNotFoundError/throwBadRequestError throw at runtime, but their
     // signatures return `void`, so TS can't narrow `block` here. Hand-narrow.
@@ -418,6 +504,16 @@ export class BlockRegistry {
     if (block.status !== 'approved') {
       throw throwBadRequestError('App block is not approved') as never;
     }
+
+    // Per-block-id settings validation. Generic settingsSchema (size + JSON)
+    // has already run at the router; this layer enforces the typed shape
+    // and cross-row checks (e.g. checkpoint ecosystem match). External
+    // (un-first-party) blocks fall through without typed validation.
+    const validatedSettings = await validateInstallSettings({
+      blockId: block.blockId,
+      settings,
+      forModelId: modelId,
+    });
 
     // H-4: enforce the per-slot cap at install time. listForModel LIMITs to
     // MAX_BLOCKS_PER_SLOT in SQL, but the prior implementation silently
@@ -462,7 +558,7 @@ export class BlockRegistry {
       enabled: true,
       updatedAt: new Date(),
     };
-    if (settings != null) updateData.settings = settings as object;
+    if (validatedSettings != null) updateData.settings = validatedSettings;
 
     const result = await dbWrite.modelBlockInstall.upsert({
       where: { modelId_appBlockId_slotId: { modelId, appBlockId, slotId } },
@@ -473,7 +569,7 @@ export class BlockRegistry {
         slotId,
         blockInstanceId: candidate,
         installedByUserId,
-        settings: (settings ?? {}) as object,
+        settings: (validatedSettings ?? {}) as object,
         enabled: true,
       },
       update: updateData,
@@ -523,17 +619,236 @@ export class BlockRegistry {
 
   static async updateSettings(opts: UpdateSettingsOpts): Promise<void> {
     const { blockInstanceId, modelId, settings } = opts;
+    // Look up the install + its app block so we can run per-block typed
+    // validation. The blockInstanceId+modelId pair is the auth pin; if it
+    // doesn't match the not-found path below fires.
+    const install = await dbWrite.modelBlockInstall.findFirst({
+      where: { blockInstanceId, modelId },
+      select: { appBlock: { select: { blockId: true } } },
+    });
+    if (!install) throwNotFoundError('Block install not found');
+
+    const validatedSettings = await validateInstallSettings({
+      blockId: install!.appBlock.blockId,
+      settings,
+      forModelId: modelId,
+    });
+
     // B3: pin modelId in the predicate. updateMany returns count 0 when
     // the install moved to a different model between auth check and write,
     // which we then surface as not-found instead of silently writing to a
     // model the caller no longer owns.
     const result = await dbWrite.modelBlockInstall.updateMany({
       where: { blockInstanceId, modelId },
-      data: { settings: settings as object, updatedAt: new Date() },
+      data: { settings: (validatedSettings ?? {}) as object, updatedAt: new Date() },
     });
     if (result.count === 0) {
       throwNotFoundError('Block install not found');
     }
     await invalidateModelCache(modelId);
   }
+
+  /**
+   * Upsert the per-viewer settings row for a (blockInstanceId, userId) pair.
+   * Used by `blocks.updateUserSettings` for things like the per-user
+   * checkpoint override. Validation (ecosystem match etc.) is the caller's
+   * responsibility — the registry method just writes.
+   */
+  static async upsertUserSettings(opts: {
+    blockInstanceId: string;
+    userId: number;
+    settings: BlockUserSettings;
+  }): Promise<void> {
+    const { blockInstanceId, userId, settings } = opts;
+    await dbWrite.blockUserSettings.upsert({
+      where: { blockInstanceId_userId: { blockInstanceId, userId } },
+      create: {
+        blockInstanceId,
+        userId,
+        settings: settings as object,
+      },
+      update: {
+        settings: settings as object,
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * Read the per-viewer settings row, if any. Returns the raw shape so
+   * callers can merge it with publisher defaults as they see fit. Returns
+   * null when the viewer has never set anything (including for anon).
+   */
+  static async getUserSettings(opts: {
+    blockInstanceId: string;
+    userId: number;
+  }): Promise<BlockUserSettings | null> {
+    const row = await dbRead.blockUserSettings.findUnique({
+      where: { blockInstanceId_userId: opts },
+      select: { settings: true },
+    });
+    if (!row) return null;
+    return row.settings as BlockUserSettings;
+  }
+
+  /**
+   * Compute the effective checkpoint info for a (blockInstanceId, viewer)
+   * pair — the merge of publisher default ∪ viewer override resolved into
+   * the BlockCheckpointInfo shape the iframe consumes.
+   *
+   * Used by the IframeHost to populate `BLOCK_INIT.context.checkpoint`
+   * BEFORE sending init. Anon viewers (`userId == null`) get the publisher
+   * default; authenticated viewers get their override if set.
+   *
+   * Returns `null` when no checkpoint is configured (rare — install form
+   * enforces a publisher default for LoRA installs at write time) AND the
+   * bound model isn't itself a Checkpoint.
+   */
+  static async getEffectiveCheckpoint(opts: {
+    blockInstanceId: string;
+    userId: number | null;
+  }): Promise<{
+    versionId: number;
+    modelId: number;
+    modelName: string;
+    versionName: string;
+    baseModel: string;
+  } | null> {
+    const { blockInstanceId, userId } = opts;
+
+    // Pull the install (with its bound model) + the per-viewer settings
+    // row (only when authenticated) in parallel.
+    const [install, viewerRow] = await Promise.all([
+      dbRead.modelBlockInstall.findUnique({
+        where: { blockInstanceId },
+        select: {
+          settings: true,
+          modelId: true,
+          modelVersionId: true,
+          model: { select: { id: true, name: true, type: true } },
+        },
+      }),
+      userId != null
+        ? dbRead.blockUserSettings.findUnique({
+            where: { blockInstanceId_userId: { blockInstanceId, userId } },
+            select: { settings: true },
+          })
+        : Promise.resolve(null),
+    ]);
+    if (!install) return null;
+
+    // Checkpoint-bound install: the model is its own anchor. Skip the
+    // override path entirely — v1 decision keeps Checkpoint installs atomic.
+    if (install.model.type === 'Checkpoint') {
+      // We need the version row to fill versionName/baseModel. Pick the
+      // install's modelVersionId if pinned, else most-recent Published.
+      const versionRow = install.modelVersionId
+        ? await dbRead.modelVersion.findUnique({
+            where: { id: install.modelVersionId },
+            select: { id: true, name: true, baseModel: true },
+          })
+        : await dbRead.modelVersion.findFirst({
+            where: { modelId: install.modelId, status: 'Published' },
+            orderBy: { createdAt: 'desc' },
+            select: { id: true, name: true, baseModel: true },
+          });
+      if (!versionRow) return null;
+      return {
+        versionId: versionRow.id,
+        modelId: install.modelId,
+        modelName: install.model.name,
+        versionName: versionRow.name,
+        baseModel: versionRow.baseModel,
+      };
+    }
+
+    // Compute the candidate checkpoint id via the same precedence chain as
+    // resolveBlockCheckpoint, then do a single ModelVersion lookup.
+    const viewerSettings = blockUserSettingsSchema.safeParse(viewerRow?.settings ?? {});
+    const overrideId = viewerSettings.success
+      ? viewerSettings.data.checkpoint_version_id
+      : undefined;
+    const publisherSchema = blockSettingsSchemaByBlockId['generate-from-model'];
+    const publisherSettings = publisherSchema.safeParse(install.settings ?? {});
+    const publisherId = publisherSettings.success
+      ? (publisherSettings.data as { default_checkpoint_version_id?: number })
+          .default_checkpoint_version_id
+      : undefined;
+    const candidate = typeof overrideId === 'number' ? overrideId : publisherId;
+    if (typeof candidate !== 'number') return null;
+
+    const row = await dbRead.modelVersion.findUnique({
+      where: { id: candidate },
+      select: {
+        id: true,
+        name: true,
+        baseModel: true,
+        status: true,
+        modelId: true,
+        model: { select: { name: true, type: true } },
+      },
+    });
+    // Quietly drop stale / unpublished / mistyped rows — surface as "no
+    // checkpoint" so the block can render a "missing checkpoint" state
+    // rather than crash. Strict validation runs at submit time anyway.
+    if (!row || row.status !== 'Published' || row.model.type !== 'Checkpoint') return null;
+    return {
+      versionId: row.id,
+      modelId: row.modelId,
+      modelName: row.model.name,
+      versionName: row.name,
+      baseModel: row.baseModel,
+    };
+  }
+}
+
+/**
+ * Per-block-id settings validation. Generic JSON-shape + size validation
+ * happens in the router; this layer enforces the typed fields each
+ * first-party block declares + cross-row checks the zod schema can't do
+ * (e.g. "the checkpoint must exist + be in the same ecosystem as the LoRA").
+ *
+ * Returns the parsed settings object (or `undefined` if the caller passed
+ * `undefined`). Throws TRPCError on validation failure — propagates to the
+ * router, which surfaces it as a structured error the install-form UI can
+ * inline. External (un-first-party) blocks skip the typed parse but still
+ * have their settings forwarded.
+ */
+async function validateInstallSettings(opts: {
+  blockId: string;
+  settings: unknown;
+  forModelId: number;
+}): Promise<Record<string, unknown> | undefined> {
+  const { blockId, settings, forModelId } = opts;
+  if (settings == null) return undefined;
+
+  const schema = blockSettingsSchemaByBlockId[blockId];
+  // External block: no typed schema, no checkpoint to validate. Forward
+  // the generic record through.
+  if (!schema) return settings as Record<string, unknown>;
+
+  const parsed = schema.parse(settings) as Record<string, unknown>;
+
+  // Cross-row validation for the checkpoint default. Only first-party
+  // blocks expose this key. For un-Checkpoint bound models (LoRA on Flux,
+  // etc.) the checkpoint must be in the same family — that gates against
+  // a publisher accidentally setting a SDXL checkpoint on a Flux LoRA.
+  const checkpointId = parsed.default_checkpoint_version_id;
+  if (typeof checkpointId === 'number') {
+    const baseModel = await getRepresentativeBaseModel(forModelId);
+    if (!baseModel) {
+      // No published versions yet — can't validate the ecosystem. Strip
+      // the field so the install row stays consistent (a value here that
+      // can't be validated later will fail at submit time anyway).
+      const { default_checkpoint_version_id: _, ...rest } = parsed;
+      return rest;
+    }
+    await validateBlockCheckpoint({
+      checkpointVersionId: checkpointId,
+      forBaseModel: baseModel,
+      reason: 'publisher-default',
+    });
+  }
+
+  return parsed;
 }

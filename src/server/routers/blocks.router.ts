@@ -3,9 +3,15 @@ import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import { blockUserSettingsSchema } from '~/server/schema/blocks/settings.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
+import {
+  getRepresentativeBaseModel,
+  resolveBlockCheckpoint,
+  validateBlockCheckpoint,
+} from '~/server/services/blocks/checkpoint.service';
 import {
   buildTextToImageInput,
   resolveBlockVersionContext,
@@ -263,9 +269,20 @@ export const blocksRouter = router({
         input.body.modelVersionId,
         input.body.modelId
       );
+      const checkpoint = await resolveBlockCheckpoint({
+        blockInstanceId: claims.blockInstanceId,
+        modelId: resolved.modelId,
+        modelVersionId: resolved.modelVersionId,
+        baseModel: resolved.baseModel,
+        modelType: resolved.modelType,
+        userId,
+      });
       const user = await getBlockSessionUser(userId);
       const token = await getOrchestratorToken(userId, ctx);
-      const generateInput = buildTextToImageInput(input.body, resolved);
+      const generateInput = buildTextToImageInput(input.body, {
+        ...resolved,
+        checkpointVersionId: checkpoint.versionId,
+      });
       const step = await createTextToImageStep({ ...generateInput, user, whatIf: true });
       const workflow = await submitWorkflow({
         token,
@@ -317,6 +334,14 @@ export const blocksRouter = router({
         input.body.modelVersionId,
         input.body.modelId
       );
+      const checkpoint = await resolveBlockCheckpoint({
+        blockInstanceId: claims.blockInstanceId,
+        modelId: resolved.modelId,
+        modelVersionId: resolved.modelVersionId,
+        baseModel: resolved.baseModel,
+        modelType: resolved.modelType,
+        userId,
+      });
       const user = await getBlockSessionUser(userId);
       const token = await getOrchestratorToken(userId, ctx);
 
@@ -331,7 +356,10 @@ export const blocksRouter = router({
         isModerator: !!user.isModerator,
       });
 
-      const generateInput = buildTextToImageInput(input.body, resolved);
+      const generateInput = buildTextToImageInput(input.body, {
+        ...resolved,
+        checkpointVersionId: checkpoint.versionId,
+      });
 
       // Cost preflight. Build the step once, reuse for both whatif and submit
       // so the orchestrator computes cost against the exact same step it'll
@@ -366,6 +394,88 @@ export const blocksRouter = router({
         body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
       });
       return { snapshot: snapshotFromWorkflow(submitted) };
+    }),
+
+  /**
+   * Compute the effective checkpoint for a (blockInstanceId, viewer) pair.
+   * Called by the IframeHost before BLOCK_INIT so the iframe receives the
+   * merged publisher-default ∪ viewer-override value via
+   * `BLOCK_INIT.context.checkpoint`.
+   *
+   * Public procedure (no session required) so anon viewers can also see
+   * the publisher default. Authenticated viewers additionally see their
+   * override if set.
+   */
+  getEffectiveCheckpoint: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ blockInstanceId: z.string().min(1).max(64) }))
+    .query(async ({ ctx, input }) => {
+      const userId = ctx.user?.id ?? null;
+      const checkpoint = await BlockRegistry.getEffectiveCheckpoint({
+        blockInstanceId: input.blockInstanceId,
+        userId,
+      });
+      return { checkpoint };
+    }),
+
+  /**
+   * Persist a viewer's per-block-instance settings (currently just the
+   * checkpoint override). Gated on the block JWT — anon viewers don't get
+   * an override because there's no user row to key on. Setting
+   * `checkpoint_version_id: null` clears the override and falls back to
+   * the publisher default at next resolveBlockCheckpoint call.
+   *
+   * Re-validates the checkpoint at write-time (ecosystem match etc.) so
+   * the persisted value is never something resolveBlockCheckpoint will
+   * later reject — the client gets a structured error inline instead of
+   * a "your saved override is invalid" failure at next generate.
+   */
+  updateUserSettings: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        settings: blockUserSettingsSchema,
+      })
+    )
+    .mutation(async ({ input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'anon viewers cannot persist block settings',
+        });
+      }
+      const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
+      if (!Number.isInteger(ctxModelId)) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks modelId context' });
+      }
+
+      // Re-validate the checkpoint when set. Skip when explicitly clearing
+      // (`null`) — that's just removing the override row's value.
+      if (typeof input.settings.checkpoint_version_id === 'number') {
+        const baseModel = await getRepresentativeBaseModel(ctxModelId);
+        if (!baseModel) {
+          throw new TRPCError({
+            code: 'BAD_REQUEST',
+            message: 'cannot determine base model for the bound install',
+          });
+        }
+        await validateBlockCheckpoint({
+          checkpointVersionId: input.settings.checkpoint_version_id,
+          forBaseModel: baseModel,
+          reason: 'viewer-override',
+        });
+      }
+
+      await BlockRegistry.upsertUserSettings({
+        blockInstanceId: claims.blockInstanceId,
+        userId,
+        settings: input.settings,
+      });
+      return { ok: true };
     }),
 });
 
