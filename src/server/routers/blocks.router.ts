@@ -375,14 +375,22 @@ export const blocksRouter = router({
 const BLOCK_CURRENCIES = BuzzTypes.toOrchestratorType(['yellow']);
 
 /**
- * Fetch the user fields `createTextToImageStep` and `parseGenerateImageInput`
- * actually consume (tier, isModerator). Cast to SessionUser at the boundary —
- * the orchestrator helpers don't reach for NextAuth-only fields.
+ * Fetch the user fields `parseGenerateImageInput` actually consumes
+ * (id, isModerator). Cast to SessionUser at the boundary — the orchestrator
+ * helpers don't reach for NextAuth-only fields.
+ *
+ * `tier` is intentionally absent: it's not a User column, it's stamped on
+ * SessionUser at session-creation time from the highest active subscription
+ * (see types/next-auth.d.ts). Without that machinery, the safest policy for
+ * block-initiated calls is to fall through to the free-tier limits via the
+ * `user?.tier ?? 'free'` default downstream consumers already apply. A
+ * higher-tier user gets free-tier limits when generating through a block —
+ * acceptable for v1; revisit if blocks need parity with web generation.
  */
 async function getBlockSessionUser(userId: number): Promise<SessionUser> {
   const row = await getUserById({
     id: userId,
-    select: { id: true, isModerator: true, tier: true, email: true, username: true },
+    select: { id: true, isModerator: true, email: true, username: true },
   });
   if (!row) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'user not found' });
   return row as unknown as SessionUser;
