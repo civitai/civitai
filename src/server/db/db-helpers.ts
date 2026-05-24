@@ -121,24 +121,44 @@ export function getClient(
   // when a client is handed out — it does NOT tell you how long the caller awaited.
   // Timing around the await is the only way to see queue-wait time, which is the
   // signal we want during pool-saturation incidents.
+  //
+  // pool.connect has two forms: Promise (no args) and callback ((err, client, done) => ...).
+  // Pool.prototype.query uses the CALLBACK form internally, so any pool.query(...) caller
+  // (including the /api/health probe) routes through here via that path. The async wrap
+  // resolves immediately for the callback form (pg-pool returns undefined synchronously),
+  // so we must wrap the callback itself to time when the client is actually delivered.
   const originalConnect = pool.connect.bind(pool) as typeof pool.connect;
-  pool.connect = (async (...args: Parameters<typeof pool.connect>) => {
+  pool.connect = ((...args: Parameters<typeof pool.connect>) => {
     const start = performance.now();
-    try {
+    const elapsedSeconds = () => (performance.now() - start) / 1000;
+
+    // Callback form: pool.connect((err, client, done) => ...)
+    if (typeof args[0] === 'function') {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const conn = await (originalConnect as any)(...args);
-      pgPoolAcquireHistogram.observe(
-        { pool: instance, result: 'ok' },
-        (performance.now() - start) / 1000
-      );
-      return conn;
-    } catch (e) {
-      pgPoolAcquireHistogram.observe(
-        { pool: instance, result: 'err' },
-        (performance.now() - start) / 1000
-      );
-      throw e;
+      const cb = args[0] as (err: Error | undefined, client: any, done: any) => void;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return (originalConnect as any)((err: Error | undefined, client: any, done: any) => {
+        pgPoolAcquireHistogram.observe(
+          { pool: instance, result: err ? 'err' : 'ok' },
+          elapsedSeconds()
+        );
+        cb(err, client, done);
+      });
     }
+
+    // Promise form: await pool.connect()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (originalConnect as any)(...args).then(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (conn: any) => {
+        pgPoolAcquireHistogram.observe({ pool: instance, result: 'ok' }, elapsedSeconds());
+        return conn;
+      },
+      (e: unknown) => {
+        pgPoolAcquireHistogram.observe({ pool: instance, result: 'err' }, elapsedSeconds());
+        throw e;
+      }
+    );
   }) as typeof pool.connect;
 
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
