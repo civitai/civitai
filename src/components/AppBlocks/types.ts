@@ -9,6 +9,24 @@ export interface SlotContext {
   [key: string]: unknown;
 }
 
+/**
+ * Snapshot of the effective Checkpoint the block will generate against —
+ * already merged from publisher default + viewer override on the host.
+ * For Checkpoint-bound installs this is the model itself; for LoRA installs
+ * it's whichever Checkpoint the resolver picked.
+ *
+ * `null` means no checkpoint is configured (rare in practice — install
+ * forms enforce the publisher default at write time). Blocks should render
+ * a "missing checkpoint" state in that case.
+ */
+export interface BlockCheckpointInfo {
+  versionId: number;
+  modelId: number;
+  modelName: string;
+  versionName: string;
+  baseModel: string;
+}
+
 export interface ModelSlotContext extends SlotContext {
   slotId: 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
   modelId: number;
@@ -24,6 +42,12 @@ export interface ModelSlotContext extends SlotContext {
   viewerStatus?: 'active' | 'banned' | 'muted';
   /** Host-page color scheme — lets the iframe match without a flicker. */
   theme?: 'light' | 'dark';
+  /**
+   * Effective Checkpoint after publisher-default ∪ viewer-override merge.
+   * `null` when no checkpoint is configured AND the bound model isn't one
+   * itself (misconfigured install).
+   */
+  checkpoint?: BlockCheckpointInfo | null;
 }
 
 /**

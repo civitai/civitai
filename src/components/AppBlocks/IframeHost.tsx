@@ -5,6 +5,8 @@ import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
 import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
 
@@ -156,6 +158,17 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     return Math.min(candidate, 1000);
   }, [install.manifest.scopes, install.publisherSettings]);
 
+  // Effective Checkpoint after publisher-default ∪ viewer-override merge.
+  // Anon viewers see publisher default; authenticated viewers see their
+  // override if set. We wait for this to resolve before sending BLOCK_INIT
+  // so the block never sees a stale `context.checkpoint`. Cached
+  // server-side via the query's React Query layer.
+  const effectiveCheckpointQuery = trpc.blocks.getEffectiveCheckpoint.useQuery(
+    { blockInstanceId: install.blockInstanceId },
+    { staleTime: 60_000 }
+  );
+  const effectiveCheckpoint = effectiveCheckpointQuery.data?.checkpoint ?? null;
+
   const buildInitPayload = (): BlockInitPayload => ({
     blockInstanceId: install.blockInstanceId,
     blockId: install.blockId,
@@ -166,7 +179,12 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
       expiresAt,
       ...(buzzBudget !== undefined ? { buzzBudget } : {}),
     },
-    context,
+    context: {
+      ...context,
+      // Merge in the resolved checkpoint so the block can render its
+      // header ("Generating with: NAME") without an extra round-trip.
+      checkpoint: effectiveCheckpoint,
+    },
     settings: {
       publisherSettings: install.publisherSettings,
       // v1 has no per-viewer settings yet (Phase 2 wires the
@@ -189,6 +207,11 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   const sendInit = () => {
     if (initSentRef.current) return;
     if (!iframeLoaded || !token) return;
+    // Wait for the effective checkpoint to resolve before init — otherwise
+    // the block renders without a checkpoint label and re-mounts when the
+    // query lands. `isLoading` is false even on error; the error path
+    // still lets us init with `checkpoint: null` so the block isn't stuck.
+    if (effectiveCheckpointQuery.isLoading) return;
     initSentRef.current = true;
     send('BLOCK_INIT', buildInitPayload());
   };
@@ -239,13 +262,16 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   useEffect(() => {
     if (status !== 'loading') return;
     if (!iframeLoaded || !token) return;
+    // Re-run when the effective-checkpoint query resolves so sendInit's
+    // guard releases. Without this dep the effect doesn't fire after the
+    // query lands, leaving the iframe stuck on the loading skeleton.
     sendInit();
     const t = setTimeout(() => {
       setStatus((current) => (current === 'loading' ? 'timeout' : current));
     }, BLOCK_READY_TIMEOUT_MS);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, status, iframeLoaded]);
+  }, [token, status, iframeLoaded, effectiveCheckpointQuery.isLoading]);
 
   // Independent token-wait timer: catches the case where the iframe loads but
   // the token never resolves (e.g. /api/v1/block-tokens repeatedly 5xx-ing).
@@ -402,6 +428,103 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     );
     return off;
   }, [onMessage, send]);
+
+  // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER with the
+  // ecosystem group (e.g. 'Flux1') it wants restricted to. We open the
+  // platform's existing ResourceSelectModal filtered to Checkpoints in that
+  // family, then post the selection back via CHECKPOINT_PICKER_RESULT.
+  // Empty `selected` means the user closed without picking — the block's
+  // SDK promise resolves to `{ selected: undefined }`.
+  useEffect(() => {
+    const off = onMessage<
+      { requestId?: unknown; baseModelGroup?: unknown; currentVersionId?: unknown } | undefined
+    >('OPEN_CHECKPOINT_PICKER', (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      // Empty filter → no checkpoints at all rather than all checkpoints,
+      // since "all" includes incompatible families that would 400 at
+      // submit. Make the block author's mistake visible immediately.
+      const baseModels =
+        typeof raw.baseModelGroup === 'string' ? getBaseModelsByGroup(raw.baseModelGroup) : [];
+      let answered = false;
+      openResourceSelectModal({
+        title: 'Choose a checkpoint',
+        options: {
+          canGenerate: true,
+          resources: [{ type: 'Checkpoint', baseModels }],
+        },
+        onSelect: (resource) => {
+          answered = true;
+          send('CHECKPOINT_PICKER_RESULT', {
+            requestId,
+            selected: {
+              // GenerationResource.id is the modelVersionId at the wire.
+              versionId: resource.id,
+              modelId: resource.model.id,
+              modelName: resource.model.name,
+              versionName: resource.name,
+              baseModel: resource.baseModel,
+            },
+          });
+        },
+        onClose: () => {
+          // Dialog dismiss fires after onSelect when the user picks (the
+          // modal closes itself); only emit the "closed without picking"
+          // result if onSelect never ran. The 30s SDK timeout otherwise
+          // races us either way — answered=true short-circuits.
+          if (answered) return;
+          send('CHECKPOINT_PICKER_RESULT', { requestId });
+        },
+      });
+    });
+    return off;
+  }, [onMessage, send]);
+
+  // Persist the viewer's chosen checkpoint via blocks.updateUserSettings.
+  // The host owns the auth — the block never touches the block_user_settings
+  // row directly. Setting versionId: null clears the override.
+  const updateUserSettingsMutation = trpc.blocks.updateUserSettings.useMutation();
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; versionId?: unknown } | undefined>(
+      'SET_USER_CHECKPOINT',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        const versionId =
+          raw.versionId === null
+            ? null
+            : typeof raw.versionId === 'number'
+            ? raw.versionId
+            : undefined;
+        if (versionId === undefined) {
+          send('USER_CHECKPOINT_SET', {
+            requestId,
+            ok: false,
+            error: 'versionId must be a number or null',
+          });
+          return;
+        }
+        try {
+          await updateUserSettingsMutation.mutateAsync({
+            blockToken: token,
+            settings: { checkpoint_version_id: versionId },
+          });
+          // Refetch the effective checkpoint so a subsequent BLOCK_INIT
+          // (after a hot remount) reflects the new value without a hard
+          // page reload.
+          effectiveCheckpointQuery.refetch();
+          send('USER_CHECKPOINT_SET', { requestId, ok: true });
+        } catch (err) {
+          send('USER_CHECKPOINT_SET', {
+            requestId,
+            ok: false,
+            error: err instanceof Error ? err.message : 'unknown',
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, updateUserSettingsMutation, effectiveCheckpointQuery]);
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
