@@ -545,6 +545,7 @@ model User {
   modelBlockInstalls         ModelBlockInstall[]
   blockUserSettings          BlockUserSettings[]
   promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
+  blockUserSubscriptions     BlockUserSubscription[]
 
   @@index([deletedAt])
 }
@@ -2221,6 +2222,7 @@ model AppBlock {
 
   modelInstalls      ModelBlockInstall[]
   platformDefault    PlatformDefaultBlock?
+  userSubscriptions  BlockUserSubscription[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   @@index([status], map: "app_blocks_status_idx")
@@ -2289,6 +2291,30 @@ model PlatformDefaultBlock {
   @@index([slotId, priority], map: "platform_default_blocks_slot_priority_idx")
   @@index([promotedBy], map: "platform_default_blocks_promoted_by_idx")
   @@map("platform_default_blocks")
+}
+
+/// User-controlled block install path. Two scopes:
+///   - 'publisher_all_my_models': model owner subscribes the block to every
+///     model they own (joins on Model.userId at listForModel time).
+///   - 'viewer_personal': any viewer subscribes the block to every model
+///     page they visit (joins on the current viewer's userId).
+/// Application-generated id (`bus_<ulid>`).
+model BlockUserSubscription {
+  id                 String   @id
+  userId             Int      @map("user_id")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  scope              String
+  targetModelTypes   String[] @map("target_model_types")
+  targetBaseModels   String[] @map("target_base_models")
+  settings           Json     @default("{}")
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, appBlockId, scope], map: "block_user_subscriptions_user_block_scope_uniq")
+  @@map("block_user_subscriptions")
 }
 
 model OauthConsent {

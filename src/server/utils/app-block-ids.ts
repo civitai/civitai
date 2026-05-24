@@ -82,3 +82,7 @@ export function newModelBlockInstallId(): string {
 export function newBlockInstanceId(): string {
   return `bki_${newUlid()}`;
 }
+
+export function newBlockUserSubscriptionId(): string {
+  return `bus_${newUlid()}`;
+}
