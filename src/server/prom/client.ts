@@ -36,22 +36,25 @@ export function registerHistogram<T extends string = string>({
   help,
   labelNames,
   buckets,
+  prefix = PROM_PREFIX,
 }: {
   name: string;
   help: string;
   labelNames?: readonly T[];
-  buckets?: number[];
+  buckets?: readonly number[];
+  prefix?: string;
 }) {
   // Do this to deal with HMR in nextjs
+  const fullName = prefix + name;
   try {
     return new client.Histogram({
-      name: PROM_PREFIX + name,
+      name: fullName,
       help,
       labelNames: labelNames ? [...labelNames] : undefined,
-      buckets,
+      buckets: buckets ? [...buckets] : undefined,
     });
   } catch (e) {
-    return client.register.getSingleMetric(PROM_PREFIX + name) as Histogram<T>;
+    return client.register.getSingleMetric(fullName) as Histogram<T>;
   }
 }
 
@@ -175,6 +178,24 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
   name: 'dbread_fallback_total',
   help: 'Number of times a dbRead query fell back to dbWrite due to CDC replication lag',
   labelNames: ['entity', 'caller'] as const,
+});
+
+// Buckets for pg Pool acquire latency in seconds.
+// Range covers sub-1ms healthy through 10s pathological — useful for diagnosing
+// pool waits during incidents like the 2026-05-21+ api-primary restart waves where
+// HAProxy backend_connect_time jittered to >1s under getInfiniteImages load.
+export const PG_POOL_ACQUIRE_BUCKETS = [
+  0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
+] as const;
+
+export const pgPoolAcquireHistogram = registerHistogram({
+  name: 'node_postgres_pool_acquire_duration_seconds',
+  help: 'Time spent awaiting a connection from a pg.Pool, by pool instance and result',
+  labelNames: ['pool', 'result'] as const,
+  buckets: PG_POOL_ACQUIRE_BUCKETS,
+  // Match the unprefixed naming used by the existing node_postgres_pool_* gauges below
+  // so dashboards can correlate on the same metric family.
+  prefix: '',
 });
 
 declare global {

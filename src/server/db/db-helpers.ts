@@ -1,8 +1,10 @@
 import { Prisma } from '@prisma/client';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
+import { performance } from 'node:perf_hooks';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { pgPoolAcquireHistogram } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -114,6 +116,30 @@ export function getClient(
       client.query(`SET statement_timeout = ${Number(readTimeout)}`).catch(() => {});
     });
   }
+
+  // Wrap pool.connect() to record acquire latency. The pg.Pool `acquire` event fires
+  // when a client is handed out — it does NOT tell you how long the caller awaited.
+  // Timing around the await is the only way to see queue-wait time, which is the
+  // signal we want during pool-saturation incidents.
+  const originalConnect = pool.connect.bind(pool) as typeof pool.connect;
+  pool.connect = (async (...args: Parameters<typeof pool.connect>) => {
+    const start = performance.now();
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const conn = await (originalConnect as any)(...args);
+      pgPoolAcquireHistogram.observe(
+        { pool: instance, result: 'ok' },
+        (performance.now() - start) / 1000
+      );
+      return conn;
+    } catch (e) {
+      pgPoolAcquireHistogram.observe(
+        { pool: instance, result: 'err' },
+        (performance.now() - start) / 1000
+      );
+      throw e;
+    }
+  }) as typeof pool.connect;
 
   pool.cancellableQuery = async function <R extends QueryResultRow = any>(
     sql: Prisma.Sql | string,
