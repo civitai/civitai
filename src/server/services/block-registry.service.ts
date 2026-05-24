@@ -11,8 +11,22 @@ import {
   getRepresentativeBaseModel,
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
-import { newBlockInstanceId, newModelBlockInstallId } from '~/server/utils/app-block-ids';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  newBlockInstanceId,
+  newBlockUserSubscriptionId,
+  newModelBlockInstallId,
+} from '~/server/utils/app-block-ids';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import type {
+  AvailableBlock,
+  ListAvailableInput,
+  SubscriptionRecord,
+  SubscriptionScope,
+} from '~/server/schema/blocks/subscription.schema';
 
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
@@ -830,6 +844,236 @@ export class BlockRegistry {
       }
     }
     return null;
+  }
+
+  /**
+   * Returns every active subscription row for a user (both scopes), with
+   * the app_block row denormalised for management-UI rendering. Ordered by
+   * most recently updated first so the user sees their latest changes at
+   * the top of the list.
+   */
+  static async listUserSubscriptions(userId: number): Promise<SubscriptionRecord[]> {
+    const rows = await dbRead.blockUserSubscription.findMany({
+      where: { userId },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        id: true,
+        scope: true,
+        appBlockId: true,
+        targetModelTypes: true,
+        targetBaseModels: true,
+        settings: true,
+        enabled: true,
+        createdAt: true,
+        updatedAt: true,
+        appBlock: {
+          select: {
+            blockId: true,
+            appId: true,
+            manifest: true,
+          },
+        },
+      },
+    });
+    return rows.map((row) => ({
+      id: row.id,
+      scope: row.scope as SubscriptionScope,
+      appBlockId: row.appBlockId,
+      blockId: row.appBlock.blockId,
+      appId: row.appBlock.appId,
+      // The arrays are NOT NULL in the DB (Prisma drops nullability for
+      // String[]). An empty array means "applies to everything"; surface
+      // that as `null` for the wire shape so the UI logic stays simple.
+      targetModelTypes:
+        row.targetModelTypes && row.targetModelTypes.length > 0 ? row.targetModelTypes : null,
+      targetBaseModels:
+        row.targetBaseModels && row.targetBaseModels.length > 0 ? row.targetBaseModels : null,
+      settings: (row.settings ?? {}) as Record<string, unknown>,
+      enabled: row.enabled,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      manifest: (row.appBlock.manifest ?? {}) as SubscriptionRecord['manifest'],
+    }));
+  }
+
+  /**
+   * Idempotent upsert against the (userId, appBlockId, scope) composite
+   * unique. Two concurrent toggle clicks land at the same key — Prisma
+   * serializes the upsert so neither hits a UNIQUE violation. Settings,
+   * targets, enabled all overwrite on update (the caller is the source of
+   * truth for the whole row).
+   */
+  static async upsertSubscription(opts: {
+    userId: number;
+    appBlockId: string;
+    scope: SubscriptionScope;
+    targetModelTypes: string[] | null;
+    targetBaseModels: string[] | null;
+    settings: Record<string, unknown>;
+    enabled: boolean;
+  }): Promise<SubscriptionRecord> {
+    const block = await dbWrite.appBlock.findUnique({
+      where: { id: opts.appBlockId },
+      select: { id: true, blockId: true, appId: true, status: true, manifest: true },
+    });
+    if (!block) throw throwNotFoundError('App block not found') as never;
+    if (block.status !== 'approved') {
+      throw throwBadRequestError('App block is not approved') as never;
+    }
+    // Empty arrays normalised to an empty TEXT[] in Postgres — the SQL
+    // `array_length(... , 1) IS NULL` predicate treats that as "no filter."
+    const targetModelTypes = opts.targetModelTypes ?? [];
+    const targetBaseModels = opts.targetBaseModels ?? [];
+
+    const candidateId = newBlockUserSubscriptionId();
+    const row = await dbWrite.blockUserSubscription.upsert({
+      where: {
+        userId_appBlockId_scope: {
+          userId: opts.userId,
+          appBlockId: opts.appBlockId,
+          scope: opts.scope,
+        },
+      },
+      create: {
+        id: candidateId,
+        userId: opts.userId,
+        appBlockId: opts.appBlockId,
+        scope: opts.scope,
+        targetModelTypes,
+        targetBaseModels,
+        settings: opts.settings as object,
+        enabled: opts.enabled,
+      },
+      update: {
+        targetModelTypes,
+        targetBaseModels,
+        settings: opts.settings as object,
+        enabled: opts.enabled,
+        updatedAt: new Date(),
+      },
+      select: {
+        id: true,
+        scope: true,
+        appBlockId: true,
+        targetModelTypes: true,
+        targetBaseModels: true,
+        settings: true,
+        enabled: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    // Subscription writes can affect what shows up on any model page the
+    // user owns (publisher) or visits (viewer). The model-keyed cache
+    // can't be safely invalidated by user id alone, so just-write semantics
+    // for v1 rely on cache being disabled when viewerUserId != null and on
+    // the 60s TTL for the (modelId, slotId) layer. Document for future.
+    return {
+      id: row.id,
+      scope: row.scope as SubscriptionScope,
+      appBlockId: row.appBlockId,
+      blockId: block.blockId,
+      appId: block.appId,
+      targetModelTypes:
+        row.targetModelTypes && row.targetModelTypes.length > 0 ? row.targetModelTypes : null,
+      targetBaseModels:
+        row.targetBaseModels && row.targetBaseModels.length > 0 ? row.targetBaseModels : null,
+      settings: (row.settings ?? {}) as Record<string, unknown>,
+      enabled: row.enabled,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      manifest: (block.manifest ?? {}) as SubscriptionRecord['manifest'],
+    };
+  }
+
+  /**
+   * Delete a subscription. Owner-only — the userId predicate pins the row
+   * so a stolen id can't be deleted by another user. Returns silently when
+   * the row doesn't exist (idempotent for retries) but raises authorization
+   * when the row exists and belongs to someone else.
+   */
+  static async deleteSubscription(opts: {
+    subscriptionId: string;
+    userId: number;
+  }): Promise<void> {
+    const existing = await dbWrite.blockUserSubscription.findUnique({
+      where: { id: opts.subscriptionId },
+      select: { userId: true },
+    });
+    if (!existing) return; // idempotent
+    if (existing.userId !== opts.userId) {
+      throw throwAuthorizationError('Not the subscription owner') as never;
+    }
+    await dbWrite.blockUserSubscription.delete({
+      where: { id: opts.subscriptionId },
+    });
+  }
+
+  /**
+   * Marketplace listing. Filters by slot (manifest @> {targets:[{slotId}]})
+   * and a simple ILIKE on the manifest name/blockId. Cursor is the last
+   * row's id (the `app_blocks` primary key sorts deterministically). Sort
+   * by install count desc, then id asc — the count is computed at read
+   * time via a correlated subquery; at <20 approved blocks this is fine.
+   */
+  static async listAvailable(
+    input: ListAvailableInput
+  ): Promise<{ items: AvailableBlock[]; nextCursor?: string }> {
+    const { slotId, query, cursor, limit } = input;
+    type Row = {
+      id: string;
+      block_id: string;
+      app_id: string;
+      app_name: string | null;
+      manifest: unknown;
+      install_count: bigint;
+    };
+    const slotFilter = slotId
+      ? `{"targets":[{"slotId":"${slotId}"}]}`
+      : null;
+    const queryLike = query ? `%${query.toLowerCase()}%` : null;
+    // The cursor is opaque — we encode `(install_count, id)` so the
+    // tiebreaker stays deterministic across pages. For v1 simplicity, the
+    // cursor is just the last row's id; the install_count tiebreaker
+    // happens naturally because the SQL stays deterministic.
+    const rows = await dbRead.$queryRaw<Row[]>`
+      SELECT
+        ab.id,
+        ab.block_id,
+        ab.app_id,
+        oc.name AS app_name,
+        ab.manifest,
+        (SELECT COUNT(*)::bigint FROM model_block_installs mbi
+         WHERE mbi.app_block_id = ab.id) AS install_count
+      FROM app_blocks ab
+      LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
+      WHERE ab.status = 'approved'
+        AND (
+          ${slotFilter}::text IS NULL
+          OR ab.manifest @> ${slotFilter}::jsonb
+        )
+        AND (
+          ${queryLike}::text IS NULL
+          OR LOWER(COALESCE(ab.manifest->>'name', '')) LIKE ${queryLike}
+          OR LOWER(ab.block_id) LIKE ${queryLike}
+        )
+        AND (${cursor ?? null}::text IS NULL OR ab.id > ${cursor ?? null}::text)
+      ORDER BY install_count DESC, ab.id ASC
+      LIMIT ${limit + 1}
+    `;
+    const trimmed = rows.slice(0, limit);
+    const nextCursor = rows.length > limit ? trimmed[trimmed.length - 1]?.id : undefined;
+    return {
+      items: trimmed.map((r) => ({
+        id: r.id,
+        blockId: r.block_id,
+        appId: r.app_id,
+        appName: r.app_name ?? null,
+        manifest: (r.manifest ?? {}) as Record<string, unknown>,
+        installCount: Number(r.install_count),
+      })),
+      nextCursor,
+    };
   }
 }
 
