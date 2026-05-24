@@ -165,7 +165,7 @@ function isBlockJwt(token: string): boolean {
   }
 }
 
-async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
+export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
   // M-3: prefer kid-based selection. The header carries the signing key's
   // kid; we look up that one key and verify once. Falls back to trying all
   // configured keys if the kid is missing or doesn't match (e.g. a token
