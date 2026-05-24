@@ -12,6 +12,7 @@ import {
   resolveBlockCheckpoint,
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
+import { getModelShowcaseImages } from '~/server/services/blocks/showcase.service';
 import {
   buildTextToImageInput,
   resolveBlockVersionContext,
@@ -395,6 +396,17 @@ export const blocksRouter = router({
       });
       return { snapshot: snapshotFromWorkflow(submitted) };
     }),
+
+  /**
+   * Read up to N showcase images for a model version with their gen-meta
+   * extracted. Used by the block UI to render a "click an image to copy
+   * its params" carousel. Public — showcase images are already public on
+   * the model page; this is the same data with a stable shape.
+   */
+  getShowcaseImages: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ modelVersionId: z.number().int().positive() }))
+    .query(({ input }) => getModelShowcaseImages(input.modelVersionId)),
 
   /**
    * Compute the effective checkpoint for a (blockInstanceId, viewer) pair.

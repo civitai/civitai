@@ -27,6 +27,28 @@ export interface BlockCheckpointInfo {
   baseModel: string;
 }
 
+/**
+ * One of the model version's curated preview images, with the standard
+ * gen params extracted from its meta. Block UIs use these to let the user
+ * "remix" a known-good prompt without typing it themselves.
+ *
+ * `null` on a gen-param field means the source image's meta didn't have
+ * that value (or it was malformed) — the block should treat null as "keep
+ * the current value" rather than clearing the field.
+ */
+export interface ShowcaseImage {
+  id: number;
+  url: string;
+  width: number;
+  height: number;
+  prompt: string | null;
+  negativePrompt: string | null;
+  cfgScale: number | null;
+  steps: number | null;
+  seed: number | null;
+  sampler: string | null;
+}
+
 export interface ModelSlotContext extends SlotContext {
   slotId: 'model.sidebar_top' | 'model.below_images' | 'model.actions_extra';
   modelId: number;
@@ -48,6 +70,12 @@ export interface ModelSlotContext extends SlotContext {
    * itself (misconfigured install).
    */
   checkpoint?: BlockCheckpointInfo | null;
+  /**
+   * Top showcase images for this model version, ordered by all-time
+   * reactions. Capped at 6 by the host. Empty array means the version
+   * has no preview images yet.
+   */
+  showcaseImages?: ShowcaseImage[];
 }
 
 /**

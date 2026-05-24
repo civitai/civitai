@@ -169,6 +169,18 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   );
   const effectiveCheckpoint = effectiveCheckpointQuery.data?.checkpoint ?? null;
 
+  // Top showcase images for the bound model version. Used by the block to
+  // render a carousel + auto-populate gen params from the user's pick.
+  // Skip when context doesn't carry a modelVersionId (non-model slots);
+  // a 5-min staleTime is fine since reactions move slowly within a session.
+  const modelVersionId =
+    typeof modelCtx.modelVersionId === 'number' ? modelCtx.modelVersionId : null;
+  const showcaseQuery = trpc.blocks.getShowcaseImages.useQuery(
+    { modelVersionId: modelVersionId ?? 0 },
+    { enabled: modelVersionId != null, staleTime: 5 * 60_000 }
+  );
+  const showcaseImages = showcaseQuery.data ?? [];
+
   const buildInitPayload = (): BlockInitPayload => ({
     blockInstanceId: install.blockInstanceId,
     blockId: install.blockId,
@@ -184,6 +196,11 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
       // Merge in the resolved checkpoint so the block can render its
       // header ("Generating with: NAME") without an extra round-trip.
       checkpoint: effectiveCheckpoint,
+      // Showcase images for the carousel — empty array when the query
+      // returns no images or hasn't loaded yet (we don't block init on
+      // showcase the way we do on checkpoint; the carousel can re-render
+      // later when the query lands).
+      showcaseImages,
     },
     settings: {
       publisherSettings: install.publisherSettings,
