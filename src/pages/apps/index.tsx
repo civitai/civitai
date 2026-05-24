@@ -86,7 +86,7 @@ export default function AppsPage() {
 
   return (
     <>
-      <Meta title="Apps — Civitai" description="Civitai App Blocks marketplace" />
+      <Meta title="Apps — Civitai" description="Civitai App Blocks marketplace" deIndex />
       <Container size="xl" py="md">
         <Stack gap="md">
           <Stack gap={4}>

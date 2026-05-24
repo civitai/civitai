@@ -191,7 +191,7 @@ export default function InstalledAppsPage() {
 
   return (
     <>
-      <Meta title="Installed Apps — Civitai" />
+      <Meta title="Installed Apps — Civitai" deIndex />
       <Container size="lg" py="md">
         <Stack gap="lg">
           <Group justify="space-between">

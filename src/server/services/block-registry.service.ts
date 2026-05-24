@@ -1002,7 +1002,19 @@ export class BlockRegistry {
    * the top of the list.
    */
   static async listUserSubscriptions(userId: number): Promise<SubscriptionRecord[]> {
-    const rows = await dbRead.blockUserSubscription.findMany({
+    type SubRow = {
+      id: string;
+      scope: string;
+      appBlockId: string;
+      targetModelTypes: string[];
+      targetBaseModels: string[];
+      settings: unknown;
+      enabled: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+      appBlock: { blockId: string; appId: string; manifest: unknown };
+    };
+    const rows = (await dbRead.blockUserSubscription.findMany({
       where: { userId },
       orderBy: { updatedAt: 'desc' },
       select: {
@@ -1023,8 +1035,8 @@ export class BlockRegistry {
           },
         },
       },
-    });
-    return rows.map((row) => ({
+    })) as SubRow[];
+    return rows.map((row: SubRow) => ({
       id: row.id,
       scope: row.scope as SubscriptionScope,
       appBlockId: row.appBlockId,
@@ -1185,7 +1197,7 @@ export class BlockRegistry {
     // tiebreaker stays deterministic across pages. For v1 simplicity, the
     // cursor is just the last row's id; the install_count tiebreaker
     // happens naturally because the SQL stays deterministic.
-    const rows = await dbRead.$queryRaw<Row[]>`
+    const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT
         ab.id,
         ab.block_id,
@@ -1209,11 +1221,11 @@ export class BlockRegistry {
         AND (${cursor ?? null}::text IS NULL OR ab.id > ${cursor ?? null}::text)
       ORDER BY install_count DESC, ab.id ASC
       LIMIT ${limit + 1}
-    `;
+    `) as Row[];
     const trimmed = rows.slice(0, limit);
     const nextCursor = rows.length > limit ? trimmed[trimmed.length - 1]?.id : undefined;
     return {
-      items: trimmed.map((r) => ({
+      items: trimmed.map((r: Row) => ({
         id: r.id,
         blockId: r.block_id,
         appId: r.app_id,
