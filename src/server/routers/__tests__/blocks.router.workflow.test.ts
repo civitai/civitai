@@ -33,7 +33,11 @@ const {
   mockAuditPromptServer: vi.fn(),
   mockGetUserById: vi.fn(),
   mockDbRead: {
-    modelVersion: { findUnique: vi.fn() },
+    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
+    // Required by resolveBlockCheckpoint (LoRA path) — published checkpoint
+    // resolution reads both tables in parallel.
+    modelBlockInstall: { findUnique: vi.fn() },
+    blockUserSettings: { findUnique: vi.fn() },
   },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
 }));
@@ -393,5 +397,129 @@ describe('blocks.submitWorkflow', () => {
         body: { kind: 'unknown', modelId: 7 } as never,
       })
     ).rejects.toThrow();
+  });
+});
+
+/**
+ * LoRA-install precedence tests. The earlier submitWorkflow tests use a
+ * Checkpoint-type fixture for the bound model, which short-circuits
+ * resolveBlockCheckpoint to the Checkpoint-self branch. These exercise the
+ * full publisher-default ∪ viewer-override resolution.
+ */
+describe('blocks.submitWorkflow — LoRA install precedence', () => {
+  function loraVersionLookup() {
+    // First lookup: resolveBlockVersionContext fetches the LoRA's version.
+    // Then resolveBlockCheckpoint fetches the chosen Checkpoint.
+    mockDbRead.modelVersion.findUnique.mockImplementation((args: { where: { id: number } }) => {
+      if (args.where.id === 99) {
+        // The LoRA the block is bound to.
+        return Promise.resolve({
+          id: 99,
+          baseModel: 'Flux.1 D',
+          modelId: 7,
+          status: 'Published',
+          model: { id: 7, type: 'LORA' },
+        });
+      }
+      if (args.where.id === 691639) {
+        // The platform Flux Checkpoint.
+        return Promise.resolve({
+          id: 691639,
+          name: 'v1.0',
+          baseModel: 'Flux.1 D',
+          modelId: 618692,
+          status: 'Published',
+          model: { id: 618692, name: 'FLUX', type: 'Checkpoint' },
+        });
+      }
+      return Promise.resolve(null);
+    });
+  }
+
+  it('rejects with BAD_REQUEST when no publisher default AND no viewer override', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyUser();
+    loraVersionLookup();
+    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
+    mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+  });
+
+  it('uses publisher default when no viewer override is set', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyUser();
+    loraVersionLookup();
+    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
+      settings: { default_checkpoint_version_id: 691639 },
+    });
+    mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 10 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: 10 },
+        steps: [],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('viewer override beats publisher default', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyUser();
+    loraVersionLookup();
+    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
+      settings: { default_checkpoint_version_id: 111 }, // publisher
+    });
+    mockDbRead.blockUserSettings.findUnique.mockResolvedValue({
+      settings: { checkpoint_version_id: 691639 }, // viewer override
+    });
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 10 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: 10 },
+        steps: [],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    // resolveBlockCheckpoint should have queried the override id (691639),
+    // not the publisher default (111). loraVersionLookup returns null for
+    // 111, so if the precedence is wrong the test fails on resolve.
+    expect(mockDbRead.modelVersion.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 691639 } })
+    );
+  });
+
+  it('drops a stale viewer override and falls through to publisher default', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyUser();
+    loraVersionLookup();
+    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
+      settings: { default_checkpoint_version_id: 691639 },
+    });
+    // Override points at a deleted version (222 → null from loraVersionLookup).
+    mockDbRead.blockUserSettings.findUnique.mockResolvedValue({
+      settings: { checkpoint_version_id: 222 },
+    });
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 10 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: 10 },
+        steps: [],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    // Submission lands — the stale override was dropped and publisher default
+    // 691639 took over.
+    expect(result.snapshot.workflowId).toBe('wf_real');
   });
 });
