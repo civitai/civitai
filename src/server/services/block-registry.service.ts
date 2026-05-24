@@ -87,6 +87,14 @@ interface ListForModelOpts {
    * page. Omitting it defaults to the most restrictive ladder rung ('pg').
    */
   modelNsfwLevel?: number;
+  /**
+   * Current viewer's user id. Drives the `viewer_personal` subscription
+   * branch in the UNION. When `null`/undefined the branch matches no rows
+   * (anon viewers don't have viewer-personal subscriptions). When set,
+   * caching is disabled for the call — viewer-specific results would
+   * otherwise leak across users in the shared (modelId, slotId) cache key.
+   */
+  viewerUserId?: number | null;
 }
 
 // Ordered ratings for ladder comparisons. Each rating implies "and below."
@@ -235,21 +243,31 @@ function resolveRenderMode(
 export class BlockRegistry {
   static async listForModel(opts: ListForModelOpts): Promise<BlockInstallRecord[]> {
     const { modelId, slotId, modelType, modelNsfwLevel } = opts;
+    const viewerUserId = opts.viewerUserId ?? null;
     const maxRating = maxRatingForNsfwLevel(modelNsfwLevel);
     const maxRatingIdx = CONTENT_RATING_INDEX[maxRating];
+    // v1: disable the shared (modelId, slotId) cache layer whenever a
+    // viewer is attached, since viewer_personal subscriptions make the
+    // result per-viewer. The 60s cache for anon viewers and authed
+    // viewers who happen to have no viewer_personal subs both pay the
+    // DB cost in this branch — that's the tradeoff. Per the handoff,
+    // a split cache layer is v2 work.
+    const cacheEnabled = viewerUserId == null;
     const key = cacheKey(modelId, slotId);
 
-    try {
-      const cached = await redis.packed.get<BlockInstallRecord[]>(key);
-      if (cached) {
-        const kill = await getKillList();
-        // M-7: sentinel from getKillList() means sysRedis is unreachable;
-        // suppress everything on this branch (cached path).
-        if (kill.has('__KILL_LIST_UNREACHABLE__')) return [];
-        return kill.size === 0 ? cached : cached.filter((r) => !kill.has(r.blockId));
+    if (cacheEnabled) {
+      try {
+        const cached = await redis.packed.get<BlockInstallRecord[]>(key);
+        if (cached) {
+          const kill = await getKillList();
+          // M-7: sentinel from getKillList() means sysRedis is unreachable;
+          // suppress everything on this branch (cached path).
+          if (kill.has('__KILL_LIST_UNREACHABLE__')) return [];
+          return kill.size === 0 ? cached : cached.filter((r) => !kill.has(r.blockId));
+        }
+      } catch {
+        // fail open — fall through to DB
       }
-    } catch {
-      // fail open — fall through to DB
     }
 
     type Row = {
@@ -275,8 +293,15 @@ export class BlockRegistry {
     //   - I15: content-rating filter happens in JS after the row map (the
     //     manifest's contentRating lives in JSONB and is easier to compare
     //     in TS against CONTENT_RATING_ORDER than via SQL).
+    // Slot manifest match payload — Postgres `@>` containment against
+    // the manifest.targets array. Building the literal in JS keeps the
+    // pg-side type clear (jsonb) and avoids json_build_array gymnastics.
+    const slotMatch = `{"targets":[{"slotId":"${slotId}"}]}`;
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT * FROM (
+        -- Source rank 1: per-model installs (publisher's specific choice
+        -- for this model). enabled=true only — disabled installs are the
+        -- publisher opt-out path that gets handled via NOT EXISTS below.
         SELECT
           mbi.block_instance_id,
           ab.block_id,
@@ -298,6 +323,61 @@ export class BlockRegistry {
 
         UNION ALL
 
+        -- Source rank 2: publisher_all_my_models subscriptions for the
+        -- model owner. The JOIN on Model.userId = bus.user_id is what
+        -- makes this dynamic: transferring the model swaps which user's
+        -- subscriptions apply automatically. A per-model install row
+        -- (any enabled value) on this (modelId, slotId, appBlockId)
+        -- suppresses the subscription via NOT EXISTS — that's the
+        -- publisher opt-out path described in the handoff.
+        SELECT
+          'bus_pub_' || bus.id AS block_instance_id,
+          ab.block_id,
+          ab.app_id,
+          ab.manifest,
+          bus.settings,
+          TRUE AS enabled,
+          ab.render_mode,
+          ab.trust_tier,
+          (ab.manifest->>'renderMode') AS manifest_render_mode,
+          2 AS source_rank,
+          0 AS priority
+        FROM block_user_subscriptions bus
+        JOIN app_blocks ab ON ab.id = bus.app_block_id
+        JOIN "Model" m ON m.id = ${modelId} AND m."userId" = bus.user_id
+        WHERE bus.scope = 'publisher_all_my_models'
+          AND bus.enabled = TRUE
+          AND ab.status = 'approved'
+          AND ab.manifest @> ${slotMatch}::jsonb
+          AND (
+            array_length(bus.target_model_types, 1) IS NULL
+            OR (
+              ${modelType ?? null}::text IS NOT NULL
+              AND ${modelType ?? null}::text = ANY(bus.target_model_types)
+            )
+          )
+          AND (
+            array_length(bus.target_base_models, 1) IS NULL
+            OR EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              WHERE mv."modelId" = ${modelId}
+                AND mv."baseModel" = ANY(bus.target_base_models)
+            )
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM model_block_installs mbi
+            WHERE mbi.model_id = ${modelId}
+              AND mbi.slot_id = ${slotId}
+              AND mbi.app_block_id = ab.id
+          )
+
+        UNION ALL
+
+        -- Source rank 3: platform defaults (mod-promoted, "every model
+        -- gets this block"). Suppressed only by a per-model install for
+        -- the same (model, slot, app_block) — a publisher subscription
+        -- on rank 2 does NOT suppress platform defaults, since the two
+        -- usually carry different app_blocks anyway.
         SELECT
           'pdb_' || pdb.app_block_id AS block_instance_id,
           ab.block_id,
@@ -308,7 +388,7 @@ export class BlockRegistry {
           ab.render_mode,
           ab.trust_tier,
           (ab.manifest->>'renderMode') AS manifest_render_mode,
-          2 AS source_rank,
+          3 AS source_rank,
           pdb.priority AS priority
         FROM platform_default_blocks pdb
         JOIN app_blocks ab ON ab.id = pdb.app_block_id
@@ -334,6 +414,73 @@ export class BlockRegistry {
             WHERE model_id = ${modelId}
               AND app_block_id = pdb.app_block_id
               AND slot_id = ${slotId}
+          )
+
+        UNION ALL
+
+        -- Source rank 4: viewer_personal subscriptions for the current
+        -- viewer. Anon viewers (viewerUserId IS NULL) match no rows
+        -- because user_id is NOT NULL on the table and -1 isn't a valid
+        -- User id. Suppressed by any higher-rank source already showing
+        -- this app_block for this slot, so we don't render duplicates.
+        SELECT
+          'bus_view_' || bus.id AS block_instance_id,
+          ab.block_id,
+          ab.app_id,
+          ab.manifest,
+          bus.settings,
+          TRUE AS enabled,
+          ab.render_mode,
+          ab.trust_tier,
+          (ab.manifest->>'renderMode') AS manifest_render_mode,
+          4 AS source_rank,
+          0 AS priority
+        FROM block_user_subscriptions bus
+        JOIN app_blocks ab ON ab.id = bus.app_block_id
+        WHERE bus.scope = 'viewer_personal'
+          AND bus.user_id = ${viewerUserId ?? -1}
+          AND bus.enabled = TRUE
+          AND ab.status = 'approved'
+          AND ab.manifest @> ${slotMatch}::jsonb
+          AND (
+            array_length(bus.target_model_types, 1) IS NULL
+            OR (
+              ${modelType ?? null}::text IS NOT NULL
+              AND ${modelType ?? null}::text = ANY(bus.target_model_types)
+            )
+          )
+          AND (
+            array_length(bus.target_base_models, 1) IS NULL
+            OR EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              WHERE mv."modelId" = ${modelId}
+                AND mv."baseModel" = ANY(bus.target_base_models)
+            )
+          )
+          -- A per-model install (rank 1) already rendering this block?
+          -- skip the viewer subscription. Same app_block + slot only.
+          AND NOT EXISTS (
+            SELECT 1 FROM model_block_installs mbi
+            WHERE mbi.model_id = ${modelId}
+              AND mbi.slot_id = ${slotId}
+              AND mbi.app_block_id = ab.id
+          )
+          -- A publisher subscription (rank 2) for the model owner that
+          -- targets this same app_block? skip viewer to avoid duplicate.
+          AND NOT EXISTS (
+            SELECT 1 FROM block_user_subscriptions pub
+            JOIN "Model" m2 ON m2.id = ${modelId} AND m2."userId" = pub.user_id
+            WHERE pub.scope = 'publisher_all_my_models'
+              AND pub.enabled = TRUE
+              AND pub.app_block_id = ab.id
+          )
+          -- A platform default (rank 3) for this same app_block + slot?
+          -- skip viewer for the same reason.
+          AND NOT EXISTS (
+            SELECT 1 FROM platform_default_blocks pdb
+            WHERE pdb.slot_id = ${slotId}
+              AND pdb.app_block_id = ab.id
+              AND pdb.enabled = TRUE
           )
       ) combined
       -- M1 (audit-10): add a deterministic tiebreaker. Installs share
@@ -494,10 +641,12 @@ export class BlockRegistry {
       return { ...rest, defaultCheckpoint };
     });
 
-    try {
-      await redis.packed.set(key, hydrated, { EX: CACHE_TTL_SECONDS });
-    } catch {
-      // fail open
+    if (cacheEnabled) {
+      try {
+        await redis.packed.set(key, hydrated, { EX: CACHE_TTL_SECONDS });
+      } catch {
+        // fail open
+      }
     }
 
     return hydrated;

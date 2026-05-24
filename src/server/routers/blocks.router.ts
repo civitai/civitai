@@ -114,7 +114,10 @@ export const blocksRouter = router({
     )
     .query(async ({ input, ctx }) => {
       if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      return BlockRegistry.listForModel(input);
+      return BlockRegistry.listForModel({
+        ...input,
+        viewerUserId: ctx.user?.id ?? null,
+      });
     }),
 
   installOnModel: guardedProcedure
