@@ -13,7 +13,7 @@ const { mockDbRead, mockRedis } = vi.hoisted(() => ({
     modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
     modelBlockInstall: { findUnique: vi.fn() },
     blockUserSettings: { findUnique: vi.fn() },
-    model: { findFirst: vi.fn() },
+    modelMetric: { findFirst: vi.fn() },
   },
   // Platform-fallback path uses redis for the popular-checkpoint cache.
   // Default to "miss" so each test exercises the DB query unless it sets
@@ -44,7 +44,7 @@ beforeEach(() => {
   mockDbRead.modelVersion.findMany.mockReset();
   mockDbRead.modelBlockInstall.findUnique.mockReset();
   mockDbRead.blockUserSettings.findUnique.mockReset();
-  mockDbRead.model.findFirst.mockReset();
+  mockDbRead.modelMetric.findFirst.mockReset();
   mockRedis.get.mockReset().mockImplementation(async () => null);
   mockRedis.set.mockReset().mockImplementation(async () => undefined);
 });
@@ -183,12 +183,20 @@ describe('getRepresentativeBaseModel', () => {
 });
 
 describe('getPopularCheckpointForEcosystem', () => {
-  it('returns the top-thumbed Checkpoint mapped to its latest published version', async () => {
-    mockDbRead.model.findFirst.mockResolvedValue({
+  // Fixture shape mirrors the rewritten query that starts from
+  // modelMetric.findFirst (Prisma can't orderBy a scalar through a 1:many
+  // relation, so we project the model + its top version through the metric).
+  const topMetricFixture = {
+    modelId: 618692,
+    model: {
       id: 618692,
       name: 'FLUX',
       modelVersions: [{ id: 691639, name: 'v1.0', baseModel: 'Flux.1 D' }],
-    });
+    },
+  };
+
+  it('returns the top-thumbed Checkpoint mapped to its latest published version', async () => {
+    mockDbRead.modelMetric.findFirst.mockResolvedValue(topMetricFixture);
     const result = await getPopularCheckpointForEcosystem('Flux.1 D');
     expect(result).toMatchObject({
       versionId: 691639,
@@ -197,14 +205,13 @@ describe('getPopularCheckpointForEcosystem', () => {
       modelName: 'FLUX',
       versionName: 'v1.0',
     });
-    // Should have queried Checkpoint+Published with a same-family filter.
-    expect(mockDbRead.model.findFirst).toHaveBeenCalledWith(
+    // Should have queried Published ModelMetrics whose related model is a
+    // Checkpoint with at least one version in the family, ordered by
+    // thumbsUpCount.
+    expect(mockDbRead.modelMetric.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          type: 'Checkpoint',
-          status: 'Published',
-        }),
-        orderBy: { metrics: { thumbsUpCount: 'desc' } },
+        where: expect.objectContaining({ status: 'Published' }),
+        orderBy: { thumbsUpCount: 'desc' },
       })
     );
   });
@@ -221,11 +228,11 @@ describe('getPopularCheckpointForEcosystem', () => {
     );
     const result = await getPopularCheckpointForEcosystem('Flux.1 D');
     expect(result?.versionId).toBe(999);
-    expect(mockDbRead.model.findFirst).not.toHaveBeenCalled();
+    expect(mockDbRead.modelMetric.findFirst).not.toHaveBeenCalled();
   });
 
   it('returns null when the ecosystem has no Published Checkpoints', async () => {
-    mockDbRead.model.findFirst.mockResolvedValue(null);
+    mockDbRead.modelMetric.findFirst.mockResolvedValue(null);
     const result = await getPopularCheckpointForEcosystem('Flux.1 D');
     expect(result).toBeNull();
     // Null shouldn't be cached — let the next call re-check (a new
@@ -235,11 +242,7 @@ describe('getPopularCheckpointForEcosystem', () => {
 
   it('survives redis outages by falling through to the DB query', async () => {
     mockRedis.get.mockRejectedValueOnce(new Error('redis down'));
-    mockDbRead.model.findFirst.mockResolvedValue({
-      id: 618692,
-      name: 'FLUX',
-      modelVersions: [{ id: 691639, name: 'v1.0', baseModel: 'Flux.1 D' }],
-    });
+    mockDbRead.modelMetric.findFirst.mockResolvedValue(topMetricFixture);
     const result = await getPopularCheckpointForEcosystem('Flux.1 D');
     expect(result?.versionId).toBe(691639);
   });
@@ -320,11 +323,15 @@ describe('resolveBlockCheckpoint precedence chain', () => {
   it('falls back to platform per-ecosystem popular Checkpoint when neither is set', async () => {
     mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
-    // Platform fallback queries model.findFirst for the top Checkpoint.
-    mockDbRead.model.findFirst.mockResolvedValue({
-      id: 618692,
-      name: 'FLUX',
-      modelVersions: [{ id: 691639, name: 'v1.0', baseModel: 'Flux.1 D' }],
+    // Platform fallback queries modelMetric.findFirst for the top
+    // Checkpoint by thumbsUpCount.
+    mockDbRead.modelMetric.findFirst.mockResolvedValue({
+      modelId: 618692,
+      model: {
+        id: 618692,
+        name: 'FLUX',
+        modelVersions: [{ id: 691639, name: 'v1.0', baseModel: 'Flux.1 D' }],
+      },
     });
     const result = await resolveBlockCheckpoint(loraOpts);
     expect(result.versionId).toBe(691639);
@@ -335,7 +342,7 @@ describe('resolveBlockCheckpoint precedence chain', () => {
     mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
     // Ecosystem genuinely empty (no Checkpoints exist for this family).
-    mockDbRead.model.findFirst.mockResolvedValue(null);
+    mockDbRead.modelMetric.findFirst.mockResolvedValue(null);
     await expect(resolveBlockCheckpoint(loraOpts)).rejects.toMatchObject({
       code: 'BAD_REQUEST',
     });

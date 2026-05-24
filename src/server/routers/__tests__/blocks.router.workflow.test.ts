@@ -39,8 +39,9 @@ const {
     // resolution reads both tables in parallel.
     modelBlockInstall: { findUnique: vi.fn() },
     blockUserSettings: { findUnique: vi.fn() },
-    // Required by the platform-fallback rung (most-popular Checkpoint).
-    model: { findFirst: vi.fn() },
+    // Required by the platform-fallback rung (most-popular Checkpoint —
+    // queried via ModelMetric so we can orderBy thumbsUpCount).
+    modelMetric: { findFirst: vi.fn() },
   },
   mockRedis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
@@ -450,11 +451,14 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
     loraVersionLookup();
     mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
-    // Platform fallback returns the top-thumbed Flux Checkpoint.
-    mockDbRead.model.findFirst.mockResolvedValue({
-      id: 618692,
-      name: 'FLUX',
-      modelVersions: [{ id: 691639, name: 'v1.0', baseModel: 'Flux.1 D' }],
+    // Platform fallback returns the top-thumbed Flux Checkpoint metric.
+    mockDbRead.modelMetric.findFirst.mockResolvedValue({
+      modelId: 618692,
+      model: {
+        id: 618692,
+        name: 'FLUX',
+        modelVersions: [{ id: 691639, name: 'v1.0', baseModel: 'Flux.1 D' }],
+      },
     });
     mockSubmitWorkflow
       .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 10 }, steps: [] })
@@ -476,7 +480,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
     mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
     // Platform fallback empty — no Published Checkpoint exists for this family.
-    mockDbRead.model.findFirst.mockResolvedValue(null);
+    mockDbRead.modelMetric.findFirst.mockResolvedValue(null);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.submitWorkflow({ blockToken: 'tok', body: validBody() })

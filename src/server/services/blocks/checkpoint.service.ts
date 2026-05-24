@@ -176,37 +176,48 @@ export async function getPopularCheckpointForEcosystem(
     // on a cache outage; the DB query is the source of truth anyway.
   }
 
-  // Pick the top Checkpoint by thumbsUpCount among Models that have at
-  // least one Published version in the ecosystem family. Then take the
-  // most-recent Published version in the family as the actual anchor.
-  // Single Prisma call via include — cheaper than two round trips.
-  const topModel = await dbRead.model.findFirst({
+  // Pick the top Checkpoint by thumbsUpCount among Models with at least
+  // one Published version in the ecosystem family. Start the query from
+  // ModelMetric so we can orderBy the scalar directly — Prisma can't
+  // orderBy through a 1:many relation (Model.metrics is declared as
+  // ModelMetric[], though @@id([modelId]) makes it 1:1 in practice).
+  // ModelMetric carries its own `status` mirror of the model so we can
+  // filter Published without a join just for that.
+  const topMetric = await dbRead.modelMetric.findFirst({
     where: {
-      type: 'Checkpoint',
       status: 'Published',
-      deletedAt: null,
-      modelVersions: {
-        some: {
-          status: 'Published',
-          baseModel: { in: baseModelsInFamily },
+      model: {
+        type: 'Checkpoint',
+        deletedAt: null,
+        modelVersions: {
+          some: {
+            status: 'Published',
+            baseModel: { in: baseModelsInFamily },
+          },
         },
       },
     },
-    orderBy: { metrics: { thumbsUpCount: 'desc' } },
+    orderBy: { thumbsUpCount: 'desc' },
     select: {
-      id: true,
-      name: true,
-      modelVersions: {
-        where: {
-          status: 'Published',
-          baseModel: { in: baseModelsInFamily },
+      modelId: true,
+      model: {
+        select: {
+          id: true,
+          name: true,
+          modelVersions: {
+            where: {
+              status: 'Published',
+              baseModel: { in: baseModelsInFamily },
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { id: true, name: true, baseModel: true },
+          },
         },
-        orderBy: { createdAt: 'desc' },
-        take: 1,
-        select: { id: true, name: true, baseModel: true },
       },
     },
   });
+  const topModel = topMetric?.model;
   const topVersion = topModel?.modelVersions?.[0];
   if (!topModel || !topVersion) return null;
 
