@@ -1,9 +1,16 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
-import { dbWrite } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
-import { blockUserSettingsSchema } from '~/server/schema/blocks/settings.schema';
+import {
+  blockSettingsSchemaByBlockId,
+  blockUserSettingsSchema,
+} from '~/server/schema/blocks/settings.schema';
+import {
+  listAvailableSchema,
+  subscriptionScopeSchema,
+} from '~/server/schema/blocks/subscription.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -202,6 +209,98 @@ export const blocksRouter = router({
         modelId: row.modelId,
         appBlockId: row.appBlockId,
         slotId: row.slotId,
+      });
+      return { ok: true };
+    }),
+
+  /**
+   * Lists every user-subscription row (both scopes) for the current viewer.
+   * Used by the management UI at /apps/installed. The app_block row is
+   * denormalised onto each subscription so the UI can render block name,
+   * icon, and target slot without a second round-trip.
+   */
+  listMySubscriptions: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+      return BlockRegistry.listUserSubscriptions(ctx.user!.id);
+    }),
+
+  /**
+   * Marketplace listing — approved app blocks, optionally filtered by slot
+   * and/or a free-text query. Cursor-paginated. Public (any user can
+   * browse the marketplace; install requires auth).
+   */
+  listAvailable: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listAvailableSchema)
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [], nextCursor: undefined };
+      }
+      return BlockRegistry.listAvailable(input);
+    }),
+
+  /**
+   * Create or update the user's subscription for a (appBlockId, scope)
+   * pair. Toggling a scope on writes a row; toggling off uses
+   * deleteSubscription instead. Settings are validated through the
+   * per-block-id schema map (same path installOnModel uses) so the
+   * subscription row carries the same shape as a per-model install.
+   */
+  upsertSubscription: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        scope: subscriptionScopeSchema,
+        targetModelTypes: z.array(z.string().min(1).max(32)).max(16).nullable(),
+        targetBaseModels: z.array(z.string().min(1).max(64)).max(32).nullable(),
+        settings: settingsSchema.default({}),
+        enabled: z.boolean().default(true),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Resolve the appBlock once for both status check and per-block-id
+      // settings validation.
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { blockId: true, status: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.status !== 'approved') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      // Per-block-id schema validation. Unknown blocks (third-party future)
+      // fall back to the generic record — the router-level settingsSchema
+      // already enforced the 4KB cap.
+      const settingsSchemaForBlock = blockSettingsSchemaByBlockId[block.blockId];
+      const validatedSettings = settingsSchemaForBlock
+        ? (settingsSchemaForBlock.parse(input.settings) as Record<string, unknown>)
+        : input.settings;
+      return BlockRegistry.upsertSubscription({
+        userId: ctx.user!.id,
+        appBlockId: input.appBlockId,
+        scope: input.scope,
+        targetModelTypes: input.targetModelTypes,
+        targetBaseModels: input.targetBaseModels,
+        settings: validatedSettings,
+        enabled: input.enabled,
+      });
+    }),
+
+  /**
+   * Idempotent + ownership-checking delete. Missing rows return ok:true
+   * (already deleted is a success); rows owned by another user raise
+   * authorization at the service layer.
+   */
+  deleteSubscription: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ subscriptionId: z.string().min(1).max(64) }))
+    .mutation(async ({ ctx, input }) => {
+      await BlockRegistry.deleteSubscription({
+        subscriptionId: input.subscriptionId,
+        userId: ctx.user!.id,
       });
       return { ok: true };
     }),
