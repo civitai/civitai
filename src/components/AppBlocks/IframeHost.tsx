@@ -1,12 +1,19 @@
+import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BlockFallback } from './BlockFallback';
 import { usePostMessage } from './usePostMessage';
-import type {
-  BlockInitPayload,
-  BlockInstall,
-  ModelSlotContext,
-  SlotContext,
-} from './types';
+import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
+import { trpc } from '~/utils/trpc';
+import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
+
+const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
+
+// Hard cap on the suggested top-up amount a block can pre-fill in the
+// BuyBuzzModal (security audit #10). Without this a malicious block could
+// trick the user into a 10M-buzz purchase by sending `{suggestedAmount: 1e7}`.
+const BUZZ_PURCHASE_AMOUNT_CAP = 50_000;
 
 interface IframeHostProps {
   install: BlockInstall;
@@ -51,6 +58,18 @@ function intersectSandbox(raw: string | undefined, trustTier: string): string {
   const tokens = new Set(declared.length > 0 ? declared : ['allow-scripts']);
   if (TRUSTED_TIERS.has(trustTier)) tokens.add('allow-same-origin');
   return Array.from(tokens).join(' ');
+}
+
+// Failure-shape snapshot returned to the block when a tRPC call throws. The
+// SDK contract treats throws from useBuzzWorkflow.* as block lifecycle errors;
+// posting a snapshot with status:'failed' instead lets the block surface a
+// recoverable UX (e.g. "Top up Buzz" CTA) without tearing down the iframe.
+function failureSnapshot(err: unknown): BlockWorkflowSnapshot {
+  return {
+    workflowId: '',
+    status: 'failed',
+    error: err instanceof Error ? err.message : 'workflow request failed',
+  };
 }
 
 /**
@@ -243,9 +262,7 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
       // Validate the shape — payload comes from cross-origin iframe code and
       // is functionally untyped. Reject anything that isn't {height?:number}.
       const payload =
-        raw && typeof raw === 'object' && 'height' in raw
-          ? (raw as { height?: unknown })
-          : {};
+        raw && typeof raw === 'object' && 'height' in raw ? (raw as { height?: unknown }) : {};
       // H-11: only honor the height when the transition actually lands on
       // 'ready'. setStatus's updater returns the *prior* status — we use
       // the next status (which the updater computed) to gate the height
@@ -284,6 +301,137 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     });
     return off;
   }, [onMessage]);
+
+  // SDK workflow bridge: receive SUBMIT/ESTIMATE/POLL requests from the block,
+  // forward to blocks.* tRPC, echo the response back with matching requestId.
+  // The block's transport (`sendTypedRequest`) correlates by requestId and
+  // 30s-timeouts if we never reply — so every error path MUST still post a
+  // response (failure-shape snapshot), not throw upward.
+  const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
+  const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
+  const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+      'SUBMIT_WORKFLOW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await submitWorkflowMutation.mutateAsync({
+            blockToken: token,
+            // Schema-validated server-side; the host never trusts this shape.
+            body: raw.body as never,
+          });
+          send('WORKFLOW_SUBMITTED', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_SUBMITTED', {
+            requestId,
+            snapshot: failureSnapshot(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, submitWorkflowMutation]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
+      'ESTIMATE_WORKFLOW',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await estimateWorkflowMutation.mutateAsync({
+            blockToken: token,
+            body: raw.body as never,
+          });
+          send('ESTIMATE_RESULT', { requestId, snapshot });
+        } catch (err) {
+          send('ESTIMATE_RESULT', {
+            requestId,
+            snapshot: failureSnapshot(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, estimateWorkflowMutation]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; suggestedAmount?: unknown } | undefined>(
+      'OPEN_BUZZ_PURCHASE',
+      (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        const rawAmount =
+          typeof raw.suggestedAmount === 'number' && Number.isFinite(raw.suggestedAmount)
+            ? raw.suggestedAmount
+            : undefined;
+        // Floor + clamp into [0, cap]; reject NaN/negative implicitly via
+        // Number.isFinite above. The modal accepts undefined for "no
+        // suggestion" so the user picks freely.
+        const amount =
+          rawAmount != null
+            ? Math.min(Math.max(Math.floor(rawAmount), 0), BUZZ_PURCHASE_AMOUNT_CAP)
+            : undefined;
+        // Mutable flag flipped by onPurchaseSuccess; onClose reads it to
+        // decide which result to post. The modal calls dialog.onClose first
+        // and then onPurchaseSuccess after a successful purchase — but our
+        // onClose fires last because it's tied to the dialog teardown, so
+        // by the time it runs the flag reflects the final state.
+        let purchased = false;
+        dialogStore.trigger<BuyBuzzModalProps>({
+          // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
+          // against each other in the dialog store's exists-check.
+          id: `block-buy-buzz-${requestId}`,
+          component: BuyBuzzModal,
+          props: {
+            minBuzzAmount: amount,
+            onPurchaseSuccess: () => {
+              purchased = true;
+            },
+          },
+          options: {
+            onClose: () => {
+              send('BUZZ_PURCHASE_RESULT', { requestId, purchased });
+            },
+          },
+        });
+      }
+    );
+    return off;
+  }, [onMessage, send]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'POLL_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await pollWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('WORKFLOW_STATUS', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_STATUS', {
+            requestId,
+            snapshot: failureSnapshot(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, pollWorkflowMutation]);
 
   useEffect(() => {
     if (status !== 'ready') return;
