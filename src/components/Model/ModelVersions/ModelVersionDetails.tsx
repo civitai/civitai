@@ -50,6 +50,8 @@ import { useRouter } from 'next/router';
 import { useMemo, useRef } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { BlockSlot } from '~/components/AppBlocks/BlockSlot';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   BidModelButton,
   getEntityDataForBidModelButton,
@@ -146,6 +148,10 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const user = useCurrentUser();
+  // `showNsfw` lives on the browsing-settings store (BrowserSettingsProvider),
+  // not on CurrentUser — that field was removed from CurrentUser when the
+  // browsing-settings refactor moved viewer prefs into their own provider.
+  const viewerShowNsfw = useBrowsingSettings((x) => x.showNsfw);
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -468,6 +474,30 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
         <Stack>
+          {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
+              platform-default blocks, capped at 3. Client-only — the server
+              emits a placeholder div. */}
+          <BlockSlot
+            slotId="model.sidebar_top"
+            context={{
+              slotId: 'model.sidebar_top',
+              modelId: model.id,
+              modelVersionId: version.id,
+              modelName: model.name,
+              modelType: model.type,
+              modelNsfwLevel: model.nsfwLevel,
+              creatorUserId: model.user.id,
+              viewerUserId: user?.id ?? null,
+              viewerUsername: user?.username ?? null,
+              viewerStatus: user?.bannedAt
+                ? 'banned'
+                : user?.muted
+                ? 'muted'
+                : 'active',
+              viewerNsfwEnabled: viewerShowNsfw,
+              theme: colorScheme === 'dark' ? 'dark' : 'light',
+            }}
+          />
           {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}

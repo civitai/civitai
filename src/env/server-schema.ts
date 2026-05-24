@@ -305,4 +305,16 @@ export const serverSchema = z.object({
   SERVER_DOMAIN_BLUE_ALIASES: z.string().optional(),
   SERVER_DOMAIN_RED: z.string().optional(),
   SERVER_DOMAIN_RED_ALIASES: z.string().optional(),
+
+  // App Blocks (Phase 1) — RSA keypair for block-scoped JWT issuance + JWKS.
+  // BLOCK_TOKEN_PRIVATE_KEY signs tokens; BLOCK_TOKEN_PUBLIC_KEY is served via
+  // /api/v1/block-tokens/jwks. BLOCK_TOKEN_PUBLIC_KEY_NEXT is set during the
+  // rotation window so the JWKS endpoint publishes both keys (and verifyBlockToken
+  // accepts signatures from either) for one full token lifetime. BLOCK_ALLOWED_ORIGINS
+  // is the CORS allow-list (comma-separated). All optional so the app boots before
+  // App Blocks rolls out; the token endpoints fail-closed if the signing key is missing.
+  BLOCK_TOKEN_PRIVATE_KEY: z.string().optional(),
+  BLOCK_TOKEN_PUBLIC_KEY: z.string().optional(),
+  BLOCK_TOKEN_PUBLIC_KEY_NEXT: z.string().optional(),
+  BLOCK_ALLOWED_ORIGINS: z.string().optional(),
 });

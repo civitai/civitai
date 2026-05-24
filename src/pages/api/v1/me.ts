@@ -3,6 +3,10 @@ import type { SessionUser } from 'next-auth';
 
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 
+// Note: App Blocks do NOT call /api/v1/me directly. Layering withBlockScope
+// over AuthedEndpoint would dead-code the block-token path (the inner
+// session check 401s before block claims do anything). Blocks use the
+// dedicated /api/v1/blocks/me route which is built on top of withBlockScope.
 export default AuthedEndpoint(async function handler(
   req: NextApiRequest,
   res: NextApiResponse,
