@@ -184,15 +184,19 @@ describe('buildTextToImageInput', () => {
       quantity: 1,
     },
   };
+  const checkpointResolved = { baseModel: 'SDXL 1.0', modelType: 'Checkpoint' };
+  const sd1CheckpointResolved = { baseModel: 'SD 1.5', modelType: 'Checkpoint' };
+  const fluxLoraResolved = { baseModel: 'Flux.1 D', modelType: 'LORA' };
+  const sdxlLoraResolved = { baseModel: 'SDXL 1.0', modelType: 'LORA' };
 
   it('fills SDXL/Flux-class defaults (1024x1024) when the block omits dimensions', () => {
-    const out = buildTextToImageInput(baseBody as never, { baseModel: 'SDXL 1.0' });
+    const out = buildTextToImageInput(baseBody as never, checkpointResolved);
     expect(out.params.width).toBe(1024);
     expect(out.params.height).toBe(1024);
   });
 
   it('fills SD1/SD2 defaults (512x512) for older base models', () => {
-    const out = buildTextToImageInput(baseBody as never, { baseModel: 'SD 1.5' });
+    const out = buildTextToImageInput(baseBody as never, sd1CheckpointResolved);
     expect(out.params.width).toBe(512);
     expect(out.params.height).toBe(512);
   });
@@ -202,13 +206,13 @@ describe('buildTextToImageInput', () => {
       ...baseBody,
       params: { ...baseBody.params, width: 768, height: 1152 },
     };
-    const out = buildTextToImageInput(body as never, { baseModel: 'SDXL 1.0' });
+    const out = buildTextToImageInput(body as never, checkpointResolved);
     expect(out.params.width).toBe(768);
     expect(out.params.height).toBe(1152);
   });
 
   it('defaults sampler/steps and pins workflow to txt2img', () => {
-    const out = buildTextToImageInput(baseBody as never, { baseModel: 'SDXL 1.0' });
+    const out = buildTextToImageInput(baseBody as never, checkpointResolved);
     expect(out.params.sampler).toBe('Euler');
     expect(out.params.steps).toBe(25);
     expect(out.params.workflow).toBe('txt2img');
@@ -217,9 +221,24 @@ describe('buildTextToImageInput', () => {
     expect(out.params.sourceImage).toBeNull();
   });
 
-  it('builds a single-resource bundle pointing at the resolved modelVersionId', () => {
-    const out = buildTextToImageInput(baseBody as never, { baseModel: 'SDXL 1.0' });
+  it('passes the bound model alone when it is itself a Checkpoint', () => {
+    const out = buildTextToImageInput(baseBody as never, checkpointResolved);
     expect(out.resources).toEqual([{ id: 99, strength: 1 }]);
+  });
+
+  it('prepends the Flux platform checkpoint when the bound model is a Flux LoRA', () => {
+    const out = buildTextToImageInput(baseBody as never, fluxLoraResolved);
+    // Platform anchor first, then the LoRA the block is bound to.
+    expect(out.resources).toEqual([
+      { id: 691639, strength: 1 },
+      { id: 99, strength: 1 },
+    ]);
+  });
+
+  it('rejects non-Checkpoint models in un-mapped families with BAD_REQUEST', () => {
+    expect(() => buildTextToImageInput(baseBody as never, sdxlLoraResolved)).toThrow(
+      /no default checkpoint configured/i
+    );
   });
 
   it('forwards block-supplied sampler/steps/seed overrides', () => {
@@ -227,7 +246,7 @@ describe('buildTextToImageInput', () => {
       ...baseBody,
       params: { ...baseBody.params, sampler: 'DPM++ 2M Karras', steps: 30, seed: 12345 },
     };
-    const out = buildTextToImageInput(body as never, { baseModel: 'SDXL 1.0' });
+    const out = buildTextToImageInput(body as never, checkpointResolved);
     expect(out.params.sampler).toBe('DPM++ 2M Karras');
     expect(out.params.steps).toBe(30);
     expect(out.params.seed).toBe(12345);
