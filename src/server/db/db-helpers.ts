@@ -2,11 +2,38 @@ import { Prisma } from '@prisma/client';
 import type { QueryResult, QueryResultRow } from 'pg';
 import { Pool } from 'pg';
 import { performance } from 'node:perf_hooks';
+import client from 'prom-client';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { pgPoolAcquireHistogram } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
+
+// Histogram for pg Pool acquire latency. Defined here (not in prom/client.ts)
+// to avoid a module-init cycle: prom/client.ts imports pgDb/notifDb/datapacketDb,
+// which import db-helpers. If db-helpers also imported a const from prom/client.ts,
+// webpack's CJS-style chunking can leave that binding in a Temporal Dead Zone
+// during module init — observed as "Cannot access 'S' before initialization" +
+// V8 heap OOM on PR-preview 2322 (commit 664aa4c2e).
+//
+// prom-client itself has no cycle back into our code, so importing it directly
+// is safe. Unprefixed name matches the existing node_postgres_pool_* gauges in
+// prom/client.ts so dashboards correlate on the same metric family.
+const PG_POOL_ACQUIRE_HISTOGRAM_NAME = 'node_postgres_pool_acquire_duration_seconds';
+const pgPoolAcquireHistogram = (() => {
+  try {
+    return new client.Histogram({
+      name: PG_POOL_ACQUIRE_HISTOGRAM_NAME,
+      help: 'Time spent awaiting a connection from a pg.Pool, by pool instance and result',
+      labelNames: ['pool', 'result'] as const,
+      buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+    });
+  } catch {
+    // HMR re-registration: prom-client throws on duplicate; reuse the existing one
+    return client.register.getSingleMetric(PG_POOL_ACQUIRE_HISTOGRAM_NAME) as client.Histogram<
+      'pool' | 'result'
+    >;
+  }
+})();
 
 const log = createLogger('pgDb', 'blue');
 

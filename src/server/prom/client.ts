@@ -180,23 +180,10 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
   labelNames: ['entity', 'caller'] as const,
 });
 
-// Buckets for pg Pool acquire latency in seconds.
-// Range covers sub-1ms healthy through 10s pathological — useful for diagnosing
-// pool waits during incidents like the 2026-05-21+ api-primary restart waves where
-// HAProxy backend_connect_time jittered to >1s under getInfiniteImages load.
-export const PG_POOL_ACQUIRE_BUCKETS = [
-  0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10,
-] as const;
-
-export const pgPoolAcquireHistogram = registerHistogram({
-  name: 'node_postgres_pool_acquire_duration_seconds',
-  help: 'Time spent awaiting a connection from a pg.Pool, by pool instance and result',
-  labelNames: ['pool', 'result'] as const,
-  buckets: PG_POOL_ACQUIRE_BUCKETS,
-  // Match the unprefixed naming used by the existing node_postgres_pool_* gauges below
-  // so dashboards can correlate on the same metric family.
-  prefix: '',
-});
+// pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.
+// Defining it here would create a module-init cycle (prom/client.ts imports
+// pgDb → db-helpers, which would import this histogram back), which webpack's
+// CJS chunking can break with a TDZ error at runtime.
 
 declare global {
   // eslint-disable-next-line no-var
