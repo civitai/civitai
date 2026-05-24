@@ -51,6 +51,7 @@ import { useMemo, useRef } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BlockSlot } from '~/components/AppBlocks/BlockSlot';
+import { PublisherSubscriptionBanner } from '~/components/Apps/PublisherSubscriptionBanner';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import {
   BidModelButton,
@@ -474,6 +475,12 @@ function ModelVersionDetailsContent({ model, version, image, onFavoriteClick }: 
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid2.Col span={{ base: 12, sm: 5, md: 4 }} order={{ sm: 2 }} ref={adContainerRef}>
         <Stack>
+          {/* Owner-only banner: lists publisher_all_my_models subscriptions
+              that would render here so the model owner can opt out of any
+              specific subscription for this model. Hidden for non-owners. */}
+          {isOwner && (
+            <PublisherSubscriptionBanner modelId={model.id} modelType={model.type} />
+          )}
           {/* App Blocks: model.sidebar_top slot. Renders publisher-installed and
               platform-default blocks, capped at 3. Client-only — the server
               emits a placeholder div. */}
