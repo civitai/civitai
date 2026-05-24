@@ -7,6 +7,7 @@ import {
 } from '~/server/schema/blocks/settings.schema';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
+  getPopularCheckpointForEcosystem,
   getRepresentativeBaseModel,
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
@@ -775,30 +776,60 @@ export class BlockRegistry {
           .default_checkpoint_version_id
       : undefined;
     const candidate = typeof overrideId === 'number' ? overrideId : publisherId;
-    if (typeof candidate !== 'number') return null;
+    if (typeof candidate === 'number') {
+      const row = await dbRead.modelVersion.findUnique({
+        where: { id: candidate },
+        select: {
+          id: true,
+          name: true,
+          baseModel: true,
+          status: true,
+          modelId: true,
+          model: { select: { name: true, type: true } },
+        },
+      });
+      // Quietly accept the candidate when valid. If it's stale (deleted /
+      // unpublished / mistyped) fall through to the platform default below
+      // rather than show "missing checkpoint" — the block can still mount
+      // with a sensible label.
+      if (row && row.status === 'Published' && row.model.type === 'Checkpoint') {
+        return {
+          versionId: row.id,
+          modelId: row.modelId,
+          modelName: row.model.name,
+          versionName: row.name,
+          baseModel: row.baseModel,
+        };
+      }
+    }
 
-    const row = await dbRead.modelVersion.findUnique({
-      where: { id: candidate },
-      select: {
-        id: true,
-        name: true,
-        baseModel: true,
-        status: true,
-        modelId: true,
-        model: { select: { name: true, type: true } },
-      },
-    });
-    // Quietly drop stale / unpublished / mistyped rows — surface as "no
-    // checkpoint" so the block can render a "missing checkpoint" state
-    // rather than crash. Strict validation runs at submit time anyway.
-    if (!row || row.status !== 'Published' || row.model.type !== 'Checkpoint') return null;
-    return {
-      versionId: row.id,
-      modelId: row.modelId,
-      modelName: row.model.name,
-      versionName: row.name,
-      baseModel: row.baseModel,
-    };
+    // Platform per-ecosystem fallback. Need the LoRA's baseModel to pick
+    // the family — read the install's version (or representative version
+    // if not pinned). This matches what resolveBlockCheckpoint does at
+    // submit time, so BLOCK_INIT and submit agree on the same default.
+    const loraVersion = install.modelVersionId
+      ? await dbRead.modelVersion.findUnique({
+          where: { id: install.modelVersionId },
+          select: { baseModel: true },
+        })
+      : await dbRead.modelVersion.findFirst({
+          where: { modelId: install.modelId, status: 'Published' },
+          orderBy: { createdAt: 'desc' },
+          select: { baseModel: true },
+        });
+    if (loraVersion?.baseModel) {
+      const popular = await getPopularCheckpointForEcosystem(loraVersion.baseModel);
+      if (popular) {
+        return {
+          versionId: popular.versionId,
+          modelId: popular.modelId,
+          modelName: popular.modelName,
+          versionName: popular.versionName,
+          baseModel: popular.baseModel,
+        };
+      }
+    }
+    return null;
   }
 }
 

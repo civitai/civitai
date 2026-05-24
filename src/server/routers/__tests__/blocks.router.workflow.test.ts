@@ -22,6 +22,7 @@ const {
   mockAuditPromptServer,
   mockGetUserById,
   mockDbRead,
+  mockRedis,
   mockIsAppBlocksEnabled,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
@@ -38,7 +39,10 @@ const {
     // resolution reads both tables in parallel.
     modelBlockInstall: { findUnique: vi.fn() },
     blockUserSettings: { findUnique: vi.fn() },
+    // Required by the platform-fallback rung (most-popular Checkpoint).
+    model: { findFirst: vi.fn() },
   },
+  mockRedis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
 }));
 
@@ -67,6 +71,10 @@ vi.mock('~/server/db/client', () => ({
   // dbWrite is referenced for install-management procedures; stub the few
   // shapes the unrelated procedures could hit so the import doesn't crash.
   dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
+}));
+vi.mock('~/server/redis/client', () => ({
+  redis: mockRedis,
+  REDIS_KEYS: { BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } },
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
@@ -436,12 +444,39 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
     });
   }
 
-  it('rejects with BAD_REQUEST when no publisher default AND no viewer override', async () => {
+  it('falls back to platform default when no publisher default AND no viewer override', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyUser();
+    loraVersionLookup();
+    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
+    mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    // Platform fallback returns the top-thumbed Flux Checkpoint.
+    mockDbRead.model.findFirst.mockResolvedValue({
+      id: 618692,
+      name: 'FLUX',
+      modelVersions: [{ id: 691639, name: 'v1.0', baseModel: 'Flux.1 D' }],
+    });
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 10 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: 10 },
+        steps: [],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('rejects with BAD_REQUEST only when the ecosystem has no Checkpoints at all', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     happyUser();
     loraVersionLookup();
     mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({ settings: {} });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    // Platform fallback empty — no Published Checkpoint exists for this family.
+    mockDbRead.model.findFirst.mockResolvedValue(null);
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.submitWorkflow({ blockToken: 'tok', body: validBody() })

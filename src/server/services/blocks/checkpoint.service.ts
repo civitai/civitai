@@ -1,10 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   blockSettingsSchemaByBlockId,
   blockUserSettingsSchema,
   type GenerateFromModelSettings,
 } from '~/server/schema/blocks/settings.schema';
+import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 
 /**
@@ -129,6 +131,100 @@ export async function getRepresentativeBaseModel(modelId: number): Promise<strin
   return any?.baseModel ?? null;
 }
 
+const POPULAR_CHECKPOINT_TTL_SECONDS = 60 * 60; // 1h
+
+/**
+ * Resolve the most-popular Checkpoint Model in the given ecosystem family.
+ * Used as the platform-wide fallback when neither the viewer nor publisher
+ * has configured a checkpoint for a LoRA install — so a fresh demo install
+ * Just Works without manual configuration.
+ *
+ * "Most popular" = highest `ModelMetric.thumbsUpCount` among published
+ * Checkpoint models that have at least one Published version in the
+ * ecosystem. Picks the latest Published version of that Model as the
+ * actual anchor.
+ *
+ * Cached in Redis for 1h. The result is small (one JSON object), and
+ * popularity changes on rolling-window scales — paying for a multi-join
+ * query on every block submit isn't worth it. Cache invalidation is
+ * passive: a hot top-Checkpoint will refresh in ≤1h.
+ *
+ * Returns `null` only when the ecosystem has no Published Checkpoints —
+ * the caller surfaces that as BAD_REQUEST.
+ */
+export async function getPopularCheckpointForEcosystem(
+  baseModel: string
+): Promise<ValidatedCheckpoint | null> {
+  const ecosystemKey = getBaseModelSetType(baseModel);
+  const baseModelsInFamily = getBaseModelsByGroup(ecosystemKey);
+  if (baseModelsInFamily.length === 0) return null;
+
+  const cacheKey: `${typeof REDIS_KEYS.BLOCKS.POPULAR_CHECKPOINT}:${string}` = `${REDIS_KEYS.BLOCKS.POPULAR_CHECKPOINT}:${ecosystemKey}`;
+  try {
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      // Cached value is a ValidatedCheckpoint JSON. Parse failure on a
+      // schema migration → treat as miss, repopulate below.
+      try {
+        return JSON.parse(cached) as ValidatedCheckpoint;
+      } catch {
+        // fall through to recompute
+      }
+    }
+  } catch {
+    // Redis unreachable — fall through to direct DB. Don't fail closed
+    // on a cache outage; the DB query is the source of truth anyway.
+  }
+
+  // Pick the top Checkpoint by thumbsUpCount among Models that have at
+  // least one Published version in the ecosystem family. Then take the
+  // most-recent Published version in the family as the actual anchor.
+  // Single Prisma call via include — cheaper than two round trips.
+  const topModel = await dbRead.model.findFirst({
+    where: {
+      type: 'Checkpoint',
+      status: 'Published',
+      deletedAt: null,
+      modelVersions: {
+        some: {
+          status: 'Published',
+          baseModel: { in: baseModelsInFamily },
+        },
+      },
+    },
+    orderBy: { metrics: { thumbsUpCount: 'desc' } },
+    select: {
+      id: true,
+      name: true,
+      modelVersions: {
+        where: {
+          status: 'Published',
+          baseModel: { in: baseModelsInFamily },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+        select: { id: true, name: true, baseModel: true },
+      },
+    },
+  });
+  const topVersion = topModel?.modelVersions?.[0];
+  if (!topModel || !topVersion) return null;
+
+  const resolved: ValidatedCheckpoint = {
+    versionId: topVersion.id,
+    modelId: topModel.id,
+    baseModel: topVersion.baseModel,
+    modelName: topModel.name,
+    versionName: topVersion.name,
+  };
+  try {
+    await redis.set(cacheKey, JSON.stringify(resolved), { EX: POPULAR_CHECKPOINT_TTL_SECONDS });
+  } catch {
+    // fail open — next call recomputes
+  }
+  return resolved;
+}
+
 /**
  * Resolve the effective checkpoint for a single workflow submission.
  *
@@ -231,11 +327,22 @@ export async function resolveBlockCheckpoint(opts: {
     }
   }
 
-  // 4. No fallback. The install needs a checkpoint configured.
+  // 4. Platform per-ecosystem fallback: most-popular Checkpoint in the
+  // LoRA's family. Makes the demo work without manual install
+  // configuration; publishers can still pin a specific Checkpoint via
+  // settings.default_checkpoint_version_id if they want a different one.
+  const popular = await getPopularCheckpointForEcosystem(baseModel);
+  if (popular) return popular;
+
+  // 5. Ecosystem has no published Checkpoints at all (e.g. a brand-new
+  // base model with only LoRAs). Surface as BAD_REQUEST — the block
+  // can't generate without an anchor and there's nothing on-platform to
+  // fall back to.
   throw new TRPCError({
     code: 'BAD_REQUEST',
     message:
-      'This block install does not have a default checkpoint configured. ' +
-      'Ask the model owner to set one in the block settings.',
+      'This block install has no checkpoint configured and the platform ' +
+      'has no popular checkpoint in this ecosystem yet. Ask the model ' +
+      'owner to set one in the block settings.',
   });
 }

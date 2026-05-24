@@ -6,7 +6,7 @@ import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } fr
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
-import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
+import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
 import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
 
@@ -441,11 +441,15 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     >('OPEN_CHECKPOINT_PICKER', (raw) => {
       if (!raw || typeof raw.requestId !== 'string') return;
       const requestId = raw.requestId;
-      // Empty filter → no checkpoints at all rather than all checkpoints,
-      // since "all" includes incompatible families that would 400 at
-      // submit. Make the block author's mistake visible immediately.
-      const baseModels =
-        typeof raw.baseModelGroup === 'string' ? getBaseModelsByGroup(raw.baseModelGroup) : [];
+      // The block may send either an ecosystem key ('Flux1') or a baseModel
+      // name ('Flux.1 D'). Normalize through getBaseModelGroup — it accepts
+      // both forms and returns the ecosystem key, which is what
+      // getBaseModelsByGroup expects. Empty filter → no checkpoints at all
+      // rather than all checkpoints, since "all" includes incompatible
+      // families that would 400 at submit.
+      const groupKey =
+        typeof raw.baseModelGroup === 'string' ? getBaseModelGroup(raw.baseModelGroup) : null;
+      const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
       let answered = false;
       openResourceSelectModal({
         title: 'Choose a checkpoint',

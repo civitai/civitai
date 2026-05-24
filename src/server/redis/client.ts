@@ -1037,6 +1037,13 @@ export const REDIS_KEYS = {
      * existence on every request; missing key → allowed, present → 403.
      */
     REVOKED_INSTANCE: 'blocks:revoked-instance',
+    /**
+     * Per-ecosystem-key most-popular-Checkpoint cache. Resolves to a
+     * JSON-encoded ValidatedCheckpoint. 1h TTL — popularity changes
+     * slowly and we'd rather serve a stale-by-an-hour Checkpoint than
+     * pay a multi-join query on every block submit.
+     */
+    POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
 } as const;
 
