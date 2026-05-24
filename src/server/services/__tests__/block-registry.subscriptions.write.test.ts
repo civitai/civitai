@@ -12,15 +12,17 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
   const dbRead = {
-    $queryRaw: vi.fn(async () => []),
-    blockUserSubscription: { findMany: vi.fn(async () => []) },
+    $queryRaw: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
+    blockUserSubscription: {
+      findMany: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
+    },
   };
   const dbWrite = {
-    appBlock: { findUnique: vi.fn() },
+    appBlock: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
     blockUserSubscription: {
-      upsert: vi.fn(async () => ({})),
-      findUnique: vi.fn(),
-      delete: vi.fn(async () => undefined),
+      upsert: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
+      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
+      delete: vi.fn<(...args: any[]) => Promise<any>>(async () => undefined),
     },
   };
   return { mockDbRead: dbRead, mockDbWrite: dbWrite };

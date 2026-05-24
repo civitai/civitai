@@ -37,8 +37,8 @@ export const upsertSubscriptionSchema = z
     scope: subscriptionScopeSchema,
     settings: z.record(z.string(), z.unknown()).default({}),
     enabled: z.boolean().default(true),
+    ...subscriptionTargetsSchema.shape,
   })
-  .merge(subscriptionTargetsSchema)
   .refine(
     (value) => Buffer.byteLength(JSON.stringify(value.settings), 'utf8') <= 4096,
     { message: 'settings exceeds 4KB', path: ['settings'] }

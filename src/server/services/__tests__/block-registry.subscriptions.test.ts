@@ -19,23 +19,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
   const dbRead = {
-    $queryRaw: vi.fn(async () => []),
-    modelBlockInstall: { findUnique: vi.fn() },
-    appBlock: { findUnique: vi.fn() },
-    blockUserSubscription: { findMany: vi.fn(async () => []) },
+    $queryRaw: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
+    modelBlockInstall: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
+    appBlock: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
+    blockUserSubscription: {
+      findMany: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
+    },
   };
   const dbWrite = {
-    appBlock: { findUnique: vi.fn() },
+    appBlock: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
     modelBlockInstall: {
-      upsert: vi.fn(async () => ({ blockInstanceId: 'bki_test' })),
-      deleteMany: vi.fn(),
-      update: vi.fn(),
-      updateMany: vi.fn(),
+      upsert: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+        blockInstanceId: 'bki_test',
+      })),
+      deleteMany: vi.fn<(...args: any[]) => Promise<any>>(),
+      update: vi.fn<(...args: any[]) => Promise<any>>(),
+      updateMany: vi.fn<(...args: any[]) => Promise<any>>(),
     },
     blockUserSubscription: {
-      upsert: vi.fn(),
-      findUnique: vi.fn(),
-      delete: vi.fn(),
+      upsert: vi.fn<(...args: any[]) => Promise<any>>(),
+      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
+      delete: vi.fn<(...args: any[]) => Promise<any>>(),
     },
   };
   const redis = {
