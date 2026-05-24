@@ -1,13 +1,25 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
+import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
-import { guardedProcedure, middleware, publicProcedure, router } from '~/server/trpc';
 import {
-  throwAuthorizationError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
+  buildTextToImageInput,
+  resolveBlockVersionContext,
+  snapshotFromWorkflow,
+} from '~/server/services/blocks/workflow.service';
+import { BuzzTypes } from '~/shared/constants/buzz.constants';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
+import { getUserById } from '~/server/services/user.service';
+import { guardedProcedure, middleware, publicProcedure, router } from '~/server/trpc';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import type { SessionUser } from 'next-auth';
 
 /**
  * H-2: every blocks router procedure gates on the Flipt flag. When the
@@ -31,11 +43,7 @@ const enforceAppBlocksFlag = middleware(async ({ next, type }) => {
 
 // Free-form slot strings are a cache-busting surface for anon callers.
 // Bound to the explicit set we ship today; new slots ship by extending this.
-const KNOWN_SLOT_IDS = z.enum([
-  'model.sidebar_top',
-  'model.below_images',
-  'model.actions_extra',
-]);
+const KNOWN_SLOT_IDS = z.enum(['model.sidebar_top', 'model.below_images', 'model.actions_extra']);
 
 // JSON settings get echoed back to every BlockSlot consumer and stamped on the
 // JWT issuance side. Cap size to keep both budgets bounded.
@@ -53,7 +61,10 @@ const settingsSchema = z
  * Asserts that the current user owns the model or is a moderator. Throws
  * UNAUTHORIZED otherwise. Used by every mutating block procedure.
  */
-async function assertCanManageBlocks(ctx: { user?: { id: number; isModerator?: boolean } }, modelId: number) {
+async function assertCanManageBlocks(
+  ctx: { user?: { id: number; isModerator?: boolean } },
+  modelId: number
+) {
   if (!ctx.user) throw throwAuthorizationError('Not authenticated');
   if (ctx.user.isModerator) return;
   // B2: read from the primary, not the replica. Former-owner-during-
@@ -184,4 +195,217 @@ export const blocksRouter = router({
       });
       return { ok: true };
     }),
+
+  /**
+   * Read a workflow's current status. Returns a `BlockWorkflowSnapshot` —
+   * a flattened, public-safe subset of the orchestrator's Workflow shape.
+   *
+   * Ownership: we fetch with the user's orchestrator token (`getOrchestratorToken`),
+   * so the orchestrator returns 404/403 for workflows the user doesn't own.
+   * That's the gate — we don't need a second client-side ownership check.
+   */
+  pollWorkflow: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        workflowId: z.string().min(1).max(64),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'workflow poll requires authenticated viewer',
+        });
+      }
+      const token = await getOrchestratorToken(userId, ctx);
+      const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      return { snapshot: snapshotFromWorkflow(workflow) };
+    }),
+
+  /**
+   * Cost-only preview. Builds the same orchestrator step `submitWorkflow`
+   * would, then calls submit with `whatif:true` so the orchestrator computes
+   * cost without queueing the job. No budget gate — estimate is how the block
+   * discovers whether budget is sufficient.
+   */
+  estimateWorkflow: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
+    .mutation(async ({ ctx, input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      // Context binding mirrors enforceContextBinding's models:read:self path —
+      // re-check here because the middleware version takes a NextApiRequest and
+      // we're in tRPC land.
+      const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
+      if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'estimate requires authenticated viewer',
+        });
+      }
+      const resolved = await resolveBlockVersionContext(
+        input.body.modelVersionId,
+        input.body.modelId
+      );
+      const user = await getBlockSessionUser(userId);
+      const token = await getOrchestratorToken(userId, ctx);
+      const generateInput = buildTextToImageInput(input.body, resolved);
+      const step = await createTextToImageStep({ ...generateInput, user, whatIf: true });
+      const workflow = await submitWorkflow({
+        token,
+        body: {
+          steps: [step],
+          tags: buildWorkflowTags(claims, resolved.baseModel),
+          currencies: BLOCK_CURRENCIES,
+        },
+        query: { whatif: true },
+      });
+      return { snapshot: snapshotFromWorkflow(workflow) };
+    }),
+
+  /**
+   * Submit a workflow for actual execution. Enforces the buzz budget the
+   * JWT carries (`claims.buzzBudget`) — over-budget submits return a
+   * failed-shape snapshot instead of throwing, since the SDK treats throws
+   * as block lifecycle errors but expects budget rejections as workflow
+   * outcomes the block can recover from (e.g. by opening BuyBuzzModal).
+   */
+  submitWorkflow: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(z.object({ blockToken: z.string().min(1), body: blockWorkflowBodySchema }))
+    .mutation(async ({ ctx, input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      if (typeof claims.buzzBudget !== 'number' || claims.buzzBudget <= 0) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block token missing budget' });
+      }
+      const ctxModelId = Number((claims.ctx as { modelId?: unknown } | undefined)?.modelId ?? NaN);
+      if (!Number.isInteger(ctxModelId) || ctxModelId !== input.body.modelId) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'modelId mismatch with token' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      // Anon submit is not just forbidden — there's no buzz account to charge.
+      // Block tokens for anon viewers carry `sub: 'anon'`; the budget check
+      // above doesn't catch this because the token issuer doesn't gate budget
+      // on subject type. Belt-and-suspenders.
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'workflow submit requires authenticated viewer',
+        });
+      }
+      const resolved = await resolveBlockVersionContext(
+        input.body.modelVersionId,
+        input.body.modelId
+      );
+      const user = await getBlockSessionUser(userId);
+      const token = await getOrchestratorToken(userId, ctx);
+
+      // Prompt audit before any orchestrator interaction (mirrors what
+      // generateFromGraph does). A block can't bypass moderation by submitting
+      // through this path.
+      await auditPromptServer({
+        prompt: input.body.params.prompt,
+        negativePrompt: input.body.params.negativePrompt,
+        userId,
+        isGreen: false,
+        isModerator: !!user.isModerator,
+      });
+
+      const generateInput = buildTextToImageInput(input.body, resolved);
+
+      // Cost preflight. Build the step once, reuse for both whatif and submit
+      // so the orchestrator computes cost against the exact same step it'll
+      // execute. (Calling createTextToImageStep twice would risk a different
+      // seed defaulting, since the step creator fills seed via getRandomInt.)
+      const stepForCostCheck = await createTextToImageStep({
+        ...generateInput,
+        user,
+        whatIf: true,
+      });
+      const tags = buildWorkflowTags(claims, resolved.baseModel);
+      const whatIfResult = await submitWorkflow({
+        token,
+        body: { steps: [stepForCostCheck], tags, currencies: BLOCK_CURRENCIES },
+        query: { whatif: true },
+      });
+      const cost = whatIfResult.cost?.total ?? 0;
+      if (cost > claims.buzzBudget) {
+        return {
+          snapshot: {
+            workflowId: '',
+            status: 'failed' as const,
+            cost: { total: cost },
+            error: `insufficient buzz budget: estimate ${cost} exceeds budget ${claims.buzzBudget}`,
+          },
+        };
+      }
+
+      const step = await createTextToImageStep({ ...generateInput, user });
+      const submitted = await submitWorkflow({
+        token,
+        body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
+      });
+      return { snapshot: snapshotFromWorkflow(submitted) };
+    }),
 });
+
+// Block-initiated workflows pay in yellow buzz only. Mature-content paid
+// (blue/green) and creator-only (red) are out of scope for v1 — the
+// budget is denominated in yellow, the JWT carries a yellow cap.
+const BLOCK_CURRENCIES = BuzzTypes.toOrchestratorType(['yellow']);
+
+/**
+ * Fetch the user fields `createTextToImageStep` and `parseGenerateImageInput`
+ * actually consume (tier, isModerator). Cast to SessionUser at the boundary —
+ * the orchestrator helpers don't reach for NextAuth-only fields.
+ */
+async function getBlockSessionUser(userId: number): Promise<SessionUser> {
+  const row = await getUserById({
+    id: userId,
+    select: { id: true, isModerator: true, tier: true, email: true, username: true },
+  });
+  if (!row) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'user not found' });
+  return row as unknown as SessionUser;
+}
+
+/**
+ * Workflow tags drive orchestrator-side filtering, billing attribution, and
+ * the "submitted via app block" audit trail. Mirrors what createTextToImage
+ * does (WORKFLOW_TAGS.GENERATION + IMAGE + workflow + baseModel) plus the
+ * block-specific provenance tags.
+ */
+function buildWorkflowTags(
+  claims: { blockId: string; blockInstanceId: string; appId: string },
+  baseModel: string
+): string[] {
+  return [
+    WORKFLOW_TAGS.GENERATION,
+    WORKFLOW_TAGS.IMAGE,
+    'txt2img',
+    baseModel,
+    'app-block',
+    `app-block:${claims.appId}`,
+    `app-block:block:${claims.blockId}`,
+    `app-block:instance:${claims.blockInstanceId}`,
+  ];
+}
