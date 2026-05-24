@@ -172,9 +172,12 @@ const healthcheckDurationHistogram = registerHistogram({
   name: 'healthcheck_duration_seconds',
   help: 'Healthcheck wall-clock duration in seconds by check name',
   labelNames: ['name'] as const,
-  // Buckets span 1ms..30s; HEALTHCHECK_TIMEOUT is the upper end of what we
-  // care about, anything past 30s is effectively "+Inf" for diagnostics.
-  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30],
+  // Buckets span 1ms..30s. Denser between 1-3.5s because that's where the
+  // HEALTHCHECK_TIMEOUT brownout zone lives — coarse buckets there make
+  // P95/P99 estimates useless for diagnosing the failure mode this exists for.
+  buckets: [
+    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 3.5, 5, 7.5, 10, 15, 20, 30,
+  ],
 });
 
 type CheckOutcome = 'success' | 'failure' | 'timeout';
