@@ -215,7 +215,7 @@ const _or = (...cs: (FilterClause | null)[]): FilterClause => {
 };
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
 import client from 'prom-client';
-import { getExplainSql } from '~/server/db/db-helpers';
+import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { CacheService } from '../../../event-engine-common/services/cache';
@@ -1097,6 +1097,17 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   actor?: string;
 };
 export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][0];
+
+// Per-call ceiling for the image-feed raw query. The `civitai` postgres role
+// has statement_timeout=0 (overriding the cluster's 300s), so a single slow
+// run of this query (mean 4.2s / max 115.8s, dominant source of replica
+// statement-timeout cancellations) can monopolize the replica's parallel-worker
+// budget, back up pgbouncer-ro, and cascade into api-primary health-check
+// failures. 20s is comfortably above p99 for healthy runs while bounding
+// pathological cases. On timeout the caller returns an empty page (graceful)
+// rather than surfacing a 500, with a structured axiom log for observability.
+const IMAGE_FEED_STATEMENT_TIMEOUT_MS = 20_000;
+
 export const getAllImages = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -1721,15 +1732,52 @@ export const getAllImages = async (
   // post.service.ts on image upload/update events.
   const cacheable = queryCacheRaw(
     async <Row>(q: Prisma.Sql) => {
-      const { rows } = await imageDb.query(q as any);
+      // Per-call statement_timeout ceiling — see IMAGE_FEED_STATEMENT_TIMEOUT_MS
+      // for rationale. The timeout fires server-side (pg error code 57014);
+      // we catch it at the call site below and return an empty page.
+      const { rows } = await queryWithTimeout(imageDb, IMAGE_FEED_STATEMENT_TIMEOUT_MS, q);
       return rows as Row[];
     },
     'getAllImages',
     'v1'
   );
-  const rawImages = await withSpan('image:getAllImages:rawQuery', () =>
-    cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags })
-  );
+  let rawImages: GetAllImagesRaw[];
+  try {
+    rawImages = await withSpan('image:getAllImages:rawQuery', () =>
+      cacheable<GetAllImagesRaw[]>(query, { ttl: cacheTime, tag: cacheTags })
+    );
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === '57014') {
+      // Query exceeded IMAGE_FEED_STATEMENT_TIMEOUT_MS on the replica.
+      // Return an empty page instead of surfacing a 500 — the feed is best-effort
+      // and the UI handles `items: []` gracefully. Log to axiom so we can track
+      // frequency and identify pathological filter combinations.
+      logToAxiom({
+        name: 'getInfiniteImages:statement_timeout',
+        type: 'warning',
+        message: `image feed query exceeded ${IMAGE_FEED_STATEMENT_TIMEOUT_MS}ms ceiling`,
+        details: {
+          timeoutMs: IMAGE_FEED_STATEMENT_TIMEOUT_MS,
+          dbTarget,
+          userId,
+          limit,
+          cursor: cursor ? String(cursor) : undefined,
+          sort,
+          period,
+          modelId,
+          modelVersionId,
+          collectionId,
+          postId,
+          username,
+          tagCount: tags?.length,
+          baseModelCount: baseModels?.length,
+        },
+      }).catch(() => undefined);
+      return { items: [], nextCursor: undefined };
+    }
+    throw e;
+  }
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
