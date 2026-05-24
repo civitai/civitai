@@ -49,7 +49,7 @@ import {
   metricsSearchClient,
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
-import { leakingContentCounter } from '~/server/prom/client';
+import { leakingContentCounter, registerCounterWithLabels } from '~/server/prom/client';
 import { imageOnSiteSql, isImageMetaOnSite } from '~/server/utils/image-onsite';
 import {
   getBaseModelFromResources,
@@ -1108,6 +1108,17 @@ export type ImagesInfiniteModel = AsyncReturnType<typeof getAllImages>['items'][
 // rather than surfacing a 500, with a structured axiom log for observability.
 const IMAGE_FEED_STATEMENT_TIMEOUT_MS = 20_000;
 
+// Increments when the image-feed query is server-side cancelled by the
+// statement_timeout ceiling above. Labelled by dbTarget so we can see
+// which pool the slow query landed on. Distinguished from pg_cancel_backend
+// or client AbortSignal cancellations by checking the error message — those
+// also use SQLSTATE 57014 but should propagate rather than fall back to empty.
+const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
+  name: 'image_feed_statement_timeout_total',
+  help: 'getAllImages raw query cancelled by server-side statement_timeout',
+  labelNames: ['dbTarget'] as const,
+});
+
 export const getAllImages = async (
   input: GetAllImagesInput & {
     userId?: number;
@@ -1748,11 +1759,19 @@ export const getAllImages = async (
     );
   } catch (e) {
     const code = (e as { code?: string })?.code;
-    if (code === '57014') {
+    const message = (e as { message?: string })?.message ?? '';
+    // SQLSTATE 57014 (query_canceled) is shared by statement_timeout,
+    // pg_cancel_backend(), and client AbortSignal cancellation. Only the
+    // first should fall back to an empty page — the others must propagate
+    // so callers/observers see the cancellation. Postgres distinguishes
+    // them via the error message: "canceling statement due to statement timeout".
+    if (code === '57014' && message.includes('statement timeout')) {
       // Query exceeded IMAGE_FEED_STATEMENT_TIMEOUT_MS on the replica.
       // Return an empty page instead of surfacing a 500 — the feed is best-effort
       // and the UI handles `items: []` gracefully. Log to axiom so we can track
-      // frequency and identify pathological filter combinations.
+      // frequency and identify pathological filter combinations; also bump a
+      // counter so we can alert if the rate climbs.
+      imageFeedStatementTimeoutCounter.inc({ dbTarget });
       logToAxiom({
         name: 'getInfiniteImages:statement_timeout',
         type: 'warning',
