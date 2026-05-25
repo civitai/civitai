@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { mockDbRead } = vi.hoisted(() => ({
   mockDbRead: {
-    imageResource: { findMany: vi.fn() },
+    imageResourceNew: { findMany: vi.fn() },
   },
 }));
 
@@ -21,7 +21,7 @@ vi.mock('~/client-utils/cf-images-utils', () => ({
 import { getModelShowcaseImages } from '../showcase.service';
 
 beforeEach(() => {
-  mockDbRead.imageResource.findMany.mockReset();
+  mockDbRead.imageResourceNew.findMany.mockReset();
 });
 
 function imageRow(
@@ -46,7 +46,7 @@ function imageRow(
 
 describe('getModelShowcaseImages', () => {
   it('orders by reactionCount desc and caps at 6', async () => {
-    mockDbRead.imageResource.findMany.mockResolvedValue([
+    mockDbRead.imageResourceNew.findMany.mockResolvedValue([
       imageRow(1, 5),
       imageRow(2, 50),
       imageRow(3, 10),
@@ -63,7 +63,7 @@ describe('getModelShowcaseImages', () => {
   });
 
   it('de-dupes images that appear in multiple resource rows', async () => {
-    mockDbRead.imageResource.findMany.mockResolvedValue([
+    mockDbRead.imageResourceNew.findMany.mockResolvedValue([
       imageRow(1, 10), // showed up under modelVersionId=99 directly
       imageRow(1, 10), // and also linked through a LoRA from the same model
       imageRow(2, 5),
@@ -73,7 +73,7 @@ describe('getModelShowcaseImages', () => {
   });
 
   it('falls back to 0 reactions when the image has no AllTime metric row', async () => {
-    mockDbRead.imageResource.findMany.mockResolvedValue([
+    mockDbRead.imageResourceNew.findMany.mockResolvedValue([
       imageRow(1, 0, {}, { metrics: [] }), // no metric → treated as 0
       imageRow(2, 5),
     ]);
@@ -82,14 +82,14 @@ describe('getModelShowcaseImages', () => {
   });
 
   it('returns empty array when no images match', async () => {
-    mockDbRead.imageResource.findMany.mockResolvedValue([]);
+    mockDbRead.imageResourceNew.findMany.mockResolvedValue([]);
     const result = await getModelShowcaseImages(99);
     expect(result).toEqual([]);
   });
 
   describe('meta extraction', () => {
     async function getFirstMeta(meta: unknown) {
-      mockDbRead.imageResource.findMany.mockResolvedValue([imageRow(1, 10, meta)]);
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([imageRow(1, 10, meta)]);
       const [first] = await getModelShowcaseImages(99);
       return first;
     }

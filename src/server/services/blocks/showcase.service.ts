@@ -42,7 +42,9 @@ export interface ShowcaseImage {
  * renders a "no preview images" state rather than crashing.
  */
 export async function getModelShowcaseImages(modelVersionId: number): Promise<ShowcaseImage[]> {
-  const rows = await dbRead.imageResource.findMany({
+  // ImageResourceNew is the live table; the legacy ImageResource was fully
+  // migrated and is now empty (verified 2026-05-25: 0 rows vs 417M).
+  const rows = await dbRead.imageResourceNew.findMany({
     where: {
       modelVersionId,
       image: {
