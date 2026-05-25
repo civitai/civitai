@@ -24,7 +24,7 @@ export type ImageModActivity = {
 
 type ArticleModActivity = {
   entityType: 'article';
-  activity: TagActivities;
+  activity: TagActivities | 'ratingReview';
 };
 
 type ReportModActivity = {

@@ -2,6 +2,7 @@ import {
   Anchor,
   AspectRatio,
   Badge,
+  Button,
   Center,
   Container,
   Divider,
@@ -39,6 +40,8 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/client';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { openArticleRatingReviewModal } from '~/components/Dialog/triggers/article-rating-review';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -60,6 +63,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleEngagementType,
   ArticleIngestionStatus,
@@ -171,6 +175,16 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
   const queryUtils = trpc.useUtils();
   const upsertArticleMutation = trpc.article.upsert.useMutation();
+
+  // Owner-only: fetch the latest nsfwLevel review row so we can render the
+  // dispute button in the correct state. The endpoint is owner-scoped server-side.
+  // Exclude moderators — they have separate mod-only controls for the override.
+  const isArticleOwner =
+    !!article && currentUser?.id === article.user.id && !currentUser?.isModerator;
+  const { data: myReview } = trpc.article.getMyArticleRatingReview.useQuery(
+    { articleId: id },
+    { enabled: isArticleOwner, staleTime: 60_000 }
+  );
   const handlePublishArticle = () => {
     if (!article || article.status === ArticleStatus.Published) return;
 
@@ -427,6 +441,18 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               onComplete={() => queryUtils.article.getById.invalidate({ id: article.id })}
             />
           )}
+          {isArticleOwner && (
+            <ArticleOwnerRatingControls
+              articleId={article.id}
+              nsfwLevel={article.nsfwLevel}
+              myReview={myReview?.review ?? null}
+              canResubmit={myReview?.canResubmit ?? true}
+              derivedLevel={myReview?.derivedLevel ?? null}
+              derivedRatingDroppedBelowOverride={
+                myReview?.derivedRatingDroppedBelowOverride ?? false
+              }
+            />
+          )}
         </Stack>
         <ContainerGrid2 gutter="xl">
           <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>
@@ -518,3 +544,146 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 }
 
 export default Page(ArticleDetailsPage);
+
+type OwnerRatingReview = {
+  id: number;
+  status: 'Pending' | 'Actioned' | 'Unactioned' | string;
+  createdAt: Date | string;
+  resolvedAt: Date | string | null;
+  appliedLevel: number | null;
+  modComment?: string | null;
+};
+
+function ArticleOwnerRatingControls({
+  articleId,
+  nsfwLevel,
+  myReview,
+  canResubmit: canResubmitFromServer,
+  derivedLevel,
+  derivedRatingDroppedBelowOverride,
+}: {
+  articleId: number;
+  nsfwLevel: number;
+  myReview: OwnerRatingReview | null | undefined;
+  canResubmit: boolean;
+  derivedLevel: number | null;
+  derivedRatingDroppedBelowOverride: boolean;
+}) {
+  const ratingLabel = getBrowsingLevelLabel(nsfwLevel);
+
+  // A review is "pending" if it exists and has not been resolved.
+  const isPending = !!myReview && myReview.status === 'Pending';
+  const isResolved = !!myReview && myReview.status !== 'Pending';
+
+  // After resolution, the owner may submit again only after the article has
+  // been edited (server-side check mirrors this — see plan §11). The server
+  // returns `canResubmit` directly so the client doesn't have to redo the
+  // date math; trust it.
+  const canResubmit = !myReview || (isResolved && canResubmitFromServer);
+
+  // Owner-visible signal for a stale moderator override: the article has been
+  // edited (canResubmit is true) AND the system-derived rating has dropped
+  // below the override. Server gates this on having an active override + a
+  // resolvable derived level, so we only need to combine it with `canResubmit`
+  // here.
+  const showStaleOverrideBanner =
+    derivedRatingDroppedBelowOverride && canResubmit && derivedLevel != null;
+
+  const handleOpen = (initialSuggestedLevel?: number) => {
+    openArticleRatingReviewModal({ articleId, currentLevel: nsfwLevel, initialSuggestedLevel });
+  };
+
+  // Button label + state matrix:
+  //   no review  → "Request rating review" (enabled)
+  //   pending    → "Review pending" (disabled, with timestamp helper)
+  //   resolved, no edits since → "Last review <status> on <date>" (disabled, modComment tooltip)
+  //   resolved, edits since    → "Request rating review" (enabled — fresh dispute)
+  let button: React.ReactNode;
+  if (isPending) {
+    button = (
+      <Tooltip
+        label={
+          <span>
+            Submitted <DaysFromNow date={new Date(myReview!.createdAt)} />
+          </span>
+        }
+        withArrow
+      >
+        <Button variant="default" size="xs" disabled>
+          Review pending
+        </Button>
+      </Tooltip>
+    );
+  } else if (isResolved && !canResubmit) {
+    const resolvedDate = myReview!.resolvedAt
+      ? formatDate(new Date(myReview!.resolvedAt))
+      : '';
+    const statusLabel =
+      myReview!.status === 'Actioned'
+        ? 'approved'
+        : myReview!.status === 'Unactioned'
+        ? 'declined'
+        : myReview!.status.toLowerCase();
+    const btn = (
+      <Button variant="default" size="xs" disabled>
+        Last review {statusLabel}
+        {resolvedDate ? ` on ${resolvedDate}` : ''}
+      </Button>
+    );
+    button = myReview!.modComment ? (
+      <Tooltip label={myReview!.modComment} withArrow multiline w={260}>
+        {btn}
+      </Tooltip>
+    ) : (
+      btn
+    );
+  } else {
+    button = (
+      <Button variant="default" size="xs" onClick={() => handleOpen()}>
+        Request rating review
+      </Button>
+    );
+  }
+
+  return (
+    <Stack gap="xs">
+      {showStaleOverrideBanner && (
+        <AlertWithIcon icon={<IconAlertCircle size={20} />} color="yellow" iconColor="yellow">
+          <Stack gap="xs">
+            <Text size="sm">
+              Your recent edits brought this article&apos;s content down to{' '}
+              <Text component="span" fw={600}>
+                {getBrowsingLevelLabel(derivedLevel!)}
+              </Text>
+              , but a previous moderator decision pinned the rating at{' '}
+              <Text component="span" fw={600}>
+                {ratingLabel}
+              </Text>
+              . Request a rating review and our system (or a moderator) will update it.
+            </Text>
+            <Group>
+              <Button
+                size="xs"
+                color="yellow"
+                variant="filled"
+                onClick={() => handleOpen(derivedLevel!)}
+              >
+                Request rating review
+              </Button>
+            </Group>
+          </Stack>
+        </AlertWithIcon>
+      )}
+      <Group gap="xs" align="center">
+        <Text size="sm" c="dimmed">
+          Rating:
+        </Text>
+        <Badge size="md" variant="filled" color="gray">
+          {ratingLabel}
+        </Badge>
+        {/* Hide the redundant inline CTA when the banner is rendering its own. */}
+        {showStaleOverrideBanner ? null : button}
+      </Group>
+    </Stack>
+  );
+}
