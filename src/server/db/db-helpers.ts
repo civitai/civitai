@@ -246,6 +246,49 @@ export function getClient(
   return pool;
 }
 
+/**
+ * Run a read-only query against the given pool with a server-side
+ * `statement_timeout` ceiling. Uses an explicit BEGIN READ ONLY / SET LOCAL
+ * / COMMIT so the timeout is scoped to this transaction even under PgBouncer
+ * transaction pooling.
+ *
+ * Accepts either a Prisma.Sql (preferred — the codebase's raw-query convention)
+ * or a (text, params) pair, matching the shape of pg's `Pool.query`.
+ *
+ * Throws pg error with code `'57014'` (query_canceled) on timeout — callers
+ * should catch and decide whether to surface, return an empty page, or retry.
+ *
+ * Note: `timeoutMs` is interpolated literally because PostgreSQL does not
+ * accept `$1`-parameterized values in `SET LOCAL`. The argument MUST be a
+ * trusted JS number — never user input. `Number(...)` is a defensive cast.
+ */
+export async function queryWithTimeout<R extends QueryResultRow = any>(
+  pool: Pool,
+  timeoutMs: number,
+  sql: Prisma.Sql | string,
+  params?: ReadonlyArray<unknown>
+): Promise<QueryResult<R>> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN READ ONLY');
+    await client.query(`SET LOCAL statement_timeout = ${Number(timeoutMs)}`);
+    let result: QueryResult<R>;
+    if (typeof sql === 'string') {
+      result = await client.query<R>(sql, params as unknown[] | undefined);
+    } else {
+      // Prisma.Sql carries its own params in `.values`; pass as QueryConfig
+      result = await client.query<R>({ text: sql.text, values: sql.values });
+    }
+    await client.query('COMMIT');
+    return result;
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
 function formatSqlType(value: any): string {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === 'object') {
