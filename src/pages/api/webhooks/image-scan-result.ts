@@ -109,7 +109,7 @@ function shouldIgnore(tag: string, source: TagSource) {
   return tagsToIgnore[source]?.includes(tag) ?? false;
 }
 
-const KONO_NSFW_SAMPLING_RATE = 0.2; // 20%
+const KONO_NSFW_SAMPLING_RATE = 0.5; // 50%
 
 export default WebhookEndpoint(async (req, res) => {
   if (req.method === 'GET' && req.query.imageId) {

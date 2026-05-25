@@ -666,7 +666,7 @@ async function getIsNewUser(userId: number) {
   return isNewUser;
 }
 
-const KONO_NSFW_SAMPLING_RATE = 0.2; // 20%
+const KONO_NSFW_SAMPLING_RATE = 0.5; // 50%
 async function addToNewOrderQueue({ imageId, nsfw }: { imageId: number; nsfw: boolean }) {
   let shouldAddToQueue = true;
   let priority: 1 | 2 | 3 = 1;
