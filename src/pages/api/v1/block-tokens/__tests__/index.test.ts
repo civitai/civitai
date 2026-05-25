@@ -23,8 +23,12 @@ const { mockDbWrite, mockRedis, mockSession, mockTokenService, mockBlockRegistry
   };
   const session = { value: null as { user: { id: number; bannedAt: Date | null } } | null };
   const tokenService = {
-    sign: vi.fn(async () => ({ token: 'jwt.signed.value', expiresAt: '2099-01-01T00:00:00Z', jti: 'j' })),
-    checkRateLimit: vi.fn(async () => true),
+    sign: vi.fn<(...args: any[]) => Promise<any>>(async () => ({
+      token: 'jwt.signed.value',
+      expiresAt: '2099-01-01T00:00:00Z',
+      jti: 'j',
+    })),
+    checkRateLimit: vi.fn<(...args: any[]) => Promise<boolean>>(async () => true),
   };
   const blockRegistry = {
     resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
