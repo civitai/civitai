@@ -13,6 +13,7 @@ import {
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
+import type { MouseEvent as ReactMouseEvent } from 'react';
 
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -27,6 +28,20 @@ import type { inferRouterOutputs } from '@trpc/server';
 import type { AppRouter } from '~/server/routers';
 
 type ReviewItem = inferRouterOutputs<AppRouter>['article']['getRatingReviews']['items'][number];
+
+interface LevelOption {
+  value: string;
+  label: string;
+}
+
+interface LevelChipProps {
+  label: string;
+  level: number | null;
+  highlight?: boolean;
+  dashed?: boolean;
+}
+
+type DismissButtonClickEvent = ReactMouseEvent<HTMLButtonElement>;
 
 // Mirror the labels used by the moderator dashboard's status filter dropdown
 // (src/pages/moderator/article-rating-review.tsx) so badge text and filter
@@ -48,7 +63,7 @@ export type ArticleRatingReviewCardProps = {
   queryInput: { limit: number; status: ReportStatus };
 };
 
-const levelOptions = browsingLevels.map((level) => ({
+const levelOptions: LevelOption[] = browsingLevels.map((level) => ({
   value: String(level),
   label: getBrowsingLevelLabel(level),
 }));
@@ -168,7 +183,7 @@ export function ArticleRatingReviewCard({
                 fw={600}
                 size="lg"
                 lineClamp={2}
-                className="inline-flex items-center gap-1 hover:underline cursor-pointer text-blue-4 hover:text-blue-3"
+                className="inline-flex cursor-pointer items-center gap-1 text-blue-4 hover:text-blue-3 hover:underline"
                 style={{ wordBreak: 'break-word' }}
               >
                 {article.title}
@@ -254,8 +269,8 @@ export function ArticleRatingReviewCard({
             />
             <Text size="xs" c="dimmed">
               Approving locks the rating at this level until a moderator clears it. Owner edits
-              won&apos;t drop the rating below it automatically — but a re-dispute will
-              auto-approve if a rescan agrees.
+              won&apos;t drop the rating below it automatically — but a re-dispute will auto-approve
+              if a rescan agrees.
             </Text>
             <Group justify="flex-end" gap="xs">
               <Tooltip
@@ -267,7 +282,7 @@ export function ArticleRatingReviewCard({
                   variant="filled"
                   data-disabled={dismissDisabled || undefined}
                   loading={isLoading}
-                  onClick={(event) => {
+                  onClick={(event: DismissButtonClickEvent) => {
                     // Mantine strips pointer events from `disabled` buttons,
                     // which kills the wrapping Tooltip. Use `data-disabled`
                     // for the visual state and guard the click handler
@@ -312,17 +327,7 @@ export function ArticleRatingReviewCard({
   );
 }
 
-function LevelChip({
-  label,
-  level,
-  highlight,
-  dashed,
-}: {
-  label: string;
-  level: number | null;
-  highlight?: boolean;
-  dashed?: boolean;
-}) {
+function LevelChip({ label, level, highlight, dashed }: LevelChipProps) {
   const hasValue = level !== null && level !== undefined && level > 0;
   return (
     <div
