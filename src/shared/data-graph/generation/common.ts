@@ -1391,6 +1391,17 @@ export function imagesNode({
 // ControlNets Node Builder
 // =============================================================================
 
+/**
+ * Maximum number of ControlNet entries allowed across all ecosystems.
+ *
+ * Capped at 1 for the initial release — multi-ControlNet is a known
+ * post-launch feature. The underlying graph node and UI both support `limit`
+ * out of the box (UI uses `meta.limit` to gate the Add button and badge
+ * `count/limit`), so lifting this cap is a one-line change here once the
+ * orchestrator-side multi-CN work lands.
+ */
+export const CONTROLNET_LIMIT = 1;
+
 /** Default weight bounds — matches orchestrator clamp. */
 const CONTROLNET_WEIGHT_MIN = 0;
 const CONTROLNET_WEIGHT_MAX = 2;

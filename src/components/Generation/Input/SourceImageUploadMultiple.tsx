@@ -1580,7 +1580,11 @@ SourceImageUploadMultiple.Image = function ImagePreview({
       withBorder
       p={0}
       className={clsx(
-        'relative overflow-hidden',
+        // `isolate` makes this card a stacking-context root so the internal
+        // `z-30` CloseButton (which needs to sit above the `z-20` hover
+        // overlay) doesn't escape and render over the sticky GenerationFooter
+        // (which is only `z-10`).
+        'relative isolate overflow-hidden',
         {
           ['border-2 border-solid border-yellow-4 ']: missingAiMetadata[previewItem.url],
         },

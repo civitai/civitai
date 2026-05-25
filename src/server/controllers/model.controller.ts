@@ -131,6 +131,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
@@ -325,9 +326,7 @@ export const getModelHandler = async ({
       }
 
       const hashes = version.files
-        .filter((file) =>
-          (['Model', 'Pruned Model'] as ModelFileType[]).includes(file.type as ModelFileType)
-        )
+        .filter((file) => primaryModelFileTypes.includes(file.type as ModelFileType))
         .map((file) => file.hashes.find((x) => x.type === ModelHashType.SHA256)?.hash.toLowerCase())
         .filter(isDefined);
 

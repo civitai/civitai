@@ -121,6 +121,8 @@ function GenerationCostPopoverDetail({
   };
 
   const baseCost = workflowCost.base ?? 0;
+  const bulkDiscount =
+    workflowCost.factors?.bulkDiscount ?? workflowCost.factors?.['bulk discount'] ?? 1;
 
   const items: DescriptionTableProps['items'] = [
     {
@@ -159,6 +161,12 @@ function GenerationCostPopoverDetail({
         </Text>
       ),
       visible: !!workflowCost.factors?.popularity && workflowCost.factors?.popularity !== 1,
+      className: classes.tableCell,
+    },
+    {
+      label: 'Bulk Discount',
+      value: <Text align="right">{Math.round((bulkDiscount - 1) * 100)}%</Text>,
+      visible: bulkDiscount !== 1,
       className: classes.tableCell,
     },
     {

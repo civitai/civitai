@@ -1,4 +1,4 @@
-import type { Counter } from 'prom-client';
+import type { Counter, Histogram } from 'prom-client';
 import client from 'prom-client';
 import { datapacketDbRead } from '~/server/db/datapacketDb';
 import { notifDbRead, notifDbWrite } from '~/server/db/notifDb';
@@ -28,6 +28,33 @@ export function registerCounterWithLabels<T extends string>({
     return new client.Counter({ name: PROM_PREFIX + name, help, labelNames });
   } catch (e) {
     return client.register.getSingleMetric(PROM_PREFIX + name) as Counter<T>;
+  }
+}
+
+export function registerHistogram<T extends string = string>({
+  name,
+  help,
+  labelNames,
+  buckets,
+  prefix = PROM_PREFIX,
+}: {
+  name: string;
+  help: string;
+  labelNames?: readonly T[];
+  buckets?: readonly number[];
+  prefix?: string;
+}) {
+  // Do this to deal with HMR in nextjs
+  const fullName = prefix + name;
+  try {
+    return new client.Histogram({
+      name: fullName,
+      help,
+      labelNames: labelNames ? [...labelNames] : undefined,
+      buckets: buckets ? [...buckets] : undefined,
+    });
+  } catch (e) {
+    return client.register.getSingleMetric(fullName) as Histogram<T>;
   }
 }
 
@@ -152,6 +179,11 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
   help: 'Number of times a dbRead query fell back to dbWrite due to CDC replication lag',
   labelNames: ['entity', 'caller'] as const,
 });
+
+// pgPoolAcquireHistogram is registered in src/server/db/db-helpers.ts, not here.
+// Defining it here would create a module-init cycle (prom/client.ts imports
+// pgDb → db-helpers, which would import this histogram back), which webpack's
+// CJS chunking can break with a TDZ error at runtime.
 
 declare global {
   // eslint-disable-next-line no-var
