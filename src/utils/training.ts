@@ -282,11 +282,11 @@ export const trainingModelInfo: {
   },
   //
   anima: {
-    label: 'Standard',
-    pretty: 'Anima',
+    label: 'Base [v1.0]',
+    pretty: 'Anima Base v1.0',
     type: 'anima',
     description:
-      "CircleStone Labs' Anima image model. Preview — settings, pricing, and results are subject to change.",
+      "CircleStone Labs' Anima image model (Base v1.0). Preview — settings, pricing, and results are subject to change.",
     air: 'urn:air:anima:checkpoint:civitai:2458426@2945208',
     baseModel: 'Anima',
     isNew: true,

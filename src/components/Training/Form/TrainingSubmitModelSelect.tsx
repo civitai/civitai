@@ -55,7 +55,7 @@ import {
   getDefaultTrainingParams,
   trainingStore,
 } from '~/store/training.store';
-import { stringifyAIR } from '~/shared/utils/air';
+import { getAirModelLink, stringifyAIR } from '~/shared/utils/air';
 import {
   type AudioSampleOverride,
   getDefaultEngine,
@@ -693,6 +693,19 @@ export const ModelSelect = ({
                     : trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
                         ?.description ?? 'No description.'}
                 </Text>
+                {!isCustomModel &&
+                  trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]?.air && (
+                    <Anchor
+                      href={getAirModelLink(
+                        trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList].air!
+                      )}
+                      target="_blank"
+                      rel="noreferrer"
+                      size="sm"
+                    >
+                      View base model on Civitai
+                    </Anchor>
+                  )}
                 {blockedModels.includes(formBaseModel) ? (
                   <AlertWithIcon
                     icon={<IconExclamationCircle />}

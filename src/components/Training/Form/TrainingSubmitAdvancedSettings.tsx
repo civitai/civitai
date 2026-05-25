@@ -438,9 +438,6 @@ export const AdvancedSettings = ({
                     </Text>
                   </InfoPopover>
                   <Text>AI Toolkit Training</Text>
-                  <Badge color="blue" size="xs">
-                    Beta
-                  </Badge>
                 </Group>
               }
               labelPosition="left"
