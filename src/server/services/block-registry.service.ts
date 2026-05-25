@@ -125,6 +125,54 @@ function maxRatingForNsfwLevel(level: number | undefined): ContentRating {
   return 'g';
 }
 
+/**
+ * Discriminated shape returned by {@link BlockRegistry.resolveBlockInstance}.
+ * Matches the row shape callers expect from `modelBlockInstall.findUnique`,
+ * but normalises across the three other id namespaces (`pdb_*`, `bus_pub_*`,
+ * `bus_view_*`) so call sites can branch on `source` instead of duplicating
+ * the precedence-ladder lookup logic.
+ *
+ * Field semantics:
+ *  - `modelId` / `slotId` — server-validated against the source row's
+ *    predicates (model owner for publisher subs, viewer match for viewer
+ *    subs, target_model_types filter for platform defaults). Callers MUST
+ *    use these (not the caller-supplied context) when stamping JWT claims
+ *    or writing to the DB, since the source row is the source of truth.
+ *  - `installedByUserId` — for `install` source this is the actual installer
+ *    (may be NULL for the SET-NULL FK case). For `publisher_subscription`
+ *    and `viewer_subscription` it's the subscription owner — that user is
+ *    the "publisher" for settings-scope checks in the block-tokens path.
+ *    For `platform_default` it is always NULL (no per-user owner).
+ *  - `enabled` — always TRUE for synthetic sources (those rows are
+ *    implicitly enabled by their existence; if disabled they wouldn't have
+ *    been resolved).
+ *  - `settings` — publisher's stored settings JSONB (for `install` and
+ *    subscriptions) or `{}` (for `platform_default`).
+ */
+export type ResolvedBlockSource =
+  | 'install'
+  | 'platform_default'
+  | 'publisher_subscription'
+  | 'viewer_subscription';
+
+export interface ResolvedBlockInstance {
+  source: ResolvedBlockSource;
+  modelId: number;
+  slotId: string;
+  enabled: boolean;
+  settings: Record<string, unknown>;
+  installedByUserId: number | null;
+  appBlock: {
+    id: string;
+    blockId: string;
+    appId: string;
+    status: string;
+    manifest: Record<string, unknown>;
+    approvedScopes: string[];
+    app: { allowedScopes: number } | null;
+  };
+}
+
 interface InstallOpts {
   modelId: number;
   appBlockId: string;
@@ -210,6 +258,22 @@ async function getKillList(): Promise<Set<string>> {
     console.error('[BlockRegistry] kill-list unreachable; failing closed', err);
     return new Set(['__KILL_LIST_UNREACHABLE__']);
   }
+}
+
+/**
+ * Mirrors the `manifest @> {"targets":[{"slotId": X}]}` predicate the SQL
+ * uses in listForModel for the subscription branches. Returns true when the
+ * manifest declares the slot in its `targets[]` array. Defensive against
+ * malformed manifest JSON — never throws.
+ */
+function manifestTargetsSlot(manifest: unknown, slotId: string): boolean {
+  const m = (manifest ?? {}) as { targets?: unknown };
+  if (!Array.isArray(m.targets)) return false;
+  return m.targets.some((t) => {
+    if (!t || typeof t !== 'object') return false;
+    const cand = (t as { slotId?: unknown }).slotId;
+    return typeof cand === 'string' && cand === slotId;
+  });
 }
 
 function resolveRenderMode(
@@ -650,6 +714,347 @@ export class BlockRegistry {
     }
 
     return hydrated;
+  }
+
+  /**
+   * Resolves a `blockInstanceId` of any kind — real install (`mbi_*`),
+   * platform default (`pdb_*`), publisher subscription (`bus_pub_*`), or
+   * viewer subscription (`bus_view_*`) — into the install-shape struct that
+   * downstream code expects. Returns `null` when the instance doesn't
+   * resolve OR when the caller-supplied `(modelId, slotId)` doesn't match
+   * what the source row would actually surface on `listForModel`.
+   *
+   * **Why re-validate against (modelId, slotId, viewerUserId)?**
+   *
+   * For real `mbi_*` installs the install row carries its own modelId/slotId
+   * so the lookup is unambiguous. For synthetic IDs the row is per-user, not
+   * per-model — `bus_pub_<bus.id>` represents "this app_block on every model
+   * owned by user X." Without re-validation, an authenticated iframe could
+   * lie about modelId in its slotContext to mint a token for a model the
+   * subscription doesn't actually surface on. The same applies to viewer
+   * subscriptions (must match the actual viewer) and platform defaults
+   * (must pass the target_model_types filter).
+   *
+   * The re-validation re-applies the same predicates the listForModel SQL
+   * uses for each rank (see lines ~280-484 in this file). Whatever changes
+   * to those predicates in future MUST be mirrored here, or the two paths
+   * will disagree about whether a block is surfaced — and the resolver is
+   * what gates token issuance / settings writes / workflow submission. The
+   * tests in block-registry.resolve-instance.test.ts pin most of the cross-
+   * row checks.
+   *
+   * `db` selects between the read replica (cache-light, eventually
+   * consistent) and the primary (replication-lag-safe). Use 'write' for
+   * any auth-relevant lookup; 'read' is acceptable for display-only paths
+   * (e.g. effective-checkpoint resolution).
+   */
+  static async resolveBlockInstance(opts: {
+    blockInstanceId: string;
+    modelId: number;
+    slotId: string;
+    viewerUserId: number | null;
+    db?: 'read' | 'write';
+  }): Promise<ResolvedBlockInstance | null> {
+    const { blockInstanceId, modelId, slotId, viewerUserId } = opts;
+    const db = opts.db === 'read' ? dbRead : dbWrite;
+
+    // mbi_* — the canonical per-model install. The row carries modelId/slotId
+    // so we cross-check the caller's claim against it.
+    if (blockInstanceId.startsWith('mbi_') || blockInstanceId.startsWith('bki_')) {
+      // bki_ is the historical prefix for the unique blockInstanceId column
+      // (vs mbi_ for the row PK). Both refer to per-model installs and the
+      // findUnique below is keyed on the unique column either way.
+      const row = await db.modelBlockInstall.findUnique({
+        where: { blockInstanceId },
+        select: {
+          modelId: true,
+          slotId: true,
+          enabled: true,
+          settings: true,
+          installedByUserId: true,
+          appBlock: {
+            select: {
+              id: true,
+              blockId: true,
+              appId: true,
+              status: true,
+              manifest: true,
+              approvedScopes: true,
+              app: { select: { allowedScopes: true } },
+            },
+          },
+        },
+      });
+      if (!row) return null;
+      if (row.modelId !== modelId || row.slotId !== slotId) return null;
+      if (!row.enabled) return null;
+      if (!row.appBlock || row.appBlock.status !== 'approved') return null;
+      return {
+        source: 'install',
+        modelId: row.modelId,
+        slotId: row.slotId,
+        enabled: true,
+        settings: (row.settings ?? {}) as Record<string, unknown>,
+        installedByUserId: row.installedByUserId,
+        appBlock: {
+          id: row.appBlock.id,
+          blockId: row.appBlock.blockId,
+          appId: row.appBlock.appId,
+          status: row.appBlock.status,
+          manifest: (row.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: row.appBlock.approvedScopes ?? [],
+          app: row.appBlock.app ? { allowedScopes: row.appBlock.app.allowedScopes } : null,
+        },
+      };
+    }
+
+    // pdb_<app_block_id>
+    if (blockInstanceId.startsWith('pdb_')) {
+      const appBlockId = blockInstanceId.slice('pdb_'.length);
+      if (!appBlockId) return null;
+      // The pdb row + app block. Single query via include.
+      const pdb = await db.platformDefaultBlock.findUnique({
+        where: { appBlockId },
+        select: {
+          enabled: true,
+          slotId: true,
+          targetModelTypes: true,
+          appBlock: {
+            select: {
+              id: true,
+              blockId: true,
+              appId: true,
+              status: true,
+              manifest: true,
+              approvedScopes: true,
+              app: { select: { allowedScopes: true } },
+            },
+          },
+        },
+      });
+      if (!pdb || !pdb.enabled) return null;
+      if (pdb.slotId !== slotId) return null;
+      if (!pdb.appBlock || pdb.appBlock.status !== 'approved') return null;
+      // target_model_types filter: empty = applies to all; non-empty needs
+      // the model's type to be in the array. We don't have modelType in
+      // the resolver context (the caller doesn't carry it), so when the
+      // filter is non-empty we have to fetch the Model.type. Cheap single-
+      // column read.
+      if (pdb.targetModelTypes && pdb.targetModelTypes.length > 0) {
+        const m = await db.model.findUnique({
+          where: { id: modelId },
+          select: { type: true },
+        });
+        if (!m || !pdb.targetModelTypes.includes(m.type)) return null;
+      }
+      // Suppression: a per-model install row for this (model, slot, app_block)
+      // would already be rendering rank 1 in listForModel, so the pdb
+      // synthetic id wouldn't appear — but if it does (stale client cache),
+      // we still want resolve to return null so the caller doesn't mint a
+      // token for a hidden source.
+      const suppressor = await db.modelBlockInstall.findFirst({
+        where: { modelId, slotId, appBlockId },
+        select: { blockInstanceId: true },
+      });
+      if (suppressor) return null;
+      return {
+        source: 'platform_default',
+        modelId,
+        slotId,
+        enabled: true,
+        settings: {},
+        installedByUserId: null,
+        appBlock: {
+          id: pdb.appBlock.id,
+          blockId: pdb.appBlock.blockId,
+          appId: pdb.appBlock.appId,
+          status: pdb.appBlock.status,
+          manifest: (pdb.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: pdb.appBlock.approvedScopes ?? [],
+          app: pdb.appBlock.app ? { allowedScopes: pdb.appBlock.app.allowedScopes } : null,
+        },
+      };
+    }
+
+    // bus_pub_<bus.id> — publisher_all_my_models subscription
+    if (blockInstanceId.startsWith('bus_pub_')) {
+      const busId = blockInstanceId.slice('bus_pub_'.length);
+      if (!busId) return null;
+      const bus = await db.blockUserSubscription.findUnique({
+        where: { id: busId },
+        select: {
+          userId: true,
+          scope: true,
+          enabled: true,
+          settings: true,
+          targetModelTypes: true,
+          targetBaseModels: true,
+          appBlock: {
+            select: {
+              id: true,
+              blockId: true,
+              appId: true,
+              status: true,
+              manifest: true,
+              approvedScopes: true,
+              app: { select: { allowedScopes: true } },
+            },
+          },
+        },
+      });
+      if (!bus || !bus.enabled) return null;
+      if (bus.scope !== 'publisher_all_my_models') return null;
+      if (!bus.appBlock || bus.appBlock.status !== 'approved') return null;
+      // Manifest must declare this slot in its targets[] (matches
+      // listForModel's `manifest @> {targets:[{slotId}]}`).
+      if (!manifestTargetsSlot(bus.appBlock.manifest as unknown, slotId)) return null;
+      // The model must genuinely be owned by the subscription user, else
+      // an attacker with their own subscription could mint tokens against
+      // someone else's model.
+      const model = await db.model.findUnique({
+        where: { id: modelId },
+        select: { userId: true, type: true },
+      });
+      if (!model) return null;
+      if (model.userId !== bus.userId) return null;
+      // target_model_types filter
+      if (bus.targetModelTypes && bus.targetModelTypes.length > 0) {
+        if (!bus.targetModelTypes.includes(model.type)) return null;
+      }
+      // target_base_models filter — any published version with a matching
+      // baseModel satisfies (mirrors the EXISTS in listForModel SQL).
+      if (bus.targetBaseModels && bus.targetBaseModels.length > 0) {
+        const mv = await db.modelVersion.findFirst({
+          where: { modelId, baseModel: { in: bus.targetBaseModels } },
+          select: { id: true },
+        });
+        if (!mv) return null;
+      }
+      // Suppression rank 1: a per-model install on the same (model, slot,
+      // app_block) would override the subscription.
+      const suppressor = await db.modelBlockInstall.findFirst({
+        where: { modelId, slotId, appBlockId: bus.appBlock.id },
+        select: { blockInstanceId: true },
+      });
+      if (suppressor) return null;
+      return {
+        source: 'publisher_subscription',
+        modelId,
+        slotId,
+        enabled: true,
+        settings: (bus.settings ?? {}) as Record<string, unknown>,
+        // The subscription owner IS the publisher for settings-scope
+        // purposes — they're the one whose preferences this row encodes.
+        installedByUserId: bus.userId,
+        appBlock: {
+          id: bus.appBlock.id,
+          blockId: bus.appBlock.blockId,
+          appId: bus.appBlock.appId,
+          status: bus.appBlock.status,
+          manifest: (bus.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: bus.appBlock.approvedScopes ?? [],
+          app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
+        },
+      };
+    }
+
+    // bus_view_<bus.id> — viewer_personal subscription
+    if (blockInstanceId.startsWith('bus_view_')) {
+      // Anon viewers can never own a viewer subscription (user_id NOT NULL,
+      // and -1 isn't a valid User id). Fail-fast.
+      if (viewerUserId == null) return null;
+      const busId = blockInstanceId.slice('bus_view_'.length);
+      if (!busId) return null;
+      const bus = await db.blockUserSubscription.findUnique({
+        where: { id: busId },
+        select: {
+          userId: true,
+          scope: true,
+          enabled: true,
+          settings: true,
+          targetModelTypes: true,
+          targetBaseModels: true,
+          appBlock: {
+            select: {
+              id: true,
+              blockId: true,
+              appId: true,
+              status: true,
+              manifest: true,
+              approvedScopes: true,
+              app: { select: { allowedScopes: true } },
+            },
+          },
+        },
+      });
+      if (!bus || !bus.enabled) return null;
+      if (bus.scope !== 'viewer_personal') return null;
+      // The viewer making the request MUST be the subscription owner.
+      // Without this an attacker could mint tokens that reference another
+      // user's viewer subscription.
+      if (bus.userId !== viewerUserId) return null;
+      if (!bus.appBlock || bus.appBlock.status !== 'approved') return null;
+      if (!manifestTargetsSlot(bus.appBlock.manifest as unknown, slotId)) return null;
+      const model = await db.model.findUnique({
+        where: { id: modelId },
+        select: { userId: true, type: true },
+      });
+      if (!model) return null;
+      if (bus.targetModelTypes && bus.targetModelTypes.length > 0) {
+        if (!bus.targetModelTypes.includes(model.type)) return null;
+      }
+      if (bus.targetBaseModels && bus.targetBaseModels.length > 0) {
+        const mv = await db.modelVersion.findFirst({
+          where: { modelId, baseModel: { in: bus.targetBaseModels } },
+          select: { id: true },
+        });
+        if (!mv) return null;
+      }
+      // Cascading suppression mirrors the three NOT EXISTS clauses on the
+      // rank-4 branch in listForModel: rank 1 (per-model install),
+      // rank 2 (publisher subscription for the model owner), rank 3
+      // (platform default).
+      const rank1 = await db.modelBlockInstall.findFirst({
+        where: { modelId, slotId, appBlockId: bus.appBlock.id },
+        select: { blockInstanceId: true },
+      });
+      if (rank1) return null;
+      const rank2 = await db.blockUserSubscription.findFirst({
+        where: {
+          scope: 'publisher_all_my_models',
+          enabled: true,
+          appBlockId: bus.appBlock.id,
+          userId: model.userId,
+        },
+        select: { id: true },
+      });
+      if (rank2) return null;
+      const rank3 = await db.platformDefaultBlock.findFirst({
+        where: { slotId, appBlockId: bus.appBlock.id, enabled: true },
+        select: { appBlockId: true },
+      });
+      if (rank3) return null;
+      return {
+        source: 'viewer_subscription',
+        modelId,
+        slotId,
+        enabled: true,
+        settings: (bus.settings ?? {}) as Record<string, unknown>,
+        installedByUserId: bus.userId,
+        appBlock: {
+          id: bus.appBlock.id,
+          blockId: bus.appBlock.blockId,
+          appId: bus.appBlock.appId,
+          status: bus.appBlock.status,
+          manifest: (bus.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: bus.appBlock.approvedScopes ?? [],
+          app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
+        },
+      };
+    }
+
+    // Unknown prefix → not a recognised blockInstanceId.
+    return null;
   }
 
   static async installOnModel(opts: InstallOpts): Promise<{ blockInstanceId: string }> {
