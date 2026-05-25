@@ -16,6 +16,7 @@ const DIM_MIN = 64;
 const DIM_MAX = 2048;
 const STEPS_MAX = 50;
 const QUANTITY_MAX = 4;
+const CLIP_SKIP_MAX = 12;
 
 const blockTextToImageBodySchema = z.object({
   kind: z.literal('textToImage'),
@@ -30,6 +31,9 @@ const blockTextToImageBodySchema = z.object({
     seed: z.coerce.number().int().nullish(),
     width: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX).optional(),
     height: z.coerce.number().int().min(DIM_MIN).max(DIM_MAX).optional(),
+    // SD/SDXL per-resource convention. Flux ignores it. Cap at 12 (the
+    // platform-wide constant in generation.constants.ts).
+    clipSkip: z.coerce.number().int().min(0).max(CLIP_SKIP_MAX).optional(),
     quantity: z.coerce.number().int().min(1).max(QUANTITY_MAX).default(1),
   }),
 });

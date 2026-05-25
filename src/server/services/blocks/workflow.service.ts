@@ -148,6 +148,11 @@ export function buildTextToImageInput(
       sampler: body.params.sampler ?? 'Euler',
       steps: body.params.steps ?? 25,
       seed: body.params.seed ?? null,
+      // Per-resource clipSkip carried from the showcase image's meta.
+      // Flux pipelines ignore it; SD1/SDXL graphs apply it at the
+      // CLIP-encoder node. Omit when not set so the platform uses its
+      // default rather than 0 (which would skip no layers in some graphs).
+      ...(body.params.clipSkip != null ? { clipSkip: body.params.clipSkip } : {}),
       quantity: body.params.quantity,
       baseModel: resolved.baseModel,
       width,

@@ -24,6 +24,7 @@ export interface ShowcaseImage {
   steps: number | null;
   seed: number | null;
   sampler: string | null;
+  clipSkip: number | null;
 }
 
 /**
@@ -108,6 +109,7 @@ export async function getModelShowcaseImages(modelVersionId: number): Promise<Sh
       steps: meta.steps,
       seed: meta.seed,
       sampler: meta.sampler,
+      clipSkip: meta.clipSkip,
     };
   });
 }
@@ -129,6 +131,7 @@ function extractMeta(rawMeta: unknown): ExtractedMeta {
     steps: null,
     seed: null,
     sampler: null,
+    clipSkip: null,
   };
   if (!rawMeta || typeof rawMeta !== 'object') return empty;
   const meta = rawMeta as Record<string, unknown>;
@@ -140,6 +143,9 @@ function extractMeta(rawMeta: unknown): ExtractedMeta {
     steps: asNumber(meta.steps ?? meta.Steps, { min: 1, max: 200, int: true }),
     seed: asNumber(meta.seed ?? meta.Seed, { min: 0, int: true }),
     sampler: asTrimmedString(meta.sampler ?? meta.Sampler),
+    // 'Clip skip' is the A1111 PascalCase legacy field name — matches what
+    // Remix accepts in src/server/services/generation/generation.service.ts.
+    clipSkip: asNumber(meta.clipSkip ?? meta['Clip skip'], { min: 0, max: 12, int: true }),
   };
 }
 

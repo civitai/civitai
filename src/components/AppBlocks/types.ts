@@ -47,6 +47,8 @@ export interface ShowcaseImage {
   steps: number | null;
   seed: number | null;
   sampler: string | null;
+  /** Per-resource CLIP layer skip count (SD1/SDXL). Flux ignores it. */
+  clipSkip: number | null;
 }
 
 export interface ModelSlotContext extends SlotContext {
