@@ -123,3 +123,4 @@ scripts/ralph/progress.txt
 
 # Claude temp files
 tmpclaude-*
+/.claude/worktrees

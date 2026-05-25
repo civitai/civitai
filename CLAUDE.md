@@ -64,6 +64,13 @@ pnpm run test:ui          # Run tests with UI
 pnpm run db:migrate:empty  # Create an empty migration file
 ```
 
+**CRITICAL: We do NOT use `prisma migrate deploy`. Migrations are applied manually.**
+- Migration files in `prisma/migrations/` exist for review/history but are never auto-run
+- Each environment's DB is updated by a human running the SQL directly (psql, retool, etc.)
+- The `_prisma_migrations` table is not the source of truth — do not rely on it
+- When you add a new migration: write the SQL, commit it, and surface to the user that it needs to be applied manually to wherever they want it (preview / staging / prod)
+- Never suggest `prisma migrate deploy`, `prisma migrate resolve`, or any auto-apply path
+
 ### Release (requires user permission)
 ```bash
 pnpm run release          # Patch release (0.0.x) - default
@@ -253,5 +260,5 @@ pnpm run dev-debug  # Includes --max_old_space_size=8192
 
 ### Database Issues
 1. Check connection string
-2. Run migrations: `pnpm run db:migrate`
+2. Apply pending migrations manually (we do NOT use `prisma migrate deploy` — see Database section above)
 3. Regenerate client: `pnpm run db:generate`
