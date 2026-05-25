@@ -152,5 +152,33 @@ describe('getModelShowcaseImages', () => {
       expect(b.prompt).toBeNull();
       expect(b.sampler).toBeNull();
     });
+
+    it('prefers meta-recorded width/height over the image file dims (post-upscale case)', async () => {
+      // The image was generated at 832x1216 and upscaled offline to 2496x3648
+      // before being uploaded. Image.width/Image.height reflect the upscale.
+      // The block should generate at the original 832x1216 — generating at
+      // the post-upscale dims (~3x area) diverges noticeably even with all
+      // other params identical (real-world case: 8753561-20260525223849768).
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(
+          7,
+          10,
+          { prompt: 'goth', width: 832, height: 1216 },
+          { width: 2496, height: 3648 }
+        ),
+      ]);
+      const [first] = await getModelShowcaseImages(99);
+      expect(first.width).toBe(832);
+      expect(first.height).toBe(1216);
+    });
+
+    it('falls back to image file dims when meta has no width/height', async () => {
+      mockDbRead.imageResourceNew.findMany.mockResolvedValue([
+        imageRow(8, 10, { prompt: 'a cat' }, { width: 1024, height: 1024 }),
+      ]);
+      const [first] = await getModelShowcaseImages(99);
+      expect(first.width).toBe(1024);
+      expect(first.height).toBe(1024);
+    });
   });
 });

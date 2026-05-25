@@ -96,13 +96,23 @@ export async function getModelShowcaseImages(modelVersionId: number): Promise<Sh
 
   return top.map(({ img }) => {
     const meta = extractMeta(img.meta);
+    // Prefer the meta-recorded generation dimensions over the image-file
+    // dimensions when present. Many showcase images are upscaled offline
+    // before upload — Image.width/Image.height reflect the post-upscale
+    // file, but meta.width/meta.height reflect the actual generator output.
+    // Submitting at the post-upscale dims (often 2-3x area) produces a
+    // composition that diverges noticeably from the showcase even when
+    // every other param matches. Falls back to file dims when meta is
+    // missing them (older / non-SD-pipeline images).
+    const genWidth = meta.width ?? img.width ?? 0;
+    const genHeight = meta.height ?? img.height ?? 0;
     return {
       id: img.id,
       // Echo through the platform's edge-URL helper so the block gets a
       // CDN-cached URL regardless of how the source row stored it.
       url: getEdgeUrl(img.url, { width: 512 }),
-      width: img.width ?? 0,
-      height: img.height ?? 0,
+      width: genWidth,
+      height: genHeight,
       prompt: meta.prompt,
       negativePrompt: meta.negativePrompt,
       cfgScale: meta.cfgScale,
@@ -114,7 +124,10 @@ export async function getModelShowcaseImages(modelVersionId: number): Promise<Sh
   });
 }
 
-type ExtractedMeta = Omit<ShowcaseImage, 'id' | 'url' | 'width' | 'height'>;
+type ExtractedMeta = Omit<ShowcaseImage, 'id' | 'url' | 'width' | 'height'> & {
+  width: number | null;
+  height: number | null;
+};
 
 /**
  * Best-effort extraction of standard gen params from Image.meta. The
@@ -132,6 +145,8 @@ function extractMeta(rawMeta: unknown): ExtractedMeta {
     seed: null,
     sampler: null,
     clipSkip: null,
+    width: null,
+    height: null,
   };
   if (!rawMeta || typeof rawMeta !== 'object') return empty;
   const meta = rawMeta as Record<string, unknown>;
@@ -146,6 +161,11 @@ function extractMeta(rawMeta: unknown): ExtractedMeta {
     // 'Clip skip' is the A1111 PascalCase legacy field name — matches what
     // Remix accepts in src/server/services/generation/generation.service.ts.
     clipSkip: asNumber(meta.clipSkip ?? meta['Clip skip'], { min: 0, max: 12, int: true }),
+    // Generator-recorded dimensions (pre-upscale). Range bounded generously;
+    // the block-side clamp scales anything above 2048 down preserving
+    // aspect ratio.
+    width: asNumber(meta.width ?? meta.Width, { min: 64, max: 8192, int: true }),
+    height: asNumber(meta.height ?? meta.Height, { min: 64, max: 8192, int: true }),
   };
 }
 
