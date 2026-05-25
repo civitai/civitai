@@ -60,11 +60,16 @@ export default function ArticleRatingReviewModal({
   const [comment, setComment] = useState('');
 
   const mutation = trpc.article.createRatingReview.useMutation({
-    onSuccess: async () => {
+    onSuccess: async (data) => {
       await queryUtils.article.getMyArticleRatingReview.invalidate({ articleId });
-      showSuccessNotification({
-        message: 'Review submitted — a moderator will get back to you.',
-      });
+      // The mutation may have auto-resolved when a rescan agreed with the
+      // suggested level — tailor the toast so the owner sees the right state
+      // (immediate update vs queued for mod review).
+      const message =
+        data?.status === 'Actioned'
+          ? 'Rating updated — your article now reflects the new rating.'
+          : 'Review submitted — a moderator will get back to you.';
+      showSuccessNotification({ message });
       dialog.onClose();
     },
     onError: (error) => {
@@ -101,7 +106,7 @@ export default function ArticleRatingReviewModal({
               {currentLabel}
             </Badge>
             <Text size="xs" c="dimmed">
-              Computed from cover + content images and title.
+              Derived from your article&apos;s content and any active moderation overrides.
             </Text>
           </Group>
         </Stack>

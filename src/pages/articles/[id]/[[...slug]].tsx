@@ -585,9 +585,16 @@ function ArticleOwnerRatingControls({
   // edited (canResubmit is true) AND the system-derived rating has dropped
   // below the override. Server gates this on having an active override + a
   // resolvable derived level, so we only need to combine it with `canResubmit`
-  // here.
+  // here. We additionally require derivedLevel >= 1 — a text-only article can
+  // yield derivedLevel = 0 (no images, no floor), which has no canonical
+  // browsing-level label and would render as "?" in the banner copy and
+  // pre-fill the dispute modal with an invalid level. Owner can still open
+  // the dispute modal via the inline button in that case.
   const showStaleOverrideBanner =
-    derivedRatingDroppedBelowOverride && canResubmit && derivedLevel != null;
+    derivedRatingDroppedBelowOverride &&
+    canResubmit &&
+    derivedLevel != null &&
+    derivedLevel >= 1;
 
   const handleOpen = (initialSuggestedLevel?: number) => {
     openArticleRatingReviewModal({ articleId, currentLevel: nsfwLevel, initialSuggestedLevel });

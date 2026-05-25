@@ -217,7 +217,7 @@ Per the ticket's "Track submission rate + accept/reject ratio to detect abuse" r
 
 1. Migration: add table + partial unique index. Verify on staging.
 2. Service + tRPC + notification processor. Add unit tests for `createArticleRatingReview` (one-pending invariant, owner check, valid level) and `resolveArticleRatingReview` (state transitions, override write, notification fire). Vitest, per CLAUDE.md memory.
-3. UI behind a Flipt flag (`articleNsfwDispute`). Owner-only flag check on the button; mod dashboard page check on the route.
+3. UI behind a Flipt flag (`articleRatingDispute`, Flipt key `article-rating-dispute`). Owner-only flag check on the button; mod dashboard page check on the route.
 4. Self-check guideline page lands at the same time the flag flips on.
 5. Open at 100% after one week of staging soak (no expected risk surface — it's a new isolated table).
 
@@ -248,7 +248,7 @@ Per the ticket's "Track submission rate + accept/reject ratio to detect abuse" r
 - **Edit-flow warning**: implemented as a **pre-submit** check on the client (`article.moderatorNsfwLevel != null && !isModerator`), not a post-response flag. Reason: rescan is destructive and irreversible — the owner needs the choice before the mutation fires, not after. The `hasModeratorOverride` response field is still returned by the service for defense in depth, but the client doesn't depend on it.
 - **Dialog registry**: registered in `src/components/Dialog/dialog-registry2.ts` (the active v2 registry). `dialog-registry.ts` was not modified.
 - **Notification index**: registered in `src/server/notifications/utils.notifications.ts` (the existing registry file), not a separate index.
-- **Flipt flag (`articleNsfwDispute`) is NOT yet registered.** Router procedures have `TODO(article-nsfw-dispute):` comments where `isFlagProtected('articleNsfwDispute')` should attach. Register the flag in `feature-flags.service.ts` before flipping in Flipt.
+- **Flipt flag registered as `articleRatingDispute`** (Flipt key `article-rating-dispute`) in `src/server/services/feature-flags.service.ts`. Router procedures attach via `isFlagProtected('articleRatingDispute')`. Earlier `TODO(article-nsfw-dispute)` comments have been resolved.
 - **ClickHouse tables** `articleRatingReviews` + `articleRatingReviewsResolved` need to be created on the CH side before events fire at runtime.
 - **Guideline URL slug** is a placeholder (`/articles/article-rating-guidelines`). Finalize in `src/server/common/constants.ts` once the education.civitai.com page is published.
 - **Migration timestamp**: `20260522120000_article_rating_review`. Includes the partial unique index that Prisma can't express natively.
@@ -266,5 +266,5 @@ Per the ticket's "Track submission rate + accept/reject ratio to detect abuse" r
 | Owner UI | `src/pages/articles/[id]/[[...slug]].tsx`, new dispute modal + edit warning |
 | Mod dashboard | `src/pages/moderator/article-rating-review.tsx`, `src/components/Article/ArticleRatingReviewCard.tsx` |
 | Self-check page | education.civitai.com (external); URL constant in `src/server/common/constants.ts` |
-| Feature flag | Flipt `articleNsfwDispute` |
-| Metrics | `src/server/services/track.service.ts` (two new events) |
+| Feature flag | Flipt `articleRatingDispute` (key `article-rating-dispute`) |
+| Metrics | `src/server/clickhouse/client.ts` (`articleRatingReview` + `articleRatingReviewResolved` events) |

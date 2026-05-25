@@ -39,7 +39,7 @@ Flag: `article-rating-dispute` (Flipt). Enable for user 1290051 + a mod account 
 - [ ] Submit on #30472, then #30473 — both succeed (count = 2)
 - [ ] Submit a 4th dispute (manually create + delete one) → 429 "You can only submit 3 rating reviews per day"
 - [ ] On article with a Pending review, try API call again → 400 "A review is already pending for this article"
-- [ ] Wait until tomorrow OR clear Redis key `article:rating-review-rate-limit:1290051` to reset
+- [ ] Wait until tomorrow OR clear Redis key `article:nsfw-review-rate:1290051` to reset
 
 ## Mod dashboard — `/moderator/article-rating-review`
 
@@ -147,5 +147,5 @@ DELETE FROM "Article" WHERE id IN (30471, 30472, 30473);
 
 Clear Redis rate-limit key if you want to reset count between sessions:
 ```
-DEL article:rating-review-rate-limit:1290051
+DEL article:nsfw-review-rate:1290051
 ```

@@ -37,9 +37,18 @@ export type AutoApproveGateResult =
  * ignoring `userNsfwLevel` — when an override is in place, `userNsfwLevel` is
  * locked-stale and cannot be trusted as a ceiling.
  *
- * Returns the derived level, or `null` if the article has no scanned cover
- * AND no scanned content images AND no moderation floor — i.e. nothing to
- * derive from yet. Callers should treat `null` as "not eligible".
+ * Returns:
+ *   - `null` if the article row doesn't exist (caller treats as "not eligible").
+ *   - `0` for a text-only / no-images article with no moderation floor — a
+ *     legitimate "PG-or-lower" signal that must be allowed to pass gate #5.
+ *   - A positive bitwise level otherwise.
+ *
+ * Intentional divergence from `updateArticleNsfwLevels`: this query joins on
+ * `cover.ingestion = 'Scanned'` only (not `IN ('Scanned', 'Blocked')`).
+ * `evaluateAutoApproveGate` rejects Blocked covers up front, so the Blocked
+ * branch is unreachable here and the tighter join makes that explicit. Any
+ * change that allows Blocked covers through the gate must also widen this
+ * join to match `updateArticleNsfwLevels`.
  */
 export async function computeArticleDerivedNsfwLevel(articleId: number): Promise<number | null> {
   const rows = await dbRead.$queryRaw<{ derived: number | null }[]>(Prisma.sql`

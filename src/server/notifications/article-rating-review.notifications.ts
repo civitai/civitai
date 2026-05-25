@@ -15,9 +15,12 @@ export const articleRatingReviewNotifications = createNotificationProcessor({
         newLevel: number | string;
         modComment?: string;
       };
-      const base = `A moderator reviewed your dispute on "${articleTitle}" and updated the rating from ${previousLevel} to ${newLevel}.`;
+      // Actor-neutral copy: this notification can fire either from a mod
+      // resolution or from the auto-approve path (resolvedBy = system user).
+      // Avoid falsely attributing the auto-approved case to a moderator.
+      const base = `Your rating dispute on "${articleTitle}" was approved — the rating was updated from ${previousLevel} to ${newLevel}.`;
       return {
-        message: modComment ? `${base} Note from moderator: ${modComment}` : base,
+        message: modComment ? `${base} Moderator note: ${modComment}` : base,
         url: `/articles/${articleId}`,
       };
     },
@@ -34,7 +37,7 @@ export const articleRatingReviewNotifications = createNotificationProcessor({
         currentLevel: number | string;
         modComment?: string;
       };
-      const base = `A moderator reviewed your dispute on "${articleTitle}" and the current rating (${currentLevel}) was kept.`;
+      const base = `Your rating dispute on "${articleTitle}" was declined — the current rating (${currentLevel}) was kept.`;
       return {
         message: modComment ? `${base} Reason: ${modComment}` : base,
         url: `/articles/${articleId}`,

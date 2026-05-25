@@ -2356,23 +2356,6 @@ export async function createArticleRatingReview({
     });
   }
 
-  // --- Rate limit (owners only, mods bypass) ---
-  // Atomic INCR + EXPIRE-on-first to avoid the TOCTOU race in the prior
-  // get → check → set → expire dance. Increment BEFORE the DB insert; if a
-  // later step throws we accept the burnt slot (same trade-off rescanArticle
-  // makes). `incr` isn't surfaced on the typed redis client, hence the cast.
-  const cacheKey = `${REDIS_KEYS.ARTICLE.RATING_REVIEW_RATE_LIMIT}:${userId}` as const;
-  if (!isModerator) {
-    const count = await (redis as any).incr(cacheKey);
-    if (count === 1) await redis.expire(cacheKey, NSFW_REVIEW_WINDOW_SECONDS);
-    if (count > NSFW_REVIEW_LIMIT) {
-      throw new TRPCError({
-        code: 'TOO_MANY_REQUESTS',
-        message: `You can only submit ${NSFW_REVIEW_LIMIT} rating reviews per day. Please try again later.`,
-      });
-    }
-  }
-
   // --- One Pending per article ---
   if (existingPending) {
     throw throwBadRequestError('A review is already pending for this article');
@@ -2387,6 +2370,25 @@ export async function createArticleRatingReview({
     throw throwBadRequestError(
       'This article has already been reviewed. Edit the article before requesting another review.'
     );
+  }
+
+  // --- Rate limit (owners only, mods bypass) ---
+  // Run AFTER the "one Pending per article" and re-edit gates so a request
+  // that's guaranteed to be rejected by either of those doesn't burn a slot.
+  // Atomic INCR + EXPIRE-on-first to avoid the TOCTOU race in the prior
+  // get → check → set → expire dance. Concurrent duplicate Pending inserts
+  // are still prevented by the partial unique index on `ArticleRatingReview`.
+  // `incr` isn't surfaced on the typed redis client, hence the cast.
+  const cacheKey = `${REDIS_KEYS.ARTICLE.RATING_REVIEW_RATE_LIMIT}:${userId}` as const;
+  if (!isModerator) {
+    const count = await (redis as any).incr(cacheKey);
+    if (count === 1) await redis.expire(cacheKey, NSFW_REVIEW_WINDOW_SECONDS);
+    if (count > NSFW_REVIEW_LIMIT) {
+      throw new TRPCError({
+        code: 'TOO_MANY_REQUESTS',
+        message: `You can only submit ${NSFW_REVIEW_LIMIT} rating reviews per day. Please try again later.`,
+      });
+    }
   }
 
   // --- Auto-approve branch ---
