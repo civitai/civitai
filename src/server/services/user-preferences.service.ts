@@ -81,19 +81,18 @@ function createUserCache<T, TArgs extends { userId?: number }>({
 
 const HiddenTags = createUserCache({
   key: 'hidden-tags-4',
-  callback: async ({ userId }) => {
-    const tagEngagment = (
-      await dbRead.tagEngagement.findMany({
-        where: { userId, type: TagEngagementType.Hide },
-        select: { tag: { select: { id: true, name: true } } },
-      })
-    ).map((x) => x.tag);
-    // const hiddenTags = tagEngagment.map((x) => x.id);
-
-    // const hiddenTagsOfHiddenTags = await getHiddenTagsOfHiddenTags(hiddenTags);
-
-    return [...tagEngagment];
-  },
+  // Inner join filters orphan TagEngagement rows (tagId → deleted Tag) that
+  // would otherwise make Prisma throw "Inconsistent query result: Field tag
+  // is required to return data, got `null` instead" and kill the whole
+  // getHidden response.
+  callback: async ({ userId }) =>
+    await dbRead.$queryRaw<{ id: number; name: string }[]>`
+        SELECT t.id, t.name
+        FROM "TagEngagement" te
+        JOIN "Tag" t ON t.id = te."tagId"
+        WHERE te."userId" = ${userId}
+          AND te.type = ${TagEngagementType.Hide}::"TagEngagementType"
+      `,
 });
 
 // images hidden by toggling 'hide image'
