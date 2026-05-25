@@ -542,6 +542,12 @@ model User {
   comicReferences            ComicReference[]
   comicProjectEngagements    ComicProjectEngagement[]
 
+  // App Blocks back-relations
+  modelBlockInstalls         ModelBlockInstall[]
+  blockUserSettings          BlockUserSettings[]
+  promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
+  blockUserSubscriptions     BlockUserSubscription[]
+
   @@index([deletedAt])
 }
 
@@ -865,6 +871,7 @@ model Model {
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
   coveredCheckpoints CoveredCheckpoint[]
+  blockInstalls      ModelBlockInstall[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -1022,6 +1029,7 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
   baseModelLicensingFees  BaseModelLicensingFee[]
+  blockInstalls           ModelBlockInstall[]
 
   @@index([modelId], type: Hash)
 }
@@ -2178,8 +2186,136 @@ model OauthClient {
   updatedAt      DateTime       @default(now()) @updatedAt
   tokens         ApiKey[]
   consents       OauthConsent[]
+  appBlocks      AppBlock[]
 
   @@index([userId])
+}
+
+/// App Blocks — v1 substrate. Registry of all blocks across all apps (OauthClients).
+/// Application-generated TEXT primary key (prefixed ULID: `ab_<ulid>`).
+/// See docs/features/app-blocks.md for the architecture overview.
+model AppBlock {
+  id                 String    @id
+  appId              String    @map("app_id")
+  app                OauthClient @relation(fields: [appId], references: [id], onDelete: Cascade)
+  blockId            String    @map("block_id")
+  version            String
+  manifest           Json
+  status             String    @default("pending")
+  contentRating      String    @map("content_rating")
+  promotionEligible  Boolean   @default(false) @map("promotion_eligible")
+  healthStatus       String    @default("unknown") @map("health_status")
+  healthCheckedAt    DateTime? @map("health_checked_at") @db.Timestamptz(6)
+
+  // v2 substrate columns (NULL-safe for v1, included to avoid later migration)
+  renderMode         String    @default("iframe") @map("render_mode")
+  trustTier          String    @default("unverified") @map("trust_tier")
+  assetBundleUrl     String?   @map("asset_bundle_url")
+  assetBundleSha256  String?   @map("asset_bundle_sha256")
+
+  // H-2: scope set captured at moderator approval. Empty array = never
+  // been approved (Prisma doesn't support nullable arrays). Token issuance
+  // fails closed when the requested scope isn't in this set.
+  approvedScopes     String[]  @default([]) @map("approved_scopes")
+
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  modelInstalls      ModelBlockInstall[]
+  platformDefault    PlatformDefaultBlock?
+  userSubscriptions  BlockUserSubscription[]
+
+  @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
+  @@index([status], map: "app_blocks_status_idx")
+  @@map("app_blocks")
+}
+
+/// Per-model, per-block install record. Application-generated id (`mbi_<ulid>`)
+/// and blockInstanceId (`bki_<ulid>`). One install row pins a block to a single
+/// slot — installing the same block in two slots requires two rows.
+model ModelBlockInstall {
+  id                 String       @id
+  modelId            Int          @map("model_id")
+  model              Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  modelVersionId     Int?         @map("model_version_id")
+  modelVersion       ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
+  appBlockId         String       @map("app_block_id")
+  appBlock           AppBlock     @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
+  slotId             String       @map("slot_id")
+  blockInstanceId    String       @unique @map("block_instance_id")
+  settings           Json         @default("{}")
+  enabled            Boolean      @default(true)
+  installedAt        DateTime     @default(now()) @map("installed_at") @db.Timestamptz(6)
+  installedByUserId  Int?         @map("installed_by_user_id")
+  installedBy        User?        @relation(fields: [installedByUserId], references: [id], onDelete: SetNull)
+  updatedAt          DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  viewerSettings     BlockUserSettings[]
+
+  @@unique([modelId, appBlockId, slotId], map: "model_block_installs_model_app_slot_uniq")
+  @@index([modelId, slotId, enabled], map: "model_block_installs_model_slot_enabled_idx")
+  @@index([appBlockId], map: "model_block_installs_app_block_idx")
+  @@index([installedByUserId], map: "model_block_installs_installed_by_idx")
+  @@index([modelVersionId], map: "model_block_installs_model_version_idx")
+  @@map("model_block_installs")
+}
+
+/// Per-block-instance, per-user settings (viewer preferences).
+/// FK CASCADE on install deletion and GDPR-user-delete.
+model BlockUserSettings {
+  blockInstanceId String            @map("block_instance_id")
+  install         ModelBlockInstall @relation(fields: [blockInstanceId], references: [blockInstanceId], onDelete: Cascade)
+  userId          Int               @map("user_id")
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settings        Json              @default("{}")
+  updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([blockInstanceId, userId])
+  @@index([userId], map: "block_user_settings_user_idx")
+  @@map("block_user_settings")
+}
+
+/// Platform-default blocks (promoted to render on all eligible model pages).
+model PlatformDefaultBlock {
+  appBlockId        String   @id @map("app_block_id")
+  appBlock          AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
+  slotId            String   @map("slot_id")
+  targetModelTypes  String[] @map("target_model_types")
+  minContentRating  String?  @map("min_content_rating")
+  maxContentRating  String?  @map("max_content_rating")
+  priority          Int      @default(500)
+  enabled           Boolean  @default(true)
+  promotedAt        DateTime @default(now()) @map("promoted_at") @db.Timestamptz(6)
+  promotedBy        Int?     @map("promoted_by")
+  promoter          User?    @relation("PlatformDefaultBlockPromoter", fields: [promotedBy], references: [id], onDelete: SetNull)
+
+  @@index([slotId, enabled], map: "platform_default_blocks_slot_enabled_idx")
+  @@index([slotId, priority], map: "platform_default_blocks_slot_priority_idx")
+  @@index([promotedBy], map: "platform_default_blocks_promoted_by_idx")
+  @@map("platform_default_blocks")
+}
+
+/// User-controlled block install path. Two scopes:
+///   - 'publisher_all_my_models': model owner subscribes the block to every
+///     model they own (joins on Model.userId at listForModel time).
+///   - 'viewer_personal': any viewer subscribes the block to every model
+///     page they visit (joins on the current viewer's userId).
+/// Application-generated id (`bus_<ulid>`).
+model BlockUserSubscription {
+  id                 String   @id
+  userId             Int      @map("user_id")
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId         String   @map("app_block_id")
+  appBlock           AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  scope              String
+  targetModelTypes   String[] @map("target_model_types")
+  targetBaseModels   String[] @map("target_base_models")
+  settings           Json     @default("{}")
+  enabled            Boolean  @default(true)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([userId, appBlockId, scope], map: "block_user_subscriptions_user_block_scope_uniq")
+  @@map("block_user_subscriptions")
 }
 
 model OauthConsent {
