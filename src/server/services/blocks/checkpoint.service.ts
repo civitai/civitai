@@ -6,6 +6,7 @@ import {
   blockUserSettingsSchema,
   type GenerateFromModelSettings,
 } from '~/server/schema/blocks/settings.schema';
+import { BlockRegistry } from '~/server/services/block-registry.service';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 
@@ -267,8 +268,15 @@ export async function resolveBlockCheckpoint(opts: {
   baseModel: string;
   modelType: string;
   userId: number;
+  /**
+   * Slot id from the JWT ctx. Required so the resolver can re-validate
+   * synthetic ids (pdb_*, bus_*) — the source row carries publisher
+   * settings (e.g. default_checkpoint_version_id) that we still need to
+   * read through the publisher-default path below.
+   */
+  slotId: string;
 }): Promise<ValidatedCheckpoint> {
-  const { blockInstanceId, modelId, modelVersionId, baseModel, modelType, userId } = opts;
+  const { blockInstanceId, modelId, modelVersionId, baseModel, modelType, userId, slotId } = opts;
 
   // 1. Checkpoint-bound install → the model IS the anchor.
   if (modelType === 'Checkpoint') {
@@ -284,11 +292,17 @@ export async function resolveBlockCheckpoint(opts: {
   }
 
   // Pull both the publisher install settings and the viewer override row in
-  // parallel — they're independent reads.
+  // parallel — they're independent reads. The publisher path goes through
+  // BlockRegistry.resolveBlockInstance so synthetic blockInstanceIds
+  // (subscriptions, platform defaults) read their settings from the source
+  // row rather than 404-ing on the missing model_block_installs row.
   const [install, viewerRow] = await Promise.all([
-    dbRead.modelBlockInstall.findUnique({
-      where: { blockInstanceId },
-      select: { settings: true },
+    BlockRegistry.resolveBlockInstance({
+      blockInstanceId,
+      modelId,
+      slotId,
+      viewerUserId: userId,
+      db: 'read',
     }),
     dbRead.blockUserSettings.findUnique({
       where: { blockInstanceId_userId: { blockInstanceId, userId } },

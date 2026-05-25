@@ -95,6 +95,11 @@ async function assertCanManageBlocks(
 
 async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise<number> {
   // B2 (same posture as above): dbWrite for the ownership-relevant lookup.
+  // updateSettings is publisher-only and only ever operates on real install
+  // rows. Synthetic ids (pdb_*, bus_*) don't have settings writable via this
+  // route — subscription settings use blocks.upsertSubscription, platform
+  // defaults aren't settings-writable at all. A synthetic id reaching this
+  // path is a client bug; the findUnique below returns null and we 404.
   const row = await dbWrite.modelBlockInstall.findUnique({
     where: { blockInstanceId },
     select: { modelId: true },
@@ -368,6 +373,10 @@ export const blocksRouter = router({
           message: 'estimate requires authenticated viewer',
         });
       }
+      const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
+      if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
+      }
       const resolved = await resolveBlockVersionContext(
         input.body.modelVersionId,
         input.body.modelId
@@ -379,6 +388,7 @@ export const blocksRouter = router({
         baseModel: resolved.baseModel,
         modelType: resolved.modelType,
         userId,
+        slotId: ctxSlotId,
       });
       const user = await getBlockSessionUser(userId);
       const token = await getOrchestratorToken(userId, ctx);
@@ -433,6 +443,10 @@ export const blocksRouter = router({
           message: 'workflow submit requires authenticated viewer',
         });
       }
+      const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
+      if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
+      }
       const resolved = await resolveBlockVersionContext(
         input.body.modelVersionId,
         input.body.modelId
@@ -444,6 +458,7 @@ export const blocksRouter = router({
         baseModel: resolved.baseModel,
         modelType: resolved.modelType,
         userId,
+        slotId: ctxSlotId,
       });
       const user = await getBlockSessionUser(userId);
       const token = await getOrchestratorToken(userId, ctx);
@@ -522,11 +537,22 @@ export const blocksRouter = router({
    */
   getEffectiveCheckpoint: publicProcedure
     .use(enforceAppBlocksFlag)
-    .input(z.object({ blockInstanceId: z.string().min(1).max(64) }))
+    .input(
+      z.object({
+        blockInstanceId: z.string().min(1).max(64),
+        // modelId + slotId are the resolver's auth pin for synthetic ids
+        // (pdb_*, bus_*). Without them, those blockInstanceIds would 404
+        // here even though they validly surface on the model page.
+        modelId: z.number().int().positive(),
+        slotId: KNOWN_SLOT_IDS,
+      })
+    )
     .query(async ({ ctx, input }) => {
       const userId = ctx.user?.id ?? null;
       const checkpoint = await BlockRegistry.getEffectiveCheckpoint({
         blockInstanceId: input.blockInstanceId,
+        modelId: input.modelId,
+        slotId: input.slotId,
         userId,
       });
       return { checkpoint };

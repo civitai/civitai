@@ -1275,6 +1275,16 @@ export class BlockRegistry {
    */
   static async getEffectiveCheckpoint(opts: {
     blockInstanceId: string;
+    /**
+     * Auth pin for the resolver. The IframeHost ALWAYS knows (modelId,
+     * slotId) for the install it's rendering — it gets both back from
+     * listForModel. Forwarding them here lets us re-validate synthetic
+     * blockInstanceIds (pdb_*, bus_*) via resolveBlockInstance, which is
+     * what unblocks the BLOCK_INIT checkpoint payload for subscription-
+     * sourced installs.
+     */
+    modelId: number;
+    slotId: string;
     userId: number | null;
   }): Promise<{
     versionId: number;
@@ -1283,19 +1293,18 @@ export class BlockRegistry {
     versionName: string;
     baseModel: string;
   } | null> {
-    const { blockInstanceId, userId } = opts;
+    const { blockInstanceId, modelId, slotId, userId } = opts;
 
-    // Pull the install (with its bound model) + the per-viewer settings
-    // row (only when authenticated) in parallel.
-    const [install, viewerRow] = await Promise.all([
-      dbRead.modelBlockInstall.findUnique({
-        where: { blockInstanceId },
-        select: {
-          settings: true,
-          modelId: true,
-          modelVersionId: true,
-          model: { select: { id: true, name: true, type: true } },
-        },
+    // Pull the resolved instance (carries publisher settings + source
+    // metadata) + the per-viewer settings row (only when authenticated)
+    // in parallel.
+    const [install, viewerRow, model] = await Promise.all([
+      BlockRegistry.resolveBlockInstance({
+        blockInstanceId,
+        modelId,
+        slotId,
+        viewerUserId: userId,
+        db: 'read',
       }),
       userId != null
         ? dbRead.blockUserSettings.findUnique({
@@ -1303,29 +1312,28 @@ export class BlockRegistry {
             select: { settings: true },
           })
         : Promise.resolve(null),
+      dbRead.model.findUnique({
+        where: { id: modelId },
+        select: { name: true, type: true },
+      }),
     ]);
-    if (!install) return null;
+    if (!install || !model) return null;
 
     // Checkpoint-bound install: the model is its own anchor. Skip the
     // override path entirely — v1 decision keeps Checkpoint installs atomic.
-    if (install.model.type === 'Checkpoint') {
+    if (model.type === 'Checkpoint') {
       // We need the version row to fill versionName/baseModel. Pick the
-      // install's modelVersionId if pinned, else most-recent Published.
-      const versionRow = install.modelVersionId
-        ? await dbRead.modelVersion.findUnique({
-            where: { id: install.modelVersionId },
-            select: { id: true, name: true, baseModel: true },
-          })
-        : await dbRead.modelVersion.findFirst({
-            where: { modelId: install.modelId, status: 'Published' },
-            orderBy: { createdAt: 'desc' },
-            select: { id: true, name: true, baseModel: true },
-          });
+      // most-recent Published version on this model.
+      const versionRow = await dbRead.modelVersion.findFirst({
+        where: { modelId, status: 'Published' },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true, name: true, baseModel: true },
+      });
       if (!versionRow) return null;
       return {
         versionId: versionRow.id,
-        modelId: install.modelId,
-        modelName: install.model.name,
+        modelId,
+        modelName: model.name,
         versionName: versionRow.name,
         baseModel: versionRow.baseModel,
       };
@@ -1372,19 +1380,14 @@ export class BlockRegistry {
     }
 
     // Platform per-ecosystem fallback. Need the LoRA's baseModel to pick
-    // the family — read the install's version (or representative version
-    // if not pinned). This matches what resolveBlockCheckpoint does at
-    // submit time, so BLOCK_INIT and submit agree on the same default.
-    const loraVersion = install.modelVersionId
-      ? await dbRead.modelVersion.findUnique({
-          where: { id: install.modelVersionId },
-          select: { baseModel: true },
-        })
-      : await dbRead.modelVersion.findFirst({
-          where: { modelId: install.modelId, status: 'Published' },
-          orderBy: { createdAt: 'desc' },
-          select: { baseModel: true },
-        });
+    // the family — read most-recent Published version on this model. This
+    // matches what resolveBlockCheckpoint does at submit time so BLOCK_INIT
+    // and submit agree on the same default.
+    const loraVersion = await dbRead.modelVersion.findFirst({
+      where: { modelId, status: 'Published' },
+      orderBy: { createdAt: 'desc' },
+      select: { baseModel: true },
+    });
     if (loraVersion?.baseModel) {
       const popular = await getPopularCheckpointForEcosystem(loraVersion.baseModel);
       if (popular) {

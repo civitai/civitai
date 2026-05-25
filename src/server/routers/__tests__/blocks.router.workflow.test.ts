@@ -87,10 +87,32 @@ vi.mock('~/server/services/block-registry.service', () => ({
     updateSettings: vi.fn(),
     toggleEnabled: vi.fn(),
     uninstallFromModel: vi.fn(),
+    // Used by resolveBlockCheckpoint to read publisher settings — return
+    // an empty-settings install shape by default so the LoRA path falls
+    // through to the platform fallback (which most workflow tests assert
+    // against). Individual tests override as needed.
+    resolveBlockInstance: vi.fn(async () => ({
+      source: 'install',
+      modelId: 7,
+      slotId: 'model.sidebar_top',
+      enabled: true,
+      settings: {},
+      installedByUserId: 42,
+      appBlock: {
+        id: 'ab_x',
+        blockId: 'gen-from-model',
+        appId: 'app',
+        status: 'approved',
+        manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 33554431 },
+      },
+    })),
   },
 }));
 
 import { blocksRouter } from '../blocks.router';
+import { BlockRegistry } from '~/server/services/block-registry.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 function validClaims(over: Record<string, unknown> = {}) {
@@ -104,7 +126,10 @@ function validClaims(over: Record<string, unknown> = {}) {
     blockId: 'blk_test',
     appId: 'app_test',
     blockInstanceId: 'bki_test',
-    ctx: { modelId: 7 },
+    // Both modelId and slotId — the workflow path requires slotId in ctx
+    // so resolveBlockCheckpoint can re-validate synthetic ids via the
+    // BlockRegistry resolver.
+    ctx: { modelId: 7, slotId: 'model.sidebar_top' },
     scopes: ['ai:write:budgeted'],
     buzzBudget: 50,
     ...over,
@@ -487,13 +512,34 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
+  // Helper to override the resolveBlockInstance mock with a specific
+  // publisher settings payload. The default mock returns empty settings;
+  // tests that exercise the publisher-default path must inject their value.
+  function publisherSettings(settings: Record<string, unknown>) {
+    (BlockRegistry.resolveBlockInstance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      source: 'install',
+      modelId: 7,
+      slotId: 'model.sidebar_top',
+      enabled: true,
+      settings,
+      installedByUserId: 42,
+      appBlock: {
+        id: 'ab_x',
+        blockId: 'gen-from-model',
+        appId: 'app',
+        status: 'approved',
+        manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 33554431 },
+      },
+    });
+  }
+
   it('uses publisher default when no viewer override is set', async () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
     happyUser();
     loraVersionLookup();
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
-      settings: { default_checkpoint_version_id: 691639 },
-    });
+    publisherSettings({ default_checkpoint_version_id: 691639 });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
     mockSubmitWorkflow
       .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 10 }, steps: [] })
@@ -512,9 +558,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
     happyUser();
     loraVersionLookup();
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
-      settings: { default_checkpoint_version_id: 111 }, // publisher
-    });
+    publisherSettings({ default_checkpoint_version_id: 111 });
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue({
       settings: { checkpoint_version_id: 691639 }, // viewer override
     });
@@ -540,9 +584,7 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
     mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
     happyUser();
     loraVersionLookup();
-    mockDbRead.modelBlockInstall.findUnique.mockResolvedValue({
-      settings: { default_checkpoint_version_id: 691639 },
-    });
+    publisherSettings({ default_checkpoint_version_id: 691639 });
     // Override points at a deleted version (222 → null from loraVersionLookup).
     mockDbRead.blockUserSettings.findUnique.mockResolvedValue({
       settings: { checkpoint_version_id: 222 },
@@ -560,5 +602,54 @@ describe('blocks.submitWorkflow — LoRA install precedence', () => {
     // Submission lands — the stale override was dropped and publisher default
     // 691639 took over.
     expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('subscription-sourced install (bus_pub_*): submits using subscription settings', async () => {
+    // The bug fix: pre-fix submitWorkflow → resolveBlockCheckpoint →
+    // findUnique({blockInstanceId:'bus_pub_X'}) returned null and the call
+    // threw BAD_REQUEST. Post-fix the resolver routes through to the
+    // subscription row's settings and the workflow goes through.
+    mockVerifyBlockToken.mockResolvedValue(
+      validClaims({ buzzBudget: 100, blockInstanceId: 'bus_pub_abcd' })
+    );
+    happyUser();
+    loraVersionLookup();
+    (BlockRegistry.resolveBlockInstance as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      source: 'publisher_subscription',
+      modelId: 7,
+      slotId: 'model.sidebar_top',
+      enabled: true,
+      settings: { default_checkpoint_version_id: 691639 },
+      installedByUserId: 99, // the subscription owner
+      appBlock: {
+        id: 'ab_x',
+        blockId: 'gen-from-model',
+        appId: 'app',
+        status: 'approved',
+        manifest: { targets: [{ slotId: 'model.sidebar_top' }] },
+        approvedScopes: ['ai:write:budgeted'],
+        app: { allowedScopes: 33554431 },
+      },
+    });
+    mockDbRead.blockUserSettings.findUnique.mockResolvedValue(null);
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: 10 }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: 10 },
+        steps: [],
+      });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    // Resolver was called with the synthetic id + slot from JWT ctx.
+    expect(BlockRegistry.resolveBlockInstance).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blockInstanceId: 'bus_pub_abcd',
+        modelId: 7,
+        slotId: 'model.sidebar_top',
+      })
+    );
   });
 });

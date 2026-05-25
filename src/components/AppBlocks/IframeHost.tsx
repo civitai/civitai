@@ -164,8 +164,21 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   // so the block never sees a stale `context.checkpoint`. Cached
   // server-side via the query's React Query layer.
   const effectiveCheckpointQuery = trpc.blocks.getEffectiveCheckpoint.useQuery(
-    { blockInstanceId: install.blockInstanceId },
-    { staleTime: 60_000 }
+    {
+      blockInstanceId: install.blockInstanceId,
+      // The resolver re-validates synthetic ids against (modelId, slotId).
+      // modelCtx is partial-typed but in practice both fields are required
+      // by the slot context shape ModelSlotContext mandates them.
+      modelId: modelCtx.modelId ?? 0,
+      slotId: (modelCtx.slotId ?? 'model.sidebar_top') as
+        | 'model.sidebar_top'
+        | 'model.below_images'
+        | 'model.actions_extra',
+    },
+    {
+      enabled: typeof modelCtx.modelId === 'number' && !!modelCtx.slotId,
+      staleTime: 60_000,
+    }
   );
   const effectiveCheckpoint = effectiveCheckpointQuery.data?.checkpoint ?? null;
 
