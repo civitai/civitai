@@ -15,6 +15,7 @@ export const config = {
   },
 };
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { BlockRegistry } from '~/server/services/block-registry.service';
 import { BlockTokenService } from '~/server/services/block-token.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
@@ -47,9 +48,23 @@ import {
  * cookie, or per-block CSRF token).
  */
 
+// slotContext is sent by the iframe host (useBlockToken.ts) and carries the
+// browsing context. We require modelId + slotId here because resolveBlockInstance
+// uses them as the auth pin for synthetic blockInstanceIds (`pdb_*`, `bus_*`)
+// — those rows don't carry modelId themselves and the resolver re-validates
+// the claim against the source predicates before mint. The resolver returns
+// the *validated* modelId/slotId from the source row (not the client's), and
+// only those validated values reach the JWT ctx.
+const slotContextSchema = z
+  .object({
+    modelId: z.coerce.number().int().positive(),
+    slotId: z.string().min(1).max(64),
+  })
+  .passthrough();
+
 const requestSchema = z.object({
   blockInstanceId: z.string().min(1).max(64),
-  slotContext: z.record(z.string(), z.unknown()).default({}),
+  slotContext: slotContextSchema,
 });
 
 const BUZZ_BUDGET_DEFAULT = 10;
@@ -72,8 +87,9 @@ function projectClientCtx(slotContext: Record<string, unknown>): Record<string, 
   // BLOCK_INIT (see IframeHost.buildInitPayload), so blocks still see
   // modelVersionId; it just doesn't get baked into trust-bearing claims.
   //
-  // _slotContext is accepted for API parity (and forward compatibility
-  // when a future scope binds on a new field) but the body is empty in v1.
+  // NB: modelId and slotId are validated by resolveBlockInstance against
+  // the source row and stamped into ctx by the handler AFTER this call —
+  // never read them from slotContext here.
   void slotContext; // intentionally unused — see comment
   return {};
 }
@@ -295,32 +311,21 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
 
   // Use dbWrite (primary) so a freshly-suspended block can't be installed
-  // through a replication-lag window.
-  const install = await dbWrite.modelBlockInstall.findUnique({
-    where: { blockInstanceId },
-    select: {
-      modelId: true,
-      slotId: true,
-      enabled: true,
-      settings: true,
-      installedByUserId: true,
-      appBlock: {
-        select: {
-          blockId: true,
-          appId: true,
-          status: true,
-          manifest: true,
-          // H-2: snapshot of scopes captured at moderator approval. Token
-          // issuance refuses anything outside this set, so a post-approval
-          // manifest swap that slipped in extra scopes can't get them signed.
-          approvedScopes: true,
-          app: { select: { allowedScopes: true } },
-        },
-      },
-    },
+  // through a replication-lag window. resolveBlockInstance handles all four
+  // blockInstanceId namespaces (real install `bki_*`, platform default `pdb_*`,
+  // publisher subscription `bus_pub_*`, viewer subscription `bus_view_*`) and
+  // re-validates the caller's (modelId, slotId) claim against the source row
+  // — for synthetic ids that's the only cross-check, since the row itself
+  // isn't per-model.
+  const install = await BlockRegistry.resolveBlockInstance({
+    blockInstanceId,
+    modelId: slotContext.modelId,
+    slotId: slotContext.slotId,
+    viewerUserId: userId,
+    db: 'write',
   });
 
-  if (!install || !install.enabled) {
+  if (!install) {
     res.status(404).json({ error: 'Block install not found' });
     return;
   }
