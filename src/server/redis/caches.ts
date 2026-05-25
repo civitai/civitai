@@ -259,18 +259,22 @@ export const userMultipliersCache = createCachedObject<CachedUserMultiplier>({
           ROW_NUMBER() OVER (
             PARTITION BY cs."userId"
             ORDER BY
+              -- Active/trialing subs take priority so a stale expired_claimable
+              -- record can't out-rank a current sub at the same tier.
+              CASE WHEN cs.status IN ('active', 'trialing') THEN 0 ELSE 1 END,
               CASE (p.metadata->>'tier')::text
                 WHEN 'gold' THEN 4
                 WHEN 'silver' THEN 3
                 WHEN 'bronze' THEN 2
                 WHEN 'founder' THEN 2
                 ELSE 1
-              END DESC
+              END DESC,
+              cs."currentPeriodEnd" DESC NULLS LAST
           ) as rn
         FROM "CustomerSubscription" cs
         JOIN "Product" p ON p.id = cs."productId"
         WHERE cs."userId" IN (${Prisma.join(goodIds)})
-          AND cs.status NOT IN ('canceled')
+          AND cs.status NOT IN ('canceled', 'expired_claimable', 'paused')
       )
       SELECT
         u.id as "userId",
