@@ -68,12 +68,16 @@ export const bulkPayoutBlockAttributions = createJob(
       _sum: { appOwnerShareCents: number | null };
       _count: number;
     };
+    // Two-step cast via `unknown` — Prisma's groupBy uses constrained generic
+    // inference that lets a direct `as GroupRow[]` back-propagate into the
+    // args type (`& GroupRow[]` intersection), which then fails to validate
+    // the args object. Casting through `unknown` breaks the back-propagation.
     const rows = (await dbRead.blockBuzzAttribution.groupBy({
       by: ['appOwnerUserId'],
       where: { status: 'confirmed' },
       _sum: { appOwnerShareCents: true },
       _count: true,
-    })) as GroupRow[];
+    })) as unknown as GroupRow[];
 
     // Surface the queue depth + dollar value to ops so leadership can
     // batch-process manually until the automated path lights up.
