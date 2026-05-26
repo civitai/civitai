@@ -635,7 +635,7 @@ export async function runAbuseDetectionScan() {
             playerId: s.userId,
             modId: constants.system.user.id,
             reason,
-            size: 1,
+            size: newOrderConfig.smiteSize * 50,
           });
           await logToAxiom({
             type: 'warning',
