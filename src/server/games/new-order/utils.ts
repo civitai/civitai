@@ -744,11 +744,32 @@ export const getImageRatingsCounter = (imageId: number) => {
   return counter;
 };
 
-type VotingRateLimitConfig = {
+export type VotingRateLimitConfig = {
   perMinute: number;
   perHour: number;
   perDay: number;
   abuseThreshold: number;
+  /** Have the daily abuse-detection job auto-smite suspects matching strict signals. Off by default. */
+  autoSmiteAbusers?: boolean;
+  /**
+   * Tunable thresholds for the daily abuse-detection job. Live values come
+   * from Redis so they're not leaked via the public source tree — defaults
+   * here are a non-load-bearing fallback for first-boot before ops seeds the
+   * config. Calibrate against real queue composition and revisit as the
+   * NSFW sampling rate / pool mix shifts.
+   */
+  abuseDetection?: {
+    /** HAVING totalRatings >= X — minimum daily vote count to be considered. */
+    minTotalRatings?: number;
+    /** HAVING dominantPct >= X — detection-pool floor for skewed distributions. */
+    havingDominantPct?: number;
+    /** HAVING avgPerMinute > X — detection-pool floor for burst voting. */
+    havingAvgPerMinute?: number;
+    /** Smite filter — issue smite when dominantPct >= X. */
+    smiteDominantPct?: number;
+    /** Smite filter — issue smite when uniqueRatings <= X. */
+    smiteMaxUniqueRatings?: number;
+  };
 };
 
 const DENIED_RESPONSE = { allowed: false, remaining: 0, resetTime: 0, isAbuse: false } as const;
@@ -760,7 +781,7 @@ const DAY_WINDOW = 24 * HOUR_WINDOW;
  * Get rate limit config from Redis. Returns null if unavailable — callers
  * should deny the vote when config is not available.
  */
-async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
+export async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig | null> {
   try {
     return await sysRedis.packed.get<VotingRateLimitConfig>(REDIS_SYS_KEYS.NEW_ORDER.CONFIG);
   } catch {

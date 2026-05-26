@@ -8,6 +8,16 @@ const configSchema = z.object({
   perHour: z.number().int().min(1).optional(),
   perDay: z.number().int().min(1).optional(),
   abuseThreshold: z.number().int().min(1).optional(),
+  autoSmiteAbusers: z.boolean().optional(),
+  abuseDetection: z
+    .object({
+      minTotalRatings: z.number().int().min(1).optional(),
+      havingDominantPct: z.number().min(0).max(100).optional(),
+      havingAvgPerMinute: z.number().min(0).optional(),
+      smiteDominantPct: z.number().min(0).max(100).optional(),
+      smiteMaxUniqueRatings: z.number().int().min(1).optional(),
+    })
+    .optional(),
 });
 
 export default ModEndpoint(
