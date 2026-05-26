@@ -27,6 +27,29 @@ import {
 const getIpnCallbackUrl = () =>
   env.NOWPAYMENTS_IPN_URL ?? `${env.NEXTAUTH_URL}/api/webhooks/nowpayments`;
 
+// App Blocks revenue-share attribution is NOT wired for NOWPayments.
+//
+// Why: NOWPayments identifies deposits via `order_id: user:{userId}` —
+// the deposit address is shared (one address per user, not per
+// purchase) and there's no per-transaction metadata bag. We can't
+// carry attribution from the block iframe through to the deposit
+// webhook without one of:
+//
+//   1. A new `block_buzz_purchase_sessions` table keyed by (userId,
+//      currency, network) that records "the next deposit from this
+//      user on this rail attributes to app X" — race-prone if the
+//      user has multiple block tabs open.
+//   2. Per-purchase fresh order IDs embedded with attribution
+//      (`user:{userId}:app:{appId}:...`). Requires the deposit-address
+//      flow to mint a new address per purchase; today addresses are
+//      shared across the user's lifetime.
+//
+// Both are out of scope for v1. Crypto-deposit buzz purchases will
+// credit buzz as normal but write no attribution row — publishers
+// don't earn share on those purchases. Captured in the handoff doc
+// for follow-up. If we later need it, the right move is option 2
+// (per-purchase addresses) — it's the only attribution-safe shape.
+
 const log = async (data: MixedObject) => {
   await logToAxiom({ name: 'nowpayments-service', type: 'error', ...data }).catch();
 };
