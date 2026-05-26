@@ -666,14 +666,14 @@ async function getIsNewUser(userId: number) {
   return isNewUser;
 }
 
-const KONO_NSFW_SAMPLING_RATE = 0.5; // 50%
+const KONO_NSFW_SAMPLING_RATE = 0.3; // 30%
 async function addToNewOrderQueue({ imageId, nsfw }: { imageId: number; nsfw: boolean }) {
   let shouldAddToQueue = true;
   let priority: 1 | 2 | 3 = 1;
   const rankType = NewOrderRankType.Knight;
   if (nsfw) {
     priority = 2;
-    shouldAddToQueue = Math.random() < KONO_NSFW_SAMPLING_RATE; // Use random sampling for 20% inclusion rate
+    shouldAddToQueue = Math.random() < KONO_NSFW_SAMPLING_RATE;
   }
   if (shouldAddToQueue) {
     await addImageToQueue({
