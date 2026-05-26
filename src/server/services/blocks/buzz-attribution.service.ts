@@ -1,5 +1,6 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { blockBuzzAttributionWriteCounter } from '~/server/prom/client';
 import {
   type BlockAttribution,
   type BlockAttributionScope,
@@ -170,6 +171,19 @@ export async function recordAttribution(
       },
       'webhooks'
     ).catch(() => null);
+
+    // Best-effort Prometheus increment. Never fail the call on a
+    // metric write error — metric infrastructure issues should not
+    // back-pressure the webhook path.
+    try {
+      blockBuzzAttributionWriteCounter.inc({
+        provider: paymentProvider,
+        scope: attribution.scope,
+        status,
+      });
+    } catch {
+      // swallow
+    }
 
     return { written: true, row: created };
   } catch (err) {

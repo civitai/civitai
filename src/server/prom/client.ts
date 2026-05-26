@@ -153,6 +153,17 @@ export const dbReadFallbackCounter = registerCounterWithLabels({
   labelNames: ['entity', 'caller'] as const,
 });
 
+// App Blocks buzz attribution
+// One row written per buzz purchase originating inside a block. Labels
+// give us per-provider, per-scope, per-status dashboards without
+// cross-contaminating sums. `status` values: 'pending'|'voided' at
+// write time; future status changes go through separate counters.
+export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
+  name: 'block_buzz_attribution_total',
+  help: 'Block buzz attribution rows written',
+  labelNames: ['provider', 'scope', 'status'] as const,
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
