@@ -84,4 +84,27 @@
     background-color: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-4));
     border: 0;
   }
+
+  // Placeholder shown in place of third-party iframes for unconsented CA visitors.
+  // The original iframe is replaced server-side-of-sanitize by RenderHtml; this
+  // styling makes the empty <div data-consent-blocked> render as a visible
+  // "content blocked" card rather than an empty box.
+  div[data-consent-blocked] {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    padding: 1rem;
+    border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+    border-radius: var(--mantine-radius-md);
+    background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-7));
+    color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+    font-size: 0.875rem;
+    text-align: center;
+
+    &::before {
+      content: attr(data-consent-blocked) " content blocked — accept cookies via “Manage cookies” in the footer to view.";
+      text-transform: capitalize;
+    }
+  }
 }

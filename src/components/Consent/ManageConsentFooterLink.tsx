@@ -6,13 +6,7 @@ export function ManageConsentFooterLink() {
   if (!required) return null;
 
   return (
-    <Button
-      onClick={reset}
-      className="px-2.5 @max-sm:px-1"
-      size="xs"
-      variant="subtle"
-      color="gray"
-    >
+    <Button onClick={reset} className="px-2.5 @max-sm:px-1" size="xs" variant="subtle" color="gray">
       Manage cookies
     </Button>
   );

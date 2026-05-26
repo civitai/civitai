@@ -2,6 +2,8 @@ import type { BoxProps } from '@mantine/core';
 import { Box, Loader } from '@mantine/core';
 import clsx from 'clsx';
 import { useEffect, useState } from 'react';
+import { ConsentBlockedEmbed } from '~/components/Consent/ConsentBlockedEmbed';
+import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { trpc } from '~/utils/trpc';
 import styles from './VimeoEmbed.module.scss';
 
@@ -12,9 +14,11 @@ export const VimeoEmbed = ({
   className,
   ...props
 }: { videoId: string; autoplay?: boolean; fallbackContent?: React.ReactNode } & BoxProps) => {
-  const { data, isLoading } = trpc.vimeo.checkVideoAvailable.useQuery({
-    id: videoId,
-  });
+  const { allowed } = useThirdPartyConsent();
+  const { data, isLoading } = trpc.vimeo.checkVideoAvailable.useQuery(
+    { id: videoId },
+    { enabled: allowed }
+  );
   const [useFallbackContent, setUseFallbackContent] = useState(false);
 
   useEffect(() => {
@@ -23,6 +27,14 @@ export const VimeoEmbed = ({
       return;
     }
   }, [data, isLoading]);
+
+  if (!allowed) {
+    return (
+      <Box {...props} className={clsx(styles.vimeoWrapper, className)}>
+        <ConsentBlockedEmbed kind="vimeo" />
+      </Box>
+    );
+  }
 
   if (useFallbackContent && fallbackContent) {
     return <>{fallbackContent}</>;

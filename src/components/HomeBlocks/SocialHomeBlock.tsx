@@ -2,6 +2,7 @@ import { Box, Group, Popover, Stack, Text, Title } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, useRef } from 'react';
+import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import type { SocialBlockProps } from '~/components/HomeBlocks/components/SocialBlock';
 import { SocialBlock } from '~/components/HomeBlocks/components/SocialBlock';
@@ -17,7 +18,12 @@ import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 export const SocialHomeBlock = ({ showAds, ...props }: Props) => {
+  const { allowed } = useThirdPartyConsent();
   if (!props.metadata.socials?.length) return null;
+  // Embeds inside (Instagram/X/Twitch/YouTube thumbnail) hit third-party hosts on
+  // mount. For unconsented CA visitors, hide the whole block rather than render
+  // one placeholder per embed — these are decorative, not core content.
+  if (!allowed) return null;
 
   return (
     <HomeBlockWrapper py={32}>

@@ -75,12 +75,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // silently block — no Snigel script, no interleaved slots.
   // Also gated on CIPA consent: in regions where consent is required, the Snigel
   // loader (and the prebid/ad-tech cascade behind it) cannot fire until accepted.
-  const adsEnabled =
-    !browserBlocked &&
-    consentAllowed &&
-    (allowAds || !isMember) &&
-    !blockedUrls.some((url) => router.asPath.includes(url)) &&
-    !router.asPath.split('?')[0].endsWith('/edit');
+  const adsEnabled = isDev
+    ? false
+    : !browserBlocked &&
+      consentAllowed &&
+      (allowAds || !isMember) &&
+      !blockedUrls.some((url) => router.asPath.includes(url)) &&
+      !router.asPath.split('?')[0].endsWith('/edit');
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });
