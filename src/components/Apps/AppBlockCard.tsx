@@ -15,6 +15,12 @@ export interface AppBlockCardProps {
   block: AvailableBlock;
   alreadySubscribed: boolean;
   onOpen: (block: AvailableBlock) => void;
+  /**
+   * Lifetime publisher share for this app, in cents. Rendered as an
+   * "Earning" chip on cards owned by the current user. Undefined =
+   * not owned by the viewer; 0 = owned but no earnings yet (no chip).
+   */
+  ownedEarningCents?: number;
 }
 
 function slotLabel(slotId?: string): string {
@@ -30,7 +36,12 @@ function slotLabel(slotId?: string): string {
   }
 }
 
-export function AppBlockCard({ block, alreadySubscribed, onOpen }: AppBlockCardProps) {
+export function AppBlockCard({
+  block,
+  alreadySubscribed,
+  onOpen,
+  ownedEarningCents,
+}: AppBlockCardProps) {
   const manifest = block.manifest as {
     name?: string;
     description?: string;
@@ -50,9 +61,16 @@ export function AppBlockCard({ block, alreadySubscribed, onOpen }: AppBlockCardP
               by {block.appName ?? block.appId}
             </Text>
           </Stack>
-          <Badge variant="light" color="blue" size="sm">
-            {slotLabel(slot)}
-          </Badge>
+          <Stack gap={4} align="flex-end">
+            <Badge variant="light" color="blue" size="sm">
+              {slotLabel(slot)}
+            </Badge>
+            {ownedEarningCents != null && ownedEarningCents > 0 && (
+              <Badge variant="light" color="green" size="sm">
+                Earning ${(ownedEarningCents / 100).toFixed(2)}
+              </Badge>
+            )}
+          </Stack>
         </Group>
         {manifest.description && (
           <Text size="sm" c="dimmed" className="line-clamp-3">

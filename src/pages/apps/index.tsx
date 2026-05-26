@@ -62,6 +62,20 @@ export default function AppsPage() {
   const { data: mySubs } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
     enabled: !!features.appBlocks,
   });
+  // Lifetime earnings per owned app — feeds the "Earning $X" chip on
+  // marketplace cards owned by the viewer. Visible only to the owner;
+  // the trPC procedure is guarded so other users get nothing back.
+  const { data: myAppsRaw } = trpc.blocks.getMyApps.useQuery(undefined, {
+    enabled: !!features.appBlocks,
+  });
+  const earningsByAppBlockId = useMemo(() => {
+    type AppRow = { id: string; lifetimeShareCents: number };
+    const map = new Map<string, number>();
+    for (const a of (myAppsRaw ?? []) as AppRow[]) {
+      map.set(a.id, a.lifetimeShareCents ?? 0);
+    }
+    return map;
+  }, [myAppsRaw]);
 
   // Index existing subscriptions by appBlockId so we know whether to show
   // Install vs Manage on each card.
@@ -142,6 +156,7 @@ export default function AppsPage() {
                     block={block}
                     alreadySubscribed={subsByBlock.has(block.id)}
                     onOpen={handleOpen}
+                    ownedEarningCents={earningsByAppBlockId.get(block.id)}
                   />
                 </Grid.Col>
               ))}
