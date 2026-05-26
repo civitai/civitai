@@ -1,9 +1,8 @@
-import { Alert, Button, Kbd, ActionIcon, Tooltip, Text, Modal, Popover } from '@mantine/core';
+import { Button, Kbd, ActionIcon, Tooltip, Text, Modal, Popover } from '@mantine/core';
 import type { HotkeyItem } from '@mantine/hooks';
 import { useHotkeys } from '@mantine/hooks';
 import {
   IconArrowBackUp,
-  IconClock,
   IconFlag,
   IconVolumeOff,
   IconVolume,
@@ -11,11 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { useState, useMemo, useCallback } from 'react';
 import { openBrowsingLevelGuide } from '~/components/Dialog/triggers/browsing-level-guide';
-import {
-  damnedReasonOptions,
-  ratingOptions,
-  useVotingCooldown,
-} from '~/components/Games/KnightsNewOrder.utils';
+import { damnedReasonOptions, ratingOptions } from '~/components/Games/KnightsNewOrder.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
@@ -23,16 +18,6 @@ import { browsingLevelDescriptions } from '~/shared/constants/browsingLevel.cons
 import { getDisplayName } from '~/utils/string-helpers';
 
 let timeoutRef: NodeJS.Timeout | undefined;
-
-const formatCooldown = (seconds: number) => {
-  if (seconds < 60) return `${seconds}s`;
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  if (m < 60) return `${m}m ${s.toString().padStart(2, '0')}s`;
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
-  return `${h}h ${mm.toString().padStart(2, '0')}m`;
-};
 
 export function NewOrderImageRater({
   muted,
@@ -43,9 +28,7 @@ export function NewOrderImageRater({
 }: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [showReasons, setShowReasons] = useState(false);
-  const { isLocked, secondsRemaining } = useVotingCooldown();
-  // Cooldown acts as a hard lock — buttons disable, hotkeys no-op, banner shows.
-  const isDisabled = disabled || isLocked;
+  const isDisabled = disabled;
 
   const debouncedRatingClick = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
@@ -146,19 +129,6 @@ export function NewOrderImageRater({
 
   return (
     <div className="flex flex-col gap-2">
-      {isLocked && (
-        <Alert
-          icon={<IconClock size={18} />}
-          color="yellow"
-          radius="md"
-          py="xs"
-          className="text-center"
-        >
-          <Text size="sm" fw={500}>
-            Voting cooldown — try again in {formatCooldown(secondsRemaining)}
-          </Text>
-        </Alert>
-      )}
       <div className="flex flex-wrap justify-center gap-2">
         {showReasons ? (
           mobile ? (
@@ -217,7 +187,12 @@ export function NewOrderImageRater({
                 );
               })}
             </Button.Group>
-            <Button variant="default" size={mobile ? 'xs' : undefined} onClick={debouncedSkipClick}>
+            <Button
+              variant="default"
+              size={mobile ? 'xs' : undefined}
+              onClick={debouncedSkipClick}
+              disabled={isDisabled}
+            >
               Skip
             </Button>
           </>

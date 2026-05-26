@@ -13,7 +13,9 @@ import {
   useJoinKnightsNewOrder,
   useKnightsNewOrderListener,
   useQueryKnightsNewOrderImageQueue,
+  useVotingCooldown,
 } from '~/components/Games/KnightsNewOrder.utils';
+import { NewOrderCooldownLockout } from '~/components/Games/NewOrder/NewOrderCooldownLockout';
 import { NewOrderImageRater } from '~/components/Games/NewOrder/NewOrderImageRater';
 import { NewOrderJoin } from '~/components/Games/NewOrder/NewOrderJoin';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -72,6 +74,7 @@ export default Page(
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
     const { playerData, isLoading, joined } = useJoinKnightsNewOrder();
+    const { isLocked: isCooldownLocked } = useVotingCooldown();
     const { addRating, skipRating } = useAddImageRating({ filters });
     const {
       data,
@@ -208,6 +211,8 @@ export default Page(
                   )}
                   {loadingImagesQueue || isRefetching ? (
                     <Loader type="bars" size="xl" />
+                  ) : isCooldownLocked ? (
+                    <NewOrderCooldownLockout />
                   ) : currentImage ? (
                     <div className="relative flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
                       <ImageGuard2 image={currentImage} explain={false}>
