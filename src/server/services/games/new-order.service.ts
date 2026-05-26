@@ -1806,8 +1806,8 @@ export async function getPlayerHistory({
     `userId = ${playerId}`,
     `createdAt >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
   ];
-  // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-  if (cursor) AND.push(`createdAt < '${cursor}'`);
+  // cursor is now guaranteed to be a Date (schema coerces); safe to ISO-format.
+  if (cursor) AND.push(`createdAt < '${cursor.toISOString()}'`);
 
   const HAVING = [];
   if (status?.length) HAVING.push(`status IN ('${status.join("','")}')`);

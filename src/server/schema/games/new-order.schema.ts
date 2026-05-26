@@ -1,4 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { newOrderConfig } from '~/server/common/constants';
 import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
@@ -68,16 +67,14 @@ const transformStatus = {
 
 export type GetHistoryInput = z.input<typeof getHistorySchema>;
 export type GetHistorySchema = z.infer<typeof getHistorySchema>;
+// Cursor is interpolated into a ClickHouse query downstream — must coerce to a
+// real Date so a crafted string cannot inject SQL. Previously any authed user
+// could read all KoNo players' rating history by sending a cursor like
+// `' OR 1=1 --` which would round-trip through `.union([..., z.string(), ...])`
+// untouched and land inside the `createdAt < '${cursor}'` template.
 export const getHistorySchema = z.object({
   limit: z.number().optional().default(DEFAULT_PAGE_SIZE),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: z.coerce.date().optional(),
   status: z
     .enum(NewOrderImageRatingStatus)
     .transform((val) => {
