@@ -45,6 +45,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     'createdAt',
+    // `id` required by the keyset cleanup scan (src/server/meilisearch/cleanup.ts).
+    'id',
     'stats.unitAmountCountAllTime',
     'stats.entryCountAllTime',
     'stats.favoriteCountAllTime',
@@ -66,6 +68,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const filterableAttributes = [
+    // `id` required by the keyset cleanup scan (src/server/meilisearch/cleanup.ts).
+    'id',
     'user.username',
     'type',
     'details.baseModel',

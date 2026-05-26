@@ -52,7 +52,10 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);
 
-  const filterableAttributes = ['tags.name', 'user.username', 'nsfwLevel'];
+  // `id` is required filterable for the keyset pagination scan in
+  // src/server/meilisearch/cleanup.ts. `id` is already declared in the
+  // updateSortableAttributes call above.
+  const filterableAttributes = ['id', 'tags.name', 'user.username', 'nsfwLevel'];
 
   if (
     // Meilisearch stores sorted.

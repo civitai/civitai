@@ -12,8 +12,15 @@ const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = COMICS_SEARCH_INDEX;
 
 const searchableAttributes = ['name', 'description', 'user.username'];
-const sortableAttributes = ['createdAt', 'updatedAt', 'stats.chapterCount', 'stats.followerCount'];
-const filterableAttributes = ['user.username', 'genre', 'nsfwLevel'];
+// `id` is in both lists for the keyset cleanup scan (src/server/meilisearch/cleanup.ts).
+const sortableAttributes = [
+  'createdAt',
+  'id',
+  'updatedAt',
+  'stats.chapterCount',
+  'stats.followerCount',
+];
+const filterableAttributes = ['id', 'user.username', 'genre', 'nsfwLevel'];
 const rankingRules = ['sort', 'words', 'typo', 'proximity', 'attribute', 'exactness'];
 
 const onIndexSetup = async ({ indexName }: { indexName: string }) => {
