@@ -4,6 +4,7 @@ import { IconArrowUp } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRef, useState } from 'react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
+import { ManageConsentFooterLink } from '~/components/Consent/ManageConsentFooterLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
@@ -187,6 +188,7 @@ export function AppFooter() {
               }
               return button;
             })}
+          <ManageConsentFooterLink />
           <SocialLinks />
         </div>
         <div className="ml-auto flex items-center gap-1">
