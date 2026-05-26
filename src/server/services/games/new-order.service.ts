@@ -23,6 +23,7 @@ import {
   fervorCounter,
   getActiveSlot,
   getImageRatingsCounter,
+  getVotingCooldownUntil,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -53,6 +54,7 @@ import {
   throwBadRequestError,
   throwInternalServerError,
   throwNotFoundError,
+  throwRateLimitError,
 } from '~/server/utils/errorHandling';
 import { getLevelProgression } from '~/server/utils/game-helpers';
 import { withSpan } from '~/server/utils/otel-helpers';
@@ -109,9 +111,12 @@ export async function joinGame({ userId }: { userId: number }) {
 
   if (user.playerInfo) {
     // User is already in game
-    const stats = await getPlayerStats({ playerId: userId });
+    const [stats, cooldownUntil] = await Promise.all([
+      getPlayerStats({ playerId: userId }),
+      getVotingCooldownUntil(userId),
+    ]);
     const { user: userInfo, ...playerData } = user.playerInfo;
-    return { ...userInfo, ...playerData, stats };
+    return { ...userInfo, ...playerData, stats, cooldownUntil };
   }
 
   const player = await dbWrite.newOrderPlayer.create({
@@ -138,6 +143,7 @@ export async function joinGame({ userId }: { userId: number }) {
       recentlyGrantedBuzz: 0,
       nextGrantDate: dayjs().add(1, 'day').startOf('day').toDate(),
     },
+    cooldownUntil: null,
   };
 }
 
@@ -149,9 +155,12 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
   const { user, ...playerData } = player;
-  const stats = await getPlayerStats({ playerId });
+  const [stats, cooldownUntil] = await Promise.all([
+    getPlayerStats({ playerId }),
+    getVotingCooldownUntil(playerId),
+  ]);
 
-  return { ...playerData, ...user, stats };
+  return { ...playerData, ...user, stats, cooldownUntil };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
@@ -364,31 +373,6 @@ async function processImageRating({
       checkVotingRateLimit(playerId)
     );
 
-    // If abuse threshold exceeded, reset player career
-    if (rateLimitResult.isAbuse) {
-      logToAxiom({
-        type: 'warning',
-        name: 'new-order-abuse-detection',
-        details: {
-          playerId,
-          imageId,
-          action: 'career-reset',
-          reason: 'excessive-voting',
-        },
-        message: `Player ${playerId} exceeded abuse threshold and was reset`,
-      }).catch(() => null);
-
-      await resetPlayer({
-        playerId,
-        withNotification: true,
-        reason:
-          'Your account has been reset due to suspicious voting patterns. Please vote at a reasonable pace to avoid this in the future.',
-      });
-
-      throw throwBadRequestError('Account has been reset due to suspicious voting patterns.');
-    }
-
-    // Standard rate limiting
     if (!rateLimitResult.allowed) {
       if (Math.random() < 0.1) {
         logToAxiom({
@@ -396,19 +380,16 @@ async function processImageRating({
           name: 'new-order-rate-limit',
           details: {
             playerId,
-            remaining: rateLimitResult.remaining,
-            resetTime: rateLimitResult.resetTime,
+            cooldownUntil: rateLimitResult.cooldownUntil,
           },
-          message: `Player ${playerId} hit rate limit`,
+          message: `Player ${playerId} hit rate limit cooldown`,
         }).catch(() => null);
       }
 
-      const waitSeconds = rateLimitResult.resetTime
-        ? Math.max(1, Math.ceil((rateLimitResult.resetTime - Date.now()) / 1000))
+      const waitSeconds = rateLimitResult.cooldownUntil
+        ? Math.max(1, Math.ceil((rateLimitResult.cooldownUntil - Date.now()) / 1000))
         : 60;
-      throw throwBadRequestError(
-        `Rate limit exceeded. Please wait ${waitSeconds} seconds before voting again.`
-      );
+      throw throwRateLimitError(`Voting cooldown active. Try again in ${waitSeconds}s.`);
     }
   }
 
@@ -2002,39 +1983,3 @@ export async function manageSanityChecks({ add, remove }: { add?: number[]; remo
     throw throwInternalServerError(error);
   }
 }
-
-/**
- * Admin testing function for simulating votes in the Knights of New Order system.
- * Allows moderators to test consensus mechanics by submitting votes as different users.
- *
- * Key features:
- * - Vote as any user (auto-joins if needed)
- * - Auto-adds image to queue if not present
- * - Uses real voting logic for authentic testing
- * - Returns detailed consensus and queue state
- *
- * @param imageId - The image to vote on
- * @param rating - The NSFW level rating to submit
- * @param userId - Optional: The user to vote as (defaults to moderator's ID)
- * @param damnedReason - Optional: Reason for blocking content
- * @param moderatorId - The moderator performing the test
- */
-
-
-/**
- * Helper function to get detailed queue state for testing and debugging.
- * Shows which images are in which queues and their current vote counts.
- */
-
-
-/**
- * Helper function to get vote details for a specific image.
- * Shows all votes, weighted distribution, and consensus status.
- */
-
-
-/**
- * Helper function to reset a specific image's vote state.
- * Useful for cleaning up test data and restarting test scenarios.
- */
-

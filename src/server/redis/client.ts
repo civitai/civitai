@@ -930,6 +930,7 @@ export const REDIS_KEYS = {
         MINUTE: 'new-order:rate-limit:minute',
         HOUR: 'new-order:rate-limit:hour',
         DAY: 'new-order:rate-limit:day',
+        COOLDOWN: 'new-order:rate-limit:cooldown',
       },
     },
     TOP_EARNERS: 'packed:caches:top-earners',
