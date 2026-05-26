@@ -2188,6 +2188,7 @@ model OauthClient {
   tokens         ApiKey[]
   consents       OauthConsent[]
   appBlocks      AppBlock[]
+  buzzAttributions BlockBuzzAttribution[]
 
   @@index([userId])
 }
