@@ -148,7 +148,7 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
     );
   });
 
-  it('smites suspects matching dominantPct >= 95 when flag is on', async () => {
+  it('smites suspects matching dominantPct >= smiteDominantPct when flag is on', async () => {
     mockClickhouseQuery.mockResolvedValue([
       strictSuspect({ userId: 200, uniqueRatings: 3, dominantPct: 95 }),
     ]);
@@ -158,6 +158,7 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perDay: 1,
       abuseThreshold: 1,
       autoSmiteAbusers: true,
+      abuseDetection: { smiteDominantPct: 95 },
     });
 
     await runAbuseDetectionScan();
@@ -189,7 +190,7 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
     expect(mockSmitePlayer).not.toHaveBeenCalled();
   });
 
-  it('does not smite at 90% dominantPct (below 95% threshold)', async () => {
+  it('does not smite below smiteDominantPct threshold', async () => {
     mockClickhouseQuery.mockResolvedValue([
       strictSuspect({ userId: 350, uniqueRatings: 3, dominantPct: 92 }),
     ]);
@@ -199,6 +200,7 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perDay: 1,
       abuseThreshold: 1,
       autoSmiteAbusers: true,
+      abuseDetection: { smiteDominantPct: 95 },
     });
 
     await runAbuseDetectionScan();
