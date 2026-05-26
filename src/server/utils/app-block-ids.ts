@@ -86,3 +86,7 @@ export function newBlockInstanceId(): string {
 export function newBlockUserSubscriptionId(): string {
   return `bus_${newUlid()}`;
 }
+
+export function newBlockBuzzAttributionId(): string {
+  return `bba_${newUlid()}`;
+}
