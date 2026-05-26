@@ -15,9 +15,14 @@ type Props = {
   children: React.ReactNode;
   region: RegionInfo | null | undefined;
   initialConsent: ConsentDecision | null;
+  loggedIn: boolean;
 };
 
-export function ThirdPartyConsentProvider({ children, region, initialConsent }: Props) {
+export function ThirdPartyConsentProvider({ children, region, initialConsent, loggedIn }: Props) {
   if (!isConsentRequired(region)) return <>{children}</>;
-  return <CAConsentManager initialConsent={initialConsent}>{children}</CAConsentManager>;
+  return (
+    <CAConsentManager initialConsent={initialConsent} loggedIn={loggedIn}>
+      {children}
+    </CAConsentManager>
+  );
 }

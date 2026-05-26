@@ -6,10 +6,16 @@ import { CONSENT_COOKIE, CONSENT_COOKIE_MAX_AGE, type ConsentDecision } from './
 type Props = {
   children: React.ReactNode;
   initialConsent: ConsentDecision | null;
+  loggedIn: boolean;
 };
 
-export function CAConsentManager({ children, initialConsent }: Props) {
-  const [consent, setConsent] = useState<ConsentDecision | null>(initialConsent);
+export function CAConsentManager({ children, initialConsent, loggedIn }: Props) {
+  // Cookie takes precedence over logged-in implicit consent: a user who
+  // explicitly rejected before signing in stays rejected. Logged-in users
+  // without an explicit cookie decision are treated as having accepted via
+  // the Terms of Service (§ 8.7 discloses third-party analytics/advertising).
+  const effectiveInitial: ConsentDecision | null = initialConsent ?? (loggedIn ? 'accepted' : null);
+  const [consent, setConsent] = useState<ConsentDecision | null>(effectiveInitial);
 
   const persist = useCallback((value: ConsentDecision) => {
     if (typeof document !== 'undefined') {

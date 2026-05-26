@@ -64,10 +64,11 @@ export function ConsentBlockedEmbed({ kind, className }: Props) {
           {label} content blocked
         </Text>
         <Text size="xs" c="dimmed">
-          We need your consent before loading {label} content. Essential cookies stay on either way.
+          This embed is blocked because {label} sets third-party cookies and trackers to load its
+          content. We need your consent before loading it.
         </Text>
         <Button size="xs" onClick={accept} mt={4}>
-          Accept and load
+          Accept third-party cookies and load
         </Button>
       </Stack>
     </Card>

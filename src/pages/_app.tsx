@@ -170,7 +170,11 @@ function MyApp(props: CustomAppProps) {
         <title>Civitai | Share your models</title>
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
-        <ThirdPartyConsentProvider region={region} initialConsent={cookies.consent}>
+        <ThirdPartyConsentProvider
+          region={region}
+          initialConsent={cookies.consent}
+          loggedIn={!!session || hasAuthCookie}
+        >
           {/* <ErrorBoundary> */}
           <SessionProvider
             session={session ? session : !hasAuthCookie ? null : undefined}

@@ -1,4 +1,4 @@
-import { Anchor, Button, Group, Paper, Stack, Text } from '@mantine/core';
+import { Anchor, Button, Group, Card, Stack, Text } from '@mantine/core';
 import { useThirdPartyConsent } from './consent.context';
 
 export function ConsentBanner() {
@@ -7,7 +7,7 @@ export function ConsentBanner() {
 
   return (
     <div className="fixed inset-x-0 bottom-0 z-[201] p-3 sm:p-4">
-      <Paper p="md" shadow="lg" radius="md" withBorder className="mx-auto max-w-3xl">
+      <Card p="md" shadow="lg" radius="md" withBorder className="mx-auto max-w-3xl">
         <Stack gap="sm">
           <Stack gap={4}>
             <Text fw={600} size="sm">
@@ -32,7 +32,7 @@ export function ConsentBanner() {
             </Button>
           </Group>
         </Stack>
-      </Paper>
+      </Card>
     </div>
   );
 }
