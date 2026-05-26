@@ -15,7 +15,9 @@ const importSchema = z.object({
 
 export default ModEndpoint(
   async function importSource(req: NextApiRequest, res: NextApiResponse) {
-    const { source, wait, data } = importSchema.parse(req.query);
+    const result = importSchema.safeParse(req.query);
+    if (!result.success) return res.status(400).json({ error: result.error });
+    const { source, wait, data } = result.data;
     const userId = -1; //Default civitai user id
 
     const { id } = await dbWrite.import.create({

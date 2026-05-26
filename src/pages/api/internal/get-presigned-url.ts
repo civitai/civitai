@@ -12,7 +12,9 @@ export default JobEndpoint(async function getPresignedUrl(
   req: NextApiRequest,
   res: NextApiResponse
 ) {
-  const { id: fileId } = requestSchema.parse(req.query);
+  const parsed = requestSchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error });
+  const { id: fileId } = parsed.data;
   const file = await dbRead.modelFile.findFirst({
     select: { url: true, name: true },
     where: { id: fileId },
