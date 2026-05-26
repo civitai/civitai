@@ -284,3 +284,152 @@ export const REFUND_WINDOWS_DAYS: Record<AttributionPaymentProvider, number> = {
 };
 
 export { ACTIVE_RATE_CARD };
+
+// ---------------------------------------------------------------
+// Publisher reporting queries
+// ---------------------------------------------------------------
+
+export type RevenueSummaryBucket = {
+  count: number;
+  grossCents: number;
+  shareCents: number;
+};
+
+export type RevenueSummary = {
+  pending: RevenueSummaryBucket;
+  confirmed: RevenueSummaryBucket;
+  paidOut: RevenueSummaryBucket;
+  voided: { count: number; grossCents: number };
+};
+
+/**
+ * Aggregate revenue summary for a single publisher. Optionally
+ * narrowed to one app_block and/or a date range. Used by the
+ * publisher-facing /apps/[appBlockId]/revenue and /apps/revenue pages.
+ */
+export async function getRevenueForOwner({
+  ownerUserId,
+  appBlockId,
+  from,
+  to,
+}: {
+  ownerUserId: number;
+  appBlockId?: string;
+  from?: Date;
+  to?: Date;
+}): Promise<{ summary: RevenueSummary; topApps: Array<{ appBlockId: string; shareCents: number; count: number }> }> {
+  const where = {
+    appOwnerUserId: ownerUserId,
+    ...(appBlockId ? { appBlockId } : {}),
+    ...(from || to
+      ? {
+          attributedAt: {
+            ...(from ? { gte: from } : {}),
+            ...(to ? { lte: to } : {}),
+          },
+        }
+      : {}),
+  };
+
+  // One round-trip per status bucket. groupBy here keeps the query
+  // cheap — it doesn't need to scan every row, just hit the
+  // (app_owner_user_id, attributed_at) index. The four small queries
+  // run in parallel.
+  const [pending, confirmed, paidOut, voided, topApps] = await Promise.all([
+    dbRead.blockBuzzAttribution.aggregate({
+      where: { ...where, status: 'pending' },
+      _sum: { usdAmountCents: true, appOwnerShareCents: true },
+      _count: true,
+    }),
+    dbRead.blockBuzzAttribution.aggregate({
+      where: { ...where, status: 'confirmed' },
+      _sum: { usdAmountCents: true, appOwnerShareCents: true },
+      _count: true,
+    }),
+    dbRead.blockBuzzAttribution.aggregate({
+      where: { ...where, status: 'paid_out' },
+      _sum: { usdAmountCents: true, appOwnerShareCents: true },
+      _count: true,
+    }),
+    dbRead.blockBuzzAttribution.aggregate({
+      where: { ...where, status: 'voided' },
+      _sum: { usdAmountCents: true },
+      _count: true,
+    }),
+    dbRead.blockBuzzAttribution.groupBy({
+      by: ['appBlockId'],
+      where: { ...where, status: { in: ['confirmed', 'paid_out'] } },
+      _sum: { appOwnerShareCents: true },
+      _count: true,
+      orderBy: { _sum: { appOwnerShareCents: 'desc' } },
+      take: 5,
+    }),
+  ]);
+
+  return {
+    summary: {
+      pending: {
+        count: pending._count ?? 0,
+        grossCents: pending._sum.usdAmountCents ?? 0,
+        shareCents: pending._sum.appOwnerShareCents ?? 0,
+      },
+      confirmed: {
+        count: confirmed._count ?? 0,
+        grossCents: confirmed._sum.usdAmountCents ?? 0,
+        shareCents: confirmed._sum.appOwnerShareCents ?? 0,
+      },
+      paidOut: {
+        count: paidOut._count ?? 0,
+        grossCents: paidOut._sum.usdAmountCents ?? 0,
+        shareCents: paidOut._sum.appOwnerShareCents ?? 0,
+      },
+      voided: {
+        count: voided._count ?? 0,
+        grossCents: voided._sum.usdAmountCents ?? 0,
+      },
+    },
+    topApps: (topApps as Array<{ appBlockId: string; _sum: { appOwnerShareCents: number | null }; _count: number }>).map((r) => ({
+      appBlockId: r.appBlockId,
+      shareCents: r._sum.appOwnerShareCents ?? 0,
+      count: r._count,
+    })),
+  };
+}
+
+/**
+ * Recent attributions for the publisher dashboard's activity feed.
+ * Limited to the last 50 so the response stays small; the timeseries
+ * chart uses the aggregate above instead of walking individual rows.
+ */
+export async function getRecentAttributionsForOwner({
+  ownerUserId,
+  appBlockId,
+  limit = 50,
+}: {
+  ownerUserId: number;
+  appBlockId?: string;
+  limit?: number;
+}) {
+  return dbRead.blockBuzzAttribution.findMany({
+    where: {
+      appOwnerUserId: ownerUserId,
+      ...(appBlockId ? { appBlockId } : {}),
+    },
+    orderBy: { attributedAt: 'desc' },
+    take: limit,
+    select: {
+      id: true,
+      attributedAt: true,
+      scope: true,
+      buzzAmount: true,
+      usdAmountCents: true,
+      appOwnerShareCents: true,
+      providerFeeCents: true,
+      status: true,
+      voidedReason: true,
+      modelId: true,
+      appBlockId: true,
+      paymentProvider: true,
+    },
+  });
+}

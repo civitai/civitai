@@ -15,6 +15,10 @@ import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema'
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import {
+  getRecentAttributionsForOwner,
+  getRevenueForOwner,
+} from '~/server/services/blocks/buzz-attribution.service';
+import {
   getRepresentativeBaseModel,
   resolveBlockCheckpoint,
   validateBlockCheckpoint,
@@ -616,6 +620,105 @@ export const blocksRouter = router({
         settings: input.settings,
       });
       return { ok: true };
+    }),
+
+  /**
+   * Publisher revenue summary. Caller must be the app owner — the
+   * service filters by `app_owner_user_id` so even if the request
+   * carries a different appBlockId, the rows are scoped to the caller.
+   * Auth check is enforced by guardedProcedure; no need to also assert
+   * ownership of the requested appBlockId (the join filter does it).
+   */
+  getMyRevenue: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64).optional(),
+        from: z.string().datetime().optional(),
+        to: z.string().datetime().optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      const user = ctx.user as SessionUser;
+      const { summary, topApps } = await getRevenueForOwner({
+        ownerUserId: user.id,
+        appBlockId: input.appBlockId,
+        from: input.from ? new Date(input.from) : undefined,
+        to: input.to ? new Date(input.to) : undefined,
+      });
+      const recentAttributions = await getRecentAttributionsForOwner({
+        ownerUserId: user.id,
+        appBlockId: input.appBlockId,
+      });
+      return { summary, topApps, recentAttributions };
+    }),
+
+  /**
+   * The current user's owned apps + lifetime revenue per app. Drives
+   * the per-app dropdown on /apps/revenue. OauthClient.userId is the
+   * single source of truth for app ownership in v1.
+   */
+  getMyApps: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      const user = ctx.user as SessionUser;
+      const apps = await dbRead.appBlock.findMany({
+        where: { app: { userId: user.id } },
+        select: {
+          id: true,
+          blockId: true,
+          appId: true,
+          status: true,
+          manifest: true,
+          app: { select: { name: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      // One groupBy across all of the user's apps so the request
+      // doesn't N+1 against the attribution table. Skip when there
+      // are no apps — pointless query.
+      const lifetimeByApp = apps.length
+        ? await dbRead.blockBuzzAttribution.groupBy({
+            by: ['appBlockId'],
+            where: {
+              appOwnerUserId: user.id,
+              status: { in: ['confirmed', 'paid_out'] },
+            },
+            _sum: { appOwnerShareCents: true },
+            _count: true,
+          })
+        : [];
+      type LifetimeRow = {
+        appBlockId: string;
+        _sum: { appOwnerShareCents: number | null };
+        _count: number;
+      };
+      const lifetimeMap = new Map<string, { shareCents: number; count: number }>(
+        (lifetimeByApp as LifetimeRow[]).map((r) => [
+          r.appBlockId,
+          { shareCents: r._sum.appOwnerShareCents ?? 0, count: r._count },
+        ])
+      );
+
+      type AppRow = {
+        id: string;
+        blockId: string;
+        appId: string;
+        status: string;
+        manifest: unknown;
+        app: { name: string } | null;
+      };
+      return (apps as AppRow[]).map((a) => ({
+        id: a.id,
+        blockId: a.blockId,
+        appId: a.appId,
+        status: a.status,
+        appName: a.app?.name ?? null,
+        manifest: a.manifest as Record<string, unknown>,
+        lifetimeShareCents: lifetimeMap.get(a.id)?.shareCents ?? 0,
+        lifetimeCount: lifetimeMap.get(a.id)?.count ?? 0,
+      }));
     }),
 });
 
