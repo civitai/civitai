@@ -19,6 +19,7 @@ import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-rand
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
+import { bulkPayoutBlockAttributions } from '~/server/jobs/bulk-payout-block-attributions';
 import { custodySweepJob } from '~/server/jobs/custody-sweep';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { countReviewImages } from '~/server/jobs/count-review-images';
@@ -160,6 +161,7 @@ export const jobs: Job[] = [
   updateCreatorResourceCompensation,
   confirmMutes,
   confirmPendingBlockAttributions,
+  bulkPayoutBlockAttributions,
   checkImageExistence,
   fullImageExistence,
   rewardsAdImpressions,
