@@ -24,6 +24,10 @@ const {
   mockDbRead,
   mockRedis,
   mockIsAppBlocksEnabled,
+  mockDailyBoostApply,
+  mockDailyBoostGetDetails,
+  mockGetUserBuzzAccounts,
+  mockLogToAxiom,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -45,6 +49,18 @@ const {
   },
   mockRedis: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
+  mockDailyBoostApply: vi.fn(async () => undefined),
+  mockDailyBoostGetDetails: vi.fn(async () => ({
+    awarded: 0,
+    awardAmount: 25,
+    accountType: 'blue',
+    type: 'dailyBoost',
+    description: 'For claiming daily boost rewards',
+    cap: 25,
+    onDemand: true,
+  })),
+  mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
+  mockLogToAxiom: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -79,6 +95,18 @@ vi.mock('~/server/redis/client', () => ({
 }));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
+}));
+vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
+  dailyBoostReward: {
+    apply: (...args: unknown[]) => mockDailyBoostApply(...args),
+    getUserRewardDetails: (...args: unknown[]) => mockDailyBoostGetDetails(...args),
+  },
+}));
+vi.mock('~/server/services/buzz.service', () => ({
+  getUserBuzzAccounts: (...args: unknown[]) => mockGetUserBuzzAccounts(...args),
+}));
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: (...args: unknown[]) => mockLogToAxiom(...args),
 }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
@@ -196,6 +224,10 @@ beforeEach(() => {
     mockGetUserById,
     mockDbRead.modelVersion.findUnique,
     mockIsAppBlocksEnabled,
+    mockDailyBoostApply,
+    mockDailyBoostGetDetails,
+    mockGetUserBuzzAccounts,
+    mockLogToAxiom,
   ]) {
     fn.mockReset();
   }
@@ -208,6 +240,22 @@ beforeEach(() => {
   mockGetOrchestratorToken.mockResolvedValue('orch_token');
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockCreateTextToImageStep.mockResolvedValue({ $type: 'textToImage', name: 's1', input: {} });
+  // Daily-boost autoclaim defaults: balance high enough that no claim
+  // fires unless a test explicitly drops it. Reward details say boost is
+  // unclaimed today with the standard 25 awardAmount. Tests that exercise
+  // autoclaim paths override either the balance or the details.
+  mockDailyBoostApply.mockResolvedValue(undefined);
+  mockDailyBoostGetDetails.mockResolvedValue({
+    awarded: 0,
+    awardAmount: 25,
+    accountType: 'blue',
+    type: 'dailyBoost',
+    description: 'For claiming daily boost rewards',
+    cap: 25,
+    onDemand: true,
+  });
+  mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 10000, blue: 0, green: 0 });
+  mockLogToAxiom.mockResolvedValue(undefined);
 });
 
 describe('blocks.pollWorkflow', () => {
@@ -431,6 +479,211 @@ describe('blocks.submitWorkflow', () => {
         body: { kind: 'unknown', modelId: 7 } as never,
       })
     ).rejects.toThrow();
+  });
+});
+
+/**
+ * Daily-boost autoclaim path. After cost ≤ budget but before submit, the
+ * router checks the user's actual Buzz balance and opportunistically claims
+ * the 25-blue daily boost when it would close the gap. Tests cover the
+ * trigger matrix from the spec: sufficient balance, claimed-today, hopeless
+ * gap, gap-closer, and apply() failure.
+ */
+describe('blocks.submitWorkflow — daily boost autoclaim', () => {
+  function happySubmitSequence(cost = 25) {
+    // First call: whatif preflight returns cost. Second call: real submit.
+    mockSubmitWorkflow
+      .mockResolvedValueOnce({ id: '', status: 'succeeded', cost: { total: cost }, steps: [] })
+      .mockResolvedValueOnce({
+        id: 'wf_real',
+        status: 'unassigned',
+        cost: { total: cost },
+        steps: [],
+      });
+  }
+
+  it('does NOT claim when the user has enough buzz already (boost unclaimed)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 1000, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 0,
+      awardAmount: 25,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('does NOT claim when boost was already claimed today', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    // Balance short of cost but boost is already claimed (awarded > 0).
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 10, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 25,
+      awardAmount: 25,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
+    // Submit still proceeds — the orchestrator's own balance check is
+    // authoritative; the host doesn't pre-fail on possibly-stale buzz API
+    // data.
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('claims when user is short AND the boost would close the gap', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    // Cost 25, balance 5, boost 25 → 5 + 25 = 30 >= 25 ✓
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 0,
+      awardAmount: 25,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).toHaveBeenCalledTimes(1);
+    expect(mockDailyBoostApply).toHaveBeenCalledWith({ userId: 42 }, expect.anything());
+    expect(result.snapshot.autoClaim).toEqual({
+      type: 'dailyBoost',
+      amount: 25,
+      accountType: 'blue',
+    });
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('does NOT claim when the boost would NOT close the gap (hopeless)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 1000 }));
+    happyVersionLookup();
+    happyUser();
+    // Cost 200, balance 10, boost 25 → 10 + 25 = 35 < 200. Don't burn the
+    // boost on a still-hopeless submit; let the orchestrator surface the
+    // insufficient-buzz error and let the block render Top-Up.
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 10, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 0,
+      awardAmount: 25,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    happySubmitSequence(200);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
+    expect(result.snapshot.workflowId).toBe('wf_real');
+  });
+
+  it('submit still proceeds when dailyBoostReward.apply throws (warning logged)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 0,
+      awardAmount: 25,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    mockDailyBoostApply.mockRejectedValueOnce(new Error('redis down'));
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).toHaveBeenCalledTimes(1);
+    // No autoClaim field on the snapshot — the claim failed.
+    expect(result.snapshot.autoClaim).toBeUndefined();
+    // But the workflow still went through to the real submit.
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    // And the failure was logged for ops.
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'apply' }),
+      'webhooks'
+    );
+  });
+
+  it('does NOT claim and submit still proceeds when precheck (balance lookup) throws', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockRejectedValueOnce(new Error('buzz api 503'));
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
+    expect(result.snapshot.workflowId).toBe('wf_real');
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'block-autoclaim-boost', stage: 'precheck' }),
+      'webhooks'
+    );
+  });
+
+  it('does NOT claim when the reward multiplier zeros the award (rewardsIneligible)', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ buzzBudget: 100 }));
+    happyVersionLookup();
+    happyUser();
+    mockGetUserBuzzAccounts.mockResolvedValue({ yellow: 5, blue: 0, green: 0 });
+    // awardAmount = 0 means there's nothing to claim for this user.
+    mockDailyBoostGetDetails.mockResolvedValue({
+      awarded: 0,
+      awardAmount: 0,
+      accountType: 'blue',
+      type: 'dailyBoost',
+      description: 'd',
+      cap: 25,
+      onDemand: true,
+    });
+    happySubmitSequence(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+    expect(mockDailyBoostApply).not.toHaveBeenCalled();
+    expect(result.snapshot.autoClaim).toBeUndefined();
   });
 });
 

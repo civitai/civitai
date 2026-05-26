@@ -1,8 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
+import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
+import { getUserBuzzAccounts } from '~/server/services/buzz.service';
 import {
   blockSettingsSchemaByBlockId,
   blockUserSettingsSchema,
@@ -510,12 +513,30 @@ export const blocksRouter = router({
         };
       }
 
+      // Daily-boost autoclaim. Cost cleared the install's budget cap; check
+      // whether the user's actual spendable Buzz can pay for it. If they're
+      // short AND the 25-blue daily boost would close the gap, fire the
+      // reward apply() before submitting — it's idempotent (Redis Lua dedup
+      // per UTC day) so re-entering this code path twice on the same UTC
+      // day is a no-op.
+      //
+      // Conservative rule: only claim when (current + awardAmount) >= cost.
+      // Burning a one-per-day boost on a still-hopeless submit would be
+      // worse UX than the existing "insufficient buzz" Top-Up CTA the
+      // block already renders.
+      const autoClaim = await maybeAutoClaimDailyBoost({
+        userId,
+        cost,
+        ip: ctx.ip,
+      });
+
       const step = await createTextToImageStep({ ...generateInput, user });
       const submitted = await submitWorkflow({
         token,
         body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
       });
-      return { snapshot: snapshotFromWorkflow(submitted) };
+      const snapshot = snapshotFromWorkflow(submitted);
+      return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
     }),
 
   /**
@@ -769,4 +790,107 @@ function buildWorkflowTags(
     `app-block:block:${claims.blockId}`,
     `app-block:instance:${claims.blockInstanceId}`,
   ];
+}
+
+/**
+ * Server-side opportunistic daily-boost claim for block generation submits.
+ *
+ * Returns the `autoClaim` snapshot fragment when (and only when) the apply()
+ * actually granted the user new Buzz. Returns `undefined` in every other
+ * case — already-claimed-today, balance already sufficient, balance still
+ * short after the would-be claim, or apply() failed.
+ *
+ * The Buzz API is the source of truth for balance. We sum across all
+ * spend-type accounts (yellow + blue + green + red) because the user's
+ * spendable pool is the union; block submits are charged in yellow today
+ * but a separate yellow-only check would over-trigger the claim for users
+ * whose Buzz is parked in blue/green from previous rewards.
+ *
+ * Conservative gating — apply() is only called when:
+ *   1. boost is unclaimed today (cheap Redis HGET)
+ *   2. current balance < cost (Buzz API call)
+ *   3. current balance + awardAmount >= cost (boost closes the gap)
+ *
+ * Failure of apply() is logged and swallowed — the submit still proceeds
+ * (and may fail the orchestrator-side balance check, which surfaces as
+ * the existing insufficient-buzz Top-Up CTA in the block).
+ */
+async function maybeAutoClaimDailyBoost({
+  userId,
+  cost,
+  ip,
+}: {
+  userId: number;
+  cost: number;
+  ip?: string | null;
+}): Promise<NonNullable<ReturnType<typeof buildAutoClaim>> | undefined> {
+  if (cost <= 0) return undefined;
+
+  let boostDetails: Awaited<ReturnType<typeof dailyBoostReward.getUserRewardDetails>>;
+  let balanceSum: number;
+  try {
+    const [details, accounts] = await Promise.all([
+      dailyBoostReward.getUserRewardDetails(userId),
+      getUserBuzzAccounts({ userId }),
+    ]);
+    boostDetails = details;
+    balanceSum = Object.values(accounts).reduce((sum, n) => sum + (n ?? 0), 0);
+  } catch (err) {
+    // Reward-details lookup or Buzz API hiccup — don't fail the submit;
+    // the user keeps the path they had pre-autoclaim.
+    logToAxiom(
+      {
+        name: 'block-autoclaim-boost',
+        type: 'warning',
+        userId,
+        cost,
+        stage: 'precheck',
+        err: (err as Error).message,
+      },
+      'webhooks'
+    ).catch(() => null);
+    return undefined;
+  }
+
+  // Already claimed today, or the reward has no payout (e.g. user is
+  // rewardsIneligible — multiplier zeroed the amount).
+  if (boostDetails.awarded > 0 || boostDetails.awardAmount <= 0) return undefined;
+
+  // Balance already covers the cost — boost would just sit unused today.
+  if (balanceSum >= cost) return undefined;
+
+  // Boost wouldn't close the gap — don't burn it.
+  if (balanceSum + boostDetails.awardAmount < cost) return undefined;
+
+  try {
+    await dailyBoostReward.apply({ userId }, { ip: ip ?? undefined });
+  } catch (err) {
+    logToAxiom(
+      {
+        name: 'block-autoclaim-boost',
+        type: 'warning',
+        userId,
+        cost,
+        stage: 'apply',
+        err: (err as Error).message,
+      },
+      'webhooks'
+    ).catch(() => null);
+    return undefined;
+  }
+
+  return buildAutoClaim(boostDetails.awardAmount, boostDetails.accountType);
+}
+
+function buildAutoClaim(amount: number, accountType: string) {
+  // Narrow the reward's accountType (could be any BuzzAccountType) into the
+  // four spend-type values the snapshot contract exposes. Daily boost is
+  // hard-coded to 'blue' today; the narrow exists so we don't lie to the
+  // iframe if the reward's account type ever changes.
+  const allowed = ['yellow', 'blue', 'red', 'green'] as const;
+  type Allowed = (typeof allowed)[number];
+  const safeAccountType: Allowed = (allowed as readonly string[]).includes(accountType)
+    ? (accountType as Allowed)
+    : 'blue';
+  return { type: 'dailyBoost' as const, amount, accountType: safeAccountType };
 }

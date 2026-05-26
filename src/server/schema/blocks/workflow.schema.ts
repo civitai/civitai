@@ -43,10 +43,20 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [blockTextTo
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
 // Keep field names in lockstep — this is the wire contract the iframe consumes.
+//
+// `autoClaim` is set when the host opportunistically claimed a Buzz reward
+// on the user's behalf during submit (currently only `dailyBoost`). The block
+// uses this to surface a "+25 daily boost claimed!" notice; it's purely
+// informational, never carries state the block must reconcile.
 export type BlockWorkflowSnapshot = {
   workflowId: string;
   status: 'pending' | 'processing' | 'succeeded' | 'failed' | 'expired' | 'canceled';
   cost?: { total: number };
   imageUrls?: string[];
   error?: string;
+  autoClaim?: {
+    type: 'dailyBoost';
+    amount: number;
+    accountType: 'yellow' | 'blue' | 'red' | 'green';
+  };
 };
