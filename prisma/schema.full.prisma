@@ -546,6 +546,8 @@ model User {
   blockUserSettings          BlockUserSettings[]
   promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
   blockUserSubscriptions     BlockUserSubscription[]
+  blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
+  blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
 
   @@index([deletedAt])
 }
@@ -2223,6 +2225,7 @@ model AppBlock {
   modelInstalls      ModelBlockInstall[]
   platformDefault    PlatformDefaultBlock?
   userSubscriptions  BlockUserSubscription[]
+  buzzAttributions   BlockBuzzAttribution[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   @@index([status], map: "app_blocks_status_idx")
@@ -2315,6 +2318,59 @@ model BlockUserSubscription {
 
   @@unique([userId, appBlockId, scope], map: "block_user_subscriptions_user_block_scope_uniq")
   @@map("block_user_subscriptions")
+}
+
+/// Buzz purchase originated from inside an App Block. One row per
+/// (payment_transaction_id, app_block_id). Drives publisher revenue
+/// share — `app_owner_share_cents` is paid out to `app_owner_user_id`
+/// once `status` reaches `paid_out`. Rate card snapshot stored on the
+/// row (`rate_card_version`) so past attributions pay out under their
+/// own terms even if the active rate card later changes.
+///
+/// `blockInstanceId` is intentionally not an FK — see migration
+/// comments. Resolve via BlockRegistry.resolveBlockInstance.
+///
+/// Application-generated id (`bba_<ulid>`).
+model BlockBuzzAttribution {
+  id                     String   @id
+  userId                 Int      @map("user_id")
+  user                   User     @relation("BlockBuzzAttributionPurchaser", fields: [userId], references: [id], onDelete: Restrict)
+  buzzAmount             Int      @map("buzz_amount")
+  usdAmountCents         Int      @map("usd_amount_cents")
+  buzzType               String   @default("yellow") @map("buzz_type")
+
+  paymentProvider        String   @map("payment_provider")
+  paymentTransactionId   String   @map("payment_transaction_id")
+  buzzTransactionId      String?  @map("buzz_transaction_id")
+
+  appId                  String   @map("app_id")
+  app                    OauthClient @relation(fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId             String   @map("app_block_id")
+  appBlock               AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
+  blockInstanceId        String   @map("block_instance_id")
+  scope                  String
+  modelId                Int?     @map("model_id")
+
+  rateCardVersion        String   @map("rate_card_version")
+  appOwnerShareCents     Int      @map("app_owner_share_cents")
+  platformShareCents     Int      @map("platform_share_cents")
+  providerFeeCents       Int      @map("provider_fee_cents")
+  appOwnerUserId         Int      @map("app_owner_user_id")
+  appOwner               User     @relation("BlockBuzzAttributionAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+
+  status                 String   @default("pending")
+  voidedReason           String?  @map("voided_reason")
+  attributedAt           DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
+  confirmedAt            DateTime? @map("confirmed_at") @db.Timestamptz(6)
+  voidedAt               DateTime? @map("voided_at") @db.Timestamptz(6)
+  paidOutAt              DateTime? @map("paid_out_at") @db.Timestamptz(6)
+  payoutId               String?  @map("payout_id")
+
+  @@unique([paymentTransactionId, appBlockId], map: "block_buzz_attribution_payment_app_uniq")
+  @@index([appOwnerUserId, attributedAt(sort: Desc)], map: "bba_publisher_dashboard_idx")
+  @@index([appBlockId, attributedAt(sort: Desc)], map: "bba_app_block_dashboard_idx")
+  @@index([paymentProvider, paymentTransactionId], map: "bba_payment_tx_idx")
+  @@map("block_buzz_attribution")
 }
 
 model OauthConsent {
