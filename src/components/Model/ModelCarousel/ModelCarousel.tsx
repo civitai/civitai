@@ -3,7 +3,10 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -30,11 +33,10 @@ import clsx from 'clsx';
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
   const forceMinorLevel = props.minor && !currentUser?.isModerator;
+  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
 
   return (
-    <BrowsingLevelProvider
-      forcedBrowsingLevel={forceMinorLevel ? publicBrowsingLevelsFlag : undefined}
-    >
+    <BrowsingLevelProvider forcedBrowsingLevel={forceMinorLevel ? minorBrowsingLevel : undefined}>
       <BrowsingSettingsAddonsProvider>
         {forceMinorLevel ? (
           <HiddenPreferencesProvider>
