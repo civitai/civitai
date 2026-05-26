@@ -507,13 +507,22 @@ export async function runAbuseDetectionScan() {
   // All tunable thresholds live in Redis so the operational values aren't
   // visible to anyone reading the public source tree. Defaults below are a
   // first-boot fallback; once ops seeds the config, those take precedence.
+  // Every value is coerced to a finite number before being interpolated into
+  // the ClickHouse query because `formatSqlType` passes strings through
+  // unquoted — a non-numeric value sneaking into the config blob would
+  // otherwise be a SQL-injection vector. Zod already validates writes via
+  // the mod endpoint; this is defense-in-depth for direct Redis edits.
   const config = await getVotingRateLimitConfig();
   const det = config?.abuseDetection ?? {};
-  const minTotalRatings = det.minTotalRatings ?? 10;
-  const havingDominantPct = det.havingDominantPct ?? 10;
-  const havingAvgPerMinute = det.havingAvgPerMinute ?? 10;
-  const smiteDominantPct = det.smiteDominantPct ?? 100;
-  const smiteMaxUniqueRatings = det.smiteMaxUniqueRatings ?? 1;
+  const asFinite = (v: unknown, fallback: number) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const minTotalRatings = asFinite(det.minTotalRatings, 10);
+  const havingDominantPct = asFinite(det.havingDominantPct, 10);
+  const havingAvgPerMinute = asFinite(det.havingAvgPerMinute, 10);
+  const smiteDominantPct = asFinite(det.smiteDominantPct, 100);
+  const smiteMaxUniqueRatings = asFinite(det.smiteMaxUniqueRatings, 1);
 
   const suspects = await clickhouse.$query<{
     userId: number;
