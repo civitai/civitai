@@ -102,15 +102,3 @@ export const manageSanityChecksSchema = z.object({
   remove: z.array(z.number()).optional(),
 });
 
-// Admin testing schemas
-
-export const ;
-
-
-export const ;
-
-
-export const ;
-
-
-export const ;
