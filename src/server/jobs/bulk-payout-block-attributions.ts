@@ -14,50 +14,49 @@ import { createJob } from './job';
  *   3. Hand the (user, totalCents, payoutId) tuple to the canonical
  *      payout entry point.
  *
- * What's blocked on a decision from monetization leadership:
+ * Recommended path (2026-05-26, pending monetization sign-off):
  *
- *   A. Where does the money flow? Two viable shapes:
- *      - Treat block attribution as a new line item on the existing
- *        creator-program cash balance (creator-program.service.ts ::
- *        bankBuzz/getCash/withdrawCash). Cleanest because the publisher
- *        already has UserPaymentConfiguration + Tipalti setup. Couples
- *        block earnings to the monthly compensation-pool cap logic,
- *        which doesn't conceptually apply — would need a pool-bypass
- *        path or a separate "non-pool" cash bucket on the same model.
- *      - Mint a separate Tipalti payment via `payToTipaltiAccount`
- *        directly from the bulk job. Decouples from the pool but
- *        skips every guard the creator program has built (caps,
- *        moderation flags, the BannedCreatorProgram onboarding step).
+ *   A — Route money: creator-program cash bank
+ *       (creator-program.service.ts :: withdrawCash). Reasons:
+ *       (1) 1099-NEC reporting flows automatically through Tipalti
+ *           when payments go through the cash bucket — required for
+ *           US publishers earning >$600/year. Option B (direct Tipalti
+ *           batch) skips this entirely, creating tax liability.
+ *       (2) Publishers are already creators; UserPaymentConfiguration
+ *           is one path, not two.
+ *       (3) Existing fraud + pool-cap guards apply.
+ *       Trade-off: may delay payouts if the pool is throttled.
+ *       Acceptable for v1.
  *
- *   B. UserPaymentConfiguration prerequisite. The user must have
- *      `tipaltiPaymentsEnabled = true` AND a valid
- *      `tipaltiWithdrawalMethod` before any payout can fire. Until they
- *      do, leave the rows in `confirmed` — they'll be picked up on the
- *      next cycle. Same behaviour as the existing `withdrawCash`
- *      path, but the "you have earnings waiting" notification doesn't
- *      exist yet for App Blocks publishers.
+ *   C — Refund clawback: carry-forward debt
+ *       Affiliate-network standard. Implementation:
+ *       - Refund BEFORE payout: void the row (existing path). Done.
+ *       - Refund AFTER payout: void the original row AND write a NEW
+ *         negative-amount attribution row (status='voided',
+ *         voided_reason='refund'). The bulk-payout aggregator
+ *         subtracts the negative from the publisher's next payout.
+ *         If the running balance stays negative for >90 days, flag
+ *         for manual review (likely fraud or anomaly).
+ *       Avoids the Tipalti adjustment-API complexity and the surprise
+ *       of immediate cash reversal. The publisher dashboard at
+ *       /apps/revenue shows the ledger transparently either way.
  *
- *   C. Refund clawback when a refund/chargeback voids a paid_out row.
- *      Today voidAttributionsForPayment flips status to voided even on
- *      paid_out rows; the next payout cycle needs to deduct the
- *      already-paid amount. The Tipalti adjustment API supports this,
- *      but the exact contract (negative-amount payout vs. cash
- *      reversal vs. carrying forward as debt on the publisher's
- *      account) needs a sign-off.
+ *   D — Tax / 1099: handled by route A automatically.
  *
- *   D. Tax / 1099 reporting. Publisher payouts are 1099-eligible US
- *      taxable income — Tipalti handles the form generation, but only
- *      if the payment is routed through the creator-program cash
- *      bucket. Option B above bypasses this. Confirm before shipping.
+ * Still open (NOT recommended yet, needs leadership):
+ *   B. UserPaymentConfiguration UX — "you have earnings waiting"
+ *      notification for publishers who haven't completed Tipalti
+ *      setup. Out of v1; rows accumulate visibly on the dashboard.
  *
- * Until the answers above land, this job runs daily, logs the pending
- * payout totals to Axiom for observability, and writes nothing. The
- * `confirmed` rows accumulate visibly on the publisher dashboard so
- * publishers know money is queued, even if the disbursement is
- * manually batched in the interim.
+ * Until the implementation lands, this job runs daily, logs the
+ * pending payout totals to Axiom for observability, and writes
+ * nothing. The `confirmed` rows accumulate visibly on the publisher
+ * dashboard so publishers know money is queued, even if the
+ * disbursement is manually batched in the interim.
  *
  * See claudedocs/app-blocks-buzz-attribution-handoff-2026-05-25.md
- * §"Open questions" #2 + #4.
+ * §"Open questions" #2 + #4 for the original framing of the
+ * decision matrix.
  */
 export const bulkPayoutBlockAttributions = createJob(
   'bulk-payout-block-attributions',

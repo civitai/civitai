@@ -35,42 +35,84 @@ export type RateCard = {
 // leadership" section of
 // claudedocs/app-blocks-buzz-attribution-handoff-2026-05-25.md.
 //
-// Open items to confirm:
-//   - Default publisher cut (20%? 30%? Hard to undo upward once announced).
-//   - Whether viewer_personal is boosted vs per_model_install (this
-//     card assumes yes — user discovery is rewarded).
+// Two cards defined: V1 (the original spec placeholder, 20/20/25/0)
+// and V2 (the recommended starting point, 15/15/25/0). Rate cards
+// are immutable — past attribution rows stamp their version at
+// write time and pay out under it forever. To change percentages,
+// add a V3, leave V1/V2 in place for the rows that referenced them.
+//
+// Open items still to confirm:
+//   - Final cuts. V2 starts lower; raising is politically easier
+//     than lowering. Default publisher cut floor is the most
+//     load-bearing decision.
+//   - Whether viewer_personal stays boosted vs per_model_install
+//     (both cards say yes — user discovery is rewarded).
 //   - Whether platform_default pays 0 or some token amount.
 //   - Whether to apply different rates by buzz type (yellow vs blue).
 //   - Whether to cap monthly per-app earnings.
 //
-// Until those are signed off, treat any v1 attribution payout as a
+// Until those are signed off, treat any attribution payout as a
 // soft-launch — do NOT enable the bulk payout job in production
 // without explicit approval.
 // ---------------------------------------------------------------
 export const RATE_CARD_V1: RateCard = {
   version: 'v1',
   publisherSharePctByScope: {
-    // Publisher chose to install the block on their own model — earns
-    // a share.
     per_model_install: 20,
-    // Same as above, just broader (every model the publisher owns).
     publisher_all_my_models: 20,
-    // User chose this app for their own viewing — slightly higher to
+    viewer_personal: 25,
+    platform_default: 0,
+  },
+  internalAppOwnerUserIds: [],
+  effectiveFrom: '2026-05-25',
+};
+
+/**
+ * V2 — recommended starting card.
+ *
+ * Reasoning:
+ *  - per_model_install / publisher_all_my_models lowered from 20% to
+ *    15%. Most conversions on the user's OWN model are counterfactual
+ *    (user was already on civitai and would have bought buzz anyway);
+ *    rewarding the publisher modestly recognizes their effort to
+ *    install without overpaying for revenue civitai would have
+ *    captured regardless.
+ *  - viewer_personal kept at 25%. This is the most incremental scope:
+ *    user actively chose a third-party app, drove discovery /
+ *    acquisition. Worth rewarding highest as a developer-ecosystem
+ *    signal.
+ *  - platform_default kept at 0%. Mod-promoted; publisher already
+ *    earns via reach / install funnel.
+ *  - Start lower; raise via V3 if traction / publisher feedback
+ *    warrants. Easier than lowering after a public announcement.
+ */
+export const RATE_CARD_V2: RateCard = {
+  version: 'v2',
+  publisherSharePctByScope: {
+    // Publisher chose to install on their own model — modest cut to
+    // acknowledge their effort.
+    per_model_install: 15,
+    // Same as above, just broader (every model the publisher owns).
+    publisher_all_my_models: 15,
+    // User chose this app for their own viewing — highest cut to
     // reward app discovery / viral acquisition.
     viewer_personal: 25,
     // Mod-promoted on the platform's behalf — publisher already earns
-    // via reach/install funnel, no extra share.
+    // via reach / install funnel, no extra share.
     platform_default: 0,
   },
   internalAppOwnerUserIds: [
     // Populate with civitai team userIds before going live. Empty for
     // now — none of the load-bearing paths read this list yet, but the
-    // service plumbing checks it.
+    // service plumbing checks it. Belt-and-suspenders: platform_default
+    // is already 0% so the dominant team-app path doesn't need this
+    // list, but per_model_install / publisher_all_my_models for a
+    // team-owned app would.
   ],
-  effectiveFrom: '2026-05-25',
+  effectiveFrom: '2026-05-26',
 };
 
-export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V1;
+export const ACTIVE_RATE_CARD: RateCard = RATE_CARD_V2;
 
 /**
  * Result of running a (gross, fee, scope) tuple through the active rate

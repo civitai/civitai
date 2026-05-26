@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ACTIVE_RATE_CARD,
   computeRateCardSplit,
-  RATE_CARD_V1,
+  RATE_CARD_V2,
   type RateCard,
 } from '../rate-card';
 
@@ -185,6 +185,6 @@ describe('computeRateCardSplit', () => {
       appOwnerUserId: 1,
     });
     expect(split.rateCardVersion).toBe(ACTIVE_RATE_CARD.version);
-    expect(split.rateCardVersion).toBe(RATE_CARD_V1.version);
+    expect(split.rateCardVersion).toBe(RATE_CARD_V2.version);
   });
 });
