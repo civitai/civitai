@@ -43,11 +43,13 @@ const t = initTRPC
       // Surface plain-object `cause` payloads (e.g. structured rate-limit
       // metadata like { cooldownUntil }) to the client via `error.data.cause`.
       // Errors and non-objects are excluded so we don't leak stack traces.
-      const cause =
+      // Field is always present in the shape (undefined when absent) so client
+      // type narrowing doesn't break on union mismatch.
+      const cause: Record<string, unknown> | undefined =
         error.cause && typeof error.cause === 'object' && !(error.cause instanceof Error)
-          ? error.cause
+          ? (error.cause as Record<string, unknown>)
           : undefined;
-      return cause ? { ...shape, data: { ...shape.data, cause } } : shape;
+      return { ...shape, data: { ...shape.data, cause } };
     },
   });
 
