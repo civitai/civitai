@@ -35,6 +35,13 @@ export interface BlockInstallRecord {
   blockInstanceId: string;
   blockId: string;
   appId: string;
+  /**
+   * `app_blocks.id` for this install. Used by App Blocks buzz
+   * attribution to stamp the specific app_block row that earned the
+   * revenue share. Distinct from `blockId` (the manifest's block id,
+   * not stable across versions of the same app block).
+   */
+  appBlockId: string;
   manifest: {
     iframe?: {
       src: string;
@@ -338,6 +345,7 @@ export class BlockRegistry {
       block_instance_id: string;
       block_id: string;
       app_id: string;
+      app_block_id: string;
       manifest: unknown;
       settings: unknown;
       enabled: boolean;
@@ -370,6 +378,7 @@ export class BlockRegistry {
           mbi.block_instance_id,
           ab.block_id,
           ab.app_id,
+          ab.id AS app_block_id,
           ab.manifest,
           mbi.settings,
           mbi.enabled,
@@ -398,6 +407,7 @@ export class BlockRegistry {
           'bus_pub_' || bus.id AS block_instance_id,
           ab.block_id,
           ab.app_id,
+          ab.id AS app_block_id,
           ab.manifest,
           bus.settings,
           TRUE AS enabled,
@@ -446,6 +456,7 @@ export class BlockRegistry {
           'pdb_' || pdb.app_block_id AS block_instance_id,
           ab.block_id,
           ab.app_id,
+          ab.id AS app_block_id,
           ab.manifest,
           '{}'::jsonb AS settings,
           TRUE AS enabled,
@@ -491,6 +502,7 @@ export class BlockRegistry {
           'bus_view_' || bus.id AS block_instance_id,
           ab.block_id,
           ab.app_id,
+          ab.id AS app_block_id,
           ab.manifest,
           bus.settings,
           TRUE AS enabled,
@@ -636,6 +648,7 @@ export class BlockRegistry {
           blockInstanceId: r.block_instance_id,
           blockId: r.block_id,
           appId: r.app_id,
+          appBlockId: r.app_block_id,
           manifest,
           publisherSettings,
           enabled: r.enabled,

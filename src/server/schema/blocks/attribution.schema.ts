@@ -50,12 +50,16 @@ export const ATTRIBUTION_METADATA_KEYS = {
  * Derive the attribution scope from the blockInstanceId prefix. The
  * substrate uses prefixed ULIDs everywhere; this resolver is the only
  * code path that needs to map prefix → scope. Keep it in lockstep with
- * BlockRegistry.resolveBlockInstance.
+ * BlockRegistry.resolveBlockInstance — in particular, both `mbi_*`
+ * (model_block_installs PK) and `bki_*` (legacy unique blockInstanceId
+ * column on the same table) resolve to per_model_install.
  */
 export function deriveScopeFromInstanceId(
   blockInstanceId: string
 ): BlockAttributionScope | null {
-  if (blockInstanceId.startsWith('mbi_')) return 'per_model_install';
+  if (blockInstanceId.startsWith('mbi_') || blockInstanceId.startsWith('bki_')) {
+    return 'per_model_install';
+  }
   if (blockInstanceId.startsWith('bus_pub_')) return 'publisher_all_my_models';
   if (blockInstanceId.startsWith('bus_view_')) return 'viewer_personal';
   if (blockInstanceId.startsWith('pdb_')) return 'platform_default';

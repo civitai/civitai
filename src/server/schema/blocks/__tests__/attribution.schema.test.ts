@@ -17,6 +17,9 @@ import {
 describe('deriveScopeFromInstanceId', () => {
   it.each([
     ['mbi_01HZK', 'per_model_install'],
+    // bki_ is the legacy unique-column prefix for the same install row.
+    // Both resolve to per_model_install — see BlockRegistry.resolveBlockInstance.
+    ['bki_01HZK', 'per_model_install'],
     ['bus_pub_01HZK', 'publisher_all_my_models'],
     ['bus_view_01HZK', 'viewer_personal'],
     ['pdb_01HZK', 'platform_default'],

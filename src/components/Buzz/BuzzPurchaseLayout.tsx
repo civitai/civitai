@@ -15,6 +15,9 @@ export type BuzzPurchaseLayoutProps = BuzzPurchaseImprovedProps & {
   buzzType?: BuzzSpendType;
 };
 
+// `attribution` is inherited from BuzzPurchaseImprovedProps and flows
+// through {...buzzPurchaseProps} into BuzzPurchaseImproved unchanged.
+
 export const BuzzPurchaseLayout = ({
   buzzType,
   ...buzzPurchaseProps

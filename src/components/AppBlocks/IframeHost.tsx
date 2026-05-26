@@ -9,6 +9,7 @@ import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-s
 import { getBaseModelGroup, getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { trpc } from '~/utils/trpc';
 import type { BlockWorkflowSnapshot } from '~/server/schema/blocks/workflow.schema';
+import { deriveScopeFromInstanceId } from '~/server/schema/blocks/attribution.schema';
 
 const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 
@@ -437,6 +438,24 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
         // onClose fires last because it's tied to the dialog teardown, so
         // by the time it runs the flag reflects the final state.
         let purchased = false;
+        // Derive attribution from the install context. The iframe never
+        // supplies these fields itself — fabricating them server-side
+        // (via props) is the only attribution path a malicious block
+        // can't forge. Scope is resolved from the blockInstanceId
+        // prefix; null means the substrate handed us an instanceId we
+        // don't recognise, in which case we skip attribution and the
+        // webhook treats it as a regular buzz purchase. Defensive — no
+        // observed mints today produce an unknown prefix.
+        const scope = deriveScopeFromInstanceId(install.blockInstanceId);
+        const attribution = scope
+          ? {
+              appId: install.appId,
+              appBlockId: install.appBlockId,
+              blockInstanceId: install.blockInstanceId,
+              scope,
+              modelId: typeof modelCtx.modelId === 'number' ? modelCtx.modelId : undefined,
+            }
+          : undefined;
         dialogStore.trigger<BuyBuzzModalProps>({
           // Per-request id so multiple OPEN_BUZZ_PURCHASE calls don't dedup
           // against each other in the dialog store's exists-check.
@@ -444,6 +463,7 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
           component: BuyBuzzModal,
           props: {
             minBuzzAmount: amount,
+            attribution,
             onPurchaseSuccess: () => {
               purchased = true;
             },
@@ -457,7 +477,14 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
       }
     );
     return off;
-  }, [onMessage, send]);
+  }, [
+    onMessage,
+    send,
+    install.appId,
+    install.appBlockId,
+    install.blockInstanceId,
+    modelCtx.modelId,
+  ]);
 
   // Checkpoint picker: the block fires OPEN_CHECKPOINT_PICKER with the
   // ecosystem group (e.g. 'Flux1') it wants restricted to. We open the

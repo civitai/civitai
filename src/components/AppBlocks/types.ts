@@ -131,6 +131,13 @@ export interface BlockInstall {
   blockInstanceId: string;
   blockId: string;
   appId: string;
+  /**
+   * `app_blocks.id` for this install — distinct from `blockId` (the
+   * manifest's block id) and `appId` (the OauthClient id). Required
+   * for App Blocks buzz attribution: the publisher revenue-share row
+   * stamps the specific app_block row that earned the share.
+   */
+  appBlockId: string;
   manifest: BlockManifest;
   publisherSettings: Record<string, unknown>;
   enabled: boolean;
