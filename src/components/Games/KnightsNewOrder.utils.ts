@@ -3,7 +3,7 @@ import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import dynamic from 'next/dynamic';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -327,11 +327,24 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
       return { prevQueue, prevPlayerData };
     },
     onError: (error, _variables, context) => {
-      showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
-      if (context) {
-        // We are not going to revert the image queue to allow the user to keep rating
+      // Rate-limit cooldown: surface countdown in UI by hydrating player cache
+      // with the server-returned cooldownUntil, so buttons disable + banner shows
+      // without needing a refetch.
+      const cooldownUntil = (error.data?.cause as { cooldownUntil?: number } | undefined)
+        ?.cooldownUntil;
+
+      if (cooldownUntil && context?.prevPlayerData) {
+        queryUtils.games.newOrder.getPlayer.setData(undefined, {
+          ...context.prevPlayerData,
+          cooldownUntil,
+        });
+      } else if (context) {
+        // Non-cooldown error: revert player optimistic update.
+        // Image queue is intentionally not reverted so the user can keep rating.
         queryUtils.games.newOrder.getPlayer.setData(undefined, context.prevPlayerData);
       }
+
+      showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
     },
   });
 
@@ -353,6 +366,40 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
     isLoading: addRatingMutation.isLoading,
     skipRating: handleSkipImage,
   };
+};
+
+/**
+ * Tracks the active voting cooldown from `getPlayer` and exposes a live
+ * countdown. When the cooldown expires, invalidates `getPlayer` so any
+ * server-side state changes (e.g. another cooldown trip in a different tab)
+ * are reflected immediately.
+ */
+export const useVotingCooldown = () => {
+  const queryUtils = trpc.useUtils();
+  const { playerData } = useJoinKnightsNewOrder();
+  const cooldownUntil = playerData?.cooldownUntil ?? null;
+
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!cooldownUntil || cooldownUntil <= Date.now()) return;
+    const interval = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(interval);
+  }, [cooldownUntil]);
+
+  const secondsRemaining = cooldownUntil
+    ? Math.max(0, Math.ceil((cooldownUntil - now) / 1000))
+    : 0;
+  const isLocked = secondsRemaining > 0;
+
+  // Once the timer hits zero, refetch player so any other state churn lands.
+  useEffect(() => {
+    if (cooldownUntil && secondsRemaining === 0) {
+      queryUtils.games.newOrder.getPlayer.invalidate();
+    }
+  }, [cooldownUntil, secondsRemaining, queryUtils]);
+
+  return { isLocked, secondsRemaining, cooldownUntil };
 };
 
 export const ratingOptions = [...browsingLevels, NsfwLevel.Blocked];

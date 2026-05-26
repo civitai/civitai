@@ -748,7 +748,6 @@ export type VotingRateLimitConfig = {
   perMinute: number;
   perHour: number;
   perDay: number;
-  abuseThreshold: number;
   /** Have the daily abuse-detection job auto-smite suspects matching strict signals. Off by default. */
   autoSmiteAbusers?: boolean;
   /**
@@ -772,10 +771,35 @@ export type VotingRateLimitConfig = {
   };
 };
 
-const DENIED_RESPONSE = { allowed: false, remaining: 0, resetTime: 0, isAbuse: false } as const;
+const DENIED_RESPONSE = { allowed: false, remaining: 0, cooldownUntil: 0 } as const;
 const MINUTE_WINDOW = 60 * 1000;
 const HOUR_WINDOW = 60 * MINUTE_WINDOW;
 const DAY_WINDOW = 24 * HOUR_WINDOW;
+
+// Cooldown durations matching each tripped window. Bots that hammer the
+// endpoint get locked out for wall-clock time rather than a 60s slide so
+// retry spam becomes uneconomical.
+const COOLDOWN_MS = {
+  minute: 10 * MINUTE_WINDOW,
+  hour: HOUR_WINDOW,
+  day: DAY_WINDOW,
+} as const;
+
+/**
+ * Read the active voting cooldown for a user. Returns the cooldown expiry
+ * timestamp (ms epoch) or null if no cooldown is active. Used by getPlayer
+ * to hydrate the UI so the countdown survives a page reload.
+ */
+export async function getVotingCooldownUntil(userId: number): Promise<number | null> {
+  if (!redis) return null;
+  try {
+    const key = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.COOLDOWN}:${userId}` as const;
+    const pttl = await redis.pTTL(key);
+    return pttl > 0 ? Date.now() + pttl : null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Get rate limit config from Redis. Returns null if unavailable — callers
@@ -793,8 +817,7 @@ export async function getVotingRateLimitConfig(): Promise<VotingRateLimitConfig 
 export async function checkVotingRateLimit(userId: number): Promise<{
   allowed: boolean;
   remaining: number;
-  resetTime: number;
-  isAbuse: boolean;
+  cooldownUntil: number;
 }> {
   if (!redis) {
     logToAxiom({
@@ -821,8 +844,15 @@ export async function checkVotingRateLimit(userId: number): Promise<{
   const minuteKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.MINUTE}:${userId}` as const;
   const hourKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.HOUR}:${userId}` as const;
   const dayKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.DAY}:${userId}` as const;
+  const cooldownKey = `${REDIS_KEYS.CACHES.NEW_ORDER.RATE_LIMIT.COOLDOWN}:${userId}` as const;
 
   try {
+    // Short-circuit if cooldown is active — bots can't slide past with retries.
+    const cooldownPttl = await redis.pTTL(cooldownKey);
+    if (cooldownPttl > 0) {
+      return { allowed: false, remaining: 0, cooldownUntil: now + cooldownPttl };
+    }
+
     // Clean up old entries
     await Promise.all([
       redis.zRemRangeByScore(minuteKey, '-inf', now - MINUTE_WINDOW),
@@ -837,12 +867,11 @@ export async function checkVotingRateLimit(userId: number): Promise<{
       redis.zCard(dayKey),
     ]);
 
-    // Check limits
+    // Check limits — narrowest window first so the cooldown matches the trip
     const minuteAllowed = minuteCount < limits.perMinute;
     const hourAllowed = hourCount < limits.perHour;
     const dayAllowed = dayCount < limits.perDay;
-    const isAbuse = hourCount >= limits.abuseThreshold;
-    const allowed = minuteAllowed && hourAllowed && dayAllowed && !isAbuse;
+    const allowed = minuteAllowed && hourAllowed && dayAllowed;
 
     if (allowed) {
       // Add current request — use individual commands instead of multi() to avoid
@@ -858,13 +887,32 @@ export async function checkVotingRateLimit(userId: number): Promise<{
         redis.expire(hourKey, 3600),
         redis.expire(dayKey, 86400),
       ]);
+
+      return {
+        allowed: true,
+        remaining: Math.max(0, limits.perMinute - minuteCount - 1),
+        cooldownUntil: 0,
+      };
     }
 
+    // Trip → set cooldown matching the narrowest tripped window.
+    // Max-merge: never shrink an active longer cooldown (so a minute trip
+    // mid-day-cooldown doesn't reset the user to 10m remaining).
+    const cooldownMs = !minuteAllowed
+      ? COOLDOWN_MS.minute
+      : !hourAllowed
+      ? COOLDOWN_MS.hour
+      : COOLDOWN_MS.day;
+
+    if (cooldownPttl < cooldownMs) {
+      await redis.set(cooldownKey, '1', { PX: cooldownMs });
+    }
+    const effectiveCooldownMs = Math.max(cooldownPttl, cooldownMs);
+
     return {
-      allowed,
-      remaining: Math.max(0, limits.perMinute - minuteCount - (allowed ? 1 : 0)),
-      resetTime: now + MINUTE_WINDOW,
-      isAbuse,
+      allowed: false,
+      remaining: 0,
+      cooldownUntil: now + effectiveCooldownMs,
     };
   } catch (error) {
     handleLogError(error as Error, `Rate limiting failed for user ${userId}`);
