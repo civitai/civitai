@@ -103,27 +103,14 @@ export const manageSanityChecksSchema = z.object({
 });
 
 // Admin testing schemas
-export type TestVoteInput = z.infer<typeof testVoteSchema>;
-export const testVoteSchema = z.object({
-  imageId: z.number(),
-  rating: z.enum(NsfwLevel),
-  userId: z.number().optional(), // Optional: vote as different user
-  damnedReason: z.enum(NewOrderDamnedReason).optional(),
-  level: z.number().min(20).max(80).optional(), // Optional: override player level for vote weight
-  smites: z.number().min(0).max(6).optional(), // Optional: override smites for vote weight
-});
 
-export type GetQueueStateInput = z.infer<typeof getQueueStateSchema>;
-export const getQueueStateSchema = z.object({
-  imageId: z.number().optional(),
-});
+export const ;
 
-export type GetVoteDetailsInput = z.infer<typeof getVoteDetailsSchema>;
-export const getVoteDetailsSchema = z.object({
-  imageId: z.number(),
-});
 
-export type ResetImageVotesInput = z.infer<typeof resetImageVotesSchema>;
-export const resetImageVotesSchema = z.object({
-  imageId: z.number(),
-});
+export const ;
+
+
+export const ;
+
+
+export const ;
