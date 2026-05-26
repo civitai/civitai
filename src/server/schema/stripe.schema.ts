@@ -38,6 +38,16 @@ const buzzPurchaseMetadataSchema = z
     buzzType: z.enum(['green', 'yellow', 'blue', 'red']).default('yellow').optional(),
     blueBuzzGranted: z.coerce.boolean().optional(),
     cosmeticsGranted: z.coerce.boolean().optional(),
+    // App Blocks attribution — populated only when the buzz purchase
+    // was initiated from inside a block iframe. See
+    // src/server/schema/blocks/attribution.schema.ts. The .passthrough()
+    // below already lets these flow through unmodified, but listing
+    // them explicitly gives downstream metadata-builders a typed shape.
+    blockAppId: z.string().optional(),
+    blockAppBlockId: z.string().optional(),
+    blockInstanceId: z.string().optional(),
+    blockScope: z.string().optional(),
+    blockModelId: z.coerce.number().int().positive().optional(),
   })
   .passthrough();
 
