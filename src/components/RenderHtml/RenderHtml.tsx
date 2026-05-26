@@ -11,11 +11,24 @@ import clsx from 'clsx';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
+// Match host exactly or as a subdomain (e.g. "www.youtube.com"), never as a
+// substring elsewhere in the URL — `url.includes('youtube.com')` would let
+// `https://evil.com/?x=youtube.com` masquerade as a YouTube embed.
+function hostMatches(host: string, domain: string) {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
 function embedKindFromUrl(url: string | undefined): string {
   if (!url) return 'embed';
-  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
-  if (url.includes('instagram.com')) return 'instagram';
-  if (url.includes('strawpoll.com')) return 'strawpoll';
+  let host: string;
+  try {
+    host = new URL(url, 'https://placeholder.invalid').hostname.toLowerCase();
+  } catch {
+    return 'embed';
+  }
+  if (hostMatches(host, 'youtube.com') || hostMatches(host, 'youtu.be')) return 'youtube';
+  if (hostMatches(host, 'instagram.com')) return 'instagram';
+  if (hostMatches(host, 'strawpoll.com')) return 'strawpoll';
   return 'embed';
 }
 
@@ -100,6 +113,11 @@ export function RenderHtml({
         },
         div: function (tagName, attribs) {
           if (attribs['data-type'] !== 'strawPoll') delete attribs.style;
+          // data-consent-blocked is whitelisted in allowedAttributes so the
+          // iframe→div transform above can set it. Strip it from
+          // user-authored divs so people can't spawn fake "content blocked"
+          // placeholders by hand-writing the attribute in their HTML.
+          delete attribs['data-consent-blocked'];
           return {
             tagName,
             attribs,

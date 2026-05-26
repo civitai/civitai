@@ -224,8 +224,10 @@ export function getRegion(req: NextRequest | NextApiRequest | IncomingMessage) {
   if (isDev && !countryCode) {
     const override = process.env.DEV_REGION_OVERRIDE ?? 'US:CA';
     const [c, r] = override.split(':');
-    countryCode = c || null;
-    regionCode = r || null;
+    // Cloudflare emits uppercase codes (US, CA). Normalize the override so a
+    // lowercase value like "us:ca" still matches CONSENT_REQUIRED_REGIONS.
+    countryCode = c?.trim().toUpperCase() || null;
+    regionCode = r?.trim().toUpperCase() || null;
   }
 
   return {

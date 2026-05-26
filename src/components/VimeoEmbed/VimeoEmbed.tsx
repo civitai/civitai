@@ -22,11 +22,17 @@ export const VimeoEmbed = ({
   const [useFallbackContent, setUseFallbackContent] = useState(false);
 
   useEffect(() => {
-    if (!data && !isLoading) {
-      setUseFallbackContent(true);
+    // Don't latch fallback while the availability query is disabled (consent
+    // rejected). Otherwise rejecting then later accepting consent leaves the
+    // component stuck on fallback even after the iframe URL resolves.
+    if (!allowed) {
+      setUseFallbackContent(false);
       return;
     }
-  }, [data, isLoading]);
+    if (!data && !isLoading) {
+      setUseFallbackContent(true);
+    }
+  }, [allowed, data, isLoading]);
 
   if (!allowed) {
     return (
