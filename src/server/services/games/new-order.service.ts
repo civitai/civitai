@@ -389,9 +389,7 @@ async function processImageRating({
       const waitSeconds = rateLimitResult.cooldownUntil
         ? Math.max(1, Math.ceil((rateLimitResult.cooldownUntil - Date.now()) / 1000))
         : 60;
-      throw throwRateLimitError(`Voting cooldown active. Try again in ${waitSeconds}s.`, {
-        cooldownUntil: rateLimitResult.cooldownUntil,
-      });
+      throw throwRateLimitError(`Voting cooldown active. Try again in ${waitSeconds}s.`);
     }
   }
 
@@ -1985,39 +1983,3 @@ export async function manageSanityChecks({ add, remove }: { add?: number[]; remo
     throw throwInternalServerError(error);
   }
 }
-
-/**
- * Admin testing function for simulating votes in the Knights of New Order system.
- * Allows moderators to test consensus mechanics by submitting votes as different users.
- *
- * Key features:
- * - Vote as any user (auto-joins if needed)
- * - Auto-adds image to queue if not present
- * - Uses real voting logic for authentic testing
- * - Returns detailed consensus and queue state
- *
- * @param imageId - The image to vote on
- * @param rating - The NSFW level rating to submit
- * @param userId - Optional: The user to vote as (defaults to moderator's ID)
- * @param damnedReason - Optional: Reason for blocking content
- * @param moderatorId - The moderator performing the test
- */
-
-
-/**
- * Helper function to get detailed queue state for testing and debugging.
- * Shows which images are in which queues and their current vote counts.
- */
-
-
-/**
- * Helper function to get vote details for a specific image.
- * Shows all votes, weighted distribution, and consensus status.
- */
-
-
-/**
- * Helper function to reset a specific image's vote state.
- * Useful for cleaning up test data and restarting test scenarios.
- */
-

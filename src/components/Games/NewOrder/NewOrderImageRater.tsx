@@ -62,6 +62,7 @@ export function NewOrderImageRater({
   );
 
   const debouncedSkipClick = useCallback(() => {
+    if (isDisabled) return;
     if (timeoutRef) {
       clearTimeout(timeoutRef);
     }
@@ -69,7 +70,7 @@ export function NewOrderImageRater({
       onSkipClick();
       setShowReasons(false);
     }, 200);
-  }, [onSkipClick]);
+  }, [isDisabled, onSkipClick]);
 
   const handleHotkeyPress = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {

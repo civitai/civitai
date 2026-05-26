@@ -327,21 +327,16 @@ export const useAddImageRating = (opts?: { filters?: GetImagesQueueSchema }) => 
       return { prevQueue, prevPlayerData };
     },
     onError: (error, _variables, context) => {
-      // Rate-limit cooldown: surface countdown in UI by hydrating player cache
-      // with the server-returned cooldownUntil, so buttons disable + banner shows
-      // without needing a refetch.
-      const cooldownUntil = (error.data?.cause as { cooldownUntil?: number } | undefined)
-        ?.cooldownUntil;
-
-      if (cooldownUntil && context?.prevPlayerData) {
-        queryUtils.games.newOrder.getPlayer.setData(undefined, {
-          ...context.prevPlayerData,
-          cooldownUntil,
-        });
-      } else if (context) {
-        // Non-cooldown error: revert player optimistic update.
-        // Image queue is intentionally not reverted so the user can keep rating.
+      if (context) {
+        // Revert player optimistic update. Image queue is intentionally not reverted
+        // so the user can keep rating.
         queryUtils.games.newOrder.getPlayer.setData(undefined, context.prevPlayerData);
+      }
+
+      // Rate-limit hit: refetch player so the server-computed cooldownUntil surfaces
+      // in the UI (banner + disabled buttons via useVotingCooldown).
+      if (error.data?.code === 'TOO_MANY_REQUESTS') {
+        queryUtils.games.newOrder.getPlayer.invalidate();
       }
 
       showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });

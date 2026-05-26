@@ -39,17 +39,8 @@ const t = initTRPC
         withSpan('trpc:serialize:superjson', () => superjson.serialize(data)),
       deserialize: superjson.deserialize.bind(superjson),
     },
-    errorFormatter({ shape, error }) {
-      // Surface plain-object `cause` payloads (e.g. structured rate-limit
-      // metadata like { cooldownUntil }) to the client via `error.data.cause`.
-      // Errors and non-objects are excluded so we don't leak stack traces.
-      // Field is always present in the shape (undefined when absent) so client
-      // type narrowing doesn't break on union mismatch.
-      const cause: Record<string, unknown> | undefined =
-        error.cause && typeof error.cause === 'object' && !(error.cause instanceof Error)
-          ? (error.cause as Record<string, unknown>)
-          : undefined;
-      return { ...shape, data: { ...shape.data, cause } };
+    errorFormatter({ shape }) {
+      return shape;
     },
   });
 

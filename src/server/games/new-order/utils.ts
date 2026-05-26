@@ -896,18 +896,28 @@ export async function checkVotingRateLimit(userId: number): Promise<{
     }
 
     // Trip → set cooldown matching the narrowest tripped window.
-    // Max-merge: never shrink an active longer cooldown (so a minute trip
-    // mid-day-cooldown doesn't reset the user to 10m remaining).
+    // Max-merge atomically via Lua: never shrink an active longer cooldown. A naive
+    // check-then-SET races when two trips on different windows land concurrently —
+    // the second SET could overwrite a longer cooldown with a shorter one.
     const cooldownMs = !minuteAllowed
       ? COOLDOWN_MS.minute
       : !hourAllowed
       ? COOLDOWN_MS.hour
       : COOLDOWN_MS.day;
 
-    if (cooldownPttl < cooldownMs) {
-      await redis.set(cooldownKey, '1', { PX: cooldownMs });
-    }
-    const effectiveCooldownMs = Math.max(cooldownPttl, cooldownMs);
+    const maxMergeScript = `
+      local cur = redis.call('PTTL', KEYS[1])
+      local req = tonumber(ARGV[1])
+      if cur < req then
+        redis.call('SET', KEYS[1], '1', 'PX', req)
+        return req
+      end
+      return cur
+    `;
+    const effectiveCooldownMs = (await redis.eval(maxMergeScript, {
+      keys: [cooldownKey],
+      arguments: [cooldownMs.toString()],
+    })) as number;
 
     return {
       allowed: false,

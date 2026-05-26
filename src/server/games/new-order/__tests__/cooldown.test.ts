@@ -22,6 +22,7 @@ const {
       zAdd: vi.fn().mockResolvedValue(1),
       expire: vi.fn().mockResolvedValue(1),
       set: vi.fn().mockResolvedValue('OK'),
+      eval: vi.fn().mockImplementation(async (_script, { arguments: args }) => Number(args[0])),
     },
     mockSysRedis: {
       packed: {
@@ -117,7 +118,7 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     expect(result.cooldownUntil).toBeGreaterThan(Date.now());
     // Sliding window check is skipped — no zCard reads when locked.
     expect(mockRedis.zCard).not.toHaveBeenCalled();
-    expect(mockRedis.set).not.toHaveBeenCalled();
+    expect(mockRedis.eval).not.toHaveBeenCalled();
   });
 
   it('allows the vote and does not set cooldown when under all limits', async () => {
@@ -127,7 +128,7 @@ describe('checkVotingRateLimit cooldown behavior', () => {
 
     expect(result.allowed).toBe(true);
     expect(result.cooldownUntil).toBe(0);
-    expect(mockRedis.set).not.toHaveBeenCalled();
+    expect(mockRedis.eval).not.toHaveBeenCalled();
     // Vote was recorded in all three windows
     expect(mockRedis.zAdd).toHaveBeenCalledTimes(3);
   });
@@ -143,10 +144,12 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockRedis.set).toHaveBeenCalledWith(
-      'new-order:rate-limit:cooldown:42',
-      '1',
-      { PX: 10 * 60 * 1000 }
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('PTTL'),
+      {
+        keys: ['new-order:rate-limit:cooldown:42'],
+        arguments: [(10 * 60 * 1000).toString()],
+      }
     );
     expect(mockRedis.zAdd).not.toHaveBeenCalled();
   });
@@ -161,10 +164,12 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockRedis.set).toHaveBeenCalledWith(
-      'new-order:rate-limit:cooldown:42',
-      '1',
-      { PX: 60 * 60 * 1000 }
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('PTTL'),
+      {
+        keys: ['new-order:rate-limit:cooldown:42'],
+        arguments: [(60 * 60 * 1000).toString()],
+      }
     );
   });
 
@@ -178,32 +183,33 @@ describe('checkVotingRateLimit cooldown behavior', () => {
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockRedis.set).toHaveBeenCalledWith(
-      'new-order:rate-limit:cooldown:42',
-      '1',
-      { PX: 24 * 60 * 60 * 1000 }
+    expect(mockRedis.eval).toHaveBeenCalledWith(
+      expect.stringContaining('PTTL'),
+      {
+        keys: ['new-order:rate-limit:cooldown:42'],
+        arguments: [(24 * 60 * 60 * 1000).toString()],
+      }
     );
   });
 
-  it('does not shrink an active longer cooldown (max-merge)', async () => {
-    // User already has 30 minutes of cooldown left, then trips the minute
-    // window — the 10-minute cooldown must NOT overwrite the longer one.
-    // First pTTL call (short-circuit check) must return 0 so we proceed into
-    // the window check; second pTTL is replaced by re-checking — actually the
-    // implementation reads pTTL once and reuses it. To simulate "cooldown is
-    // still in flight but expired between read and write" we set pTTL=0 on
-    // entry, then verify the write happens. The real max-merge test is the
-    // converse: pTTL returns a larger value than the new cooldown.
-    //
-    // So: simulate pTTL returning 2_000_000ms (33 min) at entry → already
-    // locked → short-circuit returns false WITHOUT a set call. (Same as the
-    // short-circuit test, but explicitly asserts no set.)
-    mockRedis.pTTL.mockResolvedValueOnce(2_000_000);
+  it('does not shrink an active longer cooldown (max-merge via Lua)', async () => {
+    // Short-circuit path: pTTL > 0 at entry means we never reach the Lua
+    // call. Tested separately above. This case covers the race window:
+    // pTTL=0 at read time (expired between checks) but Lua sees a longer
+    // existing cooldown and refuses to shrink — return the existing PTTL.
+    mockRedis.pTTL.mockResolvedValueOnce(-2);
+    mockRedis.zCard
+      .mockResolvedValueOnce(DEFAULT_CONFIG.perMinute) // minute trip → 10m attempt
+      .mockResolvedValueOnce(50)
+      .mockResolvedValueOnce(50);
+    // Lua returns existing 30-min PTTL (greater than requested 10m)
+    mockRedis.eval.mockResolvedValueOnce(30 * 60 * 1000);
 
     const result = await checkVotingRateLimit(42);
 
     expect(result.allowed).toBe(false);
-    expect(mockRedis.set).not.toHaveBeenCalled();
+    // cooldownUntil reflects the longer existing window, not the 10m attempt
+    expect(result.cooldownUntil).toBeGreaterThan(Date.now() + 25 * 60 * 1000);
   });
 
   it('denies the vote when redis is unavailable', async () => {
