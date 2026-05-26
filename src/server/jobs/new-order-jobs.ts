@@ -536,7 +536,7 @@ export async function runAbuseDetectionScan() {
         SELECT
           userId,
           topK(1)(rating)[1] as dominantRating
-        FROM knights_new_order_image_rating
+        FROM knights_new_order_image_rating FINAL
         WHERE createdAt >= now() - INTERVAL 24 HOUR
           AND rank != 'Acolyte'
         GROUP BY userId
@@ -548,7 +548,7 @@ export async function runAbuseDetectionScan() {
         d.dominantRating,
         countIf(r.rating = d.dominantRating) / count() * 100 as dominantPct,
         count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
-      FROM knights_new_order_image_rating r
+      FROM knights_new_order_image_rating r FINAL
       JOIN user_dominant d ON r.userId = d.userId
       WHERE r.createdAt >= now() - INTERVAL 24 HOUR
         AND r.rank != 'Acolyte'
