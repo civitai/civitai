@@ -73,6 +73,7 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -114,6 +115,7 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const { trackAction } = useTrackEvent();
   const {
     images,
     active,
@@ -185,7 +187,17 @@ export function ImageDetail2() {
         <Button
           {...sharedButtonProps}
           color="blue"
-          onClick={() => generationGraphPanel.open({ type: image.type, id: image.id })}
+          onClick={() => {
+            trackAction({
+              type: 'Image_Remix_Click',
+              details: {
+                imageId: image.id,
+                imageType: image.type,
+                source: 'remix:image',
+              },
+            }).catch(() => undefined);
+            generationGraphPanel.open({ type: image.type, id: image.id });
+          }}
           data-activity="remix:image"
         >
           <Group gap={4} wrap="nowrap">

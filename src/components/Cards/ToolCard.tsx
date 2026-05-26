@@ -4,12 +4,14 @@ import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import type { ToolGetAllModel } from '~/types/router';
 import { slugit } from '~/utils/string-helpers';
 
 export function ToolCard({ data }: Props) {
   const sluggifiedName = slugit(data.name);
+  const { trackAction } = useTrackEvent();
 
   return (
     <Link
@@ -73,10 +75,18 @@ export function ToolCard({ data }: Props) {
           )}
           {data.alias && (
             <Button
-              data-activity="generate:tool"
+              data-activity="create:tool-card"
               onClick={(e: React.MouseEvent) => {
                 e.preventDefault();
                 e.stopPropagation();
+                // Top-of-funnel telemetry. ToolCard is rendered on the /tools
+                // index — clicking Generate opens the panel with no input
+                // (tool alias is resolved later). Same Create semantics as
+                // ToolBanner; distinguished by source tag for surface volume.
+                trackAction({
+                  type: 'Model_Create_Click',
+                  details: { source: 'create:tool-card' },
+                }).catch(() => undefined);
                 generationGraphPanel.open();
               }}
               fullWidth

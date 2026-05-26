@@ -19,6 +19,7 @@ import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import type { PostContestCollectionItem } from '~/types/router';
 import classes from './PostImages.module.css';
 import clsx from 'clsx';
@@ -45,6 +46,7 @@ export function PostImages({
   const [showMore, setShowMore] = useState(false);
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const features = useFeatureFlags();
+  const { trackAction } = useTrackEvent();
 
   if (isLoading)
     return (
@@ -113,10 +115,18 @@ export function PostImages({
                           size={30}
                           color="white"
                           variant="filled"
-                          data-activity="remix:image-card"
+                          data-activity="remix:post-image-card"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
+                            trackAction({
+                              type: 'Image_Remix_Click',
+                              details: {
+                                imageId: image.id,
+                                imageType: image.type,
+                                source: 'remix:post-image-card',
+                              },
+                            }).catch(() => undefined);
                             generationGraphPanel.open({
                               type: image.type,
                               id: image.id,

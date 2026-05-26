@@ -32,6 +32,7 @@ import { LightricksFormInput } from '~/components/Generation/Video/LightricksFor
 import { Ltx2FormInput } from '~/components/Generation/Video/Ltx2FormInput';
 import { Veo3FormInput } from '~/components/Generation/Video/Veo3FormInput';
 import { generationGraphStore, useGenerationGraphStore } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { isNewFormOnly } from '~/shared/data-graph/generation/config/workflows';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
@@ -85,6 +86,7 @@ function buildGraphContext(status: {
 export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 }) {
   const getState = useVideoGenerationStore((state) => state.getState);
   const storeData = useGenerationGraphStore((state) => state.data);
+  const { trackAction } = useTrackEvent();
 
   const config = useMemo(() => videoGenerationConfig2[engine], [engine]);
   const status = useGenerationStatus();
@@ -134,6 +136,39 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     if (isLoading || isLoadingDebounced) return;
     setError(undefined);
     const { cost = 0 } = getState();
+
+    // Generation funnel telemetry — clicked Generate (video form). We fire
+    // once after the inner graph.validate() resolves so isValid reflects
+    // the actual outcome (the outer RHF onSubmit already passed at this
+    // point). `formVersion: 'video'` discriminates from image legacy/new.
+    //
+    // `trackValid` guards the catch-block emit so a synchronous throw AFTER
+    // a success-emit (e.g. a downstream `mapDataToGraphInput` mutation or
+    // `mutate()` rejection) can't double-fire as a failure. We flip the
+    // flag immediately after each emit site so the guard is meaningful.
+    let trackValid = true;
+    const emitSubmit = (isValid: boolean, modelVersionId?: number) => {
+      try {
+        const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+        trackAction({
+          type: 'Generator_Submit',
+          details: {
+            // modelVersionId: callers pass `model.id` from the graph snapshot
+            // (see `model = splitResourcesByType(...).model` below). The
+            // snapshot's `model` IS the Checkpoint resource node; .id on a
+            // resource node = ModelVersion.id, not the parent Model.id.
+            modelVersionId,
+            fromAction,
+            formVersion: 'video',
+            isValid,
+          },
+        }).catch(() => undefined);
+      } catch {
+        // Telemetry must never block a submission.
+      }
+      trackValid = false;
+    };
+
     try {
       const validated = config.validate(data);
       setIsLoadingDebounced(true);
@@ -168,10 +203,12 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
         console.error('Graph validation failed:', result.errors);
         setError('Validation failed. Please check your inputs.');
         setIsLoadingDebounced(false);
+        emitSubmit(false, model?.id);
         return;
       }
 
       const graphData = result.data;
+      emitSubmit(true, model?.id);
 
       const { buzzType } = generationFormStore.getState();
       conditionalPerformTransaction(cost, () => {
@@ -182,11 +219,36 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
         });
       });
     } catch (e: any) {
+      // config.validate() threw — count as a failed submit attempt unless
+      // we already emitted a success/failure for this submit cycle.
+      if (trackValid) emitSubmit(false);
       console.error(e);
     }
     setTimeout(() => {
       setIsLoadingDebounced(false);
     }, 1000);
+  }
+
+  // Generation funnel telemetry — RHF validation-fail branch. Mirrors the
+  // legacy form's handleSubmitError so video-form attempts that fail at the
+  // react-hook-form level (zod resolver, required fields) are still counted.
+  // The inner config.validate() + graph.validate() failures are already
+  // captured from handleSubmit's emitSubmit; this fires for failures that
+  // happen BEFORE handleSubmit runs.
+  function handleSubmitError() {
+    try {
+      const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+      trackAction({
+        type: 'Generator_Submit',
+        details: {
+          fromAction,
+          formVersion: 'video',
+          isValid: false,
+        },
+      }).catch(() => undefined);
+    } catch {
+      // Telemetry must never block UI.
+    }
   }
 
   useEffect(() => {
@@ -238,6 +300,8 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
       <GenForm
         form={form}
         onSubmit={handleSubmit}
+        onError={handleSubmitError}
+        track
         className="relative flex h-full flex-1 flex-col justify-between gap-2"
       >
         <div className="flex flex-col gap-3 px-2">
