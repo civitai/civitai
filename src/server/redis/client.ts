@@ -321,7 +321,9 @@ function getBaseClient(type: 'cache' | 'system') {
 
   const baseClient = isSysSentinel
     ? createSentinel({
-        name: env.REDIS_SYS_SENTINEL_NAME,
+        // Non-null assertion is safe: server-schema's superRefine rejects boot
+        // when REDIS_SYS_SENTINELS is set without REDIS_SYS_SENTINEL_NAME.
+        name: env.REDIS_SYS_SENTINEL_NAME!,
         sentinelRootNodes: env.REDIS_SYS_SENTINELS!.split(',').map((hp) => {
           const [host, port] = hp.trim().split(':');
           return { host, port: parseInt(port ?? '26379', 10) };
@@ -338,7 +340,10 @@ function getBaseClient(type: 'cache' | 'system') {
         masterPoolSize: 1,
         replicaPoolSize: 0,
         scanInterval: 10_000,
-        passthroughClientErrorEvents: true,
+        // Keep sub-client errors local — surfacing them here would flood the
+        // top-level `error` listener whenever a single sentinel/replica pod
+        // flaps. We log them explicitly via the `client-error` listener below.
+        passthroughClientErrorEvents: false,
         reserveClient: false,
       })
     : isCluster
@@ -366,6 +371,18 @@ function getBaseClient(type: 'cache' | 'system') {
   baseClient.on('connect', () => log(`Redis connected (${type})`));
   baseClient.on('reconnecting', () => log(`Redis reconnecting (${type})`));
   baseClient.on('ready', () => log(`Redis ready! (${type})`));
+
+  // Sentinel clients don't emit connect/reconnecting/ready — they expose
+  // topology-change (master/replica/sentinel set changed) and client-error
+  // (a sub-client errored). Surface both so failovers are visible in Loki.
+  if (isSysSentinel) {
+    baseClient.on('topology-change', (event: unknown) => {
+      log(`Redis sentinel topology change (${type})`, event);
+    });
+    baseClient.on('client-error', (event: unknown) => {
+      log(`Redis sentinel sub-client error (${type})`, event);
+    });
+  }
 
   // Cluster-specific event handlers for failover detection
   // Enhanced failover handling is gated behind FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER
@@ -756,14 +773,22 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   };
 
   // Implement scanIterator for cluster - it doesn't exist natively on RedisCluster
-  // We need to scan each master node and yield results from all of them
+  // For Sentinel, scanIterator is also absent (the JS-only helper lives on
+  // RedisClient, not the Sentinel proxy); we replicate its scan loop manually
+  // using SCAN, which IS proxied to the current master.
   const baseClient = client as any;
 
-  // Save reference to the original scanIterator (exists on single client, not on cluster)
+  // Save reference to the original scanIterator (exists on single client only,
+  // not on cluster, not on sentinel).
   const originalScanIterator = baseClient.scanIterator?.bind(baseClient);
 
+  // Detect sentinel mode: the Sentinel proxy exposes getMasterNode but not
+  // scanIterator. Cluster exposes .masters. Single client exposes scanIterator.
+  const isSentinelClient =
+    typeof baseClient.getMasterNode === 'function' &&
+    typeof baseClient.scanIterator !== 'function';
+
   client.scanIterator = async function* (options) {
-    // Check if this is a cluster client (has masters property)
     if (baseClient.masters) {
       // Cluster mode: iterate through all master nodes
       const masters = await baseClient.masters;
@@ -771,6 +796,16 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
         const nodeClient = await baseClient.nodeClient(master);
         yield* nodeClient.scanIterator(options);
       }
+    } else if (isSentinelClient) {
+      // Sentinel mode: drive SCAN directly against the proxy. SCAN is part of
+      // the COMMANDS map and is routed to the master client lease, so this
+      // works without needing to borrow a raw client via .use(...).
+      let cursor = options?.cursor ?? '0';
+      do {
+        const reply = await baseClient.scan(cursor, options);
+        cursor = reply.cursor;
+        yield reply.keys;
+      } while (cursor !== '0');
     } else {
       // Single node mode: use original native scanIterator
       yield* originalScanIterator(options);
