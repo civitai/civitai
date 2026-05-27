@@ -4,6 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
 import { logToAxiom } from '~/server/logging/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -38,9 +39,12 @@ function createCounter<TId extends number | string = number | string>({
       if (ttl !== 0) promises.push(sysRedis.expire(key, ttl));
       await Promise.all(promises);
     } else {
-      const promises: Promise<unknown>[] = [sysRedis.hSet(key, id.toString(), value)];
-      if (ttl !== 0) promises.push(sysRedis.hExpire(key, id.toString(), ttl));
-      await Promise.all(promises);
+      if (ttl !== 0) {
+        // Atomic single-EVAL replaces racy Promise.all([hSet, hExpire]).
+        await hSetWithTTL(sysRedis, key, id.toString(), value, ttl * 1000);
+      } else {
+        await sysRedis.hSet(key, id.toString(), value);
+      }
     }
   }
 

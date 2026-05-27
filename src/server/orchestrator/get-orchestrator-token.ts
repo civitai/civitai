@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';
@@ -53,31 +54,27 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
       // 500 every call during a sysRedis outage — defeating the read-side
       // fail-open above.
       //
-      // Partial-failure window is wider than "sysRedis flap between
-      // commands". Promise.all fires hSet and hExpire concurrently as
-      // independent commands (not a Redis MULTI), so:
-      //   - If HEXPIRE arrives before HSET, the field doesn't exist yet
-      //     → Redis returns 0 (no rejection), then HSET writes without
-      //     TTL. Result: no-TTL key even on a healthy server.
-      //   - If both succeed in either order, key has TTL.
-      //   - If hSet succeeds and hExpire rejects, no-TTL key.
+      // Phase 1.5 (PR #2331 follow-up): atomic single-EVAL set+TTL via
+      // hSetWithTTL helper. Replaces the prior Promise.all([hSet, hExpire])
+      // pair, which had the failure modes catalogued below — most
+      // critically the "no-TTL key on a healthy server" case where HEXPIRE
+      // arrives before HSET, finds the field missing, and returns 0
+      // silently; HSET then writes without TTL.
       //
-      // Blast radius if the no-TTL state lands: NOT a transparent re-mint.
-      // The underlying API key from getTemporaryUserApiKey has a DB-side
-      // expiresAt (generationServiceCookie.maxAge + 5 ≈ 1h). After that
-      // expires, the API key is dead at the orchestrator side, but the
-      // cached no-TTL token stays in this hash. Subsequent calls hit the
-      // hGet read path above → return the dead token → orchestrator
-      // returns 401 → user-visible auth failure. There is no automatic
-      // recovery; the cache entry has to be manually evicted or a full
-      // session invalidation has to fire. TODO before HA cutover:
-      // collapse set+expire into a single atomic operation (HEXPIRE NX
-      // with prior HSET, or a Lua script). Same TODO applies to the 5
-      // other hSet+hExpire pairs catalogued in PR #2286 round-8 audit.
-      await Promise.all([
-        sysRedis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
-        sysRedis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
-      ]).catch((err) => {
+      // Blast radius if no-TTL landed (pre-fix): NOT a transparent
+      // re-mint. The underlying API key from getTemporaryUserApiKey has a
+      // DB-side expiresAt (generationServiceCookie.maxAge + 5 ≈ 1h).
+      // After that expired, the API key was dead orchestrator-side, but
+      // the cached no-TTL token stayed in this hash. Subsequent calls hit
+      // the hGet read path above → returned the dead token → orchestrator
+      // 401 → user-visible auth failure with no automatic recovery.
+      await hSetWithTTL(
+        sysRedis,
+        REDIS_KEYS.GENERATION.TOKENS,
+        redisKey,
+        token,
+        generationServiceCookie.maxAge * 1000
+      ).catch((err) => {
         logSysRedisFailOpen(
           'write-degraded',
           'getOrchestratorToken cache writeback',

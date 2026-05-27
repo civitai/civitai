@@ -1,5 +1,6 @@
 import { SignalMessages } from '~/server/common/enums';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { hSetMultiWithTTL } from '~/server/redis/atomic';
 import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { createLogger } from '~/utils/logging';
 import { signalClient } from '~/utils/signal-client';
@@ -21,8 +22,16 @@ async function updateSessionState(userId: number, type: 'refresh' | 'invalid') {
 
   await clearSessionCache(userId);
   if (Object.keys(userTokensObj).length > 0) {
-    await sysRedis.hSet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, userTokensObj);
-    await sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, userTokens, DEFAULT_EXPIRATION);
+    // Atomic multi-field set+TTL — single EVAL replaces the sequential
+    // hSet (multi-field) + hExpire (multi-field). The previous pair could
+    // leave a subset of fields no-TTL if the second call failed; here all
+    // fields land with the same DEFAULT_EXPIRATION TTL atomically.
+    await hSetMultiWithTTL(
+      sysRedis,
+      REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
+      userTokensObj,
+      DEFAULT_EXPIRATION * 1000
+    );
   }
   return userTokens;
 }

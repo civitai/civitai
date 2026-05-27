@@ -1,6 +1,7 @@
 import type { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { getSessionUser } from './session-user';
 import type { User } from '~/shared/utils/prisma/models';
@@ -201,8 +202,16 @@ async function setToken(token: JWT, session: AsyncReturnType<typeof getSessionUs
   if (session.id) {
     const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${session.id}`;
     try {
-      await sysRedis.hSet(key as any, tokenId, Date.now());
-      await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+      // Atomic single-EVAL set+TTL — closes the orphaned-entry accumulation
+      // window described above (hSet succeeds, hExpire fails → no-TTL field
+      // sticks around until the next explicit hDel / full invalidation).
+      await hSetWithTTL(
+        sysRedis,
+        key,
+        tokenId,
+        Date.now(),
+        DEFAULT_EXPIRATION * 1000
+      );
     } catch (err) {
       logSysRedisFailOpen('tracking-write-cliff', 'setToken', err, {
         userId: session.id,
