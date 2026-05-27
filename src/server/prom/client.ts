@@ -164,6 +164,26 @@ export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['provider', 'scope', 'status'] as const,
 });
 
+// App Blocks KV datastore (W4-v0)
+// `op` ∈ get|set|delete|list|getQuota; `outcome` ∈ ok|unauthorized|
+// not_found|payload_too_large|quota_exceeded|error. Read-only counters
+// keep the procedure-side instrumentation cheap; heavier histograms hang
+// off a future per-app dashboard.
+export const appStorageOpsCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_ops_total',
+  help: 'App Blocks KV datastore tRPC operations',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+// One quota-exceeded reject is interesting on its own (it means the
+// publisher hit the 50MB ceiling). Track per-app_block_id so we can
+// surface specific apps in alerts before they get bumped to v1.
+export const appStorageQuotaExceededCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_quota_exceeded_total',
+  help: 'App Blocks KV writes rejected because the app quota would be exceeded',
+  labelNames: ['app_block_id'] as const,
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
