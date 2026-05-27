@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { hSetWithTTL, hSetMultiWithTTL } from '../atomic';
+import { hSetWithTTL, hSetMultiWithTTL, zAddWithTTL } from '../atomic';
 
 /**
  * Unit tests for the EVAL-based atomic hash-field+TTL helpers.
@@ -80,5 +80,28 @@ describe('hSetMultiWithTTL', () => {
     const client = mockClient();
     await hSetMultiWithTTL(client, 'k', {}, 1000);
     expect(client.eval).not.toHaveBeenCalled();
+  });
+});
+
+describe('zAddWithTTL', () => {
+  it('passes key as KEYS[1] and score/member/ttl as ARGV', async () => {
+    const client = mockClient();
+    await zAddWithTTL(client, 'my:zset', 42, 'member-1', 5000);
+
+    expect(client.eval).toHaveBeenCalledTimes(1);
+    const [script, options] = client.eval.mock.calls[0];
+
+    // Script does ZADD + PEXPIRE on the same key in a single EVAL.
+    expect(script).toContain("redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])");
+    expect(script).toContain("redis.call('PEXPIRE', KEYS[1], ARGV[3])");
+
+    expect(options.keys).toEqual(['my:zset']);
+    expect(options.arguments).toEqual(['42', 'member-1', '5000']);
+  });
+
+  it('stringifies numeric score', async () => {
+    const client = mockClient();
+    await zAddWithTTL(client, 'k', 0, 'm', 1000);
+    expect(client.eval.mock.calls[0][1].arguments).toEqual(['0', 'm', '1000']);
   });
 });

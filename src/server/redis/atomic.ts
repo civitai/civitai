@@ -159,3 +159,41 @@ export async function hSetMultiWithTTL(
     arguments: args,
   });
 }
+
+/**
+ * Atomically add a member to a sorted set AND set the key's TTL.
+ *
+ * Same race-class bug as hSetWithTTL: `Promise.all([zAdd, expire])` (or
+ * `await zAdd; await expire`) can land EXPIRE before ZADD on the server.
+ * EXPIRE on a missing key is a no-op (returns 0), then ZADD writes the
+ * member and the key has no TTL — the sorted set never expires.
+ *
+ * Sorted sets have key-level TTL only (no per-member TTL like hash fields'
+ * HPEXPIRE), so this uses PEXPIRE on the whole key. Callers that don't
+ * want a TTL (e.g. counters with `ttl === 0`) must bypass this helper and
+ * call `zAdd` directly — PEXPIRE with 0ms would DELETE the key.
+ *
+ * @param client - Any RedisClientType-shaped client with `.eval(...)`.
+ * @param key    - Sorted set key.
+ * @param score  - Numeric score for the member.
+ * @param member - Member string.
+ * @param ttlMs  - Time-to-live in milliseconds. Must be > 0.
+ */
+export async function zAddWithTTL(
+  client: EvalCapableClient,
+  key: string,
+  score: number,
+  member: string,
+  ttlMs: number
+): Promise<void> {
+  // KEYS[1]=key  ARGV[1]=score  ARGV[2]=member  ARGV[3]=ttlMs
+  const script = `
+    redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
+    redis.call('PEXPIRE', KEYS[1], ARGV[3])
+    return 1
+  `;
+  await client.eval(script, {
+    keys: [key],
+    arguments: [String(score), member, String(ttlMs)],
+  });
+}

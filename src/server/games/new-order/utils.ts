@@ -4,7 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { hSetWithTTL } from '~/server/redis/atomic';
+import { hSetWithTTL, zAddWithTTL } from '~/server/redis/atomic';
 import { logToAxiom } from '~/server/logging/client';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -33,11 +33,13 @@ function createCounter<TId extends number | string = number | string>({
 }: CounterOptions<TId>) {
   async function setCacheValue(id: TId, value: number) {
     if (ordered) {
-      const promises: Promise<unknown>[] = [
-        sysRedis.zAdd(key, { score: value, value: id.toString() }),
-      ];
-      if (ttl !== 0) promises.push(sysRedis.expire(key, ttl));
-      await Promise.all(promises);
+      if (ttl !== 0) {
+        // Atomic single-EVAL replaces racy Promise.all([zAdd, expire]).
+        // ttl===0 path stays bare zAdd — PEXPIRE with 0ms would DELETE the key.
+        await zAddWithTTL(sysRedis, key, value, id.toString(), ttl * 1000);
+      } else {
+        await sysRedis.zAdd(key, { score: value, value: id.toString() });
+      }
     } else {
       if (ttl !== 0) {
         // Atomic single-EVAL replaces racy Promise.all([hSet, hExpire]).
