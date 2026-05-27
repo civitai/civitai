@@ -16,6 +16,7 @@ const cookiesSchema = z.object({
       loginRedirectReason: z.string().optional(),
     })
     .default({}),
+  consent: z.enum(['accepted', 'rejected']).nullable().catch(null).default(null),
 });
 
 function parseCookiesObj(cookies: TmpCookiesObj) {
@@ -31,6 +32,7 @@ function parseCookiesObj(cookies: TmpCookiesObj) {
       landingPage: cookies?.['ref_landing_page'],
       loginRedirectReason: cookies?.['ref_login_redirect_reason'],
     },
+    consent: cookies?.['civitai-consent'],
   };
 }
 

@@ -2,6 +2,7 @@ import type { TypographyStylesProviderProps } from '@mantine/core';
 import { useComputedColorScheme, lighten, darken } from '@mantine/core';
 import { useMemo } from 'react';
 
+import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { needsColorSwap } from '~/utils/html-helpers';
 import { DEFAULT_ALLOWED_ATTRIBUTES, sanitizeHtml } from '~/utils/html-sanitize-helpers';
 import classes from './RenderHtml.module.scss';
@@ -9,6 +10,27 @@ import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/Ty
 import clsx from 'clsx';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+
+// Match host exactly or as a subdomain (e.g. "www.youtube.com"), never as a
+// substring elsewhere in the URL — `url.includes('youtube.com')` would let
+// `https://evil.com/?x=youtube.com` masquerade as a YouTube embed.
+function hostMatches(host: string, domain: string) {
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+function embedKindFromUrl(url: string | undefined): string {
+  if (!url) return 'embed';
+  let host: string;
+  try {
+    host = new URL(url, 'https://placeholder.invalid').hostname.toLowerCase();
+  } catch {
+    return 'embed';
+  }
+  if (hostMatches(host, 'youtube.com') || hostMatches(host, 'youtu.be')) return 'youtube';
+  if (hostMatches(host, 'instagram.com')) return 'instagram';
+  if (hostMatches(host, 'strawpoll.com')) return 'strawpoll';
+  return 'embed';
+}
 
 export function RenderHtml({
   html,
@@ -20,6 +42,7 @@ export function RenderHtml({
 }: Props) {
   const colorScheme = useComputedColorScheme('dark');
   const blurNsfw = useBrowsingSettings((state) => state.blurNsfw);
+  const { allowed: thirdPartyAllowed } = useThirdPartyConsent();
 
   html = useMemo(() => {
     let processedHtml = html;
@@ -67,7 +90,7 @@ export function RenderHtml({
       parseStyleAttributes: allowCustomStyles,
       allowedAttributes: {
         ...DEFAULT_ALLOWED_ATTRIBUTES,
-        div: ['data-youtube-video', 'data-type', 'style'],
+        div: ['data-youtube-video', 'data-type', 'style', 'data-consent-blocked'],
       },
       allowedStyles: allowCustomStyles
         ? {
@@ -75,8 +98,26 @@ export function RenderHtml({
           }
         : undefined,
       transformTags: {
+        // For unconsented CA visitors, replace third-party iframes with a
+        // placeholder div so no third-party network request fires. The kind
+        // attribute drives the CSS-only placeholder shown in its place.
+        iframe: function (_tagName, attribs) {
+          if (thirdPartyAllowed) return { tagName: 'iframe', attribs };
+          return {
+            tagName: 'div',
+            attribs: {
+              'data-consent-blocked': embedKindFromUrl(attribs.src),
+            },
+            text: '',
+          };
+        },
         div: function (tagName, attribs) {
           if (attribs['data-type'] !== 'strawPoll') delete attribs.style;
+          // data-consent-blocked is whitelisted in allowedAttributes so the
+          // iframe→div transform above can set it. Strip it from
+          // user-authored divs so people can't spawn fake "content blocked"
+          // placeholders by hand-writing the attribute in their HTML.
+          delete attribs['data-consent-blocked'];
           return {
             tagName,
             attribs,
@@ -139,7 +180,15 @@ export function RenderHtml({
         },
       },
     });
-  }, [html, blurNsfw, allowCustomStyles, colorScheme, withMentions, withProfanityFilter]);
+  }, [
+    html,
+    blurNsfw,
+    allowCustomStyles,
+    colorScheme,
+    withMentions,
+    withProfanityFilter,
+    thirdPartyAllowed,
+  ]);
 
   return (
     <TypographyStylesWrapper {...props} className={clsx(classes.htmlRenderer, className)}>

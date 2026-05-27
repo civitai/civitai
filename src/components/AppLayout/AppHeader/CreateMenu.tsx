@@ -13,6 +13,8 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
+import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 const CreateMenuButtons = forwardRef<
   HTMLDivElement,
@@ -23,8 +25,29 @@ const CreateMenuButtons = forwardRef<
     onClick?: MouseEventHandler;
   }
 >(({ disabled, onMouseEnter, onMouseLeave, onClick }, ref) => {
+  const { trackAction } = useTrackEvent();
   const handleClick = () => {
-    useGenerationPanelStore.setState((state) => ({ opened: !state.opened }));
+    const wasOpen = useGenerationPanelStore.getState().opened;
+
+    if (!wasOpen) {
+      // Funnel telemetry — navbar Create click is a top-of-funnel entry-point.
+      // Route through generationGraphPanel.open() (no-input branch) so
+      // lastEntryAction is reset to 'direct' on a pivot from a stale remix/
+      // create state. Without this, every navbar click reuses the prior
+      // entry-action and attributes the next submit to the wrong source.
+      generationGraphPanel.open();
+      trackAction({
+        type: 'Model_Create_Click',
+        details: { source: 'create:navbar' },
+      }).catch(() => undefined);
+    } else {
+      // Closing the panel — preserve historical toggle behaviour. We only
+      // emit Model_Create_Click on open transitions to avoid double-counting.
+      // Route through generationGraphPanel.close() (not raw setState) so
+      // the lastEntryAction reset is explicit and symmetric with the open
+      // path — keeps all entry-action lifecycle in one code path.
+      generationGraphPanel.close();
+    }
   };
 
   return (

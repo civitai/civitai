@@ -157,6 +157,233 @@ const profanitySearchSchema = z.object({
     .optional(),
 });
 
+// Generation funnel telemetry — top-of-funnel click events that feed into
+// the existing orchestration.jobs / images_created / PurchaseFunds_Confirm
+// downstream stages. See PR #2322 / civitai-observability-gaps dashboard.
+const modelCreateClickSchema = z.object({
+  type: z.literal('Model_Create_Click'),
+  details: z
+    .object({
+      modelId: z.number().optional(),
+      modelVersionId: z.number().optional(),
+      // Free-form entry-point tag (matches data-activity values on the
+      // GenerateButton). Canonical values as of pass 8:
+      //   create:model, create:model-stat, create:model-card,
+      //   create:version-stat, create:training-select, create:navbar,
+      //   create:tool-banner, create:tool-card
+      source: z.string().optional(),
+    })
+    .optional(),
+});
+
+const imageRemixClickSchema = z.object({
+  type: z.literal('Image_Remix_Click'),
+  details: z
+    .object({
+      imageId: z.number(),
+      // What the user clicked Remix on. Bounded to the three media types
+      // surfaced by GetGenerationDataInput; keep this enum tight so a typo
+      // or new value shows up at the schema layer rather than silently
+      // showing as `other` in downstream funnel queries.
+      imageType: z.enum(['image', 'video', 'audio']).optional(),
+      // The primary checkpoint version the remix will seed into the generator,
+      // when known on the client. Often unknown on infinite-scroll cards
+      // (resolved server-side by getGenerationData) — nullable on purpose.
+      sourceModelVersionId: z.number().nullish(),
+      // Free-form entry-point tag (matches data-activity values: remix:image,
+      // remix:image-card, remix:image-meta, etc.) — left as a string so new
+      // remix entry-points can be added without a schema bump.
+      source: z.string().optional(),
+    })
+    .optional(),
+});
+
+// Dashboard semantics for Generator_Submit — read before slicing the funnel:
+//
+//   isValid: true means "RHF validation + graph.validate() passed" — NOT
+//     "reached orchestration". Downstream sanitize/buzz/mutate failures
+//     (insufficient buzz, POI flag, mutate() rejection) still happen after
+//     isValid:true and are observable only via orchestration.jobs or the
+//     PurchaseFunds funnel.
+//
+//   isRateLimited: never co-emitted with the validation-fail signal. A submit
+//     that is BOTH rate-limited AND has an invalid prompt only emits
+//     isValid:false (no isRateLimited:true) — react-hook-form's onError
+//     fires before GenForm's onSubmit wrapper can run the canGenerate
+//     check (legacy), and v2's FormFooter explicitly runs graph.validate()
+//     before the canGenerate check to match (see FormFooter.tsx:handleSubmit).
+//     So the rate-limited path is unreachable from a validation-failed
+//     submit on every form path. Treat `isRateLimited:true` as the lower
+//     bound of capacity-bounded clicks, not the full set.
+//
+//     isValid value on rate-limited emits is path-dependent — the legacy
+//     image and video forms emit isValid:false (the GenForm wrapper writes
+//     it that way), while v2's FormFooter emits isValid:true (the submit
+//     would have validated; only the cap stopped it). Queries filtering
+//     `isRateLimited:true AND isValid:true` see ONLY v2; filtering
+//     `isRateLimited:true AND isValid:false` sees legacy + video. The
+//     dashboard should treat `isRateLimited:true` as the source of truth
+//     for "capacity-bounded click" and ignore `isValid` on those rows.
+//
+//   hasRemixOfId semantics:
+//      'legacy' and 'new' (v2): both gate on prompt similarity >= 0.75.
+//                v2 uses the `useRemixOfId()` hook (FormFooter.tsx:803),
+//                which returns `undefined` when below threshold; legacy
+//                applies the equivalent gate before mutate(). The hook
+//                feeds `!!remixOfId` into the emit at FormFooter.tsx:913,
+//                so an unsimilar remix correctly produces hasRemixOfId:false.
+//                The thresholds are identical — legacy ≡ v2 here.
+//      'video':  hasRemixOfId is NOT emitted (field absent in the details
+//                payload — see VideoGenerationForm.tsx:153-165, 241-252).
+//                Video form has no prompt-similarity hook yet; add when
+//                video remix analytics matter.
+//     A query GROUP BY hasRemixOfId is safe to roll up across formVersion
+//     'legacy' and 'new', but should EXCLUDE 'video' (the field is missing,
+//     not false) or split it out as its own bucket.
+//
+//   formVersion: absent on rate-limited emits from GenForm — the legacy
+//     image GenForm wrapper and VideoGenerationForm don't have a way to
+//     discriminate from the wrapping layer without a prop drill. v2's
+//     FormFooter rate-limit emit does include formVersion:'new'. So
+//     `isRateLimited:true AND formVersion missing` = legacy image or
+//     video form; `isRateLimited:true AND formVersion:'new'` = v2.
+//     Rate-limited GenForm emits are ONLY fired from the two opt-in call
+//     sites (`<GenForm track>` in GenerationForm2 + VideoGenerationForm);
+//     orchestrator modals (upscale / bg-removal / video-interpolation)
+//     deliberately omit the rate-limited emit so they don't produce
+//     asymmetric data — they have no success / validation-fail emits of
+//     their own. Treat upscale/bg-removal/interpolation as out of this
+//     funnel entirely until they get dedicated instrumentation.
+//
+//   source vs fromAction: Model_Create_Click{source:'create:navbar'} pairs
+//     to Generator_Submit{fromAction:'direct'}, NOT 'create'. The navbar
+//     Create button calls generationGraphPanel.open() with no input, which
+//     resolves entry-action to 'direct' via the no-input branch. Same
+//     pairing applies to source='create:tool-banner' and 'create:tool-card'
+//     — both open the panel with no input (the tool alias is resolved
+//     later, not at click time), so they also pair to fromAction='direct'.
+//     The remaining create:* sources (create:model, create:model-stat,
+//     create:model-card, create:version-stat, create:training-select)
+//     pair to fromAction='create'. The wildcard CTA on
+//     ModelVersionDetails.tsx emits source='create:model' too — wildcard
+//     is a runType branch in the form provider, not a source tag. If
+//     wildcard click→submit conversion ever becomes a question, the
+//     instrumentation needs to differentiate via wildcardSetId, not source.
+//     Per-source conversion queries against navbar/tool sources need:
+//       JOIN clicks ON click.userId = submit.userId
+//         WHERE click.source IN ('create:navbar','create:tool-banner','create:tool-card')
+//           AND submit.fromAction IN ('create','direct')
+//     The 'direct' bucket also contains non-click-attributed submits (panel
+//     re-open, /generate page direct visit), so navbar/tool conversion is
+//     an upper bound, not an exact count.
+//
+//     Note: source='create:version-stat' may emit with modelId=undefined
+//     during the parent component's loading race (the modelVersion fetch
+//     in ModelVersionEarlyAccessPurchase hasn't resolved yet, so
+//     modelVersion?.model?.id is undefined when the user clicks). Dashboard
+//     queries should treat 'create:version-stat AND modelId IS NULL' as
+//     expected, not as a data issue.
+//
+//     Note: source='create:model-card' (RemixButton on ModelCard) intentionally
+//     emits without modelId — the ModelCard caller doesn't have
+//     ModelVersion.modelId in scope. Aggregate to parent model via a
+//     ModelVersion lookup if you need model-level rollups.
+//
+//   Fetch-in-flight race: open({type:'image', id}) only writes
+//     lastEntryAction AFTER fetchGenerationData() resolves (generation-graph
+//     .store.ts:369-371). If a user clicks Remix and submits before the
+//     source fetch resolves, fromAction reflects the prior session's value
+//     (likely 'direct'), not 'remix'. RHF validation typically rejects
+//     these submits (isValid:false — the form is still in skeleton/loading
+//     state), so the visible artifact is a thin slice of
+//     `fromAction='direct', isValid=false` rows that should have been
+//     'remix'. Remix click→submit conversion will under-count by this
+//     narrow slice. Not worth fixing until it shows up as a measurable
+//     drift on the dashboard.
+//
+//   Orphan submits — known un-instrumented entry-points: several pre-existing
+//     call sites open the generation panel without emitting a paired
+//     Model_Create_Click / Image_Remix_Click, so their Generator_Submit rows
+//     have no joinable upstream click event:
+//       - pages/challenges/[id]/[[...slug]].tsx:154,1231 — challenge detail
+//         "Generate" buttons (top-of-page + per-model-version action)
+//       - components/Challenges/ChallengeInvitation.tsx:80,85 — challenge
+//         invite modal accept
+//       - components/Chopped/states/playing.tsx:288 — Chopped game's
+//         "Create submission" button
+//       - components/ImageGeneration/QueueItem.tsx:417-422 — in-queue
+//         "Generate with this resource" button (runType:'run' → fromAction:
+//         'create'; semantically a replay, but pre-existing — not changing
+//         in this pass)
+//       - components/generation_v2/inputs/MetadataExtractionPanel.tsx:170-179 —
+//         "Add resources" handler in the metadata-extraction drop-zone calls
+//         setData({runType:'run'}) (→ fromAction:'create') and opens the
+//         panel with no upstream click emit. Low volume vs the other
+//         orphan entry-points; instrumenting is follow-up scope.
+//       - components/Buzz/FeatureCards/FeatureCards.tsx:148 — Buzz feature
+//         card "Generate" entry. Opens the panel with no input (→ fromAction:
+//         'direct'). Not instrumented in this pass — entry-point is on the
+//         Buzz dashboard, semantically more of a marketing surface than the
+//         core create/remix funnel; instrumenting is follow-up scope.
+//     These produce Generator_Submit{fromAction:'create'} (or 'replay' for
+//     runType='run' from QueueItem) with no matching click row. Dashboard
+//     queries computing click→submit conversion should EITHER exclude
+//     orphan-submits via `WHERE EXISTS (matching click within session)` OR
+//     document the gap and treat the orphan slice as an additive baseline.
+//     Instrumenting these entry-points is follow-up scope.
+const generatorSubmitSchema = z.object({
+  type: z.literal('Generator_Submit'),
+  // `details` is marked required (not .optional()) so new callers can't
+  // silently emit a Generator_Submit with no payload — that would land in
+  // the funnel as an un-attributed row and skew every downstream query.
+  // Inside `details`, only `fromAction` is required; the rest (isValid,
+  // formVersion, isRateLimited, modelVersionId, hasRemixOfId) are advisory
+  // and may be omitted depending on form/path. The submit-schema's job is
+  // to enforce the entry-action discriminator, not to dictate which
+  // optional context fields each emitter chooses to populate.
+  details: z
+    .object({
+      // Checkpoint version that will run the job. May be undefined for
+      // multi-resource workflows where the checkpoint isn't picked yet.
+      modelVersionId: z.number().nullish(),
+      // Discriminator for joining back to the entry-point click event.
+      // Reflects the most-recent intentful entry, not session history — each
+      // open-with-input call (remix click, model-stat click, replay) overwrites
+      // the previous value; close() resets to 'direct'; navbar Create resets
+      // to 'direct' via the no-input branch. So a user who remixes then
+      // pivots to the navbar will see fromAction='direct' on the next submit,
+      // not 'remix'.
+      //
+      // 'remix'  — opened from an image/video (generationGraphPanel runType=remix)
+      // 'create' — opened from a model/modelVersion page or model card
+      // 'replay' — re-run from the queue / previous output
+      // 'direct' — opened from /generate or with no input (panel default)
+      fromAction: z.enum(['create', 'remix', 'replay', 'direct']),
+      // True when remixOfId is being sent on the request — gated by the
+      // 0.75 prompt-similarity threshold in BOTH legacy and v2 forms (v2
+      // via the `useRemixOfId()` hook). Absent on video-form emits — the
+      // video path has no similarity hook yet. See the doc-block above
+      // for the hasRemixOfId roll-up caveat.
+      hasRemixOfId: z.boolean().optional(),
+      // 'legacy' (GenerationForm2) | 'new' (generation_v2/FormFooter) |
+      // 'video' (Generation/Video/VideoGenerationForm)
+      formVersion: z.enum(['legacy', 'new', 'video']).optional(),
+      // False when the submit attempt failed validation (react-hook-form
+      // onError path or graph.validate() early return). The data team can
+      // split valid-vs-invalid attempts to spot UX traps where users click
+      // Generate but the form blocks them. Default true (omitted on success
+      // path is treated as valid by downstream).
+      isValid: z.boolean().optional(),
+      // True when the submit short-circuits because the user is at their
+      // concurrent-request limit (snapshot.canGenerate === false). Capacity-
+      // bounded clicks show up as a distinct funnel stage and aren't
+      // conflated with RHF validation failures (missing prompt, etc.).
+      // isValid on these rows is path-dependent (legacy/video: false,
+      // v2: true) — see the doc-block above for the dashboard caveat.
+      isRateLimited: z.boolean().optional(),
+    }),
+});
+
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
 export const trackActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('AddToBounty_Click') }),
@@ -175,4 +402,7 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   membershipDowngradeSchema,
   csamHelpTriggeredSchema,
   profanitySearchSchema,
+  modelCreateClickSchema,
+  imageRemixClickSchema,
+  generatorSubmitSchema,
 ]);

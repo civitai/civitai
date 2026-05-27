@@ -6,6 +6,7 @@ import { useImageFilters } from '~/components/Image/image.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { useQueryTools } from '~/components/Tool/tools.utils';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import type { FilterKeys } from '~/providers/FiltersProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { slugit } from '~/utils/string-helpers';
@@ -26,6 +27,7 @@ export function ToolBanner({
   });
   const selected = tools?.find((x) => x.id === selectedId || slugit(x.name) === slug);
   const theme = useMantineTheme();
+  const { trackAction } = useTrackEvent();
 
   if (!tools || !selected) return null;
 
@@ -78,8 +80,18 @@ export function ToolBanner({
                     color="blue"
                     radius="xl"
                     rightSection={<IconBrush size={18} />}
-                    data-activity="generate:tool"
+                    data-activity="create:tool-banner"
                     onClick={() => {
+                      // Top-of-funnel telemetry. The Tool banner's Generate
+                      // button opens the panel with no input — semantically
+                      // a Create entry-point (the tool's alias gets resolved
+                      // into a prompt later). We don't have a modelVersionId
+                      // here (tools are a separate abstraction); the source
+                      // tag is what the dashboard joins on.
+                      trackAction({
+                        type: 'Model_Create_Click',
+                        details: { source: 'create:tool-banner' },
+                      }).catch(() => undefined);
                       generationGraphPanel.open();
                     }}
                   >
