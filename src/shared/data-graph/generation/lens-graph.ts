@@ -55,20 +55,30 @@ const versionIdToVariant = new Map<number, LensVariant>([
 // Aspect Ratios
 // =============================================================================
 
-/** Lens aspect ratios (standard 1024-grade resolutions) */
+/**
+ * Lens aspect ratios — sized to a ~1440² total-pixel target (base_resolution=1440
+ * from the model card), rounded to the nearest multiple of 16.
+ */
 const lensAspectRatios = [
-  { label: '16:9', value: '16:9', width: 1344, height: 768 },
-  { label: '3:2', value: '3:2', width: 1216, height: 832 },
-  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
-  { label: '2:3', value: '2:3', width: 832, height: 1216 },
-  { label: '9:16', value: '9:16', width: 768, height: 1344 },
+  { label: '1:2', value: '1:2', width: 1024, height: 2032 },
+  { label: '9:16', value: '9:16', width: 1088, height: 1920 },
+  { label: '2:3', value: '2:3', width: 1184, height: 1760 },
+  { label: '3:4', value: '3:4', width: 1248, height: 1664 },
+  { label: '1:1', value: '1:1', width: 1440, height: 1440 },
+  { label: '4:3', value: '4:3', width: 1664, height: 1248 },
+  { label: '3:2', value: '3:2', width: 1760, height: 1184 },
+  { label: '16:9', value: '16:9', width: 1920, height: 1088 },
+  { label: '2:1', value: '2:1', width: 2032, height: 1024 },
 ];
+
+/** The most common aspect ratios — shown before the "More" overflow in the UI. */
+const lensPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 
 // =============================================================================
 // Variant Subgraphs
 // =============================================================================
 
-/** Normal model: standard cfg/steps, LoRA support */
+/** Normal model: cfg 5.0, steps 20 (model card defaults), LoRA support */
 const normalGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   .node(
     'resources',
@@ -79,10 +89,10 @@ const normalGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
       }),
     ['ecosystem']
   )
-  .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 4, step: 0.5 }))
+  .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 20 }));
 
-/** Turbo model: low cfg/steps, LoRA support */
+/** Turbo model: same defaults as normal per model card, LoRA support */
 const turboGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   .node(
     'resources',
@@ -93,8 +103,8 @@ const turboGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
       }),
     ['ecosystem']
   )
-  .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 1, step: 0.5 }))
-  .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 8 }));
+  .node('cfgScale', sliderNode({ min: 1, max: 2, step: 0.1, defaultValue: 1 }))
+  .node('steps', sliderNode({ min: 1, max: 12, defaultValue: 4 }));
 
 // =============================================================================
 // Lens Graph
@@ -126,18 +136,14 @@ export const lensGraph = new DataGraph<
     normal: normalGraph,
     turbo: turboGraph,
   })
-  // Reset cfgScale and steps to variant defaults when switching models.
-  // The discriminator switches branches, but the form's persisted input values
-  // remain valid in the new branch's range, so we explicitly reset them.
-  .effect(
-    (ctx, _ext, set) => {
-      const isTurbo = ctx.lensVariant === 'turbo';
-      set('cfgScale', isTurbo ? 1 : 4);
-      set('steps', isTurbo ? 8 : 20);
-    },
-    ['lensVariant']
+  .node(
+    'aspectRatio',
+    aspectRatioNode({
+      options: lensAspectRatios,
+      defaultValue: '1:1',
+      priorityOptions: lensPriorityRatios,
+    })
   )
-  .node('aspectRatio', aspectRatioNode({ options: lensAspectRatios, defaultValue: '1:1' }))
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
   .merge(promptGraph)
