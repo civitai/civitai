@@ -42,6 +42,7 @@ import { createNanoBananaInput } from './nano-banana.handler';
 import { createAnimaInput } from './anima.handler';
 import { createChromaInput } from './chroma.handler';
 import { createErnieInput } from './ernie.handler';
+import { createLensInput } from './lens.handler';
 import { createZImageInput } from './z-image.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createHiDreamO1Input } from './hi-dream-o1.handler';
@@ -139,6 +140,9 @@ export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 /** Ernie context */
 export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
 
+/** Lens context */
+export type LensCtx = EcosystemGraphOutput & { ecosystem: 'Lens' };
+
 /** Wan video ecosystems context */
 export type WanCtx = EcosystemGraphOutput & {
   ecosystem:
@@ -209,6 +213,7 @@ export { createHiDreamInput } from './hi-dream.handler';
 export { createHiDreamO1Input } from './hi-dream-o1.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createErnieInput } from './ernie.handler';
+export { createLensInput } from './lens.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
@@ -361,6 +366,10 @@ async function createEcosystemStep(
     // Ernie
     case 'Ernie':
       return createErnieInput(normalizedData, handlerCtx);
+
+    // Lens (Civitai-internal, comfy)
+    case 'Lens':
+      return createLensInput(normalizedData, handlerCtx);
 
     // =========================================================================
     // Video Ecosystems - videoGen step type

@@ -58,6 +58,7 @@ import { veo3Graph } from './veo3-graph';
 import { animaGraph } from './anima-graph';
 import { grokGraph } from './grok-graph';
 import { ernieGraph } from './ernie-graph';
+import { lensGraph } from './lens-graph';
 import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
@@ -265,6 +266,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['PonyV7'] as const, graph: ponyV7Graph },
     { values: ['Anima'] as const, graph: animaGraph },
     { values: ['Ernie'] as const, graph: ernieGraph },
+    { values: ['Lens'] as const, graph: lensGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
     {

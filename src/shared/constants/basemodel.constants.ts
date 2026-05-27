@@ -145,6 +145,7 @@ export const ECO = {
   PlaygroundV2: 26,
   ODOR: 27,
   Other: 28,
+  Lens: 69,
 
   // Root ecosystems - Video models
   HyV1: 30,
@@ -678,6 +679,7 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Seedance',
     sortOrder: 215,
   },
+  { id: ECO.Lens, key: 'Lens', displayName: 'Lens', sortOrder: 207 },
   { id: ECO.ODOR, key: 'ODOR', displayName: 'ODOR', sortOrder: 208 },
   {
     id: ECO.PlaygroundV2,
@@ -843,6 +845,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   // Ernie - checkpoint and LORA
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
+
+  // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
+  { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointOnly },
 
   // Sora2 - checkpoint only
   { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },
@@ -1280,6 +1285,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.AceAudio,
     defaults: {
       model: { id: 2864949 },
+      modelLocked: true,
+    },
+  },
+  {
+    ecosystemId: ECO.Lens,
+    defaults: {
+      model: { id: 2655865 },
       modelLocked: true,
     },
   },
@@ -1737,6 +1749,7 @@ export const BM = {
   Ernie: 83,
   AceAudio: 84,
   HappyHorse: 85,
+  Lens: 88,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2272,6 +2285,15 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'video',
     ecosystemId: ECO.LTXV23,
     licenseId: 16,
+  },
+
+  // Lens
+  {
+    id: BM.Lens,
+    name: 'Lens',
+    description: "Civitai's image generation model",
+    type: 'image',
+    ecosystemId: ECO.Lens,
   },
 
   // Lumina
