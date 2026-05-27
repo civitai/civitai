@@ -1,4 +1,5 @@
 import {
+  Button,
   Center,
   Chip,
   Container,
@@ -11,8 +12,10 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconSearch } from '@tabler/icons-react';
+import { IconPlus, IconSearch } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useMemo, useState } from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AppBlockCard } from '~/components/Apps/AppBlockCard';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
@@ -103,13 +106,19 @@ export default function AppsPage() {
       <Meta title="Apps — Civitai" description="Civitai App Blocks marketplace" deIndex />
       <Container size="xl" py="md">
         <Stack gap="md">
-          <Stack gap={4}>
-            <Title order={2}>Civitai App Blocks</Title>
-            <Text c="dimmed" size="sm">
-              Add interactive blocks to your models, or subscribe to ones you want to see
-              everywhere.
-            </Text>
-          </Stack>
+          <Group justify="space-between" align="flex-start">
+            <Stack gap={4}>
+              <Title order={2}>Civitai App Blocks</Title>
+              <Text c="dimmed" size="sm">
+                Add interactive blocks to your models, or subscribe to ones you want to see
+                everywhere.
+              </Text>
+            </Stack>
+            {/* Submit-new link — only rendered for the civitai-team (mod-gated
+                tRPC mutation would already reject anyone else). v1 replaces
+                the gate with the W1 review queue. */}
+            <SubmitAppLink />
+          </Group>
 
           <Group gap="md" align="end">
             <TextInput
@@ -165,5 +174,23 @@ export default function AppsPage() {
         </Stack>
       </Container>
     </>
+  );
+}
+
+function SubmitAppLink() {
+  // v0 gate: civitai-team only. The mutation already returns UNAUTHORIZED
+  // to non-mods, so the worst case if the gate slips is a clear server-
+  // side rejection rather than a silent leak.
+  const user = useCurrentUser();
+  if (!user?.isModerator) return null;
+  return (
+    <Button
+      component={Link}
+      href="/apps/submit"
+      leftSection={<IconPlus size={16} />}
+      variant="light"
+    >
+      Submit App
+    </Button>
   );
 }

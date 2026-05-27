@@ -66,7 +66,7 @@ function nextRandom(time: number): number[] {
  * later even at sub-ms cadence. Sufficient for our id needs without taking
  * the `ulid` npm dependency.
  */
-function newUlid(): string {
+export function newUlid(): string {
   const time = Date.now();
   return encodeTime(time, 10) + encodeRandom(nextRandom(time));
 }
