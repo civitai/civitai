@@ -75,6 +75,19 @@ function failureSnapshot(err: unknown): BlockWorkflowSnapshot {
   };
 }
 
+// Reduce a thrown tRPC error to a single short string the block can surface.
+// TRPCClientError exposes `.message` which is already the server message
+// (apps.storage.* throws with explicit code + message strings); everything
+// else gets a generic fallback. Keep this conservative — the iframe is
+// untrusted and we don't want to leak server stack traces.
+function storageErrorMessage(err: unknown): string {
+  if (err && typeof err === 'object' && 'message' in err) {
+    const message = (err as { message?: unknown }).message;
+    if (typeof message === 'string' && message.length > 0) return message;
+  }
+  return 'storage request failed';
+}
+
 /**
  * Renders a block inside a sandboxed iframe and drives the postMessage
  * lifecycle. Implements the @civitai/app-sdk/blocks v1 contract — see
@@ -616,6 +629,172 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     );
     return off;
   }, [onMessage, send, token, pollWorkflowMutation]);
+
+  // App Blocks KV datastore (W4-v0). Five host-mediated handlers; the
+  // iframe never sees the apps DB credentials. Every reply MUST come
+  // back with the same requestId — the block-side hook times out at
+  // 30s otherwise. Errors are reported as `error: <string>` on the
+  // result payload so the hook can reject; we never throw upward and
+  // strand the bridge.
+  const trpcUtils = trpc.useUtils();
+  const storageSetMutation = trpc.apps.storage.set.useMutation();
+  const storageDeleteMutation = trpc.apps.storage.delete.useMutation();
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'APP_STORAGE_GET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.storage.get.fetch({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('APP_STORAGE_GET_RESULT', { requestId, value: result.value });
+        } catch (err) {
+          send('APP_STORAGE_GET_RESULT', {
+            requestId,
+            value: null,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown; value?: unknown } | undefined>(
+      'APP_STORAGE_SET',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await storageSetMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+            value: raw.value,
+          });
+          send('APP_STORAGE_SET_RESULT', {
+            requestId,
+            ok: true,
+            sizeBytes: result.sizeBytes,
+          });
+        } catch (err) {
+          send('APP_STORAGE_SET_RESULT', {
+            requestId,
+            ok: false,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, storageSetMutation]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; key?: unknown } | undefined>(
+      'APP_STORAGE_DELETE',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string' || typeof raw.key !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await storageDeleteMutation.mutateAsync({
+            blockToken: token,
+            key: raw.key,
+          });
+          send('APP_STORAGE_DELETE_RESULT', {
+            requestId,
+            ok: true,
+            deleted: result.deleted,
+          });
+        } catch (err) {
+          send('APP_STORAGE_DELETE_RESULT', {
+            requestId,
+            ok: false,
+            deleted: false,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, storageDeleteMutation]);
+
+  useEffect(() => {
+    const off = onMessage<
+      | {
+          requestId?: unknown;
+          prefix?: unknown;
+          limit?: unknown;
+          cursor?: unknown;
+        }
+      | undefined
+    >('APP_STORAGE_LIST', async (raw) => {
+      if (!raw || typeof raw.requestId !== 'string') return;
+      const requestId = raw.requestId;
+      try {
+        const prefix = typeof raw.prefix === 'string' ? raw.prefix : undefined;
+        const limit =
+          typeof raw.limit === 'number' && Number.isFinite(raw.limit)
+            ? Math.min(Math.max(Math.floor(raw.limit), 1), 200)
+            : 50;
+        const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        const result = await trpcUtils.apps.storage.list.fetch({
+          blockToken: token,
+          prefix,
+          limit,
+          cursor,
+        });
+        send('APP_STORAGE_LIST_RESULT', {
+          requestId,
+          keys: result.keys.map((k) => ({
+            key: k.key,
+            updatedAt: k.updatedAt instanceof Date ? k.updatedAt.toISOString() : String(k.updatedAt),
+          })),
+          nextCursor: result.nextCursor,
+        });
+      } catch (err) {
+        send('APP_STORAGE_LIST_RESULT', {
+          requestId,
+          keys: [],
+          error: storageErrorMessage(err),
+        });
+      }
+    });
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
+
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown } | undefined>(
+      'APP_STORAGE_QUOTA',
+      async (raw) => {
+        if (!raw || typeof raw.requestId !== 'string') return;
+        const requestId = raw.requestId;
+        try {
+          const result = await trpcUtils.apps.storage.getQuota.fetch({ blockToken: token });
+          send('APP_STORAGE_QUOTA_RESULT', {
+            requestId,
+            usedBytes: result.usedBytes,
+            rowCount: result.rowCount,
+            limitBytes: result.limitBytes,
+            limitRows: result.limitRows,
+          });
+        } catch (err) {
+          send('APP_STORAGE_QUOTA_RESULT', {
+            requestId,
+            usedBytes: 0,
+            rowCount: 0,
+            limitBytes: 0,
+            limitRows: 0,
+            error: storageErrorMessage(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, trpcUtils]);
 
   useEffect(() => {
     if (status !== 'ready') return;
