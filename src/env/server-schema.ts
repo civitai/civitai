@@ -21,6 +21,12 @@ export const serverSchema = z.object({
   NOTIFICATION_DB_URL: z.url(),
   NOTIFICATION_DB_REPLICA_URL: z.url(),
   DATAPACKET_DATABASE_RO_URL: z.url().optional(),
+  // App Blocks W4-KV-v0 — connection to cnpg-cluster-apps (`apps` DB) where
+  // each approved app block gets an isolated schema. civitai-web is the only
+  // service with these creds; apps never see DB credentials directly. Optional
+  // so PR previews + dev environments that haven't provisioned the apps DB
+  // yet keep starting (the storage tRPC procedures throw cleanly when unset).
+  APPS_DATABASE_URL: z.url().optional(),
   DATABASE_CONNECTION_TIMEOUT: z.coerce.number().default(0),
   DATABASE_POOL_MAX: z.coerce.number().default(20),
   NOTIFICATION_POOL_MAX: z.coerce.number().optional(),
