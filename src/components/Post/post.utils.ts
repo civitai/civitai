@@ -37,6 +37,7 @@ const postQueryParamSchema = z
     collectionId: numericString(),
     section: z.enum(['published', 'draft']),
     followed: booleanString().optional(),
+    scheduled: booleanString().optional(),
   })
   .partial();
 
