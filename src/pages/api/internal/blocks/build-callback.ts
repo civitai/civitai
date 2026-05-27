@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
@@ -18,9 +19,28 @@ import { triggerApply } from '~/server/services/blocks/apps-pipeline.service';
  *      developer sees the result in the repo view.
  */
 
+// HMAC verification needs the exact bytes Tekton hashed; Next's bodyParser
+// re-serializes JSON before our handler sees it, which can change byte
+// ordering / whitespace / numeric encoding. Read the raw stream ourselves.
 export const config = {
-  api: { bodyParser: { sizeLimit: '8kb' } },
+  api: { bodyParser: false },
 };
+
+const MAX_BODY_BYTES = 8 * 1024;
+
+async function readRawBody(req: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer);
+    total += buf.length;
+    if (total > MAX_BODY_BYTES) {
+      throw new Error('payload too large');
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks);
+}
 
 type CallbackBody = {
   slug?: string;
@@ -37,7 +57,7 @@ function safeEqualHex(a: string, b: string): boolean {
   return timingSafeEqual(A, B);
 }
 
-function verifySignature(rawBody: string, header: unknown): boolean {
+function verifySignature(rawBody: Buffer, header: unknown): boolean {
   const secret = env.BLOCK_BUILD_CALLBACK_SECRET;
   if (!secret) return false;
   if (typeof header !== 'string' || header.length === 0) return false;
@@ -56,13 +76,26 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+  let rawBody: Buffer;
+  try {
+    rawBody = await readRawBody(req);
+  } catch {
+    res.status(413).json({ error: 'Payload too large' });
+    return;
+  }
+
   if (!verifySignature(rawBody, req.headers['x-appblocks-signature'])) {
     res.status(401).json({ error: 'Bad signature' });
     return;
   }
 
-  const body = (req.body ?? {}) as CallbackBody;
+  let body: CallbackBody;
+  try {
+    body = JSON.parse(rawBody.toString('utf8')) as CallbackBody;
+  } catch {
+    res.status(400).json({ error: 'Invalid JSON' });
+    return;
+  }
   if (!body.slug || !SLUG_RE.test(body.slug)) {
     res.status(400).json({ error: 'Invalid slug' });
     return;
