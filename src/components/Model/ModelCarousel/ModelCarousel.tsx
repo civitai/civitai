@@ -23,6 +23,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -53,6 +54,7 @@ export function ModelCarousel(props: Props) {
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
+  const { trackAction } = useTrackEvent();
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -119,6 +121,16 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
+
+                                  trackAction({
+                                    type: 'Image_Remix_Click',
+                                    details: {
+                                      imageId: image.id,
+                                      imageType: image.type,
+                                      sourceModelVersionId: modelVersionId,
+                                      source: 'remix:model-carousel',
+                                    },
+                                  }).catch(() => undefined);
 
                                   generationGraphPanel.open({
                                     type: image.type,

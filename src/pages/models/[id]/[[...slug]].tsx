@@ -771,6 +771,7 @@ export default function ModelDetailsV2({
                   {latestGenerationVersion && (
                     <GenerateButton
                       versionId={latestGenerationVersion.id}
+                      modelId={model.id}
                       data-activity="create:model-stat"
                     >
                       <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>

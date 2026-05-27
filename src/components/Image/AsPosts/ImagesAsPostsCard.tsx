@@ -41,6 +41,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import classes from './ImagesAsPostsCard.module.css';
@@ -250,6 +251,7 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
+  const { trackAction } = useTrackEvent();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
   // Not wrapping in useCallback: the returned inner closure captures
@@ -258,6 +260,14 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const handleRemixClick = (selectedImage: typeof image) => (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    trackAction({
+      type: 'Image_Remix_Click',
+      details: {
+        imageId: selectedImage.id,
+        imageType: selectedImage.type,
+        source: 'remix:model-gallery',
+      },
+    }).catch(() => undefined);
     generationGraphPanel.open({
       type: selectedImage.type,
       id: selectedImage.id,
