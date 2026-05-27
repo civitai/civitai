@@ -359,7 +359,7 @@ function ReviewCard({ creatorId, ...review }: ResourceReviewPagedModel & { creat
         </Group>
         {review.details && (
           <ContentClamp maxHeight={300} ml="56px">
-            <RenderHtml html={review.details} withProfanityFilter />
+            <RenderHtml html={review.details} />
           </ContentClamp>
         )}
       </Stack>

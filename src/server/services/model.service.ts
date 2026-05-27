@@ -28,7 +28,7 @@ import {
   preventModelVersionLagBatch,
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { getProfanityFilter } from '~/server/services/profanity.service';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
@@ -1698,7 +1698,7 @@ export const upsertModel = async (
     }
 
     // Check model name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
+    const profanityFilter = await getProfanityFilter('search');
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
@@ -2581,9 +2581,7 @@ export async function bumpModel({ id }: { id: number }) {
 
   await Promise.all([
     dataForModelsCache.refresh([id]),
-    modelsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Update },
-    ]),
+    modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]),
     userModelCountCache.refresh(updated.userId),
   ]);
 

@@ -242,6 +242,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   // Check profanity in search query (only if not illegal and domain is green)
   const profanityAnalysis = useCheckProfanity(debouncedSearch, {
     enabled: domainColor === 'green' && !isIllegalSearch && !!debouncedSearch,
+    kind: 'search',
   });
 
   const isProfaneSearch = profanityAnalysis.hasProfanity;
@@ -584,8 +585,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
               return (
                 <Stack gap="xs" align="center">
                   <Text size="sm" align="center">
-                    Your search includes terms tied to real people. Content depicting real people
-                    is filtered from search results.
+                    Your search includes terms tied to real people. Content depicting real people is
+                    filtered from search results.
                   </Text>
                 </Stack>
               );

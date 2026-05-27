@@ -1,10 +1,10 @@
-// Import all NSFW word lists
-import blockedWords from '~/utils/metadata/lists/blocked-words.json';
+// Import bundled bootstrap list used when the caller does not supply one.
+import bundledSearchList from '~/utils/metadata/lists/profanity-search.json';
 
 /**
  * NSFW Word Processor Utility
  *
- * Processes NSFW word lists from JSON files and deduplicates them.
+ * Processes NSFW word lists and deduplicates them.
  */
 
 export interface ProcessedWords {
@@ -49,22 +49,21 @@ function isValidWord(word: string): boolean {
 }
 
 /**
- * Process all NSFW word lists and return deduplicated word lists
+ * Process the supplied (or default) NSFW word list and return a deduplicated set.
  */
-export function processNsfwWords(): ProcessedWords {
-  // Clean and deduplicate original words
-  const originalWords = Array.from(new Set(blockedWords.filter(isValidWord).map(cleanWord))).sort();
+export function processNsfwWords(words: string[] = bundledSearchList): ProcessedWords {
+  const originalWords = Array.from(new Set(words.filter(isValidWord).map(cleanWord))).sort();
 
   return {
     originalWords,
   };
 }
 
-// Cache the processed words to avoid recomputation
+// Cache the processed default list to avoid recomputation
 let cachedProcessedWords: ProcessedWords | null = null;
 
 /**
- * Get processed words (cached for performance)
+ * Get processed words for the default (full) list (cached for performance).
  */
 export function getCachedNsfwWords(): ProcessedWords {
   if (!cachedProcessedWords) {

@@ -45,7 +45,7 @@ import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { createProfanityFilter } from '~/libs/profanity-simple';
+import { getProfanityFilter } from '~/server/services/profanity.service';
 import { logToAxiom } from '~/server/logging/client';
 
 export const getBountyTransactionPrefix = (bountyId: number, userId: number) => {
@@ -411,7 +411,7 @@ export const upsertBounty = async ({
     for (const key of data.lockedProperties ?? []) delete data[key as keyof typeof data];
 
     // Check bounty name and description for profanity using threshold-based evaluation
-    const profanityFilter = createProfanityFilter();
+    const profanityFilter = await getProfanityFilter('search');
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
     const evaluation = profanityFilter.evaluateContent(textToCheck);
 
@@ -741,12 +741,10 @@ export const refundBounty = async ({
       user: { select: { id: true, email: true } },
     },
   } as const;
-  const bounty = await dbRead.bounty
-    .findUniqueOrThrow(bountyFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'bounty', caller: 'refundBounty' });
-      return dbWrite.bounty.findUniqueOrThrow(bountyFindArgs);
-    });
+  const bounty = await dbRead.bounty.findUniqueOrThrow(bountyFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'bounty', caller: 'refundBounty' });
+    return dbWrite.bounty.findUniqueOrThrow(bountyFindArgs);
+  });
 
   const { user } = bounty;
 
