@@ -186,6 +186,7 @@ export const getPostsInfinite = async ({
   collectionId,
   include,
   draftOnly,
+  scheduled,
   followed,
   clubId,
   browsingLevel,
@@ -267,7 +268,8 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
   } else {
-    if (draftOnly) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
+    if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
+    else if (scheduled) AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
     else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 
