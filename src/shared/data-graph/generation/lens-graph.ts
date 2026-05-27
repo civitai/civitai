@@ -5,7 +5,7 @@
  * Meta contains only dynamic props - static props defined in components.
  *
  * Two models discriminated by lensVariant (computed from model.id):
- * - normal: full-step variant
+ * - base: full-step variant
  * - turbo: low-step variant
  *
  * Both variants support LoRAs.
@@ -33,21 +33,21 @@ import {
 
 /** Lens version IDs */
 export const lensVersionIds = {
-  normal: 2655865,
+  base: 2982236,
   turbo: 2982241,
 } as const;
 
-type LensVariant = 'normal' | 'turbo';
+type LensVariant = 'base' | 'turbo';
 
 /** Options for lens version selector (using version IDs as values) */
 const lensVersionOptions = [
-  { label: 'Normal', value: lensVersionIds.normal },
+  { label: 'Base', value: lensVersionIds.base },
   { label: 'Turbo', value: lensVersionIds.turbo },
 ];
 
 /** Map version ID to variant */
 const versionIdToVariant = new Map<number, LensVariant>([
-  [lensVersionIds.normal, 'normal'],
+  [lensVersionIds.base, 'base'],
   [lensVersionIds.turbo, 'turbo'],
 ]);
 
@@ -78,8 +78,8 @@ const lensPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
 // Variant Subgraphs
 // =============================================================================
 
-/** Normal model: cfg 5.0, steps 20 (model card defaults), LoRA support */
-const normalGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
+/** Base model: cfg 5.0, steps 20 (model card defaults), LoRA support */
+const baseGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   .node(
     'resources',
     (ctx, ext) =>
@@ -92,7 +92,7 @@ const normalGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 20 }));
 
-/** Turbo model: same defaults as normal per model card, LoRA support */
+/** Turbo model: same defaults as base per model card, LoRA support */
 const turboGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   .node(
     'resources',
@@ -113,7 +113,7 @@ const turboGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
 /**
  * Lens family controls.
  *
- * Discriminates on lensVariant (computed from model.id) to select normal vs turbo subgraph.
+ * Discriminates on lensVariant (computed from model.id) to select base vs turbo subgraph.
  */
 export const lensGraph = new DataGraph<
   { ecosystem: string; workflow: string; model: ResourceData },
@@ -123,17 +123,17 @@ export const lensGraph = new DataGraph<
     () =>
       createCheckpointGraph({
         versions: { options: lensVersionOptions },
-        defaultModelId: lensVersionIds.normal,
+        defaultModelId: lensVersionIds.base,
       }),
     []
   )
   .computed(
     'lensVariant',
-    (ctx) => (ctx.model?.id ? versionIdToVariant.get(ctx.model.id) : undefined) ?? 'normal',
+    (ctx) => (ctx.model?.id ? versionIdToVariant.get(ctx.model.id) : undefined) ?? 'base',
     ['model']
   )
   .discriminator('lensVariant', {
-    normal: normalGraph,
+    base: baseGraph,
     turbo: turboGraph,
   })
   .node(

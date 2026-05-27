@@ -1291,7 +1291,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Lens,
     defaults: {
-      model: { id: 2655865 },
+      model: { id: 2982236 },
       modelLocked: true,
     },
   },

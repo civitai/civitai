@@ -358,6 +358,25 @@ const turboGraph = new DataGraph<...>()
 
 The `.effect()` mechanism is fine for *derived* state that the user shouldn't be editing directly (e.g. computed flags). It is NOT fine for slider values the user has agency over.
 
+### Turbo/distilled variants need per-model storage scoping
+
+When the new ecosystem ships a **turbo (or distilled) variant alongside a base variant** with meaningfully different `cfgScale` / `steps` ranges, the variants will trample each other's stored values without an extra step. Example: a user sets cfg=8 on base, switches to turbo (max=2), `snapToStep` clamps to 2 and persists; switching back to base now shows cfg=2 instead of the prior 8.
+
+The fix lives in [GenerationFormProvider.tsx](src/components/generation_v2/GenerationFormProvider.tsx) — there's a `TURBO_VARIANT_ECOSYSTEMS` `Set<string>` that drives a conditional storage group scoping `cfgScale`/`steps` per `model.id`. **Add your ecosystem's key to that set** when introducing a turbo/distilled variant.
+
+```ts
+// src/components/generation_v2/GenerationFormProvider.tsx
+const TURBO_VARIANT_ECOSYSTEMS = new Set<string>([
+  'Lens',
+  'Ernie',
+  'ZImageTurbo',
+  'ZImageBase',
+  // 'YourNewEcosystem',
+]);
+```
+
+Skip this if the variants share the same slider ranges (e.g. version bumps with identical capabilities) — there's nothing to trample in that case.
+
 ## Common patterns reference
 
 | Pattern | Reference file |
