@@ -23,6 +23,7 @@ export type PostsInfiniteState = {
   sort?: PostSort;
   collectionId?: number;
   draftOnly?: boolean;
+  scheduled?: boolean;
   followed?: boolean;
   pending?: boolean;
 };

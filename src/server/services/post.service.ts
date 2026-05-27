@@ -256,7 +256,15 @@ export const getPostsInfinite = async ({
 
   const joins: string[] = [];
   if (!isOwnerRequest) {
-    AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+    if (scheduled && userId) {
+      // Surface own scheduled posts alongside the public published feed. Mirrors
+      // the image service carve-out (image.service.ts ~line 4060).
+      AND.push(
+        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${userId} AND p."publishedAt" > NOW()))`
+      );
+    } else {
+      AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+    }
 
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
