@@ -25,6 +25,12 @@ importers:
       '@axiomhq/axiom-node':
         specifier: ^0.12.0
         version: 0.12.0
+      '@civitai/app-sdk':
+        specifier: ^0.6.0
+        version: 0.6.0
+      '@civitai/blocks-react':
+        specifier: ^0.4.0
+        version: 0.4.1(@civitai/app-sdk@0.6.0)(react@18.3.1)
       '@civitai/client':
         specifier: 0.2.0-beta.65
         version: 0.2.0-beta.65
@@ -1175,6 +1181,17 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@civitai/app-sdk@0.6.0':
+    resolution: {integrity: sha512-+qTWLzI0oYmeZuvlaZmy1EqjmrfkADZVNeqsfU0cF58B5MLvopufU6yKlpGdnMfVzjVX9YzlvW3QTOzSgug9IQ==}
+    engines: {node: '>=20'}
+
+  '@civitai/blocks-react@0.4.1':
+    resolution: {integrity: sha512-MtIWhWT0INzE1QXRTV4A7CWk7kxK6ZgRIv96lq8Y45SNDDJ19alxdqWYPJ0/+D1fOPwlMKRdgySkrf1XCFuDUA==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      '@civitai/app-sdk': ^0.6.0
+      react: ^18.0.0 || ^19.0.0
 
   '@civitai/client@0.2.0-beta.65':
     resolution: {integrity: sha512-/a3YMgM/Yzk2KqCp2awvJv/n+KM7EULWZb6QLJ4Q3Wr7u8pbMW6x8uNA4Unu/e+IMKT6oB5+7rA4/0xgI4nJ7A==}
@@ -10965,6 +10982,13 @@ snapshots:
       '@babel/helper-validator-identifier': 7.28.5
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@civitai/app-sdk@0.6.0': {}
+
+  '@civitai/blocks-react@0.4.1(@civitai/app-sdk@0.6.0)(react@18.3.1)':
+    dependencies:
+      '@civitai/app-sdk': 0.6.0
+      react: 18.3.1
 
   '@civitai/client@0.2.0-beta.65':
     dependencies:
