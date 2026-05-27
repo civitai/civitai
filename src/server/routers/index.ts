@@ -91,6 +91,7 @@ import { strikeRouter } from '~/server/routers/strike.router';
 import { rewardsBonusEventRouter } from './rewards-bonus-event.router';
 import { oauthClientRouter } from '~/server/routers/oauth-client.router';
 import { oauthConsentRouter } from '~/server/routers/oauth-consent.router';
+import { appsRouter } from '~/server/routers/apps.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -185,6 +186,7 @@ export const appRouter = router({
   oauthConsent: oauthConsentRouter,
   scannerReview: scannerReviewRouter,
   blocks: blocksRouter,
+  apps: appsRouter,
 });
 
 // export type definition of API

@@ -164,6 +164,54 @@ export const blockBuzzAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['provider', 'scope', 'status'] as const,
 });
 
+// App Blocks KV datastore (W4-v0)
+// `op` ∈ get|set|delete|list|getQuota; `outcome` ∈ ok|unauthorized|
+// not_found|payload_too_large|quota_exceeded|error. Read-only counters
+// keep the procedure-side instrumentation cheap; heavier histograms hang
+// off a future per-app dashboard.
+export const appStorageOpsCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_ops_total',
+  help: 'App Blocks KV datastore tRPC operations',
+  labelNames: ['op', 'outcome'] as const,
+});
+
+// One quota-exceeded reject is interesting on its own (it means the
+// publisher hit the 50MB ceiling). Track per-app_block_id so we can
+// surface specific apps in alerts before they get bumped to v1.
+export const appStorageQuotaExceededCounter = registerCounterWithLabels({
+  name: 'app_blocks_storage_quota_exceeded_total',
+  help: 'App Blocks KV writes rejected because the app quota would be exceeded',
+  labelNames: ['app_block_id'] as const,
+});
+
+// Per-operation latency. Buckets sized for KV operations on a small CNPG
+// cluster (everything should land < 50ms in the happy path; outliers
+// beyond 250ms point at quota lookups blocked on a long write somewhere).
+function registerHistogramWithLabels<T extends string>(opts: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+  buckets: number[];
+}) {
+  try {
+    return new client.Histogram({
+      name: PROM_PREFIX + opts.name,
+      help: opts.help,
+      labelNames: opts.labelNames as unknown as string[],
+      buckets: opts.buckets,
+    });
+  } catch {
+    return client.register.getSingleMetric(PROM_PREFIX + opts.name) as client.Histogram<T>;
+  }
+}
+
+export const appStorageLatencyHistogram = registerHistogramWithLabels({
+  name: 'app_blocks_storage_latency_seconds',
+  help: 'App Blocks KV procedure latency',
+  labelNames: ['op'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
