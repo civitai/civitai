@@ -332,11 +332,12 @@ export const serverSchema = z.object({
   //                           by civitai-web to create repos / webhooks
   // FORGEJO_WEBHOOK_SECRET    HMAC shared secret between Forgejo → webhook
   // BLOCK_BUILD_CALLBACK_SECRET   HMAC shared secret between Tekton → callback
-  // APPS_TEKTON_KUBECONFIG    path to dc-02-a kubeconfig (mounted from
-  //                           a Secret) — apps-pipeline.service uses it
-  //                           to create PipelineRun resources via REST
-  // APPS_TEKTON_NAMESPACE     namespace for PipelineRuns (default
-  //                           tekton-builds on dc-02-a)
+  // APPS_TEKTON_TRIGGER_URL   HTTP endpoint that creates PipelineRuns on
+  //                           dc-02-a (the app-blocks-trigger receiver,
+  //                           reached via the VPN proxy on dp-1). Example:
+  //                           http://wireguard-proxy-service.civitai-submodel-proxy.svc.cluster.local:8088/trigger-build
+  // APPS_TEKTON_TRIGGER_SECRET   HMAC shared secret between civitai-web and
+  //                           the app-blocks-trigger receiver. 32-byte hex.
   // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
   //                           on dp-1). Defaults to civitai-apps.
   // APPS_DOMAIN               public per-app subdomain root, e.g.
@@ -346,8 +347,8 @@ export const serverSchema = z.object({
   FORGEJO_ADMIN_TOKEN: z.string().optional(),
   FORGEJO_WEBHOOK_SECRET: z.string().optional(),
   BLOCK_BUILD_CALLBACK_SECRET: z.string().optional(),
-  APPS_TEKTON_KUBECONFIG: z.string().optional(),
-  APPS_TEKTON_NAMESPACE: z.string().default('tekton-builds'),
+  APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
+  APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
   APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
   APPS_DOMAIN: z.string().default('apps.civitaic.com'),
 });
