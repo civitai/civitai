@@ -317,4 +317,31 @@ export const serverSchema = z.object({
   BLOCK_TOKEN_PUBLIC_KEY: z.string().optional(),
   BLOCK_TOKEN_PUBLIC_KEY_NEXT: z.string().optional(),
   BLOCK_ALLOWED_ORIGINS: z.string().optional(),
+
+  // App Blocks W2 (apps-as-repos). Optional so envs that don't run the
+  // platform layer (PR previews without apps-pipeline wiring) still boot.
+  //
+  // FORGEJO_BASE_URL          public root, e.g. https://forgejo.civitaic.com
+  // FORGEJO_ADMIN_TOKEN       Forgejo personal access token (admin) — used
+  //                           by civitai-web to create repos / webhooks
+  // FORGEJO_WEBHOOK_SECRET    HMAC shared secret between Forgejo → webhook
+  // BLOCK_BUILD_CALLBACK_SECRET   HMAC shared secret between Tekton → callback
+  // APPS_TEKTON_KUBECONFIG    path to dc-02-a kubeconfig (mounted from
+  //                           a Secret) — apps-pipeline.service uses it
+  //                           to create PipelineRun resources via REST
+  // APPS_TEKTON_NAMESPACE     namespace for PipelineRuns (default
+  //                           tekton-builds on dc-02-a)
+  // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
+  //                           on dp-1). Defaults to civitai-apps.
+  // APPS_DOMAIN               public per-app subdomain root, e.g.
+  //                           apps.civitaic.com — used to build iframe.src
+  //                           validation in the webhook
+  FORGEJO_BASE_URL: z.string().url().optional(),
+  FORGEJO_ADMIN_TOKEN: z.string().optional(),
+  FORGEJO_WEBHOOK_SECRET: z.string().optional(),
+  BLOCK_BUILD_CALLBACK_SECRET: z.string().optional(),
+  APPS_TEKTON_KUBECONFIG: z.string().optional(),
+  APPS_TEKTON_NAMESPACE: z.string().default('tekton-builds'),
+  APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
+  APPS_DOMAIN: z.string().default('apps.civitaic.com'),
 });
