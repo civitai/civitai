@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import { getOrMintCachedToken } from '~/server/orchestrator/orchestrator-token-cache';
 import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { hSetWithTTL } from '~/server/redis/atomic';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
@@ -41,13 +42,23 @@ export async function getOrchestratorToken(userId: number, ctx: Context) {
 
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
-    token = await getTemporaryUserApiKey({
-      name: generationServiceCookie.name,
-      // make the db token live just slightly longer than the cookie token
-      maxAge: generationServiceCookie.maxAge + 5,
-      type: 'System',
-      userId,
-    });
+    // Per-pod LRU + in-flight coalescing in front of the DB cold-mint.
+    // Caps the "sysRedis-unavailable" amplification documented at the
+    // token-mint-amplification fail-open subtype: without this, 80 pods
+    // × ~1k RPS × every auth'd request would translate to ~80k inserts/s
+    // + ~160k deleteMany/s on ApiKey during a sysRedis outage. With a
+    // 60s TTL the worst-case DB rate is bounded by (active-users / 60s)
+    // per pod, regardless of request volume. See
+    // orchestrator-token-cache.ts for the full rationale.
+    token = await getOrMintCachedToken(userId, () =>
+      getTemporaryUserApiKey({
+        name: generationServiceCookie.name,
+        // make the db token live just slightly longer than the cookie token
+        maxAge: generationServiceCookie.maxAge + 5,
+        type: 'System',
+        userId,
+      })
+    );
     if (TOKEN_STORE === 'redis') {
       // Cache populate is best-effort: if sysRedis is down we still return
       // the freshly-minted token. Without this catch, the writeback would
