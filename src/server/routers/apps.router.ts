@@ -18,6 +18,7 @@ import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { AppStorageProvisioner } from '~/server/services/apps/storage-provision.service';
 import {
+  appStorageLatencyHistogram,
   appStorageOpsCounter,
   appStorageQuotaExceededCounter,
 } from '~/server/prom/client';
@@ -120,24 +121,29 @@ export const appsStorageRouter = router({
     .use(enforceAppBlocksFlag)
     .input(blockTokenInput.extend({ key: keyInput }))
     .query(async ({ input }) => {
-      const { userId, slug, blockInstanceId } = await resolveStorageContext(
-        input.blockToken,
-        'get'
-      );
-      if (userId == null) {
+      const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'get' });
+      try {
+        const { userId, slug, blockInstanceId } = await resolveStorageContext(
+          input.blockToken,
+          'get'
+        );
+        if (userId == null) {
+          appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
+          return { value: null as unknown };
+        }
+        const pool = requireAppsDb();
+        const rows = (
+          await pool.query<{ value: unknown }>(
+            `SELECT value FROM ${appSchemaIdent(slug)}.kv
+               WHERE block_instance_id = $1 AND user_id = $2 AND key = $3`,
+            [blockInstanceId, userId, input.key]
+          )
+        ).rows;
         appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
-        return { value: null as unknown };
+        return { value: rows[0]?.value ?? null };
+      } finally {
+        stopTimer();
       }
-      const pool = requireAppsDb();
-      const rows = (
-        await pool.query<{ value: unknown }>(
-          `SELECT value FROM ${appSchemaIdent(slug)}.kv
-             WHERE block_instance_id = $1 AND user_id = $2 AND key = $3`,
-          [blockInstanceId, userId, input.key]
-        )
-      ).rows;
-      appStorageOpsCounter.inc({ op: 'get', outcome: 'ok' });
-      return { value: rows[0]?.value ?? null };
     }),
 
   /**
@@ -159,6 +165,8 @@ export const appsStorageRouter = router({
       })
     )
     .mutation(async ({ input }) => {
+      const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'set' });
+      try {
       const { userId, slug, appBlockId, blockInstanceId } = await resolveStorageContext(
         input.blockToken,
         'set'
@@ -266,44 +274,77 @@ export const appsStorageRouter = router({
       }
 
       appStorageOpsCounter.inc({ op: 'set', outcome: 'ok' });
+      logToAxiom(
+        {
+          event: 'set',
+          appBlockId,
+          blockInstanceId,
+          userId,
+          key: input.key,
+          sizeBytes: byteSize,
+          isInsert,
+        },
+        STORAGE_LOG
+      ).catch(() => {});
       return { ok: true as const, sizeBytes: byteSize };
+      } finally {
+        stopTimer();
+      }
     }),
 
   delete: publicProcedure
     .use(enforceAppBlocksFlag)
     .input(blockTokenInput.extend({ key: keyInput }))
     .mutation(async ({ input }) => {
-      const { userId, slug, appBlockId, blockInstanceId } = await resolveStorageContext(
-        input.blockToken,
-        'delete'
-      );
-      if (userId == null) {
-        appStorageOpsCounter.inc({ op: 'delete', outcome: 'unauthorized' });
-        throw new TRPCError({
-          code: 'UNAUTHORIZED',
-          message: 'storage requires an authenticated viewer',
-        });
-      }
-      const pool = requireAppsDb();
-      const schema = appSchemaIdent(slug);
-      const client = await pool.connect();
+      const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'delete' });
       try {
-        await client.query('BEGIN');
-        await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
-        const result = await client.query(
-          `DELETE FROM ${schema}.kv
-            WHERE block_instance_id = $1 AND user_id = $2 AND key = $3`,
-          [blockInstanceId, userId, input.key]
+        const { userId, slug, appBlockId, blockInstanceId } = await resolveStorageContext(
+          input.blockToken,
+          'delete'
         );
-        await client.query('COMMIT');
-        appStorageOpsCounter.inc({ op: 'delete', outcome: 'ok' });
-        return { ok: true as const, deleted: (result.rowCount ?? 0) > 0 };
-      } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        appStorageOpsCounter.inc({ op: 'delete', outcome: 'error' });
-        throw err;
+        if (userId == null) {
+          appStorageOpsCounter.inc({ op: 'delete', outcome: 'unauthorized' });
+          throw new TRPCError({
+            code: 'UNAUTHORIZED',
+            message: 'storage requires an authenticated viewer',
+          });
+        }
+        const pool = requireAppsDb();
+        const schema = appSchemaIdent(slug);
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
+          const result = await client.query(
+            `DELETE FROM ${schema}.kv
+              WHERE block_instance_id = $1 AND user_id = $2 AND key = $3`,
+            [blockInstanceId, userId, input.key]
+          );
+          await client.query('COMMIT');
+          appStorageOpsCounter.inc({ op: 'delete', outcome: 'ok' });
+          const deleted = (result.rowCount ?? 0) > 0;
+          if (deleted) {
+            logToAxiom(
+              {
+                event: 'delete',
+                appBlockId,
+                blockInstanceId,
+                userId,
+                key: input.key,
+              },
+              STORAGE_LOG
+            ).catch(() => {});
+          }
+          return { ok: true as const, deleted };
+        } catch (err) {
+          await client.query('ROLLBACK').catch(() => {});
+          appStorageOpsCounter.inc({ op: 'delete', outcome: 'error' });
+          throw err;
+        } finally {
+          client.release();
+        }
       } finally {
-        client.release();
+        stopTimer();
       }
     }),
 
@@ -323,45 +364,50 @@ export const appsStorageRouter = router({
       })
     )
     .query(async ({ input }) => {
-      const { userId, slug, blockInstanceId } = await resolveStorageContext(
-        input.blockToken,
-        'list'
-      );
-      if (userId == null) {
+      const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'list' });
+      try {
+        const { userId, slug, blockInstanceId } = await resolveStorageContext(
+          input.blockToken,
+          'list'
+        );
+        if (userId == null) {
+          appStorageOpsCounter.inc({ op: 'list', outcome: 'ok' });
+          return { keys: [], nextCursor: undefined as string | undefined };
+        }
+
+        const pool = requireAppsDb();
+        const afterKey = input.cursor
+          ? Buffer.from(input.cursor, 'base64').toString('utf8')
+          : '';
+        // % escape so a user-supplied prefix can't break out via wildcards
+        const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
+        const prefixPattern = `${escapedPrefix}%`;
+
+        const rows = (
+          await pool.query<{ key: string; updated_at: Date }>(
+            `SELECT key, updated_at FROM ${appSchemaIdent(slug)}.kv
+               WHERE block_instance_id = $1 AND user_id = $2
+                 AND key LIKE $3 ESCAPE '\\'
+                 AND key > $4
+               ORDER BY key
+               LIMIT $5`,
+            [blockInstanceId, userId, prefixPattern, afterKey, input.limit]
+          )
+        ).rows;
+
+        const nextCursor =
+          rows.length === input.limit
+            ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
+            : undefined;
+
         appStorageOpsCounter.inc({ op: 'list', outcome: 'ok' });
-        return { keys: [], nextCursor: undefined as string | undefined };
+        return {
+          keys: rows.map((r) => ({ key: r.key, updatedAt: r.updated_at })),
+          nextCursor,
+        };
+      } finally {
+        stopTimer();
       }
-
-      const pool = requireAppsDb();
-      const afterKey = input.cursor
-        ? Buffer.from(input.cursor, 'base64').toString('utf8')
-        : '';
-      // % escape so a user-supplied prefix can't break out via wildcards
-      const escapedPrefix = (input.prefix ?? '').replace(/([\\%_])/g, '\\$1');
-      const prefixPattern = `${escapedPrefix}%`;
-
-      const rows = (
-        await pool.query<{ key: string; updated_at: Date }>(
-          `SELECT key, updated_at FROM ${appSchemaIdent(slug)}.kv
-             WHERE block_instance_id = $1 AND user_id = $2
-               AND key LIKE $3 ESCAPE '\\'
-               AND key > $4
-             ORDER BY key
-             LIMIT $5`,
-          [blockInstanceId, userId, prefixPattern, afterKey, input.limit]
-        )
-      ).rows;
-
-      const nextCursor =
-        rows.length === input.limit
-          ? Buffer.from(rows[rows.length - 1].key, 'utf8').toString('base64')
-          : undefined;
-
-      appStorageOpsCounter.inc({ op: 'list', outcome: 'ok' });
-      return {
-        keys: rows.map((r) => ({ key: r.key, updatedAt: r.updated_at })),
-        nextCursor,
-      };
     }),
 
   /**
@@ -373,15 +419,20 @@ export const appsStorageRouter = router({
     .use(enforceAppBlocksFlag)
     .input(blockTokenInput)
     .query(async ({ input }) => {
-      const { slug, appBlockId } = await resolveStorageContext(input.blockToken, 'getQuota');
-      const quota = await AppStorageProvisioner.getQuota({ slug, appBlockId });
-      appStorageOpsCounter.inc({ op: 'getQuota', outcome: 'ok' });
-      return {
-        usedBytes: quota?.usedBytes ?? 0,
-        rowCount: quota?.rowCount ?? 0,
-        limitBytes: APP_QUOTA_BYTES,
-        limitRows: APP_ROW_LIMIT,
-      };
+      const stopTimer = appStorageLatencyHistogram.startTimer({ op: 'getQuota' });
+      try {
+        const { slug, appBlockId } = await resolveStorageContext(input.blockToken, 'getQuota');
+        const quota = await AppStorageProvisioner.getQuota({ slug, appBlockId });
+        appStorageOpsCounter.inc({ op: 'getQuota', outcome: 'ok' });
+        return {
+          usedBytes: quota?.usedBytes ?? 0,
+          rowCount: quota?.rowCount ?? 0,
+          limitBytes: APP_QUOTA_BYTES,
+          limitRows: APP_ROW_LIMIT,
+        };
+      } finally {
+        stopTimer();
+      }
     }),
 });
 

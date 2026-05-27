@@ -184,6 +184,34 @@ export const appStorageQuotaExceededCounter = registerCounterWithLabels({
   labelNames: ['app_block_id'] as const,
 });
 
+// Per-operation latency. Buckets sized for KV operations on a small CNPG
+// cluster (everything should land < 50ms in the happy path; outliers
+// beyond 250ms point at quota lookups blocked on a long write somewhere).
+function registerHistogramWithLabels<T extends string>(opts: {
+  name: string;
+  help: string;
+  labelNames: readonly T[];
+  buckets: number[];
+}) {
+  try {
+    return new client.Histogram({
+      name: PROM_PREFIX + opts.name,
+      help: opts.help,
+      labelNames: opts.labelNames as unknown as string[],
+      buckets: opts.buckets,
+    });
+  } catch {
+    return client.register.getSingleMetric(PROM_PREFIX + opts.name) as client.Histogram<T>;
+  }
+}
+
+export const appStorageLatencyHistogram = registerHistogramWithLabels({
+  name: 'app_blocks_storage_latency_seconds',
+  help: 'App Blocks KV procedure latency',
+  labelNames: ['op'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+});
+
 declare global {
   // eslint-disable-next-line no-var
   var pgGaugeInitialized: boolean;
