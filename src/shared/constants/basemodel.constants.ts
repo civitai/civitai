@@ -847,7 +847,7 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
-  { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointOnly },
+  { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
 
   // Sora2 - checkpoint only
   { ecosystemId: ECO.Sora2, supportType: 'generation', modelTypes: checkpointOnly },

@@ -8,13 +8,14 @@
  * - base: full-step variant
  * - turbo: low-step variant
  *
- * Both variants support LoRAs.
+ * Both variants support LoRAs and the same resolution/aspect-ratio choices.
  * Sampler (euler) and scheduler (simple) are fixed — set in the handler, not exposed in UI.
  */
 
+import z from 'zod';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import type { ResourceData } from './common';
+import type { AspectRatioOption, ResourceData } from './common';
 import {
   aspectRatioNode,
   createCheckpointGraph,
@@ -52,24 +53,41 @@ const versionIdToVariant = new Map<number, LensVariant>([
 ]);
 
 // =============================================================================
-// Aspect Ratios
+// Resolution + Aspect Ratios
 // =============================================================================
 
+/** Per the model card, Lens accepts a base resolution of 1024 or 1440. */
+const lensResolutionOptions = ['1024', '1440'] as const;
+
 /**
- * Lens aspect ratios — sized to a ~1440² total-pixel target (base_resolution=1440
- * from the model card), rounded to the nearest multiple of 16.
+ * Aspect ratios per base resolution. Each set is area-matched to its base
+ * (1024² ≈ 1.05M pixels, 1440² ≈ 2.07M pixels) and rounded to multiples of 16
+ * so the orchestrator's diffusion model gets clean dimensions either way.
  */
-const lensAspectRatios = [
-  { label: '1:2', value: '1:2', width: 1024, height: 2032 },
-  { label: '9:16', value: '9:16', width: 1088, height: 1920 },
-  { label: '2:3', value: '2:3', width: 1184, height: 1760 },
-  { label: '3:4', value: '3:4', width: 1248, height: 1664 },
-  { label: '1:1', value: '1:1', width: 1440, height: 1440 },
-  { label: '4:3', value: '4:3', width: 1664, height: 1248 },
-  { label: '3:2', value: '3:2', width: 1760, height: 1184 },
-  { label: '16:9', value: '16:9', width: 1920, height: 1088 },
-  { label: '2:1', value: '2:1', width: 2032, height: 1024 },
-];
+const lensAspectRatiosByResolution: Record<string, AspectRatioOption[]> = {
+  '1024': [
+    { label: '1:2', value: '1:2', width: 720, height: 1440 },
+    { label: '9:16', value: '9:16', width: 768, height: 1376 },
+    { label: '2:3', value: '2:3', width: 832, height: 1248 },
+    { label: '3:4', value: '3:4', width: 880, height: 1184 },
+    { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+    { label: '4:3', value: '4:3', width: 1184, height: 880 },
+    { label: '3:2', value: '3:2', width: 1248, height: 832 },
+    { label: '16:9', value: '16:9', width: 1376, height: 768 },
+    { label: '2:1', value: '2:1', width: 1440, height: 720 },
+  ],
+  '1440': [
+    { label: '1:2', value: '1:2', width: 1024, height: 2032 },
+    { label: '9:16', value: '9:16', width: 1088, height: 1920 },
+    { label: '2:3', value: '2:3', width: 1184, height: 1760 },
+    { label: '3:4', value: '3:4', width: 1248, height: 1664 },
+    { label: '1:1', value: '1:1', width: 1440, height: 1440 },
+    { label: '4:3', value: '4:3', width: 1664, height: 1248 },
+    { label: '3:2', value: '3:2', width: 1760, height: 1184 },
+    { label: '16:9', value: '16:9', width: 1920, height: 1088 },
+    { label: '2:1', value: '2:1', width: 2032, height: 1024 },
+  ],
+};
 
 /** The most common aspect ratios — shown before the "More" overflow in the UI. */
 const lensPriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
@@ -92,7 +110,7 @@ const baseGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   .node('cfgScale', sliderNode({ min: 1, max: 20, defaultValue: 5, step: 0.5 }))
   .node('steps', sliderNode({ min: 1, max: 50, defaultValue: 20 }));
 
-/** Turbo model: same defaults as base per model card, LoRA support */
+/** Turbo model: tight cfg range (1-2), low step count, LoRA support */
 const turboGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
   .node(
     'resources',
@@ -114,6 +132,8 @@ const turboGraph = new DataGraph<{ ecosystem: string }, GenerationCtx>()
  * Lens family controls.
  *
  * Discriminates on lensVariant (computed from model.id) to select base vs turbo subgraph.
+ * Resolution is a parent-level node so it stays available across variants and aspectRatio
+ * recomputes its option set when resolution changes.
  */
 export const lensGraph = new DataGraph<
   { ecosystem: string; workflow: string; model: ResourceData },
@@ -136,13 +156,25 @@ export const lensGraph = new DataGraph<
     base: baseGraph,
     turbo: turboGraph,
   })
+  .node('resolution', {
+    input: z.enum(lensResolutionOptions).optional(),
+    output: z.enum(lensResolutionOptions),
+    defaultValue: '1024',
+    meta: {
+      options: lensResolutionOptions.map((r) => ({ label: r, value: r })),
+    },
+  })
   .node(
     'aspectRatio',
-    aspectRatioNode({
-      options: lensAspectRatios,
-      defaultValue: '1:1',
-      priorityOptions: lensPriorityRatios,
-    })
+    (ctx) => {
+      const resolution = (ctx as { resolution?: string }).resolution ?? '1024';
+      return aspectRatioNode({
+        options: lensAspectRatiosByResolution[resolution],
+        defaultValue: '1:1',
+        priorityOptions: lensPriorityRatios,
+      });
+    },
+    ['resolution']
   )
   .merge(triggerWordsGraph)
   .merge(snippetsGraph)
