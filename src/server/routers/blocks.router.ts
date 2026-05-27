@@ -6,10 +6,8 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import { getUserBuzzAccounts } from '~/server/services/buzz.service';
-import {
-  blockSettingsSchemaByBlockId,
-  blockUserSettingsSchema,
-} from '~/server/schema/blocks/settings.schema';
+import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
+import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
   listAvailableSchema,
   subscriptionScopeSchema,
@@ -256,9 +254,15 @@ export const blocksRouter = router({
   /**
    * Create or update the user's subscription for a (appBlockId, scope)
    * pair. Toggling a scope on writes a row; toggling off uses
-   * deleteSubscription instead. Settings are validated through the
-   * per-block-id schema map (same path installOnModel uses) so the
-   * subscription row carries the same shape as a per-model install.
+   * deleteSubscription instead. Settings are validated against the app's
+   * manifest-declared settings (W3 generic validator) so the subscription
+   * row carries the same shape as a per-model install — and third-party
+   * apps don't need civitai-side TypeScript to add new fields.
+   *
+   * Subscription scope drives which side of the publisher/viewer split the
+   * settings write targets: `publisher_all_my_models` is a publisher write
+   * (mirrors per-model install row shape); `viewer_personal` is a viewer
+   * write (mirrors per-viewer override row shape).
    */
   upsertSubscription: guardedProcedure
     .use(enforceAppBlocksFlag)
@@ -273,22 +277,34 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      // Resolve the appBlock once for both status check and per-block-id
-      // settings validation.
+      // Resolve the appBlock once for both status check and manifest-driven
+      // settings validation. Need the manifest + approvedScopes here.
       const block = await dbRead.appBlock.findUnique({
         where: { id: input.appBlockId },
-        select: { blockId: true, status: true },
+        select: { blockId: true, status: true, manifest: true, approvedScopes: true },
       });
       if (!block) throw throwNotFoundError('App block not found');
       if (block.status !== 'approved') {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
       }
-      // Per-block-id schema validation. Unknown blocks (third-party future)
-      // fall back to the generic record — the router-level settingsSchema
-      // already enforced the 4KB cap.
-      const settingsSchemaForBlock = blockSettingsSchemaByBlockId[block.blockId];
-      const validatedSettings = settingsSchemaForBlock
-        ? (settingsSchemaForBlock.parse(input.settings) as Record<string, unknown>)
+      // Manifest-driven settings validation. The 4KB cap from the router-
+      // level settingsSchema has already fired; this pass enforces the
+      // per-field shape declared in the manifest. Manifests without a
+      // settings declaration (or malformed ones — should have been caught
+      // at submission time) forward the input through unchanged so that
+      // a manifest schema drift doesn't break previously-accepted apps.
+      const parsedManifestSettings = manifestSettingsSchema.safeParse(
+        ((block.manifest ?? {}) as Record<string, unknown>).settings ?? {}
+      );
+      const forScope: 'publisher' | 'viewer' =
+        input.scope === 'viewer_personal' ? 'viewer' : 'publisher';
+      const validatedSettings = parsedManifestSettings.success
+        ? validateBlockSettings({
+            manifestSettings: parsedManifestSettings.data,
+            inputSettings: input.settings,
+            declaredScopes: block.approvedScopes ?? [],
+            forScope,
+          })
         : input.settings;
       return BlockRegistry.upsertSubscription({
         userId: ctx.user!.id,
@@ -600,7 +616,11 @@ export const blocksRouter = router({
     .input(
       z.object({
         blockToken: z.string().min(1),
-        settings: blockUserSettingsSchema,
+        // W3 v0 — accept any record; the manifest declaration is the
+        // contract. Server-side validation is keyed on the appBlock's
+        // manifest fetched below, not a per-block-id zod schema. Generic
+        // settingsSchema enforces the 4KB / JSON-safety cap.
+        settings: settingsSchema,
       })
     )
     .mutation(async ({ input }) => {
@@ -617,10 +637,46 @@ export const blocksRouter = router({
       if (!Number.isInteger(ctxModelId)) {
         throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks modelId context' });
       }
+      const ctxSlotId = (claims.ctx as { slotId?: unknown } | undefined)?.slotId;
+      if (typeof ctxSlotId !== 'string' || ctxSlotId.length === 0) {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'block token lacks slotId context' });
+      }
 
-      // Re-validate the checkpoint when set. Skip when explicitly clearing
-      // (`null`) — that's just removing the override row's value.
-      if (typeof input.settings.checkpoint_version_id === 'number') {
+      // Resolve the install (or synthetic source row) so we can pull the
+      // app block's manifest + scopes for the validator. Re-validation of
+      // the (modelId, slotId, viewer) tuple is handled inside
+      // resolveBlockInstance — synthetic ids fail-closed without it.
+      const resolved = await BlockRegistry.resolveBlockInstance({
+        blockInstanceId: claims.blockInstanceId,
+        modelId: ctxModelId,
+        slotId: ctxSlotId,
+        viewerUserId: userId,
+        db: 'read',
+      });
+      if (!resolved) {
+        throw new TRPCError({ code: 'NOT_FOUND', message: 'Block install not found' });
+      }
+
+      // Manifest-driven shape validation. Wrong-scope fields are silently
+      // skipped, so a viewer payload that accidentally includes publisher
+      // keys just drops them rather than failing the whole call.
+      const parsedManifestSettings = manifestSettingsSchema.safeParse(
+        (resolved.appBlock.manifest as Record<string, unknown>).settings ?? {}
+      );
+      const validatedSettings = parsedManifestSettings.success
+        ? validateBlockSettings({
+            manifestSettings: parsedManifestSettings.data,
+            inputSettings: input.settings,
+            declaredScopes: resolved.appBlock.approvedScopes,
+            forScope: 'viewer',
+          })
+        : input.settings;
+
+      // Cross-row validation for the resource_picker → checkpoint case
+      // (same known field name pattern as the publisher path in
+      // block-registry.validateInstallSettings). Skip when explicitly
+      // clearing (`null`) — that's just dropping the override.
+      if (typeof validatedSettings.checkpoint_version_id === 'number') {
         const baseModel = await getRepresentativeBaseModel(ctxModelId);
         if (!baseModel) {
           throw new TRPCError({
@@ -629,7 +685,7 @@ export const blocksRouter = router({
           });
         }
         await validateBlockCheckpoint({
-          checkpointVersionId: input.settings.checkpoint_version_id,
+          checkpointVersionId: validatedSettings.checkpoint_version_id,
           forBaseModel: baseModel,
           reason: 'viewer-override',
         });
@@ -638,7 +694,7 @@ export const blocksRouter = router({
       await BlockRegistry.upsertUserSettings({
         blockInstanceId: claims.blockInstanceId,
         userId,
-        settings: input.settings,
+        settings: validatedSettings,
       });
       return { ok: true };
     }),
