@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -32,12 +33,30 @@ import { triggerBuild } from '~/server/services/blocks/apps-pipeline.service';
  * a PipelineRun named after the SHA, which Tekton dedups.
  */
 
-// Forgejo payloads can be a few KB (commit metadata + repo descriptor).
-// The default Next API body limit is 1MB which is plenty; we keep the
-// explicit cap small to bound the surface against bad-actor reach-out.
+// HMAC verification requires raw request bytes — Forgejo signs the exact
+// pretty-printed JSON it emits (Go's encoding/json with indent), which is
+// NOT byte-identical to Next's JSON.stringify of the parsed object. Turn
+// off Next's body parser and read the stream ourselves so the bytes we
+// hash match the bytes Forgejo hashed.
 export const config = {
-  api: { bodyParser: { sizeLimit: '64kb' } },
+  api: { bodyParser: false },
 };
+
+const MAX_BODY_BYTES = 64 * 1024;
+
+async function readRawBody(req: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = typeof chunk === 'string' ? Buffer.from(chunk) : (chunk as Buffer);
+    total += buf.length;
+    if (total > MAX_BODY_BYTES) {
+      throw new Error('payload too large');
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks);
+}
 
 type ForgejoPushPayload = {
   ref?: string;
@@ -55,7 +74,7 @@ function safeEqualHex(a: string, b: string): boolean {
   return timingSafeEqual(A, B);
 }
 
-function verifyForgejoSignature(rawBody: string, signatureHeader: unknown): boolean {
+function verifyForgejoSignature(rawBody: Buffer, signatureHeader: unknown): boolean {
   const secret = env.FORGEJO_WEBHOOK_SECRET;
   if (!secret) return false;
   if (typeof signatureHeader !== 'string' || signatureHeader.length === 0) return false;
@@ -80,22 +99,27 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Capture the raw body for HMAC verification. Next has already parsed
-  // it into req.body, so re-serialize. Forgejo signs the raw bytes of the
-  // POST body — we have to mirror its serialization. JSON.stringify of the
-  // parsed object is byte-identical to what Forgejo emits in practice
-  // (Forgejo serializes via Go's encoding/json, key order matches Next's
-  // default JSON.parse output for round-tripped objects). If this fails
-  // in production, fall back to using a custom body parser that captures
-  // raw bytes.
-  const rawBody = typeof req.body === 'string' ? req.body : JSON.stringify(req.body ?? {});
+  let rawBody: Buffer;
+  try {
+    rawBody = await readRawBody(req);
+  } catch {
+    res.status(413).json({ error: 'Payload too large' });
+    return;
+  }
+
   const sig = req.headers['x-gitea-signature'] ?? req.headers['x-forgejo-signature'];
   if (!verifyForgejoSignature(rawBody, sig)) {
     res.status(401).json({ error: 'Bad signature' });
     return;
   }
 
-  const payload = (req.body ?? {}) as ForgejoPushPayload;
+  let payload: ForgejoPushPayload;
+  try {
+    payload = JSON.parse(rawBody.toString('utf8')) as ForgejoPushPayload;
+  } catch {
+    res.status(400).json({ error: 'Invalid JSON' });
+    return;
+  }
   if (payload.ref !== 'refs/heads/main') {
     res.status(200).json({ skipped: 'non-main branch', ref: payload.ref });
     return;

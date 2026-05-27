@@ -3,30 +3,35 @@
  * pipeline.
  *
  * Two surfaces:
- *   1. triggerBuild()  — POSTs a PipelineRun to dc-02-a Tekton via the
- *                        REST API (kubeconfig mounted from APPS_TEKTON_KUBECONFIG).
+ *   1. triggerBuild()  — POSTs a JSON payload to the app-blocks-trigger
+ *                        receiver on dc-02-a, which validates HMAC and
+ *                        creates a PipelineRun via its in-pod ServiceAccount.
+ *                        Reached via the dp-1 VPN proxy at
+ *                        wireguard-proxy-service.civitai-submodel-proxy.svc:8088.
  *                        Called by the Forgejo push webhook handler.
  *   2. triggerApply()  — POSTs an apply Job to dp-1's civitai-apps
  *                        namespace via the in-pod ServiceAccount token.
  *                        Called by Tekton's build-callback handler.
  *
  * Both surfaces are intentionally thin REST wrappers — no kubernetes-client
- * dependency, no node-kubernetes-client surface. The PipelineRun and Job
- * specs are inline string templates; substitute slug/sha/image/appBlockId
- * via JSON construction.
+ * dependency, no node-kubernetes-client surface. The Job spec is an inline
+ * string template; the PipelineRun spec lives entirely server-side in the
+ * trigger receiver.
  *
- * For the dp-1 side we use the pod's auto-mounted token
+ * For the dp-1 side (triggerApply) we use the pod's auto-mounted token
  * (/var/run/secrets/kubernetes.io/serviceaccount/token) — civitai-pr-2319's
  * default SA is bound to the civitai-web-apps-consumer Role in civitai-apps
  * (see datapacket-talos/clusters/production/apps/civitai-apps/rbac.yaml).
  *
- * For the dc-02-a side we load a kubeconfig YAML from APPS_TEKTON_KUBECONFIG
- * and extract server + cluster CA + user token. The kubeconfig is mounted
- * from a SOPS-encrypted Secret in the civitai-web Deployment.
+ * For the dc-02-a side (triggerBuild), the original W2 design parsed a
+ * kubeconfig and posted PipelineRuns directly to dc-02-a's API server.
+ * That doesn't work — dc-02-a's API is loopback-only (SSH-tunnel for
+ * operators). We switched to an HMAC-protected trigger receiver: see
+ * datapacket-talos/claudedocs/app-blocks-tekton-trigger/ for the manifest.
  */
 
+import { createHmac } from 'crypto';
 import { readFile } from 'node:fs/promises';
-import * as YAML from 'yaml';
 import { env } from '~/env/server';
 
 // ---------- shared HTTP helpers --------------------------------------------
@@ -34,8 +39,6 @@ import { env } from '~/env/server';
 type K8sTarget = {
   server: string;
   token: string;
-  caBundle?: string; // PEM
-  insecureSkipTLS?: boolean;
 };
 
 async function k8sFetch(target: K8sTarget, path: string, init?: RequestInit): Promise<Response> {
@@ -46,14 +49,6 @@ async function k8sFetch(target: K8sTarget, path: string, init?: RequestInit): Pr
     Accept: 'application/json',
     ...(init?.headers ?? {}),
   };
-
-  // Node's fetch lets us pass a custom `dispatcher` for CA validation,
-  // but for simplicity we lean on NODE_EXTRA_CA_CERTS at process startup
-  // (the kubeconfig's CA cert gets written to a file and exported via
-  // NODE_EXTRA_CA_CERTS in the Deployment). If insecureSkipTLS is set,
-  // we'd want process.env.NODE_TLS_REJECT_UNAUTHORIZED='0' — but that's
-  // a sledgehammer; prefer NODE_EXTRA_CA_CERTS path.
-
   return fetch(url, {
     ...init,
     headers,
@@ -92,46 +87,7 @@ async function getDp1Target(): Promise<K8sTarget> {
   return dp1Target;
 }
 
-// ---------- dc-02-a target (Tekton) ----------------------------------------
-
-let tektonTarget: K8sTarget | null = null;
-async function getTektonTarget(): Promise<K8sTarget> {
-  if (tektonTarget) return tektonTarget;
-  const path = env.APPS_TEKTON_KUBECONFIG;
-  if (!path) throw new Error('APPS_TEKTON_KUBECONFIG not configured');
-  const raw = await readFile(path, 'utf8');
-  const cfg = YAML.parse(raw) as {
-    clusters: Array<{ name: string; cluster: { server: string; 'certificate-authority-data'?: string; 'insecure-skip-tls-verify'?: boolean } }>;
-    users: Array<{ name: string; user: { token?: string; 'token-file'?: string } }>;
-    contexts: Array<{ name: string; context: { cluster: string; user: string; namespace?: string } }>;
-    'current-context': string;
-  };
-  const ctxName = cfg['current-context'];
-  const ctx = cfg.contexts.find((c) => c.name === ctxName);
-  if (!ctx) throw new Error(`current-context ${ctxName} not in kubeconfig`);
-  const cluster = cfg.clusters.find((c) => c.name === ctx.context.cluster);
-  const user = cfg.users.find((u) => u.name === ctx.context.user);
-  if (!cluster || !user) throw new Error('kubeconfig missing cluster or user entry');
-
-  const token =
-    user.user.token ??
-    (user.user['token-file'] ? await readFile(user.user['token-file'], 'utf8') : undefined);
-  if (!token) throw new Error('kubeconfig user has no token (only token / token-file supported)');
-
-  const caBundle = cluster.cluster['certificate-authority-data']
-    ? Buffer.from(cluster.cluster['certificate-authority-data'], 'base64').toString('utf8')
-    : undefined;
-
-  tektonTarget = {
-    server: cluster.cluster.server,
-    token: token.trim(),
-    caBundle,
-    insecureSkipTLS: cluster.cluster['insecure-skip-tls-verify'] === true,
-  };
-  return tektonTarget;
-}
-
-// ---------- triggerBuild — Tekton PipelineRun on dc-02-a -------------------
+// ---------- triggerBuild — HMAC POST to app-blocks-trigger -----------------
 
 export type TriggerBuildArgs = {
   slug: string;
@@ -141,54 +97,43 @@ export type TriggerBuildArgs = {
 };
 
 export async function triggerBuild(args: TriggerBuildArgs): Promise<{ name: string }> {
-  const target = await getTektonTarget();
-  const ns = env.APPS_TEKTON_NAMESPACE;
-  const runName = `app-blocks-${args.slug}-${args.sha.slice(0, 8)}-${Date.now().toString(36)}`;
+  const url = env.APPS_TEKTON_TRIGGER_URL;
+  const secret = env.APPS_TEKTON_TRIGGER_SECRET;
+  if (!url || !secret) {
+    throw new Error('APPS_TEKTON_TRIGGER_URL / APPS_TEKTON_TRIGGER_SECRET not configured');
+  }
 
-  const pipelineRun = {
-    apiVersion: 'tekton.dev/v1',
-    kind: 'PipelineRun',
-    metadata: {
-      name: runName,
-      namespace: ns,
-      labels: {
-        'civitai.com/app-block-id': args.appBlockId,
-        'civitai.com/app-slug': args.slug,
-        'civitai.com/app-block-sha': args.sha,
-        'tekton.dev/pipeline': 'app-blocks-build-and-publish',
-      },
-    },
-    spec: {
-      pipelineRef: { name: 'app-blocks-build-and-publish' },
-      serviceAccountName: 'app-blocks-builder',
-      params: [
-        { name: 'slug', value: args.slug },
-        { name: 'sha', value: args.sha },
-        { name: 'app-block-id', value: args.appBlockId },
-        { name: 'callback-url', value: args.callbackUrl },
-      ],
-      workspaces: [
-        {
-          name: 'source',
-          volumeClaimTemplate: {
-            spec: {
-              accessModes: ['ReadWriteOnce'],
-              resources: { requests: { storage: '2Gi' } },
-            },
-          },
-        },
-      ],
-      timeouts: { pipeline: '20m', tasks: '15m', finally: '5m' },
-    },
-  };
+  const body = JSON.stringify({
+    slug: args.slug,
+    sha: args.sha,
+    appBlockId: args.appBlockId,
+    callbackUrl: args.callbackUrl,
+  });
+  const sig = createHmac('sha256', secret).update(body).digest('hex');
 
-  const res = await k8sFetch(
-    target,
-    `/apis/tekton.dev/v1/namespaces/${ns}/pipelineruns`,
-    { method: 'POST', body: JSON.stringify(pipelineRun) }
-  );
-  const created = await unwrap<{ metadata: { name: string } }>(res);
-  return { name: created.metadata.name };
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-AppBlocks-Trigger-Sig': sig,
+    },
+    body,
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  const text = await res.text().catch(() => '');
+  if (!res.ok) {
+    throw new Error(`trigger ${res.status} ${res.statusText}: ${text.slice(0, 240)}`);
+  }
+
+  let parsed: { pipelineRun?: string } = {};
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Receiver should always return JSON; if not, surface a clear error.
+    throw new Error(`trigger response was not JSON: ${text.slice(0, 240)}`);
+  }
+  return { name: parsed.pipelineRun ?? '' };
 }
 
 // ---------- triggerApply — apply Job on dp-1 civitai-apps ------------------
