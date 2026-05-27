@@ -38,6 +38,15 @@ export const serverSchema = z.object({
   REDIS_CLUSTER_NODES: z.string().optional(), // Comma-separated list of cluster node URLs for redundant discovery
   REDIS_CLUSTER_REFRESH_INTERVAL: z.coerce.number().default(30000), // Topology refresh interval in ms (default 30s)
   REDIS_SYS_URL: z.url(),
+  // Optional Sentinel-mode env vars for the `system` Redis client. When
+  // REDIS_SYS_SENTINELS is unset (default), the existing REDIS_SYS_URL path is
+  // used and behavior is unchanged. When set, src/server/redis/client.ts
+  // switches the system client to `createSentinel(...)` against this Sentinel
+  // pool. See claudedocs/sysredis-ha-migration-runbook.md (datapacket-talos)
+  // for the rollout sequence.
+  REDIS_SYS_SENTINELS: z.string().optional(), // comma-separated host:port list, e.g. "civitai-app-sysredis-sentinel.civitai-app-sysredis.svc.cluster.local:26379"
+  REDIS_SYS_SENTINEL_NAME: z.string().default('mymaster'), // master group name; set to "sysmaster" at deploy time
+  REDIS_SYS_SENTINEL_PASSWORD: z.string().optional(), // only set if sentinel-auth is enabled (not initially)
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   // Socket-level inactivity timeout (ms). Passed to node-redis `socket.socketTimeout`,
   // which maps to net.Socket.setTimeout — an IDLE timer that fires when NO read OR

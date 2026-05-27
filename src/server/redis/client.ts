@@ -1,7 +1,7 @@
 import chunk from 'lodash-es/chunk';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
-import { createClient, createCluster } from 'redis';
+import { createClient, createCluster, createSentinel } from 'redis';
 import { RESP_TYPES } from 'redis';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
@@ -313,11 +313,35 @@ function getBaseClient(type: 'cache' | 'system') {
     `Redis ping interval (${type}) = ${pingInterval}ms (env REDIS_PING_INTERVAL_MS=${env.REDIS_PING_INTERVAL_MS}, socketTimeout=${socketTimeoutMs}ms)`
   );
 
-  // System redis is always a single node
+  // System redis is always a single node (or — when REDIS_SYS_SENTINELS is set —
+  // a Sentinel-discovered HA topology). See claudedocs/sysredis-ha-migration-runbook.md.
   // Cache redis can be either cluster or single node based on env.REDIS_CLUSTER
   const isCluster = type === 'cache' && env.REDIS_CLUSTER;
+  const isSysSentinel = type === 'system' && !!env.REDIS_SYS_SENTINELS;
 
-  const baseClient = isCluster
+  const baseClient = isSysSentinel
+    ? createSentinel({
+        name: env.REDIS_SYS_SENTINEL_NAME,
+        sentinelRootNodes: env.REDIS_SYS_SENTINELS!.split(',').map((hp) => {
+          const [host, port] = hp.trim().split(':');
+          return { host, port: parseInt(port ?? '26379', 10) };
+        }),
+        nodeClientOptions: {
+          // Reuse the password that's already extracted from REDIS_SYS_URL —
+          // the new HA cluster is provisioned with the same secret.
+          password: authConfig.password,
+          socket: socketConfig,
+        },
+        sentinelClientOptions: env.REDIS_SYS_SENTINEL_PASSWORD
+          ? { password: env.REDIS_SYS_SENTINEL_PASSWORD, socket: socketConfig }
+          : { socket: socketConfig },
+        masterPoolSize: 1,
+        replicaPoolSize: 0,
+        scanInterval: 10_000,
+        passthroughClientErrorEvents: true,
+        reserveClient: false,
+      })
+    : isCluster
     ? createCluster({
         // Use multiple root nodes for redundant topology discovery
         rootNodes: parseClusterNodes(connectionUrl),
