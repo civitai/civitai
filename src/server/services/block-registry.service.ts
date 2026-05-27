@@ -1,16 +1,13 @@
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import {
-  blockSettingsSchemaByBlockId,
-  blockUserSettingsSchema,
-  type BlockUserSettings,
-} from '~/server/schema/blocks/settings.schema';
+import { manifestSettingsSchema } from '~/server/schema/blocks/manifest-settings.meta.schema';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   getPopularCheckpointForEcosystem,
   getRepresentativeBaseModel,
   validateBlockCheckpoint,
 } from '~/server/services/blocks/checkpoint.service';
+import { validateBlockSettings } from '~/server/services/blocks/settings-validator.service';
 import {
   newBlockInstanceId,
   newBlockUserSubscriptionId,
@@ -1075,10 +1072,16 @@ export class BlockRegistry {
 
     // Use dbWrite for the status check to avoid a replication-lag window
     // where a freshly-suspended block could still be installed. Also
-    // SELECT blockId so we can look up the per-block settings schema.
+    // SELECT manifest + approvedScopes so the W3 generic validator can
+    // type-check the submitted settings against what the app declared.
     const block = await dbWrite.appBlock.findUnique({
       where: { id: appBlockId },
-      select: { status: true, blockId: true },
+      select: {
+        status: true,
+        blockId: true,
+        manifest: true,
+        approvedScopes: true,
+      },
     });
     // throwNotFoundError/throwBadRequestError throw at runtime, but their
     // signatures return `void`, so TS can't narrow `block` here. Hand-narrow.
@@ -1087,12 +1090,14 @@ export class BlockRegistry {
       throw throwBadRequestError('App block is not approved') as never;
     }
 
-    // Per-block-id settings validation. Generic settingsSchema (size + JSON)
-    // has already run at the router; this layer enforces the typed shape
-    // and cross-row checks (e.g. checkpoint ecosystem match). External
-    // (un-first-party) blocks fall through without typed validation.
+    // Manifest-driven settings validation. Generic settingsSchema (size +
+    // JSON) has already run at the router; this layer enforces the per-
+    // field shape declared in `manifest.settings` PLUS cross-row checks
+    // (checkpoint ecosystem match). Blocks without a `settings` manifest
+    // declaration get their input forwarded unchanged.
     const validatedSettings = await validateInstallSettings({
-      blockId: block.blockId,
+      manifest: (block.manifest ?? {}) as Record<string, unknown>,
+      approvedScopes: block.approvedScopes ?? [],
       settings,
       forModelId: modelId,
     });
@@ -1201,17 +1206,27 @@ export class BlockRegistry {
 
   static async updateSettings(opts: UpdateSettingsOpts): Promise<void> {
     const { blockInstanceId, modelId, settings } = opts;
-    // Look up the install + its app block so we can run per-block typed
-    // validation. The blockInstanceId+modelId pair is the auth pin; if it
-    // doesn't match the not-found path below fires.
+    // Look up the install + its app block (manifest + approvedScopes) so
+    // the W3 generic validator can type-check the submitted settings.
+    // The blockInstanceId+modelId pair is the auth pin; mismatched →
+    // not-found below.
     const install = await dbWrite.modelBlockInstall.findFirst({
       where: { blockInstanceId, modelId },
-      select: { appBlock: { select: { blockId: true } } },
+      select: {
+        appBlock: {
+          select: {
+            blockId: true,
+            manifest: true,
+            approvedScopes: true,
+          },
+        },
+      },
     });
     if (!install) throwNotFoundError('Block install not found');
 
     const validatedSettings = await validateInstallSettings({
-      blockId: install!.appBlock.blockId,
+      manifest: (install!.appBlock.manifest ?? {}) as Record<string, unknown>,
+      approvedScopes: install!.appBlock.approvedScopes ?? [],
       settings,
       forModelId: modelId,
     });
@@ -1239,7 +1254,7 @@ export class BlockRegistry {
   static async upsertUserSettings(opts: {
     blockInstanceId: string;
     userId: number;
-    settings: BlockUserSettings;
+    settings: Record<string, unknown>;
   }): Promise<void> {
     const { blockInstanceId, userId, settings } = opts;
     await dbWrite.blockUserSettings.upsert({
@@ -1264,13 +1279,13 @@ export class BlockRegistry {
   static async getUserSettings(opts: {
     blockInstanceId: string;
     userId: number;
-  }): Promise<BlockUserSettings | null> {
+  }): Promise<Record<string, unknown> | null> {
     const row = await dbRead.blockUserSettings.findUnique({
       where: { blockInstanceId_userId: opts },
       select: { settings: true },
     });
     if (!row) return null;
-    return row.settings as BlockUserSettings;
+    return (row.settings ?? {}) as Record<string, unknown>;
   }
 
   /**
@@ -1354,16 +1369,21 @@ export class BlockRegistry {
 
     // Compute the candidate checkpoint id via the same precedence chain as
     // resolveBlockCheckpoint, then do a single ModelVersion lookup.
-    const viewerSettings = blockUserSettingsSchema.safeParse(viewerRow?.settings ?? {});
-    const overrideId = viewerSettings.success
-      ? viewerSettings.data.checkpoint_version_id
-      : undefined;
-    const publisherSchema = blockSettingsSchemaByBlockId['generate-from-model'];
-    const publisherSettings = publisherSchema.safeParse(install.settings ?? {});
-    const publisherId = publisherSettings.success
-      ? (publisherSettings.data as { default_checkpoint_version_id?: number })
-          .default_checkpoint_version_id
-      : undefined;
+    //
+    // W3 v0: settings keys are validated against the app's manifest at
+    // write-time. Here we just read the value with a typeof guard — a
+    // tighter parse would re-derive the manifest from the install's
+    // appBlock for no semantic gain.
+    const viewerRaw = (viewerRow?.settings ?? {}) as { checkpoint_version_id?: unknown };
+    const overrideId =
+      typeof viewerRaw.checkpoint_version_id === 'number'
+        ? viewerRaw.checkpoint_version_id
+        : undefined;
+    const publisherRaw = (install.settings ?? {}) as { default_checkpoint_version_id?: unknown };
+    const publisherId =
+      typeof publisherRaw.default_checkpoint_version_id === 'number'
+        ? publisherRaw.default_checkpoint_version_id
+        : undefined;
     const candidate = typeof overrideId === 'number' ? overrideId : publisherId;
     if (typeof candidate === 'number') {
       const row = await dbRead.modelVersion.findUnique({
@@ -1660,52 +1680,65 @@ export class BlockRegistry {
 }
 
 /**
- * Per-block-id settings validation. Generic JSON-shape + size validation
- * happens in the router; this layer enforces the typed fields each
- * first-party block declares + cross-row checks the zod schema can't do
- * (e.g. "the checkpoint must exist + be in the same ecosystem as the LoRA").
+ * W3 v0: manifest-driven settings validation. The app's `manifest.settings`
+ * declaration (validated against `manifestSettingsSchema` at submission
+ * time) is the contract; this function enforces it on every write. Generic
+ * JSON-shape + size validation happens in the router; this layer adds
+ * per-field type/range checks AND cross-row checks the static manifest
+ * can't express (e.g. "the picked checkpoint must exist + share the LoRA's
+ * ecosystem").
  *
- * Returns the parsed settings object (or `undefined` if the caller passed
+ * Returns the validated settings object (or `undefined` if the caller passed
  * `undefined`). Throws TRPCError on validation failure — propagates to the
  * router, which surfaces it as a structured error the install-form UI can
- * inline. External (un-first-party) blocks skip the typed parse but still
- * have their settings forwarded.
+ * inline. Manifests without a `settings` block (or a malformed one) get the
+ * input forwarded unchanged — keeps third-party authors that haven't
+ * declared settings yet from being rejected.
  */
 async function validateInstallSettings(opts: {
-  blockId: string;
+  manifest: Record<string, unknown>;
+  approvedScopes: string[];
   settings: unknown;
   forModelId: number;
 }): Promise<Record<string, unknown> | undefined> {
-  const { blockId, settings, forModelId } = opts;
+  const { manifest, approvedScopes, settings, forModelId } = opts;
   if (settings == null) return undefined;
 
-  const schema = blockSettingsSchemaByBlockId[blockId];
-  // External block: no typed schema, no checkpoint to validate. Forward
-  // the generic record through.
-  if (!schema) return settings as Record<string, unknown>;
+  const parsedManifestSettings = manifestSettingsSchema.safeParse(manifest.settings ?? {});
+  // Malformed manifest settings → forward the raw input through. The
+  // manifest validation gate at submission time should have caught this;
+  // failing closed here would break a previously-accepted install just
+  // because the manifest later drifted out of spec.
+  if (!parsedManifestSettings.success) return settings as Record<string, unknown>;
 
-  const parsed = schema.parse(settings) as Record<string, unknown>;
+  let validated = validateBlockSettings({
+    manifestSettings: parsedManifestSettings.data,
+    inputSettings: settings as Record<string, unknown>,
+    declaredScopes: approvedScopes,
+    forScope: 'publisher',
+  });
 
-  // Cross-row validation for the checkpoint default. Only first-party
-  // blocks expose this key. For un-Checkpoint bound models (LoRA on Flux,
-  // etc.) the checkpoint must be in the same family — that gates against
-  // a publisher accidentally setting a SDXL checkpoint on a Flux LoRA.
-  const checkpointId = parsed.default_checkpoint_version_id;
+  // Cross-row validation for the resource_picker → checkpoint case. Known
+  // field name across blocks that target image generation. For LoRA-bound
+  // installs the checkpoint must be in the same family — gates a publisher
+  // accidentally pinning an SDXL checkpoint on a Flux LoRA.
+  const checkpointId = validated.default_checkpoint_version_id;
   if (typeof checkpointId === 'number') {
     const baseModel = await getRepresentativeBaseModel(forModelId);
     if (!baseModel) {
       // No published versions yet — can't validate the ecosystem. Strip
-      // the field so the install row stays consistent (a value here that
-      // can't be validated later will fail at submit time anyway).
-      const { default_checkpoint_version_id: _, ...rest } = parsed;
-      return rest;
+      // the field so the install row stays consistent (a value that can't
+      // be validated later will BAD_REQUEST at submit time anyway).
+      const { default_checkpoint_version_id: _, ...rest } = validated;
+      validated = rest;
+    } else {
+      await validateBlockCheckpoint({
+        checkpointVersionId: checkpointId,
+        forBaseModel: baseModel,
+        reason: 'publisher-default',
+      });
     }
-    await validateBlockCheckpoint({
-      checkpointVersionId: checkpointId,
-      forBaseModel: baseModel,
-      reason: 'publisher-default',
-    });
   }
 
-  return parsed;
+  return validated;
 }

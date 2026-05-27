@@ -1,11 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import {
-  blockSettingsSchemaByBlockId,
-  blockUserSettingsSchema,
-  type GenerateFromModelSettings,
-} from '~/server/schema/blocks/settings.schema';
 import { BlockRegistry } from '~/server/services/block-registry.service';
 import { getBaseModelsByGroup } from '~/shared/constants/basemodel.constants';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
@@ -310,13 +305,16 @@ export async function resolveBlockCheckpoint(opts: {
     }),
   ]);
 
-  // 2. Viewer override: try first. Re-parse via the schema so a stored
-  // value that no longer matches (e.g. schema tightened in a later release)
-  // is treated as absent rather than crashing the resolve.
-  const viewerSettings = blockUserSettingsSchema.safeParse(viewerRow?.settings ?? {});
-  const viewerCheckpointId = viewerSettings.success
-    ? viewerSettings.data.checkpoint_version_id
-    : undefined;
+  // 2. Viewer override: try first. W3 v0 — settings keys are validated
+  // against the app's manifest at write-time, so reading the raw value
+  // with a typeof guard here is sufficient. A stored value that no
+  // longer matches (manifest tightened in a later release) is treated as
+  // absent rather than crashing the resolve.
+  const viewerRaw = (viewerRow?.settings ?? {}) as { checkpoint_version_id?: unknown };
+  const viewerCheckpointId =
+    typeof viewerRaw.checkpoint_version_id === 'number'
+      ? viewerRaw.checkpoint_version_id
+      : undefined;
   if (typeof viewerCheckpointId === 'number') {
     try {
       return await validateBlockCheckpoint({
@@ -332,11 +330,11 @@ export async function resolveBlockCheckpoint(opts: {
   }
 
   // 3. Publisher default.
-  const publisherSchema = blockSettingsSchemaByBlockId['generate-from-model'];
-  const publisherSettings = publisherSchema.safeParse(install?.settings ?? {});
-  const publisherCheckpointId = publisherSettings.success
-    ? (publisherSettings.data as GenerateFromModelSettings).default_checkpoint_version_id
-    : undefined;
+  const publisherRaw = (install?.settings ?? {}) as { default_checkpoint_version_id?: unknown };
+  const publisherCheckpointId =
+    typeof publisherRaw.default_checkpoint_version_id === 'number'
+      ? publisherRaw.default_checkpoint_version_id
+      : undefined;
   if (typeof publisherCheckpointId === 'number') {
     try {
       return await validateBlockCheckpoint({
