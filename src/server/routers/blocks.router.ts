@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
+import { newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import { getUserBuzzAccounts } from '~/server/services/buzz.service';
@@ -221,6 +222,123 @@ export const blocksRouter = router({
         slotId: row.slotId,
       });
       return { ok: true };
+    }),
+
+  /**
+   * Create a Forgejo repo for a new App Block under the civitai-apps org +
+   * wire up its push webhook + insert a pending app_blocks row. v0 gates on
+   * isModerator (civitai-team only — W5 + W1 open this up in v1).
+   *
+   * Lives here (not in oauth-client.router) because it deals with the
+   * downstream app_blocks lifecycle, not the OAuth identity flow itself.
+   */
+  submitApp: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        slug: z
+          .string()
+          .min(3)
+          .max(40)
+          .regex(/^[a-z][a-z0-9-]*[a-z0-9]$/, 'slug must be lowercase a-z0-9 with hyphens'),
+        oauthClientId: z.string().min(1).max(64),
+        description: z.string().max(280).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      // Lazy-load the service layer so envs without W2 wiring don't
+      // break the rest of the router at import time.
+      const [{ createRepoFromTemplate, addCollaborator, ensurePushWebhook }, { env }] =
+        await Promise.all([
+          import('~/server/services/blocks/forgejo.service'),
+          import('~/env/server'),
+        ]);
+
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App submission is restricted to civitai team at v0');
+      }
+      if (!env.FORGEJO_BASE_URL || !env.FORGEJO_ADMIN_TOKEN || !env.FORGEJO_WEBHOOK_SECRET) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Forgejo not configured in this environment',
+        });
+      }
+
+      const oauthClient = await dbRead.oauthClient.findUnique({
+        where: { id: input.oauthClientId },
+        select: { id: true, name: true },
+      });
+      if (!oauthClient) throw throwNotFoundError('OauthClient not found');
+
+      // Already submitted? Bail with a clear error so the operator notices
+      // they're double-submitting rather than silently re-running the
+      // Forgejo side.
+      const existing = await dbRead.appBlock.findFirst({
+        where: { blockId: input.slug },
+        select: { id: true, status: true },
+      });
+      if (existing) {
+        throw new TRPCError({
+          code: 'CONFLICT',
+          message: `App block ${input.slug} already exists (status=${existing.status})`,
+        });
+      }
+
+      // 1. Create the Forgejo repo from the starter template.
+      const repo = await createRepoFromTemplate({
+        slug: input.slug,
+        description: input.description ?? oauthClient.name,
+        template: 'starter',
+      });
+
+      // 2. Grant the submitter write access (best-effort — if the
+      // submitter doesn't have a Forgejo account yet, this 422s and we
+      // continue. The user can be added later manually via Forgejo admin.).
+      if (ctx.user?.username) {
+        try {
+          await addCollaborator({ slug: input.slug, username: ctx.user.username });
+        } catch (e) {
+          // Log but don't fail — repo creation + webhook are the load-
+          // bearing pieces; the collaborator bind is convenience.
+          // eslint-disable-next-line no-console
+          console.warn('[submitApp] addCollaborator failed:', String(e).slice(0, 240));
+        }
+      }
+
+      // 3. Attach the push webhook.
+      const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')}/api/internal/blocks/git-push`;
+      await ensurePushWebhook({
+        slug: input.slug,
+        callbackUrl,
+        secret: env.FORGEJO_WEBHOOK_SECRET,
+      });
+
+      // 4. Insert pending app_blocks row. apb_ prefix matches the existing
+      // hackathon row (apb_01KSD3NP23CQE4TMW14XTEFSNS) — keep that
+      // convention here even though the v1 developer-endpoint uses ab_.
+      const id = `apb_${newUlid()}`;
+      await dbWrite.appBlock.create({
+        data: {
+          id,
+          appId: oauthClient.id,
+          blockId: input.slug,
+          version: '0.0.0',
+          manifest: {},
+          status: 'pending',
+          contentRating: 'g',
+          renderMode: 'iframe',
+          trustTier: 'internal',
+          approvedScopes: [],
+          repoUrl: repo.html_url,
+        },
+      });
+
+      return {
+        appBlockId: id,
+        slug: input.slug,
+        repoUrl: repo.html_url,
+        cloneUrl: repo.clone_url,
+      };
     }),
 
   /**

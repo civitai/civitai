@@ -2220,6 +2220,14 @@ model AppBlock {
   // fails closed when the requested scope isn't in this set.
   approvedScopes     String[]  @default([]) @map("approved_scopes")
 
+  // W2 apps-as-repos — Forgejo repo currently backing this block. Nullable
+  // because pre-W2 hackathon rows (apb_01KSD3NP23CQE4TMW14XTEFSNS) won't
+  // have these until W12 migration. Written by the git-push webhook
+  // (sha) + build-callback (deployedAt).
+  currentVersionSha         String?   @map("current_version_sha")
+  currentVersionDeployedAt  DateTime? @map("current_version_deployed_at") @db.Timestamptz(6)
+  repoUrl                   String?   @map("repo_url")
+
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
