@@ -5,6 +5,8 @@ import React, { useMemo } from 'react';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { TextStyleKit } from '@tiptap/extension-text-style';
 import ImageExtension from '@tiptap/extension-image';
+import { ConsentBlockedEmbed } from '~/components/Consent/ConsentBlockedEmbed';
+import { useThirdPartyConsent } from '~/components/Consent/consent.context';
 import { EdgeMediaComponent } from '~/components/TipTap/EdgeMediaNode';
 import classes from './RichTextEditorComponent.module.scss';
 import { CustomHeading } from '~/shared/tiptap/custom-heading.node';
@@ -27,6 +29,7 @@ const extensions = [
 ];
 
 export function RenderRichText({ content }: { content: Record<string, any> }) {
+  const { allowed } = useThirdPartyConsent();
   const memoized = useMemo(() => {
     return renderToReactElement({
       content,
@@ -34,10 +37,17 @@ export function RenderRichText({ content }: { content: Record<string, any> }) {
       options: {
         nodeMapping: {
           media: ({ node }) => <EdgeMediaComponent {...(node.attrs as any)} />,
+          // For unconsented CA visitors, replace third-party embed nodes with a
+          // placeholder so the iframe is never inserted in the DOM.
+          ...(!allowed && {
+            youtube: () => <ConsentBlockedEmbed kind="youtube" />,
+            instagram: () => <ConsentBlockedEmbed kind="instagram" />,
+            strawPoll: () => <ConsentBlockedEmbed kind="strawpoll" />,
+          }),
         },
       },
     });
-  }, [content]);
+  }, [content, allowed]);
 
   return (
     <TypographyStylesWrapper className={classes.htmlRenderer}>
