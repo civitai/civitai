@@ -61,6 +61,7 @@ import { leaderboardRouter } from './leaderboard.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
 import { modelRouter } from './model.router';
+import { model3dRouter } from './model3d.router';
 import { newsletterRouter } from './newsletter.router';
 import { notificationRouter } from './notification.router';
 import { partnerRouter } from './partner.router';
@@ -115,6 +116,7 @@ export const appRouter = router({
   homeBlock: homeBlockRouter,
   image: imageRouter,
   model: modelRouter,
+  model3d: model3dRouter,
   modelFile: modelFileRouter,
   modelVersion: modelVersionRouter,
   notification: notificationRouter,
