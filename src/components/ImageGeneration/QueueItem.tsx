@@ -24,8 +24,10 @@ import {
   IconLink,
 } from '@tabler/icons-react';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
+import { useRouter } from 'next/router';
 import dayjs from '~/shared/utils/dayjs';
 import { useEffect, useState } from 'react';
+import { showErrorNotification } from '~/utils/notifications';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -844,8 +846,9 @@ function CanUpgradeBlock({
  * queued generations would create N WebGL contexts on the page. The full
  * viewer instantiates on the detail page (see workstream D).
  *
- * "Post from Generation" is a stub until workstream G wires the real flow
- * (`/posts/[id]/edit` after a Post create against the Draft Model3D).
+ * "Post from Generation" creates a Post linked to the workflow's draft
+ * Model3D (created server-side by the PolyGen result handler, keyed on
+ * workflowId) and redirects to the post editor.
  */
 function Model3DQueueCardOutputs({
   request,
@@ -856,6 +859,8 @@ function Model3DQueueCardOutputs({
   pending: boolean;
   processing: boolean;
 }) {
+  const router = useRouter();
+
   // PolyGen step outputs aren't currently passed through
   // `formatStepOutputs` so `step.output` is empty. Read the raw thumbnail
   // off the step output payload if the orchestrator has surfaced it; fall
@@ -866,6 +871,53 @@ function Model3DQueueCardOutputs({
     .find((t): t is { url?: string } => !!t);
 
   const showSpinner = pending || processing;
+  const isComplete = !pending && !processing;
+
+  // Resolve the Model3D draft for this workflow. The PolyGen result handler
+  // creates it server-side keyed on workflowId (idempotent), so we only need
+  // to look it up. Returns null until the handler has run; we surface a
+  // friendly disabled state in that window.
+  const { data: model3d, isLoading: model3dLoading } =
+    trpc.model3d.getByWorkflowId.useQuery(
+      { workflowId: request.id },
+      {
+        enabled: isComplete,
+        // Re-check briefly after the workflow completes in case the result
+        // handler is still landing the draft row.
+        refetchInterval: (data) => (isComplete && !data ? 3000 : false),
+      }
+    );
+
+  const createPost = trpc.post.create.useMutation({
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to create post',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handlePostFromGeneration = async () => {
+    if (!model3d) {
+      showErrorNotification({
+        title: 'Generation not ready',
+        error: new Error(
+          'The 3D model draft is still being created. Try again in a moment.'
+        ),
+      });
+      return;
+    }
+    try {
+      const post = await createPost.mutateAsync({ model3dId: model3d.id });
+      // Redirect to the post editor with the model3dId carried through so the
+      // edit page can also surface Model3D fields (name/description/tags).
+      await router.push(`/posts/${post.id}/edit?model3dId=${model3d.id}`);
+    } catch {
+      // showErrorNotification already fires via onError
+    }
+  };
+
+  const ctaDisabled = !isComplete || model3dLoading || !model3d || createPost.isLoading;
 
   return (
     <div className="flex flex-col gap-2">
@@ -895,21 +947,13 @@ function Model3DQueueCardOutputs({
       </TwCard>
 
       <div className="flex gap-2">
-        {/*
-          NOTE (workstream G): wire this to the real Post-from-Generation
-          flow. It should call a `postsv2.createFromGeneration`-style
-          mutation (or equivalent) seeded with the workflow id, then
-          redirect to `/posts/[id]/edit` so the user can fill in name,
-          license, tags. The draft Model3D row was already created by the
-          workflow result handler (workstream B) so the edit page just
-          needs to bind them via `Post.model3dId`.
-        */}
         <Button
-          component={Link}
-          href={`/3d-models?fromWorkflow=${encodeURIComponent(request.id)}`}
+          onClick={handlePostFromGeneration}
           variant="light"
           size="compact-sm"
           fullWidth
+          loading={createPost.isLoading}
+          disabled={ctaDisabled}
         >
           Post from Generation
         </Button>

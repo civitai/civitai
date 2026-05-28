@@ -10,6 +10,7 @@ import {
   upsertModel3DSchema,
   getModel3DByIdSchema,
   getModel3DByThumbnailImageIdSchema,
+  getModel3DByWorkflowIdSchema,
   getModel3DsInfiniteSchema,
   publishModel3DSchema,
   unpublishModel3DSchema,
@@ -27,6 +28,7 @@ import {
   upsertModel3D,
   getModel3DById,
   getModel3DByThumbnailImageId,
+  getModel3DByWorkflowId,
   getModel3DsInfinite,
   publishModel3D,
   unpublishModel3D,
@@ -86,6 +88,14 @@ export const model3dRouter = router({
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DByIdSchema)
     .query(({ input, ctx }) => getModel3DById({ ...input, user: ctx.user })),
+  // Look up a Model3D by orchestrator workflowId — used by the queue-card
+  // "Post from Generation" flow. Requires login + ownership (or mod); the
+  // service returns null instead of throwing when the draft hasn't landed yet
+  // so the UI can render a "still processing" state without a red banner.
+  getByWorkflowId: protectedProcedure
+    .use(isFlagProtected('model3dFeed'))
+    .input(getModel3DByWorkflowIdSchema)
+    .query(({ input, ctx }) => getModel3DByWorkflowId({ input, user: ctx.user })),
   getInfinite: publicProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DsInfiniteSchema)

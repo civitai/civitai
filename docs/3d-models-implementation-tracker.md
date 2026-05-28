@@ -42,14 +42,23 @@ If the main session dies:
 
 ---
 
-## Active agents — Wave 2 (in flight)
+## Active agents — Wave 2 status
+
+Wave 2 ran, several agents died mid-flight, recovered + merged what landed:
+
+| Workstream | Status | Notes |
+|------------|--------|-------|
+| E | **DONE + merged** | 3 commits — NSFW propagation + Model3DMetric rollup + comment notifications |
+| F | **DONE + merged** | Model3DGenerationForm, GenerationForm tab, QueueItem 3D branch, generate3D mutation, whatif preview |
+| G (partial) | **partially merged** | Detail page rebuild + 4 components + review backend endpoints all done. **Remaining**: reviews page replacement + Post-from-Generation wiring (G2 spawned) |
+| H (partial) | **partially merged** | 2 flags + surface gating done. **Remaining**: thumbnail-driven mod affordance (H2 spawned) |
+
+## Active agents — Wave 2.5 (continuation)
 
 | Workstream | Status | Scope |
 |------------|--------|-------|
-| E: Jobs + notifications | **in flight (background)** | updateModel3DNsfwLevels + updateModel3DMetrics + 3 comment notifications + threadUrlMap entry |
-| F: Generation form | **in flight (background)** | 3D Model tab in GenerationForm, Model3DGenerationForm.tsx, queue card (thumbnail-only), `generate3D` tRPC mutation, whatif cost preview |
-| G: Detail page + reviews modal | **in flight (background)** | Full detail page rebuild on `/3d-models/[id]`, Model3DReviewModal with image attachments via Post.model3dReviewId, reviews page, Post-from-Generation wiring |
-| H: Feature flags + mod tooling | **in flight (background)** | model3dFeed + model3dGenerator Flipt flags, thumbnail-driven "Also unpublish parent Model3D" mod affordance |
+| G2: reviews page + post-from-gen | in flight (background) | Replace reviews page stub, wire QueueItem Post-from-Gen CTA |
+| H2: mod tooling | in flight (background) | Model3DModAction component + getByThumbnailImageId router + wire into existing image-mod page |
 
 ## Active agents — Wave 1 (done, merged)
 

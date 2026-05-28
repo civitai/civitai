@@ -15,6 +15,7 @@ import type {
   DeleteModel3DInput,
   GetModel3DByIdInput,
   GetModel3DByThumbnailImageIdInput,
+  GetModel3DByWorkflowIdInput,
   GetModel3DFilesInput,
   GetModel3DRelatedPostsInput,
   GetModel3DReviewSummaryInput,
@@ -139,6 +140,41 @@ export const getModel3DById = async ({
       ...model3d,
       tags: model3d.tags.map((t) => t.tag),
     };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/**
+ * Look up a Model3D by its orchestrator workflowId. Used by the queue-card
+ * "Post from Generation" flow — the polyGen workflow result handler creates the
+ * draft Model3D keyed on workflowId, and the queue card needs to resolve that
+ * id before creating the Post.
+ *
+ * Returns null (not throws) when the row hasn't been created yet, so the UI
+ * can poll / display a friendly "still processing" state.
+ */
+export const getModel3DByWorkflowId = async ({
+  input,
+  user,
+}: {
+  input: GetModel3DByWorkflowIdInput;
+  user?: SessionUser | null;
+}) => {
+  try {
+    const row = await dbRead.model3D.findUnique({
+      where: { workflowId: input.workflowId },
+      select: { id: true, userId: true, status: true, deletedAt: true, workflowId: true },
+    });
+    if (!row) return null;
+    // The draft is owner- or mod-readable only — public can't peek at someone
+    // else's draft via the orchestrator's workflow id.
+    const isModerator = !!user?.isModerator;
+    const isOwner = !!user && row.userId === user.id;
+    if (!isModerator && !isOwner) return null;
+    if (row.deletedAt) return null;
+    return row;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
