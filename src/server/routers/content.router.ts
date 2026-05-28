@@ -42,7 +42,8 @@ export const contentRouter = router({
       // Get domain color from request context to determine which ToS field to check
       const domainColor = ctx.domain;
       const tosFieldKey = tosFieldMap[domainColor as keyof typeof tosFieldMap] || 'tosLastSeenDate';
-      const userTosLastSeen = userSettings[tosFieldKey] as Date | undefined;
+      const userTosLastSeenRaw = userSettings[tosFieldKey] as Date | string | undefined;
+      const userTosLastSeen = userTosLastSeenRaw ? new Date(userTosLastSeenRaw) : undefined;
       const tosLastMod = tos.lastmod ? new Date(tos.lastmod) : undefined;
 
       return {
