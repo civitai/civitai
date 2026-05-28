@@ -1,0 +1,467 @@
+import type { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { imageSelect } from '~/server/selectors/image.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import type {
+  DeleteModel3DInput,
+  GetModel3DByIdInput,
+  GetModel3DFilesInput,
+  GetModel3DsInfiniteInput,
+  PublishModel3DInput,
+  UnpublishModel3DInput,
+  UpsertModel3DInput,
+} from '~/server/schema/model3d.schema';
+
+type SessionUser = {
+  id: number;
+  isModerator?: boolean | null;
+  username?: string | null;
+};
+
+// ---------------------------------------------------------------------------
+// Selectors
+// ---------------------------------------------------------------------------
+
+const model3dFileSelect = {
+  id: true,
+  name: true,
+  url: true,
+  sizeKB: true,
+  format: true,
+  isPrimary: true,
+  metadata: true,
+  virusScanResult: true,
+  virusScanMessage: true,
+  scannedAt: true,
+  exists: true,
+  createdAt: true,
+} satisfies Prisma.Model3DFileSelect;
+
+const model3dDetailSelect = {
+  id: true,
+  name: true,
+  description: true,
+  userId: true,
+  thumbnailImageId: true,
+  thumbnailImage: { select: imageSelect },
+  licenseId: true,
+  license: true,
+  licenseDetails: true,
+  workflowId: true,
+  sourceImageId: true,
+  sourceImage: { select: imageSelect },
+  generationParams: true,
+  status: true,
+  nsfw: true,
+  tosViolation: true,
+  poi: true,
+  minor: true,
+  unlisted: true,
+  lockedProperties: true,
+  availability: true,
+  nsfwLevel: true,
+  meta: true,
+  createdAt: true,
+  updatedAt: true,
+  publishedAt: true,
+  deletedAt: true,
+  deletedBy: true,
+  user: { select: userWithCosmeticsSelect },
+  files: {
+    select: model3dFileSelect,
+    orderBy: [{ isPrimary: 'desc' }, { id: 'asc' }] as Prisma.Model3DFileOrderByWithRelationInput[],
+  },
+  tags: {
+    select: { tag: { select: { id: true, name: true } } },
+  },
+  metric: true,
+} satisfies Prisma.Model3DSelect;
+
+const model3dListSelect = {
+  id: true,
+  name: true,
+  userId: true,
+  status: true,
+  nsfw: true,
+  nsfwLevel: true,
+  unlisted: true,
+  availability: true,
+  publishedAt: true,
+  createdAt: true,
+  thumbnailImageId: true,
+  thumbnailImage: { select: imageSelect },
+  user: { select: userWithCosmeticsSelect },
+  metric: true,
+} satisfies Prisma.Model3DSelect;
+
+// ---------------------------------------------------------------------------
+// Read helpers
+// ---------------------------------------------------------------------------
+
+export type Model3DGetById = NonNullable<Awaited<ReturnType<typeof getModel3DById>>>;
+export const getModel3DById = async ({
+  id,
+  user,
+}: GetModel3DByIdInput & { user?: SessionUser | null }) => {
+  try {
+    const isModerator = !!user?.isModerator;
+    const model3d = await dbRead.model3D.findUnique({
+      where: { id },
+      select: model3dDetailSelect,
+    });
+    if (!model3d) throw throwNotFoundError(`No 3D model with id ${id}`);
+
+    // Visibility rules:
+    // - Mods see everything.
+    // - Owner sees their own (any status).
+    // - Public sees Published and not-Deleted.
+    const isOwner = !!user && model3d.userId === user.id;
+    if (!isModerator && !isOwner) {
+      if (model3d.status !== Model3DStatus.Published) {
+        throw throwNotFoundError(`No 3D model with id ${id}`);
+      }
+      if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${id}`);
+    }
+
+    return {
+      ...model3d,
+      tags: model3d.tags.map((t) => t.tag),
+    };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export type Model3DGetInfinite = AsyncReturnType<typeof getModel3DsInfinite>;
+export const getModel3DsInfinite = async ({
+  limit,
+  cursor,
+  query,
+  userId,
+  username,
+  status,
+  statuses,
+  tagIds,
+  includeDrafts,
+  user,
+}: GetModel3DsInfiniteInput & { user?: SessionUser | null }) => {
+  try {
+    const isModerator = !!user?.isModerator;
+
+    // Mod-only gating at the service layer (feature-flag-equivalent). Without a
+    // signed-in mod, surface nothing. Workstream H wires the Flipt flag at the
+    // router middleware layer; this is a defense-in-depth check.
+    if (!isModerator) {
+      // Owner-scoped listing is allowed (so users can see their own drafts on
+      // their profile tab once the feature flag opens up). Anonymous + non-mod
+      // viewers get an empty list until the flag flips.
+      if (!user) return { items: [], nextCursor: undefined as number | undefined };
+      // Allow the user to fetch their own; otherwise empty.
+      if (userId && userId !== user.id && !username) {
+        return { items: [], nextCursor: undefined as number | undefined };
+      }
+    }
+
+    const AND: Prisma.Model3DWhereInput[] = [{ deletedAt: null }];
+
+    // Status filter — public + non-owner can only see Published.
+    if (statuses?.length) {
+      AND.push({ status: { in: statuses } });
+    } else if (status) {
+      AND.push({ status });
+    } else if (!isModerator) {
+      // Non-mods: published only, unless they're the owner and asked for drafts.
+      const allowDrafts = !!user && (includeDrafts ?? false) && userId === user.id;
+      if (!allowDrafts) AND.push({ status: Model3DStatus.Published });
+    }
+
+    if (userId) AND.push({ userId });
+    if (username) AND.push({ user: { username } });
+    if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
+    if (tagIds?.length) AND.push({ tags: { some: { tagId: { in: tagIds } } } });
+
+    const take = Math.min(limit, 100);
+    const items = await dbRead.model3D.findMany({
+      take: take + 1,
+      where: { AND },
+      cursor: cursor ? { id: cursor } : undefined,
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+      select: model3dListSelect,
+    });
+
+    let nextCursor: number | undefined;
+    if (items.length > take) {
+      const nextItem = items.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return { items, nextCursor };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Mutations
+// ---------------------------------------------------------------------------
+
+export const upsertModel3D = async ({
+  input,
+  user,
+}: {
+  input: UpsertModel3DInput;
+  user: SessionUser;
+}) => {
+  const isModerator = !!user.isModerator;
+  const { id, tagIds, generationParams, meta, ...data } = input;
+
+  // Strip locked props on update for non-mods.
+  let lockedProperties: string[] | undefined = data.lockedProperties;
+  let existing: { id: number; userId: number; lockedProperties: string[] } | null = null;
+  if (id) {
+    existing = await dbWrite.model3D.findUnique({
+      where: { id },
+      select: { id: true, userId: true, lockedProperties: true },
+    });
+    if (!existing) throw throwNotFoundError(`No 3D model with id ${id}`);
+    if (!isModerator && existing.userId !== user.id) throw throwAuthorizationError();
+
+    if (!isModerator) {
+      const locked = new Set(existing.lockedProperties ?? []);
+      for (const key of locked) delete (data as Record<string, unknown>)[key];
+      // Non-mods can't change lockedProperties either.
+      lockedProperties = undefined;
+    }
+  }
+
+  const writeData: Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput = {
+    ...data,
+    userId: existing?.userId ?? user.id,
+    generationParams: (generationParams as Prisma.InputJsonValue) ?? undefined,
+    meta: (meta as Prisma.InputJsonValue) ?? undefined,
+    lockedProperties,
+  } as Prisma.Model3DUncheckedUpdateInput & Prisma.Model3DUncheckedCreateInput;
+
+  try {
+    if (id) {
+      const updated = await dbWrite.$transaction(async (tx) => {
+        const row = await tx.model3D.update({
+          where: { id },
+          data: writeData,
+          select: model3dDetailSelect,
+        });
+
+        if (tagIds) {
+          await tx.tagsOnModel3D.deleteMany({ where: { model3dId: id } });
+          if (tagIds.length) {
+            await tx.tagsOnModel3D.createMany({
+              data: tagIds.map((tagId) => ({ model3dId: id, tagId })),
+              skipDuplicates: true,
+            });
+          }
+        }
+
+        return row;
+      });
+      return updated;
+    }
+
+    // Create — name + licenseId are required (handled by zod). Status defaults to Draft.
+    const created = await dbWrite.$transaction(async (tx) => {
+      const row = await tx.model3D.create({
+        data: writeData,
+        select: model3dDetailSelect,
+      });
+
+      if (tagIds?.length) {
+        await tx.tagsOnModel3D.createMany({
+          data: tagIds.map((tagId) => ({ model3dId: row.id, tagId })),
+          skipDuplicates: true,
+        });
+      }
+
+      return row;
+    });
+
+    return created;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const publishModel3D = async ({
+  input,
+  user,
+}: {
+  input: PublishModel3DInput;
+  user: SessionUser;
+}) => {
+  const isModerator = !!user.isModerator;
+  const existing = await dbWrite.model3D.findUnique({
+    where: { id: input.id },
+    select: {
+      id: true,
+      userId: true,
+      status: true,
+      thumbnailImageId: true,
+      deletedAt: true,
+    },
+  });
+  if (!existing) throw throwNotFoundError(`No 3D model with id ${input.id}`);
+  if (!isModerator && existing.userId !== user.id) throw throwAuthorizationError();
+  if (existing.deletedAt) throw throwBadRequestError('Cannot publish a deleted 3D model');
+  if (!existing.thumbnailImageId) {
+    throw throwBadRequestError('A thumbnail image is required before publishing.');
+  }
+
+  try {
+    const now = new Date();
+    return await dbWrite.model3D.update({
+      where: { id: input.id },
+      data: {
+        status: Model3DStatus.Published,
+        publishedAt: now,
+      },
+      select: model3dDetailSelect,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const unpublishModel3D = async ({
+  input,
+  user,
+}: {
+  input: UnpublishModel3DInput;
+  user: SessionUser;
+}) => {
+  const isModerator = !!user.isModerator;
+  const existing = await dbWrite.model3D.findUnique({
+    where: { id: input.id },
+    select: { id: true, userId: true, status: true, deletedAt: true },
+  });
+  if (!existing) throw throwNotFoundError(`No 3D model with id ${input.id}`);
+  if (!isModerator && existing.userId !== user.id) throw throwAuthorizationError();
+  if (existing.deletedAt) throw throwBadRequestError('Cannot unpublish a deleted 3D model');
+
+  try {
+    return await dbWrite.model3D.update({
+      where: { id: input.id },
+      data: { status: Model3DStatus.Unpublished },
+      select: model3dDetailSelect,
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const deleteModel3D = async ({
+  input,
+  user,
+}: {
+  input: DeleteModel3DInput;
+  user: SessionUser;
+}) => {
+  const isModerator = !!user.isModerator;
+  const existing = await dbWrite.model3D.findUnique({
+    where: { id: input.id },
+    select: { id: true, userId: true, deletedAt: true },
+  });
+  if (!existing) throw throwNotFoundError(`No 3D model with id ${input.id}`);
+  if (!isModerator && existing.userId !== user.id) throw throwAuthorizationError();
+  if (existing.deletedAt) return existing; // idempotent
+
+  try {
+    return await dbWrite.model3D.update({
+      where: { id: input.id },
+      data: {
+        status: Model3DStatus.Deleted,
+        deletedAt: new Date(),
+        deletedBy: user.id,
+      },
+      select: { id: true, status: true, deletedAt: true, deletedBy: true },
+    });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Signed download URLs
+// ---------------------------------------------------------------------------
+
+export const getModel3DFiles = async ({
+  input,
+  user,
+}: {
+  input: GetModel3DFilesInput;
+  user?: SessionUser | null;
+}) => {
+  const isModerator = !!user?.isModerator;
+  const model3d = await dbRead.model3D.findUnique({
+    where: { id: input.id },
+    select: {
+      id: true,
+      userId: true,
+      status: true,
+      deletedAt: true,
+      files: {
+        select: model3dFileSelect,
+        orderBy: [
+          { isPrimary: 'desc' },
+          { id: 'asc' },
+        ] as Prisma.Model3DFileOrderByWithRelationInput[],
+      },
+    },
+  });
+  if (!model3d) throw throwNotFoundError(`No 3D model with id ${input.id}`);
+
+  const isOwner = !!user && model3d.userId === user.id;
+  if (!isModerator && !isOwner) {
+    if (model3d.status !== Model3DStatus.Published) {
+      throw throwNotFoundError(`No 3D model with id ${input.id}`);
+    }
+    if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${input.id}`);
+  }
+
+  // Sign each file URL. Mirrors `model.service.ts` / `file.service.ts` —
+  // delegates to resolveDownloadUrl which goes through the storage resolver +
+  // delivery-worker fallback.
+  const files = await Promise.all(
+    model3d.files.map(async (file) => {
+      try {
+        const { url } = await resolveDownloadUrl(file.id, file.url, file.name);
+        return { ...file, downloadUrl: url };
+      } catch {
+        // TODO(model3d): surface re-presign failures to mods. For now we fall
+        // back to the raw stored URL so the UI still has something to render.
+        return { ...file, downloadUrl: file.url };
+      }
+    })
+  );
+
+  return { id: model3d.id, files };
+};
+
+// Local helper type to avoid circular-import issues with the global one.
+type AsyncReturnType<T extends (...args: any) => Promise<any>> = T extends (
+  ...args: any
+) => Promise<infer R>
+  ? R
+  : never;
