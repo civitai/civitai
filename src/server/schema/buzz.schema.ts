@@ -133,7 +133,7 @@ export const userBuzzTransactionInputSchema = buzzTransactionSchema
   .check((ctx) => {
     if (
       ctx.value.entityType &&
-      ['Image', 'Model', 'Article', 'ComicProject', 'ComicChapter'].includes(
+      ['Image', 'Model', 'Article', 'ComicProject', 'ComicChapter', 'Model3D'].includes(
         ctx.value.entityType
       ) &&
       ctx.value.amount > buzzConstants.maxTipAmount

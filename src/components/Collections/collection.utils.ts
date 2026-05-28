@@ -1,6 +1,7 @@
 import type { Icon } from '@tabler/icons-react';
 import {
   IconCategory,
+  IconCube,
   IconEyeOff,
   IconFileText,
   IconLayoutList,
@@ -252,6 +253,12 @@ export const collectionTypeData: Record<CollectionType, TypeData> = {
     label: 'Article',
     value: CollectionType.Article,
     color: 'orange',
+  },
+  [CollectionType.Model3D]: {
+    icon: IconCube,
+    label: '3D Model',
+    value: CollectionType.Model3D,
+    color: 'teal',
   },
 };
 

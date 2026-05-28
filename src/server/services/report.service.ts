@@ -120,6 +120,8 @@ const reportTypeNameMap: Record<ReportEntity, string> = {
   [ReportEntity.BountyEntry]: 'bountyEntry',
   [ReportEntity.Chat]: 'chat',
   [ReportEntity.ComicProject]: 'comicProject',
+  [ReportEntity.Model3D]: 'model3d',
+  [ReportEntity.Model3DReview]: 'model3dReview',
 };
 
 const reportTypeConnectionMap = {
@@ -136,6 +138,8 @@ const reportTypeConnectionMap = {
   [ReportEntity.BountyEntry]: 'bountyEntryId',
   [ReportEntity.Chat]: 'chatId',
   [ReportEntity.ComicProject]: 'comicProjectId',
+  [ReportEntity.Model3D]: 'model3dId',
+  [ReportEntity.Model3DReview]: 'model3dReviewId',
 } as const;
 
 const statusOverrides: Partial<Record<ReportReason, ReportStatus>> = {
