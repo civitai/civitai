@@ -7,7 +7,6 @@ const configSchema = z.object({
   perMinute: z.number().int().min(1).optional(),
   perHour: z.number().int().min(1).optional(),
   perDay: z.number().int().min(1).optional(),
-  abuseThreshold: z.number().int().min(1).optional(),
   autoSmiteAbusers: z.boolean().optional(),
   abuseDetection: z
     .object({

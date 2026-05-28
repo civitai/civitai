@@ -153,6 +153,7 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationGraphStore } from '~/store/generation-graph.store';
 import { useRemixStore } from '~/store/remix.store';
 import { useTipStore } from '~/store/tip.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import {
   mapDataToGraphInput,
   splitResourcesByType,
@@ -225,6 +226,7 @@ export function GenerationFormContent() {
   const { runTour, running, currentStep, helpers, setSteps, activeTour } = useTourContext();
   const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
   const remixOfId = useRemixStore((state) => state.data?.remixOfId);
+  const { trackAction } = useTrackEvent();
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
     state.requestsLoading,
     state.hasGeneratedImages,
@@ -325,6 +327,37 @@ export function GenerationFormContent() {
       imageAnnotations,
       ...params
     } = data;
+
+    // Generation funnel telemetry — validation-pass branch. Fires before
+    // the buzz-transaction prompt so click-and-abandon (cancel at confirm
+    // dialog or insufficient-buzz fallout) is still captured. fromAction
+    // is taken from the panel store so the same submission can be joined
+    // back to the Model_Create_Click / Image_Remix_Click that opened the
+    // panel. `hasRemixOfId` reflects the actual remixOfId being sent on
+    // the request (passes the 0.75 similarity gate). `isValid=true` here;
+    // the validation-fail counterpart fires from handleSubmitError below.
+    try {
+      const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+      const willSendRemixOfId = !!(remixSimilarity && remixSimilarity > 0.75 && remixOfId);
+      trackAction({
+        type: 'Generator_Submit',
+        details: {
+          // modelVersionId: form `model` IS the model-version resource, not the
+          // parent model id (resource nodes are versions; `.id` on a resource
+          // node = ModelVersion.id). The form field is named `model` for
+          // historical reasons; the schema field is named modelVersionId for
+          // accuracy. Don't be misled by the asymmetry.
+          modelVersionId: model?.id,
+          fromAction,
+          hasRemixOfId: willSendRemixOfId,
+          formVersion: 'legacy',
+          isValid: true,
+        },
+      }).catch(() => undefined);
+    } catch {
+      // Telemetry must never block a submission.
+    }
+
     let additionalResources = formResources ?? [];
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
@@ -435,6 +468,31 @@ export function GenerationFormContent() {
 
     if (filters.marker) {
       setFilters({ marker: undefined });
+    }
+  }
+
+  // Generation funnel telemetry — validation-fail branch. Fires when
+  // react-hook-form rejects a submit (required fields missing, prompt
+  // empty, etc.). Pairs with the `isValid: true` event in handleSubmit
+  // above so the data team has a complete attempt funnel and can spot
+  // UX traps where users click Generate but the form blocks them.
+  function handleSubmitError() {
+    try {
+      const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+      const model = form.getValues('model') as { id?: number } | undefined;
+      trackAction({
+        type: 'Generator_Submit',
+        details: {
+          // modelVersionId: see same-named field in the success-path emit
+          // above — model.id IS the model-version id on the form snapshot.
+          modelVersionId: model?.id,
+          fromAction,
+          formVersion: 'legacy',
+          isValid: false,
+        },
+      }).catch(() => undefined);
+    } catch {
+      // Telemetry must never block UI.
     }
   }
 
@@ -566,6 +624,8 @@ export function GenerationFormContent() {
       <GenForm
         form={form}
         onSubmit={handleSubmit}
+        onError={handleSubmitError}
+        track
         className="relative flex flex-1 flex-col justify-between gap-2"
       >
         <Watch {...form} fields={['fluxMode', 'draft', 'workflow', 'sourceImage', 'images']}>

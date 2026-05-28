@@ -54,7 +54,9 @@ import type { GenerationGraphTypes } from '~/shared/data-graph/generation';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { useGenerationContextStore } from '~/components/ImageGeneration/GenerationProvider';
 import { useGenerationFormStore } from '~/store/generation-form.store';
+import { showWarningNotification } from '~/utils/notifications';
 import { useTipStore } from '~/store/tip.store';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -90,8 +92,13 @@ import { useRemixOfId } from './hooks/useRemixOfId';
 import { remixStore } from '~/store/remix.store';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
 import { useGeneratedItemWorkflows } from './hooks/useGeneratedItemWorkflows';
-import { generationGraphStore, REMIX_WORKFLOW_OVERRIDES } from '~/store/generation-graph.store';
+import {
+  generationGraphStore,
+  REMIX_WORKFLOW_OVERRIDES,
+  useGenerationGraphStore,
+} from '~/store/generation-graph.store';
 import { clearStorageForOutput } from './GenerationFormProvider';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 // =============================================================================
 // Helper Functions
@@ -797,6 +804,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
+  const { trackAction } = useTrackEvent();
+  const generationContextStore = useGenerationContextStore();
 
   // Get validation state from whatIf context
   const { canEstimateCost, validationErrors } = useWhatIfContext();
@@ -849,11 +858,104 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const clearWarning = () => setPromptWarning(null);
 
   const handleSubmit = async () => {
+    // Generation funnel telemetry — ordering matches legacy GenForm semantics.
+    //
+    // Legacy: RHF's `onError` fires BEFORE GenForm's `canGenerate` short-
+    // circuit, so a rate-limited+invalid submit collapses to isValid:false
+    // (never reaches the rate-limited branch). If v2 checked canGenerate
+    // first, the same case would collapse to isRateLimited:true — making
+    // `isRateLimited:true AND formVersion='new'` a strict superset of
+    // legacy. Run graph.validate() FIRST so the two paths agree on which
+    // signal wins in the overlap case.
+    //
+    // The v2 form's SubmitButton wires `onClick` directly (not through
+    // GenForm), so the GenForm canGenerate short-circuit never runs here —
+    // we mirror it inline below after validation passes.
+    //
+    // Exactly ONE Generator_Submit event is emitted per click:
+    //   - validation fails           → emit { isValid: false } and return
+    //   - validation passes + rate-limited → emit { isValid: true, isRateLimited: true } and return
+    //   - validation passes + not rate-limited → emit { isValid: true } and proceed
     const result = graph.validate();
+    const fromAction = useGenerationGraphStore.getState().lastEntryAction;
 
+    // Validation-fail branch. Pairs with the `isValid:true` emit below so the
+    // data team has a complete attempt funnel. We deliberately do NOT also
+    // check canGenerate here — matching legacy collapse where the validation
+    // failure is the only signal emitted.
     if (!result.success) {
+      try {
+        const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
+        trackAction({
+          type: 'Generator_Submit',
+          details: {
+            // modelVersionId: snapshot.model is the Checkpoint resource node;
+            // .id on a resource node IS ModelVersion.id, not the parent
+            // Model.id. The graph snapshot field is named `model` for
+            // historical reasons.
+            modelVersionId: submitSnapshot.model?.id,
+            fromAction,
+            hasRemixOfId: !!remixOfId,
+            formVersion: 'new',
+            isValid: false,
+          },
+        }).catch(() => undefined);
+      } catch {
+        // Telemetry must never block a submission.
+      }
       console.log('Validation failed:', result.errors);
       return;
+    }
+
+    // Rate-limited branch. Only reached when validation already passed
+    // (legacy parity: RHF rejects before GenForm checks canGenerate, so
+    // invalid+rate-limited collapses to isValid:false for both paths).
+    // Emits isValid:true + isRateLimited:true because the submit would
+    // have been valid; only the concurrent-request cap stopped it.
+    // `formVersion: 'new'` keeps this discriminable from the legacy /
+    // video rate-limit emits (which still emit isValid:false — they
+    // pre-date this ordering pass).
+    const contextSnapshot = generationContextStore.getState();
+    if (!contextSnapshot.canGenerate) {
+      try {
+        trackAction({
+          type: 'Generator_Submit',
+          details: {
+            fromAction,
+            formVersion: 'new',
+            isValid: true,
+            isRateLimited: true,
+          },
+        }).catch(() => undefined);
+      } catch {
+        // Telemetry must never block UI.
+      }
+      showWarningNotification({
+        message:
+          contextSnapshot.requestsRemaining === 0
+            ? `You are already generating at your limit: ${contextSnapshot.queued.length}`
+            : 'Request queued. Your generation request will begin shortly.',
+      });
+      return;
+    }
+
+    // Happy path — validation + rate-limit both clear. Emit Generator_Submit
+    // BEFORE the buzz-transaction prompt so click-and-abandon (cancel at
+    // confirm / insufficient-buzz) is still captured.
+    try {
+      const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
+      trackAction({
+        type: 'Generator_Submit',
+        details: {
+          modelVersionId: submitSnapshot.model?.id,
+          fromAction,
+          hasRemixOfId: !!remixOfId,
+          formVersion: 'new',
+          isValid: true,
+        },
+      }).catch(() => undefined);
+    } catch {
+      // Telemetry must never block a submission.
     }
 
     setSubmitError(undefined);

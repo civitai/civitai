@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.1751",
+  "version": "5.0.1760",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "scripts": {
@@ -151,7 +151,6 @@
     "@tiptap/starter-kit": "3.16.0",
     "@tiptap/static-renderer": "3.16.0",
     "@tiptap/suggestion": "3.16.0",
-    "happy-dom": "^20.0.2",
     "@trpc/client": "^10.45.0",
     "@trpc/next": "^10.45.0",
     "@trpc/react-query": "^10.45.0",
@@ -184,6 +183,7 @@
     "google-auth-library": "^9.15.0",
     "googleapis": "^144.0.0",
     "gray-matter": "^4.0.3",
+    "happy-dom": "^20.0.2",
     "he": "^1.2.0",
     "html-to-text": "^9.0.5",
     "idb-keyval": "^6.2.0",

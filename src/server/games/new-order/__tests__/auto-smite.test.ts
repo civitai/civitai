@@ -101,7 +101,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: false,
     });
 
@@ -127,7 +126,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: true,
     });
 
@@ -156,7 +154,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: true,
       abuseDetection: { smiteDominantPct: 95 },
     });
@@ -181,7 +178,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: true,
     });
 
@@ -198,7 +194,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: true,
       abuseDetection: { smiteDominantPct: 95 },
     });
@@ -218,7 +213,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: true,
       abuseDetection: { smiteDominantPct: 80 },
     });
@@ -239,7 +233,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: true,
       abuseDetection: { smiteMaxUniqueRatings: 2 },
     });
@@ -265,7 +258,6 @@ describe('runAbuseDetectionScan auto-smite branch', () => {
       perMinute: 1,
       perHour: 1,
       perDay: 1,
-      abuseThreshold: 1,
       autoSmiteAbusers: true,
     });
     mockSmitePlayer

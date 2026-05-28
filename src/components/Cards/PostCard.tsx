@@ -1,8 +1,8 @@
-import { Text } from '@mantine/core';
+import { Text, ThemeIcon, Tooltip } from '@mantine/core';
 import React from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
-import { IconPhoto } from '@tabler/icons-react';
+import { IconClock2, IconPhoto } from '@tabler/icons-react';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -17,6 +17,7 @@ export function PostCard({ data }: Props) {
 
   const image = data.images[0];
   const isOwner = currentUser?.id === data.user.id;
+  const scheduled = data.publishedAt && new Date(data.publishedAt) > new Date();
 
   return (
     <AspectRatioImageCard
@@ -27,7 +28,7 @@ export function PostCard({ data }: Props) {
       contentType="post"
       contentId={data.id}
       header={
-        <>
+        <div className="flex flex-col items-center gap-1">
           <ImageContextMenu
             className="ml-auto"
             image={image}
@@ -43,7 +44,14 @@ export function PostCard({ data }: Props) {
               ) : null
             }
           />
-        </>
+          {scheduled && (
+            <Tooltip label="Scheduled">
+              <ThemeIcon size={30} radius="xl" variant="filled" color="blue">
+                <IconClock2 size={16} strokeWidth={2.5} />
+              </ThemeIcon>
+            </Tooltip>
+          )}
+        </div>
       }
       footer={
         <div className="flex w-full flex-wrap items-end justify-between gap-1">

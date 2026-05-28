@@ -58,6 +58,7 @@ import {
   modeToScanner,
   type ScannerAuditMode,
 } from '~/components/Moderator/ScannerAuditLayout';
+import { ScannerPolicySidebar } from '~/components/Moderator/ScannerPolicySidebar';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import type { Scanner } from '~/server/schema/scanner-review.schema';
 import type { AggregatedScanRow } from '~/server/services/scanner-review.service';
@@ -109,25 +110,9 @@ function FocusedRunLayout({ children }: { children: ReactElement }) {
 
 function FocusedRunSidebarMount() {
   const router = useRouter();
-  const modeParam = Array.isArray(router.query.mode) ? router.query.mode[0] : router.query.mode;
   const labelParam = Array.isArray(router.query.label) ? router.query.label[0] : router.query.label;
-  const lookbackDays = router.query.lookbackDays ? Number(router.query.lookbackDays) : undefined;
-  const validMode = isValidMode(modeParam) ? modeParam : null;
-
-  const { data } = trpc.scannerReview.focusedRun.useQuery(
-    {
-      scanner: validMode ? modeToScanner(validMode) : 'xguard_text',
-      label: labelParam ?? '',
-      lookbackDays,
-      limit: 50,
-    },
-    { enabled: !!validMode && !!labelParam, refetchOnWindowFocus: false }
-  );
-  const items = data?.items ?? [];
-  const { cursor, setCursor } = useFocusedCursor();
-
-  if (items.length === 0) return null;
-  return <ProgressSidebar items={items} cursor={cursor} onJump={setCursor} />;
+  if (!labelParam) return null;
+  return <ScannerPolicySidebar label={labelParam} />;
 }
 
 function ScannerAuditFocusedPage() {
@@ -745,104 +730,6 @@ function ActionFooter({
           Yes
         </Button>
       </Group>
-    </Box>
-  );
-}
-
-const SIDEBAR_MATCHED_TERMS_MAX = 4;
-
-function ProgressSidebar({
-  items,
-  cursor,
-  onJump,
-}: {
-  items: AggregatedScanRow[];
-  cursor: number;
-  onJump: (idx: number) => void;
-}) {
-  // AppLayout's `right` slot already wraps this in an <aside> with
-  // `scroll-area` (overflow handling) and a left border — we just set width.
-  return (
-    <Box style={{ width: 320 }}>
-      <Stack gap={2} p="md">
-        <Group justify="space-between" mb="xs">
-          <Text fw={600}>Run</Text>
-          <Text size="xs" c="dimmed">
-            {cursor + 1} of {items.length}
-          </Text>
-        </Group>
-        {items.map((it, idx) => {
-          const isCurrent = idx === cursor;
-          const isPast = idx < cursor;
-          const matched = [
-            ...it.matchedText,
-            ...it.matchedPositivePrompt,
-            ...it.matchedNegativePrompt,
-          ];
-          const matchedVisible = matched.slice(0, SIDEBAR_MATCHED_TERMS_MAX);
-          const matchedOverflow = matched.length - matchedVisible.length;
-          return (
-            <Box
-              key={`${it.contentHash}-${it.version}`}
-              onClick={() => onJump(idx)}
-              p="xs"
-              style={{
-                cursor: 'pointer',
-                borderRadius: 4,
-                background: isCurrent ? 'var(--mantine-color-blue-9)' : 'transparent',
-                opacity: isPast ? 0.55 : 1,
-              }}
-            >
-              <Group gap="xs" wrap="nowrap" align="flex-start">
-                <Box
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: '50%',
-                    marginTop: 6,
-                    background: isPast
-                      ? 'var(--mantine-color-gray-6)'
-                      : it.triggered === 1
-                      ? 'var(--mantine-color-red-6)'
-                      : 'var(--mantine-color-gray-5)',
-                    flexShrink: 0,
-                  }}
-                />
-                <Stack gap={4} style={{ minWidth: 0, flex: 1 }}>
-                  <Text size="xs" c="dimmed">
-                    {it.score.toFixed(3)}
-                    {it.threshold !== null && ` / ${it.threshold.toFixed(2)}`}
-                  </Text>
-                  {matched.length > 0 ? (
-                    <Group gap={4} wrap="wrap">
-                      {matchedVisible.map((t, i) => (
-                        <Badge
-                          key={`${t}-${i}`}
-                          size="xs"
-                          variant="light"
-                          color="orange"
-                          styles={{ root: { textTransform: 'none', fontWeight: 500 } }}
-                        >
-                          {t}
-                        </Badge>
-                      ))}
-                      {matchedOverflow > 0 && (
-                        <Text size="xs" c="dimmed">
-                          +{matchedOverflow}
-                        </Text>
-                      )}
-                    </Group>
-                  ) : (
-                    <Text size="xs" c="dimmed" lineClamp={1}>
-                      {it.contentHash.slice(0, 12)}
-                    </Text>
-                  )}
-                </Stack>
-              </Group>
-            </Box>
-          );
-        })}
-      </Stack>
     </Box>
   );
 }

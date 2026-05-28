@@ -53,6 +53,7 @@ const EpochRow = ({
   onPublishClick,
   loading,
   incomplete,
+  modelId,
   modelVersionId,
   canGenerate,
   isVideo,
@@ -65,6 +66,7 @@ const EpochRow = ({
   onPublishClick: (modelUrl: string) => void;
   loading?: boolean;
   incomplete?: boolean;
+  modelId: number;
   modelVersionId: number;
   canGenerate?: boolean;
   isVideo: boolean;
@@ -113,8 +115,10 @@ const EpochRow = ({
                 {/* TODO will this work? */}
                 <GenerateButton
                   versionId={modelVersionId}
+                  modelId={modelId}
                   disabled={!currentUser?.isMember && !currentUser?.isModerator}
                   epochNumber={epoch.epochNumber}
+                  data-activity="create:training-select"
                 />
               </SubscriptionRequiredBlock>
             )}
@@ -581,6 +585,7 @@ export default function TrainingSelectFile({
             onPublishClick={handleSubmit}
             loading={awaitInvalidate}
             incomplete={resultsLoading}
+            modelId={model.id}
             modelVersionId={modelVersion.id}
             canGenerate={features.privateModels && !!modelVersion.id && canGenerateWithEpochBool}
             isVideo={isVideo}
@@ -603,6 +608,7 @@ export default function TrainingSelectFile({
                   onPublishClick={handleSubmit}
                   loading={awaitInvalidate}
                   incomplete={resultsLoading}
+                  modelId={model.id}
                   modelVersionId={modelVersion.id}
                   canGenerate={
                     features.privateModels && !!modelVersion.id && canGenerateWithEpochBool

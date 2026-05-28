@@ -15,6 +15,7 @@ export const postsFilterSchema = z.object({
   periodMode: periodModeSchema,
   sort: z.enum(PostSort).default(constants.postFilterDefaults.sort),
   draftOnly: z.boolean().optional(),
+  scheduled: z.coerce.boolean().optional(),
 });
 
 const postInclude = z.enum(['cosmetics']);

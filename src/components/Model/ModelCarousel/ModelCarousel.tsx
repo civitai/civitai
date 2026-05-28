@@ -3,7 +3,10 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -20,6 +23,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationGraphPanel } from '~/store/generation-graph.store';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
@@ -30,11 +34,10 @@ import clsx from 'clsx';
 export function ModelCarousel(props: Props) {
   const currentUser = useCurrentUser();
   const forceMinorLevel = props.minor && !currentUser?.isModerator;
+  const minorBrowsingLevel = currentUser ? sfwBrowsingLevelsFlag : publicBrowsingLevelsFlag;
 
   return (
-    <BrowsingLevelProvider
-      forcedBrowsingLevel={forceMinorLevel ? publicBrowsingLevelsFlag : undefined}
-    >
+    <BrowsingLevelProvider forcedBrowsingLevel={forceMinorLevel ? minorBrowsingLevel : undefined}>
       <BrowsingSettingsAddonsProvider>
         {forceMinorLevel ? (
           <HiddenPreferencesProvider>
@@ -51,6 +54,7 @@ export function ModelCarousel(props: Props) {
 function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
+  const { trackAction } = useTrackEvent();
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -117,6 +121,16 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                                 onClick={(e) => {
                                   e.preventDefault();
                                   e.stopPropagation();
+
+                                  trackAction({
+                                    type: 'Image_Remix_Click',
+                                    details: {
+                                      imageId: image.id,
+                                      imageType: image.type,
+                                      sourceModelVersionId: modelVersionId,
+                                      source: 'remix:model-carousel',
+                                    },
+                                  }).catch(() => undefined);
 
                                   generationGraphPanel.open({
                                     type: image.type,

@@ -186,6 +186,7 @@ export const getPostsInfinite = async ({
   collectionId,
   include,
   draftOnly,
+  scheduled,
   followed,
   clubId,
   browsingLevel,
@@ -255,7 +256,15 @@ export const getPostsInfinite = async ({
 
   const joins: string[] = [];
   if (!isOwnerRequest) {
-    AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+    if (scheduled && userId) {
+      // Surface own scheduled posts alongside the public published feed. Mirrors
+      // the image service carve-out (image.service.ts ~line 4060).
+      AND.push(
+        Prisma.sql`(p."publishedAt" <= NOW() OR (p."userId" = ${userId} AND p."publishedAt" > NOW()))`
+      );
+    } else {
+      AND.push(Prisma.sql`p."publishedAt" <= NOW()`);
+    }
 
     if (!!tags?.length)
       AND.push(Prisma.sql`EXISTS (
@@ -267,7 +276,8 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
   } else {
-    if (draftOnly) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
+    if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
+    else if (scheduled) AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
     else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 

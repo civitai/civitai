@@ -75,7 +75,10 @@ function UserPostsPage() {
                   value={section}
                   onChange={(section) => {
                     setSection(section as 'published' | 'draft');
-                    replace({ section: section as 'published' | 'draft' });
+                    replace({
+                      section: section as 'published' | 'draft',
+                      scheduled: section === 'draft' ? undefined : query.scheduled,
+                    });
                   }}
                 />
               )}
@@ -88,6 +91,7 @@ function UserPostsPage() {
                 <PostFiltersDropdown
                   query={{ ...query, period, followed }}
                   onChange={(filters) => replace(filters)}
+                  showScheduled={selfView && !viewingDraft}
                   size="compact-sm"
                 />
               </Group>

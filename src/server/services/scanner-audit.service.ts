@@ -20,6 +20,7 @@ import {
   type DerivedLabelInput,
   type DerivedLabelMode,
 } from '~/server/services/scanner-derived-labels.service';
+import { matchAllLabels, REGEX_VERSION } from '~/server/services/scanner-label-regex';
 
 /**
  * Age-classifier topK band names that count as minor. Includes Teenager 13-20
@@ -161,6 +162,84 @@ async function insertRows({
 }
 
 /**
+ * Cheap script-detection gate for the regex shadow pass. Returns true when
+ * the text is plausibly English (mostly Latin script). Non-English prompts
+ * skip the regex matcher — the regex term lists are English-only by design;
+ * see docs/features/scanner-label-architecture.md for the tiered detection
+ * plan.
+ */
+function isLikelyEnglishForRegex(text: string): boolean {
+  if (!text) return false;
+  // eslint-disable-next-line @typescript-eslint/prefer-regexp-exec
+  const nonLatin = text.match(
+    /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Cyrillic}\p{Script=Arabic}\p{Script=Hangul}\p{Script=Devanagari}\p{Script=Thai}\p{Script=Hebrew}]/gu
+  );
+  if (!nonLatin) return true;
+  return nonLatin.length / text.length < 0.05; // <5% non-Latin chars = treat as English
+}
+
+/**
+ * Shadow-write: compare regex-detector output to XGuard for each atomic
+ * label and persist the comparison to `scanner_regex_shadow_results` for
+ * later audit. Phase 1 of the regex-rollout plan in
+ * docs/features/scanner-label-architecture.md — does not change the audit
+ * data the moderator queue sees.
+ *
+ * Fire-and-forget: any failure here is logged to Axiom but does not
+ * propagate. We never block the main audit write on regex shadow data.
+ */
+async function writeRegexShadowComparison(args: {
+  workflowId: string;
+  contentHash: string;
+  scanner: 'xguard_prompt' | 'xguard_text';
+  positivePrompt: string;
+  xguardLabels: LabelRowSeed[];
+  scannedAt: Date;
+}) {
+  if (!clickhouse) return;
+  if (!isLikelyEnglishForRegex(args.positivePrompt)) return;
+
+  try {
+    const regexResults = matchAllLabels(args.positivePrompt);
+    if (regexResults.length === 0) return;
+
+    const rows = regexResults.map((r) => {
+      const xg = args.xguardLabels.find((l) => l.label === r.label);
+      return {
+        workflowId: args.workflowId,
+        contentHash: args.contentHash,
+        scanner: args.scanner,
+        label: r.label,
+        regexMatched: r.matched ? 1 : 0,
+        regexReason: r.reason,
+        regexMatchedTerms: r.matchedTerms,
+        regexVersion: REGEX_VERSION,
+        xguardTriggered: xg ? xg.triggered : null,
+        xguardScore: xg?.score ?? null,
+        xguardThreshold: xg?.threshold ?? null,
+        xguardPolicyHash: xg?.version ?? null,
+        scannedAt: args.scannedAt,
+      };
+    });
+
+    await clickhouse.insert({
+      table: 'scanner_regex_shadow_results',
+      values: rows,
+      format: 'JSONEachRow',
+    });
+  } catch (e) {
+    const error = e as Error;
+    await logToAxiom({
+      name: 'scanner-regex-shadow-write-failed',
+      type: 'error',
+      message: error.message,
+      workflowId: args.workflowId,
+      contentHash: args.contentHash,
+    });
+  }
+}
+
+/**
  * Pull the per-label results off a succeeded XGuard workflow and write them
  * to the audit log. No-op if `metadata.recordForReview` isn't set, or if no
  * xGuardModeration step output is present.
@@ -219,6 +298,22 @@ export async function recordXGuardScanFromWorkflow(workflow: Workflow) {
 
   const entityType = (workflow.metadata.entityType as string | undefined) ?? '';
   const entityIdRaw = workflow.metadata.entityId as number | string | undefined;
+
+  // Phase 1 (shadow mode) regex comparison. Doesn't change what's recorded
+  // to scanner_label_results — purely an analytical sidecar in
+  // scanner_regex_shadow_results so we can audit regex accuracy vs XGuard on
+  // real production traffic before flipping the regex authoritative. Prompt
+  // mode + English-only; see writeRegexShadowComparison.
+  if (mode === 'prompt' && workflow.id && input.positivePrompt) {
+    void writeRegexShadowComparison({
+      workflowId: workflow.id,
+      contentHash,
+      scanner: 'xguard_prompt',
+      positivePrompt: input.positivePrompt,
+      xguardLabels: labels,
+      scannedAt: workflow.completedAt ? new Date(workflow.completedAt) : new Date(),
+    });
+  }
 
   // Apply derived-label rules — suppress redundant rows (e.g. `suggestive`
   // when `explicit` also triggered) and synthesize computed rows (e.g.
