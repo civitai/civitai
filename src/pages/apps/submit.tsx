@@ -31,7 +31,7 @@ import { trpc } from '~/utils/trpc';
  * template, attaches a push webhook, and inserts a pending app_blocks
  * row. The developer then pushes code to the repo; the next push
  * triggers a Tekton build, then an apply Job, and the app is live at
- * <slug>.apps.civitaic.com.
+ * <slug>.civit.ai.
  *
  * v0 gate: requires `isModerator`. v1 (W5 + W1) opens to external
  * developers behind the moderator-review queue.
@@ -114,7 +114,7 @@ export default function SubmitAppPage() {
               <Stack gap="md">
                 <TextInput
                   label="Slug"
-                  description="Used for the repo name, k8s resources, and the public subdomain (<slug>.apps.civitaic.com). Lowercase a-z, 0-9, hyphens. 3-40 chars."
+                  description="Used for the repo name, k8s resources, and the public subdomain (<slug>.civit.ai). Lowercase a-z, 0-9, hyphens. 3-40 chars."
                   placeholder="generate-from-model"
                   value={slug}
                   onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
@@ -169,7 +169,7 @@ export default function SubmitAppPage() {
                   </Text>
                   <Text size="sm" mb={6}>
                     3. The first successful build deploys the static bundle at{' '}
-                    <Code>{slug ? `${slug}.apps.civitaic.com` : '<slug>.apps.civitaic.com'}</Code>.
+                    <Code>{slug ? `${slug}.civit.ai` : '<slug>.civit.ai'}</Code>.
                   </Text>
                   <Text size="sm">
                     4. Update <Code>block.manifest.json</Code> in the new repo to install the
@@ -244,7 +244,7 @@ function SuccessCard({ app }: { app: SubmittedApp }) {
           <Text size="sm" fw={600}>
             Public URL (live after first successful build)
           </Text>
-          <Code block>{`https://${app.slug}.apps.civitaic.com/`}</Code>
+          <Code block>{`https://${app.slug}.civit.ai/`}</Code>
         </Stack>
         <Stack gap={4}>
           <Text size="sm" fw={600}>

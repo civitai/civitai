@@ -327,7 +327,7 @@ export const serverSchema = z.object({
   // App Blocks W2 (apps-as-repos). Optional so envs that don't run the
   // platform layer (PR previews without apps-pipeline wiring) still boot.
   //
-  // FORGEJO_BASE_URL          public root, e.g. https://forgejo.civitaic.com
+  // FORGEJO_BASE_URL          public root, e.g. https://forgejo.civitai.com
   // FORGEJO_ADMIN_TOKEN       Forgejo personal access token (admin) — used
   //                           by civitai-web to create repos / webhooks
   // FORGEJO_WEBHOOK_SECRET    HMAC shared secret between Forgejo → webhook
@@ -341,8 +341,10 @@ export const serverSchema = z.object({
   // APPS_KUBE_NAMESPACE       civitai-apps (where apply Jobs are created
   //                           on dp-1). Defaults to civitai-apps.
   // APPS_DOMAIN               public per-app subdomain root, e.g.
-  //                           apps.civitaic.com — used to build iframe.src
-  //                           validation in the webhook
+  //                           civit.ai — used to build iframe.src
+  //                           validation in the webhook. Defaults to civit.ai
+  //                           since CF universal SSL covers *.civit.ai
+  //                           single-level wildcard for free.
   FORGEJO_BASE_URL: z.string().url().optional(),
   FORGEJO_ADMIN_TOKEN: z.string().optional(),
   FORGEJO_WEBHOOK_SECRET: z.string().optional(),
@@ -350,5 +352,5 @@ export const serverSchema = z.object({
   APPS_TEKTON_TRIGGER_URL: z.string().url().optional(),
   APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
   APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
-  APPS_DOMAIN: z.string().default('apps.civitaic.com'),
+  APPS_DOMAIN: z.string().default('civit.ai'),
 });
