@@ -3977,6 +3977,23 @@ export async function transferModelOwnership({
   if (models.some((m) => m.userId === targetUserId))
     throw throwBadRequestError('One or more models already belong to the target user');
 
+  const affectedPosts = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT p.id
+    FROM "Post" p
+    JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+    WHERE mv."modelId" = ANY(${modelIds}::int[])
+    AND p."userId" = ANY(${sourceUserIds}::int[])
+  `;
+  const affectedPostIds = affectedPosts.map((p) => p.id);
+  const affectedImages = affectedPostIds.length
+    ? await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "postId" = ANY(${affectedPostIds}::int[])
+        AND "userId" = ANY(${sourceUserIds}::int[])
+      `
+    : [];
+  const affectedImageIds = affectedImages.map((i) => i.id);
+
   const result = await dbWrite.$transaction([
     dbWrite.model.updateMany({
       where: { id: { in: modelIds } },
@@ -3989,18 +4006,12 @@ export async function transferModelOwnership({
     dbWrite.$executeRaw`
       UPDATE "Post"
       SET "userId" = ${targetUserId}
-      WHERE "modelVersionId" IN (
-        SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${modelIds}::int[])
-      )
+      WHERE id = ANY(${affectedPostIds}::int[])
     `,
     dbWrite.$executeRaw`
       UPDATE "Image"
       SET "userId" = ${targetUserId}
-      WHERE "postId" IN (
-        SELECT p.id FROM "Post" p
-        JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-        WHERE mv."modelId" = ANY(${modelIds}::int[])
-      )
+      WHERE id = ANY(${affectedImageIds}::int[])
     `,
   ]);
 
@@ -4008,6 +4019,18 @@ export async function transferModelOwnership({
   for (const m of models) {
     await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
   }
+
+  await Promise.all([
+    modelsSearchIndex.queueUpdate(
+      modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    ),
+    affectedImageIds.length
+      ? queueImageSearchIndexUpdate({
+          ids: affectedImageIds,
+          action: SearchIndexUpdateQueueAction.Update,
+        })
+      : Promise.resolve(),
+  ]);
 
   await logToAxiom({
     type: 'info',
