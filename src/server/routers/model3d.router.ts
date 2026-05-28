@@ -2,12 +2,14 @@ import {
   router,
   publicProcedure,
   protectedProcedure,
+  moderatorProcedure,
   guardedProcedure,
   isFlagProtected,
 } from '~/server/trpc';
 import {
   upsertModel3DSchema,
   getModel3DByIdSchema,
+  getModel3DByThumbnailImageIdSchema,
   getModel3DsInfiniteSchema,
   publishModel3DSchema,
   unpublishModel3DSchema,
@@ -24,6 +26,7 @@ import {
 import {
   upsertModel3D,
   getModel3DById,
+  getModel3DByThumbnailImageId,
   getModel3DsInfinite,
   publishModel3D,
   unpublishModel3D,
@@ -110,6 +113,13 @@ export const model3dRouter = router({
   getRelatedPosts: publicProcedure
     .input(getModel3DRelatedPostsSchema)
     .query(({ input, ctx }) => getModel3DRelatedPosts({ input, user: ctx.user })),
+
+  // Mod-only — used by the image-mod surface to surface a thumbnail-driven
+  // affordance against the linked Model3D. Returns ownership info, so guard
+  // with `moderatorProcedure` (not feature-flagged — mods always have access).
+  getByThumbnailImageId: moderatorProcedure
+    .input(getModel3DByThumbnailImageIdSchema)
+    .query(({ input }) => getModel3DByThumbnailImageId(input)),
 
   // Sub-routers
   reviews: reviewsRouter,

@@ -14,6 +14,7 @@ import {
 import type {
   DeleteModel3DInput,
   GetModel3DByIdInput,
+  GetModel3DByThumbnailImageIdInput,
   GetModel3DFilesInput,
   GetModel3DRelatedPostsInput,
   GetModel3DReviewSummaryInput,
@@ -460,6 +461,22 @@ export const getModel3DFiles = async ({
 
   return { id: model3d.id, files };
 };
+
+// ---------------------------------------------------------------------------
+// Moderator helper — find a Model3D by its thumbnail Image id.
+//
+// Used by the image-mod surface to surface a "this image is the thumbnail of a
+// 3D Model" affordance + one-click unpublish on the parent (workstream H,
+// §2.10). Mod-only at the router layer — this returns ownership info that
+// non-mods shouldn't see.
+// ---------------------------------------------------------------------------
+export const getModel3DByThumbnailImageId = async ({
+  imageId,
+}: GetModel3DByThumbnailImageIdInput) =>
+  dbRead.model3D.findUnique({
+    where: { thumbnailImageId: imageId },
+    select: { id: true, name: true, status: true },
+  });
 
 // ---------------------------------------------------------------------------
 // upsertModel3DFromWorkflow — orchestrator-side idempotent upsert by workflowId
