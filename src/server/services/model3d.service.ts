@@ -459,6 +459,78 @@ export const getModel3DFiles = async ({
   return { id: model3d.id, files };
 };
 
+// ---------------------------------------------------------------------------
+// upsertModel3DFromWorkflow — orchestrator-side idempotent upsert by workflowId
+// Called by the PolyGen workflow result handler (no SessionUser context).
+// Creates the Model3D draft + Model3DFile rows in one transaction.
+// Re-running on the same workflowId returns the existing row + files (no dups).
+// ---------------------------------------------------------------------------
+export const upsertModel3DFromWorkflow = async ({
+  workflowId,
+  userId,
+  thumbnailImageId,
+  sourceImageId,
+  licenseId,
+  generationParams,
+  files,
+}: {
+  workflowId: string;
+  userId: number;
+  thumbnailImageId?: number;
+  sourceImageId?: number;
+  licenseId: number;
+  generationParams: Prisma.InputJsonValue;
+  files: Array<{
+    name: string;
+    url: string;
+    format: string;
+    sizeKB: number;
+    isPrimary: boolean;
+  }>;
+}): Promise<{ id: number; created: boolean }> => {
+  return dbWrite.$transaction(async (tx) => {
+    const existing = await tx.model3D.findUnique({
+      where: { workflowId },
+      select: { id: true },
+    });
+
+    if (existing) {
+      // Idempotent path: workflow re-delivery / handler retry.
+      return { id: existing.id, created: false };
+    }
+
+    const created = await tx.model3D.create({
+      data: {
+        name: `Generated 3D Model`,
+        userId,
+        workflowId,
+        thumbnailImageId,
+        sourceImageId,
+        licenseId,
+        generationParams,
+        status: Model3DStatus.Draft,
+      },
+      select: { id: true },
+    });
+
+    if (files.length) {
+      await tx.model3DFile.createMany({
+        data: files.map((f) => ({
+          model3dId: created.id,
+          name: f.name,
+          url: f.url,
+          sizeKB: f.sizeKB,
+          format: f.format,
+          isPrimary: f.isPrimary,
+        })),
+        skipDuplicates: true,
+      });
+    }
+
+    return { id: created.id, created: true };
+  });
+};
+
 // Local helper type to avoid circular-import issues with the global one.
 type AsyncReturnType<T extends (...args: any) => Promise<any>> = T extends (
   ...args: any

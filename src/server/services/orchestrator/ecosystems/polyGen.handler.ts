@@ -50,8 +50,10 @@ import {
 } from '~/server/orchestrator/polygen/polygen.schema';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
+import { upsertModel3DFromWorkflow } from '~/server/services/model3d.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
 import { getImageUploadBackend } from '~/utils/s3-utils';
+import type { Prisma } from '@prisma/client';
 
 // =============================================================================
 // Constants
@@ -134,6 +136,7 @@ export async function submitPolyGenWorkflow({
       steps: [step] as unknown as PolyGenStepTemplate[],
       metadata,
       allowMatureContent,
+      currencies: [], // PolyGen pricing comes from the orchestrator whatIf; no per-workflow currency restriction
     },
   });
 
@@ -185,7 +188,10 @@ export type PolyGenResult = {
 export async function handlePolyGenWorkflowResult(
   args: HandlePolyGenResultArgs
 ): Promise<PolyGenResult> {
-  const { workflowId, userId, output, generationParams, sourceImageId, licenseId } = args;
+  const { workflowId, userId, output, generationParams, sourceImageId } = args;
+  // licenseId falls back to a seeded default. The seed in the migration inserts
+  // these by name; row 5 ("All Rights Reserved") is the most conservative default.
+  const licenseId = args.licenseId ?? DEFAULT_MODEL3D_LICENSE_ID;
 
   // ---------------------------------------------------------------------------
   // 1. Collect + normalize the 3D blobs (model + optional fbxModel)
@@ -238,48 +244,46 @@ export async function handlePolyGenWorkflowResult(
   }
 
   // ---------------------------------------------------------------------------
-  // 4. Upsert the Model3D draft row + Model3DFile rows
+  // 4. Upsert the Model3D draft row + Model3DFile rows (idempotent on workflowId)
   // ---------------------------------------------------------------------------
-  // TODO(workstream-A): replace with the real Model3D service. Expected shape:
-  //
-  //   import { upsertModel3DDraft } from '~/server/services/model3d.service';
-  //   const { id, created } = await upsertModel3DDraft({
-  //     workflowId,                 // UNIQUE — handles idempotence
-  //     userId,
-  //     thumbnailImageId,
-  //     sourceImageId,
-  //     licenseId,                  // default license seeded as Model3DLicense
-  //     generationParams,           // snapshot, json
-  //     files: copiedFiles.map(({ url, format, sizeKB }) => ({
-  //       name: deriveFileName(workflowId, format),
-  //       url, format, sizeKB,
-  //       isPrimary: format === PRIMARY_FORMAT,
-  //     })),
-  //   });
-  //
-  // For now, log and throw a clear "service not yet wired" error so we don't
-  // silently swallow a workflow result.
-  //
-  // The corresponding test should mock `upsertModel3DDraft` to assert this
-  // handler hands it the right shape (normalized formats, primary flag,
-  // workflowId, etc.).
-  logToAxiom({
-    name: POLYGEN_LOG,
-    type: 'info',
-    message: 'PolyGen workflow result ready for Model3D upsert',
+  const { id, created } = await upsertModel3DFromWorkflow({
     workflowId,
     userId,
     thumbnailImageId,
     sourceImageId,
     licenseId,
+    generationParams: generationParams as Prisma.InputJsonValue,
+    files: copiedFiles.map(({ url, format, sizeKB }) => ({
+      name: deriveFileName(workflowId, format),
+      url,
+      format,
+      sizeKB,
+      isPrimary: format === PRIMARY_FORMAT,
+    })),
+  });
+
+  logToAxiom({
+    name: POLYGEN_LOG,
+    type: 'info',
+    message: created ? 'PolyGen Model3D draft created' : 'PolyGen Model3D draft already exists (idempotent)',
+    workflowId,
+    model3dId: id,
+    userId,
+    thumbnailImageId,
+    sourceImageId,
+    licenseId,
     files: copiedFiles.map((f) => ({ format: f.format, url: f.url, sizeKB: f.sizeKB })),
-    generationParams,
   }).catch(() => undefined);
 
-  throw new Error(
-    'PolyGen Model3D upsert service not yet wired (workstream A) — see TODO in polyGen.handler.ts'
-  );
+  return { model3dId: id, created };
 }
+
+/**
+ * Default license id assigned when the workflow result handler isn't given one.
+ * Maps to the seeded "All Rights Reserved" row (id 5 in the migration seed).
+ * Override at call-time if the form passes a user-selected licenseId.
+ */
+const DEFAULT_MODEL3D_LICENSE_ID = 5;
 
 // =============================================================================
 // Helpers
