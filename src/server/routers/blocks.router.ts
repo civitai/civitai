@@ -241,7 +241,12 @@ export const blocksRouter = router({
           .min(3)
           .max(40)
           .regex(/^[a-z][a-z0-9-]*[a-z0-9]$/, 'slug must be lowercase a-z0-9 with hyphens'),
-        oauthClientId: z.string().min(1).max(64),
+        // Optional: pick an existing OauthClient owned by the submitter.
+        // If omitted, we auto-create a fresh public client scoped to this
+        // app — saves the "no clients found" wall for first-time submitters
+        // and keeps each block on its own client (correct shape since the
+        // allowedOrigins set + scopes diverge per app).
+        oauthClientId: z.string().min(1).max(64).optional(),
         description: z.string().max(280).optional(),
       })
     )
@@ -264,11 +269,38 @@ export const blocksRouter = router({
         });
       }
 
-      const oauthClient = await dbRead.oauthClient.findUnique({
-        where: { id: input.oauthClientId },
-        select: { id: true, name: true, allowedOrigins: true },
-      });
-      if (!oauthClient) throw throwNotFoundError('OauthClient not found');
+      // Resolve the OauthClient: either the explicit one or a freshly
+      // auto-created public client scoped to `<slug>.<APPS_DOMAIN>`.
+      // Public (secret=null, isConfidential=false) because the block iframe
+      // can't safely hold a secret; the in-iframe JWT path is what
+      // authenticates calls, not OAuth code flow. redirectUris stays empty
+      // for the same reason. allowedOrigins is set explicitly here so the
+      // post-create `allowedOrigins`-append step below is a no-op.
+      let oauthClient: { id: string; name: string; allowedOrigins: string[] };
+      if (input.oauthClientId) {
+        const existing = await dbRead.oauthClient.findUnique({
+          where: { id: input.oauthClientId },
+          select: { id: true, name: true, allowedOrigins: true },
+        });
+        if (!existing) throw throwNotFoundError('OauthClient not found');
+        oauthClient = existing;
+      } else {
+        const generatedId = `${newUlid().toLowerCase()}-app-block-${input.slug}`;
+        const generatedName = (input.description ?? `App Block: ${input.slug}`).slice(0, 80);
+        oauthClient = await dbWrite.oauthClient.create({
+          data: {
+            id: generatedId,
+            secret: null,
+            name: generatedName,
+            description: '',
+            redirectUris: [],
+            allowedOrigins: [`https://${input.slug}.${env.APPS_DOMAIN}`],
+            isConfidential: false,
+            userId: ctx.user.id,
+          },
+          select: { id: true, name: true, allowedOrigins: true },
+        });
+      }
 
       // Already submitted? Bail with a clear error so the operator notices
       // they're double-submitting rather than silently re-running the

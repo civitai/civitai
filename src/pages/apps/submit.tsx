@@ -6,6 +6,7 @@ import {
   Code,
   Container,
   Group,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -75,6 +76,7 @@ export default function SubmitAppPage() {
   const oauthClients = oauthClientsQuery.data ?? [];
 
   const [slug, setSlug] = useState('');
+  const [oauthMode, setOauthMode] = useState<'autoCreate' | 'existing'>('autoCreate');
   const [oauthClientId, setOauthClientId] = useState<string | null>(null);
   const [description, setDescription] = useState('');
   const [submitted, setSubmitted] = useState<SubmittedApp | null>(null);
@@ -91,7 +93,8 @@ export default function SubmitAppPage() {
   if (!features?.appBlocks) return <NotFound />;
 
   const slugValid = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/.test(slug);
-  const canSubmit = slugValid && !!oauthClientId && !submitMutation.isLoading && !submitted;
+  const oauthChoiceValid = oauthMode === 'autoCreate' || !!oauthClientId;
+  const canSubmit = slugValid && oauthChoiceValid && !submitMutation.isLoading && !submitted;
 
   return (
     <>
@@ -127,20 +130,50 @@ export default function SubmitAppPage() {
                   data-autofocus
                 />
 
-                <Select
-                  label="OAuth client (app)"
-                  description="The OauthClient row this block hangs off. Defines the scope set + allowed origins."
-                  placeholder={oauthClientsQuery.isLoading ? 'Loading…' : 'Choose an OAuth client'}
-                  data={oauthClients.map((c: { id: string; name: string }) => ({
-                    value: c.id,
-                    label: c.name,
-                  }))}
-                  value={oauthClientId}
-                  onChange={setOauthClientId}
-                  required
-                  searchable
-                  nothingFoundMessage="No OAuth clients found"
-                />
+                <Stack gap={6}>
+                  <Text size="sm" fw={500}>
+                    OAuth client (app)
+                  </Text>
+                  <Text size="xs" c="dimmed">
+                    Every block is backed by an OauthClient (scope set + allowed origins). Default is to
+                    create a fresh public client scoped to this app.
+                  </Text>
+                  <SegmentedControl
+                    value={oauthMode}
+                    onChange={(v) => setOauthMode(v as 'autoCreate' | 'existing')}
+                    data={[
+                      { label: 'Create new', value: 'autoCreate' },
+                      {
+                        label:
+                          oauthClients.length === 0
+                            ? 'Use existing (none owned)'
+                            : 'Use existing',
+                        value: 'existing',
+                        disabled: oauthClients.length === 0,
+                      },
+                    ]}
+                  />
+                  {oauthMode === 'autoCreate' ? (
+                    <Text size="xs" c="dimmed">
+                      A new public OauthClient will be created, owned by you, with allowed origin{' '}
+                      <Code>https://{slug || '<slug>'}.civit.ai</Code>.
+                    </Text>
+                  ) : (
+                    <Select
+                      placeholder={
+                        oauthClientsQuery.isLoading ? 'Loading…' : 'Choose an OAuth client'
+                      }
+                      data={oauthClients.map((c: { id: string; name: string }) => ({
+                        value: c.id,
+                        label: c.name,
+                      }))}
+                      value={oauthClientId}
+                      onChange={setOauthClientId}
+                      searchable
+                      nothingFoundMessage="No OAuth clients found"
+                    />
+                  )}
+                </Stack>
 
                 <Textarea
                   label="Description"
@@ -191,7 +224,7 @@ export default function SubmitAppPage() {
                     onClick={() =>
                       submitMutation.mutate({
                         slug,
-                        oauthClientId: oauthClientId!,
+                        oauthClientId: oauthMode === 'existing' ? oauthClientId! : undefined,
                         description: description.trim() || undefined,
                       })
                     }
