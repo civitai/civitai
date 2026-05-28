@@ -36,6 +36,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { BugReportChart } from '~/components/Bug/BugReportChart';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -129,6 +130,7 @@ const BugItem = ({
   setOpened,
   scrollRef,
   lastSeen,
+  reportPoints,
 }: {
   item: Bug;
   canEdit: boolean;
@@ -136,6 +138,7 @@ const BugItem = ({
   setOpened: React.Dispatch<React.SetStateAction<boolean>>;
   scrollRef: React.RefObject<HTMLDivElement> | undefined;
   lastSeen: number;
+  reportPoints?: { date: string; users: number }[];
 }) => {
   const queryUtils = trpc.useUtils();
   const router = useRouter();
@@ -294,6 +297,12 @@ const BugItem = ({
           )}
         </Stack>
       </Card.Section>
+
+      {canEdit && !!reportPoints?.length && (
+        <Card.Section withBorder inheritPadding py="sm">
+          <BugReportChart points={reportPoints} />
+        </Card.Section>
+      )}
 
       <Card.Section inheritPadding py="sm">
         <Group justify="space-between" className="w-full">
@@ -561,6 +570,14 @@ export function Bugs() {
 
   const flatData = useMemo(() => data?.pages.flatMap((x) => (!!x ? x.items : [])), [data]);
 
+  const canEdit = features.bugsEdit;
+  // Capped to the endpoint's max; Known Issues lists are small so this only guards against runaway scroll.
+  const bugIds = useMemo(() => (flatData ?? []).slice(0, 200).map((b) => b.id), [flatData]);
+  const { data: reportStats } = trpc.bug.getReportStats.useQuery(
+    { bugIds },
+    { enabled: canEdit && bugIds.length > 0, keepPreviousData: true, staleTime: 60_000 }
+  );
+
   useEffect(() => {
     if (!flatData?.length) return;
     const latest = Math.max(...flatData.map((item) => new Date(item.updatedAt).getTime()));
@@ -568,7 +585,6 @@ export function Bugs() {
   }, [flatData, lastSeenBug, setLastSeenBug]);
 
   const isAsc = sortDir === 'asc';
-  const canEdit = features.bugsEdit;
 
   return (
     <Stack ref={ref}>
@@ -653,6 +669,7 @@ export function Bugs() {
                 setOpened={setCreateOpened}
                 scrollRef={ref}
                 lastSeen={lastSeenRef.current}
+                reportPoints={reportStats?.[b.id]}
               />
             ))}
           </Stack>
