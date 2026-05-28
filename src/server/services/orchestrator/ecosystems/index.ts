@@ -43,6 +43,7 @@ import { createAnimaInput } from './anima.handler';
 import { createChromaInput } from './chroma.handler';
 import { createErnieInput } from './ernie.handler';
 import { createLensInput } from './lens.handler';
+import { createKrea2Input } from './krea2.handler';
 import { createZImageInput } from './z-image.handler';
 import { createHiDreamInput } from './hi-dream.handler';
 import { createHiDreamO1Input } from './hi-dream-o1.handler';
@@ -143,6 +144,9 @@ export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
 /** Lens context */
 export type LensCtx = EcosystemGraphOutput & { ecosystem: 'Lens' };
 
+/** Krea 2 context */
+export type Krea2Ctx = EcosystemGraphOutput & { ecosystem: 'Krea2' };
+
 /** Wan video ecosystems context */
 export type WanCtx = EcosystemGraphOutput & {
   ecosystem:
@@ -214,6 +218,7 @@ export { createHiDreamO1Input } from './hi-dream-o1.handler';
 export { createPonyV7Input } from './pony-v7.handler';
 export { createErnieInput } from './ernie.handler';
 export { createLensInput } from './lens.handler';
+export { createKrea2Input } from './krea2.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
@@ -370,6 +375,10 @@ async function createEcosystemStep(
     // Lens (Civitai-internal, comfy)
     case 'Lens':
       return createLensInput(normalizedData, handlerCtx);
+
+    // Krea 2 (Krea AI, FAL engine)
+    case 'Krea2':
+      return createKrea2Input(normalizedData, handlerCtx);
 
     // =========================================================================
     // Video Ecosystems - videoGen step type

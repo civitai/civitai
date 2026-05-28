@@ -311,7 +311,7 @@ export async function recordXGuardScanFromWorkflow(workflow: Workflow) {
       scanner: 'xguard_prompt',
       positivePrompt: input.positivePrompt,
       xguardLabels: labels,
-      scannedAt: workflow.completedAt ?? new Date(),
+      scannedAt: workflow.completedAt ? new Date(workflow.completedAt) : new Date(),
     });
   }
 

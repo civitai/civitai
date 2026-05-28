@@ -101,6 +101,10 @@ import { trpc } from '~/utils/trpc';
 import { AspectRatioInput } from './inputs/AspectRatioInput';
 import { SliderInput } from './inputs/SliderInput';
 import { ControlNetsInput, type ControlNetsInputProps } from './inputs/ControlNetsInput';
+import {
+  Krea2StyleReferencesInput,
+  type Krea2StyleReferencesInputProps,
+} from './inputs/Krea2StyleReferencesInput';
 import { SelectInput } from './inputs/SelectInput';
 import { SeedInput } from './inputs/SeedInput';
 import {
@@ -1290,6 +1294,25 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Creativity (Krea 2) */}
+            <Controller
+              graph={graph}
+              name="creativity"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Creativity</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={meta.options.map((o: { label: string; value: string }) => ({
+                      label: o.label,
+                      value: o.value,
+                    }))}
+                  />
+                </div>
+              )}
+            />
+
             {/* Num Frames (LTXV23 vid2vid:extend) */}
             {/* <Controller
               graph={graph}
@@ -1860,6 +1883,21 @@ export function GenerationForm() {
                   )}
                 />
               )}
+
+              {/* Krea 2 style references — only rendered when the Krea2 graph
+                  declares the styleReferences node */}
+              <Controller
+                graph={graph}
+                name="styleReferences"
+                render={({ value, meta, onChange, error }) => (
+                  <Krea2StyleReferencesInput
+                    value={value as Krea2StyleReferencesInputProps['value']}
+                    onChange={onChange as Krea2StyleReferencesInputProps['onChange']}
+                    meta={meta as Krea2StyleReferencesInputProps['meta']}
+                    error={error?.message}
+                  />
+                )}
+              />
             </AccordionLayout>
           </>
           <GenerationFooter>

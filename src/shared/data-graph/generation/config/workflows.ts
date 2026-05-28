@@ -95,6 +95,7 @@ const TXT2IMG_IDS = [
   ECO.WanImage27,
   ECO.Ernie,
   ECO.Lens,
+  ECO.Krea2,
 ];
 
 /** Video ecosystems that support video:create */
@@ -740,7 +741,8 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
       ecoId === ECO.WanImage27 ||
       ecoId === ECO.Ernie ||
       ecoId === ECO.HiDreamO1 ||
-      ecoId === ECO.Lens,
+      ecoId === ECO.Lens ||
+      ecoId === ECO.Krea2,
   ],
   [
     'img2img:edit',

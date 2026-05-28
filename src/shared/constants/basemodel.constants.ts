@@ -187,6 +187,9 @@ export const ECO = {
   // Baidu
   Ernie: 67,
 
+  // Krea AI
+  Krea2: 70,
+
   // Child ecosystems of SDXL
   Pony: 100,
   Illustrious: 101,
@@ -578,6 +581,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 130,
   },
 
+  // Krea AI Family (familyId: 20)
+  {
+    id: ECO.Krea2,
+    key: 'Krea2',
+    displayName: 'Krea 2',
+    familyId: 20,
+    sortOrder: 150,
+  },
+
   // HiDream Family (familyId: 19)
   {
     id: ECO.HiDream,
@@ -846,6 +858,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
   { ecosystemId: ECO.Ernie, supportType: 'generation', modelTypes: checkpointAndLora },
   { ecosystemId: ECO.Ernie, supportType: 'training', modelTypes: loraOnly },
 
+  // Krea 2 - checkpoint only (locked, no LoRA support)
+  { ecosystemId: ECO.Krea2, supportType: 'generation', modelTypes: checkpointOnly },
+
   // Lens - checkpoint and LORA (Civitai-internal, normal + turbo variants)
   { ecosystemId: ECO.Lens, supportType: 'generation', modelTypes: checkpointAndLora },
 
@@ -993,6 +1008,13 @@ export const ecosystemSettings: EcosystemSettings[] = [
     ecosystemId: ECO.Anima,
     defaults: {
       model: { id: 2945208 },
+    },
+  },
+  {
+    ecosystemId: ECO.Krea2,
+    defaults: {
+      model: { id: 2983022 },
+      modelLocked: true,
     },
   },
   {
@@ -1750,6 +1772,7 @@ export const BM = {
   AceAudio: 84,
   HappyHorse: 85,
   Lens: 88,
+  Krea2: 89,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -1934,6 +1957,11 @@ export const licenses: LicenseRecord[] = [
     name: 'HappyHorse',
     url: 'https://happyhorsesai.com/',
   },
+  {
+    id: 28,
+    name: 'Krea AI Terms of Service',
+    url: 'https://www.krea.ai/terms',
+  },
 ];
 
 export const licenseById = new Map(licenses.map((l) => [l.id, l]));
@@ -2037,6 +2065,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     id: 19,
     name: 'HiDream',
     description: "HiDream.ai's image generation models",
+  },
+  {
+    id: 20,
+    name: 'Krea AI',
+    description: "Krea AI's in-house image generation models",
   },
 ];
 
@@ -2259,6 +2292,16 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.Kolors,
     licenseId: 12,
+  },
+
+  // Krea 2
+  {
+    id: BM.Krea2,
+    name: 'Krea 2',
+    description: "Krea AI's in-house image generation model",
+    type: 'image',
+    ecosystemId: ECO.Krea2,
+    licenseId: 28,
   },
 
   // LTXV

@@ -119,6 +119,7 @@ export function useWhatIfFromGraph({ enabled = true }: UseWhatIfFromGraphOptions
       'negativePrompt',
       'musicDescription',
       'lyrics',
+      'styleReferences', // Krea 2
     ]);
 
     return filterSnapshotForSubmit(outputSnapshot, {
