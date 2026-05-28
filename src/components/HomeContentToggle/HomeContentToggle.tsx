@@ -7,6 +7,7 @@ import {
   IconCaretDown,
   IconCategory,
   IconContract,
+  IconCube,
   IconFileText,
   IconHome,
   IconLayoutList,
@@ -58,6 +59,12 @@ export const homeOptions: HomeOption[] = [
     key: 'videos',
     url: '/videos',
     icon: (props: IconProps) => <IconVideo {...props} />,
+  },
+  {
+    key: '3d-models',
+    url: '/3d-models',
+    icon: (props: IconProps) => <IconCube {...props} />,
+    new: new Date('2026-06-30'),
   },
   {
     key: 'posts',
@@ -120,6 +127,7 @@ export function filterHomeOptions(features: FeatureAccess) {
         key === 'tools' && !features.toolSearch,
         key === 'challenges' && !features.challengePlatform,
         key === 'comics' && !features.comicCreator,
+        key === '3d-models' && !features.model3dFeed,
       ].some((b) => b)
   );
 }
