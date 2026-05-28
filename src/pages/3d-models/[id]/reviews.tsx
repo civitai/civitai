@@ -58,7 +58,9 @@ const querySchema = z.object({
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ ctx }) => {
+  resolver: async ({ ctx, features }) => {
+    // Gate at SSR to avoid a NotFound flash during hydration.
+    if (!features?.model3dFeed) return { notFound: true };
     const result = querySchema.safeParse(ctx.query);
     if (!result.success) return { notFound: true };
     return { props: removeEmpty(result.data) };
@@ -119,7 +121,8 @@ function Model3DReviewsPage({ id }: InferGetServerSidePropsType<typeof getServer
     });
   };
 
-  if (!features.model3dFeed) return <NotFound />;
+  // Feature flag is gated server-side in getServerSideProps — no client check
+  // needed (and removing it avoids a NotFound flash during hydration).
 
   return (
     <>
