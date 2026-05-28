@@ -13,7 +13,7 @@
  * tightens to per-user OAuth tokens.
  *
  * Network shape: civitai-web → forgejo-http.forgejo.svc.cluster.local:3000
- * inside the cluster, or → https://forgejo.civitaic.com from a PR-preview
+ * inside the cluster, or → https://forgejo.civitai.com from a PR-preview
  * env that doesn't have direct cluster DNS. FORGEJO_BASE_URL handles both.
  */
 

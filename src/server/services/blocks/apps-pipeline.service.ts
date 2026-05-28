@@ -194,6 +194,7 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
                 { name: 'SHA', value: args.sha },
                 { name: 'IMAGE', value: args.imageRef },
                 { name: 'APP_BLOCK_ID', value: args.appBlockId },
+                { name: 'APPS_DOMAIN', value: env.APPS_DOMAIN },
               ],
               securityContext: {
                 allowPrivilegeEscalation: false,
@@ -215,6 +216,7 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
                   '      -e "s|\\${SHA}|${SHA}|g" \\',
                   '      -e "s|\\${IMAGE}|${IMAGE}|g" \\',
                   '      -e "s|\\${APP_BLOCK_ID}|${APP_BLOCK_ID}|g" \\',
+                  '      -e "s|\\${APPS_DOMAIN}|${APPS_DOMAIN}|g" \\',
                   '      /templates/app.yaml.tmpl > /tmp/rendered.yaml',
                   'fi',
                   'cat /tmp/rendered.yaml',
