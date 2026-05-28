@@ -88,7 +88,7 @@ describe('applyDerivedLabels', () => {
   describe('derivation (csam = young AND any sexual signal)', () => {
     it('does not synthesize csam without young', () => {
       const out = applyDerivedLabels(
-        [row('explicit', 1), row('sexual', 1)],
+        [row('explicit', 1), row('suggestive', 1)],
         'prompt'
       );
       expect(out.map((r) => r.label)).not.toContain('csam');
@@ -114,14 +114,6 @@ describe('applyDerivedLabels', () => {
       expect(csam!.score).toBe(0.6);
     });
 
-    it('synthesizes csam when young + sexual triggered', () => {
-      const out = applyDerivedLabels(
-        [row('young', 1), row('sexual', 1)],
-        'prompt'
-      );
-      expect(out.find((r) => r.label === 'csam')).toBeDefined();
-    });
-
     it('synthesizes csam when young + suggestive triggered (no explicit)', () => {
       const out = applyDerivedLabels(
         [row('young', 1), row('suggestive', 1)],
@@ -133,14 +125,17 @@ describe('applyDerivedLabels', () => {
     });
 
     it('prefers the first matching any-of input', () => {
-      // both sexual and suggestive triggered — derivation picks the first
-      // listed match (sexual) per the requiresAnyOf array order
+      // both suggestive and explicit triggered — derivation picks the first
+      // listed match (suggestive) per the requiresAnyOf array order. (Note:
+      // when both fire, suggestive is normally suppressed by the
+      // explicit-dominates-suggestive rule, but derivation reads the
+      // PRE-suppression set, so suggestive is still visible here.)
       const out = applyDerivedLabels(
-        [row('young', 1), row('sexual', 1), row('suggestive', 1)],
+        [row('young', 1), row('suggestive', 1), row('explicit', 1)],
         'prompt'
       );
       const csam = out.find((r) => r.label === 'csam');
-      expect(csam!.derivedFrom).toEqual(['young', 'sexual']);
+      expect(csam!.derivedFrom).toEqual(['young', 'suggestive']);
     });
 
     it('text mode also accepts nsfw as the sexual signal', () => {
@@ -167,6 +162,60 @@ describe('applyDerivedLabels', () => {
         'prompt'
       );
       expect(out.find((r) => r.label === 'csam')).toBeUndefined();
+    });
+  });
+
+  describe('derivation (incest = familial AND any sexual signal)', () => {
+    it('does not synthesize incest without familial', () => {
+      const out = applyDerivedLabels([row('explicit', 1), row('suggestive', 1)], 'prompt');
+      expect(out.map((r) => r.label)).not.toContain('incest');
+    });
+
+    it('does not synthesize incest without any sexual signal', () => {
+      const out = applyDerivedLabels([row('familial', 1)], 'prompt');
+      expect(out.map((r) => r.label)).not.toContain('incest');
+    });
+
+    it('synthesizes incest when familial + explicit triggered', () => {
+      const out = applyDerivedLabels(
+        [row('familial', 1, 0.7), row('explicit', 1, 0.9)],
+        'prompt'
+      );
+      const incest = out.find((r) => r.label === 'incest');
+      expect(incest).toBeDefined();
+      expect(incest!.synthetic).toBe(true);
+      expect(incest!.triggered).toBe(1);
+      expect(incest!.derivedFrom).toEqual(['familial', 'explicit']);
+      expect(incest!.score).toBe(0.7); // min of contributing scores
+    });
+
+    it('synthesizes incest when familial + suggestive triggered (no explicit)', () => {
+      const out = applyDerivedLabels(
+        [row('familial', 1), row('suggestive', 1)],
+        'prompt'
+      );
+      const incest = out.find((r) => r.label === 'incest');
+      expect(incest).toBeDefined();
+      expect(incest!.derivedFrom).toEqual(['familial', 'suggestive']);
+    });
+
+    it('strips an input incest row when the rule does not fire', () => {
+      // Incest is now a derivation-owned name. A raw `incest` row in the
+      // input (e.g. from a stale XGuard scan before Familial was added)
+      // should be stripped if the rule doesn't fire.
+      const out = applyDerivedLabels([row('incest', 1)], 'prompt');
+      expect(out.find((r) => r.label === 'incest')).toBeUndefined();
+    });
+
+    it('replaces an input incest row with a freshly-derived one', () => {
+      const out = applyDerivedLabels(
+        [row('incest', 1), row('familial', 1), row('explicit', 1)],
+        'prompt'
+      );
+      const incests = out.filter((r) => r.label === 'incest');
+      expect(incests).toHaveLength(1);
+      expect(incests[0].synthetic).toBe(true);
+      expect(incests[0].derivedFrom).toEqual(['familial', 'explicit']);
     });
   });
 
@@ -209,9 +258,8 @@ describe('applyDerivedLabels', () => {
       expect(out.find((r) => r.label === 'suggestive')).toBeUndefined();
       // explicit kept
       expect(out.find((r) => r.label === 'explicit')).toBeDefined();
-      // csam derived — explicit comes before suggestive in requiresAnyOf
-      // (sexual, suggestive, explicit), but sexual didn't trigger, suggestive
-      // is first matching, so derivedFrom should be [young, suggestive]
+      // csam derived — requiresAnyOf is [suggestive, explicit], suggestive is
+      // first matching, so derivedFrom should be [young, suggestive]
       const csam = out.find((r) => r.label === 'csam');
       expect(csam).toBeDefined();
       expect(csam!.derivedFrom).toEqual(['young', 'suggestive']);
@@ -243,7 +291,7 @@ describe('applyDerivedLabels', () => {
 
     it('preserves empty arrays correctly', () => {
       const out = applyDerivedLabels(
-        [row('young', 1), row('sexual', 1)],
+        [row('young', 1), row('suggestive', 1)],
         'prompt'
       );
       const csam = out.find((r) => r.label === 'csam')!;

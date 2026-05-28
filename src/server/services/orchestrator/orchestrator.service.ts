@@ -198,6 +198,16 @@ type XGuardModerationArgs = {
    * metadata only — not stored in the ClickHouse audit table. */
   userId?: number;
   labels?: string[];
+  /** Per-label policy/threshold/action overrides for this single request.
+   * Merges with the orchestrator's default registry. Useful for debug /
+   * policy-tuning paths (e.g. `/api/testing/xguard-test`) where we want to
+   * evaluate a candidate policy without modifying the live registry. */
+  labelOverrides?: Array<{
+    label: string;
+    action: string;
+    threshold: number;
+    policy: string;
+  }>;
   /** Override the default audit-result callback URL. Omit to use the standard
    * `/api/webhooks/text-moderation-result` endpoint (which is what makes audit
    * rows land in `scanner_label_results`). Pass `null` to suppress the
@@ -237,6 +247,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
     entityId,
     userId,
     labels,
+    labelOverrides,
     callbackUrl,
     wait,
     priority = 'normal',
@@ -303,7 +314,8 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           mode: 'text' as const,
           text: args.content,
           labels,
-          storeFullResponse: true,
+          labelOverrides,
+          storeFullResponse: false,
         }
       : {
           mode: 'prompt' as const,
@@ -311,7 +323,8 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           negativePrompt: args.negativePrompt ?? null,
           instructions: args.instructions ?? null,
           labels,
-          storeFullResponse: true,
+          labelOverrides,
+          storeFullResponse: false,
         };
 
   // The orchestrator submit can either return `{ data: null, error }` for a
