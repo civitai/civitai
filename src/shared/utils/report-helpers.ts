@@ -12,4 +12,6 @@ export enum ReportEntity {
   BountyEntry = 'bountyEntry',
   Chat = 'chat',
   ComicProject = 'comicProject',
+  Model3D = 'model3d',
+  Model3DReview = 'model3dReview',
 }
