@@ -41,7 +41,7 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { withSpan } from '~/server/utils/otel-helpers';
+import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
 import {
   SEARCH_ACTOR_HEADER,
   fetchDocumentsAbortable,
@@ -2488,8 +2488,14 @@ async function fetchBitdexPrimary(input: ImageSearchInput) {
 
 export async function getImagesFromSearch(input: ImageSearchInput) {
   let searchFn = getImagesFromSearchPreFilter;
-  const fliptClient = await FliptSingleton.getInstance();
-  if (fliptClient) {
+  // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
+  // flag fetch is contributing to the parent span's latency. Includes the
+  // FliptSingleton.getInstance() handshake plus the three evaluateBoolean
+  // calls (FEED_POST_FILTER, MEILI_CACHE_OPS, MEILI_USER_OWN_PASS).
+  input = await withSpan('image:flipt:eval', async () => {
+    const fliptClient = await FliptSingleton.getInstance();
+    if (!fliptClient) return input;
+
     const flag = fliptClient.evaluateBoolean({
       flagKey: FLIPT_FEATURE_FLAGS.FEED_POST_FILTER,
       entityId: input.currentUserId?.toString() || 'anonymous',
@@ -2508,19 +2514,19 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
       entityId: input.currentUserId?.toString() || 'anonymous',
       context: {},
     });
-    input = {
+    return {
       ...input,
       meiliCacheOps: cacheOpsFlag.enabled,
       meiliUserOwnPass: userOwnPassFlag.enabled,
     };
-  }
+  });
 
   // Check BitDex mode (off / shadow / primary)
   // Use buildFliptContext (same as comics) so both 'moderators' (isModerator=true)
   // and 'testers' (userId in list) segments match correctly.
   // Reuse the controller's pre-evaluated value when present (it queries the same
   // flag with the same entityId+context) to avoid a duplicate Flipt round-trip.
-  const bitdexMode =
+  const bitdexMode = await withSpan('image:flipt:bitdexMode', async () =>
     input.bitdexMode !== undefined
       ? input.bitdexMode
       : await getFliptVariant(
@@ -2531,7 +2537,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
               ? ({ id: input.currentUserId, isModerator: input.isModerator } as SessionUser)
               : undefined
           )
-        );
+        )
+  );
   console.log('[BitDex] flipt mode:', JSON.stringify(bitdexMode), 'user:', input.currentUserId);
 
   // Primary mode: bypass Meili entirely, query BitDex directly with full docs.
@@ -2539,7 +2546,11 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   // Post-filter re-adds the user's own private/blocked/poi/unpublished content.
   if (bitdexMode === 'primary') {
     try {
-      const result = await fetchBitdexPrimary(input);
+      const result = await withSpan(
+        'image:bitdex:primary',
+        { 'bitdex.mode': 'primary' },
+        () => fetchBitdexPrimary(input)
+      );
       if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
     } catch (err) {
@@ -2554,33 +2565,41 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
   // Shadow mode: run the same fetchBitdexPrimary path (cacheable filters + second pass)
   // that primary uses, compare results against Meili, but serve Meili results.
+  //
+  // The shadow span is detached (its own root with a Link back to the user-request
+  // trace) because shadow work intentionally outlives the user-facing return.
+  // Keeping it as an active child of image:getAllImagesIndex:search would produce
+  // a child span whose end-time is past its parent's, which confuses parent-
+  // duration interpretation in trace UIs.
   if (bitdexMode === 'shadow') {
     const meiliElapsed = Date.now() - meiliStart;
-    fetchBitdexPrimary(input)
-      .then((bitdexResult) => {
-        if (bitdexResult) {
-          compareBitdexResults({
-            bitdexIds: bitdexResult.data.map((d) => d.id),
-            meiliIds: result.data.map((i: { id: number }) => i.id),
-            bitdexTotalMatched: bitdexResult.data.length,
-            meiliTotalMatched: result.data.length,
-            bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
-            meiliElapsedMs: meiliElapsed,
-            sort: input.sort ?? 'Newest',
-            hasPeriod: !!input.period,
-            hasFilters: !!(
-              input.tags?.length ||
-              input.types?.length ||
-              input.userId ||
-              input.withMeta ||
-              input.fromPlatform ||
-              input.baseModels?.length ||
-              input.postId
-            ),
-          });
-        }
-      })
-      .catch((err) => recordBitdexError(err));
+    void withDetachedSpan('image:bitdex:shadow', { 'bitdex.mode': 'shadow' }, () =>
+      fetchBitdexPrimary(input)
+        .then((bitdexResult) => {
+          if (bitdexResult) {
+            compareBitdexResults({
+              bitdexIds: bitdexResult.data.map((d) => d.id),
+              meiliIds: result.data.map((i: { id: number }) => i.id),
+              bitdexTotalMatched: bitdexResult.data.length,
+              meiliTotalMatched: result.data.length,
+              bitdexElapsedMs: 0, // timing not available from fetchBitdexPrimary
+              meiliElapsedMs: meiliElapsed,
+              sort: input.sort ?? 'Newest',
+              hasPeriod: !!input.period,
+              hasFilters: !!(
+                input.tags?.length ||
+                input.types?.length ||
+                input.userId ||
+                input.withMeta ||
+                input.fromPlatform ||
+                input.baseModels?.length ||
+                input.postId
+              ),
+            });
+          }
+        })
+        .catch((err) => recordBitdexError(err))
+    );
   }
 
   return { ...result, source: 'meili' as const };

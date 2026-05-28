@@ -5,6 +5,7 @@ import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { sleep } from '~/server/utils/errorHandling';
 import type { JobContext } from '~/server/jobs/job';
+import { withSpan, safeUrl } from '~/server/utils/otel-helpers';
 
 const log = createLogger('search', 'green');
 
@@ -69,21 +70,40 @@ export async function fetchDocumentsAbortable<T>(
   options: { host: string; apiKey?: string; signal?: AbortSignal; actor?: string }
 ): Promise<ResourceResults<T[]>> {
   const { host, apiKey, signal, actor } = options;
-  const res = await fetch(`${host}/indexes/${indexName}/documents/fetch`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-      ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
+  const url = `${host}/indexes/${indexName}/documents/fetch`;
+  const urlAttr = safeUrl(url);
+  const res = await withSpan(
+    'image:meili:http',
+    {
+      'http.method': 'POST',
+      'http.url': urlAttr,
+      'image.meili.index': indexName,
     },
-    body: JSON.stringify(params),
-    signal,
-  });
+    () =>
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+          ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
+        },
+        body: JSON.stringify(params),
+        signal,
+      })
+  );
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`Meilisearch fetch failed (${res.status}): ${text}`);
   }
-  return (await res.json()) as ResourceResults<T[]>;
+  return withSpan(
+    'image:meili:parse',
+    {
+      'http.url': urlAttr,
+      'http.status_code': res.status,
+      'image.meili.index': indexName,
+    },
+    async () => (await res.json()) as ResourceResults<T[]>
+  );
 }
 
 const RETRY_LIMIT = 5;
