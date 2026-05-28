@@ -1,4 +1,4 @@
-import { withSpan } from '~/server/utils/otel-helpers';
+import { withSpan, safeUrl } from '~/server/utils/otel-helpers';
 
 export type Value = { Integer: number } | { Bool: boolean } | { String: string };
 
@@ -58,11 +58,12 @@ export async function queryBitdex(
     console.log('[BitDex] query:', JSON.stringify(body));
     const start = Date.now();
     const url = `${BITDEX_URL}/api/indexes/${indexName}/query`;
+    const urlAttr = safeUrl(url);
     const res = await withSpan(
       'bitdex:http:fetch',
       {
         'http.method': 'POST',
-        'http.url': url,
+        'http.url': urlAttr,
         'bitdex.namespace': indexName,
       },
       () =>
@@ -82,7 +83,7 @@ export async function queryBitdex(
     const result = await withSpan(
       'bitdex:http:parse',
       {
-        'http.url': url,
+        'http.url': urlAttr,
         'http.status_code': res.status,
         'bitdex.namespace': indexName,
       },

@@ -5,7 +5,7 @@ import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { sleep } from '~/server/utils/errorHandling';
 import type { JobContext } from '~/server/jobs/job';
-import { withSpan } from '~/server/utils/otel-helpers';
+import { withSpan, safeUrl } from '~/server/utils/otel-helpers';
 
 const log = createLogger('search', 'green');
 
@@ -71,11 +71,12 @@ export async function fetchDocumentsAbortable<T>(
 ): Promise<ResourceResults<T[]>> {
   const { host, apiKey, signal, actor } = options;
   const url = `${host}/indexes/${indexName}/documents/fetch`;
+  const urlAttr = safeUrl(url);
   const res = await withSpan(
     'image:meili:http',
     {
       'http.method': 'POST',
-      'http.url': url,
+      'http.url': urlAttr,
       'image.meili.index': indexName,
     },
     () =>
@@ -97,7 +98,7 @@ export async function fetchDocumentsAbortable<T>(
   return withSpan(
     'image:meili:parse',
     {
-      'http.url': url,
+      'http.url': urlAttr,
       'http.status_code': res.status,
       'image.meili.index': indexName,
     },

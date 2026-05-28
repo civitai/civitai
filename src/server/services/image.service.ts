@@ -41,7 +41,7 @@ import {
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
-import { withSpan } from '~/server/utils/otel-helpers';
+import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
 import {
   SEARCH_ACTOR_HEADER,
   fetchDocumentsAbortable,
@@ -2565,9 +2565,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 
   // Shadow mode: run the same fetchBitdexPrimary path (cacheable filters + second pass)
   // that primary uses, compare results against Meili, but serve Meili results.
+  //
+  // The shadow span is detached (its own root with a Link back to the user-request
+  // trace) because shadow work intentionally outlives the user-facing return.
+  // Keeping it as an active child of image:getAllImagesIndex:search would produce
+  // a child span whose end-time is past its parent's, which confuses parent-
+  // duration interpretation in trace UIs.
   if (bitdexMode === 'shadow') {
     const meiliElapsed = Date.now() - meiliStart;
-    withSpan('image:bitdex:shadow', { 'bitdex.mode': 'shadow' }, () =>
+    void withDetachedSpan('image:bitdex:shadow', { 'bitdex.mode': 'shadow' }, () =>
       fetchBitdexPrimary(input)
         .then((bitdexResult) => {
           if (bitdexResult) {
