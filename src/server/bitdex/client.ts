@@ -1,3 +1,5 @@
+import { withSpan } from '~/server/utils/otel-helpers';
+
 export type Value = { Integer: number } | { Bool: boolean } | { String: string };
 
 export type FilterClause =
@@ -55,19 +57,37 @@ export async function queryBitdex(
 
     console.log('[BitDex] query:', JSON.stringify(body));
     const start = Date.now();
-    const res = await fetch(`${BITDEX_URL}/api/indexes/${indexName}/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    const url = `${BITDEX_URL}/api/indexes/${indexName}/query`;
+    const res = await withSpan(
+      'bitdex:http:fetch',
+      {
+        'http.method': 'POST',
+        'http.url': url,
+        'bitdex.namespace': indexName,
+      },
+      () =>
+        fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        })
+    );
     clearTimeout(timeout);
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       console.error(`[BitDex] Query failed ${res.status} (${Date.now() - start}ms): ${errText.slice(0, 500)}`);
       return null;
     }
-    const result = await res.json();
+    const result = await withSpan(
+      'bitdex:http:parse',
+      {
+        'http.url': url,
+        'http.status_code': res.status,
+        'bitdex.namespace': indexName,
+      },
+      () => res.json()
+    );
     console.log('[BitDex] result:', JSON.stringify({
       ms: Date.now() - start,
       matched: result.total_matched,
