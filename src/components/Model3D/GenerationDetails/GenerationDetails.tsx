@@ -102,7 +102,7 @@ export function GenerationDetails({ params, sourceImage }: GenerationDetailsProp
               <EdgeMedia
                 src={sourceImage.url}
                 name={sourceImage.name ?? undefined}
-                type={sourceImage.type ?? undefined}
+                type={(sourceImage.type as 'image' | 'video' | 'audio' | undefined) ?? undefined}
                 width={320}
                 anim={false}
                 className="size-full object-cover"

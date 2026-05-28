@@ -379,8 +379,8 @@ async function getEarnedTasks(ctx: MetricContext) {
     await getMetrics(ctx)`
       -- earned = total BuzzTip amount routed to the Model3D creator for
       -- this entity. Matches Model3D.userId against BuzzTip.toAccountType
-      -- inheritance via the entity link — since BuzzTip is polymorphic and
-      -- we don't have a `toUserId` slot, we trust entityId+entityType.
+      -- inheritance via the entity link -- since BuzzTip is polymorphic and
+      -- we do not have a toUserId slot, we trust entityId+entityType.
       SELECT
         bt."entityId" AS "model3dId",
         SUM(bt.amount)::int AS "earnedAmount"

@@ -10,6 +10,8 @@ import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscu
 
 type CommentEntityType =
   | 'model'
+  | 'model3d'
+  | 'model3dReview'
   | 'post'
   | 'article'
   | 'bounty'

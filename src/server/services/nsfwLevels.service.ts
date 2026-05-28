@@ -550,9 +550,9 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
  * actually changed, returns the affected ids for downstream search-index
  * fan-out (the dedicated `model3d` Meilisearch index lands in Phase 2).
  */
-export async function updateModel3DNsfwLevels(model3dIds: number[]) {
+export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<void> {
   if (!model3dIds.length) return;
-  const updated = await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
+  await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT
         m.id,
@@ -577,7 +577,6 @@ export async function updateModel3DNsfwLevels(model3dIds: number[]) {
   // affected ids once `model3dSearchIndex` lands (plan §2.9). Currently we
   // intentionally do not surface Model3D via any of the existing search
   // indexes, so there's no fan-out to do here.
-  return updated;
 }
 
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
