@@ -53,12 +53,35 @@ Wave 2 ran, several agents died mid-flight, recovered + merged what landed:
 | G (partial) | **partially merged** | Detail page rebuild + 4 components + review backend endpoints all done. **Remaining**: reviews page replacement + Post-from-Generation wiring (G2 spawned) |
 | H (partial) | **partially merged** | 2 flags + surface gating done. **Remaining**: thumbnail-driven mod affordance (H2 spawned) |
 
-## Active agents — Wave 2.5 (continuation)
+## Active agents — Wave 2.5 (continuation) — DONE
 
-| Workstream | Status | Scope |
+| Workstream | Status | Notes |
 |------------|--------|-------|
-| G2: reviews page + post-from-gen | in flight (background) | Replace reviews page stub, wire QueueItem Post-from-Gen CTA |
-| H2: mod tooling | in flight (background) | Model3DModAction component + getByThumbnailImageId router + wire into existing image-mod page |
+| G2: reviews page + post-from-gen | **DONE + merged** | 3 commits — reviews page (`6cc97db7a`), Post-from-Gen wiring + `getByWorkflowId` (`53a826201`), publish-hook flips Model3D Draft→Published (`8a9b1cf04`). Merged with import conflict resolved (H2's `getByThumbnailImageId` + G2's `getByWorkflowId` coexist). |
+| H2: mod tooling | **DONE + merged** | 3 commits — `getByThumbnailImageId` procedure + `Model3DModAction` component + wired into `src/pages/moderator/images.tsx:655`. |
+
+## ✅ Phase 1 complete
+
+All 8 workstreams (A–H) merged on `main`. `pnpm run typecheck` clean across all Model3D code.
+
+Phase 1 surface summary:
+- Schema + migration applied
+- Services: model3d / model3d-review / model3d-report
+- Router: model3d (with `reviews` and `reports` sub-routers) + 12 procedures
+- Orchestrator: PolyGen handler + Zod schema + generation-config registration
+- UI: 3D Model generation form, queue card branch, detail page, reviews page, reviews modal
+- Viewer: three.js + GLTFLoader (dynamic-imported)
+- Jobs: NSFW propagation + Model3DMetric rollup + comment notifications
+- Mod affordance: thumbnail-driven "Also unpublish parent Model3D"
+- Feature flags: `model3d-feed` + `model3d-generator` (Flipt, mod-only at launch)
+- Post-publish hook: linked Model3D auto-flips Draft → Published
+
+Open follow-ups (intentionally deferred per plan):
+- ClickHouse download event emission (Model3DMetric.downloadCount currently stays 0)
+- Post-edit page surfacing Model3D-specific fields (currently passes `?model3dId=` through but doesn't render the form)
+- Reviews pagination switched from page-based to cursor-based if scale demands it
+- Dedicated `model3d` Meilisearch index implementation (search-parser is registered but routes nowhere yet)
+- User uploads (Phase 3, schema is upload-ready)
 
 ## Active agents — Wave 1 (done, merged)
 
