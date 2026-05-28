@@ -13,6 +13,8 @@ import {
   unpublishModel3DSchema,
   deleteModel3DSchema,
   getModel3DFilesSchema,
+  getModel3DRelatedPostsSchema,
+  getModel3DReviewSummarySchema,
   upsertModel3DReviewSchema,
   getModel3DReviewsSchema,
   deleteModel3DReviewSchema,
@@ -27,6 +29,8 @@ import {
   unpublishModel3D,
   deleteModel3D,
   getModel3DFiles,
+  getModel3DRelatedPosts,
+  getModel3DReviewSummary,
 } from '~/server/services/model3d.service';
 import {
   upsertModel3DReview,
@@ -51,6 +55,9 @@ const reviewsRouter = router({
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DReviewsSchema)
     .query(({ input, ctx }) => getModel3DReviews({ input, user: ctx.user })),
+  getSummary: publicProcedure
+    .input(getModel3DReviewSummarySchema)
+    .query(({ input }) => getModel3DReviewSummary({ input })),
   delete: protectedProcedure
     .use(isFlagProtected('model3dFeed'))
     .input(deleteModel3DReviewSchema)
@@ -100,6 +107,9 @@ export const model3dRouter = router({
     .use(isFlagProtected('model3dFeed'))
     .input(getModel3DFilesSchema)
     .query(({ input, ctx }) => getModel3DFiles({ input, user: ctx.user })),
+  getRelatedPosts: publicProcedure
+    .input(getModel3DRelatedPostsSchema)
+    .query(({ input, ctx }) => getModel3DRelatedPosts({ input, user: ctx.user })),
 
   // Sub-routers
   reviews: reviewsRouter,

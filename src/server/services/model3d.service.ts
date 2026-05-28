@@ -15,6 +15,8 @@ import type {
   DeleteModel3DInput,
   GetModel3DByIdInput,
   GetModel3DFilesInput,
+  GetModel3DRelatedPostsInput,
+  GetModel3DReviewSummaryInput,
   GetModel3DsInfiniteInput,
   PublishModel3DInput,
   UnpublishModel3DInput,
@@ -529,6 +531,99 @@ export const upsertModel3DFromWorkflow = async ({
 
     return { id: created.id, created: true };
   });
+};
+
+// ---------------------------------------------------------------------------
+// Related Posts ("Makes & Uses") + Review summary
+// ---------------------------------------------------------------------------
+
+export type Model3DRelatedPost = AsyncReturnType<typeof getModel3DRelatedPosts>['items'][number];
+export const getModel3DRelatedPosts = async ({
+  input,
+  user,
+}: {
+  input: GetModel3DRelatedPostsInput;
+  user?: SessionUser | null;
+}) => {
+  try {
+    const { model3dId, limit, cursor } = input;
+    const isModerator = !!user?.isModerator;
+
+    // Look up the Model3D creator so we can exclude their own auto-Post (the
+    // generation thumbnail Post) from the Makes/Uses rail.
+    const model3d = await dbRead.model3D.findUnique({
+      where: { id: model3dId },
+      select: { id: true, userId: true },
+    });
+    if (!model3d) throw throwNotFoundError(`No 3D model with id ${model3dId}`);
+
+    const where: Prisma.PostWhereInput = {
+      model3dId,
+      // Skip the creator's own Post(s); community Makes/Uses are by other users.
+      NOT: { userId: model3d.userId },
+      // Public visibility: only published posts unless the requester is a mod.
+      ...(isModerator
+        ? {}
+        : { publishedAt: { lte: new Date() }, availability: { not: 'Private' } }),
+    };
+
+    const take = Math.min(limit, 50);
+    const items = await dbRead.post.findMany({
+      take: take + 1,
+      where,
+      cursor: cursor ? { id: cursor } : undefined,
+      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'desc' }],
+      select: {
+        id: true,
+        title: true,
+        userId: true,
+        publishedAt: true,
+        nsfwLevel: true,
+        user: { select: userWithCosmeticsSelect },
+        images: {
+          take: 1,
+          orderBy: { index: 'asc' },
+          select: imageSelect,
+        },
+      },
+    });
+
+    let nextCursor: number | undefined;
+    if (items.length > take) {
+      const nextItem = items.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return { items, nextCursor };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+export const getModel3DReviewSummary = async ({
+  input,
+}: {
+  input: GetModel3DReviewSummaryInput;
+}) => {
+  try {
+    const agg = await dbRead.model3DReview.aggregate({
+      where: { model3dId: input.model3dId, exclude: false },
+      _avg: { rating: true },
+      _count: { _all: true },
+    });
+    const recommendedCount = await dbRead.model3DReview.count({
+      where: { model3dId: input.model3dId, exclude: false, recommended: true },
+    });
+    return {
+      ratingAvg: agg._avg.rating ?? 0,
+      ratingCount: agg._count._all,
+      recommendedCount,
+    };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
 };
 
 // Local helper type to avoid circular-import issues with the global one.

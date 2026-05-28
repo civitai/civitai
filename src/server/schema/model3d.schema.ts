@@ -78,6 +78,18 @@ export const getModel3DFilesSchema = z.object({
   id: z.number().int().positive(),
 });
 
+export type GetModel3DRelatedPostsInput = z.infer<typeof getModel3DRelatedPostsSchema>;
+export const getModel3DRelatedPostsSchema = z.object({
+  model3dId: z.number().int().positive(),
+  limit: z.number().int().min(1).max(50).default(12),
+  cursor: z.number().int().positive().optional(),
+});
+
+export type GetModel3DReviewSummaryInput = z.infer<typeof getModel3DReviewSummarySchema>;
+export const getModel3DReviewSummarySchema = z.object({
+  model3dId: z.number().int().positive(),
+});
+
 // ---------------------------------------------------------------------------
 // Reviews
 // ---------------------------------------------------------------------------
