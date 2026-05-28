@@ -100,9 +100,9 @@ export function PostFiltersDropdown({
           <div className="flex flex-wrap gap-2">
             <FilterChip
               checked={!!mergedFilters.scheduled}
-              onChange={(checked) => handleChange({ scheduled: checked ? checked : undefined })}
+              onChange={(checked) => handleChange({ scheduled: checked })}
             >
-              <Tooltip label="Show your scheduled posts in feeds">
+              <Tooltip label="Include your scheduled posts">
                 <span>Scheduled</span>
               </Tooltip>
             </FilterChip>

@@ -276,8 +276,10 @@ export const getPostsInfinite = async ({
       AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
     }
   } else {
-    if (draftOnly) AND.push(Prisma.sql`p."publishedAt" IS NULL`);
-    else if (scheduled) AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
+    if (draftOnly) {
+      if (scheduled) AND.push(Prisma.sql`(p."publishedAt" IS NULL OR p."publishedAt" > NOW())`);
+      else AND.push(Prisma.sql`p."publishedAt" IS NULL`);
+    } else if (scheduled) AND.push(Prisma.sql`p."publishedAt" IS NOT NULL`);
     else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 
@@ -346,8 +348,16 @@ export const getPostsInfinite = async ({
   }
 
   // sorting - always include id as tiebreaker for stable pagination
-  let orderBy = draftOnly ? 'p."createdAt" DESC, p.id DESC' : 'p."publishedAt" DESC, p.id DESC';
-  let primarySortProp = draftOnly ? 'p."createdAt"' : 'p."publishedAt"';
+  // draftOnly mixes drafts (publishedAt IS NULL) with scheduled (publishedAt > NOW()).
+  // Offsetting drafts by +100 years on the sort key keeps them ahead of any
+  // scheduled post (DESC) while preserving createdAt order among themselves;
+  // scheduled posts continue to sort by their publishedAt within that partition.
+  let orderBy = draftOnly
+    ? `COALESCE(p."publishedAt", p."createdAt" + interval '100 years') DESC, p.id DESC`
+    : 'p."publishedAt" DESC, p.id DESC';
+  let primarySortProp = draftOnly
+    ? `COALESCE(p."publishedAt", p."createdAt" + interval '100 years')`
+    : 'p."publishedAt"';
   let isDateSort = true;
 
   if (sort === PostSort.MostComments) {
