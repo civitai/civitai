@@ -187,7 +187,7 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
           containers: [
             {
               name: 'apply',
-              image: 'bitnami/kubectl:1.34',
+              image: 'alpine/k8s:1.34.0',
               imagePullPolicy: 'IfNotPresent',
               env: [
                 { name: 'SLUG', value: args.slug },
