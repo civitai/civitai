@@ -42,14 +42,18 @@ If the main session dies:
 
 ---
 
-## Active agents
+## Active agents — Wave 2 (in flight)
 
-| Workstream | Branch | Status | Notes |
-|------------|--------|--------|-------|
-| A: Backend service + router | `worktree-agent-a032ad75027b491bc` @ `5c60f5645` | **done** | All services + router + Zod schema + router registration. 0 new typecheck errors. Uses `upsertModel3D` (not `upsertModel3DDraft` as B expected — reconcile during integration). Notes: `Model3DEngagement` favorite/notify endpoints + comment threads NOT in scope, deferred. |
-| B: PolyGen orchestrator | `worktree-agent-a240a7c10f27a2a52` @ `8ff736a52` | **done** | polygen.schema.ts + polyGen.handler.ts + generation.config.ts. Has a TODO awaiting A's service shape — will reconcile to A's `upsertModel3D` during integration. |
-| C: Touch-point edits | `worktree-agent-ad3d34f1b06bd20c6` (10 files modified) | **in flight** | Touching: collection.utils.ts, search/parsers/base.ts, image-scan-result.ts, common/constants.ts, jobs/job-queue.ts, schema/buzz.schema.ts, schema/commentv2.schema.ts, services/report.service.ts, prisma/enums.ts, prisma/models.ts. |
-| D: UI scaffold + viewer | `worktree-agent-a7e6b0ab4d05237b9` @ `9efe10370` | **done** | three.js + @types/three added to package.json (install needed at merge time), Model3DViewer.tsx, 3 page stubs. Stray `.gitkeep` to clean up at `src/pages/3d-models/[id]/.gitkeep`. |
+| Workstream | Status | Scope |
+|------------|--------|-------|
+| E: Jobs + notifications | **in flight (background)** | updateModel3DNsfwLevels + updateModel3DMetrics + 3 comment notifications + threadUrlMap entry |
+| F: Generation form | **in flight (background)** | 3D Model tab in GenerationForm, Model3DGenerationForm.tsx, queue card (thumbnail-only), `generate3D` tRPC mutation, whatif cost preview |
+| G: Detail page + reviews modal | **in flight (background)** | Full detail page rebuild on `/3d-models/[id]`, Model3DReviewModal with image attachments via Post.model3dReviewId, reviews page, Post-from-Generation wiring |
+| H: Feature flags + mod tooling | **in flight (background)** | model3dFeed + model3dGenerator Flipt flags, thumbnail-driven "Also unpublish parent Model3D" mod affordance |
+
+## Active agents — Wave 1 (done, merged)
+
+See "Commit log" below.
 
 ## Integration plan (once C lands)
 
@@ -86,11 +90,16 @@ git log --all --oneline --since="1 hour ago" | head -30
 
 ## Commit log (post-merge)
 
-_Updated as workstream branches are merged back. Each row is one merged workstream._
+| Date | Workstream | Branch merged | Notes |
+|------|------------|---------------|-------|
+| 2026-05-27 | groundwork | (main) `2f7b86a7a` | schema + migration + docs + civitai-client bump |
+| 2026-05-27 | D | `worktree-agent-a7e6b0ab4d05237b9` @ `9efe10370` | three.js + viewer + 3 page stubs |
+| 2026-05-27 | B | `worktree-agent-a240a7c10f27a2a52` @ `8ff736a52` | PolyGen schema + handler + generation.config registration |
+| 2026-05-27 | C | `worktree-agent-ad3d34f1b06bd20c6` @ `dc27eb04d` | 10 touch-point files (enums, allow-lists, collection.utils, job-queue, user.service) |
+| 2026-05-27 | A | `worktree-agent-a032ad75027b491bc` @ `5c60f5645` | services + router + Zod + router registration |
+| 2026-05-27 | reconcile A↔B | (main) `4e8570350` | added upsertModel3DFromWorkflow; wired polyGen.handler.ts; `currencies: []` for WorkflowTemplate |
 
-| Date | Workstream | Branch merged | Files touched | Tests | Notes |
-|------|------------|---------------|---------------|-------|-------|
-| — | — | — | — | — | — |
+**Phase 1 Wave 1 complete. `pnpm run typecheck` passes.**
 
 ---
 

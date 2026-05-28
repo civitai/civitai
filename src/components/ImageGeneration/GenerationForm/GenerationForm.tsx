@@ -54,6 +54,16 @@ export function GenerationForm() {
             className="flex flex-col gap-2"
           >
             <div className="flex flex-col gap-2 px-3">
+              {/*
+                TODO(flag): gate via `model3dGenerator`. When workstream F adds
+                the "3D Model" segmented entry (text-to-3D + image-to-3D
+                sub-tabs), conditionally include it only when
+                `useFeatureFlags().model3dGenerator` is true, and bounce the
+                user back to `image` if they had `model3d` selected but lost
+                access (e.g. flag flipped). The corresponding `generate3D`
+                tRPC mutation (if F adds one) should also be guarded with
+                `.use(isFlagProtected('model3dGenerator'))`.
+              */}
               <SegmentedControl
                 value={type}
                 onChange={(v) => generationFormStore.setType(v as MediaType)}

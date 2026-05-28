@@ -13,9 +13,11 @@ import {
 import { IconCube, IconMessage, IconStar } from '@tabler/icons-react';
 import type { InferGetServerSidePropsType } from 'next';
 import * as z from 'zod';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -45,6 +47,9 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerSideProps>) {
+  const features = useFeatureFlags();
+  if (!features.model3dFeed) return <NotFound />;
+
   return (
     <>
       <Meta

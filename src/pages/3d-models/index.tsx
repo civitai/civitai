@@ -1,9 +1,11 @@
 import { Card, Center, Stack, Text, Title } from '@mantine/core';
 import { IconCube } from '@tabler/icons-react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 /**
  * 3D Models feed page (Workstream D stub).
@@ -13,6 +15,10 @@ import { Meta } from '~/components/Meta/Meta';
  * feature flag is mod-only.
  */
 function Model3DsPage() {
+  const features = useFeatureFlags();
+  if (!features.model3dFeed) return <NotFound />;
+
+  // TODO_TEST_MARKER_xyz123
   return (
     <>
       <Meta

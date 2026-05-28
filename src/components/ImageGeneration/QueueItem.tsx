@@ -109,6 +109,13 @@ export function QueueItem({
 
   const allImages = request.steps.flatMap((s) => s.output);
 
+  // PolyGen (3D) workflows are rendered as their own queue card variant —
+  // we deliberately do NOT spin up a WebGL viewer per queue card (5 queued
+  // generations would mean 5 WebGL contexts on the page). Show the
+  // thumbnail + a stub "Post from Generation" CTA; the full viewer lives
+  // on the detail page (workstream D + G).
+  const isPolyGen = request.steps.some((s) => s.$type === 'polyGen');
+
   const stepErrors = request.steps.flatMap((s) => s.errors ?? []);
   const failureReason = stepErrors.length
     ? stepErrors.join(',\n')
@@ -290,7 +297,19 @@ export function QueueItem({
         </Card.Section>
       )}
 
-      {inView && (
+      {inView && isPolyGen && (
+        <div className="flex flex-col gap-3 py-3 @container">
+          {prompt && <LineClamp lh={1.3}>{prompt}</LineClamp>}
+          {failureReason && <Alert color="red">{failureReason}</Alert>}
+          <Model3DQueueCardOutputs
+            request={request}
+            pending={pending}
+            processing={processing}
+          />
+        </div>
+      )}
+
+      {inView && !isPolyGen && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
             {showDelayedMessage &&
@@ -814,5 +833,87 @@ function CanUpgradeBlock({
         </Text>
       )}
     </>
+  );
+}
+
+/**
+ * Queue card body for 3D Model (polyGen) workflows.
+ *
+ * Renders the generator-provided thumbnail (an `ImageBlob` carried on the
+ * polyGen step's output). DO NOT mount a three.js viewer here — multiple
+ * queued generations would create N WebGL contexts on the page. The full
+ * viewer instantiates on the detail page (see workstream D).
+ *
+ * "Post from Generation" is a stub until workstream G wires the real flow
+ * (`/posts/[id]/edit` after a Post create against the Draft Model3D).
+ */
+function Model3DQueueCardOutputs({
+  request,
+  pending,
+  processing,
+}: {
+  request: WorkflowData;
+  pending: boolean;
+  processing: boolean;
+}) {
+  // PolyGen step outputs aren't currently passed through
+  // `formatStepOutputs` so `step.output` is empty. Read the raw thumbnail
+  // off the step output payload if the orchestrator has surfaced it; fall
+  // back to a placeholder card while pending/processing or if the
+  // workflow returned no thumbnail.
+  const thumbnail = request.steps
+    .map((s) => (s as unknown as { output?: { thumbnail?: { url?: string } } })?.output?.thumbnail)
+    .find((t): t is { url?: string } => !!t);
+
+  const showSpinner = pending || processing;
+
+  return (
+    <div className="flex flex-col gap-2">
+      <TwCard
+        className="flex aspect-square items-center justify-center border"
+        style={{ minHeight: 240 }}
+      >
+        {thumbnail?.url ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={thumbnail.url}
+            alt="3D model thumbnail"
+            className="max-h-full max-w-full object-contain"
+          />
+        ) : showSpinner ? (
+          <div className="flex flex-col items-center gap-2">
+            <Loader size={24} />
+            <Text c="dimmed" size="xs" align="center">
+              Generating 3D model…
+            </Text>
+          </div>
+        ) : (
+          <Text c="dimmed" size="xs" align="center">
+            No preview available yet
+          </Text>
+        )}
+      </TwCard>
+
+      <div className="flex gap-2">
+        {/*
+          NOTE (workstream G): wire this to the real Post-from-Generation
+          flow. It should call a `postsv2.createFromGeneration`-style
+          mutation (or equivalent) seeded with the workflow id, then
+          redirect to `/posts/[id]/edit` so the user can fill in name,
+          license, tags. The draft Model3D row was already created by the
+          workflow result handler (workstream B) so the edit page just
+          needs to bind them via `Post.model3dId`.
+        */}
+        <Button
+          component={Link}
+          href={`/3d-models?fromWorkflow=${encodeURIComponent(request.id)}`}
+          variant="light"
+          size="compact-sm"
+          fullWidth
+        >
+          Post from Generation
+        </Button>
+      </div>
+    </div>
   );
 }

@@ -75,6 +75,13 @@ import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { model3dGenerationSchema } from '~/server/orchestrator/polygen/polygen.schema';
+import {
+  buildPolyGenStep,
+  submitPolyGenWorkflow,
+} from '~/server/services/orchestrator/ecosystems/polyGen.handler';
+import { createImage } from '~/server/services/image.service';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
  * Resolves the currencies to use for a generation request.
@@ -764,5 +771,117 @@ export const orchestratorRouter = router({
         userId: ctx.user!.id,
         ctx,
       });
+    }),
+
+  // ── 3D Model generation (PolyGen / Meshy via Fal) ──
+  //
+  // The form lives at `src/components/Generation/Model3D/Model3DGenerationForm.tsx`.
+  // We expose two procedures:
+  //   - `generate3D` (mutation): ingests source image for imageTo3D, then
+  //     hands off to `submitPolyGenWorkflow` (workstream B).
+  //   - `generate3DWhatIf` (query): same step shape but submitted with
+  //     `whatif: true` so we can show inline cost preview without billing.
+
+  /**
+   * Submit a PolyGen workflow. For imageTo3D, ingests the orchestrator-uploaded
+   * source image as a real `Image` row (skipping NSFW ingestion — the upload
+   * already passed orchestrator's mature-content gate) before submitting so
+   * the workflow result handler can hook `Model3D.sourceImageId` back to it.
+   */
+  generate3D: orchestratorGuardedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(
+      z.object({
+        input: model3dGenerationSchema,
+        buzzType: z.string().optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { input: formInput } = input;
+
+      // For imageTo3D, persist the source image as a regular Image row so
+      // downstream surfaces (Generation Details panel, "Makes/Uses" linkage)
+      // can reference it via FK. skipIngestion=true: the orchestrator already
+      // accepted the upload + scanned for mature content. NSFW scanning here
+      // would double-bill us and gate the workflow on an unrelated job.
+      let sourceImageId: number | undefined;
+      if (formInput.process === 'imageTo3D') {
+        const { sourceImage } = formInput;
+        const created = await createImage({
+          url: sourceImage.url,
+          type: MediaType.image,
+          width: sourceImage.width,
+          height: sourceImage.height,
+          userId: ctx.user.id,
+          meta: { source: 'model3d-generation' } as never,
+          skipIngestion: true,
+        } as Parameters<typeof createImage>[0]);
+        sourceImageId = created.id;
+      }
+
+      try {
+        const workflow = await submitPolyGenWorkflow({
+          data: formInput,
+          token: ctx.token,
+          userId: ctx.user.id,
+          allowMatureContent: ctx.allowMatureContent,
+          sourceImageId,
+        });
+        return {
+          workflowId: workflow.id,
+          cost: workflow.cost?.total ?? 0,
+          sourceImageId,
+        };
+      } catch (e) {
+        logToAxiom({
+          name: 'generate-3d',
+          type: 'error',
+          error: e instanceof Error ? e.message : String(e),
+          userId: ctx.user.id,
+          process: formInput.process,
+        }).catch(() => undefined);
+        throw e;
+      }
+    }),
+
+  /**
+   * Cost preview for a PolyGen workflow. Builds the same PolyGenStep that
+   * `submitPolyGenWorkflow` would, but submits with `whatif: true` so the
+   * orchestrator returns the cost without enqueuing the job.
+   *
+   * We construct the step here rather than calling into `polyGen.handler`
+   * so this whatif path stays self-contained (workstream B's handler is
+   * intentionally unaware of the whatif flag).
+   */
+  generate3DWhatIf: orchestratorGuardedProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(model3dGenerationSchema)
+    .query(async ({ ctx, input }) => {
+      try {
+        const step = buildPolyGenStep(input);
+        const workflow = await submitWorkflow({
+          token: ctx.token,
+          body: {
+            tags: ['generation', 'model3d', 'polyGen', 'meshy', input.process, 'whatif'],
+            steps: [step] as any,
+            allowMatureContent: ctx.allowMatureContent,
+            currencies: [],
+          },
+          query: { whatif: true },
+        });
+        return {
+          ready: true,
+          cost: workflow.cost ?? { base: 0, total: 0 },
+        };
+      } catch (e) {
+        logToAxiom({
+          name: 'generate-3d-whatif',
+          type: 'error',
+          error: e instanceof Error ? e.message : String(e),
+          userId: ctx.user.id,
+          process: input.process,
+        }).catch(() => undefined);
+        return { ready: false, cost: { base: 0, total: 0 } };
+      }
     }),
 });
