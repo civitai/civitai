@@ -726,6 +726,22 @@ export const createPost = async ({
     availability = modelVersion?.model.availability ?? Availability.Public;
   }
 
+  // If linking to a Model3D, verify ownership so users can't claim someone
+  // else's draft. The queue-card flow only ever passes the user's own
+  // workflowId-keyed draft so this is defense-in-depth.
+  if (data.model3dId) {
+    const model3d = await dbWrite.model3D.findUnique({
+      where: { id: data.model3dId },
+      select: { id: true, userId: true, deletedAt: true },
+    });
+    if (!model3d || model3d.deletedAt) {
+      throw throwNotFoundError(`No 3D model with id ${data.model3dId}`);
+    }
+    if (model3d.userId !== userId) {
+      throw throwAuthorizationError('You can only attach posts to your own 3D models.');
+    }
+  }
+
   const post = await dbWrite.post.create({
     data: {
       ...data,

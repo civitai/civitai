@@ -51,6 +51,10 @@ export const postsQuerySchema = baseQuerySchema.merge(
 export type PostCreateInput = z.infer<typeof postCreateSchema>;
 export const postCreateSchema = z.object({
   modelVersionId: z.number().nullish(),
+  // Optional Model3D link — set by the queue-card "Post from Generation" flow
+  // so the Post is bound to the draft Model3D on create. Validated server-side
+  // (must be owner or moderator) inside `createPost`.
+  model3dId: z.number().int().positive().nullish(),
   title: z.string().trim().nullish(),
   detail: z.string().nullish(),
   tag: z.number().nullish(),
