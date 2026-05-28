@@ -78,6 +78,11 @@ export const getModel3DFilesSchema = z.object({
   id: z.number().int().positive(),
 });
 
+export type GetModel3DByThumbnailImageIdInput = z.infer<typeof getModel3DByThumbnailImageIdSchema>;
+export const getModel3DByThumbnailImageIdSchema = z.object({
+  imageId: z.number().int().positive(),
+});
+
 export type GetModel3DRelatedPostsInput = z.infer<typeof getModel3DRelatedPostsSchema>;
 export const getModel3DRelatedPostsSchema = z.object({
   model3dId: z.number().int().positive(),
