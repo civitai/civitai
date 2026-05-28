@@ -266,7 +266,7 @@ export const blocksRouter = router({
 
       const oauthClient = await dbRead.oauthClient.findUnique({
         where: { id: input.oauthClientId },
-        select: { id: true, name: true },
+        select: { id: true, name: true, allowedOrigins: true },
       });
       if (!oauthClient) throw throwNotFoundError('OauthClient not found');
 
@@ -313,7 +313,20 @@ export const blocksRouter = router({
         secret: env.FORGEJO_WEBHOOK_SECRET,
       });
 
-      // 4. Insert pending app_blocks row. apb_ prefix matches the existing
+      // 4. Add the per-app host to OauthClient.allowedOrigins so the
+      // git-push handler's iframe.src check accepts the manifest. Without
+      // this, the first push would 400 with "iframe.src rejected: origin
+      // ... not in OauthClient.allowedOrigins" and require a manual UPDATE.
+      const newOrigin = `https://${input.slug}.${env.APPS_DOMAIN}`;
+      const currentOrigins = oauthClient.allowedOrigins ?? [];
+      if (!currentOrigins.includes(newOrigin)) {
+        await dbWrite.oauthClient.update({
+          where: { id: oauthClient.id },
+          data: { allowedOrigins: [...currentOrigins, newOrigin] },
+        });
+      }
+
+      // 5. Insert pending app_blocks row. apb_ prefix matches the existing
       // hackathon row (apb_01KSD3NP23CQE4TMW14XTEFSNS) — keep that
       // convention here even though the v1 developer-endpoint uses ab_.
       const id = `apb_${newUlid()}`;
