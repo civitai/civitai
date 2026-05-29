@@ -43,3 +43,24 @@ export const withdrawRequestSchema = z.object({
 });
 
 export type WithdrawRequestInput = z.infer<typeof withdrawRequestSchema>;
+
+export const listPendingRequestsSchema = z.object({
+  limit: z.number().int().min(1).max(100).optional(),
+  cursor: z.string().min(1).max(64).optional(),
+});
+
+export type ListPendingRequestsInput = z.infer<typeof listPendingRequestsSchema>;
+
+export const approveRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  approvalNotes: z.string().max(2000).optional(),
+});
+
+export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
+
+export const rejectRequestSchema = z.object({
+  publishRequestId: z.string().min(1).max(64),
+  rejectionReason: z.string().min(10).max(2000),
+});
+
+export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;

@@ -14,6 +14,9 @@ import {
   subscriptionScopeSchema,
 } from '~/server/schema/blocks/subscription.schema';
 import {
+  approveRequestSchema,
+  listPendingRequestsSchema,
+  rejectRequestSchema,
   submitVersionSchema,
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
@@ -469,6 +472,82 @@ export const blocksRouter = router({
         await withdrawRequest({
           publishRequestId: input.publishRequestId,
           userId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+        });
+      }
+      return { ok: true };
+    }),
+
+  /**
+   * Mod queue: paginated list of publish requests waiting for review,
+   * oldest first. Powers /apps/review.
+   */
+  listPendingRequests: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listPendingRequestsSchema)
+    .query(async ({ ctx, input }) => {
+      const { listPendingRequests } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review queue is restricted to civitai team');
+      }
+      return listPendingRequests({ limit: input.limit, cursor: input.cursor });
+    }),
+
+  /**
+   * Approve a pending publish request: pre-creates the OauthClient +
+   * app_blocks row (first version), commits the bundle to Forgejo in a
+   * single atomic commit, and lets the existing git-push webhook fire
+   * the Tekton build chain.
+   */
+  approveRequest: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(approveRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { approveRequest } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Approving publish requests is restricted to civitai team');
+      }
+      try {
+        return await approveRequest({
+          publishRequestId: input.publishRequestId,
+          reviewerUserId: ctx.user.id,
+          approvalNotes: input.approvalNotes,
+        });
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+        });
+      }
+    }),
+
+  /**
+   * Reject a pending publish request. Reason is required (≥10 chars) and
+   * shown to the dev inline on /apps/my-submissions.
+   */
+  rejectRequest: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(rejectRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { rejectRequest } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Rejecting publish requests is restricted to civitai team');
+      }
+      try {
+        await rejectRequest({
+          publishRequestId: input.publishRequestId,
+          reviewerUserId: ctx.user.id,
+          rejectionReason: input.rejectionReason,
         });
       } catch (err) {
         throw new TRPCError({

@@ -220,3 +220,114 @@ export async function setCommitStatus(opts: {
   });
   await unwrap<unknown>(res);
 }
+
+/**
+ * Recursively list every blob in the repo's branch HEAD as
+ * Map<path, sha>. Used by `commitFiles` to know which paths need
+ * delete-vs-update, and to look up blob SHAs for updates.
+ */
+async function listRepoTree(slug: string, branch: string): Promise<Map<string, string>> {
+  const branchRes = await fjFetch(
+    `/api/v1/repos/${FORGEJO_ORG}/${slug}/branches/${encodeURIComponent(branch)}`
+  );
+  const branchInfo = await unwrap<{ commit: { id: string } }>(branchRes);
+  const treeRes = await fjFetch(
+    `/api/v1/repos/${FORGEJO_ORG}/${slug}/git/trees/${branchInfo.commit.id}?recursive=true&per_page=1000`
+  );
+  const tree = await unwrap<{
+    tree: Array<{ path: string; type: string; sha: string }>;
+    truncated?: boolean;
+  }>(treeRes);
+  if (tree.truncated) {
+    throw new Error(
+      `Forgejo tree for ${slug}@${branch} is truncated (>1000 entries); pagination not implemented`
+    );
+  }
+  const result = new Map<string, string>();
+  for (const item of tree.tree) {
+    if (item.type === 'blob') result.set(item.path, item.sha);
+  }
+  return result;
+}
+
+/**
+ * Replace the contents of `main` with a single atomic commit:
+ *   - create files in `files` that aren't already in the repo
+ *   - update files in `files` that differ from the repo
+ *   - delete files in the repo that aren't in `files` (when
+ *     `replaceAllFiles` is true)
+ *
+ * Single multi-file commit means: one push event, one webhook fire,
+ * one Tekton build, one apply. Avoids the N-PUTs-N-builds storm of
+ * file-by-file uploads.
+ *
+ * `files[].content` must be a Buffer (text or binary); function
+ * base64-encodes for the Forgejo API.
+ */
+export async function commitFiles(opts: {
+  slug: string;
+  files: Array<{ path: string; content: Buffer }>;
+  message: string;
+  branch?: string;
+  replaceAllFiles?: boolean;
+}): Promise<{ sha: string }> {
+  const branch = opts.branch ?? 'main';
+  const tree = await listRepoTree(opts.slug, branch);
+  const targetPaths = new Set(opts.files.map((f) => f.path));
+
+  const operations: Array<{
+    operation: 'create' | 'update' | 'delete';
+    path: string;
+    content?: string;
+    sha?: string;
+  }> = [];
+
+  for (const file of opts.files) {
+    const existingSha = tree.get(file.path);
+    const contentB64 = file.content.toString('base64');
+    if (existingSha) {
+      operations.push({
+        operation: 'update',
+        path: file.path,
+        content: contentB64,
+        sha: existingSha,
+      });
+    } else {
+      operations.push({
+        operation: 'create',
+        path: file.path,
+        content: contentB64,
+      });
+    }
+  }
+
+  if (opts.replaceAllFiles) {
+    for (const [path, sha] of tree) {
+      if (!targetPaths.has(path)) {
+        operations.push({ operation: 'delete', path, sha });
+      }
+    }
+  }
+
+  if (operations.length === 0) {
+    // Nothing to commit (bundle identical to repo state). Caller can
+    // treat this as a no-op approve. Return current HEAD SHA so the
+    // publish_request still gets a forgejo_commit_sha pointer.
+    const branchRes = await fjFetch(
+      `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/branches/${encodeURIComponent(branch)}`
+    );
+    const branchInfo = await unwrap<{ commit: { id: string } }>(branchRes);
+    return { sha: branchInfo.commit.id };
+  }
+
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/contents`, {
+    method: 'POST',
+    body: JSON.stringify({
+      files: operations,
+      message: opts.message,
+      branch,
+    }),
+  });
+  const result = await unwrap<{ commit: { sha: string } }>(res);
+  return { sha: result.commit.sha };
+}

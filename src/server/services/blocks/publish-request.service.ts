@@ -1,4 +1,4 @@
-import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { createHash } from 'crypto';
 import JSZip from 'jszip';
 import {
@@ -449,5 +449,314 @@ export async function withdrawRequest(opts: {
   await dbWrite.appBlockPublishRequest.update({
     where: { id: publishRequestId },
     data: { status: 'withdrawn' },
+  });
+}
+
+/**
+ * Re-fetch the bundle from MinIO and extract path → content map. Used
+ * during approve to push files to Forgejo. Returns Buffer per file (we
+ * need binary fidelity for non-text files).
+ */
+async function fetchAndExtractBundleFiles(
+  bundleKey: string
+): Promise<Array<{ path: string; content: Buffer }>> {
+  const { getBundleBucket, getBundleS3Client } = await import('~/utils/bundle-s3');
+  const client = getBundleS3Client();
+  const obj = await client.send(
+    new GetObjectCommand({ Bucket: getBundleBucket(), Key: bundleKey })
+  );
+  if (!obj.Body) throw new Error(`bundle ${bundleKey} not found in S3`);
+  const bytes = await obj.Body.transformToByteArray();
+  const bundleBuffer = Buffer.from(bytes);
+
+  const zip = await JSZip.loadAsync(bundleBuffer);
+  const out: Array<{ path: string; content: Buffer }> = [];
+  for (const [path, entry] of Object.entries(zip.files)) {
+    if (entry.dir) continue;
+    out.push({ path, content: await entry.async('nodebuffer') });
+  }
+  return out;
+}
+
+export type ListPendingRequestsOptions = {
+  limit?: number;
+  cursor?: string;
+};
+
+/**
+ * Mod queue: paginated list of publish requests in status='pending',
+ * oldest first (FIFO). Includes the submitter's basic profile so the
+ * review UI doesn't round-trip per row.
+ */
+export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
+  const { dbRead } = await import('~/server/db/client');
+  const limit = Math.min(opts.limit ?? 25, 100);
+  const rows = await dbRead.appBlockPublishRequest.findMany({
+    where: { status: 'pending' },
+    orderBy: { submittedAt: 'asc' },
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    select: {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      submittedAt: true,
+      bundleSizeBytes: true,
+      bundleSha256: true,
+      manifest: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      submittedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  const hasNext = rows.length > limit;
+  const items = hasNext ? rows.slice(0, limit) : rows;
+  return {
+    items: items.map((r: (typeof rows)[number]) => ({
+      ...r,
+      // BigInt isn't JSON-serializable through tRPC's default transformer;
+      // surface as a string. UI can format with Intl.NumberFormat.
+      bundleSizeBytes: r.bundleSizeBytes.toString(),
+    })),
+    nextCursor: hasNext ? items[items.length - 1].id : null,
+  };
+}
+
+export type ApproveRequestParams = {
+  publishRequestId: string;
+  reviewerUserId: number;
+  approvalNotes?: string;
+};
+
+export type ApproveRequestResult = {
+  publishRequestId: string;
+  appBlockId: string;
+  forgejoCommitSha: string;
+  isFirstVersion: boolean;
+};
+
+/**
+ * Approve a pending publish request. End-to-end:
+ *   1. (first version only) auto-create OauthClient owned by the submitter
+ *   2. (first version only) create Forgejo repo from starter + webhook
+ *   3. pre-insert app_blocks row (status='approved') so the downstream
+ *      Forgejo webhook (existing git-push handler) finds it
+ *   4. fetch bundle from MinIO, extract files
+ *   5. commitFiles to Forgejo (single atomic commit, replaceAllFiles=true)
+ *   6. update publish_request → status='approved'
+ *
+ * The Forgejo push webhook fires from step 5 and the existing git-push
+ * handler takes over: validates manifest, updates app_blocks
+ * (currentVersionSha), triggers Tekton build.
+ *
+ * Partial-state risk: if step 5 fails after step 1-3 succeeded, the
+ * OauthClient + app_blocks rows are orphaned. v0 surfaces this; v1
+ * adds a compensation transaction.
+ */
+export async function approveRequest(
+  params: ApproveRequestParams
+): Promise<ApproveRequestResult> {
+  const [{ dbRead, dbWrite }, { newUlid }, { env }] = await Promise.all([
+    import('~/server/db/client'),
+    import('~/server/utils/app-block-ids'),
+    import('~/env/server'),
+  ]);
+  const { commitFiles, createRepoFromTemplate, ensurePushWebhook } = await import(
+    './forgejo.service'
+  );
+
+  if (!env.FORGEJO_BASE_URL || !env.FORGEJO_ADMIN_TOKEN || !env.FORGEJO_WEBHOOK_SECRET) {
+    throw new Error('Forgejo not configured');
+  }
+
+  const request = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: params.publishRequestId },
+    select: {
+      id: true,
+      status: true,
+      slug: true,
+      version: true,
+      manifest: true,
+      bundleKey: true,
+      submittedByUserId: true,
+      appBlockId: true,
+    },
+  });
+  if (!request) throw new Error(`publish request ${params.publishRequestId} not found`);
+  if (request.status !== 'pending') {
+    throw new Error(`cannot approve a request in status ${request.status}`);
+  }
+
+  const manifest = request.manifest as Record<string, unknown>;
+  const manifestScopes = Array.isArray(manifest.scopes)
+    ? (manifest.scopes as string[])
+    : [];
+  const manifestContentRating =
+    typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
+  const manifestRenderMode =
+    typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
+  const manifestTrustTier =
+    typeof manifest.trustTier === 'string' ? manifest.trustTier : 'internal';
+
+  // Determine first-vs-subsequent via the existing app_blocks row.
+  // We don't rely on request.appBlockId being null because two requests
+  // could land for the same slug before the first is approved.
+  const existingAppBlock = await dbRead.appBlock.findFirst({
+    where: { blockId: request.slug },
+    select: { id: true, appId: true, repoUrl: true },
+  });
+  const isFirstVersion = !existingAppBlock;
+
+  let appBlockId: string;
+  let repoUrl: string;
+
+  if (isFirstVersion) {
+    // (1) Auto-create OauthClient — public client scoped to the per-app
+    // subdomain so the existing git-push manifest validator passes the
+    // H8 origin binding check.
+    const oauthClientId = `${newUlid().toLowerCase()}-app-block-${request.slug}`;
+    const oauthClientName =
+      typeof manifest.name === 'string' && manifest.name.length > 0
+        ? manifest.name.slice(0, 80)
+        : `App Block: ${request.slug}`;
+    await dbWrite.oauthClient.create({
+      data: {
+        id: oauthClientId,
+        secret: null,
+        name: oauthClientName,
+        description: '',
+        redirectUris: [],
+        allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
+        isConfidential: false,
+        userId: request.submittedByUserId,
+      },
+    });
+
+    // (2) Create Forgejo repo seeded from the starter + push webhook.
+    const repo = await createRepoFromTemplate({
+      slug: request.slug,
+      description: oauthClientName,
+      template: 'starter',
+    });
+    repoUrl = repo.html_url;
+    const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')}/api/internal/blocks/git-push`;
+    await ensurePushWebhook({
+      slug: request.slug,
+      callbackUrl,
+      secret: env.FORGEJO_WEBHOOK_SECRET,
+    });
+
+    // (3) Insert app_blocks row so the downstream git-push handler finds
+    // it. status='approved' + repoUrl populated; currentVersionSha gets
+    // filled in by the webhook after the Forgejo commit.
+    appBlockId = `apb_${newUlid()}`;
+    await dbWrite.appBlock.create({
+      data: {
+        id: appBlockId,
+        appId: oauthClientId,
+        blockId: request.slug,
+        version: request.version,
+        manifest: manifest as object,
+        status: 'approved',
+        contentRating: manifestContentRating,
+        renderMode: manifestRenderMode,
+        trustTier: manifestTrustTier,
+        approvedScopes: manifestScopes,
+        repoUrl,
+      },
+    });
+  } else {
+    appBlockId = existingAppBlock.id;
+    repoUrl = existingAppBlock.repoUrl ?? '';
+    // Subsequent version: refresh manifest + version + approvedScopes
+    // on the existing row. currentVersionSha is updated by the
+    // git-push webhook after the upcoming Forgejo commit.
+    await dbWrite.appBlock.update({
+      where: { id: appBlockId },
+      data: {
+        manifest: manifest as object,
+        version: request.version,
+        approvedScopes: manifestScopes,
+        contentRating: manifestContentRating,
+        renderMode: manifestRenderMode,
+        trustTier: manifestTrustTier,
+      },
+    });
+  }
+
+  // (4) Fetch + extract bundle. Single MinIO GET; the per-file extract
+  // happens in-memory.
+  const files = await fetchAndExtractBundleFiles(request.bundleKey);
+
+  // (5) Atomic single-commit replacement of the repo contents. Fires
+  // exactly one Forgejo webhook → one git-push handler invocation →
+  // one Tekton build → one apply Job.
+  const commitMessage = `Approved publish request ${request.id} — ${request.slug} v${request.version}`;
+  const { sha: forgejoCommitSha } = await commitFiles({
+    slug: request.slug,
+    files,
+    message: commitMessage,
+    replaceAllFiles: true,
+  });
+
+  // (6) Finalise the publish request.
+  await dbWrite.appBlockPublishRequest.update({
+    where: { id: request.id },
+    data: {
+      status: 'approved',
+      reviewedByUserId: params.reviewerUserId,
+      reviewedAt: new Date(),
+      approvalNotes: params.approvalNotes,
+      forgejoCommitSha,
+      appBlockId,
+    },
+  });
+
+  return {
+    publishRequestId: request.id,
+    appBlockId,
+    forgejoCommitSha,
+    isFirstVersion,
+  };
+}
+
+export type RejectRequestParams = {
+  publishRequestId: string;
+  reviewerUserId: number;
+  rejectionReason: string;
+};
+
+/**
+ * Reject a pending publish request. Reason is required and shown to the
+ * dev inline on /apps/my-submissions.
+ */
+export async function rejectRequest(params: RejectRequestParams): Promise<void> {
+  const { dbRead, dbWrite } = await import('~/server/db/client');
+  const reason = params.rejectionReason.trim();
+  if (reason.length < 10) {
+    throw new Error('rejection reason must be at least 10 characters');
+  }
+  if (reason.length > 2000) {
+    throw new Error('rejection reason must be at most 2000 characters');
+  }
+
+  const row = await dbRead.appBlockPublishRequest.findUnique({
+    where: { id: params.publishRequestId },
+    select: { id: true, status: true },
+  });
+  if (!row) throw new Error(`publish request ${params.publishRequestId} not found`);
+  if (row.status !== 'pending') {
+    throw new Error(`cannot reject a request in status ${row.status}`);
+  }
+
+  await dbWrite.appBlockPublishRequest.update({
+    where: { id: row.id },
+    data: {
+      status: 'rejected',
+      reviewedByUserId: params.reviewerUserId,
+      reviewedAt: new Date(),
+      rejectionReason: reason,
+    },
   });
 }
