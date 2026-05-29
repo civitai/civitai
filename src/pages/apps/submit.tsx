@@ -5,37 +5,49 @@ import {
   Card,
   Code,
   Container,
+  FileInput,
   Group,
-  SegmentedControl,
-  Select,
   Stack,
   Text,
   TextInput,
-  Textarea,
   Title,
 } from '@mantine/core';
-import { IconCheck, IconExternalLink, IconGitBranch, IconInfoCircle } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCheck,
+  IconCloudUpload,
+  IconFileZip,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  MAX_BUNDLE_SIZE_BYTES,
+  SEMVER_REGEX,
+  SLUG_REGEX,
+} from '~/server/schema/blocks/publish-request.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 /**
- * /apps/submit — Civitai-team-only App Block submission form.
+ * /apps/submit — Submit a new app or a new version of an existing app.
  *
- * Creates a Forgejo repo under civitai-apps/<slug> from the starter
- * template, attaches a push webhook, and inserts a pending app_blocks
- * row. The developer then pushes code to the repo; the next push
- * triggers a Tekton build, then an apply Job, and the app is live at
- * <slug>.civit.ai.
+ * The dev uploads a ZIP containing their entire app source tree
+ * (Dockerfile + block.manifest.json + index.html + src/...). The
+ * platform stores the bundle, computes a diff summary against the
+ * previous approved version (if any), and queues a publish request
+ * for moderator review at /apps/review.
  *
- * v0 gate: requires `isModerator`. v1 (W5 + W1) opens to external
- * developers behind the moderator-review queue.
+ * v0 gate: requires `isModerator`. v1 (W11 audit + W5 scopes) opens to
+ * external developers.
+ *
+ * The submission form is intentionally backend-agnostic — devs don't
+ * see Forgejo, ghcr.io, Tekton, or any of the deploy substrate. They
+ * submit a ZIP and get a status page.
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -57,33 +69,43 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-type SubmittedApp = {
-  appBlockId: string;
+type Submitted = {
+  publishRequestId: string;
   slug: string;
-  repoUrl: string;
-  cloneUrl: string;
+  version: string;
 };
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string | null;
+      if (!result) return reject(new Error('FileReader returned empty result'));
+      // result format: "data:application/zip;base64,<base64>"
+      const idx = result.indexOf(',');
+      if (idx < 0) return reject(new Error('FileReader result missing comma'));
+      resolve(result.slice(idx + 1));
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('FileReader failed'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function SubmitAppPage() {
   const features = useFeatureFlags();
-
-  // OAuth client picker — every block must be backed by an OauthClient
-  // (per app_blocks.app_id FK). v0 lists clients the operator owns;
-  // future W5 work narrows this further to a per-team scope.
-  const oauthClientsQuery = trpc.oauthClient.getAll.useQuery(undefined, {
-    enabled: !!features?.appBlocks,
-  });
-  const oauthClients = oauthClientsQuery.data ?? [];
-
   const [slug, setSlug] = useState('');
-  const [oauthMode, setOauthMode] = useState<'autoCreate' | 'existing'>('autoCreate');
-  const [oauthClientId, setOauthClientId] = useState<string | null>(null);
-  const [description, setDescription] = useState('');
-  const [submitted, setSubmitted] = useState<SubmittedApp | null>(null);
+  const [version, setVersion] = useState('0.1.0');
+  const [bundle, setBundle] = useState<File | null>(null);
+  const [encoding, setEncoding] = useState(false);
+  const [submitted, setSubmitted] = useState<Submitted | null>(null);
 
-  const submitMutation = trpc.blocks.submitApp.useMutation({
+  const submitMutation = trpc.blocks.submitVersion.useMutation({
     onSuccess: (result) => {
-      setSubmitted(result);
+      setSubmitted({
+        publishRequestId: result.publishRequestId,
+        slug: result.slug,
+        version: result.version,
+      });
     },
     onError: (err) => {
       showErrorNotification({ title: 'Submission failed', error: new Error(err.message) });
@@ -92,35 +114,56 @@ export default function SubmitAppPage() {
 
   if (!features?.appBlocks) return <NotFound />;
 
-  const slugValid = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/.test(slug);
-  const oauthChoiceValid = oauthMode === 'autoCreate' || !!oauthClientId;
-  const canSubmit = slugValid && oauthChoiceValid && !submitMutation.isLoading && !submitted;
+  const slugValid = SLUG_REGEX.test(slug) && slug.length >= 3 && slug.length <= 40;
+  const versionValid = SEMVER_REGEX.test(version);
+  const bundleValid =
+    !!bundle && bundle.size > 0 && bundle.size <= MAX_BUNDLE_SIZE_BYTES;
+  const bundleTooLarge = !!bundle && bundle.size > MAX_BUNDLE_SIZE_BYTES;
+  const busy = encoding || submitMutation.isLoading || !!submitted;
+  const canSubmit = slugValid && versionValid && bundleValid && !busy;
+
+  async function handleSubmit() {
+    if (!bundle) return;
+    setEncoding(true);
+    try {
+      const bundleBase64 = await fileToBase64(bundle);
+      submitMutation.mutate({ slug, version, bundleBase64 });
+    } catch (err) {
+      showErrorNotification({
+        title: 'Could not read file',
+        error: err as Error,
+      });
+    } finally {
+      setEncoding(false);
+    }
+  }
 
   return (
     <>
-      <Meta title="Submit an App Block — Civitai" deIndex />
+      <Meta title="Submit an app — Civitai" deIndex />
       <Container size="sm" py="xl">
         <Stack gap="lg">
           <Stack gap={4}>
-            <Title order={2}>Submit a new App Block</Title>
+            <Title order={2}>Submit an app</Title>
             <Text c="dimmed" size="sm">
-              Civitai team only. Creates a new repo in the civitai-apps Forgejo organisation
-              from the starter template + wires up auto-deploy. Push to <Code>main</Code> to
-              roll out a new version.
+              Upload a ZIP of your app source. A moderator will review the manifest +
+              change summary, then approve or reject with feedback. Approved
+              submissions deploy automatically to{' '}
+              <Code>{slug ? `${slug}.civit.ai` : '<slug>.civit.ai'}</Code>.
             </Text>
           </Stack>
 
           {submitted ? (
-            <SuccessCard app={submitted} />
+            <SuccessCard submitted={submitted} />
           ) : (
             <Card withBorder p="lg">
               <Stack gap="md">
                 <TextInput
-                  label="Slug"
-                  description="Used for the repo name, k8s resources, and the public subdomain (<slug>.civit.ai). Lowercase a-z, 0-9, hyphens. 3-40 chars."
+                  label="App slug"
+                  description="Used as the public subdomain (<slug>.civit.ai) and the install key. Lowercase a-z, 0-9, hyphens. 3-40 chars. Must match block.manifest.json blockId."
                   placeholder="generate-from-model"
                   value={slug}
-                  onChange={(e) => setSlug(e.currentTarget.value.toLowerCase())}
+                  onChange={(e) => setSlug(e.currentTarget.value.toLowerCase().trim())}
                   error={
                     slug.length > 0 && !slugValid
                       ? 'must be lowercase a-z, 0-9, hyphens; start with a letter; end with a letter or digit'
@@ -130,83 +173,55 @@ export default function SubmitAppPage() {
                   data-autofocus
                 />
 
-                <Stack gap={6}>
-                  <Text size="sm" fw={500}>
-                    OAuth client (app)
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Every block is backed by an OauthClient (scope set + allowed origins). Default is to
-                    create a fresh public client scoped to this app.
-                  </Text>
-                  <SegmentedControl
-                    value={oauthMode}
-                    onChange={(v) => setOauthMode(v as 'autoCreate' | 'existing')}
-                    data={[
-                      { label: 'Create new', value: 'autoCreate' },
-                      {
-                        label:
-                          oauthClients.length === 0
-                            ? 'Use existing (none owned)'
-                            : 'Use existing',
-                        value: 'existing',
-                        disabled: oauthClients.length === 0,
-                      },
-                    ]}
-                  />
-                  {oauthMode === 'autoCreate' ? (
-                    <Text size="xs" c="dimmed">
-                      A new public OauthClient will be created, owned by you, with allowed origin{' '}
-                      <Code>https://{slug || '<slug>'}.civit.ai</Code>.
-                    </Text>
-                  ) : (
-                    <Select
-                      placeholder={
-                        oauthClientsQuery.isLoading ? 'Loading…' : 'Choose an OAuth client'
-                      }
-                      data={oauthClients.map((c: { id: string; name: string }) => ({
-                        value: c.id,
-                        label: c.name,
-                      }))}
-                      value={oauthClientId}
-                      onChange={setOauthClientId}
-                      searchable
-                      nothingFoundMessage="No OAuth clients found"
-                    />
-                  )}
-                </Stack>
+                <TextInput
+                  label="Version"
+                  description="Semver. Must match the version in your block.manifest.json. Increment on every submission."
+                  placeholder="0.1.0"
+                  value={version}
+                  onChange={(e) => setVersion(e.currentTarget.value.trim())}
+                  error={
+                    version.length > 0 && !versionValid
+                      ? 'must be semver (e.g. 0.1.0, 1.2.3-beta)'
+                      : null
+                  }
+                  required
+                />
 
-                <Textarea
-                  label="Description"
-                  description="Shown in the Forgejo repo description and on the marketplace card."
-                  placeholder="Generate images from this model using the iframe-hosted block"
-                  value={description}
-                  onChange={(e) => setDescription(e.currentTarget.value)}
-                  autosize
-                  minRows={2}
-                  maxRows={4}
+                <FileInput
+                  label="App bundle (.zip)"
+                  description={`ZIP of your app source: Dockerfile + block.manifest.json + index.html + src/. Max ${Math.round(MAX_BUNDLE_SIZE_BYTES / (1024 * 1024))} MiB.`}
+                  placeholder="my-app.zip"
+                  accept=".zip,application/zip,application/x-zip-compressed"
+                  value={bundle}
+                  onChange={setBundle}
+                  leftSection={<IconFileZip size={16} />}
+                  required
+                  error={bundleTooLarge ? 'bundle exceeds the size limit' : null}
                 />
 
                 <Alert
-                  icon={<IconInfoCircle size={16} />}
+                  icon={<IconCheck size={16} />}
                   color="blue"
                   variant="light"
                   title="What happens next"
                 >
                   <Text size="sm" mb={6}>
-                    1. We create <Code>civitai-apps/{slug || '<slug>'}</Code> on Forgejo from
-                    the starter template.
+                    1. We store your bundle and compute a diff against the previous approved version (if any).
                   </Text>
                   <Text size="sm" mb={6}>
-                    2. We attach a push webhook so every commit to <Code>main</Code> triggers
-                    a build via dc-02-a Tekton.
+                    2. A moderator reviews the manifest + change summary on{' '}
+                    <Code>/apps/review</Code>.
                   </Text>
                   <Text size="sm" mb={6}>
-                    3. The first successful build deploys the static bundle at{' '}
-                    <Code>{slug ? `${slug}.civit.ai` : '<slug>.civit.ai'}</Code>.
+                    3. On approve, the platform deploys your build to{' '}
+                    <Code>{slug ? `${slug}.civit.ai` : '<slug>.civit.ai'}</Code> automatically.
                   </Text>
                   <Text size="sm">
-                    4. Update <Code>block.manifest.json</Code> in the new repo to install the
-                    block on a model (existing <Code>installOnModel</Code> tRPC flow).
+                    4. On reject, you'll see the reviewer's feedback inline on{' '}
+                    <Anchor component={Link} href="/apps/my-submissions">
+                      /apps/my-submissions
+                    </Anchor>
+                    .
                   </Text>
                 </Alert>
 
@@ -214,24 +229,18 @@ export default function SubmitAppPage() {
                   <Button
                     variant="default"
                     component={Link}
-                    href="/apps/installed"
-                    disabled={submitMutation.isLoading}
+                    href="/apps/my-submissions"
+                    disabled={busy}
                   >
                     Cancel
                   </Button>
                   <Button
-                    leftSection={<IconGitBranch size={16} />}
-                    onClick={() =>
-                      submitMutation.mutate({
-                        slug,
-                        oauthClientId: oauthMode === 'existing' ? oauthClientId! : undefined,
-                        description: description.trim() || undefined,
-                      })
-                    }
+                    leftSection={<IconCloudUpload size={16} />}
+                    onClick={handleSubmit}
                     disabled={!canSubmit}
-                    loading={submitMutation.isLoading}
+                    loading={busy}
                   >
-                    Create repo
+                    Submit for review
                   </Button>
                 </Group>
               </Stack>
@@ -243,47 +252,38 @@ export default function SubmitAppPage() {
   );
 }
 
-function SuccessCard({ app }: { app: SubmittedApp }) {
+function SuccessCard({ submitted }: { submitted: Submitted }) {
   return (
     <Card withBorder p="lg">
       <Stack gap="md">
         <Group gap="xs">
-          <IconCheck color="var(--mantine-color-green-6)" size={20} />
-          <Title order={4}>Repo created</Title>
+          <IconAlertTriangle color="var(--mantine-color-blue-6)" size={20} />
+          <Title order={4}>Submitted — pending review</Title>
         </Group>
         <Text size="sm">
-          <Code>civitai-apps/{app.slug}</Code> is ready. Clone it, push your initial commit to{' '}
-          <Code>main</Code>, and watch the Forgejo commit-status updates for build + deploy
-          progress.
+          Your submission for <Code>{submitted.slug}</Code> v
+          <Code>{submitted.version}</Code> is in the moderator queue. You'll see
+          the result on{' '}
+          <Anchor component={Link} href="/apps/my-submissions">
+            /apps/my-submissions
+          </Anchor>{' '}
+          when a reviewer approves or rejects.
         </Text>
+        <Group>
+          <Button component={Link} href="/apps/my-submissions">
+            View my submissions
+          </Button>
+          <Button component={Link} href="/apps/submit" variant="default">
+            Submit another
+          </Button>
+        </Group>
         <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Repo
+          <Text size="xs" c="dimmed">
+            Request ID
           </Text>
-          <Anchor href={app.repoUrl} target="_blank" rel="noopener" size="sm">
-            <Group gap={4}>
-              <Text component="span">{app.repoUrl}</Text>
-              <IconExternalLink size={14} />
-            </Group>
-          </Anchor>
-        </Stack>
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Clone URL
-          </Text>
-          <Code block>{`git clone ${app.cloneUrl}`}</Code>
-        </Stack>
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Public URL (live after first successful build)
-          </Text>
-          <Code block>{`https://${app.slug}.civit.ai/`}</Code>
-        </Stack>
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            App Block ID
-          </Text>
-          <Code block>{app.appBlockId}</Code>
+          <Code block style={{ fontSize: 11 }}>
+            {submitted.publishRequestId}
+          </Code>
         </Stack>
       </Stack>
     </Card>
