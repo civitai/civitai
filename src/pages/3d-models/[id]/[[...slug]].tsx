@@ -290,61 +290,41 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </Group>
           </Group>
 
-          {/* Body grid: main column + sidebar on desktop, stacked on mobile. */}
+          {/* Viewer pulled out of the grid so it sits full-width above on both
+              mobile and desktop. This lets us reorder the remaining columns so
+              that on mobile (single column) the sidebar (files / gen details /
+              creator / reviews) appears directly under the viewer, with the
+              main column content (description / makes-uses / comments) below. */}
+          <Card withBorder radius="md" p={0} className="overflow-hidden">
+            {primaryFile ? (
+              <Model3DViewer
+                // Use the resolved/presigned downloadUrl so the browser can
+                // actually fetch the GLB — the raw `url` may point at a
+                // bucket the public delivery worker doesn't authorize.
+                url={primaryFile.downloadUrl ?? primaryFile.url}
+                format={primaryFile.format}
+                sizeKB={primaryFile.sizeKB}
+              />
+            ) : (
+              <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
+                <Stack align="center" gap="xs" maw={420} ta="center">
+                  <IconCube size={48} stroke={1.5} />
+                  <Text fw={600}>No files yet</Text>
+                  <Text size="sm" c="dimmed">
+                    The 3D files for this model are still being processed.
+                  </Text>
+                </Stack>
+              </Box>
+            )}
+          </Card>
+
+          {/* Body grid: main column + sidebar on desktop, stacked on mobile.
+              Sidebar Col is FIRST in DOM order so on mobile (single column) it
+              renders directly under the viewer. On md+ the `order` prop swaps
+              the columns visually so the main column is on the left. */}
           <ContainerGrid2 gutter="xl">
-            {/* Main column — viewer, description, makes/uses, comments */}
-            <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
-              <Stack gap="md">
-                {/* Viewer */}
-                <Card withBorder radius="md" p={0} className="overflow-hidden">
-                  {primaryFile ? (
-                    <Model3DViewer
-                      // Use the resolved/presigned downloadUrl so the browser can
-                      // actually fetch the GLB — the raw `url` may point at a
-                      // bucket the public delivery worker doesn't authorize.
-                      url={primaryFile.downloadUrl ?? primaryFile.url}
-                      format={primaryFile.format}
-                      sizeKB={primaryFile.sizeKB}
-                    />
-                  ) : (
-                    <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
-                      <Stack align="center" gap="xs" maw={420} ta="center">
-                        <IconCube size={48} stroke={1.5} />
-                        <Text fw={600}>No files yet</Text>
-                        <Text size="sm" c="dimmed">
-                          The 3D files for this model are still being processed.
-                        </Text>
-                      </Stack>
-                    </Box>
-                  )}
-                </Card>
-
-                {/* Description */}
-                {model3d.description && (
-                  <Card withBorder radius="md" p="md">
-                    <Stack gap="xs">
-                      <Title order={3}>About this model</Title>
-                      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                        {model3d.description}
-                      </Text>
-                    </Stack>
-                  </Card>
-                )}
-
-                {/* Makes & Uses */}
-                <MakesUsesRail model3dId={id} />
-
-                <Divider />
-
-                {/* Comments */}
-                <div id="comments">
-                  <Model3DComments model3dId={id} userId={model3d.user.id} />
-                </div>
-              </Stack>
-            </ContainerGrid2.Col>
-
             {/* Sidebar — files dropdown + generation details + creator + reviews preview */}
-            <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+            <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ base: 1, md: 2 }}>
               <Stack gap="md">
                 {/* Files dropdown + download */}
                 <Card withBorder radius="md" p="md">
@@ -505,6 +485,33 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     </Anchor>
                   </Stack>
                 </Card>
+              </Stack>
+            </ContainerGrid2.Col>
+
+            {/* Main column — description, makes/uses, comments */}
+            <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ base: 2, md: 1 }}>
+              <Stack gap="md">
+                {/* Description */}
+                {model3d.description && (
+                  <Card withBorder radius="md" p="md">
+                    <Stack gap="xs">
+                      <Title order={3}>About this model</Title>
+                      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                        {model3d.description}
+                      </Text>
+                    </Stack>
+                  </Card>
+                )}
+
+                {/* Makes & Uses */}
+                <MakesUsesRail model3dId={id} />
+
+                <Divider />
+
+                {/* Comments */}
+                <div id="comments">
+                  <Model3DComments model3dId={id} userId={model3d.user.id} />
+                </div>
               </Stack>
             </ContainerGrid2.Col>
           </ContainerGrid2>
