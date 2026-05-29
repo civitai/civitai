@@ -682,6 +682,19 @@ const baseModelGenerationConfig: BaseModelGenerationConfig[] = [
     ],
   },
   {
+    group: 'Anima',
+    support: [
+      {
+        modelTypes: [
+          ModelType.Checkpoint,
+          ModelType.LORA,
+          ModelType.DoRA,
+        ],
+        baseModels: ['Anima'],
+      },
+    ],
+  },
+  {
     group: 'Chroma',
     support: [
       {
