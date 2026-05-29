@@ -424,18 +424,28 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const version = manifest.version;
 
   // Block double-submit on the same slug — only one pending request per
-  // slug at a time. Caller's UI should withdraw the existing pending
-  // request before re-submitting. The partial unique index on
-  // (slug) WHERE status='pending' catches the race (audit C-4 fix);
-  // this app-layer check just produces a friendlier error in the
-  // common case.
+  // slug at a time. The /apps/submit UI calls getMyPendingForSlug on
+  // preview to surface a "withdraw and resubmit" affordance before the
+  // user gets here; this server-side check is the fallback for races and
+  // direct-API callers. The partial unique index on (slug) WHERE
+  // status='pending' (audit C-4) catches the same-instant race.
+  //
+  // Same-user collision wording assumes the caller can self-withdraw;
+  // other-user collision wording avoids leaking the request id (which is
+  // useless to a non-owner — only the original submitter or a mod can
+  // act on it).
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
     select: { id: true, submittedByUserId: true },
   });
   if (conflicting) {
+    if (conflicting.submittedByUserId === submittedByUserId) {
+      throw new Error(
+        `you already have a pending submission for slug ${slug} (${conflicting.id}); withdraw it before resubmitting`
+      );
+    }
     throw new Error(
-      `slug ${slug} already has a pending publish request (${conflicting.id}); withdraw it before resubmitting`
+      `slug ${slug} already has a pending submission from another user; wait for it to be reviewed before submitting a different bundle`
     );
   }
 
@@ -552,6 +562,26 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     fileSummary,
     manifestDiffSummary,
   };
+}
+
+/**
+ * Returns the current user's pending publish_request for `slug`, or null.
+ * Powers the /apps/submit pre-flight check that surfaces a "withdraw and
+ * resubmit" affordance when the dev is about to re-upload a bundle for a
+ * slug they already have in the queue. Scoped to the caller's own rows
+ * so other-user collisions don't leak request ids.
+ */
+export async function getMyPendingForSlug(opts: {
+  slug: string;
+  userId: number;
+}): Promise<{ id: string; version: string; submittedAt: Date } | null> {
+  const { dbRead } = await import('~/server/db/client');
+  const { slug, userId } = opts;
+  const row = await dbRead.appBlockPublishRequest.findFirst({
+    where: { slug, status: 'pending', submittedByUserId: userId },
+    select: { id: true, version: true, submittedAt: true },
+  });
+  return row ?? null;
 }
 
 /**

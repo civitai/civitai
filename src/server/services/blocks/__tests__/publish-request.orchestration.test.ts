@@ -335,7 +335,26 @@ describe('submitVersion', () => {
     ).rejects.toThrow(/name must be a non-empty string/);
   });
 
-  it('rejects when a pending request for the slug already exists', async () => {
+  it('rejects same-user resubmit with a self-withdrawable error wording', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+      id: 'pubreq_existing',
+      submittedByUserId: 42,
+    });
+    const buf = await makeValidBundle();
+    await expect(
+      submitVersion({
+        bundleBuffer: buf,
+        submittedByUserId: 42,
+      })
+    ).rejects.toThrow(
+      /you already have a pending submission for slug .* \(pubreq_existing\); withdraw it/
+    );
+    expect(mockS3Send).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects other-user collision without leaking the existing request id', async () => {
     const { submitVersion } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
       id: 'pubreq_existing',
@@ -347,7 +366,15 @@ describe('submitVersion', () => {
         bundleBuffer: buf,
         submittedByUserId: 42,
       })
-    ).rejects.toThrow(/already has a pending publish request/);
+    ).rejects.toThrow(/from another user/);
+    // The conflicting id is useless to a non-owner — verify the error
+    // wording doesn't leak it.
+    await expect(
+      submitVersion({
+        bundleBuffer: buf,
+        submittedByUserId: 42,
+      })
+    ).rejects.not.toThrow(/pubreq_existing/);
     expect(mockS3Send).not.toHaveBeenCalled();
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
   });
@@ -531,6 +558,61 @@ describe('withdrawRequest', () => {
     });
     await withdrawRequest({ publishRequestId: 'pubreq_x', userId: 42 });
     expect(mockS3Send).not.toHaveBeenCalled();
+  });
+});
+
+// ---- getMyPendingForSlug ---------------------------------------------------
+
+describe('getMyPendingForSlug', () => {
+  it('returns null when no pending request exists for the slug', async () => {
+    const { getMyPendingForSlug } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const result = await getMyPendingForSlug({ slug: 'hello-world', userId: 42 });
+    expect(result).toBeNull();
+    expect(mockDbRead.appBlockPublishRequest.findFirst).toHaveBeenCalledWith({
+      where: { slug: 'hello-world', status: 'pending', submittedByUserId: 42 },
+      select: { id: true, version: true, submittedAt: true },
+    });
+  });
+
+  it("returns the caller's own pending row when one exists", async () => {
+    const { getMyPendingForSlug } = await import('../publish-request.service');
+    const submittedAt = new Date('2026-05-29T13:48:00Z');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({
+      id: 'pubreq_mine',
+      version: '0.1.0',
+      submittedAt,
+    });
+    const result = await getMyPendingForSlug({ slug: 'hello-world', userId: 42 });
+    expect(result).toEqual({
+      id: 'pubreq_mine',
+      version: '0.1.0',
+      submittedAt,
+    });
+  });
+
+  it("does not surface another user's pending request (scoped via where clause)", async () => {
+    // The where clause filters by submittedByUserId, so the test must
+    // assert the query shape — mocking findFirst can't distinguish
+    // "owned by 42" from "owned by 1" by itself. This test guards
+    // against accidentally widening the scope.
+    const { getMyPendingForSlug } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    await getMyPendingForSlug({ slug: 'hello-world', userId: 42 });
+    // mockDbRead surfaces are typed as bare vi.fn() with no signature, so
+    // their .calls tuple is `[]`. Reach through `unknown` to inspect the
+    // captured args (same pattern other tests use for the Discord fetch
+    // spy).
+    const calls = (
+      mockDbRead.appBlockPublishRequest.findFirst as unknown as {
+        mock: { calls: Array<[{ where: Record<string, unknown> }]> };
+      }
+    ).mock.calls;
+    expect(calls[0]?.[0]?.where).toMatchObject({
+      slug: 'hello-world',
+      status: 'pending',
+      submittedByUserId: 42,
+    });
   });
 });
 

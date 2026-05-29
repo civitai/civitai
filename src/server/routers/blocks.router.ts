@@ -15,6 +15,7 @@ import {
 import {
   approveRequestSchema,
   backfillPublishRequestSchema,
+  getMyPendingForSlugSchema,
   listPendingRequestsSchema,
   rejectRequestSchema,
   submitVersionSchema,
@@ -319,6 +320,28 @@ export const blocksRouter = router({
         });
       }
       return { ok: true };
+    }),
+
+  /**
+   * Pre-flight check for /apps/submit: does the current user already have
+   * a pending publish request for this slug? Returns the id + version +
+   * submittedAt so the form can show a "withdraw and resubmit" affordance
+   * instead of letting the user hit the same-slug error on submit.
+   * Scoped to the caller's own rows by design.
+   */
+  getMyPendingForSlug: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(getMyPendingForSlugSchema)
+    .query(async ({ ctx, input }) => {
+      const { getMyPendingForSlug } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user) return { pending: null };
+      const pending = await getMyPendingForSlug({
+        slug: input.slug,
+        userId: ctx.user.id,
+      });
+      return { pending };
     }),
 
   /**

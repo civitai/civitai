@@ -8,6 +8,7 @@ import {
   Container,
   FileInput,
   Group,
+  Loader,
   Stack,
   Text,
   Title,
@@ -17,6 +18,7 @@ import {
   IconCheck,
   IconCloudUpload,
   IconFileZip,
+  IconRefresh,
 } from '@tabler/icons-react';
 import JSZip from 'jszip';
 import Link from 'next/link';
@@ -195,6 +197,17 @@ export default function SubmitAppPage() {
     };
   }, [bundle]);
 
+  // Pre-flight: once the manifest's slug is known, check whether the
+  // current user already has a pending submission for it. Surfacing this
+  // inline lets us turn "submit → server error → toast" into a clear
+  // "withdraw and resubmit" affordance.
+  const previewedSlug = preview?.ok ? preview.manifest.blockId : null;
+  const pendingQuery = trpc.blocks.getMyPendingForSlug.useQuery(
+    { slug: previewedSlug ?? '' },
+    { enabled: !!previewedSlug, staleTime: 0 }
+  );
+  const existingPending = pendingQuery.data?.pending ?? null;
+
   const submitMutation = trpc.blocks.submitVersion.useMutation({
     onSuccess: (result) => {
       setSubmitted({
@@ -208,16 +221,40 @@ export default function SubmitAppPage() {
     },
   });
 
+  const withdrawMutation = trpc.blocks.withdrawPublishRequest.useMutation();
+
   if (!features?.appBlocks) return <NotFound />;
 
   const previewOk = preview?.ok === true;
-  const busy = encoding || submitMutation.isLoading || !!submitted;
+  const checkingPending = !!previewedSlug && pendingQuery.isFetching;
+  const busy =
+    encoding ||
+    submitMutation.isLoading ||
+    withdrawMutation.isLoading ||
+    !!submitted ||
+    checkingPending;
   const canSubmit = !!bundle && previewOk && !busy;
 
   async function handleSubmit() {
     if (!bundle) return;
     setEncoding(true);
     try {
+      // If the user already has a pending request for this slug, withdraw
+      // it server-side first. The /apps/submit Alert above the button
+      // makes this explicit before the click, so this isn't a surprise.
+      if (existingPending) {
+        try {
+          await withdrawMutation.mutateAsync({
+            publishRequestId: existingPending.id,
+          });
+        } catch (err) {
+          showErrorNotification({
+            title: 'Could not withdraw existing submission',
+            error: err as Error,
+          });
+          return;
+        }
+      }
       const bundleBase64 = await fileToBase64(bundle);
       submitMutation.mutate({ bundleBase64 });
     } catch (err) {
@@ -265,6 +302,13 @@ export default function SubmitAppPage() {
 
                 {preview && <ManifestPreviewCard preview={preview} />}
 
+                {previewOk && (checkingPending || existingPending) && (
+                  <PendingNotice
+                    loading={checkingPending}
+                    pending={existingPending}
+                  />
+                )}
+
                 <Alert
                   icon={<IconCheck size={16} />}
                   color="blue"
@@ -306,12 +350,15 @@ export default function SubmitAppPage() {
                     Cancel
                   </Button>
                   <Button
-                    leftSection={<IconCloudUpload size={16} />}
+                    leftSection={
+                      existingPending ? <IconRefresh size={16} /> : <IconCloudUpload size={16} />
+                    }
+                    color={existingPending ? 'yellow' : undefined}
                     onClick={handleSubmit}
                     disabled={!canSubmit}
                     loading={busy}
                   >
-                    Submit for review
+                    {existingPending ? 'Withdraw and resubmit' : 'Submit for review'}
                   </Button>
                 </Group>
               </Stack>
@@ -320,6 +367,49 @@ export default function SubmitAppPage() {
         </Stack>
       </Container>
     </>
+  );
+}
+
+function PendingNotice({
+  loading,
+  pending,
+}: {
+  loading: boolean;
+  pending: { id: string; version: string; submittedAt: string | Date } | null;
+}) {
+  if (loading) {
+    return (
+      <Alert color="gray" variant="light" icon={<Loader size={14} />}>
+        <Text size="sm">Checking for an existing pending submission…</Text>
+      </Alert>
+    );
+  }
+  if (!pending) return null;
+  const submittedAt =
+    typeof pending.submittedAt === 'string'
+      ? new Date(pending.submittedAt)
+      : pending.submittedAt;
+  return (
+    <Alert
+      color="yellow"
+      variant="light"
+      icon={<IconAlertTriangle size={16} />}
+      title="You already have a pending submission for this slug"
+    >
+      <Stack gap={4}>
+        <Text size="sm">
+          v<Code>{pending.version}</Code> submitted{' '}
+          {Number.isFinite(submittedAt.getTime())
+            ? submittedAt.toLocaleString()
+            : 'recently'}{' '}
+          is still in the moderator queue. Submitting this bundle will withdraw
+          that request and put this one in its place.
+        </Text>
+        <Text size="xs" c="dimmed">
+          {pending.id}
+        </Text>
+      </Stack>
+    </Alert>
   );
 }
 

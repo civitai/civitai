@@ -40,6 +40,12 @@ export const withdrawRequestSchema = z.object({
 
 export type WithdrawRequestInput = z.infer<typeof withdrawRequestSchema>;
 
+export const getMyPendingForSlugSchema = z.object({
+  slug: z.string().min(3).max(40).regex(SLUG_REGEX),
+});
+
+export type GetMyPendingForSlugInput = z.infer<typeof getMyPendingForSlugSchema>;
+
 export const listPendingRequestsSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.string().min(1).max(64).optional(),
