@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/blocks/subscription.schema';
 import {
   approveRequestSchema,
+  backfillPublishRequestSchema,
   listPendingRequestsSchema,
   rejectRequestSchema,
   submitVersionSchema,
@@ -518,6 +519,37 @@ export const blocksRouter = router({
       try {
         return await approveRequest({
           publishRequestId: input.publishRequestId,
+          reviewerUserId: ctx.user.id,
+          approvalNotes: input.approvalNotes,
+        });
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+        });
+      }
+    }),
+
+  /**
+   * One-shot W1 migration: backfill a publish_request row for an existing
+   * live app whose first version predates this flow. Pulls the current
+   * Forgejo state into a fresh ZIP, uploads to MinIO, inserts a
+   * status='approved' row linked to the existing app_blocks entry.
+   * Idempotent at the (slug, bundleSha256) level.
+   */
+  backfillPublishRequest: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(backfillPublishRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { backfillPublishRequest } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Backfill is restricted to civitai team');
+      }
+      try {
+        return await backfillPublishRequest({
+          slug: input.slug,
           reviewerUserId: ctx.user.id,
           approvalNotes: input.approvalNotes,
         });

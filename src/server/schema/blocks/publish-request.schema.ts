@@ -64,3 +64,10 @@ export const rejectRequestSchema = z.object({
 });
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
+
+export const backfillPublishRequestSchema = z.object({
+  slug: z.string().min(3).max(40).regex(SLUG_REGEX),
+  approvalNotes: z.string().max(2000).optional(),
+});
+
+export type BackfillPublishRequestInput = z.infer<typeof backfillPublishRequestSchema>;

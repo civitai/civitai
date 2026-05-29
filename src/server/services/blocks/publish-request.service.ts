@@ -721,6 +721,180 @@ export async function approveRequest(
   };
 }
 
+export type BackfillPublishRequestParams = {
+  slug: string;
+  reviewerUserId: number;
+  approvalNotes?: string;
+};
+
+export type BackfillPublishRequestResult = {
+  publishRequestId: string;
+  appBlockId: string;
+  bundleSha256: string;
+  bundleSizeBytes: number;
+  fileCount: number;
+  forgejoCommitSha: string;
+};
+
+/**
+ * One-shot W1 migration helper: backfill an `app_block_publish_requests`
+ * row for an existing live app whose first version predates the
+ * publish-request flow. Pulls the current Forgejo state into a fresh
+ * ZIP, uploads it to MinIO, and writes an `status='approved'` row
+ * pointed at the live app_blocks entry.
+ *
+ * After this lands, the next real submitVersion call will diff its
+ * bundle against the backfilled bundle's file list, so file_summary
+ * change counts are accurate from that point forward.
+ *
+ * Idempotent at the SHA level — re-running with the same Forgejo HEAD
+ * will reuse the existing publish_request if one already exists for
+ * this (slug, bundleSha256) pair.
+ */
+export async function backfillPublishRequest(
+  params: BackfillPublishRequestParams
+): Promise<BackfillPublishRequestResult> {
+  const [{ dbRead, dbWrite }, { newUlid }] = await Promise.all([
+    import('~/server/db/client'),
+    import('~/server/utils/app-block-ids'),
+  ]);
+  const { getRepo, listRepoTree, getBlobContent } = await import('./forgejo.service');
+
+  // Identify the live app row.
+  const appBlock = await dbRead.appBlock.findFirst({
+    where: { blockId: params.slug },
+    select: {
+      id: true,
+      appId: true,
+      manifest: true,
+      version: true,
+      currentVersionSha: true,
+      app: { select: { userId: true } },
+    },
+  });
+  if (!appBlock) {
+    throw new Error(`app_blocks row for slug=${params.slug} not found; nothing to backfill`);
+  }
+
+  // Pull repo metadata to know the default branch + the current commit SHA
+  // we're snapshotting.
+  const repo = await getRepo(params.slug);
+  const defaultBranch = repo.default_branch ?? 'main';
+
+  // Recursively list blobs in the default branch, then download each blob's
+  // raw bytes in parallel (capped at 8 in flight to avoid hammering Forgejo).
+  const tree = await listRepoTree(params.slug, defaultBranch);
+  const entries = Array.from(tree.entries()).map(([path, blobSha]) => ({ path, blobSha }));
+
+  const CONCURRENCY = 8;
+  const files: Array<{ path: string; content: Buffer }> = [];
+  for (let i = 0; i < entries.length; i += CONCURRENCY) {
+    const batch = entries.slice(i, i + CONCURRENCY);
+    const fetched = await Promise.all(
+      batch.map(async (e) => ({ path: e.path, content: await getBlobContent(params.slug, e.blobSha) }))
+    );
+    files.push(...fetched);
+  }
+
+  // Build an in-memory ZIP — same shape a developer would have uploaded.
+  // Generate deterministic-ish so re-runs with identical repo state produce
+  // identical bundleSha256.
+  const zip = new JSZip();
+  for (const f of files) zip.file(f.path, f.content, { date: new Date(0) });
+  const bundleBuffer = Buffer.from(
+    await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' })
+  );
+  const bundleSha256 = createHash('sha256').update(bundleBuffer).digest('hex');
+
+  // Idempotency: if a publish_request for this exact (slug, sha) already
+  // exists, return it instead of inserting a duplicate.
+  const existing = await dbRead.appBlockPublishRequest.findFirst({
+    where: { slug: params.slug, bundleSha256 },
+    select: { id: true, appBlockId: true, bundleSizeBytes: true },
+  });
+  if (existing) {
+    return {
+      publishRequestId: existing.id,
+      appBlockId: existing.appBlockId ?? appBlock.id,
+      bundleSha256,
+      bundleSizeBytes: Number(existing.bundleSizeBytes),
+      fileCount: files.length,
+      forgejoCommitSha: appBlock.currentVersionSha ?? '',
+    };
+  }
+
+  // Reuse the submit path's extract for consistent file_summary semantics.
+  const { files: fileMetas, manifest } = await extractBundleMetadata(bundleBuffer);
+  if (!manifest || typeof manifest !== 'object') {
+    throw new Error(`backfilled bundle for ${params.slug} has no valid block.manifest.json`);
+  }
+
+  // Upload to MinIO. Reuses the storeBundle helper via dynamic import.
+  const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+  const { bundleKey, getBundleBucket, getBundleS3Client } = await import('~/utils/bundle-s3');
+  const key = bundleKey(bundleSha256);
+  await getBundleS3Client().send(
+    new PutObjectCommand({
+      Bucket: getBundleBucket(),
+      Key: key,
+      Body: bundleBuffer,
+      ContentType: 'application/zip',
+      Metadata: { sha256: bundleSha256, backfilled: 'true' },
+    })
+  );
+
+  // Synthetic file_summary: first-version style (everything 'added') since
+  // there's no prior approved publish_request to diff against.
+  const fileSummary: FileSummary = {
+    files: fileMetas,
+    added: fileMetas.map((f) => f.path).sort(),
+    removed: [],
+    changed: [],
+  };
+  const manifestDiffSummary: ManifestDiffSummary = {
+    kind: 'first-version',
+    fields: Object.keys(manifest as Record<string, unknown>).sort(),
+  };
+
+  // Owner attribution from the OauthClient.userId — the original owner of
+  // the live app. Reviewer is the mod running the backfill.
+  const ownerUserId = appBlock.app.userId;
+  const version = appBlock.version ?? '0.0.0-backfill';
+
+  const publishRequestId = `pubreq_${newUlid()}`;
+  await dbWrite.appBlockPublishRequest.create({
+    data: {
+      id: publishRequestId,
+      appBlockId: appBlock.id,
+      slug: params.slug,
+      submittedByUserId: ownerUserId,
+      version,
+      manifest: manifest as object,
+      bundleKey: key,
+      bundleSha256,
+      bundleSizeBytes: BigInt(bundleBuffer.length),
+      fileSummary: fileSummary as object,
+      manifestDiffSummary: manifestDiffSummary as object,
+      status: 'approved',
+      reviewedByUserId: params.reviewerUserId,
+      reviewedAt: new Date(),
+      approvalNotes:
+        params.approvalNotes ??
+        `Backfilled W1 migration from existing deployment at ${appBlock.currentVersionSha ?? '(unknown sha)'}`,
+      forgejoCommitSha: appBlock.currentVersionSha ?? bundleSha256,
+    },
+  });
+
+  return {
+    publishRequestId,
+    appBlockId: appBlock.id,
+    bundleSha256,
+    bundleSizeBytes: bundleBuffer.length,
+    fileCount: files.length,
+    forgejoCommitSha: appBlock.currentVersionSha ?? '',
+  };
+}
+
 export type RejectRequestParams = {
   publishRequestId: string;
   reviewerUserId: number;

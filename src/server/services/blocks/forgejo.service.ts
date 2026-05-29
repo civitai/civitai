@@ -224,9 +224,11 @@ export async function setCommitStatus(opts: {
 /**
  * Recursively list every blob in the repo's branch HEAD as
  * Map<path, sha>. Used by `commitFiles` to know which paths need
- * delete-vs-update, and to look up blob SHAs for updates.
+ * delete-vs-update, and to look up blob SHAs for updates. Also used
+ * by the W1 backfill to know what files to pull when reconstructing
+ * a bundle from a live Forgejo repo.
  */
-async function listRepoTree(slug: string, branch: string): Promise<Map<string, string>> {
+export async function listRepoTree(slug: string, branch: string): Promise<Map<string, string>> {
   const branchRes = await fjFetch(
     `/api/v1/repos/${FORGEJO_ORG}/${slug}/branches/${encodeURIComponent(branch)}`
   );
@@ -248,6 +250,26 @@ async function listRepoTree(slug: string, branch: string): Promise<Map<string, s
     if (item.type === 'blob') result.set(item.path, item.sha);
   }
   return result;
+}
+
+/**
+ * Fetch a blob's raw bytes by its git object SHA. Used by the W1
+ * backfill to reconstruct a bundle from a live Forgejo repo (one HTTP
+ * call per blob; for repos with hundreds of files the caller should
+ * batch through Promise.all).
+ *
+ * Forgejo's blobs endpoint returns the content base64-encoded inside a
+ * JSON envelope; we decode here so the caller gets a plain Buffer.
+ */
+export async function getBlobContent(slug: string, sha: string): Promise<Buffer> {
+  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${slug}/git/blobs/${sha}`);
+  const blob = await unwrap<{ content: string; encoding: string }>(res);
+  if (blob.encoding !== 'base64') {
+    throw new Error(
+      `Forgejo blob ${sha} returned unexpected encoding ${blob.encoding}`
+    );
+  }
+  return Buffer.from(blob.content, 'base64');
 }
 
 /**
