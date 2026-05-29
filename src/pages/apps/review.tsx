@@ -1,4 +1,5 @@
 import {
+  Accordion,
   Alert,
   Badge,
   Button,
@@ -14,13 +15,19 @@ import {
   Text,
   Textarea,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
+  IconAdjustmentsAlt,
   IconCheck,
   IconClock,
   IconCode,
   IconExternalLink,
+  IconKey,
+  IconLayoutGrid,
+  IconShieldLock,
+  IconWindow,
   IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -685,14 +692,12 @@ function ReviewModal({
         </Group>
 
         {(approved || rejected) && (
-          <Card withBorder p="sm" bg={approved ? 'green.0' : 'red.0'}>
-            <Stack gap={6}>
+          <Alert
+            color={approved ? 'green' : 'red'}
+            variant="light"
+            icon={approved ? <IconCheck size={16} /> : <IconX size={16} />}
+            title={
               <Group gap={6}>
-                {approved ? (
-                  <IconCheck size={16} color="var(--mantine-color-green-7)" />
-                ) : (
-                  <IconX size={16} color="var(--mantine-color-red-7)" />
-                )}
                 <Text size="sm" fw={600}>
                   {approved ? 'Approved by' : 'Rejected by'}{' '}
                   {(approved ?? rejected)?.reviewedBy
@@ -705,39 +710,34 @@ function ReviewModal({
                   · {formatDate((approved ?? rejected)!.reviewedAt)}
                 </Text>
               </Group>
-              {approved && approved.approvalNotes && (
-                <Stack gap={2}>
-                  <Text size="xs" c="dimmed">
-                    Approval notes
-                  </Text>
-                  <Text
-                    size="sm"
-                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                  >
-                    {approved.approvalNotes}
-                  </Text>
-                </Stack>
-              )}
-              {approved && !approved.approvalNotes && (
-                <Text size="xs" c="dimmed" fs="italic">
-                  No approval notes were recorded.
+            }
+          >
+            {approved && approved.approvalNotes && (
+              <Stack gap={2}>
+                <Text size="xs" c="dimmed">
+                  Approval notes
                 </Text>
-              )}
-              {rejected && rejected.rejectionReason && (
-                <Stack gap={2}>
-                  <Text size="xs" c="dimmed">
-                    Rejection reason
-                  </Text>
-                  <Text
-                    size="sm"
-                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-                  >
-                    {rejected.rejectionReason}
-                  </Text>
-                </Stack>
-              )}
-            </Stack>
-          </Card>
+                <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {approved.approvalNotes}
+                </Text>
+              </Stack>
+            )}
+            {approved && !approved.approvalNotes && (
+              <Text size="xs" c="dimmed" fs="italic">
+                No approval notes were recorded.
+              </Text>
+            )}
+            {rejected && rejected.rejectionReason && (
+              <Stack gap={2}>
+                <Text size="xs" c="dimmed">
+                  Rejection reason
+                </Text>
+                <Text size="sm" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                  {rejected.rejectionReason}
+                </Text>
+              </Stack>
+            )}
+          </Alert>
         )}
 
         <Button
@@ -794,13 +794,9 @@ function ReviewModal({
 
         <Stack gap={4}>
           <Text size="sm" fw={600}>
-            New manifest
+            Manifest
           </Text>
-          <ScrollArea h={300} style={{ background: 'var(--mantine-color-gray-0)' }}>
-            <Code block style={{ fontSize: 11, padding: 8 }}>
-              {JSON.stringify(manifest, null, 2)}
-            </Code>
-          </ScrollArea>
+          <ManifestView manifest={manifest} />
         </Stack>
 
         {readOnly ? null : actionMode === 'reject' ? (
@@ -989,5 +985,476 @@ function ManifestDiffPreview({
         ))}
       </Stack>
     </ScrollArea.Autosize>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Structured manifest renderer (replaces the raw JSON dump)
+// ---------------------------------------------------------------------------
+
+/** Manifest top-level keys this renderer handles inline. Anything else falls
+ * into the "Other fields" accordion as raw JSON so reviewers can still see
+ * unexpected payloads. */
+const HANDLED_MANIFEST_KEYS = new Set([
+  '$schema',
+  'appId',
+  'blockId',
+  'version',
+  'name',
+  'description',
+  'type',
+  'minApiVersion',
+  'contentRating',
+  'renderMode',
+  'trustTier',
+  'scopes',
+  'targets',
+  'iframe',
+  'settings',
+]);
+
+/** Short human description per known JWT scope. Mirrors the comments in
+ * src/shared/constants/block-scope.constants.ts. Unknown scopes render
+ * without a description but still surface in the chip list. */
+const SCOPE_DESCRIPTIONS: Record<string, string> = {
+  'user:read:self': "Read the viewer's username and account status",
+  'models:read:self': 'Read the model on the page where the block is mounted',
+  'media:read:owned': "Read the viewer's own uploaded media",
+  'buzz:read:self': "Read the viewer's Buzz balance",
+  'ai:write:budgeted': 'Submit generations with a per-call Buzz cap',
+  'social:tip:self': 'Post tips on behalf of the viewer',
+  'block:settings:read': "Read this block's per-install settings",
+  'block:settings:write': "Update this block's per-install settings",
+};
+
+/** Short description per known slot id. New slots ship via the
+ * KNOWN_SLOT_IDS enum in blocks.router.ts; keep this map in sync. */
+const SLOT_DESCRIPTIONS: Record<string, string> = {
+  'model.sidebar_top': 'Top of the model page sidebar',
+  'model.below_images': 'Below the model page image gallery',
+  'model.actions_extra': 'Among the model page action buttons',
+};
+
+function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
+  const otherKeys = useMemo(
+    () =>
+      Object.keys(manifest)
+        .filter((k) => !HANDLED_MANIFEST_KEYS.has(k))
+        .sort(),
+    [manifest]
+  );
+
+  return (
+    <Stack gap="sm">
+      <ManifestIdentity manifest={manifest} />
+      <ManifestScopes manifest={manifest} />
+      <ManifestTargets manifest={manifest} />
+      <ManifestIframe manifest={manifest} />
+      <ManifestSettings manifest={manifest} />
+      {otherKeys.length > 0 && (
+        <Accordion variant="contained" multiple={false}>
+          <Accordion.Item value="other">
+            <Accordion.Control>
+              <Text size="sm" fw={500}>
+                Other manifest fields ({otherKeys.length})
+              </Text>
+            </Accordion.Control>
+            <Accordion.Panel>
+              <ScrollArea h={200}>
+                <Code block style={{ fontSize: 11, padding: 8 }}>
+                  {JSON.stringify(
+                    Object.fromEntries(otherKeys.map((k) => [k, manifest[k]])),
+                    null,
+                    2
+                  )}
+                </Code>
+              </ScrollArea>
+            </Accordion.Panel>
+          </Accordion.Item>
+        </Accordion>
+      )}
+    </Stack>
+  );
+}
+
+function ManifestIdentity({ manifest }: { manifest: Record<string, unknown> }) {
+  const name = typeof manifest.name === 'string' ? manifest.name : null;
+  const description =
+    typeof manifest.description === 'string' ? manifest.description : null;
+  const blockId = typeof manifest.blockId === 'string' ? manifest.blockId : null;
+  const version = typeof manifest.version === 'string' ? manifest.version : null;
+  const contentRating =
+    typeof manifest.contentRating === 'string' ? manifest.contentRating : null;
+  const trustTier = typeof manifest.trustTier === 'string' ? manifest.trustTier : null;
+  const renderMode = typeof manifest.renderMode === 'string' ? manifest.renderMode : null;
+
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        <Group justify="space-between" align="flex-start">
+          <Stack gap={2}>
+            {name && (
+              <Text size="md" fw={600}>
+                {name}
+              </Text>
+            )}
+            <Group gap={6}>
+              {blockId && <Code>{blockId}</Code>}
+              {version && (
+                <Badge color="gray" variant="light">
+                  v{version}
+                </Badge>
+              )}
+            </Group>
+          </Stack>
+          <Group gap={6}>
+            {contentRating && (
+              <Tooltip label="Content rating">
+                <Badge color={ratingColor(contentRating)} variant="filled">
+                  {contentRating}
+                </Badge>
+              </Tooltip>
+            )}
+            {trustTier && (
+              <Tooltip label="Trust tier">
+                <Badge color={trustColor(trustTier)} variant="light">
+                  {trustTier}
+                </Badge>
+              </Tooltip>
+            )}
+            {renderMode && (
+              <Tooltip label="Render mode">
+                <Badge color="gray" variant="outline">
+                  {renderMode}
+                </Badge>
+              </Tooltip>
+            )}
+          </Group>
+        </Group>
+        {description && (
+          <Text size="sm" c="dimmed" style={{ whiteSpace: 'pre-wrap' }}>
+            {description}
+          </Text>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function ratingColor(rating: string): string {
+  switch (rating.toLowerCase()) {
+    case 'g':
+      return 'green';
+    case 'pg':
+      return 'lime';
+    case 'pg13':
+      return 'yellow';
+    case 'r':
+      return 'orange';
+    case 'x':
+    case 'xxx':
+      return 'red';
+    default:
+      return 'gray';
+  }
+}
+
+function trustColor(tier: string): string {
+  switch (tier.toLowerCase()) {
+    case 'internal':
+      return 'blue';
+    case 'verified':
+      return 'green';
+    case 'unverified':
+      return 'orange';
+    default:
+      return 'gray';
+  }
+}
+
+function ManifestScopes({ manifest }: { manifest: Record<string, unknown> }) {
+  const scopes = Array.isArray(manifest.scopes)
+    ? (manifest.scopes as unknown[]).filter((s): s is string => typeof s === 'string')
+    : [];
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        <Group gap={6}>
+          <IconKey size={14} />
+          <Text size="sm" fw={600}>
+            JWT scopes ({scopes.length})
+          </Text>
+        </Group>
+        {scopes.length === 0 ? (
+          <Text size="xs" c="dimmed" fs="italic">
+            No scopes requested — block can only consume host postMessage
+            data, no scope-gated platform APIs.
+          </Text>
+        ) : (
+          <Stack gap={4}>
+            {scopes.map((s) => {
+              const desc = SCOPE_DESCRIPTIONS[s];
+              const known = !!desc;
+              return (
+                <Group key={s} gap={8} align="flex-start" wrap="nowrap">
+                  <Badge
+                    variant={known ? 'light' : 'outline'}
+                    color={known ? 'blue' : 'red'}
+                    style={{ fontFamily: 'ui-monospace, monospace' }}
+                  >
+                    {s}
+                  </Badge>
+                  <Text size="xs" c={known ? 'dimmed' : 'red'}>
+                    {desc ?? 'Unknown scope — would fail at token issuance.'}
+                  </Text>
+                </Group>
+              );
+            })}
+          </Stack>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function ManifestTargets({ manifest }: { manifest: Record<string, unknown> }) {
+  const targets = Array.isArray(manifest.targets)
+    ? (manifest.targets as Array<Record<string, unknown>>)
+    : [];
+  if (targets.length === 0) return null;
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        <Group gap={6}>
+          <IconLayoutGrid size={14} />
+          <Text size="sm" fw={600}>
+            Slot targets ({targets.length})
+          </Text>
+        </Group>
+        <Stack gap={6}>
+          {targets.map((t, i) => {
+            const slotId = typeof t.slotId === 'string' ? t.slotId : '?';
+            const priority = typeof t.priority === 'number' ? t.priority : null;
+            const requiredContext = Array.isArray(t.requiredContext)
+              ? (t.requiredContext as unknown[]).filter(
+                  (c): c is string => typeof c === 'string'
+                )
+              : [];
+            const slotDesc = SLOT_DESCRIPTIONS[slotId];
+            return (
+              <Stack key={i} gap={2}>
+                <Group gap={6}>
+                  <Code>{slotId}</Code>
+                  {priority !== null && (
+                    <Badge size="xs" color="gray" variant="light">
+                      priority {priority}
+                    </Badge>
+                  )}
+                </Group>
+                {slotDesc && (
+                  <Text size="xs" c="dimmed" pl={4}>
+                    {slotDesc}
+                  </Text>
+                )}
+                {requiredContext.length > 0 && (
+                  <Group gap={4} pl={4}>
+                    <Text size="xs" c="dimmed">
+                      requires:
+                    </Text>
+                    {requiredContext.map((c) => (
+                      <Code key={c} style={{ fontSize: 10 }}>
+                        {c}
+                      </Code>
+                    ))}
+                  </Group>
+                )}
+              </Stack>
+            );
+          })}
+        </Stack>
+      </Stack>
+    </Card>
+  );
+}
+
+function ManifestIframe({ manifest }: { manifest: Record<string, unknown> }) {
+  const iframe =
+    manifest.iframe && typeof manifest.iframe === 'object'
+      ? (manifest.iframe as Record<string, unknown>)
+      : null;
+  if (!iframe) return null;
+  const src = typeof iframe.src === 'string' ? iframe.src : null;
+  const sandbox = typeof iframe.sandbox === 'string' ? iframe.sandbox : null;
+  const minHeight = typeof iframe.minHeight === 'number' ? iframe.minHeight : null;
+  const maxHeight = typeof iframe.maxHeight === 'number' ? iframe.maxHeight : null;
+  const resizable = typeof iframe.resizable === 'boolean' ? iframe.resizable : null;
+
+  const sandboxFlags = sandbox ? sandbox.split(/\s+/).filter(Boolean) : [];
+
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        <Group gap={6}>
+          <IconWindow size={14} />
+          <Text size="sm" fw={600}>
+            Iframe
+          </Text>
+        </Group>
+        {src && (
+          <Group gap={6} align="baseline">
+            <Text size="xs" c="dimmed" style={{ minWidth: 60 }}>
+              src
+            </Text>
+            <a href={src} target="_blank" rel="noopener" style={{ fontSize: 12 }}>
+              {src}
+            </a>
+          </Group>
+        )}
+        {sandboxFlags.length > 0 && (
+          <Group gap={6} align="baseline">
+            <Text size="xs" c="dimmed" style={{ minWidth: 60 }}>
+              sandbox
+            </Text>
+            <Group gap={4}>
+              {sandboxFlags.map((flag) => {
+                const risky =
+                  flag === 'allow-same-origin' ||
+                  flag === 'allow-top-navigation' ||
+                  flag === 'allow-popups-to-escape-sandbox';
+                return (
+                  <Tooltip
+                    key={flag}
+                    label={
+                      risky
+                        ? 'Higher-risk sandbox flag — review carefully.'
+                        : 'Standard sandbox flag.'
+                    }
+                  >
+                    <Badge
+                      size="xs"
+                      color={risky ? 'orange' : 'gray'}
+                      variant="light"
+                      leftSection={risky ? <IconShieldLock size={10} /> : undefined}
+                    >
+                      {flag}
+                    </Badge>
+                  </Tooltip>
+                );
+              })}
+            </Group>
+          </Group>
+        )}
+        {(minHeight !== null || maxHeight !== null || resizable !== null) && (
+          <Group gap={12}>
+            {minHeight !== null && (
+              <Text size="xs">
+                <Text component="span" size="xs" c="dimmed">
+                  min height:
+                </Text>{' '}
+                {minHeight}px
+              </Text>
+            )}
+            {maxHeight !== null && (
+              <Text size="xs">
+                <Text component="span" size="xs" c="dimmed">
+                  max height:
+                </Text>{' '}
+                {maxHeight}px
+              </Text>
+            )}
+            {resizable !== null && (
+              <Text size="xs">
+                <Text component="span" size="xs" c="dimmed">
+                  resizable:
+                </Text>{' '}
+                {resizable ? 'yes' : 'no'}
+              </Text>
+            )}
+          </Group>
+        )}
+      </Stack>
+    </Card>
+  );
+}
+
+function ManifestSettings({ manifest }: { manifest: Record<string, unknown> }) {
+  const settings =
+    manifest.settings && typeof manifest.settings === 'object'
+      ? (manifest.settings as Record<string, unknown>)
+      : null;
+  const entries = settings ? Object.entries(settings) : [];
+  if (entries.length === 0) return null;
+  return (
+    <Card withBorder p="sm">
+      <Stack gap="xs">
+        <Group gap={6}>
+          <IconAdjustmentsAlt size={14} />
+          <Text size="sm" fw={600}>
+            Settings ({entries.length})
+          </Text>
+        </Group>
+        <Stack gap={8}>
+          {entries.map(([key, raw]) => {
+            const def =
+              raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+            const type = typeof def.type === 'string' ? def.type : '?';
+            const widget = typeof def.widget === 'string' ? def.widget : null;
+            const label = typeof def.label === 'string' ? def.label : null;
+            const description =
+              typeof def.description === 'string' ? def.description : null;
+            const scope = typeof def.scope === 'string' ? def.scope : null;
+            const defaultVal = def.default;
+            const min = typeof def.min === 'number' ? def.min : null;
+            const max = typeof def.max === 'number' ? def.max : null;
+            const requiresScope =
+              typeof def.requires_scope === 'string' ? def.requires_scope : null;
+            return (
+              <Stack key={key} gap={2}>
+                <Group gap={6} wrap="nowrap" align="baseline">
+                  <Code style={{ fontSize: 11 }}>{key}</Code>
+                  <Badge size="xs" variant="light">
+                    {type}
+                    {widget && widget !== type ? `/${widget}` : ''}
+                  </Badge>
+                  {scope && (
+                    <Badge size="xs" color="gray" variant="outline">
+                      {scope}
+                    </Badge>
+                  )}
+                  {requiresScope && (
+                    <Badge size="xs" color="blue" variant="outline">
+                      needs {requiresScope}
+                    </Badge>
+                  )}
+                </Group>
+                {label && (
+                  <Text size="xs" pl={4}>
+                    {label}
+                  </Text>
+                )}
+                {description && (
+                  <Text size="xs" c="dimmed" pl={4}>
+                    {description}
+                  </Text>
+                )}
+                <Group gap={8} pl={4}>
+                  {defaultVal !== undefined && (
+                    <Text size="xs" c="dimmed">
+                      default:{' '}
+                      <Code style={{ fontSize: 10 }}>{JSON.stringify(defaultVal)}</Code>
+                    </Text>
+                  )}
+                  {(min !== null || max !== null) && (
+                    <Text size="xs" c="dimmed">
+                      range: {min ?? '−∞'} – {max ?? '+∞'}
+                    </Text>
+                  )}
+                </Group>
+              </Stack>
+            );
+          })}
+        </Stack>
+      </Stack>
+    </Card>
   );
 }

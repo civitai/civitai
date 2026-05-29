@@ -497,7 +497,7 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .query(async ({ ctx }) => {
       if (!ctx.user) return [];
-      return dbRead.appBlockPublishRequest.findMany({
+      const rows = await dbRead.appBlockPublishRequest.findMany({
         where: { submittedByUserId: ctx.user.id },
         orderBy: { submittedAt: 'desc' },
         take: 100,
@@ -513,7 +513,26 @@ export const blocksRouter = router({
           approvalNotes: true,
           fileSummary: true,
           manifestDiffSummary: true,
+          appBlock: {
+            select: {
+              _count: { select: { modelInstalls: true, userSubscriptions: true } },
+            },
+          },
         },
+      });
+      // Flatten _count onto each row so the UI doesn't have to dig through
+      // the relation. Pending-first-version + withdrawn-first-version rows
+      // have no appBlock (FK is set on approve) — surface null so the UI
+      // can render "—".
+      type RowWithCount = (typeof rows)[number];
+      return rows.map((r: RowWithCount) => {
+        const counts = r.appBlock?._count;
+        const { appBlock: _drop, ...rest } = r;
+        return {
+          ...rest,
+          modelInstallCount: counts?.modelInstalls ?? null,
+          userSubscriptionCount: counts?.userSubscriptions ?? null,
+        };
       });
     }),
 

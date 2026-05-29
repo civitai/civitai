@@ -14,9 +14,11 @@ import {
 import {
   IconAlertTriangle,
   IconArrowRight,
+  IconBox,
   IconCheck,
   IconClock,
   IconExternalLink,
+  IconUsers,
   IconX,
 } from '@tabler/icons-react';
 import Link from 'next/link';
@@ -87,6 +89,12 @@ type Submission = {
   approvalNotes: string | null;
   fileSummary: unknown;
   manifestDiffSummary: unknown;
+  /** Total ModelBlockInstall rows referencing this app block. Null when
+   * the publish request has no app block yet (pending first-version,
+   * withdrawn first-version). */
+  modelInstallCount: number | null;
+  /** Total BlockUserSubscription rows. Same null semantics as above. */
+  userSubscriptionCount: number | null;
 };
 
 function formatDate(d: string | Date): string {
@@ -194,6 +202,7 @@ export default function MySubmissionsPage() {
                     <Table.Th>Submitted</Table.Th>
                     <Table.Th>Reviewed</Table.Th>
                     <Table.Th>Changes</Table.Th>
+                    <Table.Th>Installs</Table.Th>
                     <Table.Th />
                   </Table.Tr>
                 </Table.Thead>
@@ -251,6 +260,12 @@ export default function MySubmissionsPage() {
                             </Group>
                           </Table.Td>
                           <Table.Td>
+                            <InstallCountCell
+                              modelInstalls={s.modelInstallCount}
+                              subscriptions={s.userSubscriptionCount}
+                            />
+                          </Table.Td>
+                          <Table.Td>
                             <SubmissionActions
                               submission={s}
                               onWithdraw={() =>
@@ -261,43 +276,36 @@ export default function MySubmissionsPage() {
                           </Table.Td>
                         </Table.Tr>
                         {s.status === 'rejected' && s.rejectionReason && (
-                          <Table.Tr
-                            style={{ background: 'var(--mantine-color-red-0)' }}
-                          >
-                            <Table.Td colSpan={7}>
-                              <Stack gap={4} px="xs">
-                                <Group gap={6}>
-                                  <IconX size={14} color="var(--mantine-color-red-6)" />
-                                  <Text size="xs" fw={600} c="red">
-                                    Reviewer feedback
-                                  </Text>
-                                </Group>
+                          <Table.Tr>
+                            <Table.Td colSpan={8} p={0}>
+                              <Alert
+                                color="red"
+                                variant="light"
+                                radius={0}
+                                icon={<IconX size={16} />}
+                                title="Reviewer feedback"
+                              >
                                 <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                                   {s.rejectionReason}
                                 </Text>
-                              </Stack>
+                              </Alert>
                             </Table.Td>
                           </Table.Tr>
                         )}
                         {s.status === 'approved' && s.approvalNotes && (
-                          <Table.Tr
-                            style={{ background: 'var(--mantine-color-green-0)' }}
-                          >
-                            <Table.Td colSpan={7}>
-                              <Stack gap={4} px="xs">
-                                <Group gap={6}>
-                                  <IconCheck
-                                    size={14}
-                                    color="var(--mantine-color-green-6)"
-                                  />
-                                  <Text size="xs" fw={600} c="green">
-                                    Reviewer notes
-                                  </Text>
-                                </Group>
+                          <Table.Tr>
+                            <Table.Td colSpan={8} p={0}>
+                              <Alert
+                                color="green"
+                                variant="light"
+                                radius={0}
+                                icon={<IconCheck size={16} />}
+                                title="Reviewer notes"
+                              >
                                 <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
                                   {s.approvalNotes}
                                 </Text>
-                              </Stack>
+                              </Alert>
                             </Table.Td>
                           </Table.Tr>
                         )}
@@ -365,4 +373,48 @@ function SubmissionActions({
     );
   }
   return null;
+}
+
+/**
+ * Install + subscription count for an approved submission. Renders two
+ * compact pills: model installs (per-model placements) and user
+ * subscriptions (publisher/viewer scope rows). Null means there's no
+ * AppBlock row yet (pending/withdrawn first-version) so we show a dash.
+ */
+function InstallCountCell({
+  modelInstalls,
+  subscriptions,
+}: {
+  modelInstalls: number | null;
+  subscriptions: number | null;
+}) {
+  if (modelInstalls == null && subscriptions == null) {
+    return (
+      <Text size="xs" c="dimmed">
+        —
+      </Text>
+    );
+  }
+  return (
+    <Group gap={6}>
+      <Badge
+        variant="light"
+        color="blue"
+        size="sm"
+        leftSection={<IconBox size={12} />}
+        title="ModelBlockInstall rows — per-model placements"
+      >
+        {modelInstalls ?? 0}
+      </Badge>
+      <Badge
+        variant="light"
+        color="grape"
+        size="sm"
+        leftSection={<IconUsers size={12} />}
+        title="BlockUserSubscription rows — publisher + viewer scopes"
+      >
+        {subscriptions ?? 0}
+      </Badge>
+    </Group>
+  );
 }
