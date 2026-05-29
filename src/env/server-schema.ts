@@ -111,6 +111,15 @@ export const serverSchema = z.object({
   SEARCH_API_KEY: z.string().optional(),
   METRICS_SEARCH_HOST: z.url().optional(),
   METRICS_SEARCH_API_KEY: z.string().optional(),
+  // Per-call Meilisearch timeout in ms. Calls wrapped via withMeili() fail
+  // fast with MeiliCallTimeoutError once exceeded, instead of hanging until
+  // Traefik's 30s router timeout fires. Default tuned for the image feed
+  // hot path (typical P99 ~700ms under healthy load).
+  MEILI_CALL_TIMEOUT_MS: z.coerce.number().optional().default(2500),
+  // Per-pod cap on in-flight Meilisearch calls wrapped via withMeili().
+  // When saturated, additional calls fail fast with MeiliCallTimeoutError
+  // rather than queueing forever and pressuring the event loop.
+  MEILI_CALL_CONCURRENCY: z.coerce.number().optional().default(50),
   PODNAME: z.string().optional(),
   INTEGRATION_TOKEN: z.string().optional(),
   NEWSLETTER_ID: z.string().optional(),

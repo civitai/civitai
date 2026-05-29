@@ -43,10 +43,13 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
 import {
+  MeiliCallTimeoutError,
   SEARCH_ACTOR_HEADER,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
   metricsSearchClient,
+  withMeili,
+  wrapMeilisearchClientWithLimiter,
 } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter, registerCounterWithLabels } from '~/server/prom/client';
@@ -2051,19 +2054,39 @@ export const getAllImagesIndex = async (
 
   const currentUserId = user?.id;
 
-  const {
-    data: searchResults,
-    nextCursor: searchNextCursor,
-    source: searchSource,
-  } = await withSpan('image:getAllImagesIndex:search', () =>
-    getImagesFromSearch({
-      ...input,
-      currentUserId,
-      isModerator: user?.isModerator,
-      offset,
-      entry,
-    })
-  );
+  let searchResults: Awaited<ReturnType<typeof getImagesFromSearch>>['data'];
+  let searchNextCursor: Awaited<ReturnType<typeof getImagesFromSearch>>['nextCursor'];
+  let searchSource: Awaited<ReturnType<typeof getImagesFromSearch>>['source'];
+  try {
+    ({
+      data: searchResults,
+      nextCursor: searchNextCursor,
+      source: searchSource,
+    } = await withSpan('image:getAllImagesIndex:search', () =>
+      getImagesFromSearch({
+        ...input,
+        currentUserId,
+        isModerator: user?.isModerator,
+        offset,
+        entry,
+      })
+    ));
+  } catch (err) {
+    // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
+    // Surface as TRPCError TIMEOUT so the client returns 408 fast instead of
+    // bleeding until Traefik's 30s router timeout — which is what backed up
+    // the event loop and tipped api-primary into kubelet SIGKILL on 2026-05-29.
+    // tRPC v10 has no SERVICE_UNAVAILABLE / 503 code; TIMEOUT is the closest
+    // semantic match.
+    if (err instanceof MeiliCallTimeoutError) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
+    throw err;
+  }
 
   if (!searchResults.length) {
     return {
@@ -2624,14 +2647,28 @@ export async function getImagesFromFeedSearch(
     }
 
     const feed = new ImagesFeed(
-      ({ apiKey, host }: { apiKey: string; host: string }) =>
-        new MeiliSearch({
+      ({ apiKey, host }: { apiKey: string; host: string }) => {
+        const client = new MeiliSearch({
           host,
           apiKey,
           requestConfig: input.actor
             ? { headers: { [SEARCH_ACTOR_HEADER]: input.actor } }
             : undefined,
-        }) as IMeilisearch,
+        });
+        // Wrap the returned IMeilisearch so that only the SDK calls inside
+        // event-engine-common's queryDocuments / populate go through
+        // withMeili('search'). Without this narrow scope, the previous wrap
+        // covered ALL of populatedQuery() — including Postgres / ClickHouse /
+        // Redis work in populateDocuments — which (a) falsely attributed
+        // slow DB queries as Meili timeouts and (b) held a Meili semaphore
+        // slot during non-Meili work, starving real Meili callers.
+        //
+        // NOTE: This is defense-in-depth. Verified hot path on 2026-05-29
+        // is getImagesFromSearch (above), not this feed path (REST-only,
+        // 0 errors/15min). Keeping this wrap so a future traffic-shift
+        // doesn't expose us again.
+        return wrapMeilisearchClientWithLimiter(client) as IMeilisearch;
+      },
       clickhouse as IClickhouseClient,
       pgDbWrite as IDbClient,
       new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
@@ -2649,6 +2686,9 @@ export async function getImagesFromFeedSearch(
       enableExistenceCheck,
     };
 
+    // No outer withMeili() here — the wrap now lives on the SDK calls inside
+    // the client wrapper above. populatedQuery() does DB+CH+Redis work that
+    // should NOT consume a Meili semaphore slot.
     const feedResult = await feed.populatedQuery(feedInput as FeedQueryInput<ImageQueryInput>);
 
     // Transform PopulatedImage to match getAllImagesIndex return type
@@ -2720,6 +2760,17 @@ export async function getImagesFromFeedSearch(
     };
   } catch (err) {
     console.error('Error in getImagesFromFeedSearch:', err);
+    // Meili saturation / timeout → fail fast as TIMEOUT (HTTP 408) so the
+    // caller gets a fast, retryable response instead of bleeding 30s while
+    // Traefik gives up. tRPC v10 has no SERVICE_UNAVAILABLE / 503 code, so
+    // TIMEOUT (the closest semantic match) is used here.
+    if (err instanceof MeiliCallTimeoutError) {
+      throw new TRPCError({
+        code: 'TIMEOUT',
+        message: 'Image search is temporarily overloaded — please retry.',
+        cause: err,
+      });
+    }
     throw err;
   }
 }
@@ -2802,11 +2853,21 @@ async function fetchMeiliUserOwnPass(
   };
 
   try {
-    const { results } = await metricsSearchClient
-      .index(METRICS_SEARCH_INDEX)
-      .getDocuments<ImageMetricsSearchIndexRecord>(request);
+    // Narrow withMeili wrap to the SDK call only — this runs on the same hot
+    // path as the main pre-filter query and shares the same brownout risk.
+    const { results } = await withMeili('metricsSearch', () =>
+      metricsSearchClient!
+        .index(METRICS_SEARCH_INDEX)
+        .getDocuments<ImageMetricsSearchIndexRecord>(request)
+    );
     return results;
   } catch (err) {
+    // MeiliCallTimeoutError bubbles up so the parent prefilter call's outer
+    // try/catch can attribute it correctly and surface a 408. fetchMeili
+    // UserOwnPass is "best-effort enrichment" — if it times out independently
+    // (not part of the main race), we'd rather fail the whole request than
+    // silently lose the user's own private content.
+    if (err instanceof MeiliCallTimeoutError) throw err;
     console.error('fetchMeiliUserOwnPass error:', err);
     return [];
   }
@@ -3306,6 +3367,14 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
     // underlying Meili request. The meilisearch-js client on 0.33/0.34 doesn't
     // expose signal on getDocuments.
+    //
+    // The non-signal SDK path is the actual hot tRPC path
+    // (image.getInfinite → getInfiniteImagesHandler → getAllImagesIndex →
+    //  this prefilter). Verification on 2026-05-29 showed this is where the
+    // 374-error/15min Meili bleed lives, NOT in getImagesFromFeedSearch.
+    // Wrap it under withMeili('metricsSearch', ...) so a backend brownout
+    // can't hang us past Traefik's 30s timeout. Narrowly scoped to the SDK
+    // call only — surrounding DB/CH work is intentionally outside.
     const [mainResult, userOwnHits] = await Promise.all([
       withSpan('image:meili:getDocuments', () =>
         input.signal
@@ -3315,9 +3384,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
               signal: input.signal,
               actor,
             })
-          : (actor ? getMetricsSearchClient(actor) : metricsSearchClient)!
-              .index(METRICS_SEARCH_INDEX)
-              .getDocuments<ImageMetricsSearchIndexRecord>(request)
+          : withMeili('metricsSearch', () =>
+              (actor ? getMetricsSearchClient(actor) : metricsSearchClient)!
+                .index(METRICS_SEARCH_INDEX)
+                .getDocuments<ImageMetricsSearchIndexRecord>(request)
+            )
       ),
       runUserOwnPass
         ? fetchMeiliUserOwnPass(input, nsfwLevelField, userId)
@@ -4203,7 +4274,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       request.offset = currentOffset;
 
       // See PreFilter path for why we fall back to raw fetch when a signal is
-      // provided.
+      // provided. Non-signal SDK path is wrapped under withMeili('metricsSearch')
+      // for the same brownout-safety reason as PreFilter.
       const { results } = input.signal
         ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
             METRICS_SEARCH_INDEX,
@@ -4215,9 +4287,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
               actor,
             }
           )
-        : await actorClient!
-            .index(METRICS_SEARCH_INDEX)
-            .getDocuments<ImageMetricsSearchIndexRecord>(request);
+        : await withMeili('metricsSearch', () =>
+            actorClient!
+              .index(METRICS_SEARCH_INDEX)
+              .getDocuments<ImageMetricsSearchIndexRecord>(request)
+          );
 
       // If no more results, break the loop
       if (results.length === 0) {
