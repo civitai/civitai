@@ -1,6 +1,5 @@
 import {
   Anchor,
-  AspectRatio,
   Badge,
   Box,
   Button,
@@ -9,7 +8,6 @@ import {
   Container,
   Divider,
   Group,
-  Image as MantineImage,
   Loader,
   LoadingOverlay,
   Rating,
@@ -40,6 +38,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
@@ -436,17 +435,20 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                               {review.post?.images && review.post.images.length > 0 && (
                                 <Group gap={4}>
                                   {review.post.images.slice(0, 3).map((img) => (
-                                    <AspectRatio
-                                      ratio={1}
+                                    <Link
                                       key={img.id}
-                                      style={{ width: 36 }}
+                                      href={`/posts/${review.post?.id}`}
+                                      className="block aspect-square w-9 overflow-hidden rounded-sm border border-solid border-dark-4 bg-dark-7"
                                     >
-                                      <MantineImage
+                                      <EdgeMedia
                                         src={img.url}
-                                        alt={img.name ?? ''}
-                                        radius="sm"
+                                        type={img.type}
+                                        name={img.name ?? undefined}
+                                        width={144}
+                                        anim={false}
+                                        className="size-full object-cover"
                                       />
-                                    </AspectRatio>
+                                    </Link>
                                   ))}
                                   {review.post.images.length > 3 && (
                                     <Box className="flex h-9 w-9 items-center justify-center rounded-sm bg-dark-5 text-xs text-white">

@@ -33,8 +33,10 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
   return (
     <AspectRatioImageCard
       href={`/3d-models/${id}`}
-      contentType="model3d"
-      contentId={id}
+      // TODO(model3d): add 'model3d' to ConnectType in ImageGuard2 once we wire
+      // the image-guard pipeline for Model3D thumbnails. For now we skip the
+      // connection — the card just renders the thumbnail without per-card
+      // unblur tracking.
       aspectRatio="portrait"
       image={
         thumbnailImage
@@ -43,6 +45,7 @@ export const Model3DCard = memo(function Model3DCard({ data }: Props) {
               url: thumbnailImage.url,
               type: thumbnailImage.type,
               name: thumbnailImage.name,
+              metadata: (thumbnailImage.metadata ?? null) as Record<string, unknown> | null,
               width: thumbnailImage.width,
               height: thumbnailImage.height,
               hash: thumbnailImage.hash,
