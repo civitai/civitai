@@ -21,6 +21,7 @@ import {
   IconCube,
   IconDownload,
   IconFlag,
+  IconPencil,
   IconShare3,
   IconStar,
 } from '@tabler/icons-react';
@@ -43,6 +44,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
 import { MakesUsesRail } from '~/components/Model3D/MakesUses/MakesUsesRail';
+import type { Model3DEditModalProps } from '~/components/Model3D/Edit/Model3DEditModal';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -70,6 +72,11 @@ const Model3DViewer = dynamic(
 // Lazy-loaded review modal — only imported when the user clicks "Write a review".
 const Model3DReviewModal = dynamic<Model3DReviewModalProps>(
   () => import('~/components/Model3D/Reviews/Model3DReviewModal')
+);
+
+// Lazy-loaded edit modal — only imported when the owner/mod clicks "Edit".
+const Model3DEditModal = dynamic<Model3DEditModalProps>(
+  () => import('~/components/Model3D/Edit/Model3DEditModal')
 );
 
 const querySchema = z.object({
@@ -149,6 +156,21 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     });
   };
 
+  const openEditModal = () => {
+    if (!model3d) return;
+    dialogStore.trigger({
+      component: Model3DEditModal,
+      props: {
+        model3d: {
+          id: model3d.id,
+          name: model3d.name,
+          description: model3d.description ?? null,
+          licenseId: model3d.licenseId,
+        },
+      },
+    });
+  };
+
   if (isLoading) return <PageLoader />;
   if (!model3d) return <NotFound />;
 
@@ -213,6 +235,16 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </Stack>
 
             <Group gap={4} align="center" wrap="nowrap">
+              {(isOwner || isModerator) && (
+                <Button
+                  variant="default"
+                  size="xs"
+                  leftSection={<IconPencil size={14} />}
+                  onClick={openEditModal}
+                >
+                  Edit
+                </Button>
+              )}
               <InteractiveTipBuzzButton
                 toUserId={model3d.user.id}
                 entityType="Model3D"

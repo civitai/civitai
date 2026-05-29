@@ -103,8 +103,13 @@ function Model3DSeedPage() {
       // to createImage server-side. uploadToCF's return is only { url, id, … }.
       const data = await getDataFromFile(file);
       const upload = await uploadToCF(file);
+      // IMPORTANT: store `upload.id` (the CF image UUID) — NOT `upload.url`.
+      // `upload.url` is the one-time PUT URL from CF, which is unreadable.
+      // EdgeMedia / EdgeMedia2 expect the CF image ID and construct the
+      // delivery URL themselves with transforms applied. Storing the upload
+      // URL produced cards/thumbnails that rendered broken.
       setThumb({
-        url: upload.url,
+        url: upload.id,
         name: file.name,
         width: data?.width ?? null,
         height: data?.height ?? null,
