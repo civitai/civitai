@@ -20,6 +20,15 @@
 import { env } from '~/env/server';
 
 const FORGEJO_ORG = 'civitai-apps';
+const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
+
+/**
+ * Public URL pointer for the in-review repo of a slug. Used by the
+ * UI to deep-link mods into Forgejo's diff view from /apps/review.
+ */
+export function reviewRepoUrl(slug: string): string {
+  return `${getBaseUrl()}/${FORGEJO_REVIEW_ORG}/${slug}`;
+}
 
 function getBaseUrl(): string {
   const u = env.FORGEJO_BASE_URL;
@@ -228,13 +237,17 @@ export async function setCommitStatus(opts: {
  * by the W1 backfill to know what files to pull when reconstructing
  * a bundle from a live Forgejo repo.
  */
-export async function listRepoTree(slug: string, branch: string): Promise<Map<string, string>> {
+export async function listRepoTree(
+  slug: string,
+  branch: string,
+  org: string = FORGEJO_ORG
+): Promise<Map<string, string>> {
   const branchRes = await fjFetch(
-    `/api/v1/repos/${FORGEJO_ORG}/${slug}/branches/${encodeURIComponent(branch)}`
+    `/api/v1/repos/${org}/${slug}/branches/${encodeURIComponent(branch)}`
   );
   const branchInfo = await unwrap<{ commit: { id: string } }>(branchRes);
   const treeRes = await fjFetch(
-    `/api/v1/repos/${FORGEJO_ORG}/${slug}/git/trees/${branchInfo.commit.id}?recursive=true&per_page=1000`
+    `/api/v1/repos/${org}/${slug}/git/trees/${branchInfo.commit.id}?recursive=true&per_page=1000`
   );
   const tree = await unwrap<{
     tree: Array<{ path: string; type: string; sha: string }>;
@@ -292,9 +305,13 @@ export async function commitFiles(opts: {
   message: string;
   branch?: string;
   replaceAllFiles?: boolean;
+  /** Defaults to `civitai-apps` (the canonical, build-trigger org). The
+   *  in-review repo flow passes `civitai-apps-review`. */
+  org?: string;
 }): Promise<{ sha: string }> {
   const branch = opts.branch ?? 'main';
-  const tree = await listRepoTree(opts.slug, branch);
+  const org = opts.org ?? FORGEJO_ORG;
+  const tree = await listRepoTree(opts.slug, branch, org);
   const targetPaths = new Set(opts.files.map((f) => f.path));
 
   const operations: Array<{
@@ -336,13 +353,13 @@ export async function commitFiles(opts: {
     // treat this as a no-op approve. Return current HEAD SHA so the
     // publish_request still gets a forgejo_commit_sha pointer.
     const branchRes = await fjFetch(
-      `/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/branches/${encodeURIComponent(branch)}`
+      `/api/v1/repos/${org}/${opts.slug}/branches/${encodeURIComponent(branch)}`
     );
     const branchInfo = await unwrap<{ commit: { id: string } }>(branchRes);
     return { sha: branchInfo.commit.id };
   }
 
-  const res = await fjFetch(`/api/v1/repos/${FORGEJO_ORG}/${opts.slug}/contents`, {
+  const res = await fjFetch(`/api/v1/repos/${org}/${opts.slug}/contents`, {
     method: 'POST',
     body: JSON.stringify({
       files: operations,
@@ -352,4 +369,50 @@ export async function commitFiles(opts: {
   });
   const result = await unwrap<{ commit: { sha: string } }>(res);
   return { sha: result.commit.sha };
+}
+
+/**
+ * Ensure the `civitai-apps-review` org exists and a per-slug repo under
+ * it is ready to receive a commit. Idempotent: both the org POST and the
+ * repo POST treat 422 / 409 as "already exists, fine". Returns nothing —
+ * the caller proceeds straight to `commitFiles({ org: FORGEJO_REVIEW_ORG })`.
+ *
+ * Used by the W1 publish-request flow to push the dev's bundle into a
+ * disposable review repo at submitVersion time, so /apps/review can
+ * deep-link mods into Forgejo's diff view.
+ */
+export async function ensureReviewRepo(slug: string): Promise<void> {
+  // (1) Make sure the org exists. Forgejo accepts org creation via the
+  // admin API; 422 means "name taken" (i.e. org already exists).
+  const orgRes = await fjFetch('/api/v1/orgs', {
+    method: 'POST',
+    body: JSON.stringify({
+      username: FORGEJO_REVIEW_ORG,
+      full_name: 'Civitai App Blocks — in-review',
+      description:
+        'Disposable per-app repos for the W1 mod-review flow. Overwritten on each submitVersion; not used by the build pipeline.',
+      visibility: 'private',
+    }),
+  });
+  if (!orgRes.ok && orgRes.status !== 422 && orgRes.status !== 409) {
+    const body = await orgRes.text().catch(() => '');
+    throw new Error(`Forgejo org create ${orgRes.status}: ${body.slice(0, 240)}`);
+  }
+  // (2) Make sure the repo exists. auto_init=true so commitFiles can
+  // immediately push to `main` (Forgejo refuses to push to a missing
+  // branch). 409 / 422 = already exists.
+  const repoRes = await fjFetch(`/api/v1/orgs/${FORGEJO_REVIEW_ORG}/repos`, {
+    method: 'POST',
+    body: JSON.stringify({
+      name: slug,
+      description: `Pending publish-request bundle for ${slug}.`,
+      private: true,
+      auto_init: true,
+      default_branch: 'main',
+    }),
+  });
+  if (!repoRes.ok && repoRes.status !== 409 && repoRes.status !== 422) {
+    const body = await repoRes.text().catch(() => '');
+    throw new Error(`Forgejo review repo create ${repoRes.status}: ${body.slice(0, 240)}`);
+  }
 }

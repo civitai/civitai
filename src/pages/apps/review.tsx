@@ -18,6 +18,7 @@ import {
   IconAlertTriangle,
   IconCheck,
   IconClock,
+  IconCode,
   IconExternalLink,
   IconX,
 } from '@tabler/icons-react';
@@ -87,6 +88,7 @@ type PendingRequest = {
   manifest: unknown;
   fileSummary: unknown;
   manifestDiffSummary: unknown;
+  reviewRepoUrl: string;
   submittedBy: { id: number; username: string | null; image: string | null };
 };
 
@@ -336,6 +338,18 @@ function ReviewModal({
           </Text>
           <Code style={{ fontSize: 10 }}>{request.bundleSha256.slice(0, 12)}…</Code>
         </Group>
+
+        <Button
+          component="a"
+          href={request.reviewRepoUrl}
+          target="_blank"
+          rel="noopener"
+          variant="default"
+          leftSection={<IconCode size={14} />}
+          rightSection={<IconExternalLink size={12} />}
+        >
+          View code in Forgejo
+        </Button>
 
         <Stack gap={4}>
           <Text size="sm" fw={600}>

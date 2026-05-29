@@ -65,6 +65,8 @@ const {
       listRepoTree: vi.fn(),
       getBlobContent: vi.fn(),
       getRepo: vi.fn(),
+      ensureReviewRepo: vi.fn(),
+      reviewRepoUrl: vi.fn((slug: string) => `https://forgejo.example/civitai-apps-review/${slug}`),
     },
     mockUlidSeq: ulidSeq,
     mockNewUlid: vi.fn(() => {

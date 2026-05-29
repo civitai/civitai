@@ -456,10 +456,39 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const fileSummary = computeFileDiff(files, previous?.files ?? null);
   const manifestDiffSummary = computeManifestDiff(manifest, previous?.manifest ?? null);
 
-  // Upload bundle LAST so a validation failure never leaves a dangling
-  // object behind. PutObject is idempotent on the SHA, so a retry after
-  // an upstream error reuses the same key safely.
+  // Upload bundle to MinIO. PutObject is idempotent on the SHA, so a
+  // retry after an upstream error reuses the same key safely.
   const key = await storeBundle(bundleBuffer, bundleSha256);
+
+  // Push the bundle's files into the per-slug review repo on Forgejo so
+  // mods can see the actual code (not just the manifest diff) at
+  // /apps/review. One repo per slug under civitai-apps-review/<slug>;
+  // overwritten on each submit. Separate org from civitai-apps so the
+  // build webhook + Tekton don't accidentally fire on these commits.
+  //
+  // Re-decoding the ZIP buffer is cheap (in-memory; ~50ms for a 50 MiB
+  // bundle on a modern node). The alternative — threading the per-file
+  // contents through extractBundleMetadata's return shape — would bloat
+  // the diff-only call sites that don't need bytes.
+  try {
+    const { commitFiles, ensureReviewRepo } = await import('./forgejo.service');
+    const reviewZip = await JSZip.loadAsync(bundleBuffer);
+    const reviewFiles: Array<{ path: string; content: Buffer }> = [];
+    for (const [path, entry] of Object.entries(reviewZip.files)) {
+      if (entry.dir) continue;
+      reviewFiles.push({ path, content: await entry.async('nodebuffer') });
+    }
+    await ensureReviewRepo(slug);
+    await commitFiles({
+      org: 'civitai-apps-review',
+      slug,
+      files: reviewFiles,
+      message: `Publish request ${version} bundle (sha ${bundleSha256.slice(0, 12)})`,
+      replaceAllFiles: true,
+    });
+  } catch (err) {
+    throw new Error(`could not push bundle to review repo: ${(err as Error).message}`);
+  }
 
   const publishRequestId = `pubreq_${newUlid()}`;
   try {
@@ -591,7 +620,10 @@ export type ListPendingRequestsOptions = {
  * review UI doesn't round-trip per row.
  */
 export async function listPendingRequests(opts: ListPendingRequestsOptions = {}) {
-  const { dbRead } = await import('~/server/db/client');
+  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./forgejo.service'),
+  ]);
   const limit = Math.min(opts.limit ?? 25, 100);
   const rows = await dbRead.appBlockPublishRequest.findMany({
     where: { status: 'pending' },
@@ -620,6 +652,9 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
       // BigInt isn't JSON-serializable through tRPC's default transformer;
       // surface as a string. UI can format with Intl.NumberFormat.
       bundleSizeBytes: r.bundleSizeBytes.toString(),
+      // Deep-link into the per-slug Forgejo review repo so mods can
+      // browse the actual code from the review modal.
+      reviewRepoUrl: reviewRepoUrl(r.slug),
     })),
     nextCursor: hasNext ? items[items.length - 1].id : null,
   };
