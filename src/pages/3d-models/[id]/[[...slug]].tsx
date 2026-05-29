@@ -1,5 +1,6 @@
 import {
   Anchor,
+  AspectRatio,
   Badge,
   Box,
   Button,
@@ -8,6 +9,7 @@ import {
   Container,
   Divider,
   Group,
+  Image as MantineImage,
   Loader,
   LoadingOverlay,
   Rating,
@@ -36,11 +38,14 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { Meta } from '~/components/Meta/Meta';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
 import { MakesUsesRail } from '~/components/Model3D/MakesUses/MakesUsesRail';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -50,6 +55,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -91,6 +97,13 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: model3d, isLoading, isRefetching } = trpc.model3d.getById.useQuery({ id });
   const { data: filesData } = trpc.model3d.getFiles.useQuery({ id }, { enabled: !!model3d });
   const { data: reviewSummary } = trpc.model3d.reviews.getSummary.useQuery({ model3dId: id });
+  // Top 3 reviews shown inline. Full pagination lives on /3d-models/[id]/reviews.
+  const { data: previewReviewsData } = trpc.model3d.reviews.getInfinite.useQuery({
+    model3dId: id,
+    limit: 3,
+    page: 1,
+  });
+  const previewReviews = previewReviewsData?.items ?? [];
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model3D', entityId: id });
 
   const files = filesData?.files ?? [];
@@ -246,134 +259,221 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </Group>
           </Group>
 
-          {/* Viewer */}
-          <Card withBorder radius="md" p={0} className="overflow-hidden">
-            {primaryFile ? (
-              <Model3DViewer
-                // Use the resolved/presigned downloadUrl so the browser can
-                // actually fetch the GLB — the raw `url` may point at a
-                // bucket the public delivery worker doesn't authorize.
-                url={primaryFile.downloadUrl ?? primaryFile.url}
-                format={primaryFile.format}
-                sizeKB={primaryFile.sizeKB}
-              />
-            ) : (
-              <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
-                <Stack align="center" gap="xs" maw={420} ta="center">
-                  <IconCube size={48} stroke={1.5} />
-                  <Text fw={600}>No files yet</Text>
-                  <Text size="sm" c="dimmed">
-                    The 3D files for this model are still being processed.
-                  </Text>
-                </Stack>
-              </Box>
-            )}
-          </Card>
-
-          {/* Description */}
-          {model3d.description && (
-            <Card withBorder radius="md" p="md">
-              <Stack gap="xs">
-                <Title order={3}>About this model</Title>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                  {model3d.description}
-                </Text>
-              </Stack>
-            </Card>
-          )}
-
-          {/* Files dropdown + download */}
-          <Card withBorder radius="md" p="md">
-            <Stack gap="xs">
-              <Title order={3}>Files</Title>
-              {files.length === 0 ? (
-                <Text c="dimmed" size="sm">
-                  No downloadable files available.
-                </Text>
-              ) : (
-                <Group align="flex-end" gap="sm" wrap="wrap">
-                  <Select
-                    label="Format"
-                    data={formatOptions}
-                    value={selectedFormat}
-                    onChange={setSelectedFormat}
-                    miw={260}
-                  />
-                  <Button
-                    leftSection={<IconDownload size={16} />}
-                    onClick={handleDownload}
-                    disabled={!selectedFile}
-                  >
-                    Download
-                  </Button>
-                  {selectedFile && (
-                    <Text size="sm" c="dimmed">
-                      {selectedFile.name} · {(selectedFile.sizeKB / 1024).toFixed(2)} MB
-                    </Text>
+          {/* Body grid: main column + sidebar on desktop, stacked on mobile. */}
+          <ContainerGrid2 gutter="xl">
+            {/* Main column — viewer, description, makes/uses, comments */}
+            <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
+              <Stack gap="md">
+                {/* Viewer */}
+                <Card withBorder radius="md" p={0} className="overflow-hidden">
+                  {primaryFile ? (
+                    <Model3DViewer
+                      // Use the resolved/presigned downloadUrl so the browser can
+                      // actually fetch the GLB — the raw `url` may point at a
+                      // bucket the public delivery worker doesn't authorize.
+                      url={primaryFile.downloadUrl ?? primaryFile.url}
+                      format={primaryFile.format}
+                      sizeKB={primaryFile.sizeKB}
+                    />
+                  ) : (
+                    <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
+                      <Stack align="center" gap="xs" maw={420} ta="center">
+                        <IconCube size={48} stroke={1.5} />
+                        <Text fw={600}>No files yet</Text>
+                        <Text size="sm" c="dimmed">
+                          The 3D files for this model are still being processed.
+                        </Text>
+                      </Stack>
+                    </Box>
                   )}
-                </Group>
-              )}
-            </Stack>
-          </Card>
+                </Card>
 
-          {/* Generation Details */}
-          <GenerationDetails
-            params={model3d.generationParams}
-            sourceImage={model3d.sourceImage ?? undefined}
-          />
-
-          {/* Reviews summary + CTA */}
-          <Card withBorder radius="md" p="md">
-            <Group justify="space-between" wrap="wrap" gap="sm">
-              <Stack gap={4}>
-                <Group gap="xs">
-                  <IconStar size={20} />
-                  <Title order={3}>Reviews</Title>
-                </Group>
-                {reviewSummary && reviewSummary.ratingCount > 0 ? (
-                  <Group gap="sm" align="center">
-                    <Rating value={reviewSummary.ratingAvg} fractions={2} readOnly />
-                    <Text size="sm" c="dimmed">
-                      {reviewSummary.ratingAvg.toFixed(2)} from{' '}
-                      {reviewSummary.ratingCount}{' '}
-                      {reviewSummary.ratingCount === 1 ? 'review' : 'reviews'}
-                    </Text>
-                  </Group>
-                ) : (
-                  <Text size="sm" c="dimmed">
-                    No reviews yet.
-                  </Text>
+                {/* Description */}
+                {model3d.description && (
+                  <Card withBorder radius="md" p="md">
+                    <Stack gap="xs">
+                      <Title order={3}>About this model</Title>
+                      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                        {model3d.description}
+                      </Text>
+                    </Stack>
+                  </Card>
                 )}
+
+                {/* Makes & Uses */}
+                <MakesUsesRail model3dId={id} />
+
+                <Divider />
+
+                {/* Comments */}
+                <div id="comments">
+                  <Model3DComments model3dId={id} userId={model3d.user.id} />
+                </div>
               </Stack>
-              <Group gap="sm">
-                <Button variant="default" component={Link} href={`/3d-models/${id}/reviews`}>
-                  View all reviews
-                </Button>
-                <Button onClick={openReviewModal} leftSection={<IconStar size={16} />}>
-                  Write a review
-                </Button>
-              </Group>
-            </Group>
-          </Card>
+            </ContainerGrid2.Col>
 
-          {/* Makes & Uses */}
-          <MakesUsesRail model3dId={id} />
+            {/* Sidebar — files dropdown + generation details + creator + reviews preview */}
+            <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+              <Stack gap="md">
+                {/* Files dropdown + download */}
+                <Card withBorder radius="md" p="md">
+                  <Stack gap="xs">
+                    <Title order={4}>Files</Title>
+                    {files.length === 0 ? (
+                      <Text c="dimmed" size="sm">
+                        No downloadable files available.
+                      </Text>
+                    ) : (
+                      <Stack gap="xs">
+                        <Select
+                          label="Format"
+                          data={formatOptions}
+                          value={selectedFormat}
+                          onChange={setSelectedFormat}
+                        />
+                        <Button
+                          leftSection={<IconDownload size={16} />}
+                          onClick={handleDownload}
+                          disabled={!selectedFile}
+                          fullWidth
+                        >
+                          Download
+                        </Button>
+                        {selectedFile && (
+                          <Text size="xs" c="dimmed" lineClamp={1}>
+                            {selectedFile.name} ·{' '}
+                            {(selectedFile.sizeKB / 1024).toFixed(2)} MB
+                          </Text>
+                        )}
+                      </Stack>
+                    )}
+                  </Stack>
+                </Card>
 
-          <Divider />
+                {/* Generation Details */}
+                <GenerationDetails
+                  params={model3d.generationParams}
+                  sourceImage={model3d.sourceImage ?? undefined}
+                />
 
-          {/* Comments */}
-          <div id="comments">
-            <Model3DComments model3dId={id} userId={model3d.user.id} />
-          </div>
+                {/* Creator card */}
+                <SmartCreatorCard
+                  user={model3d.user}
+                  tipBuzzEntityId={id}
+                  tipBuzzEntityType="Model3D"
+                />
 
-          <Group justify="space-between">
-            <Text size="sm" c="dimmed">
-              Reviews live on a dedicated page.
-            </Text>
-            <Anchor component={Link} href={`/3d-models/${id}/reviews`}>
-              View reviews →
-            </Anchor>
-          </Group>
+                {/* Inline reviews preview */}
+                <Card withBorder radius="md" p="md">
+                  <Stack gap="sm">
+                    <Group justify="space-between" wrap="nowrap">
+                      <Group gap="xs">
+                        <IconStar size={18} />
+                        <Title order={4}>Reviews</Title>
+                      </Group>
+                      <Button
+                        size="xs"
+                        onClick={openReviewModal}
+                        leftSection={<IconStar size={12} />}
+                      >
+                        Write a review
+                      </Button>
+                    </Group>
+
+                    {reviewSummary && reviewSummary.ratingCount > 0 ? (
+                      <Group gap="sm" align="center">
+                        <Rating
+                          value={reviewSummary.ratingAvg}
+                          fractions={2}
+                          readOnly
+                          size="sm"
+                        />
+                        <Text size="xs" c="dimmed">
+                          {reviewSummary.ratingAvg.toFixed(2)} ·{' '}
+                          {reviewSummary.ratingCount}{' '}
+                          {reviewSummary.ratingCount === 1 ? 'review' : 'reviews'}
+                        </Text>
+                      </Group>
+                    ) : (
+                      <Text size="xs" c="dimmed">
+                        No reviews yet — be the first.
+                      </Text>
+                    )}
+
+                    {previewReviews.length > 0 && (
+                      <Stack gap="sm">
+                        {previewReviews.map((review) => (
+                          <Box
+                            key={review.id}
+                            className="rounded-md bg-gray-1 p-2 dark:bg-dark-6"
+                          >
+                            <Stack gap={4}>
+                              <Group gap="xs" justify="space-between" wrap="nowrap">
+                                <UserAvatarSimple
+                                  id={review.user.id}
+                                  username={review.user.username}
+                                  profilePicture={review.user.profilePicture}
+                                  deletedAt={review.user.deletedAt}
+                                  cosmetics={review.user.cosmetics}
+                                />
+                                <Text size="xs" c="dimmed">
+                                  {formatDate(review.createdAt)}
+                                </Text>
+                              </Group>
+                              <Group gap="xs" align="center">
+                                <Rating value={review.rating} readOnly size="xs" />
+                                {review.recommended && (
+                                  <Badge color="green" size="xs" variant="light">
+                                    Recommends
+                                  </Badge>
+                                )}
+                              </Group>
+                              {review.details && (
+                                <Text size="xs" lineClamp={3}>
+                                  {review.details}
+                                </Text>
+                              )}
+                              {review.post?.images && review.post.images.length > 0 && (
+                                <Group gap={4}>
+                                  {review.post.images.slice(0, 3).map((img) => (
+                                    <AspectRatio
+                                      ratio={1}
+                                      key={img.id}
+                                      style={{ width: 36 }}
+                                    >
+                                      <MantineImage
+                                        src={img.url}
+                                        alt={img.name ?? ''}
+                                        radius="sm"
+                                      />
+                                    </AspectRatio>
+                                  ))}
+                                  {review.post.images.length > 3 && (
+                                    <Box className="flex h-9 w-9 items-center justify-center rounded-sm bg-dark-5 text-xs text-white">
+                                      +{review.post.images.length - 3}
+                                    </Box>
+                                  )}
+                                </Group>
+                              )}
+                            </Stack>
+                          </Box>
+                        ))}
+                      </Stack>
+                    )}
+
+                    <Anchor
+                      component={Link}
+                      href={`/3d-models/${id}/reviews`}
+                      size="sm"
+                      ta="center"
+                    >
+                      See all reviews →
+                    </Anchor>
+                  </Stack>
+                </Card>
+              </Stack>
+            </ContainerGrid2.Col>
+          </ContainerGrid2>
         </Stack>
       </Container>
     </>

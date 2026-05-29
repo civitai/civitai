@@ -1,22 +1,28 @@
-import { Card, Center, Stack, Text, Title } from '@mantine/core';
+import { Center, Group, Loader, LoadingOverlay, Stack, Title } from '@mantine/core';
 import { IconCube } from '@tabler/icons-react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
+import { Model3DCard } from '~/components/Cards/Model3DCard';
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
 import { Meta } from '~/components/Meta/Meta';
+import { NoContent } from '~/components/NoContent/NoContent';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { trpc } from '~/utils/trpc';
 
 /**
- * 3D Models feed page (Workstream D stub).
- *
- * The real feed (Meilisearch-backed, categories, infinite scroll) is filled in
- * by Phase 2. For now this is a placeholder so the route resolves while the
- * feature flag is mod-only.
+ * 3D Models feed page.
  *
  * Flag gating lives in `getServerSideProps` (returns 404 server-side when the
- * flag is off) so unauthorized viewers never see a flash of content. The
- * client-side `<NotFound />` check we used to have caused a flicker between
- * SSR hydration and FeatureFlagsProvider's user-features query resolving.
+ * flag is off) so unauthorized viewers never see a flash of content.
+ *
+ * Phase 2 will wire Meilisearch + filters / sort UI. For v1 this renders the
+ * raw Postgres listing from `trpc.model3d.getInfinite` ordered by publishedAt
+ * (handled in the service). The service also gates non-mod / non-owner reads
+ * to an empty list at the service layer — that's defense-in-depth on top of
+ * the flag gate.
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -27,6 +33,23 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function Model3DsPage() {
+  const {
+    data,
+    isLoading,
+    isFetching,
+    isRefetching,
+    hasNextPage,
+    fetchNextPage,
+  } = trpc.model3d.getInfinite.useInfiniteQuery(
+    { limit: 50 },
+    {
+      getNextPageParam: (last) => last.nextCursor,
+      keepPreviousData: true,
+    }
+  );
+
+  const items = data?.pages.flatMap((p) => p.items) ?? [];
+
   return (
     <>
       <Meta
@@ -38,20 +61,40 @@ function Model3DsPage() {
 
       <MasonryContainer>
         <Stack gap="md">
-          <Title order={1}>3D Models</Title>
-          <Card withBorder radius="md" p="xl">
-            <Center>
-              <Stack align="center" gap="sm" maw={520} ta="center">
-                <IconCube size={48} stroke={1.5} />
-                <Title order={3}>3D Models Feed (coming soon)</Title>
-                <Text c="dimmed" size="sm">
-                  We&apos;re building out the 3D Models experience. Soon you&apos;ll be able to
-                  browse generated and uploaded 3D models, view them in your browser, and download
-                  in your format of choice.
-                </Text>
-              </Stack>
+          <Group gap="xs" align="center">
+            <IconCube size={28} stroke={1.5} />
+            <Title order={1}>3D Models</Title>
+          </Group>
+
+          {isLoading ? (
+            <Center p="xl">
+              <Loader size="xl" />
             </Center>
-          </Card>
+          ) : items.length ? (
+            <div className="relative">
+              <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+              <MasonryGridVirtual
+                data={items}
+                render={Model3DCard}
+                itemId={(x) => x.id}
+                empty={<NoContent />}
+              />
+              {hasNextPage && (
+                <InViewLoader
+                  loadFn={fetchNextPage}
+                  loadCondition={!isFetching}
+                  style={{ gridColumn: '1/-1' }}
+                >
+                  <Center p="xl" style={{ height: 36 }} mt="md">
+                    <Loader />
+                  </Center>
+                </InViewLoader>
+              )}
+              {!hasNextPage && <EndOfFeed />}
+            </div>
+          ) : (
+            <NoContent py="lg" />
+          )}
         </Stack>
       </MasonryContainer>
     </>
