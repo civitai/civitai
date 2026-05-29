@@ -2,6 +2,13 @@ import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import {
+  getGetUrl,
+  getS3Client,
+  getUploadBucket,
+  getUploadS3Client,
+  isB2Url,
+} from '~/utils/s3-utils';
 import { Model3DStatus } from '~/shared/utils/prisma/enums';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -479,12 +486,28 @@ export const getModel3DFiles = async ({
     if (model3d.deletedAt) throw throwNotFoundError(`No 3D model with id ${input.id}`);
   }
 
-  // Sign each file URL. Mirrors `model.service.ts` / `file.service.ts` —
-  // delegates to resolveDownloadUrl which goes through the storage resolver +
-  // delivery-worker fallback.
+  // Sign each file URL. Two URL shapes can land in Model3DFile.url:
+  //   - **Full URL** (e.g. https://civitai-media-uploads.s3.../key.glb) — this
+  //     is what the test-seeder pipeline (and any client-side useS3Upload flow)
+  //     stores. Presign directly against the bucket the URL points at; the
+  //     delivery-worker doesn't know about every test/upload bucket so a raw
+  //     URL would 401 in the browser.
+  //   - **Key only** (e.g. `3d/<uuid>.glb`) — this is what the orchestrator
+  //     PolyGen handler stores after `registerMediaLocation`. Resolve via
+  //     delivery-worker / storage-resolver (existing legacy path).
   const files = await Promise.all(
     model3d.files.map(async (file) => {
+      const isFullUrl = /^https?:\/\//i.test(file.url);
       try {
+        if (isFullUrl) {
+          const isB2 = isB2Url(file.url);
+          const s3 = isB2 ? getUploadS3Client('b2') : getS3Client();
+          // For B2 URLs, force the bucket so getGetUrl's parseKey fallback
+          // (which strips it from the hostname) doesn't pick the wrong one.
+          const bucket = isB2 ? getUploadBucket('b2') ?? undefined : undefined;
+          const { url } = await getGetUrl(file.url, { s3, bucket, fileName: file.name });
+          return { ...file, downloadUrl: url };
+        }
         const { url } = await resolveDownloadUrl(file.id, file.url, file.name);
         return { ...file, downloadUrl: url };
       } catch {

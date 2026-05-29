@@ -250,7 +250,10 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           <Card withBorder radius="md" p={0} className="overflow-hidden">
             {primaryFile ? (
               <Model3DViewer
-                url={primaryFile.url}
+                // Use the resolved/presigned downloadUrl so the browser can
+                // actually fetch the GLB — the raw `url` may point at a
+                // bucket the public delivery worker doesn't authorize.
+                url={primaryFile.downloadUrl ?? primaryFile.url}
                 format={primaryFile.format}
                 sizeKB={primaryFile.sizeKB}
               />
