@@ -548,6 +548,8 @@ model User {
   blockUserSubscriptions     BlockUserSubscription[]
   blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
   blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
+  publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
+  publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
 
   @@index([deletedAt])
 }
@@ -2235,10 +2237,56 @@ model AppBlock {
   platformDefault    PlatformDefaultBlock?
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
+  publishRequests    AppBlockPublishRequest[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   @@index([status], map: "app_blocks_status_idx")
   @@map("app_blocks")
+}
+
+/// W1 v0 publish request — every version of every app goes through the
+/// moderator review queue. The dev uploads a ZIP via /apps/submit (first
+/// version) or /apps/<slug>/submit-version (subsequent). civitai-web
+/// stores the bundle on ssd-minio-backups MinIO, extracts + validates the
+/// manifest, computes diff summaries, and inserts a row here in
+/// status='pending'. A mod approves or rejects via /apps/review.
+///
+/// On approve the platform (a) auto-creates the OauthClient if first
+/// version, (b) inserts/updates the app_blocks row, (c) commits the
+/// bundle contents to the Forgejo repo, which triggers the existing
+/// Tekton build → callback → apply chain.
+///
+/// Forgejo is invisible to developers at every step.
+model AppBlockPublishRequest {
+  id                    String    @id                                                       // pubreq_<ULID>
+  appBlockId            String?   @map("app_block_id")                                      // NULL while first request pending; FK on approve
+  appBlock              AppBlock? @relation(fields: [appBlockId], references: [id], onDelete: SetNull)
+  slug                  String                                                              // app slug; carries identity across the first-request lifecycle
+  submittedByUserId     Int       @map("submitted_by_user_id")
+  submittedBy           User      @relation("PublishRequestSubmitter", fields: [submittedByUserId], references: [id], onDelete: Cascade)
+  submittedAt           DateTime  @default(now()) @map("submitted_at") @db.Timestamptz(6)
+  version               String                                                              // semver, e.g. "0.1.0"
+  manifest              Json                                                                // parsed block.manifest.json from the ZIP
+  bundleKey             String    @map("bundle_key")                                        // S3 key: app-block-bundles/<sha256>.zip
+  bundleSha256          String    @map("bundle_sha256")                                     // for integrity + dedup
+  bundleSizeBytes       BigInt    @map("bundle_size_bytes")
+  fileSummary           Json      @map("file_summary")                                      // { added, removed, changed } vs previous approved version
+  manifestDiffSummary   Json      @map("manifest_diff_summary")                             // field-level diff
+  status                String                                                              // 'pending' | 'approved' | 'rejected' | 'withdrawn'
+  reviewedByUserId      Int?      @map("reviewed_by_user_id")
+  reviewedBy            User?     @relation("PublishRequestReviewer", fields: [reviewedByUserId], references: [id], onDelete: SetNull)
+  reviewedAt            DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  rejectionReason       String?   @map("rejection_reason")
+  approvalNotes         String?   @map("approval_notes")
+  forgejoCommitSha      String?   @map("forgejo_commit_sha")                                // populated on approve after Forgejo commit succeeds
+  createdAt             DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt             DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status, submittedAt(sort: Desc)], map: "app_block_publish_requests_queue_idx")  // mod queue
+  @@index([appBlockId, submittedAt(sort: Desc)], map: "app_block_publish_requests_app_history_idx")
+  @@index([submittedByUserId, status], map: "app_block_publish_requests_my_submissions_idx")
+  @@index([slug, status], map: "app_block_publish_requests_slug_idx")
+  @@map("app_block_publish_requests")
 }
 
 /// Per-model, per-block install record. Application-generated id (`mbi_<ulid>`)

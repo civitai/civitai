@@ -13,6 +13,10 @@ import {
   listAvailableSchema,
   subscriptionScopeSchema,
 } from '~/server/schema/blocks/subscription.schema';
+import {
+  submitVersionSchema,
+  withdrawRequestSchema,
+} from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { BlockRegistry } from '~/server/services/block-registry.service';
@@ -384,6 +388,125 @@ export const blocksRouter = router({
         repoUrl: repo.html_url,
         cloneUrl: repo.clone_url,
       };
+    }),
+
+  /**
+   * W1 publish-request flow — developer uploads a ZIP bundle (the full app
+   * directory) for moderator review. v0 keeps the gate at `isModerator`;
+   * v1 (W11 audit + W5 scopes) opens it to external developers.
+   *
+   * Replaces the direct-Forgejo-push flow shipped in W12. The mod review
+   * + Forgejo-upload happens in `approveRequest` (Phase 3).
+   *
+   * Bundle is base64-encoded in the JSON body — simpler than multipart
+   * for v0 (50 MiB max, 67 MiB encoded, well within reach of the default
+   * Next.js body limit).
+   */
+  submitVersion: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(submitVersionSchema)
+    .mutation(async ({ ctx, input }) => {
+      const [{ submitVersion }, { env }] = await Promise.all([
+        import('~/server/services/blocks/publish-request.service'),
+        import('~/env/server'),
+      ]);
+
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('App submission is restricted to civitai team at v0');
+      }
+      if (!env.BUNDLE_S3_ENDPOINT || !env.BUNDLE_S3_BUCKET) {
+        throw new TRPCError({
+          code: 'PRECONDITION_FAILED',
+          message: 'Bundle storage not configured in this environment',
+        });
+      }
+
+      // Decode + validate the bundle bytes. The schema's pre-decode cap
+      // is a cheap sanity check; the service re-checks against the real
+      // post-decode buffer size.
+      let bundleBuffer: Buffer;
+      try {
+        bundleBuffer = Buffer.from(input.bundleBase64, 'base64');
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: `bundleBase64 is not valid base64: ${(err as Error).message}`,
+        });
+      }
+
+      try {
+        return await submitVersion({
+          slug: input.slug,
+          version: input.version,
+          bundleBuffer,
+          submittedByUserId: ctx.user.id,
+        });
+      } catch (err) {
+        // Service throws plain Errors with human-readable messages
+        // (bundle too large, missing manifest, version mismatch, ...).
+        // Surface as BAD_REQUEST so the form can render them inline.
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+        });
+      }
+    }),
+
+  /**
+   * Developer-facing: withdraw your own pending publish request.
+   * Idempotent. Allows resubmitting against the same slug without
+   * accumulating dead pending rows.
+   */
+  withdrawPublishRequest: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(withdrawRequestSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { withdrawRequest } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      try {
+        await withdrawRequest({
+          publishRequestId: input.publishRequestId,
+          userId: ctx.user.id,
+        });
+      } catch (err) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+        });
+      }
+      return { ok: true };
+    }),
+
+  /**
+   * Developer-facing list: every publish request submitted by the current
+   * viewer, newest first. The /apps/my-submissions page renders this.
+   * Returns the rejection reason inline so the dev sees mod feedback
+   * without a second round-trip.
+   */
+  listMyPublishRequests: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      if (!ctx.user) return [];
+      return dbRead.appBlockPublishRequest.findMany({
+        where: { submittedByUserId: ctx.user.id },
+        orderBy: { submittedAt: 'desc' },
+        take: 100,
+        select: {
+          id: true,
+          appBlockId: true,
+          slug: true,
+          version: true,
+          status: true,
+          submittedAt: true,
+          reviewedAt: true,
+          rejectionReason: true,
+          approvalNotes: true,
+          fileSummary: true,
+          manifestDiffSummary: true,
+        },
+      });
     }),
 
   /**

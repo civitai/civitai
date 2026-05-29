@@ -353,4 +353,18 @@ export const serverSchema = z.object({
   APPS_TEKTON_TRIGGER_SECRET: z.string().optional(),
   APPS_KUBE_NAMESPACE: z.string().default('civitai-apps'),
   APPS_DOMAIN: z.string().default('civit.ai'),
+
+  // App Blocks W1 (publish-request flow). S3-compatible storage for
+  // dev-uploaded ZIP bundles. Production points at ssd-minio-backups
+  // MinIO with credentials scoped to the app-block-bundles bucket only.
+  // All optional so envs without the publish-request feature still boot.
+  //
+  // BUNDLE_S3_ENDPOINT             e.g. http://minio.minio-ssd-backups.svc.cluster.local
+  // BUNDLE_S3_BUCKET               e.g. app-block-bundles
+  // BUNDLE_S3_ACCESS_KEY_ID        scoped service-account key
+  // BUNDLE_S3_SECRET_ACCESS_KEY    matching secret
+  BUNDLE_S3_ENDPOINT: z.string().url().optional(),
+  BUNDLE_S3_BUCKET: z.string().optional(),
+  BUNDLE_S3_ACCESS_KEY_ID: z.string().optional(),
+  BUNDLE_S3_SECRET_ACCESS_KEY: z.string().optional(),
 });
