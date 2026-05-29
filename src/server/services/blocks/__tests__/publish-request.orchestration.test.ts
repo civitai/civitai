@@ -366,39 +366,66 @@ describe('submitVersion', () => {
     expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
   });
 
-  // C-4 regression: two concurrent submitVersion calls both pass the pending
-  // check because there's no DB-level uniqueness. This test LOCKS IN current
-  // behavior — when a partial unique index is added, this will fail and
-  // should be updated to assert the second call throws.
-  //
-  // Vitest's mock proxy doesn't co-operate well with Prisma's lazy init under
-  // Promise.all of the same service entry point, so we simulate the race
-  // sequentially: prove that when BOTH calls observe no pending row, BOTH
-  // proceed to insert. The interleaving doesn't matter — the race window
-  // is between the read and the write inside the SAME function.
-  it('REGRESSION (C-4): two same-slug submissions both succeed without DB-level uniqueness', async () => {
+  // C-4 fix verification: the race window between the app-layer "no pending
+  // request" check and the INSERT is now closed by a partial unique index
+  // (migration 20260528210000_w1_uniqueness_constraints):
+  //   CREATE UNIQUE INDEX ... ON app_block_publish_requests (slug)
+  //     WHERE status='pending'
+  // Two parallel submitVersion calls that both pass the app-layer findFirst
+  // (because neither's INSERT is visible to the other yet) collide at the
+  // DB. The catch translates the raw P2002 into a human-readable error.
+  it('FIX (C-4): second concurrent same-slug submission collides on the partial unique index', async () => {
     const { submitVersion } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null); // both see no pending
     const buf = await makeValidBundle();
 
+    // First submission lands cleanly (default mockDbWrite create succeeds).
     const r1 = await submitVersion({
       slug: 'hello',
       version: '0.1.0',
       bundleBuffer: buf,
       submittedByUserId: 42,
     });
-    // Re-arming the "no pending" state simulates the race window where the
-    // first INSERT hasn't been visible to the second findFirst yet.
-    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
-    const r2 = await submitVersion({
-      slug: 'hello',
-      version: '0.1.0',
-      bundleBuffer: buf,
-      submittedByUserId: 43,
-    });
+    expect(r1.publishRequestId).toBeDefined();
 
-    expect(r1.publishRequestId).not.toBe(r2.publishRequestId);
+    // Race window: the second findFirst still sees no pending row because
+    // the first INSERT hasn't been visible across replicas yet. The second
+    // INSERT trips the partial unique index → P2002.
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    mockDbWrite.appBlockPublishRequest.create.mockRejectedValueOnce(p2002);
+
+    await expect(
+      submitVersion({
+        slug: 'hello',
+        version: '0.1.0',
+        bundleBuffer: buf,
+        submittedByUserId: 43,
+      })
+    ).rejects.toThrow(/already has a pending publish request/);
+
+    // Both attempted to INSERT; only one succeeded (the race-loser caught
+    // P2002 + surfaced the user-readable error).
     expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledTimes(2);
+  });
+
+  // Verify non-P2002 errors aren't silently swallowed by the C-4 catch.
+  it('FIX (C-4): non-P2002 errors on publish_request INSERT are surfaced', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue(null);
+    const buf = await makeValidBundle();
+    mockDbWrite.appBlockPublishRequest.create.mockRejectedValueOnce(
+      new Error('connection reset by peer')
+    );
+
+    await expect(
+      submitVersion({
+        slug: 'hello',
+        version: '0.1.0',
+        bundleBuffer: buf,
+        submittedByUserId: 42,
+      })
+    ).rejects.toThrow(/connection reset/);
   });
 
   it('Discord notify is invoked with the right shape on submission', async () => {
@@ -882,6 +909,44 @@ describe('approveRequest', () => {
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(1);
     expect(mockForgejo.commitFiles).toHaveBeenCalledTimes(1);
     expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledTimes(1);
+  });
+
+  // C-3 fix verification — the DB-level UNIQUE on app_blocks(block_id)
+  // (migration 20260528210000_w1_uniqueness_constraints) is the
+  // belt-and-suspenders layer beneath the C-2 deterministic-id dedup.
+  // Models the scenario where the OauthClient layer is somehow bypassed
+  // (e.g. legacy data path with a non-deterministic appId) but block_id
+  // is still already taken: the AppBlock INSERT trips P2002 and the
+  // recovery path falls through to the existing row.
+  it('FIX (C-3): AppBlock create with block_id collision falls through to existing row', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    // appBlock.findFirst is called twice in the first-version path: once
+    // for isFirstVersion (returns null = first version), then again inside
+    // the AppBlock.create P2002 catch (returns the colliding row).
+    mockDbRead.appBlock.findFirst
+      .mockResolvedValueOnce(null) // isFirstVersion check
+      .mockResolvedValueOnce({ id: 'apb_collision' }); // catch recovery
+    mockBundleBuffer.current = await makeValidBundle();
+
+    // OauthClient.create succeeds (test isolates the block_id constraint).
+    // AppBlock.create trips the new DB constraint on its first try.
+    const p2002 = Object.assign(new Error('app_blocks_block_id_unique violation'), {
+      code: 'P2002',
+    });
+    mockDbWrite.appBlock.create.mockRejectedValueOnce(p2002);
+
+    const result = await approveRequest({
+      publishRequestId: 'pubreq_1',
+      reviewerUserId: 999,
+    });
+
+    expect(result.isFirstVersion).toBe(true);
+    expect(result.appBlockId).toBe('apb_collision');
+    // The recovery path refreshes the existing AppBlock's manifest so the
+    // row converges to the new content.
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalledOnce();
+    expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
   });
 
   // C-2 fix verification — non-P2002 errors are NOT swallowed. If the

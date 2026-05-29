@@ -2240,6 +2240,10 @@ model AppBlock {
   publishRequests    AppBlockPublishRequest[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
+  // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
+  // (appId, blockId) constraint above doesn't protect because each
+  // approve mints a fresh appId.
+  @@unique([blockId], map: "app_blocks_block_id_unique")
   @@index([status], map: "app_blocks_status_idx")
   @@map("app_blocks")
 }

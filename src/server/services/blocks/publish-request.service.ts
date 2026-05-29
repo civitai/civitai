@@ -450,22 +450,38 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const key = await storeBundle(bundleBuffer, bundleSha256);
 
   const publishRequestId = `pubreq_${newUlid()}`;
-  await dbWrite.appBlockPublishRequest.create({
-    data: {
-      id: publishRequestId,
-      appBlockId: existingApp?.id ?? null,
-      slug,
-      submittedByUserId,
-      version,
-      manifest: manifest as object,
-      bundleKey: key,
-      bundleSha256,
-      bundleSizeBytes: BigInt(bundleBuffer.length),
-      fileSummary: fileSummary as object,
-      manifestDiffSummary: manifestDiffSummary as object,
-      status: 'pending',
-    },
-  });
+  try {
+    await dbWrite.appBlockPublishRequest.create({
+      data: {
+        id: publishRequestId,
+        appBlockId: existingApp?.id ?? null,
+        slug,
+        submittedByUserId,
+        version,
+        manifest: manifest as object,
+        bundleKey: key,
+        bundleSha256,
+        bundleSizeBytes: BigInt(bundleBuffer.length),
+        fileSummary: fileSummary as object,
+        manifestDiffSummary: manifestDiffSummary as object,
+        status: 'pending',
+      },
+    });
+  } catch (err) {
+    // C-4 fix: the partial unique index app_block_publish_requests_one_
+    // pending_per_slug catches the race window between our findFirst above
+    // and this INSERT — two parallel submitVersion calls for the same slug
+    // both pass the app-layer check and arrive here. Convert the raw
+    // Postgres unique-violation into the same human-readable message the
+    // app-layer check would have surfaced.
+    const code = (err as { code?: unknown })?.code;
+    if (code === 'P2002') {
+      throw new Error(
+        `slug ${slug} already has a pending publish request (race window); withdraw the other or retry`
+      );
+    }
+    throw err;
+  }
 
   // Fire-and-forget Discord notify to the mod queue. Don't await — a
   // Discord outage must not block submissions.
