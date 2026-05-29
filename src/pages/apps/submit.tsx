@@ -1,6 +1,7 @@
 import {
   Alert,
   Anchor,
+  Badge,
   Button,
   Card,
   Code,
@@ -9,7 +10,6 @@ import {
   Group,
   Stack,
   Text,
-  TextInput,
   Title,
 } from '@mantine/core';
 import {
@@ -18,8 +18,9 @@ import {
   IconCloudUpload,
   IconFileZip,
 } from '@tabler/icons-react';
+import JSZip from 'jszip';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -36,18 +37,13 @@ import { trpc } from '~/utils/trpc';
 /**
  * /apps/submit — Submit a new app or a new version of an existing app.
  *
- * The dev uploads a ZIP containing their entire app source tree
- * (Dockerfile + block.manifest.json + index.html + src/...). The
- * platform stores the bundle, computes a diff summary against the
- * previous approved version (if any), and queues a publish request
- * for moderator review at /apps/review.
+ * The dev picks a ZIP of their app source. The form parses
+ * block.manifest.json client-side, shows the slug + version + name +
+ * targets the manifest will register, and only then enables Submit.
+ * No separate slug/version fields — the manifest is the source of
+ * truth, and a typed slug that doesn't match would be a typo trap.
  *
- * v0 gate: requires `isModerator`. v1 (W11 audit + W5 scopes) opens to
- * external developers.
- *
- * The submission form is intentionally backend-agnostic — devs don't
- * see Forgejo, ghcr.io, Tekton, or any of the deploy substrate. They
- * submit a ZIP and get a status page.
+ * v0 gate: requires `isModerator`.
  */
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -62,7 +58,6 @@ export const getServerSideProps = createServerSideProps({
       };
     }
     if (!session.user.isModerator) {
-      // 404 (rather than 403) so non-team users can't enumerate the surface.
       return { notFound: true };
     }
     return { props: {} };
@@ -75,13 +70,25 @@ type Submitted = {
   version: string;
 };
 
+type ParsedManifest = {
+  blockId: string;
+  version: string;
+  name: string;
+  description?: string;
+  contentRating?: string;
+  targets?: Array<{ slotId?: string; priority?: number }>;
+};
+
+type ManifestPreview =
+  | { ok: true; manifest: ParsedManifest }
+  | { ok: false; error: string };
+
 async function fileToBase64(file: File): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const result = reader.result as string | null;
       if (!result) return reject(new Error('FileReader returned empty result'));
-      // result format: "data:application/zip;base64,<base64>"
       const idx = result.indexOf(',');
       if (idx < 0) return reject(new Error('FileReader result missing comma'));
       resolve(result.slice(idx + 1));
@@ -91,13 +98,102 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
+/**
+ * Parse the ZIP client-side and pull out block.manifest.json so the
+ * dev sees what they're about to submit. Same shape checks as the
+ * server-side submitVersion does — kept in sync so failures surface
+ * before the upload round-trip.
+ */
+async function previewManifest(file: File): Promise<ManifestPreview> {
+  if (file.size === 0) return { ok: false, error: 'file is empty' };
+  if (file.size > MAX_BUNDLE_SIZE_BYTES) {
+    return {
+      ok: false,
+      error: `bundle is ${Math.round(file.size / (1024 * 1024))} MiB — max ${Math.round(
+        MAX_BUNDLE_SIZE_BYTES / (1024 * 1024)
+      )} MiB`,
+    };
+  }
+  let bytes: ArrayBuffer;
+  try {
+    bytes = await file.arrayBuffer();
+  } catch (err) {
+    return { ok: false, error: `could not read file: ${(err as Error).message}` };
+  }
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(bytes);
+  } catch (err) {
+    return { ok: false, error: `not a valid ZIP: ${(err as Error).message}` };
+  }
+  const manifestEntry = zip.file('block.manifest.json');
+  if (!manifestEntry) {
+    return { ok: false, error: 'block.manifest.json missing from bundle root' };
+  }
+  let raw: string;
+  try {
+    raw = await manifestEntry.async('text');
+  } catch (err) {
+    return { ok: false, error: `could not read manifest: ${(err as Error).message}` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    return { ok: false, error: `manifest is not valid JSON: ${(err as Error).message}` };
+  }
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, error: 'manifest must be a JSON object' };
+  }
+  const m = parsed as Record<string, unknown>;
+  if (typeof m.blockId !== 'string' || !SLUG_REGEX.test(m.blockId) || m.blockId.length < 3 || m.blockId.length > 40) {
+    return {
+      ok: false,
+      error: `manifest.blockId "${m.blockId ?? ''}" must be 3-40 chars, lowercase a-z/0-9/hyphens, start with a letter`,
+    };
+  }
+  if (typeof m.version !== 'string' || !SEMVER_REGEX.test(m.version)) {
+    return { ok: false, error: `manifest.version "${m.version ?? ''}" must be semver (e.g. 0.1.0)` };
+  }
+  if (typeof m.name !== 'string' || m.name.length === 0) {
+    return { ok: false, error: 'manifest.name must be a non-empty string' };
+  }
+  return {
+    ok: true,
+    manifest: {
+      blockId: m.blockId,
+      version: m.version,
+      name: m.name,
+      description: typeof m.description === 'string' ? m.description : undefined,
+      contentRating: typeof m.contentRating === 'string' ? m.contentRating : undefined,
+      targets: Array.isArray(m.targets)
+        ? (m.targets as Array<{ slotId?: string; priority?: number }>)
+        : undefined,
+    },
+  };
+}
+
 export default function SubmitAppPage() {
   const features = useFeatureFlags();
-  const [slug, setSlug] = useState('');
-  const [version, setVersion] = useState('0.1.0');
   const [bundle, setBundle] = useState<File | null>(null);
+  const [preview, setPreview] = useState<ManifestPreview | null>(null);
   const [encoding, setEncoding] = useState(false);
   const [submitted, setSubmitted] = useState<Submitted | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!bundle) {
+      setPreview(null);
+      return;
+    }
+    setPreview(null); // clear stale preview while parsing
+    previewManifest(bundle).then((p) => {
+      if (!cancelled) setPreview(p);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [bundle]);
 
   const submitMutation = trpc.blocks.submitVersion.useMutation({
     onSuccess: (result) => {
@@ -114,20 +210,16 @@ export default function SubmitAppPage() {
 
   if (!features?.appBlocks) return <NotFound />;
 
-  const slugValid = SLUG_REGEX.test(slug) && slug.length >= 3 && slug.length <= 40;
-  const versionValid = SEMVER_REGEX.test(version);
-  const bundleValid =
-    !!bundle && bundle.size > 0 && bundle.size <= MAX_BUNDLE_SIZE_BYTES;
-  const bundleTooLarge = !!bundle && bundle.size > MAX_BUNDLE_SIZE_BYTES;
+  const previewOk = preview?.ok === true;
   const busy = encoding || submitMutation.isLoading || !!submitted;
-  const canSubmit = slugValid && versionValid && bundleValid && !busy;
+  const canSubmit = !!bundle && previewOk && !busy;
 
   async function handleSubmit() {
     if (!bundle) return;
     setEncoding(true);
     try {
       const bundleBase64 = await fileToBase64(bundle);
-      submitMutation.mutate({ slug, version, bundleBase64 });
+      submitMutation.mutate({ bundleBase64 });
     } catch (err) {
       showErrorNotification({
         title: 'Could not read file',
@@ -146,10 +238,11 @@ export default function SubmitAppPage() {
           <Stack gap={4}>
             <Title order={2}>Submit an app</Title>
             <Text c="dimmed" size="sm">
-              Upload a ZIP of your app source. A moderator will review the manifest +
-              change summary, then approve or reject with feedback. Approved
-              submissions deploy automatically to{' '}
-              <Code>{slug ? `${slug}.civit.ai` : '<slug>.civit.ai'}</Code>.
+              Upload a ZIP of your app source. The slug, version, and name come
+              from <Code>block.manifest.json</Code> — no separate fields to
+              fill in. A moderator reviews the manifest + change summary, then
+              approves or rejects with feedback. Approved submissions deploy
+              automatically.
             </Text>
           </Stack>
 
@@ -158,35 +251,6 @@ export default function SubmitAppPage() {
           ) : (
             <Card withBorder p="lg">
               <Stack gap="md">
-                <TextInput
-                  label="App slug"
-                  description="Used as the public subdomain (<slug>.civit.ai) and the install key. Lowercase a-z, 0-9, hyphens. 3-40 chars. Must match block.manifest.json blockId."
-                  placeholder="generate-from-model"
-                  value={slug}
-                  onChange={(e) => setSlug(e.currentTarget.value.toLowerCase().trim())}
-                  error={
-                    slug.length > 0 && !slugValid
-                      ? 'must be lowercase a-z, 0-9, hyphens; start with a letter; end with a letter or digit'
-                      : null
-                  }
-                  required
-                  data-autofocus
-                />
-
-                <TextInput
-                  label="Version"
-                  description="Semver. Must match the version in your block.manifest.json. Increment on every submission."
-                  placeholder="0.1.0"
-                  value={version}
-                  onChange={(e) => setVersion(e.currentTarget.value.trim())}
-                  error={
-                    version.length > 0 && !versionValid
-                      ? 'must be semver (e.g. 0.1.0, 1.2.3-beta)'
-                      : null
-                  }
-                  required
-                />
-
                 <FileInput
                   label="App bundle (.zip)"
                   description={`ZIP of your app source: Dockerfile + block.manifest.json + index.html + src/. Max ${Math.round(MAX_BUNDLE_SIZE_BYTES / (1024 * 1024))} MiB.`}
@@ -196,8 +260,10 @@ export default function SubmitAppPage() {
                   onChange={setBundle}
                   leftSection={<IconFileZip size={16} />}
                   required
-                  error={bundleTooLarge ? 'bundle exceeds the size limit' : null}
+                  data-autofocus
                 />
+
+                {preview && <ManifestPreviewCard preview={preview} />}
 
                 <Alert
                   icon={<IconCheck size={16} />}
@@ -214,7 +280,12 @@ export default function SubmitAppPage() {
                   </Text>
                   <Text size="sm" mb={6}>
                     3. On approve, the platform deploys your build to{' '}
-                    <Code>{slug ? `${slug}.civit.ai` : '<slug>.civit.ai'}</Code> automatically.
+                    <Code>
+                      {previewOk && preview.ok
+                        ? `${preview.manifest.blockId}.civit.ai`
+                        : '<slug>.civit.ai'}
+                    </Code>{' '}
+                    automatically.
                   </Text>
                   <Text size="sm">
                     4. On reject, you'll see the reviewer's feedback inline on{' '}
@@ -249,6 +320,53 @@ export default function SubmitAppPage() {
         </Stack>
       </Container>
     </>
+  );
+}
+
+function ManifestPreviewCard({ preview }: { preview: ManifestPreview }) {
+  if (!preview.ok) {
+    return (
+      <Alert color="red" variant="light" icon={<IconAlertTriangle size={16} />} title="Bundle problem">
+        <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>{preview.error}</Text>
+      </Alert>
+    );
+  }
+  const m = preview.manifest;
+  return (
+    <Alert color="green" variant="light" icon={<IconCheck size={16} />} title="Manifest parsed">
+      <Stack gap={6}>
+        <Group gap={6}>
+          <Text size="sm" fw={600}>Slug</Text>
+          <Code>{m.blockId}</Code>
+          <Text size="sm" fw={600} ml="md">Version</Text>
+          <Code>{m.version}</Code>
+        </Group>
+        <Group gap={6}>
+          <Text size="sm" fw={600}>Name</Text>
+          <Text size="sm">{m.name}</Text>
+        </Group>
+        {m.description && (
+          <Group gap={6} align="flex-start">
+            <Text size="sm" fw={600} style={{ minWidth: 80 }}>Description</Text>
+            <Text size="sm" c="dimmed" style={{ flex: 1 }}>{m.description}</Text>
+          </Group>
+        )}
+        {m.contentRating && (
+          <Group gap={6}>
+            <Text size="sm" fw={600}>Rating</Text>
+            <Badge color="gray" variant="light">{m.contentRating}</Badge>
+          </Group>
+        )}
+        {m.targets && m.targets.length > 0 && (
+          <Group gap={6}>
+            <Text size="sm" fw={600}>Slots</Text>
+            {m.targets.map((t, i) => (
+              <Code key={i}>{t.slotId ?? '?'}</Code>
+            ))}
+          </Group>
+        )}
+      </Stack>
+    </Alert>
   );
 }
 

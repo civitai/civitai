@@ -20,16 +20,12 @@ export const MAX_FILES_IN_BUNDLE = 2000;
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MiB per file
 
 export const submitVersionSchema = z.object({
-  slug: z.string().min(3).max(40).regex(SLUG_REGEX),
-  version: z.string().regex(SEMVER_REGEX, 'version must be semver (e.g. 0.1.0)'),
-  // Base64-encoded ZIP bytes. Server decodes and validates size before
-  // touching it (the encoded length cap below is a quick pre-check; the
-  // post-decode buffer is checked against MAX_BUNDLE_SIZE_BYTES).
-  //
-  // Display name + marketplace description come from the manifest at v0
-  // (manifest.name + manifest.description). The Phase 4 form pre-fills
-  // them from a manifest preview before the dev clicks submit, so there
-  // are no separate form fields.
+  // Base64-encoded ZIP bytes. Server decodes, validates size, then
+  // extracts manifest.blockId / manifest.version / manifest.name as the
+  // canonical slug / version / display name for this submission. There
+  // are no separate form fields for those — the manifest is the source
+  // of truth, and the form would otherwise just be a typo trap that
+  // produces "blockId X does not match form slug Y" errors.
   bundleBase64: z
     .string()
     .min(1)

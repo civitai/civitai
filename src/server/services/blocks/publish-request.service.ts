@@ -59,8 +59,6 @@ export type ManifestDiffSummary =
     };
 
 export type SubmitVersionParams = {
-  slug: string;
-  version: string;
   bundleBuffer: Buffer;
   submittedByUserId: number;
 };
@@ -379,11 +377,12 @@ async function getPreviousApprovedState(
  * second round-trip.
  */
 export async function submitVersion(params: SubmitVersionParams): Promise<SubmitVersionResult> {
-  const [{ dbRead, dbWrite }, { newUlid }] = await Promise.all([
+  const [{ dbRead, dbWrite }, { newUlid }, { SEMVER_REGEX, SLUG_REGEX }] = await Promise.all([
     import('~/server/db/client'),
     import('~/server/utils/app-block-ids'),
+    import('~/server/schema/blocks/publish-request.schema'),
   ]);
-  const { slug, version, bundleBuffer, submittedByUserId } = params;
+  const { bundleBuffer, submittedByUserId } = params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(
@@ -396,9 +395,40 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
 
   const bundleSha256 = createHash('sha256').update(bundleBuffer).digest('hex');
 
+  // Extract + validate the bundle FIRST so we have the manifest's
+  // blockId / version / name to drive the rest of the pipeline. The
+  // manifest is the source of truth — there are no separate form
+  // fields the dev could mis-type.
+  const { files, manifest: rawManifest } = await extractBundleMetadata(bundleBuffer);
+  if (!rawManifest || typeof rawManifest !== 'object') {
+    throw new Error(`${MANIFEST_PATH} must contain a JSON object`);
+  }
+  const manifest = rawManifest as Record<string, unknown>;
+
+  if (typeof manifest.blockId !== 'string') {
+    throw new Error('manifest.blockId must be a string');
+  }
+  if (manifest.blockId.length < 3 || manifest.blockId.length > 40 || !SLUG_REGEX.test(manifest.blockId)) {
+    throw new Error(
+      `manifest.blockId "${manifest.blockId}" must be 3-40 chars, lowercase a-z/0-9/hyphens, start with a letter, end with a letter or digit`
+    );
+  }
+  if (typeof manifest.version !== 'string' || !SEMVER_REGEX.test(manifest.version)) {
+    throw new Error(`manifest.version "${manifest.version ?? ''}" must be semver (e.g. 0.1.0)`);
+  }
+  if (typeof manifest.name !== 'string' || manifest.name.length === 0) {
+    throw new Error('manifest.name must be a non-empty string');
+  }
+
+  const slug = manifest.blockId;
+  const version = manifest.version;
+
   // Block double-submit on the same slug — only one pending request per
   // slug at a time. Caller's UI should withdraw the existing pending
-  // request before re-submitting.
+  // request before re-submitting. The partial unique index on
+  // (slug) WHERE status='pending' catches the race (audit C-4 fix);
+  // this app-layer check just produces a friendlier error in the
+  // common case.
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
     select: { id: true, submittedByUserId: true },
@@ -415,29 +445,11 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     select: { id: true, appId: true },
   });
 
-  // Extract + validate the bundle.
-  const { files, manifest: rawManifest } = await extractBundleMetadata(bundleBuffer);
-  if (!rawManifest || typeof rawManifest !== 'object') {
-    throw new Error(`${MANIFEST_PATH} must contain a JSON object`);
-  }
-  const manifest = rawManifest as Record<string, unknown>;
-
-  // Manifest cross-checks against the form: blockId in the manifest must
-  // match the slug; version in the manifest must match the submitted
-  // version. (The deep validation of contentRating / scopes / iframe /
-  // targets happens at the BlockManifestValidator step in the approve
-  // flow, when the OauthClient with allowedOrigins is known.)
-  if (manifest.blockId !== slug) {
-    throw new Error(`manifest blockId (${manifest.blockId}) does not match form slug (${slug})`);
-  }
-  if (manifest.version !== version) {
-    throw new Error(
-      `manifest version (${manifest.version}) does not match form version (${version})`
-    );
-  }
-  if (typeof manifest.name !== 'string' || manifest.name.length === 0) {
-    throw new Error('manifest.name must be a non-empty string');
-  }
+  // Deep manifest validation (contentRating / scopes / iframe.sandbox /
+  // targets / scope subset / iframe.src origin) happens at the
+  // BlockManifestValidator step in the approve flow, when the
+  // OauthClient with allowedOrigins is known. The basic blockId /
+  // version / name shape checks above are the only submit-time gate.
 
   // Diff against the previous approved version (if any).
   const previous = await getPreviousApprovedState(slug);

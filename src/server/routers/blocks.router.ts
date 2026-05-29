@@ -279,15 +279,14 @@ export const blocksRouter = router({
 
       try {
         return await submitVersion({
-          slug: input.slug,
-          version: input.version,
           bundleBuffer,
           submittedByUserId: ctx.user.id,
         });
       } catch (err) {
         // Service throws plain Errors with human-readable messages
-        // (bundle too large, missing manifest, version mismatch, ...).
-        // Surface as BAD_REQUEST so the form can render them inline.
+        // (bundle too large, missing manifest, invalid blockId / version
+        // / name in manifest, etc). Surface as BAD_REQUEST so the form
+        // can render them inline.
         throw new TRPCError({
           code: 'BAD_REQUEST',
           message: (err as Error).message,

@@ -220,8 +220,6 @@ describe('submitVersion', () => {
     const buf = await makeValidBundle();
 
     const result = await submitVersion({
-      slug: 'hello',
-      version: '0.1.0',
       bundleBuffer: buf,
       submittedByUserId: 42,
     });
@@ -268,8 +266,6 @@ describe('submitVersion', () => {
 
     const buf = await makeValidBundle();
     const result = await submitVersion({
-      slug: 'hello',
-      version: '0.1.0',
       bundleBuffer: buf,
       submittedByUserId: 42,
     });
@@ -285,8 +281,6 @@ describe('submitVersion', () => {
     const oversize = Buffer.alloc(50 * 1024 * 1024 + 1);
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: oversize,
         submittedByUserId: 42,
       })
@@ -300,38 +294,32 @@ describe('submitVersion', () => {
     const { submitVersion } = await import('../publish-request.service');
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: Buffer.alloc(0),
         submittedByUserId: 42,
       })
     ).rejects.toThrow(/empty/);
   });
 
-  it('rejects when manifest.blockId does not match slug', async () => {
+  it('rejects when manifest.blockId is not a valid slug', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({ blockId: 'different-slug' });
+    const buf = await makeValidBundle({ blockId: 'NotALowercaseSlug' });
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: buf,
         submittedByUserId: 42,
       })
-    ).rejects.toThrow(/blockId.*does not match.*slug/);
+    ).rejects.toThrow(/manifest\.blockId .* lowercase/);
   });
 
-  it('rejects when manifest.version does not match submitted version', async () => {
+  it('rejects when manifest.version is not valid semver', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({ version: '9.9.9' });
+    const buf = await makeValidBundle({ version: 'not-semver' });
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: buf,
         submittedByUserId: 42,
       })
-    ).rejects.toThrow(/version.*does not match/);
+    ).rejects.toThrow(/manifest\.version .* semver/);
   });
 
   it('rejects when manifest.name is missing or empty', async () => {
@@ -339,8 +327,6 @@ describe('submitVersion', () => {
     const buf = await makeValidBundle({ name: '' });
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: buf,
         submittedByUserId: 42,
       })
@@ -356,8 +342,6 @@ describe('submitVersion', () => {
     const buf = await makeValidBundle();
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: buf,
         submittedByUserId: 42,
       })
@@ -381,8 +365,6 @@ describe('submitVersion', () => {
 
     // First submission lands cleanly (default mockDbWrite create succeeds).
     const r1 = await submitVersion({
-      slug: 'hello',
-      version: '0.1.0',
       bundleBuffer: buf,
       submittedByUserId: 42,
     });
@@ -397,8 +379,6 @@ describe('submitVersion', () => {
 
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: buf,
         submittedByUserId: 43,
       })
@@ -420,8 +400,6 @@ describe('submitVersion', () => {
 
     await expect(
       submitVersion({
-        slug: 'hello',
-        version: '0.1.0',
         bundleBuffer: buf,
         submittedByUserId: 42,
       })
@@ -435,8 +413,6 @@ describe('submitVersion', () => {
 
     const buf = await makeValidBundle();
     await submitVersion({
-      slug: 'hello',
-      version: '0.1.0',
       bundleBuffer: buf,
       submittedByUserId: 42,
     });
@@ -463,8 +439,6 @@ describe('submitVersion', () => {
     );
     const buf = await makeValidBundle();
     const result = await submitVersion({
-      slug: 'hello',
-      version: '0.1.0',
       bundleBuffer: buf,
       submittedByUserId: 42,
     });
@@ -565,8 +539,6 @@ describe('listPendingRequests', () => {
     return {
       id: 'pubreq_1',
       appBlockId: null,
-      slug: 'hello',
-      version: '0.1.0',
       submittedAt: new Date('2026-05-28T12:00:00Z'),
       bundleSizeBytes: 12345n,
       bundleSha256: 'abc',
