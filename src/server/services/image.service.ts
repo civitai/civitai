@@ -2546,10 +2546,8 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
   // Post-filter re-adds the user's own private/blocked/poi/unpublished content.
   if (bitdexMode === 'primary') {
     try {
-      const result = await withSpan(
-        'image:bitdex:primary',
-        { 'bitdex.mode': 'primary' },
-        () => fetchBitdexPrimary(input)
+      const result = await withSpan('image:bitdex:primary', { 'bitdex.mode': 'primary' }, () =>
+        fetchBitdexPrimary(input)
       );
       if (result) return { ...result, source: 'bitdex' as const };
       console.log('[BitDex] PRIMARY returned no results, falling through to Meili');
@@ -6131,6 +6129,62 @@ export const getImageModerationReviewQueue = async ({
     }
   }
 
+  // For the appeal queue, surface the report(s) that triggered the original moderation.
+  // Capped at 5 per image, newest first, so spam-report patterns are visible.
+  type AppealReport = {
+    id: number;
+    reason: string;
+    details: Prisma.JsonValue;
+    status: ReportStatus;
+    createdAt: Date;
+    user: { id: number; username?: string | null };
+  };
+  let appealReports: Map<number, AppealReport[]> | undefined;
+  if (needsReview === 'appeal' && imageIds.length > 0) {
+    const reportRows = await dbRead.$queryRaw<
+      {
+        imageId: number;
+        id: number;
+        reason: string;
+        details: Prisma.JsonValue;
+        status: ReportStatus;
+        createdAt: Date;
+        username: string | null;
+        userId: number;
+      }[]
+    >`
+      SELECT
+        imgr."imageId" as "imageId",
+        r.id as "id",
+        r.reason as "reason",
+        r.details as "details",
+        r.status as "status",
+        r."createdAt" as "createdAt",
+        ru.username as "username",
+        ru.id as "userId"
+      FROM "ImageReport" imgr
+      JOIN "Report" r ON r.id = imgr."reportId"
+      JOIN "User" ru ON ru.id = r."userId"
+      WHERE imgr."imageId" IN (${Prisma.join(imageIds)})
+      ORDER BY r."createdAt" DESC
+    `;
+
+    appealReports = new Map();
+    for (const row of reportRows) {
+      const report: AppealReport = {
+        id: row.id,
+        reason: row.reason,
+        details: row.details,
+        status: row.status,
+        createdAt: row.createdAt,
+        user: { id: row.userId, username: row.username },
+      };
+      const list = appealReports.get(row.imageId);
+      if (!list) appealReports.set(row.imageId, [report]);
+      else if (list.length < 5) list.push(report);
+    }
+  }
+
   const images: Array<
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
       meta: ImageMetaProps | null;
@@ -6154,6 +6208,7 @@ export const getImageModerationReviewQueue = async ({
             moderator?: { id: number; username?: string | null };
           }
         | undefined;
+      reports?: AppealReport[] | undefined;
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       entityType?: string | null;
@@ -6223,6 +6278,7 @@ export const getImageModerationReviewQueue = async ({
         : undefined,
       removedAt,
       tosReason: tosDetails?.get(i.id)?.tosReason,
+      reports: appealReports?.get(i.id),
     })
   );
 
