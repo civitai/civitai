@@ -6,10 +6,17 @@ import { createContext } from '~/server/createContext';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { appRouter } from '~/server/routers';
 
+// Raised from '17mb' to '72mb' 2026-05-28 to accommodate App Blocks W1
+// publish-request submissions: a 50 MiB ZIP base64-encodes to ~67 MiB JSON,
+// plus tRPC envelope overhead. The schema-level cap (MAX_BUNDLE_SIZE_BYTES
+// = 50 MiB) is enforced server-side; this is only the transport-layer cap.
+// Audit C-1 (claudedocs/app-blocks-w1-v0-audit-2026-05-28.md) tracks the
+// v1+ migration to a dedicated /api/internal/blocks/upload-bundle route
+// that would isolate the cap to the one endpoint that needs it.
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '17mb',
+      sizeLimit: '72mb',
     },
   },
 };

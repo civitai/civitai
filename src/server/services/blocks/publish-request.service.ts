@@ -689,25 +689,55 @@ export async function approveRequest(
     // (1) Auto-create OauthClient — public client scoped to the per-app
     // subdomain so the existing git-push manifest validator passes the
     // H8 origin binding check.
-    const oauthClientId = `${newUlid().toLowerCase()}-app-block-${request.slug}`;
+    //
+    // **Deterministic id** (`appblk-<slug>`) is load-bearing for retry
+    // safety: if approve fails mid-flow and the mod re-clicks Approve,
+    // the second oauthClient.create hits the PK unique constraint
+    // (P2002) and we fall through to findUnique — no orphan client
+    // accumulating across retries. Audit C-2 (claudedocs/app-blocks-
+    // w1-v0-audit-2026-05-28.md) tracks the rationale.
+    //
+    // **Also blunts C-3**: two concurrent first-version approves for
+    // the same slug now collide at the OauthClient PK rather than each
+    // inserting a distinct OauthClient + AppBlock row.
+    const oauthClientId = `appblk-${request.slug}`;
     const oauthClientName =
       typeof manifest.name === 'string' && manifest.name.length > 0
         ? manifest.name.slice(0, 80)
         : `App Block: ${request.slug}`;
-    await dbWrite.oauthClient.create({
-      data: {
-        id: oauthClientId,
-        secret: null,
-        name: oauthClientName,
-        description: '',
-        redirectUris: [],
-        allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
-        isConfidential: false,
-        userId: request.submittedByUserId,
-      },
-    });
+    try {
+      await dbWrite.oauthClient.create({
+        data: {
+          id: oauthClientId,
+          secret: null,
+          name: oauthClientName,
+          description: '',
+          redirectUris: [],
+          allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
+          isConfidential: false,
+          userId: request.submittedByUserId,
+        },
+      });
+    } catch (err) {
+      // Duck-type on Prisma's error shape rather than instanceof —
+      // matches the pattern used by buzz-attribution.service.ts.
+      const code = (err as { code?: unknown })?.code;
+      if (code !== 'P2002') throw err;
+      const existing = await dbRead.oauthClient.findUnique({
+        where: { id: oauthClientId },
+        select: { id: true },
+      });
+      if (!existing) {
+        // P2002 without a hit on findUnique would indicate a foreign
+        // unique constraint we don't know about; surface the original.
+        throw err;
+      }
+    }
 
     // (2) Create Forgejo repo seeded from the starter + push webhook.
+    // createRepoFromTemplate is idempotent (returns existing on 409);
+    // ensurePushWebhook lists + replaces existing hooks so the second
+    // call doesn't stack.
     const repo = await createRepoFromTemplate({
       slug: request.slug,
       description: oauthClientName,
@@ -724,22 +754,52 @@ export async function approveRequest(
     // (3) Insert app_blocks row so the downstream git-push handler finds
     // it. status='approved' + repoUrl populated; currentVersionSha gets
     // filled in by the webhook after the Forgejo commit.
+    //
+    // Retry-safe via the (appId, blockId) unique constraint: a second
+    // approve hits P2002 here and falls through to findFirst.
     appBlockId = `apb_${newUlid()}`;
-    await dbWrite.appBlock.create({
-      data: {
-        id: appBlockId,
-        appId: oauthClientId,
-        blockId: request.slug,
-        version: request.version,
-        manifest: manifest as object,
-        status: 'approved',
-        contentRating: manifestContentRating,
-        renderMode: manifestRenderMode,
-        trustTier: manifestTrustTier,
-        approvedScopes: manifestScopes,
-        repoUrl,
-      },
-    });
+    try {
+      await dbWrite.appBlock.create({
+        data: {
+          id: appBlockId,
+          appId: oauthClientId,
+          blockId: request.slug,
+          version: request.version,
+          manifest: manifest as object,
+          status: 'approved',
+          contentRating: manifestContentRating,
+          renderMode: manifestRenderMode,
+          trustTier: manifestTrustTier,
+          approvedScopes: manifestScopes,
+          repoUrl,
+        },
+      });
+    } catch (err) {
+      const code = (err as { code?: unknown })?.code;
+      if (code !== 'P2002') throw err;
+      const existing = await dbRead.appBlock.findFirst({
+        where: { appId: oauthClientId, blockId: request.slug },
+        select: { id: true },
+      });
+      if (!existing) throw err;
+      appBlockId = existing.id;
+      // Refresh the manifest + version on the existing row so retries
+      // converge to the new state (the failed earlier attempt may have
+      // had different content).
+      await dbWrite.appBlock.update({
+        where: { id: appBlockId },
+        data: {
+          version: request.version,
+          manifest: manifest as object,
+          status: 'approved',
+          contentRating: manifestContentRating,
+          renderMode: manifestRenderMode,
+          trustTier: manifestTrustTier,
+          approvedScopes: manifestScopes,
+          repoUrl,
+        },
+      });
+    }
   } else {
     appBlockId = existingAppBlock.id;
     repoUrl = existingAppBlock.repoUrl ?? '';

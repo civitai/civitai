@@ -46,6 +46,10 @@ const {
       },
       appBlock: { findFirst: vi.fn() },
       user: { findUnique: vi.fn() },
+      // Added 2026-05-28 for C-2 fix: approveRequest now reads the
+      // OauthClient row after a P2002 collision to recover the existing
+      // client on retry.
+      oauthClient: { findUnique: vi.fn() },
     },
     mockDbWrite: {
       appBlockPublishRequest: { create: vi.fn(), update: vi.fn() },
@@ -659,8 +663,10 @@ describe('approveRequest', () => {
     expect(mockForgejo.commitFiles).toHaveBeenCalledOnce();
     expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledOnce();
 
-    // OauthClient gets the slug-scoped allowedOrigins.
+    // OauthClient gets the slug-scoped allowedOrigins + a deterministic id
+    // (post C-2 fix). The deterministic id is what makes retries idempotent.
     const ocArg = mockDbWrite.oauthClient.create.mock.calls[0][0].data;
+    expect(ocArg.id).toBe('appblk-hello');
     expect(ocArg.allowedOrigins).toEqual(['https://hello.civit.ai']);
     expect(ocArg.userId).toBe(42);
     expect(ocArg.isConfidential).toBe(false);
@@ -790,27 +796,108 @@ describe('approveRequest', () => {
     ).rejects.toThrow(/not found/);
   });
 
-  // C-3 regression — concurrent first-version approves both succeed today
-  // because the AppBlock unique constraint is on (appId, blockId) and appId
-  // is freshly generated each time. Sequential simulation; see C-4 test for
-  // why we don't use Promise.all here.
-  it('REGRESSION (C-3): two first-version approves both create AppBlock rows', async () => {
+  // C-3 fix verification — two parallel first-version approves for the same
+  // slug. Pre-fix, both would create distinct OauthClient + AppBlock rows
+  // because the appId was freshly generated each call. Post-fix, the
+  // deterministic OauthClient.id (`appblk-<slug>`) means the second create
+  // hits a unique constraint (P2002); we catch and fall through to the
+  // existing row. Net: one OauthClient + one AppBlock for one slug, even
+  // under racing approvers.
+  it('FIX (C-3): second concurrent approve dedupes on the deterministic OauthClient id', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
     mockDbRead.appBlock.findFirst.mockResolvedValue(null); // both observe no existing
     mockBundleBuffer.current = await makeValidBundle();
 
+    // First approve succeeds end-to-end.
     await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
-    // Re-arm: the status check would see pending again because the second
-    // approver hasn't observed the first's UPDATE yet.
+
+    // Re-arm DB reads for the second approver. appBlock.findFirst is
+    // called twice in the first-version path: once for the isFirstVersion
+    // check (race-window null), and once inside the appBlock.create
+    // P2002-catch (returns the row approver-1 inserted). Order matters —
+    // mockResolvedValueOnce queue is consumed in registration order.
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
-    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockDbRead.appBlock.findFirst
+      .mockResolvedValueOnce(null) // isFirstVersion check: still race-window null
+      .mockResolvedValueOnce({ id: 'apb_first' }); // catch recovery: approver-1's row
+
+    // Simulate the unique-constraint violation that Postgres would raise
+    // on the second OauthClient.create with the same deterministic id.
+    const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
+    // The post-P2002 lookup returns the row from approver-1.
+    mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+    // AppBlock.create for the second approver also hits the (appId,blockId)
+    // unique constraint and falls through to findFirst.
+    mockDbWrite.appBlock.create.mockRejectedValueOnce(p2002);
+
     await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 998 });
 
-    // Both runs created an AppBlock + OauthClient because the
-    // unique-by-(appId,blockId) constraint is satisfied by distinct appIds.
+    // Both creates were ATTEMPTED twice (call count), but only one of each
+    // materialized (the second was caught + recovered).
     expect(mockDbWrite.oauthClient.create).toHaveBeenCalledTimes(2);
     expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(2);
+    expect(mockDbRead.oauthClient.findUnique).toHaveBeenCalled();
+    // The second approver UPDATEs the existing AppBlock (refreshes manifest)
+    // instead of inserting a new one — converges to a consistent state.
+    expect(mockDbWrite.appBlock.update).toHaveBeenCalled();
+  });
+
+  // C-2 fix verification — retry safety. A failed first attempt followed by
+  // a second attempt converges to a single OauthClient + AppBlock, instead
+  // of accumulating orphans.
+  it('FIX (C-2): retry after Forgejo failure dedupes via deterministic OauthClient id', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    // Attempt 1: OauthClient.create succeeds, then Forgejo blows up.
+    mockForgejo.createRepoFromTemplate.mockRejectedValueOnce(new Error('Forgejo 503'));
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/Forgejo 503/);
+    expect(mockDbWrite.oauthClient.create).toHaveBeenCalledTimes(1);
+
+    // Attempt 2: same request, Forgejo now healthy. The second
+    // OauthClient.create hits the (deterministic) id again → P2002 →
+    // catch → findUnique returns the orphan → continue.
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    const p2002 = Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+    mockDbWrite.oauthClient.create.mockRejectedValueOnce(p2002);
+    mockDbRead.oauthClient.findUnique.mockResolvedValueOnce({ id: 'appblk-hello' });
+
+    const result = await approveRequest({
+      publishRequestId: 'pubreq_1',
+      reviewerUserId: 999,
+    });
+
+    expect(result.isFirstVersion).toBe(true);
+    expect(result.forgejoCommitSha).toBe('commit_sha_abc');
+    // No orphan accumulation: only one OauthClient materialized despite two
+    // calls, and one AppBlock from the second attempt.
+    expect(mockDbWrite.oauthClient.create).toHaveBeenCalledTimes(2);
+    expect(mockDbWrite.appBlock.create).toHaveBeenCalledTimes(1);
+    expect(mockForgejo.commitFiles).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.appBlockPublishRequest.update).toHaveBeenCalledTimes(1);
+  });
+
+  // C-2 fix verification — non-P2002 errors are NOT swallowed. If the
+  // OauthClient create fails with anything else, we surface the error so
+  // ops sees the real failure rather than silently continuing past a bug.
+  it('FIX (C-2): non-P2002 errors on OauthClient.create are surfaced', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest());
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+
+    mockDbWrite.oauthClient.create.mockRejectedValueOnce(new Error('connection refused'));
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/connection refused/);
+    expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
   });
 
   // H-4 regression — subsequent-version approve updates AppBlock.manifest
