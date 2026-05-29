@@ -16,7 +16,9 @@ import {
   approveRequestSchema,
   backfillPublishRequestSchema,
   getMyPendingForSlugSchema,
+  listApprovedRequestsSchema,
   listPendingRequestsSchema,
+  listRejectedRequestsSchema,
   rejectRequestSchema,
   submitVersionSchema,
   withdrawRequestSchema,
@@ -359,6 +361,40 @@ export const blocksRouter = router({
         throw throwAuthorizationError('Mod review queue is restricted to civitai team');
       }
       return listPendingRequests({ limit: input.limit, cursor: input.cursor });
+    }),
+
+  /**
+   * Mod history: paginated list of publish requests that were approved,
+   * newest-first. Powers the Approved tab on /apps/review.
+   */
+  listApprovedRequests: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listApprovedRequestsSchema)
+    .query(async ({ ctx, input }) => {
+      const { listApprovedRequests } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review history is restricted to civitai team');
+      }
+      return listApprovedRequests({ limit: input.limit, cursor: input.cursor });
+    }),
+
+  /**
+   * Mod history: paginated list of publish requests that were rejected,
+   * newest-first. Powers the Rejected tab on /apps/review.
+   */
+  listRejectedRequests: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(listRejectedRequestsSchema)
+    .query(async ({ ctx, input }) => {
+      const { listRejectedRequests } = await import(
+        '~/server/services/blocks/publish-request.service'
+      );
+      if (!ctx.user?.isModerator) {
+        throw throwAuthorizationError('Mod review history is restricted to civitai team');
+      }
+      return listRejectedRequests({ limit: input.limit, cursor: input.cursor });
     }),
 
   /**

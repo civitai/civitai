@@ -53,6 +53,16 @@ export const listPendingRequestsSchema = z.object({
 
 export type ListPendingRequestsInput = z.infer<typeof listPendingRequestsSchema>;
 
+// History tabs share the same paginate-by-cursor shape — reuse the schema
+// rather than fork it. The router exposes them as distinct procs so future
+// per-status filters (e.g. by reviewer) can diverge without breaking the
+// pending queue.
+export const listApprovedRequestsSchema = listPendingRequestsSchema;
+export type ListApprovedRequestsInput = z.infer<typeof listApprovedRequestsSchema>;
+
+export const listRejectedRequestsSchema = listPendingRequestsSchema;
+export type ListRejectedRequestsInput = z.infer<typeof listRejectedRequestsSchema>;
+
 export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),

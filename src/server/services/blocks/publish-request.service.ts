@@ -690,6 +690,98 @@ export async function listPendingRequests(opts: ListPendingRequestsOptions = {})
   };
 }
 
+/**
+ * Mod history: paginated list of publish requests in status='approved',
+ * newest first (most recently reviewed). Includes both the submitter +
+ * reviewer profiles plus the inline `approvalNotes` so the /apps/review
+ * Approved tab doesn't round-trip per row.
+ */
+export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}) {
+  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./forgejo.service'),
+  ]);
+  const limit = Math.min(opts.limit ?? 25, 100);
+  const rows = await dbRead.appBlockPublishRequest.findMany({
+    where: { status: 'approved' },
+    orderBy: { reviewedAt: 'desc' },
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    select: {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      submittedAt: true,
+      reviewedAt: true,
+      approvalNotes: true,
+      bundleSizeBytes: true,
+      bundleSha256: true,
+      manifest: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      submittedBy: { select: { id: true, username: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  const hasNext = rows.length > limit;
+  const items = hasNext ? rows.slice(0, limit) : rows;
+  return {
+    items: items.map((r: (typeof rows)[number]) => ({
+      ...r,
+      bundleSizeBytes: r.bundleSizeBytes.toString(),
+      reviewRepoUrl: reviewRepoUrl(r.slug),
+    })),
+    nextCursor: hasNext ? items[items.length - 1].id : null,
+  };
+}
+
+/**
+ * Mod history: paginated list of publish requests in status='rejected',
+ * newest first. Includes the rejecter profile + the required
+ * `rejectionReason` so the /apps/review Rejected tab can show the inline
+ * mod feedback without a second round-trip.
+ */
+export async function listRejectedRequests(opts: ListPendingRequestsOptions = {}) {
+  const [{ dbRead }, { reviewRepoUrl }] = await Promise.all([
+    import('~/server/db/client'),
+    import('./forgejo.service'),
+  ]);
+  const limit = Math.min(opts.limit ?? 25, 100);
+  const rows = await dbRead.appBlockPublishRequest.findMany({
+    where: { status: 'rejected' },
+    orderBy: { reviewedAt: 'desc' },
+    take: limit + 1,
+    ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+    select: {
+      id: true,
+      appBlockId: true,
+      slug: true,
+      version: true,
+      submittedAt: true,
+      reviewedAt: true,
+      rejectionReason: true,
+      bundleSizeBytes: true,
+      bundleSha256: true,
+      manifest: true,
+      fileSummary: true,
+      manifestDiffSummary: true,
+      submittedBy: { select: { id: true, username: true, image: true } },
+      reviewedBy: { select: { id: true, username: true, image: true } },
+    },
+  });
+  const hasNext = rows.length > limit;
+  const items = hasNext ? rows.slice(0, limit) : rows;
+  return {
+    items: items.map((r: (typeof rows)[number]) => ({
+      ...r,
+      bundleSizeBytes: r.bundleSizeBytes.toString(),
+      reviewRepoUrl: reviewRepoUrl(r.slug),
+    })),
+    nextCursor: hasNext ? items[items.length - 1].id : null,
+  };
+}
+
 export type ApproveRequestParams = {
   publishRequestId: string;
   reviewerUserId: number;

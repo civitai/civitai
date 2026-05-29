@@ -10,6 +10,7 @@ import {
   ScrollArea,
   Stack,
   Table,
+  Tabs,
   Text,
   Textarea,
   Title,
@@ -22,7 +23,9 @@ import {
   IconExternalLink,
   IconX,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useRouter } from 'next/router';
+import type { MouseEvent } from 'react';
+import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -32,12 +35,18 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { trpc } from '~/utils/trpc';
 
 /**
- * /apps/review — Moderator review queue for App Blocks publish requests.
+ * /apps/review — Moderator review queue + history for App Blocks publish
+ * requests.
  *
- * Lists pending requests oldest-first; click into a row to see the new
- * manifest, the diff summary against the previous approved version, and
- * approve / reject buttons. On approve the platform commits the bundle
- * to Forgejo server-side and the existing Tekton build chain takes over.
+ * Three tabs:
+ *  - Pending  — oldest-first FIFO queue; click into a row to approve/reject.
+ *  - Approved — newest-first history with the mod's optional approval notes
+ *               and the "View code in Forgejo" link. Read-only modal.
+ *  - Rejected — newest-first history with the required rejection reason
+ *               surfaced inline. Read-only modal.
+ *
+ * Active tab is mirrored to `?tab=approved|rejected` so a mod can deep-link
+ * to a specific history view (e.g. when pasting into a Discord thread).
  *
  * v0 gate: requires `isModerator`. v1 (W11 audit) opens to reviewers
  * outside the civitai team behind RBAC.
@@ -77,7 +86,9 @@ type FileSummary = {
   changed: string[];
 };
 
-type PendingRequest = {
+type UserProfile = { id: number; username: string | null; image: string | null };
+
+type ReviewedRequestCommon = {
   id: string;
   appBlockId: string | null;
   slug: string;
@@ -89,8 +100,30 @@ type PendingRequest = {
   fileSummary: unknown;
   manifestDiffSummary: unknown;
   reviewRepoUrl: string;
-  submittedBy: { id: number; username: string | null; image: string | null };
+  submittedBy: UserProfile;
 };
+
+type PendingRequest = ReviewedRequestCommon;
+
+type ApprovedRequest = ReviewedRequestCommon & {
+  reviewedAt: string | Date | null;
+  approvalNotes: string | null;
+  reviewedBy: UserProfile | null;
+};
+
+type RejectedRequest = ReviewedRequestCommon & {
+  reviewedAt: string | Date | null;
+  rejectionReason: string | null;
+  reviewedBy: UserProfile | null;
+};
+
+type AnyRequest = PendingRequest | ApprovedRequest | RejectedRequest;
+
+type TabValue = 'pending' | 'approved' | 'rejected';
+
+function isTabValue(v: unknown): v is TabValue {
+  return v === 'pending' || v === 'approved' || v === 'rejected';
+}
 
 function formatBytes(s: string): string {
   const n = Number(s);
@@ -100,23 +133,38 @@ function formatBytes(s: string): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MiB`;
 }
 
-function formatDate(d: string | Date): string {
+function formatDate(d: string | Date | null | undefined): string {
+  if (!d) return '—';
   const date = typeof d === 'string' ? new Date(d) : d;
   return date.toLocaleString();
 }
 
 export default function ReviewQueuePage() {
   const features = useFeatureFlags();
-  const queue = trpc.blocks.listPendingRequests.useQuery(
-    { limit: 50 },
-    { enabled: !!features?.appBlocks }
-  );
+  const router = useRouter();
 
-  const [selected, setSelected] = useState<PendingRequest | null>(null);
+  // Sync active tab with `?tab=` so deep-links land on the right view. Use
+  // shallow routing so the page query doesn't re-trigger getServerSideProps.
+  const tab: TabValue = useMemo(() => {
+    const qt = router.query.tab;
+    if (typeof qt === 'string' && isTabValue(qt)) return qt;
+    return 'pending';
+  }, [router.query.tab]);
+
+  const setTab = (next: TabValue) => {
+    void router.replace(
+      { pathname: router.pathname, query: { ...router.query, tab: next } },
+      undefined,
+      { shallow: true }
+    );
+  };
+
+  const [selected, setSelected] = useState<{
+    request: AnyRequest;
+    mode: TabValue;
+  } | null>(null);
 
   if (!features?.appBlocks) return <NotFound />;
-
-  const items = (queue.data?.items ?? []) as PendingRequest[];
 
   return (
     <>
@@ -126,145 +174,425 @@ export default function ReviewQueuePage() {
           <Stack gap={4}>
             <Title order={2}>App publish-request queue</Title>
             <Text c="dimmed" size="sm">
-              Moderator review for App Blocks. Oldest-first.{' '}
-              {queue.isLoading ? 'Loading…' : `${items.length} pending.`}
+              Moderator review for App Blocks. Pending queue is oldest-first;
+              history tabs are newest-first.
             </Text>
           </Stack>
 
-          {queue.isError && (
-            <Alert color="red" icon={<IconAlertTriangle size={16} />}>
-              {queue.error.message}
-            </Alert>
-          )}
+          <Tabs
+            value={tab}
+            onChange={(v) => {
+              if (isTabValue(v)) setTab(v);
+            }}
+            keepMounted={false}
+          >
+            <Tabs.List>
+              <Tabs.Tab value="pending" leftSection={<IconClock size={14} />}>
+                Pending
+              </Tabs.Tab>
+              <Tabs.Tab value="approved" leftSection={<IconCheck size={14} />}>
+                Approved
+              </Tabs.Tab>
+              <Tabs.Tab value="rejected" leftSection={<IconX size={14} />}>
+                Rejected
+              </Tabs.Tab>
+            </Tabs.List>
 
-          {!queue.isLoading && items.length === 0 && (
-            <Card withBorder p="lg">
-              <Group gap="xs">
-                <IconCheck color="var(--mantine-color-green-6)" size={20} />
-                <Text>Queue is empty. Nothing waiting for review.</Text>
-              </Group>
-            </Card>
-          )}
+            <Tabs.Panel value="pending" pt="md">
+              <PendingTab
+                onSelect={(r) => setSelected({ request: r, mode: 'pending' })}
+              />
+            </Tabs.Panel>
 
-          {items.length > 0 && (
-            <Card withBorder p={0}>
-              <Table verticalSpacing="md" horizontalSpacing="md">
-                <Table.Thead>
-                  <Table.Tr>
-                    <Table.Th>App</Table.Th>
-                    <Table.Th>Version</Table.Th>
-                    <Table.Th>Submitter</Table.Th>
-                    <Table.Th>Submitted</Table.Th>
-                    <Table.Th>Bundle</Table.Th>
-                    <Table.Th>Changes</Table.Th>
-                    <Table.Th />
-                  </Table.Tr>
-                </Table.Thead>
-                <Table.Tbody>
-                  {items.map((r) => {
-                    const fs = (r.fileSummary ?? {}) as FileSummary;
-                    const mds = (r.manifestDiffSummary ?? {}) as ManifestDiffSummary;
-                    const isFirst = mds.kind === 'first-version';
-                    return (
-                      <Table.Tr key={r.id} style={{ cursor: 'pointer' }}>
-                        <Table.Td onClick={() => setSelected(r)}>
-                          <Group gap={6}>
-                            <Code>{r.slug}</Code>
-                            {isFirst && (
-                              <Badge color="violet" size="xs">
-                                first version
-                              </Badge>
-                            )}
-                          </Group>
-                        </Table.Td>
-                        <Table.Td onClick={() => setSelected(r)}>
-                          <Code>{r.version}</Code>
-                        </Table.Td>
-                        <Table.Td onClick={() => setSelected(r)}>
-                          {r.submittedBy.username ?? `#${r.submittedBy.id}`}
-                        </Table.Td>
-                        <Table.Td onClick={() => setSelected(r)}>
-                          <Group gap={4}>
-                            <IconClock size={14} />
-                            <Text size="xs">{formatDate(r.submittedAt)}</Text>
-                          </Group>
-                        </Table.Td>
-                        <Table.Td onClick={() => setSelected(r)}>
-                          <Text size="xs" c="dimmed">
-                            {formatBytes(r.bundleSizeBytes)} ·{' '}
-                            {fs.files?.length ?? 0} files
-                          </Text>
-                        </Table.Td>
-                        <Table.Td onClick={() => setSelected(r)}>
-                          <Group gap={6}>
-                            {(fs.added?.length ?? 0) > 0 && (
-                              <Badge color="green" size="xs">
-                                +{fs.added.length}
-                              </Badge>
-                            )}
-                            {(fs.changed?.length ?? 0) > 0 && (
-                              <Badge color="yellow" size="xs">
-                                ~{fs.changed.length}
-                              </Badge>
-                            )}
-                            {(fs.removed?.length ?? 0) > 0 && (
-                              <Badge color="red" size="xs">
-                                −{fs.removed.length}
-                              </Badge>
-                            )}
-                          </Group>
-                        </Table.Td>
-                        <Table.Td>
-                          <Button
-                            size="xs"
-                            variant="default"
-                            onClick={() => setSelected(r)}
-                            rightSection={<IconExternalLink size={12} />}
-                          >
-                            Review
-                          </Button>
-                        </Table.Td>
-                      </Table.Tr>
-                    );
-                  })}
-                </Table.Tbody>
-              </Table>
-            </Card>
-          )}
+            <Tabs.Panel value="approved" pt="md">
+              <ApprovedTab onSelect={(r) => setSelected({ request: r, mode: 'approved' })} />
+            </Tabs.Panel>
+
+            <Tabs.Panel value="rejected" pt="md">
+              <RejectedTab onSelect={(r) => setSelected({ request: r, mode: 'rejected' })} />
+            </Tabs.Panel>
+          </Tabs>
         </Stack>
       </Container>
 
       <ReviewModal
-        request={selected}
+        selection={selected}
         onClose={() => setSelected(null)}
-        onActioned={async () => {
-          setSelected(null);
-          await queue.refetch();
-        }}
       />
     </>
   );
 }
 
-function ReviewModal({
-  request,
-  onClose,
-  onActioned,
+// ---------------------------------------------------------------------------
+// Pending tab — original FIFO queue with approve/reject modal.
+// ---------------------------------------------------------------------------
+
+function PendingTab({ onSelect }: { onSelect: (r: PendingRequest) => void }) {
+  const features = useFeatureFlags();
+  const queue = trpc.blocks.listPendingRequests.useQuery(
+    { limit: 50 },
+    { enabled: !!features?.appBlocks }
+  );
+
+  const items = (queue.data?.items ?? []) as PendingRequest[];
+
+  // The modal invalidates listPendingRequests via trpc.useUtils() on
+  // approve/reject success, which forces this query to refetch
+  // automatically — no prop-drilled onActioned callback needed.
+
+  return (
+    <Stack gap="md">
+      <Text c="dimmed" size="sm">
+        {queue.isLoading ? 'Loading…' : `${items.length} pending.`}
+      </Text>
+
+      {queue.isError && (
+        <Alert color="red" icon={<IconAlertTriangle size={16} />}>
+          {queue.error.message}
+        </Alert>
+      )}
+
+      {!queue.isLoading && items.length === 0 && (
+        <Card withBorder p="lg">
+          <Group gap="xs">
+            <IconCheck color="var(--mantine-color-green-6)" size={20} />
+            <Text>Queue is empty. Nothing waiting for review.</Text>
+          </Group>
+        </Card>
+      )}
+
+      {items.length > 0 && (
+        <Card withBorder p={0}>
+          <Table verticalSpacing="md" horizontalSpacing="md">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>App</Table.Th>
+                <Table.Th>Version</Table.Th>
+                <Table.Th>Submitter</Table.Th>
+                <Table.Th>Submitted</Table.Th>
+                <Table.Th>Bundle</Table.Th>
+                <Table.Th>Changes</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {items.map((r) => {
+                const fs = (r.fileSummary ?? {}) as FileSummary;
+                const mds = (r.manifestDiffSummary ?? {}) as ManifestDiffSummary;
+                const isFirst = mds.kind === 'first-version';
+                return (
+                  <Table.Tr key={r.id} style={{ cursor: 'pointer' }}>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Group gap={6}>
+                        <Code>{r.slug}</Code>
+                        {isFirst && (
+                          <Badge color="violet" size="xs">
+                            first version
+                          </Badge>
+                        )}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Code>{r.version}</Code>
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      {r.submittedBy.username ?? `#${r.submittedBy.id}`}
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Group gap={4}>
+                        <IconClock size={14} />
+                        <Text size="xs">{formatDate(r.submittedAt)}</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Text size="xs" c="dimmed">
+                        {formatBytes(r.bundleSizeBytes)} ·{' '}
+                        {fs.files?.length ?? 0} files
+                      </Text>
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Group gap={6}>
+                        {(fs.added?.length ?? 0) > 0 && (
+                          <Badge color="green" size="xs">
+                            +{fs.added.length}
+                          </Badge>
+                        )}
+                        {(fs.changed?.length ?? 0) > 0 && (
+                          <Badge color="yellow" size="xs">
+                            ~{fs.changed.length}
+                          </Badge>
+                        )}
+                        {(fs.removed?.length ?? 0) > 0 && (
+                          <Badge color="red" size="xs">
+                            −{fs.removed.length}
+                          </Badge>
+                        )}
+                      </Group>
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="xs"
+                        variant="default"
+                        onClick={() => onSelect(r)}
+                        rightSection={<IconExternalLink size={12} />}
+                      >
+                        Review
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        </Card>
+      )}
+    </Stack>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Approved tab — cursor-paginated history with inline approval notes.
+// ---------------------------------------------------------------------------
+
+function ApprovedTab({ onSelect }: { onSelect: (r: ApprovedRequest) => void }) {
+  return (
+    <HistoryTab
+      kind="approved"
+      onSelect={(r) => onSelect(r as ApprovedRequest)}
+      emptyLabel="No approved publish requests yet."
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Rejected tab — cursor-paginated history with inline rejection reason.
+// ---------------------------------------------------------------------------
+
+function RejectedTab({ onSelect }: { onSelect: (r: RejectedRequest) => void }) {
+  return (
+    <HistoryTab
+      kind="rejected"
+      onSelect={(r) => onSelect(r as RejectedRequest)}
+      emptyLabel="No rejected publish requests yet."
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared history tab — drives both approved + rejected. Differs only by the
+// tRPC proc it calls and the inline mod-note column it renders.
+// ---------------------------------------------------------------------------
+
+function HistoryTab({
+  kind,
+  onSelect,
+  emptyLabel,
 }: {
-  request: PendingRequest | null;
-  onClose: () => void;
-  onActioned: () => void | Promise<void>;
+  kind: 'approved' | 'rejected';
+  onSelect: (r: ApprovedRequest | RejectedRequest) => void;
+  emptyLabel: string;
 }) {
+  const features = useFeatureFlags();
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const [accumulated, setAccumulated] = useState<Array<ApprovedRequest | RejectedRequest>>([]);
+
+  // Reset accumulated state when switching between tabs (kind doesn't
+  // change in practice — each HistoryTab instance is per-kind — but if a
+  // mod reloads the page on a different tab we start fresh).
+  // Both procs share the listPendingRequestsSchema shape so the input
+  // types are interchangeable.
+  const approvedQuery = trpc.blocks.listApprovedRequests.useQuery(
+    { limit: 25, cursor },
+    { enabled: !!features?.appBlocks && kind === 'approved' }
+  );
+  const rejectedQuery = trpc.blocks.listRejectedRequests.useQuery(
+    { limit: 25, cursor },
+    { enabled: !!features?.appBlocks && kind === 'rejected' }
+  );
+  const query = kind === 'approved' ? approvedQuery : rejectedQuery;
+
+  const page = (query.data?.items ?? []) as Array<ApprovedRequest | RejectedRequest>;
+
+  // Merge each page result into the accumulated list. Dedupe by id in case
+  // the user clicks Load more multiple times before the previous fetch
+  // settled (defensive — react-query usually serializes these).
+  const merged = useMemo(() => {
+    if (!cursor) return page;
+    const seen = new Set(accumulated.map((r) => r.id));
+    return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
+  }, [accumulated, page, cursor]);
+
+  const onLoadMore = () => {
+    // Snapshot the current page before advancing the cursor so the next
+    // useQuery call starts a new fetch.
+    setAccumulated(merged);
+    const next = query.data?.nextCursor ?? undefined;
+    if (next) setCursor(next);
+  };
+
+  return (
+    <Stack gap="md">
+      <Text c="dimmed" size="sm">
+        {query.isLoading ? 'Loading…' : `${merged.length} shown.`}
+      </Text>
+
+      {query.isError && (
+        <Alert color="red" icon={<IconAlertTriangle size={16} />}>
+          {query.error.message}
+        </Alert>
+      )}
+
+      {!query.isLoading && merged.length === 0 && (
+        <Card withBorder p="lg">
+          <Group gap="xs">
+            <IconCheck color="var(--mantine-color-gray-6)" size={20} />
+            <Text>{emptyLabel}</Text>
+          </Group>
+        </Card>
+      )}
+
+      {merged.length > 0 && (
+        <Card withBorder p={0}>
+          <Table verticalSpacing="md" horizontalSpacing="md">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>App</Table.Th>
+                <Table.Th>Version</Table.Th>
+                <Table.Th>Submitter</Table.Th>
+                <Table.Th>{kind === 'approved' ? 'Approved by' : 'Rejected by'}</Table.Th>
+                <Table.Th>Reviewed</Table.Th>
+                <Table.Th>{kind === 'approved' ? 'Notes' : 'Reason'}</Table.Th>
+                <Table.Th />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {merged.map((r) => {
+                const isApproved = kind === 'approved';
+                const approved = r as ApprovedRequest;
+                const rejected = r as RejectedRequest;
+                const note = isApproved ? approved.approvalNotes : rejected.rejectionReason;
+                return (
+                  <Table.Tr key={r.id} style={{ cursor: 'pointer' }}>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Code>{r.slug}</Code>
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Code>{r.version}</Code>
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      {r.submittedBy.username ?? `#${r.submittedBy.id}`}
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      {r.reviewedBy
+                        ? r.reviewedBy.username
+                          ? `@${r.reviewedBy.username}`
+                          : `#${r.reviewedBy.id}`
+                        : '—'}
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <Group gap={4}>
+                        <IconClock size={14} />
+                        <Text size="xs">{formatDate(r.reviewedAt)}</Text>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td onClick={() => onSelect(r)}>
+                      <HistoryNoteCell note={note} />
+                    </Table.Td>
+                    <Table.Td>
+                      <Button
+                        size="xs"
+                        variant="default"
+                        onClick={() => onSelect(r)}
+                        rightSection={<IconExternalLink size={12} />}
+                      >
+                        View
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                );
+              })}
+            </Table.Tbody>
+          </Table>
+        </Card>
+      )}
+
+      {query.data?.nextCursor && !query.isFetching && (
+        <Group justify="center">
+          <Button variant="default" onClick={onLoadMore}>
+            Load more
+          </Button>
+        </Group>
+      )}
+    </Stack>
+  );
+}
+
+/**
+ * Inline mod-note cell. Notes are usually one line; collapse anything
+ * over ~120 chars behind a Show more toggle so the table rows don't
+ * stretch unboundedly.
+ */
+function HistoryNoteCell({ note }: { note: string | null | undefined }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!note) {
+    return (
+      <Text size="xs" c="dimmed">
+        —
+      </Text>
+    );
+  }
+  const long = note.length > 120;
+  const shown = expanded || !long ? note : `${note.slice(0, 120).trimEnd()}…`;
+  return (
+    <Stack gap={2} maw={360}>
+      <Text size="xs" style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        {shown}
+      </Text>
+      {long && (
+        <Text
+          component="button"
+          type="button"
+          size="xs"
+          c="blue"
+          onClick={(e: MouseEvent<HTMLButtonElement>) => {
+            e.stopPropagation();
+            setExpanded((v) => !v);
+          }}
+          style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
+        >
+          {expanded ? 'Show less' : 'Show more'}
+        </Text>
+      )}
+    </Stack>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Review modal — pending requests get the interactive approve/reject UI;
+// history requests get a read-only view with the mod feedback surfaced
+// prominently.
+// ---------------------------------------------------------------------------
+
+function ReviewModal({
+  selection,
+  onClose,
+}: {
+  selection: { request: AnyRequest; mode: TabValue } | null;
+  onClose: () => void;
+}) {
+  const utils = trpc.useUtils();
   const [approvalNotes, setApprovalNotes] = useState('');
   const [rejectionReason, setRejectionReason] = useState('');
-  const [mode, setMode] = useState<'view' | 'reject'>('view');
+  const [actionMode, setActionMode] = useState<'view' | 'reject'>('view');
 
   const approveMut = trpc.blocks.approveRequest.useMutation({
     onSuccess: async () => {
       showSuccessNotification({
-        message: `Approved ${request?.slug} v${request?.version}. Build started.`,
+        message: `Approved ${selection?.request.slug} v${selection?.request.version}. Build started.`,
       });
-      await onActioned();
+      await utils.blocks.listPendingRequests.invalidate();
+      await utils.blocks.listApprovedRequests.invalidate();
+      onClose();
     },
     onError: (e) => {
       showErrorNotification({
@@ -276,9 +604,11 @@ function ReviewModal({
   const rejectMut = trpc.blocks.rejectRequest.useMutation({
     onSuccess: async () => {
       showSuccessNotification({
-        message: `Rejected ${request?.slug} v${request?.version}.`,
+        message: `Rejected ${selection?.request.slug} v${selection?.request.version}.`,
       });
-      await onActioned();
+      await utils.blocks.listPendingRequests.invalidate();
+      await utils.blocks.listRejectedRequests.invalidate();
+      onClose();
     },
     onError: (e) => {
       showErrorNotification({
@@ -288,21 +618,26 @@ function ReviewModal({
     },
   });
 
-  if (!request) return null;
+  if (!selection) return null;
+  const { request, mode } = selection;
+  const readOnly = mode !== 'pending';
 
   const manifest = request.manifest as Record<string, unknown>;
   const fs = (request.fileSummary ?? {}) as FileSummary;
   const mds = (request.manifestDiffSummary ?? {}) as ManifestDiffSummary;
   const busy = approveMut.isLoading || rejectMut.isLoading;
 
+  const approved = mode === 'approved' ? (request as ApprovedRequest) : null;
+  const rejected = mode === 'rejected' ? (request as RejectedRequest) : null;
+
   return (
     <Modal
-      opened={!!request}
+      opened={!!selection}
       onClose={() => {
         if (busy) return;
         setApprovalNotes('');
         setRejectionReason('');
-        setMode('view');
+        setActionMode('view');
         onClose();
       }}
       title={
@@ -312,6 +647,16 @@ function ReviewModal({
           {mds.kind === 'first-version' && (
             <Badge color="violet" size="sm">
               first version
+            </Badge>
+          )}
+          {mode === 'approved' && (
+            <Badge color="green" size="sm">
+              approved
+            </Badge>
+          )}
+          {mode === 'rejected' && (
+            <Badge color="red" size="sm">
+              rejected
             </Badge>
           )}
         </Group>
@@ -338,6 +683,62 @@ function ReviewModal({
           </Text>
           <Code style={{ fontSize: 10 }}>{request.bundleSha256.slice(0, 12)}…</Code>
         </Group>
+
+        {(approved || rejected) && (
+          <Card withBorder p="sm" bg={approved ? 'green.0' : 'red.0'}>
+            <Stack gap={6}>
+              <Group gap={6}>
+                {approved ? (
+                  <IconCheck size={16} color="var(--mantine-color-green-7)" />
+                ) : (
+                  <IconX size={16} color="var(--mantine-color-red-7)" />
+                )}
+                <Text size="sm" fw={600}>
+                  {approved ? 'Approved by' : 'Rejected by'}{' '}
+                  {(approved ?? rejected)?.reviewedBy
+                    ? (approved ?? rejected)!.reviewedBy!.username
+                      ? `@${(approved ?? rejected)!.reviewedBy!.username}`
+                      : `#${(approved ?? rejected)!.reviewedBy!.id}`
+                    : 'unknown'}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  · {formatDate((approved ?? rejected)!.reviewedAt)}
+                </Text>
+              </Group>
+              {approved && approved.approvalNotes && (
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    Approval notes
+                  </Text>
+                  <Text
+                    size="sm"
+                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                  >
+                    {approved.approvalNotes}
+                  </Text>
+                </Stack>
+              )}
+              {approved && !approved.approvalNotes && (
+                <Text size="xs" c="dimmed" fs="italic">
+                  No approval notes were recorded.
+                </Text>
+              )}
+              {rejected && rejected.rejectionReason && (
+                <Stack gap={2}>
+                  <Text size="xs" c="dimmed">
+                    Rejection reason
+                  </Text>
+                  <Text
+                    size="sm"
+                    style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
+                  >
+                    {rejected.rejectionReason}
+                  </Text>
+                </Stack>
+              )}
+            </Stack>
+          </Card>
+        )}
 
         <Button
           component="a"
@@ -402,7 +803,7 @@ function ReviewModal({
           </ScrollArea>
         </Stack>
 
-        {mode === 'reject' ? (
+        {readOnly ? null : actionMode === 'reject' ? (
           <Stack gap="xs">
             <Text size="sm" fw={600}>
               Rejection reason
@@ -417,7 +818,7 @@ function ReviewModal({
               disabled={busy}
             />
             <Group justify="flex-end" gap="xs">
-              <Button variant="default" onClick={() => setMode('view')} disabled={busy}>
+              <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
                 Cancel
               </Button>
               <Button
@@ -453,7 +854,7 @@ function ReviewModal({
                 color="red"
                 variant="default"
                 leftSection={<IconX size={14} />}
-                onClick={() => setMode('reject')}
+                onClick={() => setActionMode('reject')}
                 disabled={busy}
               >
                 Reject…

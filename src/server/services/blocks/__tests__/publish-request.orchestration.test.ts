@@ -690,6 +690,190 @@ describe('listPendingRequests', () => {
   });
 });
 
+// ---- listApprovedRequests --------------------------------------------------
+
+describe('listApprovedRequests', () => {
+  function row(over: Record<string, unknown> = {}) {
+    return {
+      id: 'pubreq_1',
+      appBlockId: 'apb_1',
+      slug: 'hello',
+      version: '0.1.0',
+      submittedAt: new Date('2026-05-27T10:00:00Z'),
+      reviewedAt: new Date('2026-05-28T12:00:00Z'),
+      approvalNotes: 'lgtm',
+      bundleSizeBytes: 12345n,
+      bundleSha256: 'abc',
+      manifest: {},
+      fileSummary: {},
+      manifestDiffSummary: {},
+      submittedBy: { id: 1, username: 'dev', image: null },
+      reviewedBy: { id: 999, username: 'mod', image: null },
+      ...over,
+    };
+  }
+
+  it('returns empty list with nextCursor=null when there are no approved requests', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    const result = await listApprovedRequests({});
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('filters by status=approved and orders by reviewedAt desc', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({ id: 'pubreq_a', reviewedAt: new Date('2026-05-28T15:00:00Z') }),
+      row({ id: 'pubreq_b', reviewedAt: new Date('2026-05-28T10:00:00Z') }),
+    ]);
+    const result = await listApprovedRequests({});
+    expect(result.items.map((r) => r.id)).toEqual(['pubreq_a', 'pubreq_b']);
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.orderBy).toEqual({ reviewedAt: 'desc' });
+    expect(arg.where).toEqual({ status: 'approved' });
+  });
+
+  it('surfaces approvalNotes + reviewedBy on each item', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({
+        approvalNotes: 'reviewed the iframe sandbox flags, looks good',
+        reviewedBy: { id: 999, username: 'modzilla', image: null },
+      }),
+    ]);
+    const result = await listApprovedRequests({});
+    expect(result.items[0].approvalNotes).toBe('reviewed the iframe sandbox flags, looks good');
+    expect(result.items[0].reviewedBy).toEqual({ id: 999, username: 'modzilla', image: null });
+  });
+
+  it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([row({ id: 'pubreq_z' })]);
+    await listApprovedRequests({ cursor: 'pubreq_y', limit: 1 });
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.cursor).toEqual({ id: 'pubreq_y' });
+    expect(arg.skip).toBe(1);
+    expect(arg.take).toBe(2);
+  });
+
+  it('signals more pages when result is exactly limit+1', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({ id: 'pubreq_1' }),
+      row({ id: 'pubreq_2' }),
+      row({ id: 'pubreq_3' }), // limit+1 — the trailing "has next" indicator
+    ]);
+    const result = await listApprovedRequests({ limit: 2 });
+    expect(result.items.map((r) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
+    expect(result.nextCursor).toBe('pubreq_2');
+  });
+
+  it('attaches reviewRepoUrl per row so the read-only modal can link to Forgejo', async () => {
+    const { listApprovedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({ slug: 'hello-world' }),
+    ]);
+    const result = await listApprovedRequests({});
+    expect(result.items[0].reviewRepoUrl).toBe(
+      'https://forgejo.example/civitai-apps-review/hello-world'
+    );
+  });
+});
+
+// ---- listRejectedRequests --------------------------------------------------
+
+describe('listRejectedRequests', () => {
+  function row(over: Record<string, unknown> = {}) {
+    return {
+      id: 'pubreq_1',
+      appBlockId: null,
+      slug: 'spammy',
+      version: '0.1.0',
+      submittedAt: new Date('2026-05-27T10:00:00Z'),
+      reviewedAt: new Date('2026-05-28T12:00:00Z'),
+      rejectionReason: 'manifest contentRating mismatch — please file as adult content',
+      bundleSizeBytes: 12345n,
+      bundleSha256: 'abc',
+      manifest: {},
+      fileSummary: {},
+      manifestDiffSummary: {},
+      submittedBy: { id: 1, username: 'dev', image: null },
+      reviewedBy: { id: 999, username: 'mod', image: null },
+      ...over,
+    };
+  }
+
+  it('returns empty list with nextCursor=null when there are no rejected requests', async () => {
+    const { listRejectedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([]);
+    const result = await listRejectedRequests({});
+    expect(result.items).toEqual([]);
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('filters by status=rejected and orders by reviewedAt desc', async () => {
+    const { listRejectedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({ id: 'pubreq_a', reviewedAt: new Date('2026-05-28T15:00:00Z') }),
+      row({ id: 'pubreq_b', reviewedAt: new Date('2026-05-28T10:00:00Z') }),
+    ]);
+    const result = await listRejectedRequests({});
+    expect(result.items.map((r) => r.id)).toEqual(['pubreq_a', 'pubreq_b']);
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.orderBy).toEqual({ reviewedAt: 'desc' });
+    expect(arg.where).toEqual({ status: 'rejected' });
+  });
+
+  it('surfaces rejectionReason + reviewedBy on each item', async () => {
+    const { listRejectedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({
+        rejectionReason: 'iframe.src origin must match the OauthClient allowedOrigin',
+        reviewedBy: { id: 999, username: 'modzilla', image: null },
+      }),
+    ]);
+    const result = await listRejectedRequests({});
+    expect(result.items[0].rejectionReason).toBe(
+      'iframe.src origin must match the OauthClient allowedOrigin'
+    );
+    expect(result.items[0].reviewedBy).toEqual({ id: 999, username: 'modzilla', image: null });
+  });
+
+  it('paginates with cursor — uses cursor + skip:1 + take=limit+1', async () => {
+    const { listRejectedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([row({ id: 'pubreq_z' })]);
+    await listRejectedRequests({ cursor: 'pubreq_y', limit: 1 });
+    const arg = mockDbRead.appBlockPublishRequest.findMany.mock.calls[0][0];
+    expect(arg.cursor).toEqual({ id: 'pubreq_y' });
+    expect(arg.skip).toBe(1);
+    expect(arg.take).toBe(2);
+  });
+
+  it('signals more pages when result is exactly limit+1', async () => {
+    const { listRejectedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({ id: 'pubreq_1' }),
+      row({ id: 'pubreq_2' }),
+      row({ id: 'pubreq_3' }), // trailing has-next indicator
+    ]);
+    const result = await listRejectedRequests({ limit: 2 });
+    expect(result.items.map((r) => r.id)).toEqual(['pubreq_1', 'pubreq_2']);
+    expect(result.nextCursor).toBe('pubreq_2');
+  });
+
+  it('attaches reviewRepoUrl per row so the read-only modal can link to Forgejo', async () => {
+    const { listRejectedRequests } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findMany.mockResolvedValue([
+      row({ slug: 'spammy' }),
+    ]);
+    const result = await listRejectedRequests({});
+    expect(result.items[0].reviewRepoUrl).toBe(
+      'https://forgejo.example/civitai-apps-review/spammy'
+    );
+  });
+});
+
 // ---- approveRequest --------------------------------------------------------
 
 describe('approveRequest', () => {
