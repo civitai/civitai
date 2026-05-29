@@ -487,36 +487,19 @@ export async function recordImageScan({
     });
   }
 
-  // face_count — emit when faces were detected. boundingBox / landmarks /
-  // embedding are deliberately not stored (high-cardinality + PII).
+  // faces — emit when the classifier detected any. score carries the count
+  // so a query can still filter by "images with > N faces". boundingBoxes,
+  // landmarks, embeddings, and similarityMatrix are intentionally not
+  // persisted (high-cardinality, partly PII).
   const faces = mediaRating.faceRecognition?.faces ?? [];
   if (faces.length > 0) {
     labels.push({
       ...baseRow,
-      label: 'face_count',
-      labelValue: String(faces.length),
+      label: 'faces',
+      labelValue: '',
       score: faces.length,
       triggered: 1,
     });
-
-    // face_max_similarity — useful for "same person across uploads" signal.
-    const sim = mediaRating.faceRecognition?.similarityMatrix;
-    if (sim && sim.length > 1) {
-      let maxOffDiag = 0;
-      for (let i = 0; i < sim.length; i++) {
-        const row = sim[i] ?? [];
-        for (let j = 0; j < row.length; j++) {
-          if (i !== j) maxOffDiag = Math.max(maxOffDiag, row[j] ?? 0);
-        }
-      }
-      labels.push({
-        ...baseRow,
-        label: 'face_max_similarity',
-        labelValue: '',
-        score: clamp01(maxOffDiag),
-        triggered: 1,
-      });
-    }
   }
 
   await insertRows({
