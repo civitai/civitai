@@ -2,6 +2,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+
+const poolWeightsSchema = z.array(z.number().min(0)).length(3);
 
 const configSchema = z.object({
   perMinute: z.number().int().min(1).optional(),
@@ -15,6 +18,13 @@ const configSchema = z.object({
       havingAvgPerMinute: z.number().min(0).optional(),
       smiteDominantPct: z.number().min(0).max(100).optional(),
       smiteMaxUniqueRatings: z.number().int().min(1).optional(),
+    })
+    .optional(),
+  poolQuotas: z
+    .object({
+      [NewOrderRankType.Acolyte]: poolWeightsSchema.optional(),
+      [NewOrderRankType.Knight]: poolWeightsSchema.optional(),
+      [NewOrderRankType.Templar]: poolWeightsSchema.optional(),
     })
     .optional(),
 });

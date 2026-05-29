@@ -18,12 +18,15 @@ import {
   allJudgmentsCounter,
   blessedBuzzCounter,
   checkVotingRateLimit,
+  computePoolTargets,
   correctJudgmentsCounter,
+  DEFAULT_POOL_QUOTAS,
   expCounter,
   fervorCounter,
   getActiveSlot,
   getImageRatingsCounter,
   getVotingCooldownUntil,
+  getVotingRateLimitConfig,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -1554,35 +1557,56 @@ export async function getImagesQueue({
 
   const overflowLimit = imageCount * 2;
 
-  for (const pool of rankPools) {
-    let offset = 0;
+  // Per-rank pool weights drive a stratified fetch instead of the legacy
+  // strict-sequential drain. Knight1/Knight2/Knight3 are content-tier
+  // buckets in practice (see image-scan-result.ts), so reading Knight1
+  // until full starved Knight2 (NSFW) entirely. Resolve weights from
+  // Redis (ops-tunable) with a built-in fallback; missing rank → legacy.
+  const rateLimitConfig = await getVotingRateLimitConfig();
+  const poolWeights =
+    rateLimitConfig?.poolQuotas?.[effectiveRankType] ??
+    DEFAULT_POOL_QUOTAS[effectiveRankType] ??
+    null;
 
-    while (validatedImages.length < overflowLimit) {
-      // Fetch images with offset to ensure we get enough images in case some are already rated.
+  const poolOffsets = rankPools.map(() => 0);
+  const poolExhausted = rankPools.map(() => false);
+
+  // Pull up to `target` images from `rankPools[poolIdx]`, appending to
+  // `validatedImages` and updating shared state. Returns the count actually
+  // added so callers can compute deficits for redistribution.
+  const fetchFromPool = async (poolIdx: number, target: number): Promise<number> => {
+    if (target <= 0 || poolExhausted[poolIdx]) return 0;
+    const pool = rankPools[poolIdx];
+    if (!pool) return 0;
+
+    const before = validatedImages.length;
+    const goal = before + target;
+    // Read 2× target per batch to absorb already-rated / already-seen misses.
+    // The original loop used `overflowLimit` here unconditionally; scaling to
+    // the per-pool target keeps Redis reads bounded when weights are small.
+    const step = Math.max(target * 2, 20);
+
+    while (validatedImages.length < goal) {
       const poolImages = await pool.getAll({
-        limit: overflowLimit,
-        offset,
+        limit: step,
+        offset: poolOffsets[poolIdx],
         withCount: true,
       });
-      if (poolImages.length === 0) break;
+      if (poolImages.length === 0) {
+        poolExhausted[poolIdx] = true;
+        break;
+      }
+      poolOffsets[poolIdx] += step;
 
       const imageIds = poolImages
         .filter(({ score }) => (isKnight ? score < newOrderConfig.limits.knightVotes : true))
         .map(({ value }) => Number(value));
 
-      // Filter out images already seen in this request
       const unseenImageIds = imageIds.filter((id) => !seenImageIds.has(id));
-      if (unseenImageIds.length === 0) {
-        offset += overflowLimit;
-        continue;
-      }
+      if (unseenImageIds.length === 0) continue;
 
-      // Filter out already rated images using SMISMEMBER (O(N) where N = candidates, single command)
       const unratedImageIds = await filterUnratedImages(ratedKey, unseenImageIds);
-      if (unratedImageIds.length === 0) {
-        offset += overflowLimit;
-        continue;
-      }
+      if (unratedImageIds.length === 0) continue;
 
       const images = await dbRead.image.findMany({
         where: {
@@ -1596,24 +1620,81 @@ export async function getImagesQueue({
         select: { id: true, url: true, nsfwLevel: true, metadata: true },
       });
 
-      // Add new image IDs to the seen set (for dedup within this request)
-      images.forEach((image) => seenImageIds.add(image.id));
+      // Don't overshoot the target — pass 2 redistribution relies on
+      // per-pool quotas being respected during pass 1. We mark `seenImageIds`
+      // AFTER slicing so the discarded tail stays eligible for the same
+      // pool's pass-2 redistribution call. Marking before the slice would
+      // permanently poison the IDs we never served.
+      const needed = goal - validatedImages.length;
+      const sliced = needed >= images.length ? images : images.slice(0, needed);
+
+      sliced.forEach((image) => seenImageIds.add(image.id));
 
       validatedImages.push(
-        ...images.map(({ nsfwLevel, ...image }) => ({
+        ...sliced.map(({ nsfwLevel, ...image }) => ({
           ...image,
           nsfwLevel:
             effectiveRankType === NewOrderRankType.Acolyte || isModerator ? nsfwLevel : undefined,
           metadata: image.metadata as ImageMetadata,
         }))
       );
-
-      if (validatedImages.length >= overflowLimit) break;
-
-      offset += overflowLimit; // Increment offset for the next batch
     }
 
-    if (validatedImages.length >= overflowLimit) break;
+    return validatedImages.length - before;
+  };
+
+  const sequentialDrain = async () => {
+    for (let i = 0; i < rankPools.length; i++) {
+      if (validatedImages.length >= overflowLimit) break;
+      await fetchFromPool(i, overflowLimit - validatedImages.length);
+    }
+  };
+
+  if (!poolWeights) {
+    await sequentialDrain();
+  } else {
+    // Probe pool sizes (ZCARD) only for pools with non-zero weight so an
+    // empty Knight3 can be skipped without wasting reads.
+    const poolSizes = await Promise.all(
+      rankPools.map(async (pool, idx) => {
+        const w = poolWeights[idx] ?? 0;
+        if (w <= 0) return 0;
+        try {
+          return await sysRedis.zCard(pool.key);
+        } catch {
+          return 0;
+        }
+      })
+    );
+
+    const { targets, activeIdxs } = computePoolTargets({
+      weights: poolWeights,
+      poolSizes,
+      overflowLimit,
+    });
+
+    if (activeIdxs.length === 0) {
+      // Weights point at empty pools only → fall back to sequential drain
+      // so the request still gets *something* instead of returning empty.
+      await sequentialDrain();
+    } else {
+      // Pass 1: quota fill.
+      for (const idx of activeIdxs) {
+        await fetchFromPool(idx, targets[idx]);
+      }
+
+      // Pass 2: redistribute deficit from exhausted pools to survivors.
+      // Single pass — survivors that exhaust during redistribution just stop.
+      let deficit = overflowLimit - validatedImages.length;
+      if (deficit > 0) {
+        const survivors = activeIdxs.filter((idx) => !poolExhausted[idx]);
+        for (const idx of survivors) {
+          if (deficit <= 0) break;
+          const added = await fetchFromPool(idx, deficit);
+          deficit -= added;
+        }
+      }
+    }
   }
 
   // Shuffle and slice to requested count
