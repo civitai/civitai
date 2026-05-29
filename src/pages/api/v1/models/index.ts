@@ -136,6 +136,11 @@ export default MixedAuthEndpoint(async function handler(
         : undefined;
     } catch (e) {
       if (e instanceof MeiliCallTimeoutError) {
+        // Override the public cache headers set by MixedAuthEndpoint —
+        // without this Cloudflare caches the 408 and turns a transient
+        // Meili brownout into a sticky 408 wall for every other
+        // unauthenticated caller with the same query.
+        res.setHeader('Cache-Control', 'no-store');
         return res
           .status(408)
           .json({ error: 'Model search is temporarily overloaded — please retry.' });
