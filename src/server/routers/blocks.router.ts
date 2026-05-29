@@ -3,7 +3,6 @@ import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
-import { newUlid } from '~/server/utils/app-block-ids';
 import { parseSubjectUserId, verifyBlockToken } from '~/server/middleware/block-scope.middleware';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import { getUserBuzzAccounts } from '~/server/services/buzz.service';
@@ -233,174 +232,14 @@ export const blocksRouter = router({
     }),
 
   /**
-   * Create a Forgejo repo for a new App Block under the civitai-apps org +
-   * wire up its push webhook + insert a pending app_blocks row. v0 gates on
-   * isModerator (civitai-team only — W5 + W1 open this up in v1).
-   *
-   * Lives here (not in oauth-client.router) because it deals with the
-   * downstream app_blocks lifecycle, not the OAuth identity flow itself.
-   */
-  submitApp: guardedProcedure
-    .use(enforceAppBlocksFlag)
-    .input(
-      z.object({
-        slug: z
-          .string()
-          .min(3)
-          .max(40)
-          .regex(/^[a-z][a-z0-9-]*[a-z0-9]$/, 'slug must be lowercase a-z0-9 with hyphens'),
-        // Optional: pick an existing OauthClient owned by the submitter.
-        // If omitted, we auto-create a fresh public client scoped to this
-        // app — saves the "no clients found" wall for first-time submitters
-        // and keeps each block on its own client (correct shape since the
-        // allowedOrigins set + scopes diverge per app).
-        oauthClientId: z.string().min(1).max(64).optional(),
-        description: z.string().max(280).optional(),
-      })
-    )
-    .mutation(async ({ ctx, input }) => {
-      // Lazy-load the service layer so envs without W2 wiring don't
-      // break the rest of the router at import time.
-      const [{ createRepoFromTemplate, addCollaborator, ensurePushWebhook }, { env }] =
-        await Promise.all([
-          import('~/server/services/blocks/forgejo.service'),
-          import('~/env/server'),
-        ]);
-
-      if (!ctx.user?.isModerator) {
-        throw throwAuthorizationError('App submission is restricted to civitai team at v0');
-      }
-      if (!env.FORGEJO_BASE_URL || !env.FORGEJO_ADMIN_TOKEN || !env.FORGEJO_WEBHOOK_SECRET) {
-        throw new TRPCError({
-          code: 'PRECONDITION_FAILED',
-          message: 'Forgejo not configured in this environment',
-        });
-      }
-
-      // Resolve the OauthClient: either the explicit one or a freshly
-      // auto-created public client scoped to `<slug>.<APPS_DOMAIN>`.
-      // Public (secret=null, isConfidential=false) because the block iframe
-      // can't safely hold a secret; the in-iframe JWT path is what
-      // authenticates calls, not OAuth code flow. redirectUris stays empty
-      // for the same reason. allowedOrigins is set explicitly here so the
-      // post-create `allowedOrigins`-append step below is a no-op.
-      let oauthClient: { id: string; name: string; allowedOrigins: string[] };
-      if (input.oauthClientId) {
-        const existing = await dbRead.oauthClient.findUnique({
-          where: { id: input.oauthClientId },
-          select: { id: true, name: true, allowedOrigins: true },
-        });
-        if (!existing) throw throwNotFoundError('OauthClient not found');
-        oauthClient = existing;
-      } else {
-        const generatedId = `${newUlid().toLowerCase()}-app-block-${input.slug}`;
-        const generatedName = (input.description ?? `App Block: ${input.slug}`).slice(0, 80);
-        oauthClient = await dbWrite.oauthClient.create({
-          data: {
-            id: generatedId,
-            secret: null,
-            name: generatedName,
-            description: '',
-            redirectUris: [],
-            allowedOrigins: [`https://${input.slug}.${env.APPS_DOMAIN}`],
-            isConfidential: false,
-            userId: ctx.user.id,
-          },
-          select: { id: true, name: true, allowedOrigins: true },
-        });
-      }
-
-      // Already submitted? Bail with a clear error so the operator notices
-      // they're double-submitting rather than silently re-running the
-      // Forgejo side.
-      const existing = await dbRead.appBlock.findFirst({
-        where: { blockId: input.slug },
-        select: { id: true, status: true },
-      });
-      if (existing) {
-        throw new TRPCError({
-          code: 'CONFLICT',
-          message: `App block ${input.slug} already exists (status=${existing.status})`,
-        });
-      }
-
-      // 1. Create the Forgejo repo from the starter template.
-      const repo = await createRepoFromTemplate({
-        slug: input.slug,
-        description: input.description ?? oauthClient.name,
-        template: 'starter',
-      });
-
-      // 2. Grant the submitter write access (best-effort — if the
-      // submitter doesn't have a Forgejo account yet, this 422s and we
-      // continue. The user can be added later manually via Forgejo admin.).
-      if (ctx.user?.username) {
-        try {
-          await addCollaborator({ slug: input.slug, username: ctx.user.username });
-        } catch (e) {
-          // Log but don't fail — repo creation + webhook are the load-
-          // bearing pieces; the collaborator bind is convenience.
-          // eslint-disable-next-line no-console
-          console.warn('[submitApp] addCollaborator failed:', String(e).slice(0, 240));
-        }
-      }
-
-      // 3. Attach the push webhook.
-      const callbackUrl = `${(process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '')}/api/internal/blocks/git-push`;
-      await ensurePushWebhook({
-        slug: input.slug,
-        callbackUrl,
-        secret: env.FORGEJO_WEBHOOK_SECRET,
-      });
-
-      // 4. Add the per-app host to OauthClient.allowedOrigins so the
-      // git-push handler's iframe.src check accepts the manifest. Without
-      // this, the first push would 400 with "iframe.src rejected: origin
-      // ... not in OauthClient.allowedOrigins" and require a manual UPDATE.
-      const newOrigin = `https://${input.slug}.${env.APPS_DOMAIN}`;
-      const currentOrigins = oauthClient.allowedOrigins ?? [];
-      if (!currentOrigins.includes(newOrigin)) {
-        await dbWrite.oauthClient.update({
-          where: { id: oauthClient.id },
-          data: { allowedOrigins: [...currentOrigins, newOrigin] },
-        });
-      }
-
-      // 5. Insert pending app_blocks row. apb_ prefix matches the existing
-      // hackathon row (apb_01KSD3NP23CQE4TMW14XTEFSNS) — keep that
-      // convention here even though the v1 developer-endpoint uses ab_.
-      const id = `apb_${newUlid()}`;
-      await dbWrite.appBlock.create({
-        data: {
-          id,
-          appId: oauthClient.id,
-          blockId: input.slug,
-          version: '0.0.0',
-          manifest: {},
-          status: 'pending',
-          contentRating: 'g',
-          renderMode: 'iframe',
-          trustTier: 'internal',
-          approvedScopes: [],
-          repoUrl: repo.html_url,
-        },
-      });
-
-      return {
-        appBlockId: id,
-        slug: input.slug,
-        repoUrl: repo.html_url,
-        cloneUrl: repo.clone_url,
-      };
-    }),
-
-  /**
    * W1 publish-request flow — developer uploads a ZIP bundle (the full app
    * directory) for moderator review. v0 keeps the gate at `isModerator`;
    * v1 (W11 audit + W5 scopes) opens it to external developers.
    *
-   * Replaces the direct-Forgejo-push flow shipped in W12. The mod review
-   * + Forgejo-upload happens in `approveRequest` (Phase 3).
+   * Replaced the legacy `submitApp` direct-Forgejo-push procedure: under
+   * W1 there is no developer-facing "create repo" step — the OauthClient
+   * + Forgejo repo + app_blocks row are all created server-side in
+   * `approveRequest` (Phase 3) when a mod approves the first version.
    *
    * Bundle is base64-encoded in the JSON body — simpler than multipart
    * for v0 (50 MiB max, 67 MiB encoded, well within reach of the default

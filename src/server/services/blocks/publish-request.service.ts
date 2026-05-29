@@ -291,6 +291,60 @@ async function storeBundle(bundleBuffer: Buffer, sha256: string): Promise<string
 }
 
 /**
+ * Fire-and-forget Discord notify on a new pending publish request.
+ * Posts to DISCORD_WEBHOOK_MOD_ALERTS if set. Never throws — Discord
+ * outages must not block submissions. Caller doesn't await.
+ */
+async function notifyModsOfNewRequest(opts: {
+  slug: string;
+  version: string;
+  publishRequestId: string;
+  submittedByUsername: string | null;
+  submittedByUserId: number;
+  manifestDiffKind: 'first-version' | 'update';
+  fileChangeCounts: { added: number; changed: number; removed: number };
+}): Promise<void> {
+  try {
+    const { env } = await import('~/env/server');
+    if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
+    const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
+    const reviewUrl = baseUrl ? `${baseUrl}/apps/review` : '/apps/review';
+    const submitter = opts.submittedByUsername ?? `user #${opts.submittedByUserId}`;
+    const changeSummary =
+      opts.manifestDiffKind === 'first-version'
+        ? 'first version'
+        : `+${opts.fileChangeCounts.added} ~${opts.fileChangeCounts.changed} −${opts.fileChangeCounts.removed} files`;
+
+    const payload = {
+      embeds: [
+        {
+          title: `New publish request: ${opts.slug} v${opts.version}`,
+          url: reviewUrl,
+          color: 0x1971c2,
+          fields: [
+            { name: 'Submitted by', value: submitter, inline: true },
+            { name: 'Changes', value: changeSummary, inline: true },
+            { name: 'Request ID', value: `\`${opts.publishRequestId}\`` },
+          ],
+          footer: { text: 'App Blocks publish-request queue' },
+          timestamp: new Date().toISOString(),
+        },
+      ],
+    };
+    await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => {
+      /* fire and forget */
+    });
+  } catch {
+    /* never let Discord break submission */
+  }
+}
+
+/**
  * Look up the previous APPROVED publish request for this slug, if any.
  * Returns the stored file map + manifest from that row so we can diff
  * against it without re-fetching the bundle from MinIO.
@@ -410,6 +464,26 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       fileSummary: fileSummary as object,
       manifestDiffSummary: manifestDiffSummary as object,
       status: 'pending',
+    },
+  });
+
+  // Fire-and-forget Discord notify to the mod queue. Don't await — a
+  // Discord outage must not block submissions.
+  const submitter = await dbRead.user.findUnique({
+    where: { id: submittedByUserId },
+    select: { username: true },
+  });
+  void notifyModsOfNewRequest({
+    slug,
+    version,
+    publishRequestId,
+    submittedByUsername: submitter?.username ?? null,
+    submittedByUserId,
+    manifestDiffKind: manifestDiffSummary.kind === 'first-version' ? 'first-version' : 'update',
+    fileChangeCounts: {
+      added: fileSummary.added.length,
+      changed: fileSummary.changed.length,
+      removed: fileSummary.removed.length,
     },
   });
 

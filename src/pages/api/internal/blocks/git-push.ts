@@ -136,10 +136,10 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // Look up the app_blocks row by (appId, blockId) — civitai-team created
-  // it during blocks.submitApp. If it's missing, the repo exists in Forgejo
-  // but never got registered in our DB; bail with 404 so submitApp gets
-  // re-run.
+  // Look up the app_blocks row by (appId, blockId). Under W1 the row is
+  // pre-created in `approveRequest` before this webhook fires; if it's
+  // missing the Forgejo commit raced ahead of the approve flow's DB
+  // insert, so bail with 404 and the mod can re-approve.
   const appBlock = await dbRead.appBlock.findFirst({
     where: { blockId: slug },
     select: {
