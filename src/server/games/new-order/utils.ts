@@ -769,7 +769,21 @@ export type VotingRateLimitConfig = {
     /** Smite filter — issue smite when uniqueRatings <= X. */
     smiteMaxUniqueRatings?: number;
   };
+  /**
+   * Per-rank weight array indexed by priority slot (index 0 = priority 1, etc.).
+   * Used by `getImagesQueue` to mix images across pools instead of draining
+   * them in strict priority order — fixes the case where one pool dominates
+   * (e.g. Knight1 SFW flood starves Knight2 NSFW). Weights are renormalized
+   * over non-empty pools at read time, and missing/zero entries are treated
+   * as "do not pull from this pool". When the rank key is absent, the loop
+   * falls back to the legacy sequential drain.
+   */
+  poolQuotas?: Partial<Record<NewOrderRankType, number[]>>;
 };
+
+// Re-export the pure quota math from a side-effect-free module so unit tests
+// can import it without booting Redis/ClickHouse/DB modules transitively.
+export { DEFAULT_POOL_QUOTAS, computePoolTargets } from './pool-quotas';
 
 const DENIED_RESPONSE = { allowed: false, remaining: 0, cooldownUntil: 0 } as const;
 const MINUTE_WINDOW = 60 * 1000;
