@@ -6,8 +6,19 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { clickhouse } from '~/server/clickhouse/client';
 import { env } from '~/env/server';
 import type { TagType } from '~/shared/utils/prisma/enums';
-import { ImageIngestionStatus, NewOrderRankType, TagSource } from '~/shared/utils/prisma/enums';
-import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
+import {
+  ImageIngestionStatus,
+  ModerationRuleAction,
+  NewOrderRankType,
+  TagSource,
+} from '~/shared/utils/prisma/enums';
+import {
+  BlockedReason,
+  NotificationCategory,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+  SignalMessages,
+} from '~/server/common/enums';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -35,13 +46,16 @@ import {
   queueComicsForPanelImage,
   updateComicNsfwLevelsForImage,
 } from '~/server/services/nsfwLevels.service';
-import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { fanOutArticleImageUpdates } from '~/server/utils/webhook-debounce';
 import { logToAxiom } from '~/server/logging/client';
 import { recordImageScan } from '~/server/services/scanner-audit.service';
+import { evaluateRules } from '~/server/utils/mod-rules';
+import { createNotification } from '~/server/services/notification.service';
+import { decreaseDate } from '~/utils/date-helpers';
 
 export async function isExemptFromAiVerification(
   imageId: number,
@@ -282,55 +296,117 @@ export async function processImageScanWorkflow({
     }))
   );
 
-  const audit = await auditScanResults({
-    imageId: image.id,
-    userId: image.userId,
-    prompt,
-    negativePrompt,
-  });
-
   const toUpdate: Prisma.ImageUpdateInput = {
     updatedAt: new Date(),
     pHash,
   };
-  // AI-generation verification is no longer a blocking gate (per operations
-  // 2026-05-11): nsfw images that we couldn't auto-verify as AI used to
-  // land in `Blocked + AiNotVerified`, but the false-positive rate didn't
-  // justify the friction. The remaining `audit.blockedFor` branch still
-  // catches hard violations (TOS / Moderated / CSAM) — everything else
-  // falls through to Scanned.
-  if (audit.blockedFor) {
+  let reviewKey: string | null = null;
+  let audit: Awaited<ReturnType<typeof auditScanResults>> | undefined;
+
+  // A `mediaRating.isBlocked` result hard-blocks the image above. Skip the
+  // audit + overwrite UPDATE so we don't recompute a fresh nsfwLevel/ingestion
+  // and silently revert the block the orchestrator just made. We still stamp
+  // scan provenance (workflowId / pHash) and run the downstream blocked-image
+  // handling below.
+  //
+  // A *prior* block is intentionally NOT treated as sticky: a moderator rescan
+  // leaves ingestion = 'Blocked' and just re-runs the workflow (see
+  // `ingestImage`), so letting the audit run is what allows a rescan — with a
+  // potentially different model set — to clear a block. Hard violations simply
+  // re-block via `isBlocked` on the rescan.
+  if (isBlocked) {
     toUpdate.ingestion = ImageIngestionStatus.Blocked;
-    toUpdate.blockedFor = audit.blockedFor;
-    toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    toUpdate.blockedFor = blockedReason ?? null;
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET
+        "updatedAt" = ${toUpdate.updatedAt},
+        "pHash" = COALESCE(${pHash ?? null}, "pHash"),
+        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
+          workflowId
+        )}::jsonb)
+      WHERE id = ${image.id}
+    `;
   } else {
-    toUpdate.ingestion = ImageIngestionStatus.Scanned;
-    toUpdate.needsReview = audit.reviewKey ?? null;
-    toUpdate.minor = audit.minor;
-    toUpdate.poi = audit.poi;
-    toUpdate.blockedFor = null;
-    toUpdate.nsfwLevel = audit.nsfwLevel;
+    audit = await auditScanResults({
+      imageId: image.id,
+      userId: image.userId,
+      prompt,
+      negativePrompt,
+    });
+    reviewKey = audit.reviewKey ?? null;
 
-    toUpdate.scannedAt = image.ingestion === 'Rescan' ? image.scannedAt : new Date();
+    // AI-generation verification is no longer a blocking gate (per operations
+    // 2026-05-11): nsfw images that we couldn't auto-verify as AI used to
+    // land in `Blocked + AiNotVerified`, but the false-positive rate didn't
+    // justify the friction. The remaining `audit.blockedFor` branch still
+    // catches hard violations (TOS / Moderated / CSAM) — everything else
+    // falls through to Scanned.
+    if (audit.blockedFor) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = audit.blockedFor;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
+    } else {
+      toUpdate.ingestion = ImageIngestionStatus.Scanned;
+      toUpdate.needsReview = reviewKey;
+      toUpdate.minor = audit.minor;
+      toUpdate.poi = audit.poi;
+      toUpdate.blockedFor = null;
+      // Respect a manually-locked nsfw level — never overwrite it from the scan.
+      toUpdate.nsfwLevel = image.nsfwLevelLocked ? image.nsfwLevel : audit.nsfwLevel;
+
+      // scannedAt reassignment: always stamp the first scan; afterwards only
+      // re-stamp recent (<1 week old) non-Rescan images that haven't opted out
+      // via metadata.skipScannedAtReassignment. Older/rescanned images keep
+      // their original scannedAt.
+      const now = new Date();
+      if (!image.scannedAt) toUpdate.scannedAt = now;
+      else if (
+        !(image.metadata as any)?.skipScannedAtReassignment &&
+        image.ingestion !== 'Rescan' &&
+        new Date(image.createdAt).getTime() >= decreaseDate(now, 7, 'days').getTime()
+      )
+        toUpdate.scannedAt = now;
+      else toUpdate.scannedAt = image.scannedAt;
+    }
+
+    // Moderation rules can block the image, hold it for review, or annotate its
+    // metadata with the matched rule. Applied after the scan audit so a Block/Hold
+    // takes precedence over the audit's own decision.
+    const modRule = await checkModerationRules(image, audit.tags);
+    let metadataUpdate: Record<string, any> | undefined;
+    if (modRule) {
+      metadataUpdate = modRule.metadata;
+      if (modRule.ingestion) toUpdate.ingestion = modRule.ingestion;
+      if (modRule.nsfwLevel != null) toUpdate.nsfwLevel = modRule.nsfwLevel;
+      if (modRule.blockedFor) toUpdate.blockedFor = modRule.blockedFor;
+      if (modRule.needsReview !== undefined) {
+        toUpdate.needsReview = modRule.needsReview;
+        if (typeof modRule.needsReview === 'string') reviewKey = modRule.needsReview;
+      }
+    }
+
+    await dbWrite.$executeRaw`
+      UPDATE "Image"
+      SET
+        "updatedAt" = ${toUpdate.updatedAt},
+        "pHash" = ${pHash ?? null},
+        "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
+        "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
+        "nsfwLevel" = ${toUpdate.nsfwLevel as number},
+        "needsReview" = ${(toUpdate.needsReview as string) ?? null},
+        "minor" = ${(toUpdate.minor as boolean) ?? false},
+        "poi" = ${(toUpdate.poi as boolean) ?? false},
+        "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
+        "metadata" = COALESCE(${
+          metadataUpdate ? JSON.stringify(metadataUpdate) : null
+        }::jsonb, "metadata"),
+        "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
+          workflowId
+        )}::jsonb)
+      WHERE id = ${image.id}
+    `;
   }
-
-  await dbWrite.$executeRaw`
-    UPDATE "Image"
-    SET
-      "updatedAt" = ${toUpdate.updatedAt},
-      "pHash" = ${pHash ?? null},
-      "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
-      "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
-      "nsfwLevel" = ${toUpdate.nsfwLevel as number},
-      "needsReview" = ${(toUpdate.needsReview as string) ?? null},
-      "minor" = ${(toUpdate.minor as boolean) ?? false},
-      "poi" = ${(toUpdate.poi as boolean) ?? false},
-      "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},
-      "scanJobs" = jsonb_set(COALESCE("scanJobs", '{}'), '{workflowId}', ${JSON.stringify(
-        workflowId
-      )}::jsonb)
-    WHERE id = ${image.id}
-  `;
 
   // Audit-log to scanner_label_results. Fire-and-forget — failures log but
   // can't block ingestion. Runs for every successful mediaRating output.
@@ -388,16 +464,20 @@ export async function processImageScanWorkflow({
       action: SearchIndexUpdateQueueAction.Update,
     });
 
-    const tagsForReview = [...audit.poiTags, ...audit.minorTags, ...audit.reviewTags];
-    if (tagsForReview.length > 0) {
-      await createImageTagsForReview({
-        imageId: image.id,
-        tagIds: tagsForReview.map((x) => x.id),
-      });
-    }
+    if (audit) {
+      const tagsForReview = [...audit.poiTags, ...audit.minorTags, ...audit.reviewTags];
+      // Only persist review-tags when the image is actually queued for review
+      // (matches the legacy `if (reviewKey)` gate).
+      if (reviewKey && tagsForReview.length > 0) {
+        await createImageTagsForReview({
+          imageId: image.id,
+          tagIds: tagsForReview.map((x) => x.id),
+        });
+      }
 
-    if (!audit.reviewKey && image.type === 'image') {
-      await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+      if (!reviewKey && image.type === 'image') {
+        await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+      }
     }
   }
 
@@ -556,15 +636,18 @@ async function auditScanResults(args: {
   if (inappropriate === 'poi') poiReview = true;
 
   const associatedEntities = await getAssociatedEntities(args.imageId);
-  if (associatedEntities.poi) poiReview = true;
-  if (associatedEntities.minor) minorReview = true;
+  // Associated poi/minor resources only escalate to review when the image is
+  // nsfw — a sfw image with a poi/minor resource is still flagged (below) but
+  // not queued for moderator review.
+  if (associatedEntities.poi && nsfw) poiReview = true;
+  if (associatedEntities.minor && nsfw) minorReview = true;
 
   if (!minorReview && !poiReview && !tagReview && nsfw) {
     newUserReview = await getIsNewUser(args.userId);
   }
 
   const minor = minorTags.length > 0 || !!associatedEntities.minor;
-  const poi = poiTags.length > 0 || !!associatedEntities.poi;
+  const poi = poiTags.length > 0 || !!associatedEntities.poi || (!!prompt && !!includesPoi(prompt));
 
   let reviewKey: string | undefined;
   if (poiReview) reviewKey = 'poi';
@@ -576,10 +659,11 @@ async function auditScanResults(args: {
   if (nsfw && prompt) {
     const auditResult = auditMetaData({ prompt }, nsfw);
     if (!auditResult.success)
-      blockedFor = auditResult.blockedFor.join(', ') ?? 'Failed audit, no explanation';
+      blockedFor = auditResult.blockedFor.join(',') ?? 'Failed audit, no explanation';
   }
 
   return {
+    tags,
     nsfwLevel,
     nsfw,
     minorTags,
@@ -594,6 +678,72 @@ async function auditScanResults(args: {
     reviewKey,
     blockedFor,
   };
+}
+
+async function checkModerationRules(
+  image: { id: number; userId: number; meta: Prisma.JsonValue; metadata: Prisma.JsonValue },
+  tags: { name: string }[]
+) {
+  const imageModRules = await getImagesModRules();
+  if (!imageModRules.length) return;
+
+  const tagNames = tags.map((x) => x.name);
+  const meta = (image.meta ?? {}) as Prisma.JsonObject;
+  const appliedRule = evaluateRules(imageModRules, { ...meta, tags: tagNames });
+  if (!appliedRule || appliedRule.action === ModerationRuleAction.Approve) return;
+
+  const result: {
+    metadata: Record<string, any>;
+    ingestion?: ImageIngestionStatus;
+    nsfwLevel?: NsfwLevel;
+    blockedFor?: string;
+    needsReview?: string | null;
+  } = {
+    metadata: {
+      ...((image.metadata ?? {}) as Record<string, any>),
+      ruleId: appliedRule.id,
+      ruleReason: appliedRule.reason,
+    },
+  };
+
+  if (appliedRule.action === ModerationRuleAction.Block) {
+    result.ingestion = ImageIngestionStatus.Blocked;
+    result.nsfwLevel = NsfwLevel.Blocked;
+    result.blockedFor = BlockedReason.Moderated;
+    result.needsReview = null;
+  } else if (appliedRule.action === ModerationRuleAction.Hold) {
+    result.needsReview = 'modRule';
+  }
+
+  // Notify the user when their image is auto-blocked by a moderation rule.
+  if (appliedRule.action === ModerationRuleAction.Block) {
+    await createNotification({
+      category: NotificationCategory.System,
+      key: `image-block:${image.id}`,
+      type: 'system-message',
+      userId: image.userId,
+      details: {
+        message: `One of your images has been blocked due to a moderation rule violation${
+          appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
+        }. If you believe this is a mistake, you can appeal this decision.`,
+        url: `/images/${image.id}`,
+      },
+    }).catch((error) =>
+      logToAxiom({
+        name: 'image-scan-result',
+        type: 'error',
+        message: 'Could not create notification when blocking image',
+        data: {
+          imageId: image.id,
+          error: error.message,
+          cause: error.cause,
+          stack: error.stack,
+        },
+      })
+    );
+  }
+
+  return result;
 }
 
 async function getAssociatedEntities(imageId: number) {
