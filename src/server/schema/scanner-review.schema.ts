@@ -116,3 +116,11 @@ export const deleteLabelVerdictSchema = z.object({
 export const exportRowsSchema = listScansSchema.extend({
   limit: z.number().int().min(1).max(50000).default(10000),
 });
+
+/** Per-label moderator-review coverage for one scanner. Scanner scope comes
+ * from joining reviews to their snapshotted content (which carries `scanner`),
+ * so a label shared across scanners — e.g. `young` in both text and prompt —
+ * is counted separately per tab. */
+export const labelReviewStatsSchema = z.object({
+  scanner: scannerSchema,
+});
