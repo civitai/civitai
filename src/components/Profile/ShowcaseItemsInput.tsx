@@ -1,12 +1,13 @@
 import type { InputWrapperProps } from '@mantine/core';
-import { Box, Button, Center, Input, Loader, Paper, Stack, Text } from '@mantine/core';
+import { ActionIcon, Box, Button, Center, Input, Loader, Paper, Stack, Text } from '@mantine/core';
 import React, { useMemo, useState } from 'react';
 import { useDidUpdate } from '@mantine/hooks';
 import type { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { trpc } from '~/utils/trpc';
 import { GenericImageCard } from '~/components/Cards/GenericImageCard';
-import { IconTrash } from '@tabler/icons-react';
+import { IconExternalLink, IconTrash } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { isEqual } from 'lodash-es';
 import type { DragEndEvent, UniqueIdentifier } from '@dnd-kit/core';
 import { DndContext, PointerSensor, rectIntersection, useSensor, useSensors } from '@dnd-kit/core';
@@ -171,11 +172,44 @@ export const ShowcaseItemsInput = ({
                       );
                     }
 
+                    const itemUrl = (() => {
+                      switch (item.entityType) {
+                        case 'Model':
+                          return `/models/${item.entityId}`;
+                        case 'Image':
+                          return `/images/${item.entityId}`;
+                        case 'Collection':
+                          return `/collections/${item.entityId}`;
+                        case 'Bounty':
+                          return `/bounties/${item.entityId}`;
+                        default:
+                          return null;
+                      }
+                    })();
+
                     return (
                       <SortableItem key={key} id={key}>
                         <Box pos="relative">
                           <GenericImageCard {...item} image={coverImage} disabled />
                           {removeBtn}
+                          {itemUrl && (
+                            <ActionIcon
+                              component={Link}
+                              href={itemUrl}
+                              target="_blank"
+                              size="sm"
+                              variant="filled"
+                              color="gray"
+                              style={{
+                                position: 'absolute',
+                                bottom: 6,
+                                right: 6,
+                                zIndex: 10,
+                              }}
+                            >
+                              <IconExternalLink size={12} />
+                            </ActionIcon>
+                          )}
                         </Box>
                       </SortableItem>
                     );
