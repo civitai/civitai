@@ -2158,6 +2158,7 @@ export const getAllImagesIndex = async (
     thumbnails,
     imageMetrics,
     tagIdsVar,
+    tagsVar,
   ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
     Promise.all([
       // These enrichment fetches are independent (each takes pre-computed
@@ -2184,8 +2185,18 @@ export const getAllImagesIndex = async (
       // Search results from BitDex don't include tagIds (too expensive to store),
       // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
+      include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
     ])
   );
+
+  const tagsByImageId = tagsVar
+    ? tagsVar.reduce((acc, tag) => {
+        const arr = acc.get(tag.imageId);
+        if (arr) arr.push(tag);
+        else acc.set(tag.imageId, [tag]);
+        return acc;
+      }, new Map<number, typeof tagsVar>())
+    : undefined;
 
   const mergedData = withSpan('image:getAllImagesIndex:transform', () =>
     searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -2234,7 +2245,7 @@ export const getAllImagesIndex = async (
         cosmetic: imageCosmetics?.[sr.id] ?? null,
         // TODO fix below
         availability: Availability.Public,
-        tags: [], // needed?
+        tags: tagsByImageId?.get(sr.id) ?? [],
         name: null, // leave
         scannedAt: null, // remove
         mimeType: null, // need?

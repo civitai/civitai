@@ -127,6 +127,10 @@ describe('/api/v1/images API Handler', () => {
         },
         baseModel: 'Anima',
         modelVersionIds: [2653283],
+        tags: [
+          { id: 1, name: 'anime' },
+          { id: 2, name: 'portrait' },
+        ],
       },
     ],
     nextCursor: 'cursor_val',
@@ -168,6 +172,57 @@ describe('/api/v1/images API Handler', () => {
     expect(mockGetImagesFromFeedSearch).toHaveBeenCalledWith(
       expect.objectContaining({
         withMeta: false,
+      })
+    );
+  });
+
+  it('should omit tags by default (when withTags is false)', async () => {
+    const { req, res } = createMocks({ query: { limit: '10' } });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    const data = res._getJSONData();
+    expect(data.items[0].tags).toBeUndefined();
+    expect(mockGetImagesFromFeedSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.not.arrayContaining(['tags']),
+      })
+    );
+  });
+
+  it('should return tags when withTags=true', async () => {
+    const { req, res } = createMocks({ query: { limit: '10', withTags: 'true' } });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    const data = res._getJSONData();
+    expect(data.items[0].tags).toEqual([
+      { id: 1, name: 'anime' },
+      { id: 2, name: 'portrait' },
+    ]);
+    expect(mockGetImagesFromFeedSearch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.arrayContaining(['tags']),
+      })
+    );
+  });
+
+  it('should return tags with withTags=true on legacy path', async () => {
+    const { req, res } = createMocks({ query: { imageId: '100', withTags: 'true' } });
+
+    await handler(req, res);
+
+    expect(res._getStatusCode()).toBe(200);
+    const data = res._getJSONData();
+    expect(data.items[0].tags).toEqual([
+      { id: 1, name: 'anime' },
+      { id: 2, name: 'portrait' },
+    ]);
+    expect(mockGetAllImages).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.arrayContaining(['tags']),
       })
     );
   });

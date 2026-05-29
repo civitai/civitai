@@ -82,6 +82,7 @@ const imagesEndpointSchema = z.object({
   withMeta: booleanString().default(false),
   requiringMeta: booleanString().optional(),
   flatMeta: booleanString().optional(),
+  withTags: booleanString().default(false),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -92,7 +93,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, ...data } = reqParams.data;
+    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, withTags, ...data } = reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -155,7 +156,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           cursor,
           // Only fetch tagIds and profilePictures here; metaSelect is fetched
           // on-demand in the controller below to avoid query filtering.
-          include: ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
           periodMode: 'published',
           headers: { src: '/api/v1/images' },
           browsingLevel: _browsingLevel,
@@ -173,7 +174,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
           withMeta: false,
@@ -191,7 +192,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           limit,
           skip,
           cursor,
-          include: ['tagIds', 'profilePictures'],
+          include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
           periodMode: 'published',
           browsingLevel: _browsingLevel,
           withMeta: false,
@@ -251,6 +252,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           username: image.user.username,
           baseModel: image.baseModel,
           modelVersionIds: image.modelVersionIds,
+          tags: withTags ? (image.tags?.map((t) => ({ id: t.id, name: t.name })) ?? []) : undefined,
         };
       }),
       metadata,
