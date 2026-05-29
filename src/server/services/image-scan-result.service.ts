@@ -1,5 +1,5 @@
 import poiWords from '~/utils/metadata/lists/words-poi.json';
-import { getWorkflow, type WorkflowEvent } from '@civitai/client';
+import { getWorkflow, type MediaRatingOutput, type WorkflowEvent } from '@civitai/client';
 import type { NextApiRequest } from 'next';
 import { dbWrite } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
@@ -68,29 +68,9 @@ type WdTaggingStep = {
   $type: 'wdTagging';
   output: { tags: Record<string, number>; rating: Record<string, number> };
 };
-type AgeDetection = {
-  detectorType?: string;
-  boundingBox: { x1: number; y1: number; x2: number; y2: number };
-  ageLabel: string;
-  confidence: number;
-  isMinor: boolean;
-  topK: Record<string, number>;
-};
-type FaceDetection = {
-  boundingBox: { x1: number; y1: number; x2: number; y2: number };
-};
-type RecognitionResult = { label: string; confidence: number };
 type MediaRatingStep = {
   $type: 'mediaRating';
-  output: {
-    nsfwLevel: string;
-    isBlocked: boolean;
-    blockedReason?: string;
-    ageClassification?: { detections: AgeDetection[] };
-    faceRecognition?: { faces: FaceDetection[] };
-    aiRecognition?: RecognitionResult;
-    animeRecognition?: RecognitionResult;
-  };
+  output: MediaRatingOutput;
 };
 type MediaHashStep = {
   $type: 'mediaHash';

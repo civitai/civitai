@@ -12,7 +12,7 @@
  * never propagates back to the operational webhook path.
  */
 import crypto from 'crypto';
-import type { Workflow, XGuardModerationStep } from '@civitai/client';
+import type { MediaRatingOutput, Workflow, XGuardModerationStep } from '@civitai/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -23,28 +23,31 @@ import {
 import { matchAllLabels, REGEX_VERSION } from '~/server/services/scanner-label-regex';
 
 /**
- * Age-classifier topK band names that count as minor. Includes Teenager 13-20
- * intentionally — the band spans both minor and adult ages, but for FN-browse
- * purposes we want the score to reflect "how close to a minor classification"
- * the model put this image, not just whether isMinor flipped.
+ * Age-classifier topK band names that count as minor. Stored in normalized
+ * form (lowercase, ASCII hyphen) and matched after normalizing the input key,
+ * so locale variants ("Child 0–12" with en-dash, lowercase, etc.) still hit.
+ * Includes Teenager 13-20 intentionally — the band spans both minor and adult
+ * ages, but for FN-browse purposes we want the score to reflect "how close
+ * to a minor classification" the model put this image, not just isMinor.
  */
-const MINOR_AGE_BANDS = new Set(['Child 0-12', 'Teenager 13-20']);
+const MINOR_AGE_BANDS_NORMALIZED = new Set(['child 0-12', 'teenager 13-20']);
 
-type MediaRatingOutput = {
-  nsfwLevel: string;
-  isBlocked: boolean;
-  blockedReason?: string;
-  ageClassification?: {
-    detections: Array<{
-      isMinor: boolean;
-      confidence: number;
-      topK?: Record<string, number>;
-    }>;
-  };
-  faceRecognition?: { faces: Array<unknown> };
-  aiRecognition?: { label: string; confidence: number };
-  animeRecognition?: { label: string; confidence: number };
-};
+function normAgeBandKey(k: string): string {
+  return k.trim().toLowerCase().replace(/[–—]/g, '-');
+}
+
+/** Normalize classifier label output (lowercase + trim) so casing drift in
+ *  the orchestrator response doesn't fracture the audit table. The 'na'
+ *  sentinel from the NsfwLevel union is the one value we deliberately drop —
+ *  it means "not analyzed", not a real rating. */
+function normClassifierLabel(v: string | null | undefined): string {
+  return (v ?? '').trim().toLowerCase();
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
 
 type LabelRowSeed = {
   label: string;
@@ -385,78 +388,135 @@ export async function recordImageScan({
   if (!clickhouse) return;
 
   const labels: LabelRowSeed[] = [];
-  labels.push({
-    label: 'nsfw_level',
-    labelValue: mediaRating.nsfwLevel,
-    score: 1,
-    threshold: null,
-    triggered: 1,
-    version: '1',
-    matchedText: [],
-    matchedPositivePrompt: [],
-    matchedNegativePrompt: [],
-  });
-  labels.push({
-    label: 'is_blocked',
-    labelValue: '',
-    score: mediaRating.isBlocked ? 1 : 0,
-    threshold: null,
-    triggered: mediaRating.isBlocked ? 1 : 0,
-    version: '1',
-    matchedText: [],
-    matchedPositivePrompt: [],
-    matchedNegativePrompt: [],
-  });
 
-  if (mediaRating.ageClassification) {
-    const detections = mediaRating.ageClassification.detections ?? [];
+  // Shared row defaults — image rows have no text-side matched-term arrays
+  // and no per-row threshold. Spread this into each push to keep them tidy.
+  const baseRow = {
+    threshold: null,
+    version: '1',
+    matchedText: [] as string[],
+    matchedPositivePrompt: [] as string[],
+    matchedNegativePrompt: [] as string[],
+  };
+
+  // --- 1. NSFW level → the LEVEL itself becomes the label name -------------
+  // pg / pg13 / r / x / xxx are queryable directly. 'na' is the orchestrator's
+  // "not analyzed" sentinel — recorded as a distinct audit signal, not a real
+  // rating. Anything else (case drift, future variant) gets surfaced as
+  // unknown_nsfw_level so an audit trail exists for new shapes.
+  // nsfw_level — label IS the level. Skip the 'na' sentinel.
+  const nsfwLevel = normClassifierLabel(mediaRating.nsfwLevel);
+  if (nsfwLevel && nsfwLevel !== 'na') {
+    labels.push({
+      ...baseRow,
+      label: nsfwLevel,
+      labelValue: 'nsfw_level',
+      score: 1,
+      triggered: 1,
+    });
+  }
+
+  // is_blocked — emit when blocked, with blockedReason in labelValue.
+  if (mediaRating.isBlocked) {
+    labels.push({
+      ...baseRow,
+      label: 'is_blocked',
+      labelValue: mediaRating.blockedReason ?? '',
+      score: 1,
+      triggered: 1,
+    });
+  }
+
+  // content_label — one row per orchestrator-provided label.
+  for (const orchLabel of mediaRating.labels ?? []) {
+    if (!orchLabel) continue;
+    labels.push({
+      ...baseRow,
+      label: 'content_label',
+      labelValue: orchLabel,
+      score: 1,
+      triggered: 1,
+    });
+  }
+
+  // minor — score is sum of minor-band topK probabilities (max across
+  // detections); triggered tracks isMinor; labelValue carries the joined
+  // ageLabel(s) so mods can see 'Teenager 13-20' vs 'Adult 21-44'.
+  const detections = mediaRating.ageClassification?.detections ?? [];
+  if (detections.length > 0) {
     const minorScore = detections.reduce((max, d) => {
       const topK = d.topK ?? {};
       const probSum = Object.entries(topK).reduce(
-        (sum, [band, p]) => (MINOR_AGE_BANDS.has(band) ? sum + p : sum),
+        (sum, [band, p]) => (MINOR_AGE_BANDS_NORMALIZED.has(normAgeBandKey(band)) ? sum + p : sum),
         0
       );
       return Math.max(max, probSum);
     }, 0);
+    const ageLabels = detections
+      .map((d) => d.ageLabel)
+      .filter((x): x is string => !!x)
+      .join(', ');
     labels.push({
+      ...baseRow,
       label: 'minor',
-      labelValue: '',
-      score: minorScore,
-      threshold: null,
+      labelValue: ageLabels,
+      score: clamp01(minorScore),
       triggered: detections.some((d) => d.isMinor) ? 1 : 0,
-      version: '1',
-      matchedText: [],
-      matchedPositivePrompt: [],
-      matchedNegativePrompt: [],
     });
   }
 
-  if (mediaRating.aiRecognition) {
+  // ai_recognition / anime_recognition — emit whatever the classifier said.
+  // labelValue carries the detector source so 'real' rows from the two
+  // classifiers don't collide on the `label` column.
+  if (mediaRating.aiRecognition?.label) {
     labels.push({
-      label: 'ai',
-      labelValue: mediaRating.aiRecognition.label,
-      score: mediaRating.aiRecognition.confidence,
-      threshold: null,
-      triggered: mediaRating.aiRecognition.label === 'AI' ? 1 : 0,
-      version: '1',
-      matchedText: [],
-      matchedPositivePrompt: [],
-      matchedNegativePrompt: [],
+      ...baseRow,
+      label: normClassifierLabel(mediaRating.aiRecognition.label),
+      labelValue: 'ai_recognition',
+      score: clamp01(mediaRating.aiRecognition.confidence),
+      triggered: 1,
+    });
+  }
+  if (mediaRating.animeRecognition?.label) {
+    labels.push({
+      ...baseRow,
+      label: normClassifierLabel(mediaRating.animeRecognition.label),
+      labelValue: 'anime_recognition',
+      score: clamp01(mediaRating.animeRecognition.confidence),
+      triggered: 1,
     });
   }
 
-  if (mediaRating.animeRecognition) {
+  // face_count — emit when faces were detected. boundingBox / landmarks /
+  // embedding are deliberately not stored (high-cardinality + PII).
+  const faces = mediaRating.faceRecognition?.faces ?? [];
+  if (faces.length > 0) {
     labels.push({
-      label: 'anime',
-      labelValue: mediaRating.animeRecognition.label,
-      score: mediaRating.animeRecognition.confidence,
-      threshold: null,
-      triggered: mediaRating.animeRecognition.label === 'anime' ? 1 : 0,
-      version: '1',
-      matchedText: [],
-      matchedPositivePrompt: [],
-      matchedNegativePrompt: [],
+      ...baseRow,
+      label: 'face_count',
+      labelValue: String(faces.length),
+      score: faces.length,
+      triggered: 1,
     });
+
+    // face_max_similarity — useful for "same person across uploads" signal.
+    const sim = mediaRating.faceRecognition?.similarityMatrix;
+    if (sim && sim.length > 1) {
+      let maxOffDiag = 0;
+      for (let i = 0; i < sim.length; i++) {
+        const row = sim[i] ?? [];
+        for (let j = 0; j < row.length; j++) {
+          if (i !== j) maxOffDiag = Math.max(maxOffDiag, row[j] ?? 0);
+        }
+      }
+      labels.push({
+        ...baseRow,
+        label: 'face_max_similarity',
+        labelValue: '',
+        score: clamp01(maxOffDiag),
+        triggered: 1,
+      });
+    }
   }
 
   await insertRows({
