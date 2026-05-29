@@ -31,7 +31,7 @@ import {
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
-import { searchClient } from '~/server/meilisearch/client';
+import { MeiliCallTimeoutError, searchClient, withMeili } from '~/server/meilisearch/client';
 import { modelMetrics } from '~/server/metrics';
 import { withSpan } from '~/server/utils/otel-helpers';
 import {
@@ -304,9 +304,31 @@ export const getModelsRaw = async ({
       ].filter(isDefined),
     };
 
-    const results: SearchResponse<ModelSearchIndexRecord> = await searchClient
-      .index(MODELS_SEARCH_INDEX)
-      .search(query, request);
+    // Wrap the SDK call under withMeili('search', ...) so a backend brownout
+    // is bounded by MEILI_CALL_TIMEOUT_MS instead of bleeding the event loop
+    // until Traefik's 30s router timeout — same cascade pattern that bit
+    // image.getInfinite (PR #2351). Translate the timeout to a TRPCError
+    // TIMEOUT here (vs at each controller) so every getModelsRaw caller
+    // — models.getAll, recommenders, associated-resources, etc. — fails fast
+    // with a 408 instead of hanging on a slow Meili.
+    // searchClient was null-checked on the outer if; pin a local non-null
+    // reference so TS narrowing survives the closure boundary.
+    const client = searchClient;
+    let results: SearchResponse<ModelSearchIndexRecord>;
+    try {
+      results = await withMeili('search', () =>
+        client.index(MODELS_SEARCH_INDEX).search(query, request)
+      );
+    } catch (err) {
+      if (err instanceof MeiliCallTimeoutError) {
+        throw new TRPCError({
+          code: 'TIMEOUT',
+          message: 'Model search is temporarily overloaded — please retry.',
+          cause: err,
+        });
+      }
+      throw err;
+    }
 
     // console.log(results.hits);
     searchModelIds = results.hits.map((m) => m.id);
