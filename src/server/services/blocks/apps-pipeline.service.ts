@@ -206,24 +206,7 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
                 { name: 'tmp', mountPath: '/tmp' },
               ],
               command: ['/bin/bash', '-c'],
-              args: [
-                [
-                  'set -euo pipefail',
-                  'if command -v envsubst >/dev/null 2>&1; then',
-                  '  envsubst < /templates/app.yaml.tmpl > /tmp/rendered.yaml',
-                  'else',
-                  '  sed -e "s|\\${SLUG}|${SLUG}|g" \\',
-                  '      -e "s|\\${SHA}|${SHA}|g" \\',
-                  '      -e "s|\\${IMAGE}|${IMAGE}|g" \\',
-                  '      -e "s|\\${APP_BLOCK_ID}|${APP_BLOCK_ID}|g" \\',
-                  '      -e "s|\\${APPS_DOMAIN}|${APPS_DOMAIN}|g" \\',
-                  '      /templates/app.yaml.tmpl > /tmp/rendered.yaml',
-                  'fi',
-                  'cat /tmp/rendered.yaml',
-                  'kubectl apply -f /tmp/rendered.yaml',
-                  'kubectl -n ' + ns + ' rollout status deploy/${SLUG} --timeout=180s',
-                ].join('\n'),
-              ],
+              args: [buildApplyScript(ns)],
               resources: {
                 requests: { cpu: '50m', memory: '64Mi' },
                 limits: { cpu: '500m', memory: '256Mi' },
@@ -258,4 +241,122 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
   });
   const created = await unwrap<{ metadata: { name: string } }>(res);
   return { name: created.metadata.name };
+}
+
+// ---------- apply-Job inner script (rendered into spec.containers[].args)
+
+/**
+ * The bash script that runs inside the apply Job. Renders the per-app
+ * manifest, runs a pre-flight smoke test against the new image, and
+ * only then `kubectl apply`s the manifest into the live namespace.
+ *
+ * Smoke test fixes 2026-05-29's gen-from-model incident: a bundle with
+ * Vite `base: '/<slug>/'` + nginx redirect from `/` shipped clean, then
+ * mixed-content-blocked in the iframe because the redirect Location
+ * leaked the in-pod port (:8080) through Traefik to the browser. The
+ * smoke test catches that EXACT pattern by spinning up the candidate
+ * image as a Pod, hitting it directly, and rejecting any redirect
+ * whose Location embeds the in-pod port — a strong signal the bundle
+ * would mixed-content-block the iframe under HTTPS.
+ *
+ * Failures during the smoke test exit non-zero so the Job is marked
+ * Failed and the live Deployment is left untouched. The build chain
+ * surfaces this back to civitai-web via the standard apply Job watch.
+ *
+ * Exported for the orchestration tests so the smoke shape stays
+ * locked-in.
+ */
+export function buildApplyScript(ns: string): string {
+  return `#!/usr/bin/env bash
+set -euo pipefail
+
+# ---- Render the per-app manifest from /templates/app.yaml.tmpl --------------
+if command -v envsubst >/dev/null 2>&1; then
+  envsubst < /templates/app.yaml.tmpl > /tmp/rendered.yaml
+else
+  sed -e "s|\\\${SLUG}|\${SLUG}|g" \\
+      -e "s|\\\${SHA}|\${SHA}|g" \\
+      -e "s|\\\${IMAGE}|\${IMAGE}|g" \\
+      -e "s|\\\${APP_BLOCK_ID}|\${APP_BLOCK_ID}|g" \\
+      -e "s|\\\${APPS_DOMAIN}|\${APPS_DOMAIN}|g" \\
+      /templates/app.yaml.tmpl > /tmp/rendered.yaml
+fi
+cat /tmp/rendered.yaml
+
+# ---- Pre-flight smoke test against the candidate image ---------------------
+# 8-char short SHA keeps the pod name under the 63-char DNS label limit.
+SMOKE_POD="smoke-\${SLUG}-$(printf '%s' "\${SHA}" | head -c 8)"
+echo "smoke test: creating pod \${SMOKE_POD} from \${IMAGE}"
+
+# Pod overrides:
+#   - automountServiceAccountToken: false — the smoke pod doesn't need RBAC.
+#   - runAsNonRoot enforced (matches PodSecurity:restricted on civitai-apps);
+#     does NOT pin a specific UID, so any non-root image (nginx user 101,
+#     node user 1000, etc.) is accepted.
+#   - capabilities drop ALL + seccompProfile RuntimeDefault for PSA.
+kubectl -n ${ns} run "\${SMOKE_POD}" --image="\${IMAGE}" --restart=Never \\
+  --port=8080 --labels="civitai.com/role=smoke,civitai.com/app-slug=\${SLUG}" \\
+  --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"smoke","image":"'\${IMAGE}'","ports":[{"containerPort":8080}],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}'
+
+# Always clean up the smoke pod, even if the script fails mid-way.
+cleanup() {
+  kubectl -n ${ns} delete pod "\${SMOKE_POD}" --wait=false --ignore-not-found=true >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+if ! kubectl -n ${ns} wait "pod/\${SMOKE_POD}" --for=condition=Ready --timeout=60s; then
+  echo "smoke test: pod failed to become Ready within 60s" >&2
+  kubectl -n ${ns} describe "pod/\${SMOKE_POD}" || true
+  kubectl -n ${ns} logs "pod/\${SMOKE_POD}" --tail=80 || true
+  exit 1
+fi
+
+POD_IP=$(kubectl -n ${ns} get "pod/\${SMOKE_POD}" -o jsonpath='{.status.podIP}')
+echo "smoke test: pod IP \${POD_IP}"
+
+# Probe 1: /healthz must return 200.
+HZ=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "http://\${POD_IP}:8080/healthz" || echo "000")
+if [ "\${HZ}" != "200" ]; then
+  echo "smoke test: GET /healthz returned \${HZ} (expected 200)" >&2
+  exit 1
+fi
+
+# Probe 2: GET / must return 200 + text/html after at most one redirect.
+ROOT=$(curl -sS -i -L --max-redirs 1 --max-time 15 "http://\${POD_IP}:8080/" || true)
+ROOT_STATUS=$(printf '%s\\n' "\${ROOT}" | awk '/^HTTP\\// {s=$2} END {print s}')
+ROOT_CT=$(printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="content-type"{print tolower($2); exit}' | tr -d '\\r')
+
+if [ "\${ROOT_STATUS}" != "200" ]; then
+  echo "smoke test: GET / final status \${ROOT_STATUS} (expected 200)" >&2
+  printf '%s\\n' "\${ROOT}" | head -20 >&2
+  exit 1
+fi
+case "\${ROOT_CT}" in
+  *text/html*) ;;
+  *)
+    echo "smoke test: GET / Content-Type was '\${ROOT_CT}' (expected text/html)" >&2
+    exit 1
+    ;;
+esac
+
+# Probe 3: catch the gen-from-model mixed-content trap. Any Location
+# header in the redirect chain whose value embeds the in-pod listen
+# port (:8080) means nginx is leaking $server_port — under Traefik's
+# HTTPS terminator this becomes "http://<slug>.civit.ai:8080/..." in
+# the browser, which mixed-content-blocks the iframe. Reject hard.
+if printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="location"{print $2}' | grep -q ':8080'; then
+  BAD=$(printf '%s\\n' "\${ROOT}" | awk -F': ' 'tolower($1)=="location"{print $2}' | tr -d '\\r' | head -1)
+  echo "smoke test: redirect Location leaks the in-pod port — will trigger" >&2
+  echo "  browser mixed-content block when served behind HTTPS Traefik." >&2
+  echo "  Location: \${BAD}" >&2
+  echo "  Common cause: bundler base path + nginx redirect from /." >&2
+  exit 1
+fi
+
+echo "smoke test: PASSED — healthz 200, / 200 text/html, no port-leak redirect"
+
+# ---- Apply the per-app manifest into the live namespace --------------------
+kubectl apply -f /tmp/rendered.yaml
+kubectl -n ${ns} rollout status deploy/\${SLUG} --timeout=180s
+`;
 }

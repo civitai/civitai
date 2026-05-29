@@ -335,6 +335,89 @@ describe('submitVersion', () => {
     ).rejects.toThrow(/name must be a non-empty string/);
   });
 
+  // ---- iframe.src static checks (catch mixed-content + W12-domain drift
+  // at submit time so devs don't ship a bundle that builds clean but
+  // can't actually mount in the iframe).
+
+  it('rejects when iframe.src is missing', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({ iframe: { minHeight: 300 } });
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
+    ).rejects.toThrow(/manifest\.iframe\.src must be a string/);
+  });
+
+  it('rejects HTTP iframe.src as mixed content', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({
+      iframe: { src: 'http://hello.civit.ai/', minHeight: 300 },
+    });
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
+    ).rejects.toThrow(/must use https.*mixed content/i);
+  });
+
+  it('rejects malformed iframe.src URL', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({
+      iframe: { src: 'not a url', minHeight: 300 },
+    });
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
+    ).rejects.toThrow(/is not a valid URL/);
+  });
+
+  it('rejects iframe.src hostname that doesn\'t match the per-app subdomain', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({
+      iframe: { src: 'https://attacker.example/', minHeight: 300 },
+    });
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
+    ).rejects.toThrow(/host must be "hello\.civit\.ai"/);
+  });
+
+  it('rejects leftover hackathon block-host URL pattern', async () => {
+    // Pre-W12 manifests used a shared block-host with path prefix:
+    //   https://blocks-pr2319.civitaic.com/<slug>/
+    // Now devs must use https://<slug>.civit.ai/ — catch this at submit.
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({
+      iframe: {
+        src: 'https://blocks-pr2319.civitaic.com/hello/',
+        minHeight: 300,
+      },
+    });
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
+    ).rejects.toThrow(/host must be "hello\.civit\.ai"/);
+  });
+
+  it('rejects iframe.src with a non-root pathname', async () => {
+    // A stale Vite base: '/hello/' + nginx redirect from / produces a
+    // working bundle that mixed-content-blocks in the iframe (skill
+    // gotcha + 2026-05-29 incident). Reject the leftover path prefix.
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({
+      iframe: { src: 'https://hello.civit.ai/hello/', minHeight: 300 },
+    });
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42 })
+    ).rejects.toThrow(/must point at the subdomain root.*pathname "\/hello\/"/);
+  });
+
+  it('accepts the canonical iframe.src shape (https + matching subdomain + root path)', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    const buf = await makeValidBundle({
+      iframe: { src: 'https://hello.civit.ai/', minHeight: 300 },
+    });
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 42,
+    });
+    expect(result.publishRequestId).toBeDefined();
+  });
+
   it('rejects same-user resubmit with a self-withdrawable error wording', async () => {
     const { submitVersion } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findFirst.mockResolvedValue({

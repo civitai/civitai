@@ -423,6 +423,51 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const slug = manifest.blockId;
   const version = manifest.version;
 
+  // Static iframe.src sanity check — the deep BlockManifestValidator runs
+  // at approve time against the OauthClient.allowedOrigins, but it's worth
+  // catching obvious shape problems here so the dev gets feedback in the
+  // submit modal instead of waiting for a mod and a build cycle.
+  //
+  // Caught here:
+  //   - missing / non-string iframe.src
+  //   - HTTP (would mixed-content-block in the iframe)
+  //   - hostname that doesn't match `<blockId>.<APPS_DOMAIN>` (the W12
+  //     per-app-subdomain contract); catches leftover hackathon block-host
+  //     URLs like `blocks-pr2319.civitaic.com/<slug>/`
+  //   - non-/ pathnames (the W12 platform routes the entire subdomain to
+  //     this app — a path prefix usually signals a stale base config in
+  //     the app's bundler/nginx)
+  const iframe =
+    manifest.iframe && typeof manifest.iframe === 'object'
+      ? (manifest.iframe as Record<string, unknown>)
+      : null;
+  if (!iframe || typeof iframe.src !== 'string') {
+    throw new Error('manifest.iframe.src must be a string');
+  }
+  const { env } = await import('~/env/server');
+  const expectedHost = `${slug}.${env.APPS_DOMAIN}`;
+  let iframeUrl: URL;
+  try {
+    iframeUrl = new URL(iframe.src);
+  } catch {
+    throw new Error(`manifest.iframe.src "${iframe.src}" is not a valid URL`);
+  }
+  if (iframeUrl.protocol !== 'https:') {
+    throw new Error(
+      `manifest.iframe.src must use https:// — got "${iframeUrl.protocol}//${iframeUrl.host}". HTTP iframe sources are blocked by the browser as mixed content.`
+    );
+  }
+  if (iframeUrl.hostname !== expectedHost) {
+    throw new Error(
+      `manifest.iframe.src host must be "${expectedHost}" (the W12 per-app subdomain), got "${iframeUrl.hostname}". Update the manifest's iframe.src to https://${expectedHost}/.`
+    );
+  }
+  if (iframeUrl.pathname !== '/' && iframeUrl.pathname !== '') {
+    throw new Error(
+      `manifest.iframe.src must point at the subdomain root ("/") — got pathname "${iframeUrl.pathname}". The platform routes the entire ${expectedHost} subdomain to this app; a path prefix usually signals a stale bundler base path or nginx redirect that breaks under per-app subdomains.`
+    );
+  }
+
   // Block double-submit on the same slug — only one pending request per
   // slug at a time. The /apps/submit UI calls getMyPendingForSlug on
   // preview to surface a "withdraw and resubmit" affordance before the
