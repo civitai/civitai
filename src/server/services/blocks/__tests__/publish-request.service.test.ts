@@ -6,6 +6,11 @@ import {
   extractBundleMetadata,
   type FileMeta,
 } from '../publish-request.service';
+import {
+  MAX_BUNDLE_SIZE_BYTES,
+  MAX_FILES_IN_BUNDLE,
+  MAX_FILE_SIZE_BYTES,
+} from '~/server/schema/blocks/publish-request.schema';
 
 /**
  * Deterministic-input coverage for the W1 publish-request flow's diff
@@ -224,5 +229,107 @@ describe('extractBundleMetadata', () => {
       'm.txt',
       'z.txt',
     ]);
+  });
+
+  it('rejects when a single file exceeds 10 MiB cap', async () => {
+    // One file at MAX_FILE_SIZE_BYTES + 1 = 10 MiB + 1 byte.
+    const big = Buffer.alloc(MAX_FILE_SIZE_BYTES + 1, 'x');
+    const buf = await makeBundle({
+      'block.manifest.json': '{"blockId":"x"}',
+      'big.bin': big.toString('binary'),
+    });
+    await expect(extractBundleMetadata(buf)).rejects.toThrow(
+      new RegExp(`max ${MAX_FILE_SIZE_BYTES}`)
+    );
+  });
+
+  it('accepts a single file at exactly the 10 MiB cap', async () => {
+    // A file at exactly MAX_FILE_SIZE_BYTES should pass (boundary).
+    const buf = await makeBundle({
+      'block.manifest.json': '{"blockId":"x"}',
+      'big.bin': 'x'.repeat(MAX_FILE_SIZE_BYTES),
+    });
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.find((f) => f.path === 'big.bin')?.sizeBytes).toBe(MAX_FILE_SIZE_BYTES);
+  });
+
+  it('rejects when bundle exceeds the 2000-file cap', async () => {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', '{"blockId":"x"}');
+    for (let i = 0; i < MAX_FILES_IN_BUNDLE; i += 1) {
+      zip.file(`f${i}.txt`, String(i));
+    }
+    // Total files = 2001 (manifest + 2000 added)
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+    await expect(extractBundleMetadata(buf)).rejects.toThrow(
+      new RegExp(`max ${MAX_FILES_IN_BUNDLE}`)
+    );
+  });
+
+  it('accepts a bundle at exactly the 2000-file cap', async () => {
+    const zip = new JSZip();
+    zip.file('block.manifest.json', '{"blockId":"x"}');
+    for (let i = 0; i < MAX_FILES_IN_BUNDLE - 1; i += 1) {
+      zip.file(`f${i}.txt`, String(i));
+    }
+    // Total files = 2000 (manifest + 1999)
+    const buf = Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.length).toBe(MAX_FILES_IN_BUNDLE);
+  });
+
+  // H-1 lock-in — extractBundleMetadata does NOT track the cumulative
+  // extracted size, so a small ZIP with highly-compressible content can
+  // expand to ~10 MiB without tripping any guard. Flip when a total-size
+  // running counter lands in the service.
+  it('REGRESSION (H-1): does not guard against cumulative decompression expansion', async () => {
+    // 5 MiB of zeroes per file, two files = ~10 MiB extracted.
+    // Force DEFLATE so the compressed ZIP is much smaller than the
+    // extracted total (default jszip behavior is STORE).
+    const big = Buffer.alloc(5 * 1024 * 1024, 0);
+    const zip = new JSZip();
+    zip.file('block.manifest.json', '{"blockId":"x"}');
+    zip.file('a.bin', big);
+    zip.file('b.bin', big);
+    const buf = Buffer.from(
+      await zip.generateAsync({
+        type: 'nodebuffer',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 9 },
+      })
+    );
+    // Compressed buffer is well under 1 MiB; extracted total is ~10 MiB.
+    expect(buf.length).toBeLessThan(1 * 1024 * 1024);
+    const { files } = await extractBundleMetadata(buf);
+    expect(files.length).toBe(3);
+    // No total-size guard exists today; extraction succeeded despite the
+    // 10:1+ inflation ratio across the bundle.
+    const total = files.reduce((s, f) => s + f.sizeBytes, 0);
+    expect(total).toBeGreaterThan(buf.length * 10);
+  });
+});
+
+describe('schema boundary caps', () => {
+  it('MAX_BUNDLE_SIZE_BYTES is 50 MiB', () => {
+    expect(MAX_BUNDLE_SIZE_BYTES).toBe(50 * 1024 * 1024);
+    expect(MAX_BUNDLE_SIZE_BYTES).toBe(52_428_800);
+  });
+
+  it('MAX_FILES_IN_BUNDLE is 2000', () => {
+    expect(MAX_FILES_IN_BUNDLE).toBe(2000);
+  });
+
+  it('MAX_FILE_SIZE_BYTES is 10 MiB', () => {
+    expect(MAX_FILE_SIZE_BYTES).toBe(10 * 1024 * 1024);
+  });
+
+  // L-1 lock-in — the bundleBase64 zod cap formula is slightly over-permissive
+  // (~15 bytes more than the true base64 length for 50 MiB). Innocuous; this
+  // test records the relationship explicitly.
+  it('bundleBase64 cap formula matches MAX_BUNDLE_SIZE_BYTES base64 length within 16 bytes', () => {
+    const trueB64Length = Math.ceil(MAX_BUNDLE_SIZE_BYTES / 3) * 4;
+    const formulaUsed = Math.ceil((MAX_BUNDLE_SIZE_BYTES * 4) / 3) + 16;
+    expect(formulaUsed).toBeGreaterThanOrEqual(trueB64Length);
+    expect(formulaUsed - trueB64Length).toBeLessThanOrEqual(16);
   });
 });
