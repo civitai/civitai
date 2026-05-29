@@ -44,6 +44,29 @@ function normClassifierLabel(v: string | null | undefined): string {
   return (v ?? '').trim().toLowerCase();
 }
 
+/**
+ * ClickHouse async_insert settings. Audit-table inserts run at high frequency
+ * once image scanning ramps up — one insert per scan, 5-10 rows each. Without
+ * server-side batching that's hundreds of small parts per partition per
+ * second and we hit `parts_to_throw_insert` (~300 active parts) fast.
+ *
+ * async_insert tells ClickHouse to buffer incoming rows server-side and flush
+ * them as a single part when either `busy_timeout_ms` elapses since the first
+ * buffered row OR `max_data_size` bytes are accumulated. The wait-flag is 0
+ * because every caller of insertRows / writeRegexShadowComparison is
+ * fire-and-forget — we don't need to know the row landed before we return.
+ *
+ * Worst-case durability: server crash during the ~1s buffer window loses
+ * those rows. Acceptable for an audit log (we already swallow ClickHouse
+ * errors and log to Axiom; same defensive posture).
+ */
+const CLICKHOUSE_AUDIT_INSERT_SETTINGS = {
+  async_insert: 1,
+  wait_for_async_insert: 0,
+  async_insert_busy_timeout_ms: 1000,
+  async_insert_max_data_size: 10_000_000,
+} as const;
+
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1, n));
@@ -147,6 +170,7 @@ async function insertRows({
       table: 'scanner_label_results',
       values: rows,
       format: 'JSONEachRow',
+      clickhouse_settings: CLICKHOUSE_AUDIT_INSERT_SETTINGS,
     });
   } catch (e) {
     const error = e as Error;
@@ -229,6 +253,7 @@ async function writeRegexShadowComparison(args: {
       table: 'scanner_regex_shadow_results',
       values: rows,
       format: 'JSONEachRow',
+      clickhouse_settings: CLICKHOUSE_AUDIT_INSERT_SETTINGS,
     });
   } catch (e) {
     const error = e as Error;
