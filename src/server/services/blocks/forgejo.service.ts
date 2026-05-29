@@ -401,12 +401,21 @@ export async function ensureReviewRepo(slug: string): Promise<void> {
   // (2) Make sure the repo exists. auto_init=true so commitFiles can
   // immediately push to `main` (Forgejo refuses to push to a missing
   // branch). 409 / 422 = already exists.
+  //
+  // `private: false` is deliberate: the security boundary on
+  // forgejo.civitai.com is oauth2-proxy (GH `oauth` team gate), which
+  // sits in front of every Forgejo request. Inside that boundary,
+  // making review repos public lets mods anonymously browse the file
+  // tree from /apps/review's deep-link without needing a separate
+  // Forgejo login session (Forgejo's own login form is currently
+  // throwing CSRF errors for moderator browsing flows — orthogonal
+  // issue, tracked separately).
   const repoRes = await fjFetch(`/api/v1/orgs/${FORGEJO_REVIEW_ORG}/repos`, {
     method: 'POST',
     body: JSON.stringify({
       name: slug,
       description: `Pending publish-request bundle for ${slug}.`,
-      private: true,
+      private: false,
       auto_init: true,
       default_branch: 'main',
     }),
