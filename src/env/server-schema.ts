@@ -346,6 +346,12 @@ export const serverSchema = z.object({
   //                           since CF universal SSL covers *.civit.ai
   //                           single-level wildcard for free.
   FORGEJO_BASE_URL: z.string().url().optional(),
+  // Browser-facing public URL for Forgejo — distinct from FORGEJO_BASE_URL
+  // because the latter points at the cluster-internal service so civitai-web's
+  // API + webhook calls don't loop through Cloudflare + oauth2-proxy. The
+  // mod-review UI link in /apps/review uses this one. Defaults to the
+  // production hostname; PR previews can override but won't normally need to.
+  FORGEJO_PUBLIC_URL: z.string().url().default('https://forgejo.civitai.com'),
   FORGEJO_ADMIN_TOKEN: z.string().optional(),
   FORGEJO_WEBHOOK_SECRET: z.string().optional(),
   BLOCK_BUILD_CALLBACK_SECRET: z.string().optional(),

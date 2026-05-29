@@ -25,9 +25,14 @@ const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
 /**
  * Public URL pointer for the in-review repo of a slug. Used by the
  * UI to deep-link mods into Forgejo's diff view from /apps/review.
+ *
+ * Uses FORGEJO_PUBLIC_URL (browser-facing host) rather than
+ * FORGEJO_BASE_URL (cluster-internal service URL used for civitai-web's
+ * own API + webhook calls).
  */
 export function reviewRepoUrl(slug: string): string {
-  return `${getBaseUrl()}/${FORGEJO_REVIEW_ORG}/${slug}`;
+  const u = env.FORGEJO_PUBLIC_URL.replace(/\/$/, '');
+  return `${u}/${FORGEJO_REVIEW_ORG}/${slug}`;
 }
 
 function getBaseUrl(): string {
