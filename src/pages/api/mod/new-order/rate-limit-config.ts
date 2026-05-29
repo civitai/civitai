@@ -4,7 +4,14 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
-const poolWeightsSchema = z.array(z.number().min(0)).length(3);
+// Per-pool weights are mod-tunable from this endpoint. The refine() guard
+// rejects `NaN` / `±Infinity` at the API boundary so we never persist a
+// value that would produce `NaN` targets in `computePoolTargets` once read
+// back from Redis. Length is locked to the three Knight* / Acolyte* /
+// Templar* slots.
+const poolWeightsSchema = z
+  .array(z.number().refine(Number.isFinite, { message: 'weight must be finite' }).min(0))
+  .length(3);
 
 const configSchema = z.object({
   perMinute: z.number().int().min(1).optional(),
@@ -44,9 +51,22 @@ export default ModEndpoint(
       return res.status(400).json({ error: 'Invalid config', details: parsed.error.format() });
     }
 
-    // Merge with existing config so partial updates work
-    const existing = (await sysRedis.packed.get(key)) ?? {};
-    const merged = { ...existing, ...parsed.data };
+    // Merge with existing config so partial updates work. Nested objects
+    // (`abuseDetection`, `poolQuotas`) get merged one level deep so a PUT
+    // touching only `{ poolQuotas: { Knight: [...] } }` doesn't wipe out an
+    // existing `Acolyte` entry. Top-level scalars still hard-overwrite.
+    const existing = ((await sysRedis.packed.get(key)) ?? {}) as Record<string, unknown>;
+    const data = parsed.data;
+    const merged: Record<string, unknown> = { ...existing, ...data };
+
+    const mergeNested = (k: 'abuseDetection' | 'poolQuotas') => {
+      const incoming = data[k];
+      if (incoming === undefined) return;
+      const prev = (existing[k] ?? {}) as Record<string, unknown>;
+      merged[k] = { ...prev, ...(incoming as Record<string, unknown>) };
+    };
+    mergeNested('abuseDetection');
+    mergeNested('poolQuotas');
 
     await sysRedis.packed.set(key, merged);
 

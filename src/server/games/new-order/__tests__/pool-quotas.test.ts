@@ -109,6 +109,47 @@ describe('computePoolTargets', () => {
     expect(targets).toEqual([14, 6, 0]);
   });
 
+  it('treats NaN/Infinity/non-number weights as zero (defends against corrupted Redis blobs)', () => {
+    const { targets, activeIdxs } = computePoolTargets({
+      weights: [NaN, Infinity, 0.5] as unknown as number[],
+      poolSizes: [100, 100, 100],
+      overflowLimit: 20,
+    });
+    // Only index 2 has a finite positive weight, so it absorbs the full quota.
+    expect(activeIdxs).toEqual([2]);
+    expect(targets).toEqual([0, 0, 20]);
+  });
+
+  it('treats string/null weights as zero without throwing', () => {
+    const { targets, activeIdxs } = computePoolTargets({
+      weights: ['0.5' as unknown as number, null as unknown as number, 1],
+      poolSizes: [100, 100, 100],
+      overflowLimit: 20,
+    });
+    expect(activeIdxs).toEqual([2]);
+    expect(targets).toEqual([0, 0, 20]);
+  });
+
+  it('treats negative weights as zero', () => {
+    const { targets, activeIdxs } = computePoolTargets({
+      weights: [-0.5, 0.5, 0],
+      poolSizes: [100, 100, 100],
+      overflowLimit: 20,
+    });
+    expect(activeIdxs).toEqual([1]);
+    expect(targets).toEqual([0, 20, 0]);
+  });
+
+  it('returns empty targets when overflowLimit is non-finite', () => {
+    const { targets, activeIdxs } = computePoolTargets({
+      weights: [0.5, 0.5, 0],
+      poolSizes: [100, 100, 100],
+      overflowLimit: Number.NaN,
+    });
+    expect(activeIdxs).toEqual([]);
+    expect(targets).toEqual([0, 0, 0]);
+  });
+
   it('sizes targets to the longer of weights/poolSizes (caller may pass mismatched arrays)', () => {
     // weights shorter than poolSizes — extra pools default to 0 target.
     const { targets, activeIdxs } = computePoolTargets({

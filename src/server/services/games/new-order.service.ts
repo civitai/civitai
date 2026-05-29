@@ -1563,10 +1563,18 @@ export async function getImagesQueue({
   // until full starved Knight2 (NSFW) entirely. Resolve weights from
   // Redis (ops-tunable) with a built-in fallback; missing rank → legacy.
   const rateLimitConfig = await getVotingRateLimitConfig();
-  const poolWeights =
-    rateLimitConfig?.poolQuotas?.[effectiveRankType] ??
-    DEFAULT_POOL_QUOTAS[effectiveRankType] ??
-    null;
+  // `sysRedis.packed.get` returns untrusted runtime data: if the Redis blob
+  // is hand-edited or corrupted, `poolQuotas[rank]` could be a string, an
+  // object, or `null` — passing that through to `computePoolTargets` would
+  // produce `NaN` targets or throw. Validate the shape (array of finite
+  // numbers) and fall back to the in-code default (or sequential drain) when
+  // it's wrong, instead of trusting the cast on `VotingRateLimitConfig`.
+  const isValidWeights = (w: unknown): w is number[] =>
+    Array.isArray(w) && w.every((v) => typeof v === 'number' && Number.isFinite(v));
+  const redisWeights = rateLimitConfig?.poolQuotas?.[effectiveRankType];
+  const poolWeights = isValidWeights(redisWeights)
+    ? redisWeights
+    : DEFAULT_POOL_QUOTAS[effectiveRankType] ?? null;
 
   const poolOffsets = rankPools.map(() => 0);
   const poolExhausted = rankPools.map(() => false);
@@ -1581,10 +1589,12 @@ export async function getImagesQueue({
 
     const before = validatedImages.length;
     const goal = before + target;
-    // Read 2× target per batch to absorb already-rated / already-seen misses.
-    // The original loop used `overflowLimit` here unconditionally; scaling to
-    // the per-pool target keeps Redis reads bounded when weights are small.
-    const step = Math.max(target * 2, 20);
+    // Read 2× target per batch to absorb already-rated / already-seen misses,
+    // but cap at `overflowLimit` so the legacy sequential-drain path (target
+    // = overflowLimit) doesn't double the Redis payload vs the original
+    // implementation. Floor at 20 so very small per-pool quotas still pull
+    // enough headroom to skip past already-rated images.
+    const step = Math.min(Math.max(target * 2, 20), overflowLimit);
 
     while (validatedImages.length < goal) {
       const poolImages = await pool.getAll({
