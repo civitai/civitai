@@ -136,11 +136,22 @@ async function makeBundle(files: Record<string, string | Buffer>): Promise<Buffe
 }
 
 function manifest(over: Record<string, unknown> = {}) {
+  // Default shape covers the minimum fields BlockManifestValidator requires
+  // (so approveRequest's H-4 pre-validation accepts the manifest by default
+  // and individual tests opt into invalid shapes via `over`).
   return {
     blockId: 'hello',
     version: '0.1.0',
     name: 'Hello World',
-    iframe: { src: 'https://hello.civit.ai', minHeight: 300 },
+    contentRating: 'g',
+    scopes: [],
+    iframe: {
+      src: 'https://hello.civit.ai',
+      minHeight: 300,
+      maxHeight: 800,
+      resizable: true,
+      sandbox: 'allow-scripts',
+    },
     ...over,
   };
 }
@@ -1039,6 +1050,12 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
+      // H-4 fix path: approveRequest's pre-validation reads the
+      // existing OauthClient context off this relation.
+      app: {
+        allowedScopes: 33554431,
+        allowedOrigins: ['https://hello.civit.ai'],
+      },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
 
@@ -1288,15 +1305,17 @@ describe('approveRequest', () => {
     expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
   });
 
-  // H-4 regression — subsequent-version approve updates AppBlock.manifest
-  // BEFORE Forgejo commit + webhook validation. If the manifest is bad,
-  // AppBlock holds the bad data.
-  it('REGRESSION (H-4): subsequent-version approve writes manifest to AppBlock before any validation', async () => {
+  // H-4 fix — approveRequest now runs the same BlockManifestValidator the
+  // git-push webhook runs, BEFORE any DB writes or Forgejo commit. A
+  // manifest with a mismatched origin (or other webhook-rejectable shape)
+  // is refused at approve time instead of leaving AppBlock.manifest
+  // pointing at content the build chain will never accept.
+  it('FIX (H-4): subsequent-version approve rejects when manifest fails validation', async () => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
       pendingRequest({
         manifest: manifest({
-          iframe: { src: 'https://attacker.example' }, // mismatched origin
+          iframe: { src: 'https://attacker.example', minHeight: 300 }, // origin not in OauthClient.allowedOrigins
         }),
       })
     );
@@ -1304,19 +1323,54 @@ describe('approveRequest', () => {
       id: 'apb_existing',
       appId: 'oc_existing',
       repoUrl: 'https://forgejo.example/civitai-apps/hello',
-    });
-    mockBundleBuffer.current = await makeValidBundle({
-      iframe: { src: 'https://attacker.example' },
+      app: {
+        allowedScopes: 33554431,
+        allowedOrigins: ['https://hello.civit.ai'],
+      },
     });
 
-    await approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 });
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/Invalid manifest — cannot approve/);
 
-    // AppBlock.update was called with the (potentially-bad) manifest before
-    // any cross-validation against the existing OauthClient.allowedOrigins.
-    const updateArg = mockDbWrite.appBlock.update.mock.calls[0][0];
-    expect(updateArg.data.manifest).toMatchObject({
-      iframe: { src: 'https://attacker.example' },
-    });
+    // Defense in depth: NO writes to any of the four external systems.
+    expect(mockDbWrite.appBlock.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
+    expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    expect(mockS3Send).not.toHaveBeenCalled();
+  });
+
+  // First-version variant: the OauthClient + AppBlock don't exist yet;
+  // approveRequest must synthesise the AppContext using the values it
+  // WOULD create (per-app subdomain + default allowedScopes) and run the
+  // validator against that. Catches the gen-from-model 2026-05-29
+  // incident shape (sandbox flag not allowed for trustTier=unverified)
+  // before the OauthClient is even created.
+  it('FIX (H-4): first-version approve rejects when manifest fails validation', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({
+        manifest: manifest({
+          // Origin not in the to-be-created allowedOrigins (which would be
+          // ['https://hello.civit.ai']) — same failure mode the webhook
+          // surfaces after the fact.
+          iframe: { src: 'https://elsewhere.example', minHeight: 300 },
+        }),
+      })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(/Invalid manifest — cannot approve/);
+
+    // No OauthClient, no Forgejo repo, no AppBlock row created.
+    expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
+    expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
+    expect(mockForgejo.ensurePushWebhook).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+    expect(mockForgejo.commitFiles).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.update).not.toHaveBeenCalled();
   });
 });
 

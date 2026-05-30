@@ -906,11 +906,63 @@ export async function approveRequest(
   // Determine first-vs-subsequent via the existing app_blocks row.
   // We don't rely on request.appBlockId being null because two requests
   // could land for the same slug before the first is approved.
+  //
+  // Pull the related OauthClient's allowedScopes + allowedOrigins so we
+  // can feed the same AppContext to BlockManifestValidator that the
+  // git-push webhook uses (audit H-4 — validate before any state writes
+  // so a manifest the webhook would reject doesn't poison the
+  // app_blocks row with content the build chain never accepts).
   const existingAppBlock = await dbRead.appBlock.findFirst({
     where: { blockId: request.slug },
-    select: { id: true, appId: true, repoUrl: true },
+    select: {
+      id: true,
+      appId: true,
+      repoUrl: true,
+      app: { select: { allowedScopes: true, allowedOrigins: true } },
+    },
   });
   const isFirstVersion = !existingAppBlock;
+
+  // H-4 fix — run the same BlockManifestValidator the git-push webhook
+  // runs, BEFORE any DB writes or the Forgejo commit. Without this:
+  //   - app_blocks.manifest gets updated to the new manifest content
+  //   - Forgejo commit fires the webhook
+  //   - webhook 400s on the validator
+  //   - publish_request is marked 'approved'
+  //   - build chain never runs
+  //   - row is left pointing at a manifest the live pod never serves
+  // (Today's gen-from-model "sandbox token allow-popups-to-escape-
+  // sandbox not allowed for trustTier=unverified" incident.)
+  //
+  // For first-version the OauthClient doesn't exist yet — synthesize
+  // the AppContext that the create call (a few lines down) will
+  // materialise. allowedScopes default is the Prisma schema default
+  // (33554431 — every OAuth bit set on a newly-created client), which
+  // matches what the webhook will see when it queries this row in a
+  // few seconds. allowedOrigins matches the same per-app subdomain we
+  // hardcode in the create.
+  const { BlockManifestValidator } = await import(
+    '~/server/services/block-manifest-validator.service'
+  );
+  const NEW_OAUTH_CLIENT_DEFAULT_SCOPES = 33554431;
+  const validationCtx = isFirstVersion
+    ? {
+        allowedScopes: NEW_OAUTH_CLIENT_DEFAULT_SCOPES,
+        allowedOrigins: [`https://${request.slug}.${env.APPS_DOMAIN}`],
+      }
+    : {
+        allowedScopes: existingAppBlock!.app.allowedScopes ?? 0,
+        allowedOrigins: (existingAppBlock!.app.allowedOrigins ?? []).map(
+          (o: string) => o.toLowerCase()
+        ),
+      };
+  const validation = BlockManifestValidator.validate(manifest, validationCtx);
+  if (!validation.valid) {
+    throw new Error(
+      `Invalid manifest — cannot approve. The git-push webhook would reject this manifest with the same errors and the build chain would not run. ` +
+        `Details: ${validation.errors.slice(0, 5).join('; ')}`
+    );
+  }
 
   let appBlockId: string;
   let repoUrl: string;

@@ -170,6 +170,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/manifest-validation',
       description: 'block.manifest.json missing or unreachable',
     });
+    notifyModsOfWebhookFailure({
+      slug,
+      sha,
+      stage: 'fetch-manifest',
+      details: `block.manifest.json missing or unreachable: ${String(e).slice(0, 200)}`,
+    });
     res.status(400).json({ error: 'Cannot fetch manifest', detail: String(e).slice(0, 240) });
     return;
   }
@@ -184,6 +190,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       state: 'failure',
       context: 'civitai/manifest-validation',
       description: 'block.manifest.json is not valid JSON',
+    });
+    notifyModsOfWebhookFailure({
+      slug,
+      sha,
+      stage: 'parse-manifest',
+      details: 'block.manifest.json is not valid JSON',
     });
     res.status(400).json({ error: 'Invalid manifest JSON' });
     return;
@@ -202,6 +214,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/manifest-validation',
       description: validation.errors.slice(0, 3).join('; '),
     });
+    notifyModsOfWebhookFailure({
+      slug,
+      sha,
+      stage: 'manifest-validation',
+      details: validation.errors.slice(0, 5).join('; '),
+    });
     res.status(400).json({ error: 'Invalid manifest', details: validation.errors });
     return;
   }
@@ -218,6 +236,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/manifest-validation',
       description: `blockId in manifest (${parsedManifest.blockId}) must equal repo slug (${slug})`,
     });
+    notifyModsOfWebhookFailure({
+      slug,
+      sha,
+      stage: 'blockId-slug-mismatch',
+      details: `manifest.blockId="${parsedManifest.blockId}" but repo slug="${slug}"`,
+    });
     res.status(400).json({ error: 'blockId / slug mismatch' });
     return;
   }
@@ -231,6 +255,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       state: 'failure',
       context: 'civitai/manifest-validation',
       description: `iframe.src must equal ${expectedSrc}`,
+    });
+    notifyModsOfWebhookFailure({
+      slug,
+      sha,
+      stage: 'iframe-src-mismatch',
+      details: `manifest.iframe.src="${parsedManifest.iframe?.src ?? ''}" but expected "${expectedSrc}"`,
     });
     res.status(400).json({ error: 'iframe.src mismatch' });
     return;
@@ -272,6 +302,12 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/build',
       description: `Trigger failed: ${String(e).slice(0, 80)}`,
     });
+    notifyModsOfWebhookFailure({
+      slug,
+      sha,
+      stage: 'trigger-build',
+      details: `triggerBuild() failed: ${String(e).slice(0, 200)}`,
+    });
     res.status(500).json({ error: 'Build trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
@@ -297,4 +333,64 @@ async function setCommitStatusSafe(args: Parameters<typeof setCommitStatus>[0]):
     // eslint-disable-next-line no-console
     console.error('[git-push] setCommitStatus failed:', String(e).slice(0, 240));
   }
+}
+
+/**
+ * Fire-and-forget Discord ping when the build chain fails at this
+ * webhook (validator reject, slug/iframe mismatch, trigger failure).
+ *
+ * After the H-4 fix in publish-request.service.ts.approveRequest runs
+ * the same validator BEFORE writing app_blocks, this should never fire
+ * on the canonical /apps/submit → /apps/review flow — the approve call
+ * itself surfaces validation errors inline to the mod. This ping is the
+ * defense-in-depth signal that catches:
+ *   - direct pushes to civitai-apps/<slug> on Forgejo bypassing the
+ *     mod review UI
+ *   - drift between the approve-side and webhook-side validator (e.g.
+ *     a new check added to one and not the other)
+ *   - triggerBuild failures (Tekton receiver down, HMAC drift, network)
+ *
+ * No-op if DISCORD_WEBHOOK_MOD_ALERTS is unset. Never throws.
+ */
+function notifyModsOfWebhookFailure(opts: {
+  slug: string;
+  sha: string;
+  stage: string;
+  details: string;
+}): void {
+  if (!env.DISCORD_WEBHOOK_MOD_ALERTS) return;
+  const baseUrl = (process.env.NEXTAUTH_URL ?? '').replace(/\/$/, '');
+  const reviewUrl = baseUrl ? `${baseUrl}/apps/review` : '/apps/review';
+  const payload = {
+    embeds: [
+      {
+        title: `🚨 App Blocks build-chain rejected: ${opts.slug}`,
+        description:
+          'The git-push webhook refused the commit — the live pod is unchanged. ' +
+          'After the H-4 fix this should not fire from the normal /apps/review approve ' +
+          'flow; investigate direct pushes or validator drift.',
+        url: reviewUrl,
+        color: 0xc92a2a,
+        fields: [
+          { name: 'Slug', value: opts.slug, inline: true },
+          { name: 'Stage', value: opts.stage, inline: true },
+          { name: 'Commit', value: `\`${opts.sha.slice(0, 12)}\``, inline: true },
+          { name: 'Details', value: opts.details.slice(0, 900) || '(none)' },
+        ],
+        footer: { text: 'App Blocks git-push webhook' },
+        timestamp: new Date().toISOString(),
+      },
+    ],
+  };
+  // Cast as ResponseInit is fine here — global.fetch is webapi compatible
+  // in Next's Node runtime. AbortSignal.timeout caps the call so a Discord
+  // outage can't slow the 4xx response we're about to send to Forgejo.
+  fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5_000),
+  }).catch(() => {
+    /* fire and forget */
+  });
 }
