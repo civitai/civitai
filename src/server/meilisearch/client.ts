@@ -69,6 +69,11 @@ export function getMetricsSearchClient(actor: string) {
  * meilisearch-js client we're on (<=0.34) doesn't expose signal on
  * getDocuments, so we hit the /documents/fetch endpoint directly when a
  * cancellable request is needed (e.g. the image feed's slow-fetch path).
+ *
+ * Wrapped under runWithLimiter('metricsSearch', useTimeout=false) so a
+ * backend brownout shares the same per-backend semaphore + circuit breaker
+ * gate as the SDK path. The caller's AbortSignal remains the deadline (we
+ * pass useTimeout=false to avoid a double race against the 2.5s timer).
  */
 export async function fetchDocumentsAbortable<T>(
   indexName: string,
@@ -78,37 +83,46 @@ export async function fetchDocumentsAbortable<T>(
   const { host, apiKey, signal, actor } = options;
   const url = `${host}/indexes/${indexName}/documents/fetch`;
   const urlAttr = safeUrl(url);
-  const res = await withSpan(
-    'image:meili:http',
-    {
-      'http.method': 'POST',
-      'http.url': urlAttr,
-      'image.meili.index': indexName,
-    },
-    () =>
-      fetch(url, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-          ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
+  return runWithLimiter(
+    'metricsSearch',
+    'metricsSearch',
+    async () => {
+      const res = await withSpan(
+        'image:meili:http',
+        {
+          'http.method': 'POST',
+          'http.url': urlAttr,
+          'image.meili.index': indexName,
         },
-        body: JSON.stringify(params),
-        signal,
-      })
-  );
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`Meilisearch fetch failed (${res.status}): ${text}`);
-  }
-  return withSpan(
-    'image:meili:parse',
-    {
-      'http.url': urlAttr,
-      'http.status_code': res.status,
-      'image.meili.index': indexName,
+        () =>
+          fetch(url, {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+              ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
+            },
+            body: JSON.stringify(params),
+            signal,
+          })
+      );
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Meilisearch fetch failed (${res.status}): ${text}`);
+      }
+      return withSpan(
+        'image:meili:parse',
+        {
+          'http.url': urlAttr,
+          'http.status_code': res.status,
+          'image.meili.index': indexName,
+        },
+        async () => (await res.json()) as ResourceResults<T[]>
+      );
     },
-    async () => (await res.json()) as ResourceResults<T[]>
+    // Caller's AbortSignal is the deadline; skip the wrapper's 2.5s timer to
+    // avoid a double-timeout race. The circuit breaker still applies.
+    { useTimeout: false }
   );
 }
 
@@ -201,6 +215,187 @@ const meiliCallDurationHistogram = registerHistogram({
   buckets: [0.001, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 2.5, 3.5, 5, 7.5, 10, 30],
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// Per-backend circuit breaker
+// ────────────────────────────────────────────────────────────────────────────
+//
+// Why this exists: 2026-05-30 chronic brownout cascade — 14h of Meili
+// upstream degradation produced 70+ storm intervals, 483 pod restarts, with
+// the 50-slot limiter + 2.5s timeout firing throughout. Under that load,
+// 50 concurrent callers each waiting the full 2.5s before failing
+// accumulates ~125 worker-seconds of event-loop pressure per pod per cycle
+// — enough to block past the kubelet 5s TCP probe threshold and trip
+// SIGKILL.
+//
+// The circuit breaker short-circuits at 0ms once a backend is demonstrably
+// failing, eliminating that accumulated wait. Each backend is tracked
+// independently so a brownout on metricsSearch doesn't shed load from
+// search.
+//
+// healthProbe is intentionally NOT under the breaker — health-probe is the
+// canonical signal we need to keep responsive even when the circuit is open.
+// (Failure mode: health-check returns false, not bypassed.)
+//
+// State machine (per backend):
+//   CLOSED → (failures >= TRIP_THRESHOLD in WINDOW_SECONDS) → OPEN
+//   OPEN → (now >= cooldownUntil) → HALF_OPEN
+//   HALF_OPEN → (trial success) → CLOSED
+//   HALF_OPEN → (trial failure) → OPEN (new cooldown)
+//
+// Failures counted: MeiliCallTimeoutError. Other errors (network, HTTP 5xx
+// not surfaced via timeout) are NOT counted — they're either symptoms of the
+// timeout path or app-level errors not indicative of upstream brownout.
+
+type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
+type Circuit = {
+  state: CircuitState;
+  // Unix ms timestamps of recent counted failures. Pruned on each access.
+  failures: number[];
+  // ms-since-epoch; only meaningful when state === 'OPEN'.
+  cooldownUntil: number;
+  // While HALF_OPEN, whether the single trial slot is currently in flight.
+  // Prevents a thundering-herd retry against a still-broken backend.
+  trialInFlight: boolean;
+};
+
+const circuits: Record<MeiliBackend, Circuit> = {
+  search: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
+  metricsSearch: { state: 'CLOSED', failures: [], cooldownUntil: 0, trialInFlight: false },
+};
+
+const meiliCircuitStateGauge = registerGaugeWithLabels({
+  name: 'meili_circuit_state',
+  help: 'Per-backend circuit breaker state (0=CLOSED, 1=HALF_OPEN, 2=OPEN)',
+  labelNames: ['backend'] as const,
+});
+const meiliCircuitTripsCounter = registerCounterWithLabels({
+  name: 'meili_circuit_trips_total',
+  help: 'Count of CLOSED→OPEN (or HALF_OPEN→OPEN re-trips) transitions per backend',
+  labelNames: ['backend'] as const,
+});
+// Per-call rejections while the circuit is OPEN or HALF_OPEN-with-trial-busy.
+// Kept SEPARATE from meili_call_timeouts_total — that counter's documented
+// meaning is "backend timed out at MEILI_CALL_TIMEOUT_MS". Conflating
+// circuit-open rejections (which never touch the backend) would inflate it
+// at request-arrival rate during OPEN and falsely trigger any alert keyed on
+// rate(meili_call_timeouts_total). Operators wanting "all fast-fail events"
+// should sum these two.
+const meiliCircuitRejectionsCounter = registerCounterWithLabels({
+  name: 'meili_circuit_rejections_total',
+  help: 'Calls rejected at 0ms because circuit was OPEN or HALF_OPEN-busy, by backend',
+  labelNames: ['backend'] as const,
+});
+(meiliCircuitStateGauge as any).collect = function collect() {
+  for (const backend of Object.keys(circuits) as MeiliBackend[]) {
+    const s = circuits[backend].state;
+    this.set({ backend }, s === 'CLOSED' ? 0 : s === 'HALF_OPEN' ? 1 : 2);
+  }
+};
+
+function circuitWindowMs() {
+  return env.MEILI_CIRCUIT_WINDOW_SECONDS * 1000;
+}
+function circuitCooldownMs() {
+  return env.MEILI_CIRCUIT_COOLDOWN_SECONDS * 1000;
+}
+
+function pruneFailures(c: Circuit, now: number) {
+  const cutoff = now - circuitWindowMs();
+  // Failures are pushed in chronological order; find first kept index.
+  let i = 0;
+  while (i < c.failures.length && c.failures[i] < cutoff) i++;
+  if (i > 0) c.failures.splice(0, i);
+}
+
+function transition(backend: MeiliBackend, c: Circuit, next: CircuitState, now: number) {
+  if (c.state === next) return;
+  const wasOpen = c.state === 'OPEN' || c.state === 'HALF_OPEN';
+  c.state = next;
+  if (next === 'OPEN') {
+    c.cooldownUntil = now + circuitCooldownMs();
+    c.trialInFlight = false;
+    meiliCircuitTripsCounter.inc({ backend });
+  } else if (next === 'HALF_OPEN') {
+    c.trialInFlight = false;
+  } else if (next === 'CLOSED') {
+    c.failures = [];
+    c.cooldownUntil = 0;
+    c.trialInFlight = false;
+  }
+  // Log state transitions so we can correlate to incidents without scraping.
+  if (wasOpen || next !== 'CLOSED') {
+    log(`meili circuit ${backend}: → ${next}`);
+  }
+}
+
+/**
+ * Pre-flight circuit check. Called synchronously inside runWithLimiter
+ * before the pLimit acquire. Returns true if the call should proceed
+ * (and reserves the trial slot if we're going HALF_OPEN → trial), false
+ * if the circuit short-circuited the call.
+ */
+function admitCall(backend: MeiliBackend): { admitted: boolean; isTrial: boolean } {
+  const c = circuits[backend];
+  const now = Date.now();
+  pruneFailures(c, now);
+
+  if (c.state === 'OPEN') {
+    if (now >= c.cooldownUntil) {
+      transition(backend, c, 'HALF_OPEN', now);
+      // Fall through into HALF_OPEN handling below.
+    } else {
+      return { admitted: false, isTrial: false };
+    }
+  }
+
+  if (c.state === 'HALF_OPEN') {
+    if (c.trialInFlight) {
+      // Another trial is already probing the backend; reject this one fast.
+      return { admitted: false, isTrial: false };
+    }
+    c.trialInFlight = true;
+    return { admitted: true, isTrial: true };
+  }
+
+  return { admitted: true, isTrial: false };
+}
+
+/**
+ * Post-call circuit update. Called once per admitted call regardless of
+ * outcome. `failed` is true iff the call rejected with a counted-failure
+ * (MeiliCallTimeoutError today). HALF_OPEN trial dispositions decide
+ * whether to close or re-open the breaker.
+ */
+function recordCallOutcome(backend: MeiliBackend, isTrial: boolean, failed: boolean) {
+  const c = circuits[backend];
+  const now = Date.now();
+  pruneFailures(c, now);
+
+  if (failed) {
+    c.failures.push(now);
+  }
+
+  if (isTrial) {
+    c.trialInFlight = false;
+    if (failed) {
+      transition(backend, c, 'OPEN', now);
+    } else {
+      transition(backend, c, 'CLOSED', now);
+    }
+    return;
+  }
+
+  // Non-trial path: check the rolling window for trip.
+  if (
+    c.state === 'CLOSED' &&
+    failed &&
+    c.failures.length >= env.MEILI_CIRCUIT_TRIP_THRESHOLD
+  ) {
+    transition(backend, c, 'OPEN', now);
+  }
+}
+
 /**
  * Run a single Meilisearch SDK call under per-backend concurrency cap + hard
  * per-call timeout. Throws MeiliCallTimeoutError on the timeout path so
@@ -234,11 +429,34 @@ const meiliCallDurationHistogram = registerHistogram({
 async function runWithLimiter<T>(
   key: LimiterKey,
   backendLabel: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  opts: { useTimeout?: boolean } = {}
 ): Promise<T> {
+  const useTimeout = opts.useTimeout ?? true;
+
+  // Circuit breaker gate — only for the two user-traffic backends. healthProbe
+  // bypasses the circuit so the kubelet probe always issues a real request.
+  let isTrial = false;
+  if (key === 'search' || key === 'metricsSearch') {
+    const decision = admitCall(key);
+    if (!decision.admitted) {
+      meiliCircuitRejectionsCounter.inc({ backend: backendLabel });
+      // Throw the same typed error so existing instanceof catches translate
+      // to the same 408 / TRPCError(TIMEOUT) responses. reason='concurrency'
+      // distinguishes circuit-open rejections from the timeout path for
+      // anyone reading the .reason field.
+      throw new MeiliCallTimeoutError(
+        'concurrency',
+        'Meilisearch backend circuit open — failing fast'
+      );
+    }
+    isTrial = decision.isTrial;
+  }
+
   const endTimer = meiliCallDurationHistogram.startTimer({ backend: backendLabel });
   return limiters[key](async () => {
     let timer: NodeJS.Timeout | undefined;
+    let failedForCircuit = false;
     // Capture the SDK call so we can absorb a late rejection if the timeout
     // wins the race. meilisearch-js doesn't accept AbortSignal here, so the
     // SDK call keeps running and will eventually settle (success or RST).
@@ -248,11 +466,27 @@ async function runWithLimiter<T>(
     const sdkCall = fn();
     sdkCall.catch(() => undefined);
     try {
+      if (!useTimeout) {
+        // Caller supplied their own deadline (e.g. AbortSignal); skip the
+        // 2.5s timer race entirely so we don't double-time-out. The circuit
+        // still applies and the outcome still feeds the breaker.
+        try {
+          return await sdkCall;
+        } catch (err) {
+          // Caller's signal-aborted/network errors don't tell us anything
+          // useful about backend brownout — only count an explicit
+          // MeiliCallTimeoutError (none produced on this path today, but
+          // future-proof for symmetry with the timeout branch).
+          if (err instanceof MeiliCallTimeoutError) failedForCircuit = true;
+          throw err;
+        }
+      }
       return await Promise.race([
         sdkCall,
         new Promise<never>((_, reject) => {
           timer = setTimeout(() => {
             meiliCallTimeoutsCounter.inc({ backend: backendLabel });
+            failedForCircuit = true;
             reject(new MeiliCallTimeoutError('timeout'));
           }, env.MEILI_CALL_TIMEOUT_MS);
           // Don't keep the event loop alive for this timer; the surrounding
@@ -263,6 +497,9 @@ async function runWithLimiter<T>(
     } finally {
       if (timer) clearTimeout(timer);
       endTimer();
+      if (key === 'search' || key === 'metricsSearch') {
+        recordCallOutcome(key, isTrial, failedForCircuit);
+      }
     }
   });
 }
