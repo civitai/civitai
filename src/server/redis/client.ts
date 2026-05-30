@@ -719,6 +719,12 @@ export const REDIS_SYS_KEYS = {
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
+    // Accumulator for models-index re-index requests originating in the
+    // per-minute model-metrics job. Flushed into the search-index queue
+    // on a 15-min cadence (matches the search-index sync cron) to avoid
+    // generating ~15× more re-index work than the consumer can drain.
+    MODEL_METRIC_AFFECTED: 'index-updates:model-metric-affected',
+    MODEL_METRIC_LAST_FLUSH: 'index-updates:model-metric-last-flush',
   },
   QUEUES: {
     BUCKETS: 'queues:buckets',
