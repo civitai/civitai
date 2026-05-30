@@ -542,9 +542,10 @@ export const blocksRouter = router({
       // Post kill_per_model_installs: model installs are subscription rows
       // with target_model_ids populated. Compute the pinned-install count
       // via a second targeted query rather than over-fetching subs.
+      type RawRow = (typeof rows)[number];
       const appBlockIds = rows
-        .map((r) => r.appBlock?.id)
-        .filter((id): id is string => !!id);
+        .map((r: RawRow) => r.appBlock?.id)
+        .filter((id: string | undefined): id is string => !!id);
       const pinnedCounts = appBlockIds.length
         ? (
             (await dbRead.blockUserSubscription.groupBy({

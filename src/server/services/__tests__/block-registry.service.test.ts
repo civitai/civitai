@@ -17,21 +17,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  */
 
 const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
+  // Annotate Promise<any[] | any> on the impl so `.mockResolvedValue({...})`
+  // / `.mockResolvedValue([{...}, ...])` at call sites isn't narrowed to
+  // `Promise<never>` by vi.fn's overload inference.
+  // Type the impl so vi.fn captures both args AND return type — needed so
+  // `.mock.calls.at(-1)?.[0]` doesn't narrow to `never` and
+  // `.mockResolvedValue({...})` accepts arbitrary objects.
   const dbRead = {
-    $queryRaw: vi.fn(async () => []),
-    blockUserSubscription: { findUnique: vi.fn() },
-    appBlock: { findUnique: vi.fn() },
-    modelVersion: { findMany: vi.fn(async () => []) },
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+    blockUserSubscription: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
+    modelVersion: { findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []) },
   };
   const dbWrite = {
-    appBlock: { findUnique: vi.fn() },
+    appBlock: { findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null) },
     blockUserSubscription: {
-      findFirst: vi.fn(),
-      findMany: vi.fn(async () => []),
-      create: vi.fn(async () => ({})),
-      update: vi.fn(async () => ({ blockInstanceId: 'bki_test' })),
-      updateMany: vi.fn(async () => ({ count: 1 })),
-      deleteMany: vi.fn(async () => ({ count: 0 })),
+      findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
+      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
+      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ blockInstanceId: 'bki_test' })),
+      updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
+      deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
   };
   const redis = {
