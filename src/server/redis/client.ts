@@ -333,6 +333,11 @@ function getBaseClient(type: 'cache' | 'system') {
           // the new HA cluster is provisioned with the same secret.
           password: authConfig.password,
           socket: socketConfig,
+          // Match the standalone path's PING heartbeat. Sentinel sub-clients
+          // are long-lived against each master/replica pod; without this, an
+          // idle connection through any intermediate LB or rolling-update of a
+          // sentinel pod can silently expire.
+          pingInterval,
         },
         sentinelClientOptions: env.REDIS_SYS_SENTINEL_PASSWORD
           ? { password: env.REDIS_SYS_SENTINEL_PASSWORD, socket: socketConfig }
