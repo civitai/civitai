@@ -390,8 +390,10 @@ function ActivityPanel() {
       <Center py="md">
         <Stack align="center" gap="xs">
           <IconHistory size={28} opacity={0.5} />
-          <Text size="sm" c="dimmed">
-            Apps haven't taken any actions on your behalf yet.
+          <Text size="sm" c="dimmed" ta="center" maw={420}>
+            No activity yet. This feed populates when an app spends Buzz (via the in-block
+            top-up flow) or calls a scope-gated Civitai API on your behalf. Just running
+            generations from existing balance does not appear here.
           </Text>
           <Anchor component={Link} href="/apps" size="sm">
             Browse the marketplace
@@ -664,8 +666,10 @@ function ModelInstallsPanel() {
       <Center py="md">
         <Stack align="center" gap="xs">
           <IconBox size={28} opacity={0.5} />
-          <Text size="sm" c="dimmed">
-            You haven't installed any apps on a model yet.
+          <Text size="sm" c="dimmed" ta="center" maw={460}>
+            No per-model installs. This tab only shows apps you pinned to a specific model
+            from that model's page. If you subscribed to an app to cover all your models or
+            every page you visit, manage it in the <strong>Subscriptions</strong> tab.
           </Text>
           <Anchor component={Link} href="/apps" size="sm">
             Browse the marketplace
@@ -749,7 +753,7 @@ export default function InstalledAppsPage() {
                 Subscriptions
               </Tabs.Tab>
               <Tabs.Tab value="model-installs" leftSection={<IconBox size={14} />}>
-                Model installs
+                Per-model installs
               </Tabs.Tab>
               <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
                 Apps & permissions
@@ -796,8 +800,10 @@ export default function InstalledAppsPage() {
             <Tabs.Panel value="model-installs" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  Apps you've installed on a specific model. Pick which version's manifest the
-                  host uses, or uninstall to remove the block from that model's page.
+                  Apps you've pinned to a single specific model (distinct from blanket{' '}
+                  <strong>Subscriptions</strong>, which cover all your models or every page you
+                  visit). Pick which version's manifest the host uses, or uninstall to remove
+                  the block from that model's page.
                 </Text>
                 <ModelInstallsPanel />
               </Stack>
