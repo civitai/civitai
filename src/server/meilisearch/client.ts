@@ -274,6 +274,18 @@ const meiliCircuitTripsCounter = registerCounterWithLabels({
   help: 'Count of CLOSED→OPEN (or HALF_OPEN→OPEN re-trips) transitions per backend',
   labelNames: ['backend'] as const,
 });
+// Per-call rejections while the circuit is OPEN or HALF_OPEN-with-trial-busy.
+// Kept SEPARATE from meili_call_timeouts_total — that counter's documented
+// meaning is "backend timed out at MEILI_CALL_TIMEOUT_MS". Conflating
+// circuit-open rejections (which never touch the backend) would inflate it
+// at request-arrival rate during OPEN and falsely trigger any alert keyed on
+// rate(meili_call_timeouts_total). Operators wanting "all fast-fail events"
+// should sum these two.
+const meiliCircuitRejectionsCounter = registerCounterWithLabels({
+  name: 'meili_circuit_rejections_total',
+  help: 'Calls rejected at 0ms because circuit was OPEN or HALF_OPEN-busy, by backend',
+  labelNames: ['backend'] as const,
+});
 (meiliCircuitStateGauge as any).collect = function collect() {
   for (const backend of Object.keys(circuits) as MeiliBackend[]) {
     const s = circuits[backend].state;
@@ -428,7 +440,7 @@ async function runWithLimiter<T>(
   if (key === 'search' || key === 'metricsSearch') {
     const decision = admitCall(key);
     if (!decision.admitted) {
-      meiliCallTimeoutsCounter.inc({ backend: backendLabel });
+      meiliCircuitRejectionsCounter.inc({ backend: backendLabel });
       // Throw the same typed error so existing instanceof catches translate
       // to the same 408 / TRPCError(TIMEOUT) responses. reason='concurrency'
       // distinguishes circuit-open rejections from the timeout path for

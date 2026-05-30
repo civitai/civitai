@@ -129,9 +129,14 @@ export const serverSchema = z.object({
   // accumulated 2.5s waits per pod per cycle during chronic brownouts —
   // the mechanism that bled the api-primary pool past kubelet TCP probe
   // timeout on 2026-05-30.
-  MEILI_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().optional().default(10),
-  MEILI_CIRCUIT_WINDOW_SECONDS: z.coerce.number().optional().default(30),
-  MEILI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().optional().default(30),
+  // .int().min(1) on all three: a blank env value coerces to NaN under
+  // z.coerce.number(), which silently makes the >= comparison false →
+  // breaker disabled. Zero values would either trip on first failure
+  // (threshold=0), prune all failures immediately (window=0), or skip
+  // cooldown entirely (cooldown=0). Reject all three at boot.
+  MEILI_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().int().min(1).optional().default(10),
+  MEILI_CIRCUIT_WINDOW_SECONDS: z.coerce.number().int().min(1).optional().default(30),
+  MEILI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
   PODNAME: z.string().optional(),
   INTEGRATION_TOKEN: z.string().optional(),
   NEWSLETTER_ID: z.string().optional(),
