@@ -317,7 +317,19 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
       ]);
     } finally {
       if (timer) clearTimeout(timer);
-      endTimer();
+      // EMERGENCY 2026-05-30: a metric-observation error MUST NOT propagate
+      // into the app request path. We observed prom-client Histogram.observe
+      // throwing `Cannot read properties of undefined (reading 'length')` at
+      // 22/s per pod on signals.getToken (PR #2366 deploy), turning every
+      // wrapped signals call into an INTERNAL_SERVER_ERROR — the exact
+      // cascade pattern the wrap was supposed to prevent. Root cause of the
+      // bad histogram state is still under investigation; this catch is the
+      // unconditional safety net so a broken observation can't kill traffic.
+      try {
+        endTimer();
+      } catch {
+        // intentionally swallowed
+      }
       recordCallOutcome(isTrial, failedForCircuit);
     }
   });
