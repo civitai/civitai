@@ -942,6 +942,12 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Happy path — validation + rate-limit both clear. Emit Generator_Submit
     // BEFORE the buzz-transaction prompt so click-and-abandon (cancel at
     // confirm / insufficient-buzz) is still captured.
+    //
+    // submitId is a per-attempt UUID re-used on the paired Generator_JobLinked
+    // emit after mutateAsync resolves with a workflow.id. Only attached to
+    // happy-path emits (the validation-fail and rate-limited branches above
+    // omit it — those terminate without a job and have nothing to link to).
+    const submitId = crypto.randomUUID();
     try {
       const submitSnapshot = graph.getSnapshot() as ResourceSnapshot;
       trackAction({
@@ -952,6 +958,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
           hasRemixOfId: !!remixOfId,
           formVersion: 'new',
           isValid: true,
+          submitId,
         },
       }).catch(() => undefined);
     } catch {
@@ -1020,7 +1027,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
 
     // Wrap the mutation call with buzz transaction check
     const performTransaction = async () => {
-      await generateMutation.mutateAsync({
+      const workflow = await generateMutation.mutateAsync({
         input: {
           ...inputData,
           disablePoi: browsingSettingsAddons.settings.disablePoi,
@@ -1033,6 +1040,19 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         ...(sourceMetadata ? { sourceMetadata } : {}),
         ...(sourceMetadataMap ? { sourceMetadataMap } : {}),
       });
+
+      // Generation funnel telemetry — link the happy-path Generator_Submit
+      // emitted earlier to the resulting workflow. Reaches this point only
+      // if mutateAsync resolved (the hook's onError handler converts known
+      // errors into UI state — POI flag, insufficientBuzz, etc. — and the
+      // thrown rejection from mutateAsync propagates past this emit, so
+      // failed-mutate paths correctly do NOT fire Generator_JobLinked).
+      if (workflow?.id) {
+        trackAction({
+          type: 'Generator_JobLinked',
+          details: { submitId, workflowId: workflow.id },
+        }).catch(() => undefined);
+      }
 
       if (hasEarlyAccess) {
         invalidateWhatIf();
@@ -1069,7 +1089,16 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       onSubmitSuccess?.();
     };
 
-    conditionalPerformTransaction(totalCost, performTransaction);
+    // conditionalPerformTransaction's callback type is `() => void` and the
+    // wrapper does NOT await the return (see buzz.utils.ts:88 —
+    // `onPerformTransaction();` discards). Passing the async performTransaction
+    // directly would let any mutateAsync rejection bubble to the global
+    // unhandled-rejection handler. Wrap to neutralize. Match the VideoGenerationForm
+    // pattern; the durable fix is to make buzz.utils.ts accept void|Promise<void>
+    // and await with a swallow (follow-up — not in this PR's scope).
+    conditionalPerformTransaction(totalCost, () => {
+      void performTransaction().catch(() => undefined);
+    });
   };
 
   const handleReset = () => {
