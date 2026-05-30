@@ -1196,6 +1196,23 @@ export const blocksRouter = router({
         userId,
         settings: validatedSettings,
       });
+
+      // Audit — log every viewer-settings write (including checkpoint pin
+      // swaps via SET_CHECKPOINT) to the activity feed. Fire-and-forget.
+      void (async () => {
+        const { recordScopeInvocation } = await import(
+          '~/server/services/blocks/user-app-surface.service'
+        );
+        await recordScopeInvocation({
+          userId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          scope: 'block:settings:write',
+          endpoint: 'user-settings:write',
+          statusCode: 200,
+        });
+      })().catch(() => {});
+
       return { ok: true };
     }),
 

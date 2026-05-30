@@ -286,6 +286,22 @@ export const appsStorageRouter = router({
         },
         STORAGE_LOG
       ).catch(() => {});
+      // User-facing audit: unify the W4 storage feed into the same Activity
+      // tab that surfaces workflow + scope events. Axiom log above stays
+      // for ops/debug visibility; this row populates /apps/installed.
+      void (async () => {
+        const { recordScopeInvocation } = await import(
+          '~/server/services/blocks/user-app-surface.service'
+        );
+        await recordScopeInvocation({
+          userId,
+          appBlockId,
+          blockInstanceId,
+          scope: 'apps:storage',
+          endpoint: `storage:set:${input.key}`,
+          statusCode: 200,
+        });
+      })().catch(() => {});
       return { ok: true as const, sizeBytes: byteSize };
       } finally {
         stopTimer();
@@ -334,6 +350,21 @@ export const appsStorageRouter = router({
               },
               STORAGE_LOG
             ).catch(() => {});
+            // User-facing audit row — only on actual deletion (a no-op
+            // delete shouldn't appear in the user's activity feed).
+            void (async () => {
+              const { recordScopeInvocation } = await import(
+                '~/server/services/blocks/user-app-surface.service'
+              );
+              await recordScopeInvocation({
+                userId,
+                appBlockId,
+                blockInstanceId,
+                scope: 'apps:storage',
+                endpoint: `storage:delete:${input.key}`,
+                statusCode: 200,
+              });
+            })().catch(() => {});
           }
           return { ok: true as const, deleted };
         } catch (err) {

@@ -661,22 +661,31 @@ const SCOPE_ACTION_LABELS: Record<string, string> = {
 };
 
 function humaniseScopeInvocation(scope: string, endpoint?: string): string {
-  // submitWorkflow gets logged as a synthetic scope_invocation with
-  // endpoint=workflow:submit:<id> + scope=ai:write:budgeted. The scope
-  // label "Submit AI workflow" works, but "Generated an image" is what
-  // the user actually did — disambiguate by endpoint prefix.
+  // Synthetic endpoints take precedence over the scope label — same
+  // scope can fan out to different user-facing verbs (block:settings:write
+  // covers both first-time saves and checkpoint pin swaps; apps:storage
+  // covers both set and delete). The endpoint string is the source of
+  // truth for what the app actually did.
   if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
+  if (endpoint === 'user-settings:write') return 'Saved your block settings';
+  if (endpoint?.startsWith('storage:set:')) return 'Wrote app-local storage';
+  if (endpoint?.startsWith('storage:delete:')) return 'Deleted app-local storage';
   return SCOPE_ACTION_LABELS[scope] ?? scope;
 }
 
 /**
- * Strip the synthetic prefix off workflow endpoints so the Detail column
- * shows just the workflowId, not "workflow:submit:<id>". REST endpoints
- * pass through unchanged.
+ * Strip synthetic prefixes off endpoints so the Detail column shows the
+ * meaningful tail (workflowId, storage key, etc.). REST endpoints pass
+ * through unchanged.
  */
 function humaniseScopeEndpoint(endpoint: string): string {
-  const m = endpoint.match(/^workflow:submit:(.+)$/);
-  if (m) return m[1] === 'pending' ? '(no workflow id)' : `workflow ${m[1]}`;
+  const workflow = endpoint.match(/^workflow:submit:(.+)$/);
+  if (workflow) {
+    return workflow[1] === 'pending' ? '(no workflow id)' : `workflow ${workflow[1]}`;
+  }
+  const storage = endpoint.match(/^storage:(set|delete):(.+)$/);
+  if (storage) return `key "${storage[2]}"`;
+  if (endpoint === 'user-settings:write') return '';
   return endpoint;
 }
 
