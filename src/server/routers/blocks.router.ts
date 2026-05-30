@@ -1021,6 +1021,37 @@ export const blocksRouter = router({
         body: { steps: [step], tags, currencies: BLOCK_CURRENCIES },
       });
       const snapshot = snapshotFromWorkflow(submitted);
+
+      // Log the workflow submission to the per-user activity feed so
+      // /apps/installed → Activity shows "this app ran a workflow on
+      // your behalf at time T". Without this, generations that spend
+      // existing balance (the common case) leave NO trace anywhere —
+      // block_buzz_attribution only covers Buzz PURCHASES from inside
+      // the block (publisher revenue share), not vanilla spends. Fire-
+      // and-forget; recordScopeInvocation has internal try/catch so a
+      // failed audit insert can't poison the user-facing response.
+      //
+      // workflow:submit is a synthetic endpoint string (this path is
+      // tRPC, not REST) — the UI's Activity panel humanises it via the
+      // 'ai:write:budgeted' scope to "Generated an image".
+      void (async () => {
+        const { recordScopeInvocation } = await import(
+          '~/server/services/blocks/user-app-surface.service'
+        );
+        await recordScopeInvocation({
+          userId,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          scope: 'ai:write:budgeted',
+          endpoint: `workflow:submit:${snapshot.workflowId || 'pending'}`,
+          // Snapshot status is 'pending' / 'failed' / etc — map to an HTTP-
+          // ish code so the existing UI badge colors are coherent.
+          statusCode: snapshot.status === 'failed' ? 500 : 200,
+        });
+      })().catch(() => {
+        /* swallowed inside helper */
+      });
+
       return { snapshot: autoClaim ? { ...snapshot, autoClaim } : snapshot };
     }),
 

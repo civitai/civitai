@@ -559,9 +559,8 @@ function ActivityPanel() {
         <Stack align="center" gap="xs">
           <IconHistory size={28} opacity={0.5} />
           <Text size="sm" c="dimmed" ta="center" maw={420}>
-            No activity yet. This feed populates when an app spends Buzz (via the in-block
-            top-up flow) or calls a scope-gated Civitai API on your behalf. Just running
-            generations from existing balance does not appear here.
+            No activity yet. This feed populates whenever an app runs a generation, calls a
+            scope-gated Civitai API, or sources a Buzz purchase on your behalf.
           </Text>
           <Anchor component={Link} href="/apps" size="sm">
             Browse the marketplace
@@ -604,7 +603,7 @@ function ActivityPanel() {
                 <Text size="xs">
                   {item.kind === 'buzz'
                     ? humaniseActivityAction(item.scope)
-                    : humaniseScopeInvocation(item.scope)}
+                    : humaniseScopeInvocation(item.scope, item.endpoint)}
                 </Text>
               </Table.Td>
               <Table.Td>
@@ -619,7 +618,7 @@ function ActivityPanel() {
                     size="xs"
                     style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}
                   >
-                    {item.endpoint}
+                    {humaniseScopeEndpoint(item.endpoint)}
                   </Text>
                 )}
               </Table.Td>
@@ -661,8 +660,24 @@ const SCOPE_ACTION_LABELS: Record<string, string> = {
   'social:tip:self': 'Tip',
 };
 
-function humaniseScopeInvocation(scope: string): string {
+function humaniseScopeInvocation(scope: string, endpoint?: string): string {
+  // submitWorkflow gets logged as a synthetic scope_invocation with
+  // endpoint=workflow:submit:<id> + scope=ai:write:budgeted. The scope
+  // label "Submit AI workflow" works, but "Generated an image" is what
+  // the user actually did — disambiguate by endpoint prefix.
+  if (endpoint?.startsWith('workflow:submit')) return 'Generated an image';
   return SCOPE_ACTION_LABELS[scope] ?? scope;
+}
+
+/**
+ * Strip the synthetic prefix off workflow endpoints so the Detail column
+ * shows just the workflowId, not "workflow:submit:<id>". REST endpoints
+ * pass through unchanged.
+ */
+function humaniseScopeEndpoint(endpoint: string): string {
+  const m = endpoint.match(/^workflow:submit:(.+)$/);
+  if (m) return m[1] === 'pending' ? '(no workflow id)' : `workflow ${m[1]}`;
+  return endpoint;
 }
 
 function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
