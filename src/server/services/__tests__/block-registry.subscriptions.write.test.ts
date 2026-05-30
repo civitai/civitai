@@ -16,11 +16,17 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
     blockUserSubscription: {
       findMany: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
     },
+    model: { findMany: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []) },
+    appBlockPublishRequest: {
+      groupBy: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
+    },
   };
   const dbWrite = {
     appBlock: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
     blockUserSubscription: {
-      upsert: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
+      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
+      create: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
+      update: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
       findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
       delete: vi.fn<(...args: any[]) => Promise<any>>(async () => undefined),
     },
@@ -47,6 +53,10 @@ vi.mock('~/server/redis/client', () => ({
 describe('BlockRegistry.listUserSubscriptions', () => {
   beforeEach(() => {
     mockDbRead.blockUserSubscription.findMany.mockReset();
+    mockDbRead.model.findMany.mockReset();
+    mockDbRead.model.findMany.mockResolvedValue([]);
+    mockDbRead.appBlockPublishRequest.groupBy.mockReset();
+    mockDbRead.appBlockPublishRequest.groupBy.mockResolvedValue([]);
   });
 
   it('returns rows ordered by updatedAt desc with empty arrays normalised to null', async () => {
@@ -58,11 +68,20 @@ describe('BlockRegistry.listUserSubscriptions', () => {
         appBlockId: 'ab_one',
         targetModelTypes: [],
         targetBaseModels: ['Flux.1 D'],
+        targetModelIds: [],
+        slotId: null,
+        pinnedVersion: null,
+        blockInstanceId: null,
         settings: { buzz_budget_per_gen: 50 },
         enabled: true,
         createdAt: now,
         updatedAt: now,
-        appBlock: { blockId: 'generate-from-model', appId: 'oc_test', manifest: { name: 'Gen' } },
+        appBlock: {
+          blockId: 'generate-from-model',
+          appId: 'oc_test',
+          manifest: { name: 'Gen' },
+          version: '0.1.0',
+        },
       },
     ]);
     const { BlockRegistry } = await import('../block-registry.service');
@@ -70,8 +89,13 @@ describe('BlockRegistry.listUserSubscriptions', () => {
     expect(out).toHaveLength(1);
     expect(out[0].targetModelTypes).toBeNull();
     expect(out[0].targetBaseModels).toEqual(['Flux.1 D']);
+    expect(out[0].targetModelIds).toBeNull();
+    expect(out[0].slotId).toBeNull();
     expect(out[0].blockId).toBe('generate-from-model');
     expect(out[0].settings).toEqual({ buzz_budget_per_gen: 50 });
+    expect(out[0].pinnedModelNames).toBeNull();
+    expect(out[0].currentVersion).toBe('0.1.0');
+    expect(out[0].availableVersions).toEqual([]);
     const callArgs = mockDbRead.blockUserSubscription.findMany.mock.calls.at(-1)?.[0] as {
       where: { userId: number };
       orderBy: { updatedAt: string };
@@ -79,12 +103,59 @@ describe('BlockRegistry.listUserSubscriptions', () => {
     expect(callArgs.where.userId).toBe(42);
     expect(callArgs.orderBy.updatedAt).toBe('desc');
   });
+
+  it('hydrates pinnedModelNames + availableVersions for the pinned shape', async () => {
+    const now = new Date();
+    const approvedAt = new Date(now.getTime() - 86400_000);
+    mockDbRead.blockUserSubscription.findMany.mockResolvedValue([
+      {
+        id: 'bus_pin_1',
+        scope: 'publisher_all_my_models',
+        appBlockId: 'ab_one',
+        targetModelTypes: [],
+        targetBaseModels: [],
+        targetModelIds: [101, 202],
+        slotId: 'model.sidebar_top',
+        pinnedVersion: '0.2.0',
+        blockInstanceId: 'bki_test',
+        settings: {},
+        enabled: true,
+        createdAt: now,
+        updatedAt: now,
+        appBlock: {
+          blockId: 'generate-from-model',
+          appId: 'oc_test',
+          manifest: {},
+          version: '0.3.0',
+        },
+      },
+    ]);
+    mockDbRead.model.findMany.mockResolvedValue([
+      { id: 101, name: 'My LoRA' },
+      { id: 202, name: 'Other LoRA' },
+    ]);
+    mockDbRead.appBlockPublishRequest.groupBy.mockResolvedValue([
+      { appBlockId: 'ab_one', version: '0.1.0', _max: { reviewedAt: approvedAt } },
+      { appBlockId: 'ab_one', version: '0.3.0', _max: { reviewedAt: now } },
+    ]);
+    const { BlockRegistry } = await import('../block-registry.service');
+    const out = await BlockRegistry.listUserSubscriptions(42);
+    expect(out[0].targetModelIds).toEqual([101, 202]);
+    expect(out[0].slotId).toBe('model.sidebar_top');
+    expect(out[0].pinnedVersion).toBe('0.2.0');
+    expect(out[0].blockInstanceId).toBe('bki_test');
+    expect(out[0].pinnedModelNames).toEqual({ 101: 'My LoRA', 202: 'Other LoRA' });
+    // Versions sort newest-first by reviewedAt.
+    expect(out[0].availableVersions.map((v) => v.version)).toEqual(['0.3.0', '0.1.0']);
+  });
 });
 
 describe('BlockRegistry.upsertSubscription', () => {
   beforeEach(() => {
     mockDbWrite.appBlock.findUnique.mockReset();
-    mockDbWrite.blockUserSubscription.upsert.mockReset();
+    mockDbWrite.blockUserSubscription.findFirst.mockReset();
+    mockDbWrite.blockUserSubscription.create.mockReset();
+    mockDbWrite.blockUserSubscription.update.mockReset();
   });
 
   it('rejects an unknown app block', async () => {
@@ -101,7 +172,8 @@ describe('BlockRegistry.upsertSubscription', () => {
         enabled: true,
       })
     ).rejects.toThrow();
-    expect(mockDbWrite.blockUserSubscription.upsert).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockUserSubscription.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockUserSubscription.update).not.toHaveBeenCalled();
   });
 
   it('rejects an unapproved app block', async () => {
@@ -126,21 +198,27 @@ describe('BlockRegistry.upsertSubscription', () => {
     ).rejects.toThrow();
   });
 
-  it('writes through the (userId, appBlockId, scope) composite unique with empty arrays for null targets', async () => {
+  it('creates a blanket subscription row when none exists, with empty target arrays', async () => {
     mockDbWrite.appBlock.findUnique.mockResolvedValue({
       id: 'ab',
       blockId: 'generate-from-model',
       appId: 'a',
       status: 'approved',
       manifest: {},
+      version: '0.1.0',
     });
+    mockDbWrite.blockUserSubscription.findFirst.mockResolvedValue(null);
     const updatedAt = new Date();
-    mockDbWrite.blockUserSubscription.upsert.mockResolvedValue({
+    mockDbWrite.blockUserSubscription.create.mockResolvedValue({
       id: 'bus_new',
       scope: 'publisher_all_my_models',
       appBlockId: 'ab',
       targetModelTypes: [],
       targetBaseModels: [],
+      targetModelIds: [],
+      slotId: null,
+      pinnedVersion: null,
+      blockInstanceId: null,
       settings: {},
       enabled: true,
       createdAt: updatedAt,
@@ -158,17 +236,70 @@ describe('BlockRegistry.upsertSubscription', () => {
     });
     expect(out.id).toBe('bus_new');
     expect(out.targetModelTypes).toBeNull();
-    const args = mockDbWrite.blockUserSubscription.upsert.mock.calls.at(-1)?.[0] as {
-      where: { userId_appBlockId_scope: { userId: number; appBlockId: string; scope: string } };
-      create: { targetModelTypes: string[]; targetBaseModels: string[] };
+    expect(out.targetModelIds).toBeNull();
+    expect(out.slotId).toBeNull();
+    // findFirst is the blanket-row lookup: scope + slot=NULL + empty target_model_ids.
+    const findArgs = mockDbWrite.blockUserSubscription.findFirst.mock.calls.at(-1)?.[0] as {
+      where: { userId: number; scope: string; slotId: null };
     };
-    expect(args.where.userId_appBlockId_scope).toEqual({
+    expect(findArgs.where.userId).toBe(7);
+    expect(findArgs.where.scope).toBe('publisher_all_my_models');
+    expect(findArgs.where.slotId).toBeNull();
+    const createArgs = mockDbWrite.blockUserSubscription.create.mock.calls.at(-1)?.[0] as {
+      data: {
+        targetModelTypes: string[];
+        targetBaseModels: string[];
+        targetModelIds: number[];
+        slotId: string | null;
+      };
+    };
+    expect(createArgs.data.targetModelTypes).toEqual([]);
+    expect(createArgs.data.targetBaseModels).toEqual([]);
+    expect(createArgs.data.targetModelIds).toEqual([]);
+    expect(createArgs.data.slotId).toBeNull();
+  });
+
+  it('updates an existing blanket row in place when one is found', async () => {
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
+      id: 'ab',
+      blockId: 'g',
+      appId: 'a',
+      status: 'approved',
+      manifest: {},
+      version: '0.1.0',
+    });
+    mockDbWrite.blockUserSubscription.findFirst.mockResolvedValue({ id: 'bus_existing' });
+    const updatedAt = new Date();
+    mockDbWrite.blockUserSubscription.update.mockResolvedValue({
+      id: 'bus_existing',
+      scope: 'publisher_all_my_models',
+      appBlockId: 'ab',
+      targetModelTypes: [],
+      targetBaseModels: [],
+      targetModelIds: [],
+      slotId: null,
+      pinnedVersion: null,
+      blockInstanceId: null,
+      settings: { a: 1 },
+      enabled: false,
+      createdAt: updatedAt,
+      updatedAt,
+    });
+    const { BlockRegistry } = await import('../block-registry.service');
+    const out = await BlockRegistry.upsertSubscription({
       userId: 7,
       appBlockId: 'ab',
       scope: 'publisher_all_my_models',
+      targetModelTypes: null,
+      targetBaseModels: null,
+      settings: { a: 1 },
+      enabled: false,
     });
-    expect(args.create.targetModelTypes).toEqual([]);
-    expect(args.create.targetBaseModels).toEqual([]);
+    expect(out.enabled).toBe(false);
+    expect(mockDbWrite.blockUserSubscription.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockUserSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'bus_existing' } })
+    );
   });
 });
 

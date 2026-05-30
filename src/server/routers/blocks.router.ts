@@ -111,17 +111,23 @@ async function assertCanManageBlocks(
 
 async function resolveModelIdFromBlockInstance(blockInstanceId: string): Promise<number> {
   // B2 (same posture as above): dbWrite for the ownership-relevant lookup.
-  // updateSettings is publisher-only and only ever operates on real install
-  // rows. Synthetic ids (pdb_*, bus_*) don't have settings writable via this
-  // route — subscription settings use blocks.upsertSubscription, platform
-  // defaults aren't settings-writable at all. A synthetic id reaching this
-  // path is a client bug; the findUnique below returns null and we 404.
-  const row = await dbWrite.modelBlockInstall.findUnique({
+  // updateSettings is publisher-only and only ever operates on pinned
+  // subscription rows (the per-model-install shape, post kill_per_model
+  // _installs). Synthetic ids (pdb_*, bus_pub_*, bus_view_*) don't have
+  // settings writable via this route — blanket subscription settings use
+  // blocks.upsertSubscription, platform defaults aren't settings-writable.
+  // A synthetic id reaching this path is a client bug; the findUnique
+  // below returns null and we 404.
+  const row = await dbWrite.blockUserSubscription.findUnique({
     where: { blockInstanceId },
-    select: { modelId: true },
+    select: { targetModelIds: true },
   });
   if (!row) throw throwNotFoundError('Block install not found');
-  return row.modelId;
+  // Pinned subscriptions always have exactly one modelId in target_model
+  // _ids; defensive .at(0) so a bad data shape doesn't NaN downstream.
+  const modelId = row.targetModelIds?.[0];
+  if (!modelId) throw throwNotFoundError('Block install not found');
+  return modelId;
 }
 
 export const blocksRouter = router({
@@ -196,16 +202,21 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const row = await dbWrite.modelBlockInstall.findUnique({
+      // Post kill_per_model_installs: the per-model-pinned shape lives on
+      // block_user_subscriptions (block_instance_id is UNIQUE there for
+      // pinned rows).
+      const sub = await dbWrite.blockUserSubscription.findUnique({
         where: { blockInstanceId: input.blockInstanceId },
-        select: { modelId: true, appBlockId: true, slotId: true },
+        select: { appBlockId: true, slotId: true, targetModelIds: true },
       });
-      if (!row) throw throwNotFoundError('Block install not found');
-      await assertCanManageBlocks(ctx, row.modelId);
+      if (!sub) throw throwNotFoundError('Block install not found');
+      const modelId = sub.targetModelIds?.[0];
+      if (!modelId || !sub.slotId) throw throwNotFoundError('Block install not found');
+      await assertCanManageBlocks(ctx, modelId);
       await BlockRegistry.toggleEnabled({
-        modelId: row.modelId,
-        appBlockId: row.appBlockId,
-        slotId: row.slotId,
+        modelId,
+        appBlockId: sub.appBlockId,
+        slotId: sub.slotId,
         enabled: input.enabled,
       });
       return { ok: true };
@@ -220,16 +231,18 @@ export const blocksRouter = router({
     .use(enforceAppBlocksFlag)
     .input(z.object({ blockInstanceId: z.string().min(1).max(64) }))
     .mutation(async ({ ctx, input }) => {
-      const row = await dbWrite.modelBlockInstall.findUnique({
+      const sub = await dbWrite.blockUserSubscription.findUnique({
         where: { blockInstanceId: input.blockInstanceId },
-        select: { modelId: true, appBlockId: true, slotId: true },
+        select: { appBlockId: true, slotId: true, targetModelIds: true },
       });
-      if (!row) throw throwNotFoundError('Block install not found');
-      await assertCanManageBlocks(ctx, row.modelId);
+      if (!sub) throw throwNotFoundError('Block install not found');
+      const modelId = sub.targetModelIds?.[0];
+      if (!modelId || !sub.slotId) throw throwNotFoundError('Block install not found');
+      await assertCanManageBlocks(ctx, modelId);
       await BlockRegistry.uninstallFromModel({
-        modelId: row.modelId,
-        appBlockId: row.appBlockId,
-        slotId: row.slotId,
+        modelId,
+        appBlockId: sub.appBlockId,
+        slotId: sub.slotId,
       });
       return { ok: true };
     }),
@@ -515,7 +528,8 @@ export const blocksRouter = router({
           manifestDiffSummary: true,
           appBlock: {
             select: {
-              _count: { select: { modelInstalls: true, userSubscriptions: true } },
+              id: true,
+              _count: { select: { userSubscriptions: true } },
             },
           },
         },
@@ -524,14 +538,44 @@ export const blocksRouter = router({
       // the relation. Pending-first-version + withdrawn-first-version rows
       // have no appBlock (FK is set on approve) — surface null so the UI
       // can render "—".
+      //
+      // Post kill_per_model_installs: model installs are subscription rows
+      // with target_model_ids populated. Compute the pinned-install count
+      // via a second targeted query rather than over-fetching subs.
+      const appBlockIds = rows
+        .map((r) => r.appBlock?.id)
+        .filter((id): id is string => !!id);
+      const pinnedCounts = appBlockIds.length
+        ? (
+            (await dbRead.blockUserSubscription.groupBy({
+              by: ['appBlockId'],
+              where: {
+                appBlockId: { in: appBlockIds },
+                scope: 'publisher_all_my_models',
+                slotId: { not: null },
+              },
+              _count: { _all: true },
+            })) as unknown as Array<{ appBlockId: string; _count: { _all: number } }>
+          ).reduce<Record<string, number>>((acc, row) => {
+            acc[row.appBlockId] = row._count._all;
+            return acc;
+          }, {})
+        : {};
       type RowWithCount = (typeof rows)[number];
       return rows.map((r: RowWithCount) => {
         const counts = r.appBlock?._count;
+        const appBlockId = r.appBlock?.id;
         const { appBlock: _drop, ...rest } = r;
+        // userSubscriptionCount keeps the historical meaning ("blanket +
+        // pinned subscriptions for this app"); modelInstallCount is the
+        // pinned-subscription subset, mirroring what the pre-migration
+        // model_block_installs row count meant.
+        const totalSubs = counts?.userSubscriptions ?? null;
+        const pinnedCount = appBlockId ? pinnedCounts[appBlockId] ?? 0 : null;
         return {
           ...rest,
-          modelInstallCount: counts?.modelInstalls ?? null,
-          userSubscriptionCount: counts?.userSubscriptions ?? null,
+          modelInstallCount: pinnedCount,
+          userSubscriptionCount: totalSubs,
         };
       });
     }),
@@ -586,44 +630,32 @@ export const blocksRouter = router({
     }),
 
   /**
-   * W5 v0.5 — every model_block_installs row the user owns, with
-   * available approved versions per app + the current pinned_version
-   * (NULL=latest). Powers the "Model installs" tab on /apps/installed
-   * and feeds the version selector + uninstall button.
+   * Set or clear the version pin on a single subscription. NULL version
+   * reverts to "latest" (host loads the AppBlock's current manifest); a
+   * semver string pins to that version's manifest from `app_block
+   * _publish_requests`. Service validates ownership + version existence;
+   * this proc is the thin tRPC wrapper.
+   *
+   * Identifying the target row by the subscription's `id` (not the
+   * blockInstanceId) — blanket subscriptions don't have a blockInstance
+   * Id, and the management UI on /apps/installed reads `id` off the
+   * SubscriptionRecord directly.
    */
-  listMyModelInstalls: guardedProcedure
-    .use(enforceAppBlocksFlag)
-    .query(async ({ ctx }) => {
-      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
-      if (!ctx.user) return [];
-      const { listMyModelInstalls } = await import(
-        '~/server/services/blocks/user-app-surface.service'
-      );
-      return listMyModelInstalls(ctx.user.id);
-    }),
-
-  /**
-   * W5 v0.5 — set or clear the version pin on a single install. NULL
-   * version reverts to "latest" (host loads the AppBlock's current
-   * manifest); a semver string pins to that version's manifest from
-   * `app_block_publish_requests`. Service validates ownership +
-   * version existence; this proc is the thin tRPC wrapper.
-   */
-  setInstallPinnedVersion: guardedProcedure
+  setSubscriptionPinnedVersion: guardedProcedure
     .use(enforceAppBlocksFlag)
     .input(
       z.object({
-        blockInstanceId: z.string().min(1).max(64),
+        subscriptionId: z.string().min(1).max(64),
         version: z.string().min(1).max(64).nullable(),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const { setInstallPinnedVersion } = await import(
+      const { setSubscriptionPinnedVersion } = await import(
         '~/server/services/blocks/user-app-surface.service'
       );
-      return setInstallPinnedVersion({
+      return setSubscriptionPinnedVersion({
         userId: ctx.user!.id,
-        blockInstanceId: input.blockInstanceId,
+        subscriptionId: input.subscriptionId,
         version: input.version,
       });
     }),

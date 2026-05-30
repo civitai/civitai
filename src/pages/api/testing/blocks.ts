@@ -53,14 +53,24 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
 
   // All actions need the install row (for modelId pinning in updateSettings
   // and for `show`). Single fetch up front.
-  const install = await dbWrite.modelBlockInstall.findUnique({
+  //
+  // Post kill_per_model_installs: per-model installs ARE block_user
+  // _subscription rows now. block_instance_id is UNIQUE on subscriptions
+  // for pinned rows.
+  const install = await dbWrite.blockUserSubscription.findUnique({
     where: { blockInstanceId: input.blockInstanceId },
-    select: { modelId: true, settings: true, appBlock: { select: { blockId: true } } },
+    select: {
+      targetModelIds: true,
+      settings: true,
+      appBlock: { select: { blockId: true } },
+    },
   });
   if (!install) return res.status(404).json({ error: 'install not found' });
+  const modelId = install.targetModelIds?.[0];
+  if (!modelId) return res.status(404).json({ error: 'install not found' });
 
   if (input.action === 'show') {
-    return res.status(200).json({ ok: true, settings: install.settings, modelId: install.modelId });
+    return res.status(200).json({ ok: true, settings: install.settings, modelId });
   }
 
   const current = (install.settings ?? {}) as Record<string, unknown>;
@@ -84,7 +94,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
     // the future author UI will.
     await BlockRegistry.updateSettings({
       blockInstanceId: input.blockInstanceId,
-      modelId: install.modelId,
+      modelId,
       settings: nextSettings,
     });
   } catch (err) {

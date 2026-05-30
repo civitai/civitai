@@ -11,7 +11,6 @@ import { validateBlockSettings } from '~/server/services/blocks/settings-validat
 import {
   newBlockInstanceId,
   newBlockUserSubscriptionId,
-  newModelBlockInstallId,
 } from '~/server/utils/app-block-ids';
 import {
   throwAuthorizationError,
@@ -131,10 +130,11 @@ function maxRatingForNsfwLevel(level: number | undefined): ContentRating {
 
 /**
  * Discriminated shape returned by {@link BlockRegistry.resolveBlockInstance}.
- * Matches the row shape callers expect from `modelBlockInstall.findUnique`,
- * but normalises across the three other id namespaces (`pdb_*`, `bus_pub_*`,
- * `bus_view_*`) so call sites can branch on `source` instead of duplicating
- * the precedence-ladder lookup logic.
+ * Normalises across all four id namespaces — `mbi_*`/`bki_*` (per-model
+ * pinned subscription, the only path with source='install'), `pdb_*`
+ * (platform default), `bus_pub_*` (blanket publisher sub), `bus_view_*`
+ * (viewer sub) — so call sites can branch on `source` instead of
+ * duplicating the precedence-ladder lookup logic.
  *
  * Field semantics:
  *  - `modelId` / `slotId` — server-validated against the source row's
@@ -303,10 +303,13 @@ function resolveRenderMode(
  * Block Registry — queries enabled block installs for a (modelId, slotId)
  * combination, applies the emergency kill list, and caches in Redis for 60s.
  *
- * Publisher Opt-Out invariant (plan §4):
- *   The NOT EXISTS subquery against `model_block_installs` checks
- *   `model_id` + `app_block_id` ONLY — never `enabled`. This is what makes
- *   `toggleEnabled(false)` an opt-out mechanism instead of a no-op.
+ * Publisher Opt-Out invariant (plan §4, post kill_per_model_installs):
+ *   The NOT EXISTS subquery against pinned `block_user_subscriptions`
+ *   (scope='publisher_all_my_models' AND slot_id IS NOT NULL AND target
+ *   _model_ids contains modelId) checks ONLY the (model, slot, app_block)
+ *   triple — NOT `enabled`. This is what makes `toggleEnabled(false)` on
+ *   a pinned subscription an opt-out mechanism (suppresses the blanket
+ *   sub + platform default) instead of a no-op.
  */
 export class BlockRegistry {
   static async listForModel(opts: ListForModelOpts): Promise<BlockInstallRecord[]> {
@@ -350,56 +353,65 @@ export class BlockRegistry {
       trust_tier: string;
       manifest_render_mode: string | null;
     };
-    // SQL notes:
-    //   - installs are scoped to a single slot via mbi.slot_id; the NOT
-    //     EXISTS subquery matches (model, app_block, slot) so an opt-out
-    //     in slot A does NOT suppress the same block in slot B.
-    //   - INVARIANT (see plan §4): do NOT add "AND enabled = true" inside
-    //     the NOT EXISTS — that turns toggleEnabled(false) into a no-op.
-    //   - I13: platform_default_blocks rows now filter on target_model_types
-    //     (when set), and the union orders by priority (lower=earlier) within
-    //     each source rank. Installs always rank first (source_rank=1).
-    //   - I15: content-rating filter happens in JS after the row map (the
-    //     manifest's contentRating lives in JSONB and is easier to compare
-    //     in TS against CONTENT_RATING_ORDER than via SQL).
-    // Slot manifest match payload — Postgres `@>` containment against
-    // the manifest.targets array. Building the literal in JS keeps the
-    // pg-side type clear (jsonb) and avoids json_build_array gymnastics.
+    // SQL notes (post kill_per_model_installs absorb):
+    //   - Source rank 1 is the per-model-PINNED subscription shape (was
+    //     model_block_installs). One row per (user, app, scope, slot,
+    //     target_model_ids[1]). block_instance_id is preserved across the
+    //     migration (the old bki_* id) so downstream tables (attribution,
+    //     scope invocations, user settings) keep resolving.
+    //   - Source rank 2 is the BLANKET publisher subscription shape
+    //     (target_model_ids=[] AND slot_id IS NULL). We still synthesise
+    //     bus_pub_<id> for these since multiple slots may render through
+    //     one blanket row and the synthetic id stays stable across slot
+    //     reads.
+    //   - INVARIANT (see plan §4): the NOT EXISTS clause on rank 2 checks
+    //     for a pinned sub on (model, app, slot) regardless of enabled —
+    //     so toggleEnabled(false) on a pinned sub continues to opt OUT of
+    //     blanket subs + platform defaults.
+    //   - Slot manifest match (`@>`) only matters for blanket rows since
+    //     pinned rows already carry slot_id directly.
+    //   - I15: content-rating filter happens in JS after the row map.
     const slotMatch = `{"targets":[{"slotId":"${slotId}"}]}`;
     const rows = (await dbRead.$queryRaw<Row[]>`
       SELECT * FROM (
-        -- Source rank 1: per-model installs (publisher's specific choice
-        -- for this model). enabled=true only — disabled installs are the
-        -- publisher opt-out path that gets handled via NOT EXISTS below.
+        -- Source rank 1: per-model pinned subscriptions (publisher's specific
+        -- choice for this model in this slot). The pinned shape — slot_id
+        -- NOT NULL AND target_model_ids contains the modelId. enabled=true
+        -- only; disabled pinned subs are the publisher opt-out path that
+        -- gets handled via NOT EXISTS in rank 2.
         SELECT
-          mbi.block_instance_id,
+          bus.block_instance_id AS block_instance_id,
           ab.block_id,
           ab.app_id,
           ab.id AS app_block_id,
           ab.manifest,
-          mbi.settings,
-          mbi.enabled,
+          bus.settings,
+          bus.enabled,
           ab.render_mode,
           ab.trust_tier,
           (ab.manifest->>'renderMode') AS manifest_render_mode,
           1 AS source_rank,
           0 AS priority
-        FROM model_block_installs mbi
-        JOIN app_blocks ab ON ab.id = mbi.app_block_id
-        WHERE mbi.model_id = ${modelId}
-          AND mbi.slot_id = ${slotId}
-          AND mbi.enabled = TRUE
+        FROM block_user_subscriptions bus
+        JOIN app_blocks ab ON ab.id = bus.app_block_id
+        WHERE bus.scope = 'publisher_all_my_models'
+          AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          AND bus.slot_id = ${slotId}
+          AND ${modelId} = ANY(bus.target_model_ids)
+          AND bus.block_instance_id IS NOT NULL
 
         UNION ALL
 
-        -- Source rank 2: publisher_all_my_models subscriptions for the
-        -- model owner. The JOIN on Model.userId = bus.user_id is what
-        -- makes this dynamic: transferring the model swaps which user's
-        -- subscriptions apply automatically. A per-model install row
-        -- (any enabled value) on this (modelId, slotId, appBlockId)
-        -- suppresses the subscription via NOT EXISTS — that's the
-        -- publisher opt-out path described in the handoff.
+        -- Source rank 2: blanket publisher_all_my_models subscriptions for
+        -- the model owner. slot_id IS NULL (applies to every slot the
+        -- manifest declares) AND target_model_ids IS EMPTY (applies to
+        -- every model the user owns). The JOIN on Model.userId = bus.user
+        -- _id makes this dynamic: transferring the model swaps which user's
+        -- subscriptions apply automatically.
+        --
+        -- Suppressed by a pinned subscription on (model, app, slot)
+        -- regardless of enabled — the publisher opt-out path.
         SELECT
           'bus_pub_' || bus.id AS block_instance_id,
           ab.block_id,
@@ -419,6 +431,8 @@ export class BlockRegistry {
         WHERE bus.scope = 'publisher_all_my_models'
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          AND bus.slot_id IS NULL
+          AND cardinality(bus.target_model_ids) = 0
           AND ab.manifest @> ${slotMatch}::jsonb
           AND (
             array_length(bus.target_model_types, 1) IS NULL
@@ -436,19 +450,22 @@ export class BlockRegistry {
             )
           )
           AND NOT EXISTS (
-            SELECT 1 FROM model_block_installs mbi
-            WHERE mbi.model_id = ${modelId}
-              AND mbi.slot_id = ${slotId}
-              AND mbi.app_block_id = ab.id
+            -- Pinned subscription (any user, any enabled value) on this
+            -- (model, slot, app_block) is the publisher opt-out path.
+            SELECT 1 FROM block_user_subscriptions pin
+            WHERE pin.scope = 'publisher_all_my_models'
+              AND pin.slot_id = ${slotId}
+              AND pin.app_block_id = ab.id
+              AND ${modelId} = ANY(pin.target_model_ids)
           )
 
         UNION ALL
 
         -- Source rank 3: platform defaults (mod-promoted, "every model
-        -- gets this block"). Suppressed only by a per-model install for
-        -- the same (model, slot, app_block) — a publisher subscription
-        -- on rank 2 does NOT suppress platform defaults, since the two
-        -- usually carry different app_blocks anyway.
+        -- gets this block"). Suppressed only by a pinned subscription
+        -- for the same (model, slot, app_block) — a blanket publisher
+        -- subscription on rank 2 does NOT suppress platform defaults,
+        -- since the two usually carry different app_blocks anyway.
         SELECT
           'pdb_' || pdb.app_block_id AS block_instance_id,
           ab.block_id,
@@ -482,19 +499,22 @@ export class BlockRegistry {
             )
           )
           AND NOT EXISTS (
-            SELECT 1 FROM model_block_installs
-            WHERE model_id = ${modelId}
-              AND app_block_id = pdb.app_block_id
-              AND slot_id = ${slotId}
+            SELECT 1 FROM block_user_subscriptions pin
+            WHERE pin.scope = 'publisher_all_my_models'
+              AND pin.slot_id = ${slotId}
+              AND pin.app_block_id = pdb.app_block_id
+              AND ${modelId} = ANY(pin.target_model_ids)
           )
 
         UNION ALL
 
         -- Source rank 4: viewer_personal subscriptions for the current
-        -- viewer. Anon viewers (viewerUserId IS NULL) match no rows
+        -- viewer. Always blanket in v0 (no per-model pinning UI for the
+        -- viewer scope), so we filter to slot_id IS NULL + empty target
+        -- _model_ids. Anon viewers (viewerUserId IS NULL) match no rows
         -- because user_id is NOT NULL on the table and -1 isn't a valid
         -- User id. Suppressed by any higher-rank source already showing
-        -- this app_block for this slot, so we don't render duplicates.
+        -- this app_block for this slot.
         SELECT
           'bus_view_' || bus.id AS block_instance_id,
           ab.block_id,
@@ -514,6 +534,8 @@ export class BlockRegistry {
           AND bus.user_id = ${viewerUserId ?? -1}
           AND bus.enabled = TRUE
           AND ab.status = 'approved'
+          AND bus.slot_id IS NULL
+          AND cardinality(bus.target_model_ids) = 0
           AND ab.manifest @> ${slotMatch}::jsonb
           AND (
             array_length(bus.target_model_types, 1) IS NULL
@@ -530,15 +552,16 @@ export class BlockRegistry {
                 AND mv."baseModel" = ANY(bus.target_base_models)
             )
           )
-          -- A per-model install (rank 1) already rendering this block?
-          -- skip the viewer subscription. Same app_block + slot only.
+          -- A pinned publisher subscription on (model, slot, app_block) is
+          -- rendering at rank 1; suppress.
           AND NOT EXISTS (
-            SELECT 1 FROM model_block_installs mbi
-            WHERE mbi.model_id = ${modelId}
-              AND mbi.slot_id = ${slotId}
-              AND mbi.app_block_id = ab.id
+            SELECT 1 FROM block_user_subscriptions pin
+            WHERE pin.scope = 'publisher_all_my_models'
+              AND pin.slot_id = ${slotId}
+              AND pin.app_block_id = ab.id
+              AND ${modelId} = ANY(pin.target_model_ids)
           )
-          -- A publisher subscription (rank 2) for the model owner that
+          -- A blanket publisher subscription for the model owner that
           -- targets this same app_block? skip viewer to avoid duplicate.
           AND NOT EXISTS (
             SELECT 1 FROM block_user_subscriptions pub
@@ -546,6 +569,8 @@ export class BlockRegistry {
             WHERE pub.scope = 'publisher_all_my_models'
               AND pub.enabled = TRUE
               AND pub.app_block_id = ab.id
+              AND pub.slot_id IS NULL
+              AND cardinality(pub.target_model_ids) = 0
           )
           -- A platform default (rank 3) for this same app_block + slot?
           -- skip viewer for the same reason.
@@ -768,17 +793,20 @@ export class BlockRegistry {
     const { blockInstanceId, modelId, slotId, viewerUserId } = opts;
     const db = opts.db === 'read' ? dbRead : dbWrite;
 
-    // mbi_* — the canonical per-model install. The row carries modelId/slotId
-    // so we cross-check the caller's claim against it.
+    // mbi_* / bki_* — historical per-model install ids. Since the 2026-05-30
+    // kill_per_model_installs migration, these resolve via block_user
+    // _subscriptions.block_instance_id (the UNIQUE column the migration
+    // preserved). Both prefixes refer to the same shape.
     if (blockInstanceId.startsWith('mbi_') || blockInstanceId.startsWith('bki_')) {
-      // bki_ is the historical prefix for the unique blockInstanceId column
-      // (vs mbi_ for the row PK). Both refer to per-model installs and the
-      // findUnique below is keyed on the unique column either way.
-      const row = await db.modelBlockInstall.findUnique({
+      const sub = await db.blockUserSubscription.findUnique({
         where: { blockInstanceId },
         select: {
-          modelId: true,
+          userId: true,
+          scope: true,
           slotId: true,
+          targetModelIds: true,
+          targetModelTypes: true,
+          targetBaseModels: true,
           enabled: true,
           settings: true,
           installedByUserId: true,
@@ -795,25 +823,52 @@ export class BlockRegistry {
           },
         },
       });
-      if (!row) return null;
-      if (row.modelId !== modelId || row.slotId !== slotId) return null;
-      if (!row.enabled) return null;
-      if (!row.appBlock || row.appBlock.status !== 'approved') return null;
+      if (!sub) return null;
+      // Per-model-pinned shape is the only thing that gets a bki_*/mbi_*
+      // id — anything else is a stale client cache + a bug. Validate the
+      // shape defensively.
+      if (sub.scope !== 'publisher_all_my_models') return null;
+      if (sub.slotId !== slotId) return null;
+      if (!Array.isArray(sub.targetModelIds) || !sub.targetModelIds.includes(modelId)) {
+        return null;
+      }
+      if (!sub.enabled) return null;
+      if (!sub.appBlock || sub.appBlock.status !== 'approved') return null;
+      // Defense-in-depth: still re-validate the model owner against the
+      // subscription user. Same posture as the bus_pub_ branch — without
+      // it, a pinned subscription that survives a model-ownership transfer
+      // could keep emitting tokens for the new owner's model.
+      const model = await db.model.findUnique({
+        where: { id: modelId },
+        select: { userId: true, type: true },
+      });
+      if (!model) return null;
+      if (model.userId !== sub.userId) return null;
+      if (sub.targetModelTypes && sub.targetModelTypes.length > 0) {
+        if (!sub.targetModelTypes.includes(model.type)) return null;
+      }
+      if (sub.targetBaseModels && sub.targetBaseModels.length > 0) {
+        const mv = await db.modelVersion.findFirst({
+          where: { modelId, baseModel: { in: sub.targetBaseModels } },
+          select: { id: true },
+        });
+        if (!mv) return null;
+      }
       return {
         source: 'install',
-        modelId: row.modelId,
-        slotId: row.slotId,
+        modelId,
+        slotId,
         enabled: true,
-        settings: (row.settings ?? {}) as Record<string, unknown>,
-        installedByUserId: row.installedByUserId,
+        settings: (sub.settings ?? {}) as Record<string, unknown>,
+        installedByUserId: sub.installedByUserId,
         appBlock: {
-          id: row.appBlock.id,
-          blockId: row.appBlock.blockId,
-          appId: row.appBlock.appId,
-          status: row.appBlock.status,
-          manifest: (row.appBlock.manifest ?? {}) as Record<string, unknown>,
-          approvedScopes: row.appBlock.approvedScopes ?? [],
-          app: row.appBlock.app ? { allowedScopes: row.appBlock.app.allowedScopes } : null,
+          id: sub.appBlock.id,
+          blockId: sub.appBlock.blockId,
+          appId: sub.appBlock.appId,
+          status: sub.appBlock.status,
+          manifest: (sub.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: sub.appBlock.approvedScopes ?? [],
+          app: sub.appBlock.app ? { allowedScopes: sub.appBlock.app.allowedScopes } : null,
         },
       };
     }
@@ -857,14 +912,18 @@ export class BlockRegistry {
         });
         if (!m || !pdb.targetModelTypes.includes(m.type)) return null;
       }
-      // Suppression: a per-model install row for this (model, slot, app_block)
-      // would already be rendering rank 1 in listForModel, so the pdb
-      // synthetic id wouldn't appear — but if it does (stale client cache),
-      // we still want resolve to return null so the caller doesn't mint a
-      // token for a hidden source.
-      const suppressor = await db.modelBlockInstall.findFirst({
-        where: { modelId, slotId, appBlockId },
-        select: { blockInstanceId: true },
+      // Suppression: a pinned publisher subscription for this (model, slot,
+      // app_block) overrides the platform default at rank 1 in listForModel.
+      // If a stale client cache still holds the pdb_ id, the resolver still
+      // returns null so the caller doesn't mint a token for a hidden source.
+      const suppressor = await db.blockUserSubscription.findFirst({
+        where: {
+          scope: 'publisher_all_my_models',
+          slotId,
+          appBlockId,
+          targetModelIds: { has: modelId },
+        },
+        select: { id: true },
       });
       if (suppressor) return null;
       return {
@@ -886,7 +945,10 @@ export class BlockRegistry {
       };
     }
 
-    // bus_pub_<bus.id> — publisher_all_my_models subscription
+    // bus_pub_<bus.id> — publisher_all_my_models BLANKET subscription. The
+    // pinned shape gets a bki_*/mbi_* id (handled above) so a bus_pub_*
+    // here must be the blanket shape (slot_id IS NULL, target_model_ids
+    // empty).
     if (blockInstanceId.startsWith('bus_pub_')) {
       const busId = blockInstanceId.slice('bus_pub_'.length);
       if (!busId) return null;
@@ -895,6 +957,8 @@ export class BlockRegistry {
         select: {
           userId: true,
           scope: true,
+          slotId: true,
+          targetModelIds: true,
           enabled: true,
           settings: true,
           targetModelTypes: true,
@@ -914,6 +978,10 @@ export class BlockRegistry {
       });
       if (!bus || !bus.enabled) return null;
       if (bus.scope !== 'publisher_all_my_models') return null;
+      // Blanket-only via the bus_pub_ prefix. A pinned subscription must
+      // come in as bki_*/mbi_* — anything else is a synthetic-id mismatch.
+      if (bus.slotId !== null) return null;
+      if (Array.isArray(bus.targetModelIds) && bus.targetModelIds.length !== 0) return null;
       if (!bus.appBlock || bus.appBlock.status !== 'approved') return null;
       // Manifest must declare this slot in its targets[] (matches
       // listForModel's `manifest @> {targets:[{slotId}]}`).
@@ -940,11 +1008,16 @@ export class BlockRegistry {
         });
         if (!mv) return null;
       }
-      // Suppression rank 1: a per-model install on the same (model, slot,
-      // app_block) would override the subscription.
-      const suppressor = await db.modelBlockInstall.findFirst({
-        where: { modelId, slotId, appBlockId: bus.appBlock.id },
-        select: { blockInstanceId: true },
+      // Suppression: a pinned subscription on (model, slot, app_block) is
+      // rank 1 in listForModel; this blanket sub would be suppressed.
+      const suppressor = await db.blockUserSubscription.findFirst({
+        where: {
+          scope: 'publisher_all_my_models',
+          slotId,
+          appBlockId: bus.appBlock.id,
+          targetModelIds: { has: modelId },
+        },
+        select: { id: true },
       });
       if (suppressor) return null;
       return {
@@ -980,6 +1053,8 @@ export class BlockRegistry {
         select: {
           userId: true,
           scope: true,
+          slotId: true,
+          targetModelIds: true,
           enabled: true,
           settings: true,
           targetModelTypes: true,
@@ -999,6 +1074,9 @@ export class BlockRegistry {
       });
       if (!bus || !bus.enabled) return null;
       if (bus.scope !== 'viewer_personal') return null;
+      // viewer_personal is always blanket in v0.
+      if (bus.slotId !== null) return null;
+      if (Array.isArray(bus.targetModelIds) && bus.targetModelIds.length !== 0) return null;
       // The viewer making the request MUST be the subscription owner.
       // Without this an attacker could mint tokens that reference another
       // user's viewer subscription.
@@ -1020,13 +1098,17 @@ export class BlockRegistry {
         });
         if (!mv) return null;
       }
-      // Cascading suppression mirrors the three NOT EXISTS clauses on the
-      // rank-4 branch in listForModel: rank 1 (per-model install),
-      // rank 2 (publisher subscription for the model owner), rank 3
-      // (platform default).
-      const rank1 = await db.modelBlockInstall.findFirst({
-        where: { modelId, slotId, appBlockId: bus.appBlock.id },
-        select: { blockInstanceId: true },
+      // Cascading suppression mirrors the NOT EXISTS clauses on the
+      // rank-4 branch in listForModel: pinned-sub (rank 1), blanket
+      // publisher-sub for model owner (rank 2), platform default (rank 3).
+      const rank1 = await db.blockUserSubscription.findFirst({
+        where: {
+          scope: 'publisher_all_my_models',
+          slotId,
+          appBlockId: bus.appBlock.id,
+          targetModelIds: { has: modelId },
+        },
+        select: { id: true },
       });
       if (rank1) return null;
       const rank2 = await db.blockUserSubscription.findFirst({
@@ -1035,6 +1117,8 @@ export class BlockRegistry {
           enabled: true,
           appBlockId: bus.appBlock.id,
           userId: model.userId,
+          slotId: null,
+          targetModelIds: { isEmpty: true },
         },
         select: { id: true },
       });
@@ -1104,17 +1188,14 @@ export class BlockRegistry {
 
     // H-4: enforce the per-slot cap at install time. listForModel LIMITs to
     // MAX_BLOCKS_PER_SLOT in SQL, but the prior implementation silently
-    // accepted any number of installs — the 4th publisher saw success but
-    // their block never rendered. Reject explicitly so the caller knows.
-    //
-    // The count below could race with a concurrent install; we accept that
-    // and let the create branch hit the composite UNIQUE if it does. The
-    // race window is tiny (one Redis-cached findMany), and the worst case
-    // is the 4th install lands and the SQL LIMIT continues to truncate.
-    // The upsert branch (same publisher re-installing same slot) doesn't
-    // need this check because it doesn't grow the count.
-    const existingForSlot = await dbWrite.modelBlockInstall.findMany({
-      where: { modelId, slotId },
+    // accepted any number of installs. Count pinned subscriptions on
+    // (model, slot) regardless of owner; the cap is per-slot global.
+    const existingForSlot = await dbWrite.blockUserSubscription.findMany({
+      where: {
+        scope: 'publisher_all_my_models',
+        slotId,
+        targetModelIds: { has: modelId },
+      },
       select: { appBlockId: true },
     });
     const alreadyInstalled = existingForSlot.some(
@@ -1126,93 +1207,158 @@ export class BlockRegistry {
       );
     }
 
-    // Atomic upsert keyed on the composite unique. Two concurrent install
-    // double-clicks both target the same key; Prisma upsert serializes them,
-    // so one runs `create` and the other runs `update` — neither hits a
-    // UNIQUE violation. The `create` branch's blockInstanceId is only
-    // consumed when no row exists; the `update` branch preserves the
-    // existing id via the SELECT.
+    // Find the existing pinned subscription for this (user, app, scope,
+    // slot, model) tuple, if any. Prisma can't express the partial unique
+    // index inline, so we use findFirst + create-or-update branch instead
+    // of upsert. The DB-level partial UNIQUE index defends against
+    // concurrent inserts (a race would manifest as a P2002 — caller can
+    // retry).
     //
-    // M2: omitting `settings` in the update branch preserves prior values.
-    // Pre-fix, an `installOnModel({modelId, appBlockId, slotId})` call
-    // without `settings` wiped the publisher's existing settings to {}.
-    const candidate = newBlockInstanceId();
-    const updateData: {
-      enabled: boolean;
-      updatedAt: Date;
-      settings?: object;
-    } = {
-      enabled: true,
-      updatedAt: new Date(),
-    };
-    if (validatedSettings != null) updateData.settings = validatedSettings;
-
-    const result = await dbWrite.modelBlockInstall.upsert({
-      where: { modelId_appBlockId_slotId: { modelId, appBlockId, slotId } },
-      create: {
-        id: newModelBlockInstallId(),
-        modelId,
+    // M2: omitting `settings` in the update branch preserves prior values
+    // (was the bug that wiped publisher settings on a no-args install).
+    const existing = await dbWrite.blockUserSubscription.findFirst({
+      where: {
+        userId: installedByUserId,
         appBlockId,
+        scope: 'publisher_all_my_models',
         slotId,
-        blockInstanceId: candidate,
-        installedByUserId,
-        settings: (validatedSettings ?? {}) as object,
-        enabled: true,
+        targetModelIds: { equals: [modelId] },
       },
-      update: updateData,
-      select: { blockInstanceId: true },
+      select: { id: true, blockInstanceId: true },
     });
 
+    let resultInstanceId: string;
+    if (existing) {
+      // Re-enable + (optionally) update settings.
+      const updateData: {
+        enabled: boolean;
+        updatedAt: Date;
+        settings?: object;
+      } = {
+        enabled: true,
+        updatedAt: new Date(),
+      };
+      if (validatedSettings != null) updateData.settings = validatedSettings;
+      // Existing rows may have NULL blockInstanceId for legacy reasons;
+      // allocate one on first write so downstream tables can resolve.
+      let instanceId = existing.blockInstanceId;
+      if (!instanceId) {
+        instanceId = newBlockInstanceId();
+      }
+      await dbWrite.blockUserSubscription.update({
+        where: { id: existing.id },
+        data: { ...updateData, blockInstanceId: instanceId },
+      });
+      resultInstanceId = instanceId;
+    } else {
+      const instanceId = newBlockInstanceId();
+      await dbWrite.blockUserSubscription.create({
+        data: {
+          id: newBlockUserSubscriptionId(),
+          userId: installedByUserId,
+          appBlockId,
+          scope: 'publisher_all_my_models',
+          slotId,
+          targetModelIds: [modelId],
+          targetModelTypes: [],
+          targetBaseModels: [],
+          blockInstanceId: instanceId,
+          installedByUserId,
+          settings: (validatedSettings ?? {}) as object,
+          enabled: true,
+        },
+      });
+      resultInstanceId = instanceId;
+    }
+
     await invalidateModelCache(modelId);
-    return { blockInstanceId: result.blockInstanceId };
+    return { blockInstanceId: resultInstanceId };
   }
 
   static async uninstallFromModel(opts: UninstallOpts): Promise<void> {
     const { modelId, appBlockId, slotId } = opts;
-    // Capture the affected blockInstanceId BEFORE deleteMany so we can
-    // write the revocation marker. Otherwise a token issued seconds before
+    // Capture the affected blockInstanceId BEFORE delete so we can write
+    // the revocation marker. Otherwise a token issued seconds before
     // uninstall stays valid against the consumer routes until natural exp.
-    const rows: { blockInstanceId: string }[] = await dbWrite.modelBlockInstall.findMany({
-      where: { modelId, appBlockId, slotId },
-      select: { blockInstanceId: true },
-    });
-    await dbWrite.modelBlockInstall.deleteMany({
-      where: { modelId, appBlockId, slotId },
+    //
+    // Post kill_per_model_installs: the per-model-pinned shape lives on
+    // block_user_subscriptions where (scope='publisher_all_my_models',
+    // slot_id, target_model_ids contains modelId, app_block_id).
+    const rows = (await dbWrite.blockUserSubscription.findMany({
+      where: {
+        scope: 'publisher_all_my_models',
+        slotId,
+        appBlockId,
+        targetModelIds: { has: modelId },
+      },
+      select: { id: true, blockInstanceId: true },
+    })) as Array<{ id: string; blockInstanceId: string | null }>;
+    await dbWrite.blockUserSubscription.deleteMany({
+      where: {
+        scope: 'publisher_all_my_models',
+        slotId,
+        appBlockId,
+        targetModelIds: { has: modelId },
+      },
     });
     for (const { blockInstanceId } of rows) {
-      await BlockRevocation.revokeInstance(blockInstanceId);
+      if (blockInstanceId) await BlockRevocation.revokeInstance(blockInstanceId);
     }
     await invalidateModelCache(modelId);
   }
 
   static async toggleEnabled(opts: ToggleOpts): Promise<void> {
     const { modelId, appBlockId, slotId, enabled } = opts;
-    const row = await dbWrite.modelBlockInstall.update({
-      where: { modelId_appBlockId_slotId: { modelId, appBlockId, slotId } },
-      data: { enabled, updatedAt: new Date() },
-      select: { blockInstanceId: true },
+    // Post kill_per_model_installs: the per-model-pinned shape lives on
+    // block_user_subscriptions. We don't carry userId into this method,
+    // but the partial UNIQUE index on (user, app, scope, slot, target
+    // _model_ids[1]) guarantees at most one matching row per user — and
+    // a global toggle across users for the same (model, slot, app)
+    // doesn't have a coherent meaning anyway (the model has one owner).
+    const matches = await dbWrite.blockUserSubscription.findMany({
+      where: {
+        scope: 'publisher_all_my_models',
+        slotId,
+        appBlockId,
+        targetModelIds: { has: modelId },
+      },
+      select: { id: true, blockInstanceId: true },
     });
-    // Disable writes a revocation marker; re-enable MUST clear it. Without
-    // the clear, every freshly-minted token for this install would be
-    // rejected by withBlockScope until the marker's 15-minute TTL elapsed
-    // (the blockInstanceId is preserved across toggle).
-    if (enabled) {
-      await BlockRevocation.clearInstance(row.blockInstanceId);
-    } else {
-      await BlockRevocation.revokeInstance(row.blockInstanceId);
+    for (const row of matches) {
+      await dbWrite.blockUserSubscription.update({
+        where: { id: row.id },
+        data: { enabled, updatedAt: new Date() },
+      });
+      if (!row.blockInstanceId) continue;
+      // Disable writes a revocation marker; re-enable MUST clear it.
+      // Without the clear, every freshly-minted token for this install
+      // would be rejected by withBlockScope until the marker's 15-minute
+      // TTL elapsed.
+      if (enabled) {
+        await BlockRevocation.clearInstance(row.blockInstanceId);
+      } else {
+        await BlockRevocation.revokeInstance(row.blockInstanceId);
+      }
     }
     await invalidateModelCache(modelId);
   }
 
   static async updateSettings(opts: UpdateSettingsOpts): Promise<void> {
     const { blockInstanceId, modelId, settings } = opts;
-    // Look up the install + its app block (manifest + approvedScopes) so
-    // the W3 generic validator can type-check the submitted settings.
-    // The blockInstanceId+modelId pair is the auth pin; mismatched →
-    // not-found below.
-    const install = await dbWrite.modelBlockInstall.findFirst({
-      where: { blockInstanceId, modelId },
+    // Look up the pinned subscription + its app block (manifest +
+    // approvedScopes) so the W3 generic validator can type-check the
+    // submitted settings. The blockInstanceId+modelId pair is the auth
+    // pin; mismatched → not-found.
+    //
+    // Post kill_per_model_installs: settings live on
+    // block_user_subscriptions. blockInstanceId is unique on that table
+    // (partial UNIQUE on non-NULL); we additionally cross-check that the
+    // sub's target_model_ids includes the caller-supplied modelId.
+    const sub = await dbWrite.blockUserSubscription.findUnique({
+      where: { blockInstanceId },
       select: {
+        id: true,
+        targetModelIds: true,
         appBlock: {
           select: {
             blockId: true,
@@ -1222,11 +1368,13 @@ export class BlockRegistry {
         },
       },
     });
-    if (!install) throwNotFoundError('Block install not found');
+    if (!sub || !sub.targetModelIds.includes(modelId)) {
+      throwNotFoundError('Block install not found');
+    }
 
     const validatedSettings = await validateInstallSettings({
-      manifest: (install!.appBlock.manifest ?? {}) as Record<string, unknown>,
-      approvedScopes: install!.appBlock.approvedScopes ?? [],
+      manifest: (sub!.appBlock.manifest ?? {}) as Record<string, unknown>,
+      approvedScopes: sub!.appBlock.approvedScopes ?? [],
       settings,
       forModelId: modelId,
     });
@@ -1235,8 +1383,11 @@ export class BlockRegistry {
     // the install moved to a different model between auth check and write,
     // which we then surface as not-found instead of silently writing to a
     // model the caller no longer owns.
-    const result = await dbWrite.modelBlockInstall.updateMany({
-      where: { blockInstanceId, modelId },
+    const result = await dbWrite.blockUserSubscription.updateMany({
+      where: {
+        blockInstanceId,
+        targetModelIds: { has: modelId },
+      },
       data: { settings: (validatedSettings ?? {}) as object, updatedAt: new Date() },
     });
     if (result.count === 0) {
@@ -1449,11 +1600,15 @@ export class BlockRegistry {
       appBlockId: string;
       targetModelTypes: string[];
       targetBaseModels: string[];
+      targetModelIds: number[];
+      slotId: string | null;
+      pinnedVersion: string | null;
+      blockInstanceId: string | null;
       settings: unknown;
       enabled: boolean;
       createdAt: Date;
       updatedAt: Date;
-      appBlock: { blockId: string; appId: string; manifest: unknown };
+      appBlock: { blockId: string; appId: string; manifest: unknown; version: string | null };
     };
     const rows = (await dbRead.blockUserSubscription.findMany({
       where: { userId },
@@ -1464,6 +1619,10 @@ export class BlockRegistry {
         appBlockId: true,
         targetModelTypes: true,
         targetBaseModels: true,
+        targetModelIds: true,
+        slotId: true,
+        pinnedVersion: true,
+        blockInstanceId: true,
         settings: true,
         enabled: true,
         createdAt: true,
@@ -1473,29 +1632,107 @@ export class BlockRegistry {
             blockId: true,
             appId: true,
             manifest: true,
+            version: true,
           },
         },
       },
     })) as SubRow[];
-    return rows.map((row: SubRow) => ({
-      id: row.id,
-      scope: row.scope as SubscriptionScope,
-      appBlockId: row.appBlockId,
-      blockId: row.appBlock.blockId,
-      appId: row.appBlock.appId,
-      // The arrays are NOT NULL in the DB (Prisma drops nullability for
-      // String[]). An empty array means "applies to everything"; surface
-      // that as `null` for the wire shape so the UI logic stays simple.
-      targetModelTypes:
-        row.targetModelTypes && row.targetModelTypes.length > 0 ? row.targetModelTypes : null,
-      targetBaseModels:
-        row.targetBaseModels && row.targetBaseModels.length > 0 ? row.targetBaseModels : null,
-      settings: (row.settings ?? {}) as Record<string, unknown>,
-      enabled: row.enabled,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      manifest: (row.appBlock.manifest ?? {}) as SubscriptionRecord['manifest'],
-    }));
+
+    // Side-table fetch for two purposes:
+    //   (a) Render "Pinned to: <Model Name>" badges on the management UI
+    //       for pinned subscriptions, without a second per-row round-trip.
+    //   (b) List available approved versions per app for the version pin
+    //       Select on /apps/installed. Empty array when the app has no
+    //       publish_request rows (pre-W1 hackathon apps).
+    const pinnedModelIds = new Set<number>();
+    for (const row of rows) {
+      if (row.targetModelIds) {
+        for (const id of row.targetModelIds) pinnedModelIds.add(id);
+      }
+    }
+    const appBlockIds = Array.from(new Set(rows.map((r) => r.appBlockId)));
+
+    const [modelNameRows, versionRows] = await Promise.all([
+      pinnedModelIds.size > 0
+        ? dbRead.model.findMany({
+            where: { id: { in: Array.from(pinnedModelIds) } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([] as Array<{ id: number; name: string }>),
+      appBlockIds.length > 0
+        ? (dbRead.appBlockPublishRequest.groupBy({
+            by: ['appBlockId', 'version'],
+            where: {
+              appBlockId: { in: appBlockIds },
+              status: 'approved',
+            },
+            _max: { reviewedAt: true },
+          }) as unknown as Promise<
+            Array<{ appBlockId: string | null; version: string; _max: { reviewedAt: Date | null } }>
+          >)
+        : Promise.resolve(
+            [] as Array<{
+              appBlockId: string | null;
+              version: string;
+              _max: { reviewedAt: Date | null };
+            }>
+          ),
+    ]);
+
+    const modelNameById = new Map<number, string>();
+    for (const m of modelNameRows) modelNameById.set(m.id, m.name);
+
+    const versionsByApp = new Map<string, { version: string; approvedAt: Date | null }[]>();
+    for (const row of versionRows) {
+      if (!row.appBlockId) continue;
+      const list = versionsByApp.get(row.appBlockId) ?? [];
+      list.push({ version: row.version, approvedAt: row._max.reviewedAt });
+      versionsByApp.set(row.appBlockId, list);
+    }
+    for (const list of versionsByApp.values()) {
+      list.sort((a, b) => {
+        const at = a.approvedAt?.getTime() ?? 0;
+        const bt = b.approvedAt?.getTime() ?? 0;
+        return bt - at;
+      });
+    }
+
+    return rows.map((row: SubRow) => {
+      const targetIds =
+        row.targetModelIds && row.targetModelIds.length > 0 ? row.targetModelIds : null;
+      const pinnedModelNames =
+        targetIds !== null
+          ? Object.fromEntries(
+              targetIds.map((id) => [id, modelNameById.get(id) ?? `Model ${id}`])
+            )
+          : null;
+      return {
+        id: row.id,
+        scope: row.scope as SubscriptionScope,
+        appBlockId: row.appBlockId,
+        blockId: row.appBlock.blockId,
+        appId: row.appBlock.appId,
+        // The arrays are NOT NULL in the DB (Prisma drops nullability for
+        // String[]). An empty array means "applies to everything"; surface
+        // that as `null` for the wire shape so the UI logic stays simple.
+        targetModelTypes:
+          row.targetModelTypes && row.targetModelTypes.length > 0 ? row.targetModelTypes : null,
+        targetBaseModels:
+          row.targetBaseModels && row.targetBaseModels.length > 0 ? row.targetBaseModels : null,
+        targetModelIds: targetIds,
+        pinnedModelNames,
+        slotId: row.slotId,
+        pinnedVersion: row.pinnedVersion,
+        blockInstanceId: row.blockInstanceId,
+        currentVersion: row.appBlock.version ?? null,
+        availableVersions: versionsByApp.get(row.appBlockId) ?? [],
+        settings: (row.settings ?? {}) as Record<string, unknown>,
+        enabled: row.enabled,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        manifest: (row.appBlock.manifest ?? {}) as SubscriptionRecord['manifest'],
+      };
+    });
   }
 
   /**
@@ -1516,7 +1753,7 @@ export class BlockRegistry {
   }): Promise<SubscriptionRecord> {
     const block = await dbWrite.appBlock.findUnique({
       where: { id: opts.appBlockId },
-      select: { id: true, blockId: true, appId: true, status: true, manifest: true },
+      select: { id: true, blockId: true, appId: true, status: true, manifest: true, version: true },
     });
     if (!block) throw throwNotFoundError('App block not found') as never;
     if (block.status !== 'approved') {
@@ -1527,44 +1764,96 @@ export class BlockRegistry {
     const targetModelTypes = opts.targetModelTypes ?? [];
     const targetBaseModels = opts.targetBaseModels ?? [];
 
-    const candidateId = newBlockUserSubscriptionId();
-    const row = await dbWrite.blockUserSubscription.upsert({
+    // upsertSubscription only ever writes the BLANKET shape from the
+    // marketplace UI. Per-model pinning goes through installOnModel.
+    // The blanket-shape uniqueness is the partial UNIQUE index on
+    // (user, app, scope) WHERE slot_id IS NULL AND target_model_ids = [].
+    // Prisma can't express partial uniques inline, so we find-then-write.
+    const existing = await dbWrite.blockUserSubscription.findFirst({
       where: {
-        userId_appBlockId_scope: {
-          userId: opts.userId,
-          appBlockId: opts.appBlockId,
-          scope: opts.scope,
-        },
-      },
-      create: {
-        id: candidateId,
         userId: opts.userId,
         appBlockId: opts.appBlockId,
         scope: opts.scope,
-        targetModelTypes,
-        targetBaseModels,
-        settings: opts.settings as object,
-        enabled: opts.enabled,
+        slotId: null,
+        targetModelIds: { isEmpty: true },
       },
-      update: {
-        targetModelTypes,
-        targetBaseModels,
-        settings: opts.settings as object,
-        enabled: opts.enabled,
-        updatedAt: new Date(),
-      },
-      select: {
-        id: true,
-        scope: true,
-        appBlockId: true,
-        targetModelTypes: true,
-        targetBaseModels: true,
-        settings: true,
-        enabled: true,
-        createdAt: true,
-        updatedAt: true,
-      },
+      select: { id: true },
     });
+
+    type SubRow = {
+      id: string;
+      scope: string;
+      appBlockId: string;
+      targetModelTypes: string[];
+      targetBaseModels: string[];
+      targetModelIds: number[];
+      slotId: string | null;
+      pinnedVersion: string | null;
+      blockInstanceId: string | null;
+      settings: unknown;
+      enabled: boolean;
+      createdAt: Date;
+      updatedAt: Date;
+    };
+    let row: SubRow;
+    if (existing) {
+      row = (await dbWrite.blockUserSubscription.update({
+        where: { id: existing.id },
+        data: {
+          targetModelTypes,
+          targetBaseModels,
+          settings: opts.settings as object,
+          enabled: opts.enabled,
+          updatedAt: new Date(),
+        },
+        select: {
+          id: true,
+          scope: true,
+          appBlockId: true,
+          targetModelTypes: true,
+          targetBaseModels: true,
+          targetModelIds: true,
+          slotId: true,
+          pinnedVersion: true,
+          blockInstanceId: true,
+          settings: true,
+          enabled: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })) as SubRow;
+    } else {
+      const candidateId = newBlockUserSubscriptionId();
+      row = (await dbWrite.blockUserSubscription.create({
+        data: {
+          id: candidateId,
+          userId: opts.userId,
+          appBlockId: opts.appBlockId,
+          scope: opts.scope,
+          slotId: null,
+          targetModelIds: [],
+          targetModelTypes,
+          targetBaseModels,
+          settings: opts.settings as object,
+          enabled: opts.enabled,
+        },
+        select: {
+          id: true,
+          scope: true,
+          appBlockId: true,
+          targetModelTypes: true,
+          targetBaseModels: true,
+          targetModelIds: true,
+          slotId: true,
+          pinnedVersion: true,
+          blockInstanceId: true,
+          settings: true,
+          enabled: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      })) as SubRow;
+    }
     // Subscription writes can affect what shows up on any model page the
     // user owns (publisher) or visits (viewer). The model-keyed cache
     // can't be safely invalidated by user id alone, so just-write semantics
@@ -1580,6 +1869,14 @@ export class BlockRegistry {
         row.targetModelTypes && row.targetModelTypes.length > 0 ? row.targetModelTypes : null,
       targetBaseModels:
         row.targetBaseModels && row.targetBaseModels.length > 0 ? row.targetBaseModels : null,
+      targetModelIds:
+        row.targetModelIds && row.targetModelIds.length > 0 ? row.targetModelIds : null,
+      pinnedModelNames: null,
+      slotId: row.slotId,
+      pinnedVersion: row.pinnedVersion,
+      blockInstanceId: row.blockInstanceId,
+      currentVersion: block.version ?? null,
+      availableVersions: [],
       settings: (row.settings ?? {}) as Record<string, unknown>,
       enabled: row.enabled,
       createdAt: row.createdAt,
@@ -1645,8 +1942,13 @@ export class BlockRegistry {
         ab.app_id,
         oc.name AS app_name,
         ab.manifest,
-        (SELECT COUNT(*)::bigint FROM model_block_installs mbi
-         WHERE mbi.app_block_id = ab.id) AS install_count
+        -- Post kill_per_model_installs: install count is now the union of
+        -- (a) pinned subs — one per (user, app, slot, model) — and
+        -- (b) blanket subs — one per (user, app, scope). Both contribute
+        -- one to "how many people use this app". We simply count
+        -- block_user_subscription rows for this app.
+        (SELECT COUNT(*)::bigint FROM block_user_subscriptions bus
+         WHERE bus.app_block_id = ab.id) AS install_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
       WHERE ab.status = 'approved'

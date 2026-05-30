@@ -40,40 +40,39 @@ export type ScopeGrantSurface = {
  * toggle on `/apps/installed` already lets them turn it off).
  */
 export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurface[]> {
-  // Two parallel reads: per-app install counts (enabled rows only,
-  // joined to the AppBlock that backs them) + every active subscription.
-  // Both are scoped to user-owned data only; no cross-user leakage.
-  const [installs, subs] = await Promise.all([
-    dbRead.modelBlockInstall.findMany({
-      where: { installedByUserId: userId, enabled: true },
-      select: {
-        appBlockId: true,
-        appBlock: {
-          select: {
-            id: true,
-            blockId: true,
-            manifest: true,
-            approvedScopes: true,
-          },
+  // Post kill_per_model_installs: every install — blanket OR per-model-
+  // pinned — is a `block_user_subscriptions` row. The "model install
+  // count" surface now means "how many pinned subscriptions does the user
+  // have for this app". Sum target_model_ids cardinality across all
+  // pinned subs per app to get the count of distinct models pinned.
+  const subs = (await dbRead.blockUserSubscription.findMany({
+    where: { userId },
+    select: {
+      scope: true,
+      slotId: true,
+      targetModelIds: true,
+      appBlockId: true,
+      appBlock: {
+        select: {
+          id: true,
+          blockId: true,
+          manifest: true,
+          approvedScopes: true,
         },
       },
-    }),
-    dbRead.blockUserSubscription.findMany({
-      where: { userId },
-      select: {
-        scope: true,
-        appBlockId: true,
-        appBlock: {
-          select: {
-            id: true,
-            blockId: true,
-            manifest: true,
-            approvedScopes: true,
-          },
-        },
-      },
-    }),
-  ]);
+    },
+  })) as Array<{
+    scope: string;
+    slotId: string | null;
+    targetModelIds: number[];
+    appBlockId: string;
+    appBlock: {
+      id: string;
+      blockId: string;
+      manifest: unknown;
+      approvedScopes: string[];
+    } | null;
+  }>;
 
   type AppBlockRow = {
     id: string;
@@ -88,37 +87,21 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
   };
   const byAppBlock = new Map<string, Aggregate>();
 
-  for (const row of installs as Array<{
-    appBlockId: string;
-    appBlock: AppBlockRow | null;
-  }>) {
+  for (const row of subs) {
     if (!row.appBlock) continue;
+    const isPinned =
+      row.slotId !== null &&
+      Array.isArray(row.targetModelIds) &&
+      row.targetModelIds.length > 0;
     const existing = byAppBlock.get(row.appBlockId);
     if (existing) {
-      existing.modelInstallCount += 1;
+      if (isPinned) existing.modelInstallCount += row.targetModelIds.length;
+      else existing.subscriptionScopes.add(row.scope);
     } else {
       byAppBlock.set(row.appBlockId, {
         appBlock: row.appBlock,
-        modelInstallCount: 1,
-        subscriptionScopes: new Set(),
-      });
-    }
-  }
-
-  for (const row of subs as Array<{
-    scope: string;
-    appBlockId: string;
-    appBlock: AppBlockRow | null;
-  }>) {
-    if (!row.appBlock) continue;
-    const existing = byAppBlock.get(row.appBlockId);
-    if (existing) {
-      existing.subscriptionScopes.add(row.scope);
-    } else {
-      byAppBlock.set(row.appBlockId, {
-        appBlock: row.appBlock,
-        modelInstallCount: 0,
-        subscriptionScopes: new Set([row.scope]),
+        modelInstallCount: isPinned ? row.targetModelIds.length : 0,
+        subscriptionScopes: isPinned ? new Set() : new Set([row.scope]),
       });
     }
   }
@@ -251,174 +234,49 @@ export async function listMyAppActivity({
 }
 
 /* ============================================================================
- * W5 v0.5 — per-install version pin + scope-invocation audit log
+ * W5 v0.5 — per-subscription version pin + scope-invocation audit log
+ *
+ * After the 2026-05-30 kill_per_model_installs migration, the per-model
+ * install row is just a `block_user_subscriptions` row with slot_id +
+ * target_model_ids populated. `pinned_version` lives on the subscription;
+ * `setSubscriptionPinnedVersion` is the write path that replaces the
+ * removed `setInstallPinnedVersion`.
+ *
+ * The /apps/installed surface uses `BlockRegistry.listUserSubscriptions`
+ * for the read side (it already returns availableVersions + pinned model
+ * names + slotId / pinnedVersion on each row), so there is no separate
+ * "list my model installs" call anymore.
  * ==========================================================================*/
 
-export type ModelInstallVersionInfo = {
-  version: string;
-  approvedAt: Date | null;
-};
-
-export type ModelInstallSurface = {
-  blockInstanceId: string;
-  installId: string;
-  modelId: number;
-  modelName: string;
-  modelVersionId: number | null;
-  slotId: string;
-  enabled: boolean;
-  pinnedVersion: string | null;
-  appBlockId: string;
-  appSlug: string;
-  appName: string;
-  /**
-   * AppBlock's manifest-declared current version. Equivalent to "latest"
-   * for the version dropdown. Null when the AppBlock predates the W2
-   * versioning columns (hackathon-era rows).
-   */
-  currentVersion: string | null;
-  /**
-   * Distinct approved versions for this app, newest first. The UI
-   * renders this as the "pin to a specific version" dropdown.
-   */
-  availableVersions: ModelInstallVersionInfo[];
-};
-
 /**
- * Lists every model_block_installs row the current user owns (installed
- * by them) with the data the /apps/installed Model installs tab needs:
- * model name, app metadata, pinned version, and the list of approved
- * versions to pick from.
- *
- * Approved versions are per-AppBlock, not per-install — so a separate
- * query batches them keyed on appBlockId. Returned as denormalised data
- * on each install row so the UI doesn't have to join client-side.
- */
-export async function listMyModelInstalls(userId: number): Promise<ModelInstallSurface[]> {
-  type InstallRow = {
-    id: string;
-    blockInstanceId: string;
-    modelId: number;
-    modelVersionId: number | null;
-    slotId: string;
-    enabled: boolean;
-    pinnedVersion: string | null;
-    appBlockId: string;
-    model: { id: number; name: string } | null;
-    appBlock: {
-      id: string;
-      blockId: string;
-      manifest: unknown;
-      version: string | null;
-    } | null;
-  };
-  const installs = (await dbRead.modelBlockInstall.findMany({
-    where: { installedByUserId: userId },
-    orderBy: [{ installedAt: 'desc' }, { id: 'desc' }],
-    select: {
-      id: true,
-      blockInstanceId: true,
-      modelId: true,
-      modelVersionId: true,
-      slotId: true,
-      enabled: true,
-      pinnedVersion: true,
-      appBlockId: true,
-      model: { select: { id: true, name: true } },
-      appBlock: {
-        select: { id: true, blockId: true, manifest: true, version: true },
-      },
-    },
-  })) as InstallRow[];
-
-  if (installs.length === 0) return [];
-
-  // Batch-fetch distinct approved versions for the apps the user has
-  // installed. groupBy gives us (appBlockId, version, max(reviewedAt)) so
-  // we can sort newest-first inside each app.
-  const appBlockIds = Array.from(new Set(installs.map((i) => i.appBlockId)));
-  type VersionGroupRow = {
-    appBlockId: string | null;
-    version: string;
-    _max: { reviewedAt: Date | null };
-  };
-  const versionRows = (await dbRead.appBlockPublishRequest.groupBy({
-    by: ['appBlockId', 'version'],
-    where: {
-      appBlockId: { in: appBlockIds },
-      status: 'approved',
-    },
-    _max: { reviewedAt: true },
-  })) as unknown as VersionGroupRow[];
-
-  const versionsByApp = new Map<string, ModelInstallVersionInfo[]>();
-  for (const row of versionRows) {
-    if (!row.appBlockId) continue;
-    const list = versionsByApp.get(row.appBlockId) ?? [];
-    list.push({ version: row.version, approvedAt: row._max.reviewedAt });
-    versionsByApp.set(row.appBlockId, list);
-  }
-  for (const list of versionsByApp.values()) {
-    list.sort((a, b) => {
-      const at = a.approvedAt?.getTime() ?? 0;
-      const bt = b.approvedAt?.getTime() ?? 0;
-      return bt - at;
-    });
-  }
-
-  return installs.map<ModelInstallSurface>((row) => {
-    const manifest = (row.appBlock?.manifest ?? {}) as { name?: unknown };
-    const appName =
-      typeof manifest.name === 'string' && manifest.name.length > 0
-        ? manifest.name
-        : row.appBlock?.blockId ?? row.appBlockId;
-    return {
-      blockInstanceId: row.blockInstanceId,
-      installId: row.id,
-      modelId: row.modelId,
-      modelName: row.model?.name ?? `Model ${row.modelId}`,
-      modelVersionId: row.modelVersionId,
-      slotId: row.slotId,
-      enabled: row.enabled,
-      pinnedVersion: row.pinnedVersion,
-      appBlockId: row.appBlockId,
-      appSlug: row.appBlock?.blockId ?? row.appBlockId,
-      appName,
-      currentVersion: row.appBlock?.version ?? null,
-      availableVersions: versionsByApp.get(row.appBlockId) ?? [],
-    };
-  });
-}
-
-/**
- * Persists the per-install version pin. Pass `version=null` to clear
+ * Persists the per-subscription version pin. Pass `version=null` to clear
  * (revert to "latest" semantics — host loads the current AppBlock
  * manifest). Pass a semver string to pin. Caller MUST validate that the
- * version exists in approved publish requests for the install's
+ * version exists in approved publish requests for the subscription's
  * AppBlock — service rejects unknown versions to keep the pin coherent.
  */
-export async function setInstallPinnedVersion(opts: {
+export async function setSubscriptionPinnedVersion(opts: {
   userId: number;
-  blockInstanceId: string;
+  subscriptionId: string;
   version: string | null;
 }): Promise<{ ok: true }> {
-  const { userId, blockInstanceId, version } = opts;
-  // Pinning is a write on a row the user must own — installedByUserId is
-  // the only authoritative ownership column (the surrounding tRPC proc
-  // also asserts modelId ownership, but a defense-in-depth check at the
-  // service boundary keeps the API safe to call from non-tRPC paths).
-  const install = await dbRead.modelBlockInstall.findUnique({
-    where: { blockInstanceId },
-    select: { id: true, appBlockId: true, installedByUserId: true },
+  const { userId, subscriptionId, version } = opts;
+  // Pinning is a write on a row the user must own — user_id is the
+  // authoritative ownership column on block_user_subscriptions. Defense
+  // -in-depth check at the service boundary keeps the API safe to call
+  // from non-tRPC paths.
+  const sub = await dbRead.blockUserSubscription.findUnique({
+    where: { id: subscriptionId },
+    select: { id: true, appBlockId: true, userId: true },
   });
-  if (!install) throw new Error('install not found');
-  if (install.installedByUserId !== userId) {
-    throw new Error('not the install owner');
+  if (!sub) throw new Error('subscription not found');
+  if (sub.userId !== userId) {
+    throw new Error('not the subscription owner');
   }
 
   if (version !== null) {
     const exists = await dbRead.appBlockPublishRequest.findFirst({
-      where: { appBlockId: install.appBlockId, version, status: 'approved' },
+      where: { appBlockId: sub.appBlockId, version, status: 'approved' },
       select: { id: true },
     });
     if (!exists) {
@@ -426,8 +284,8 @@ export async function setInstallPinnedVersion(opts: {
     }
   }
 
-  await dbWrite.modelBlockInstall.update({
-    where: { blockInstanceId },
+  await dbWrite.blockUserSubscription.update({
+    where: { id: subscriptionId },
     data: { pinnedVersion: version },
   });
   return { ok: true };

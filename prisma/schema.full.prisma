@@ -542,7 +542,6 @@ model User {
   comicProjectEngagements    ComicProjectEngagement[]
 
   // App Blocks back-relations
-  modelBlockInstalls         ModelBlockInstall[]
   blockUserSettings          BlockUserSettings[]
   promotedPlatformBlocks     PlatformDefaultBlock[]          @relation("PlatformDefaultBlockPromoter")
   blockUserSubscriptions     BlockUserSubscription[]
@@ -875,7 +874,6 @@ model Model {
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
   coveredCheckpoints CoveredCheckpoint[]
-  blockInstalls      ModelBlockInstall[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -1033,7 +1031,6 @@ model ModelVersion {
   coveredCheckpoints      CoveredCheckpoint[]
   wildcardSet             WildcardSet?
   baseModelLicensingFees  BaseModelLicensingFee[]
-  blockInstalls           ModelBlockInstall[]
 
   @@index([modelId], type: Hash)
 }
@@ -2234,7 +2231,6 @@ model AppBlock {
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  modelInstalls      ModelBlockInstall[]
   platformDefault    PlatformDefaultBlock?
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
@@ -2295,49 +2291,23 @@ model AppBlockPublishRequest {
   @@map("app_block_publish_requests")
 }
 
-/// Per-model, per-block install record. Application-generated id (`mbi_<ulid>`)
-/// and blockInstanceId (`bki_<ulid>`). One install row pins a block to a single
-/// slot — installing the same block in two slots requires two rows.
-model ModelBlockInstall {
-  id                 String       @id
-  modelId            Int          @map("model_id")
-  model              Model        @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  modelVersionId     Int?         @map("model_version_id")
-  modelVersion       ModelVersion? @relation(fields: [modelVersionId], references: [id], onDelete: SetNull)
-  appBlockId         String       @map("app_block_id")
-  appBlock           AppBlock     @relation(fields: [appBlockId], references: [id], onDelete: Restrict)
-  slotId             String       @map("slot_id")
-  blockInstanceId    String       @unique @map("block_instance_id")
-  settings           Json         @default("{}")
-  enabled            Boolean      @default(true)
-  // W5 v0.5 version pin. NULL = host loads the AppBlock's current approved
-  // manifest (existing behavior). A semver string = host loads THAT version's
-  // manifest from app_block_publish_requests instead. iframe.src is still
-  // the live image — multi-version hosting is W2 v1.
-  pinnedVersion      String?      @map("pinned_version")
-  installedAt        DateTime     @default(now()) @map("installed_at") @db.Timestamptz(6)
-  installedByUserId  Int?         @map("installed_by_user_id")
-  installedBy        User?        @relation(fields: [installedByUserId], references: [id], onDelete: SetNull)
-  updatedAt          DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
-  viewerSettings     BlockUserSettings[]
-
-  @@unique([modelId, appBlockId, slotId], map: "model_block_installs_model_app_slot_uniq")
-  @@index([modelId, slotId, enabled], map: "model_block_installs_model_slot_enabled_idx")
-  @@index([appBlockId], map: "model_block_installs_app_block_idx")
-  @@index([installedByUserId], map: "model_block_installs_installed_by_idx")
-  @@index([modelVersionId], map: "model_block_installs_model_version_idx")
-  @@map("model_block_installs")
-}
-
 /// Per-block-instance, per-user settings (viewer preferences).
-/// FK CASCADE on install deletion and GDPR-user-delete.
+/// FK CASCADE on subscription deletion and GDPR-user-delete.
+///
+/// The FK points at BlockUserSubscription.block_instance_id which is a
+/// nullable + UNIQUE column populated for migrated per-model installs
+/// (preserves the historical `bki_*` id). Future per-model pinned
+/// subscriptions get a fresh `bki_*` id at upsert time. Blanket
+/// subscriptions have NULL block_instance_id; their viewer overrides
+/// aren't currently a thing (no UI surface), but if added later they'd
+/// allocate a block_instance_id on first override write.
 model BlockUserSettings {
-  blockInstanceId String            @map("block_instance_id")
-  install         ModelBlockInstall @relation(fields: [blockInstanceId], references: [blockInstanceId], onDelete: Cascade)
-  userId          Int               @map("user_id")
-  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  settings        Json              @default("{}")
-  updatedAt       DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  blockInstanceId String                @map("block_instance_id")
+  subscription    BlockUserSubscription @relation(fields: [blockInstanceId], references: [blockInstanceId], onDelete: Cascade)
+  userId          Int                   @map("user_id")
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  settings        Json                  @default("{}")
+  updatedAt       DateTime              @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@id([blockInstanceId, userId])
   @@index([userId], map: "block_user_settings_user_idx")
@@ -2364,11 +2334,31 @@ model PlatformDefaultBlock {
   @@map("platform_default_blocks")
 }
 
-/// User-controlled block install path. Two scopes:
-///   - 'publisher_all_my_models': model owner subscribes the block to every
-///     model they own (joins on Model.userId at listForModel time).
-///   - 'viewer_personal': any viewer subscribes the block to every model
-///     page they visit (joins on the current viewer's userId).
+/// User-controlled install row — the ONE install primitive (since the
+/// 2026-05-30 kill_per_model_installs migration absorbed model_block
+/// _installs into this table).
+///
+/// Two scopes:
+///   - 'publisher_all_my_models': model owner. Joins on Model.userId
+///     at listForModel time. Can be blanket (target_model_ids=[]) or
+///     pinned to specific models (target_model_ids=[X,Y,...]).
+///   - 'viewer_personal': any viewer. Joins on the current viewer's
+///     userId. Always blanket in v0; per-model pinning UI is publisher
+///     -only by design.
+///
+/// Pinning shape:
+///   - blanket subscription:  slot_id=NULL, target_model_ids=[]
+///   - pinned subscription:   slot_id=<slot>, target_model_ids=[X]
+///   The pinned shape replaces what model_block_installs did — one row
+///   per (user, app, scope, slot, model) tuple.
+///
+/// block_instance_id is NULL for blanket subs (listForModel synthesises
+/// `bus_pub_<id>` / `bus_view_<id>` at SELECT time); non-NULL for the
+/// pinned shape (the migration preserved the historical `bki_*` id, and
+/// future pinned installs allocate a fresh one). Downstream tables
+/// (block_buzz_attribution, block_scope_invocations, block_user_settings)
+/// look up by this column.
+///
 /// Application-generated id (`bus_<ulid>`).
 model BlockUserSubscription {
   id                 String   @id
@@ -2379,12 +2369,40 @@ model BlockUserSubscription {
   scope              String
   targetModelTypes   String[] @map("target_model_types")
   targetBaseModels   String[] @map("target_base_models")
+  /// NEW (kill_per_model_installs): pin this subscription to specific model
+  /// ids. Empty = blanket (applies to every model that passes the type +
+  /// base-model filters). Non-empty + non-NULL slot_id = the per-model
+  /// install path that model_block_installs used to carry.
+  targetModelIds     Int[]    @default([]) @map("target_model_ids")
+  /// NEW (kill_per_model_installs): when set, this subscription targets a
+  /// specific slot id (e.g. "model.sidebar_top"). When NULL, it applies to
+  /// every slot the manifest declares (the blanket-subscription shape).
+  slotId             String?  @map("slot_id")
+  /// NEW (kill_per_model_installs): copied from model_block_installs.pinned
+  /// _version. NULL = use the AppBlock's current approved manifest; semver
+  /// string = use that version's manifest from app_block_publish_requests.
+  pinnedVersion      String?  @map("pinned_version")
+  /// NEW (kill_per_model_installs): preserves the bki_* id from the migrated
+  /// install row so block_buzz_attribution, block_scope_invocations, and
+  /// block_user_settings continue to resolve. NULL for blanket
+  /// subscriptions (which synthesise bus_pub_*/bus_view_* on read).
+  blockInstanceId    String?  @unique @map("block_instance_id")
+  /// NEW (kill_per_model_installs): mirrors model_block_installs.installed
+  /// _by_user_id. For migrated rows this equals user_id by construction;
+  /// kept as a separate column so future "installed by mod / installed via
+  /// admin tooling" cases are expressible without schema change.
+  installedByUserId  Int?     @map("installed_by_user_id")
   settings           Json     @default("{}")
   enabled            Boolean  @default(true)
   createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt          DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  @@unique([userId, appBlockId, scope], map: "block_user_subscriptions_user_block_scope_uniq")
+  viewerSettings     BlockUserSettings[]
+
+  // Partial uniqueness — declared in the migration SQL (Prisma can't
+  // express partial unique indexes with array expressions inline). One
+  // blanket sub per (user, app, scope); one pinned sub per
+  // (user, app, scope, slot, target_model_ids[1]).
   @@map("block_user_subscriptions")
 }
 

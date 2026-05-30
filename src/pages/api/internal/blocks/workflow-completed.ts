@@ -98,11 +98,15 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // A malformed/wrong workflowId paired with a bogus blockInstanceId would
   // otherwise burn a Redis slot for a week, even though we know on the
   // first call the request is invalid.
-  const install = await dbRead.modelBlockInstall.findUnique({
+  //
+  // Post kill_per_model_installs: per-model installs ARE block_user
+  // _subscription rows now. block_instance_id is UNIQUE on subscriptions
+  // for pinned rows (the migrated install row carries its old bki_*).
+  const install = await dbRead.blockUserSubscription.findUnique({
     where: { blockInstanceId },
-    select: { id: true, modelId: true, appBlockId: true },
+    select: { id: true, targetModelIds: true, appBlockId: true },
   });
-  if (!install) {
+  if (!install || !install.targetModelIds || install.targetModelIds.length === 0) {
     res.status(404).json({ error: 'Block install not found' });
     return;
   }

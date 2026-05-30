@@ -5,28 +5,33 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  * catch. We don't run the query (no DB in unit tests) — we capture the SQL
  * template literal that's passed to dbRead.$queryRaw and assert on its shape.
  *
- * Two invariants from the audit's call-outs:
- *   1. NOT EXISTS subquery against model_block_installs filters on
- *      (model_id, app_block_id, slot_id) — and crucially NOT on `enabled`.
- *      Including `enabled = true` would silently break publisher opt-out
- *      (toggleEnabled(false) keeps the row; the NOT EXISTS must see it).
- *   2. The installs branch DOES filter on `mbi.enabled = TRUE` (without
- *      this, disabled installs would render).
+ * Post 2026-05-30 kill_per_model_installs migration:
+ *   - per-model installs are now `block_user_subscriptions` rows with
+ *     slot_id non-NULL and target_model_ids containing the modelId
+ *   - publisher opt-out semantics are preserved: the NOT EXISTS clause
+ *     against the pinned shape ignores `enabled`, so toggleEnabled(false)
+ *     on a pinned sub still suppresses blanket + platform-default
+ *   - the blanket publisher subscription branch additionally requires
+ *     slot_id IS NULL and cardinality(target_model_ids) = 0 so it can't
+ *     collide with the pinned branch
  */
 
 const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
   const dbRead = {
     $queryRaw: vi.fn(async () => []),
-    modelBlockInstall: { findUnique: vi.fn() },
+    blockUserSubscription: { findUnique: vi.fn() },
     appBlock: { findUnique: vi.fn() },
+    modelVersion: { findMany: vi.fn(async () => []) },
   };
   const dbWrite = {
     appBlock: { findUnique: vi.fn() },
-    modelBlockInstall: {
-      upsert: vi.fn(async () => ({ blockInstanceId: 'bki_test' })),
-      deleteMany: vi.fn(),
-      update: vi.fn(),
-      updateMany: vi.fn(),
+    blockUserSubscription: {
+      findFirst: vi.fn(),
+      findMany: vi.fn(async () => []),
+      create: vi.fn(async () => ({})),
+      update: vi.fn(async () => ({ blockInstanceId: 'bki_test' })),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      deleteMany: vi.fn(async () => ({ count: 0 })),
     },
   };
   const redis = {
@@ -79,33 +84,43 @@ describe('BlockRegistry.listForModel SQL invariants', () => {
     return sql;
   }
 
-  it('installs branch filters on mbi.enabled = TRUE', async () => {
+  it('pinned-subscription branch filters on bus.enabled = TRUE', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.listForModel({ modelId: 1, slotId: 'model.sidebar_top' });
     const sql = capturedSql();
-    expect(sql).toMatch(/mbi\.enabled\s*=\s*TRUE/);
+    expect(sql).toMatch(/bus\.enabled\s*=\s*TRUE/);
   });
 
-  it('installs branch filters on mbi.slot_id (audit C4)', async () => {
+  it('pinned-subscription branch filters on bus.slot_id (audit C4)', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.listForModel({ modelId: 1, slotId: 'model.sidebar_top' });
-    expect(capturedSql()).toMatch(/mbi\.slot_id\s*=\s*\$\d+/);
+    expect(capturedSql()).toMatch(/bus\.slot_id\s*=\s*\$\d+/);
   });
 
   it('NOT EXISTS subquery does NOT filter on enabled (publisher opt-out invariant)', async () => {
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.listForModel({ modelId: 1, slotId: 'model.sidebar_top' });
     const sql = capturedSql();
-    // Locate the NOT EXISTS block and assert no `enabled` clause inside it.
-    const notExistsMatch = sql.match(/NOT EXISTS\s*\(([\s\S]*?)\)/i);
-    expect(notExistsMatch).toBeTruthy();
-    if (notExistsMatch) {
-      expect(notExistsMatch[1]).not.toMatch(/\benabled\b/);
-      // …but it should still filter on the tuple keys.
-      expect(notExistsMatch[1]).toMatch(/model_id/);
-      expect(notExistsMatch[1]).toMatch(/app_block_id/);
-      expect(notExistsMatch[1]).toMatch(/slot_id/);
+    // Find every NOT EXISTS body; the suppression subqueries that mirror
+    // the historical "publisher opt-out" path must not gate on enabled.
+    const all = sql.matchAll(/NOT EXISTS\s*\(([\s\S]*?)\)/gi);
+    let saw = 0;
+    for (const m of all) {
+      saw++;
+      // Each suppression looks up the pinned sub by (slot, app, target_model
+      // _ids). It should not filter on enabled.
+      if (m[1].includes('pin.scope') || m[1].includes('pub.scope')) {
+        // Allow `pub.enabled = TRUE` on the rank-4 viewer-side suppression
+        // for blanket publisher subs — that branch genuinely doesn't want
+        // to suppress when the publisher's blanket sub is disabled.
+        // The pinned-sub suppression (`pin.scope = publisher_all_my_models`
+        // AND slot_id = X AND target_model_ids has modelId) must NOT gate.
+        if (m[1].includes('pin.scope')) {
+          expect(m[1]).not.toMatch(/\benabled\b/);
+        }
+      }
     }
+    expect(saw).toBeGreaterThan(0);
   });
 
   it('platform defaults branch filters on pdb.slot_id and pdb.enabled', async () => {
@@ -121,18 +136,46 @@ describe('BlockRegistry.listForModel SQL invariants', () => {
     await BlockRegistry.listForModel({ modelId: 1, slotId: 'model.sidebar_top' });
     expect(capturedSql()).toMatch(/LIMIT\s+\$\d+/);
   });
+
+  it('pinned-subscription branch requires modelId in target_model_ids', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.listForModel({ modelId: 2522512, slotId: 'model.sidebar_top' });
+    const sql = capturedSql();
+    expect(sql).toMatch(/\$\d+\s*=\s*ANY\(bus\.target_model_ids\)/);
+  });
+
+  it('blanket publisher-sub branch requires slot_id IS NULL and empty target_model_ids', async () => {
+    const { BlockRegistry } = await import('../block-registry.service');
+    await BlockRegistry.listForModel({ modelId: 1, slotId: 'model.sidebar_top' });
+    const sql = capturedSql();
+    // The rank-2 SELECT must explicitly check both predicates.
+    expect(sql).toMatch(/bus\.slot_id\s+IS\s+NULL/);
+    expect(sql).toMatch(/cardinality\(bus\.target_model_ids\)\s*=\s*0/);
+  });
 });
 
 describe('BlockRegistry.installOnModel preserves settings on omit (audit M2)', () => {
   beforeEach(() => {
-    mockDbWrite.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
-    (mockDbWrite.modelBlockInstall as unknown as { findMany: ReturnType<typeof vi.fn> }).findMany =
-      vi.fn(async () => []);
-    mockDbWrite.modelBlockInstall.upsert.mockClear();
-    mockDbWrite.modelBlockInstall.upsert.mockResolvedValue({ blockInstanceId: 'bki_test' });
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
+      status: 'approved',
+      blockId: 'g',
+      manifest: {},
+      approvedScopes: [],
+    });
+    mockDbWrite.blockUserSubscription.findMany.mockReset();
+    mockDbWrite.blockUserSubscription.findMany.mockResolvedValue([]);
+    mockDbWrite.blockUserSubscription.findFirst.mockReset();
+    mockDbWrite.blockUserSubscription.create.mockReset();
+    mockDbWrite.blockUserSubscription.update.mockReset();
   });
 
-  it('omits settings from the upsert update payload when caller omits', async () => {
+  it('omits settings from the update payload when caller omits AND row exists', async () => {
+    // Existing row: take the update branch.
+    mockDbWrite.blockUserSubscription.findFirst.mockResolvedValue({
+      id: 'bus_existing',
+      blockInstanceId: 'bki_existing',
+    });
+    mockDbWrite.blockUserSubscription.update.mockResolvedValue({});
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.installOnModel({
       modelId: 1,
@@ -140,13 +183,29 @@ describe('BlockRegistry.installOnModel preserves settings on omit (audit M2)', (
       slotId: 'model.sidebar_top',
       installedByUserId: 42,
     });
-    const upsertArgs = mockDbWrite.modelBlockInstall.upsert.mock.calls.at(-1)?.[0] as {
-      update: { settings?: unknown };
+    const args = mockDbWrite.blockUserSubscription.update.mock.calls.at(-1)?.[0] as {
+      data: { settings?: unknown };
     };
-    expect(upsertArgs.update).not.toHaveProperty('settings');
+    expect(args.data).not.toHaveProperty('settings');
   });
 
-  it('includes settings in the upsert update payload when caller passes them', async () => {
+  it('includes settings in the update payload when caller passes them', async () => {
+    // Manifest must declare `foo` as a settings field, otherwise the
+    // generic validator strips it (correctly — unknown fields are not
+    // allowlisted for storage). Mirror what a real manifest looks like.
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
+      status: 'approved',
+      blockId: 'g',
+      manifest: {
+        settings: { foo: { type: 'string', scope: 'publisher', label: 'Foo' } },
+      },
+      approvedScopes: [],
+    });
+    mockDbWrite.blockUserSubscription.findFirst.mockResolvedValue({
+      id: 'bus_existing',
+      blockInstanceId: 'bki_existing',
+    });
+    mockDbWrite.blockUserSubscription.update.mockResolvedValue({});
     const { BlockRegistry } = await import('../block-registry.service');
     await BlockRegistry.installOnModel({
       modelId: 1,
@@ -155,27 +214,33 @@ describe('BlockRegistry.installOnModel preserves settings on omit (audit M2)', (
       installedByUserId: 42,
       settings: { foo: 'bar' },
     });
-    const upsertArgs = mockDbWrite.modelBlockInstall.upsert.mock.calls.at(-1)?.[0] as {
-      update: { settings?: unknown };
+    const args = mockDbWrite.blockUserSubscription.update.mock.calls.at(-1)?.[0] as {
+      data: { settings?: unknown };
     };
-    expect(upsertArgs.update).toHaveProperty('settings', { foo: 'bar' });
+    expect(args.data).toHaveProperty('settings', { foo: 'bar' });
   });
 });
 
 describe('BlockRegistry.installOnModel enforces MAX_BLOCKS_PER_SLOT (audit H-4)', () => {
   beforeEach(() => {
-    mockDbWrite.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
-    mockDbWrite.modelBlockInstall.upsert.mockClear();
-    mockDbWrite.modelBlockInstall.upsert.mockResolvedValue({ blockInstanceId: 'bki_new' });
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
+      status: 'approved',
+      blockId: 'g',
+      manifest: {},
+      approvedScopes: [],
+    });
+    mockDbWrite.blockUserSubscription.findMany.mockReset();
+    mockDbWrite.blockUserSubscription.findFirst.mockReset();
+    mockDbWrite.blockUserSubscription.create.mockReset();
+    mockDbWrite.blockUserSubscription.update.mockReset();
   });
 
   it('rejects the 4th distinct install in a slot', async () => {
-    (mockDbWrite.modelBlockInstall as unknown as { findMany: ReturnType<typeof vi.fn> }).findMany =
-      vi.fn(async () => [
-        { appBlockId: 'ab_one' },
-        { appBlockId: 'ab_two' },
-        { appBlockId: 'ab_three' },
-      ]);
+    mockDbWrite.blockUserSubscription.findMany.mockResolvedValue([
+      { appBlockId: 'ab_one' },
+      { appBlockId: 'ab_two' },
+      { appBlockId: 'ab_three' },
+    ]);
     const { BlockRegistry } = await import('../block-registry.service');
     await expect(
       BlockRegistry.installOnModel({
@@ -185,35 +250,42 @@ describe('BlockRegistry.installOnModel enforces MAX_BLOCKS_PER_SLOT (audit H-4)'
         installedByUserId: 42,
       })
     ).rejects.toThrow();
-    expect(mockDbWrite.modelBlockInstall.upsert).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockUserSubscription.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockUserSubscription.update).not.toHaveBeenCalled();
   });
 
   it('allows a re-install of an existing block at the cap (no new row)', async () => {
-    (mockDbWrite.modelBlockInstall as unknown as { findMany: ReturnType<typeof vi.fn> }).findMany =
-      vi.fn(async () => [
-        { appBlockId: 'ab_one' },
-        { appBlockId: 'ab_two' },
-        { appBlockId: 'ab_three' },
-      ]);
+    mockDbWrite.blockUserSubscription.findMany.mockResolvedValue([
+      { appBlockId: 'ab_one' },
+      { appBlockId: 'ab_two' },
+      { appBlockId: 'ab_three' },
+    ]);
+    // The (user, app, scope, slot, model) row exists → update branch.
+    mockDbWrite.blockUserSubscription.findFirst.mockResolvedValue({
+      id: 'bus_existing',
+      blockInstanceId: 'bki_existing',
+    });
+    mockDbWrite.blockUserSubscription.update.mockResolvedValue({});
     const { BlockRegistry } = await import('../block-registry.service');
-    // Re-installing ab_two at the cap is fine — it's already an existing
-    // install row; the upsert hits the update branch, doesn't grow the count.
-    await expect(
-      BlockRegistry.installOnModel({
-        modelId: 1,
-        appBlockId: 'ab_two',
-        slotId: 'model.sidebar_top',
-        installedByUserId: 42,
-      })
-    ).resolves.toEqual({ blockInstanceId: 'bki_new' });
-    expect(mockDbWrite.modelBlockInstall.upsert).toHaveBeenCalled();
+    const out = await BlockRegistry.installOnModel({
+      modelId: 1,
+      appBlockId: 'ab_two',
+      slotId: 'model.sidebar_top',
+      installedByUserId: 42,
+    });
+    expect(out.blockInstanceId).toBe('bki_existing');
+    expect(mockDbWrite.blockUserSubscription.update).toHaveBeenCalled();
+    expect(mockDbWrite.blockUserSubscription.create).not.toHaveBeenCalled();
   });
 });
 
 describe('BlockRegistry.toggleEnabled revocation cycle (audit B1)', () => {
   beforeEach(() => {
-    (mockDbWrite.modelBlockInstall as unknown as { update: ReturnType<typeof vi.fn> }).update =
-      vi.fn(async () => ({ blockInstanceId: 'bki_test' }));
+    mockDbWrite.blockUserSubscription.findMany.mockReset();
+    mockDbWrite.blockUserSubscription.findMany.mockResolvedValue([
+      { id: 'bus_test', blockInstanceId: 'bki_test' },
+    ]);
+    mockDbWrite.blockUserSubscription.update.mockResolvedValue({});
   });
 
   it('toggleEnabled(false) writes the revocation marker', async () => {

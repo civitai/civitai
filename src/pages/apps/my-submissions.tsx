@@ -89,9 +89,11 @@ type Submission = {
   approvalNotes: string | null;
   fileSummary: unknown;
   manifestDiffSummary: unknown;
-  /** Total ModelBlockInstall rows referencing this app block. Null when
-   * the publish request has no app block yet (pending first-version,
-   * withdrawn first-version). */
+  /** Total pinned subscriptions referencing this app block. (Was the
+   * ModelBlockInstall count before the 2026-05-30 kill_per_model_installs
+   * migration absorbed per-model installs into block_user_subscriptions.)
+   * Null when the publish request has no app block yet (pending first-
+   * version, withdrawn first-version). */
   modelInstallCount: number | null;
   /** Total BlockUserSubscription rows. Same null semantics as above. */
   userSubscriptionCount: number | null;
@@ -402,7 +404,7 @@ function InstallCountCell({
         color="blue"
         size="sm"
         leftSection={<IconBox size={12} />}
-        title="ModelBlockInstall rows — per-model placements"
+        title="Pinned subscriptions — per-model placements"
       >
         {modelInstalls ?? 0}
       </Badge>
