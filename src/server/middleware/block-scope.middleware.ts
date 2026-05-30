@@ -9,6 +9,7 @@ import {
   getBlockTokenVerificationKeys,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
+import { recordScopeInvocation } from '~/server/services/blocks/user-app-surface.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 
 /**
@@ -32,6 +33,12 @@ export interface BlockTokenClaims {
   jti: string;
   blockId: string;
   appId: string;
+  /**
+   * AppBlock.id (`apb_<ulid>`). Distinct from `appId` which is the
+   * OauthClient.id. Used to write BlockScopeInvocation rows without
+   * a per-request DB lookup.
+   */
+  appBlockId: string;
   blockInstanceId: string;
   ctx: Record<string, unknown>;
   scopes: string[];
@@ -212,6 +219,7 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
         typeof claims.sub !== 'string' ||
         typeof claims.blockId !== 'string' ||
         typeof claims.appId !== 'string' ||
+        typeof claims.appBlockId !== 'string' ||
         typeof claims.blockInstanceId !== 'string' ||
         !Array.isArray(claims.scopes) ||
         typeof claims.iat !== 'number' ||
@@ -487,6 +495,53 @@ export function withBlockScope(
       'private, no-store, no-cache, must-revalidate, max-age=0'
     );
 
+    // W5 v0.5: log a BlockScopeInvocation row when the response finishes.
+    // Fires after every successful scope+binding check (the wrapped handler
+    // may still return 4xx/5xx — captured in statusCode). Only emit for
+    // authenticated users — `sub='anon'` doesn't have a userId to attribute
+    // to. Fire-and-forget; errors are swallowed so the audit pipeline can't
+    // poison the user-facing response.
+    const userIdForLog = parseSubjectUserId(claims.sub);
+    if (userIdForLog != null) {
+      const endpointForLog = normalizeEndpoint(req.url ?? '');
+      res.on('finish', () => {
+        void recordScopeInvocation({
+          userId: userIdForLog,
+          appBlockId: claims.appBlockId,
+          blockInstanceId: claims.blockInstanceId,
+          scope: opts.requiredScope,
+          endpoint: endpointForLog,
+          statusCode: res.statusCode,
+        }).catch(() => {
+          // Audit log is best-effort. A failed write must not surface to the
+          // client — the response already shipped. Errors are logged by the
+          // service helper itself.
+        });
+      });
+    }
+
     return handler(req, res);
   };
+}
+
+/**
+ * Reduce req.url to a route-shaped string for the audit log: strip query
+ * string + collapse path segments that look like ids/ulids to a placeholder
+ * so the cardinality of the `endpoint` column stays bounded.
+ */
+function normalizeEndpoint(rawUrl: string): string {
+  const qIdx = rawUrl.indexOf('?');
+  const path = qIdx >= 0 ? rawUrl.slice(0, qIdx) : rawUrl;
+  return path
+    .split('/')
+    .map((seg) => {
+      if (!seg) return seg;
+      // Numeric ids (modelId, userId, etc.).
+      if (/^\d+$/.test(seg)) return ':id';
+      // ULIDs + their prefixed forms (apb_<26 ulid>, mbi_<26 ulid>, etc.).
+      if (/^[A-Za-z]+_[0-9A-HJKMNP-TV-Z]{26}$/.test(seg)) return ':ulid';
+      if (/^[0-9A-HJKMNP-TV-Z]{26}$/.test(seg)) return ':ulid';
+      return seg;
+    })
+    .join('/');
 }

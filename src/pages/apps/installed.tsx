@@ -9,6 +9,7 @@ import {
   Divider,
   Group,
   Loader,
+  Select,
   Stack,
   Switch,
   Table,
@@ -17,7 +18,9 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import {
+  IconBox,
   IconHistory,
   IconPlugConnected,
   IconPlus,
@@ -293,15 +296,87 @@ function humaniseActivityAction(scope: string): string {
   }
 }
 
+/**
+ * W5 v0.5: combined activity feed. Two cursor-paginated tRPC queries
+ * (block_buzz_attribution + block_scope_invocations) merged into one
+ * timeline. Both are page-by-page, so we fetch the same page on each side
+ * and merge-sort by createdAt — good enough at the page sizes the user
+ * actually sees. A scope-invocation row carries (endpoint, statusCode)
+ * instead of (amount, status); humaniseActivityAction is overloaded.
+ */
+type ActivityFeedRow =
+  | {
+      kind: 'buzz';
+      id: string;
+      createdAt: Date;
+      appName: string;
+      appSlug: string;
+      scope: string;
+      usdAmountCents: number;
+      status: string;
+    }
+  | {
+      kind: 'scope';
+      id: string;
+      createdAt: Date;
+      appName: string;
+      appSlug: string;
+      scope: string;
+      endpoint: string;
+      statusCode: number;
+    };
+
 function ActivityPanel() {
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.blocks.listMyAppActivity.useInfiniteQuery(
-      { limit: 25 },
-      {
-        getNextPageParam: (last) => last.nextCursor ?? undefined,
-      }
+  const buzz = trpc.blocks.listMyAppActivity.useInfiniteQuery(
+    { limit: 25 },
+    { getNextPageParam: (last) => last.nextCursor ?? undefined }
+  );
+  const scopes = trpc.blocks.listMyScopeInvocations.useInfiniteQuery(
+    { limit: 25 },
+    { getNextPageParam: (last) => last.nextCursor ?? undefined }
+  );
+
+  const items = useMemo<ActivityFeedRow[]>(() => {
+    const buzzRows: ActivityFeedRow[] =
+      buzz.data?.pages.flatMap((p) =>
+        p.items.map<ActivityFeedRow>((item) => ({
+          kind: 'buzz',
+          id: `buzz:${item.id}`,
+          createdAt: item.createdAt,
+          appName: item.appName,
+          appSlug: item.appSlug,
+          scope: item.scope,
+          usdAmountCents: item.usdAmountCents,
+          status: item.status,
+        }))
+      ) ?? [];
+    const scopeRows: ActivityFeedRow[] =
+      scopes.data?.pages.flatMap((p) =>
+        p.items.map<ActivityFeedRow>((item) => ({
+          kind: 'scope',
+          id: `scope:${item.id}`,
+          createdAt: item.createdAt,
+          appName: item.appName,
+          appSlug: item.appSlug,
+          scope: item.scope,
+          endpoint: item.endpoint,
+          statusCode: item.statusCode,
+        }))
+      ) ?? [];
+    return [...buzzRows, ...scopeRows].sort(
+      (a, b) => b.createdAt.getTime() - a.createdAt.getTime()
     );
-  const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
+  }, [buzz.data, scopes.data]);
+
+  const isLoading = buzz.isLoading || scopes.isLoading;
+  const hasNextPage = !!(buzz.hasNextPage || scopes.hasNextPage);
+  const isFetchingNextPage = !!(buzz.isFetchingNextPage || scopes.isFetchingNextPage);
+  const loadMore = () => {
+    // Load whichever feeds still have more — usually both. Cheap; the
+    // queries are independent.
+    if (buzz.hasNextPage) void buzz.fetchNextPage();
+    if (scopes.hasNextPage) void scopes.fetchNextPage();
+  };
 
   if (isLoading) {
     return (
@@ -333,7 +408,7 @@ function ActivityPanel() {
             <Table.Th>When</Table.Th>
             <Table.Th>App</Table.Th>
             <Table.Th>Action</Table.Th>
-            <Table.Th>Amount</Table.Th>
+            <Table.Th>Detail</Table.Th>
             <Table.Th>Status</Table.Th>
           </Table.Tr>
         </Table.Thead>
@@ -356,17 +431,34 @@ function ActivityPanel() {
                 </Group>
               </Table.Td>
               <Table.Td>
-                <Text size="xs">{humaniseActivityAction(item.scope)}</Text>
-              </Table.Td>
-              <Table.Td>
                 <Text size="xs">
-                  {item.usdAmountCents > 0
-                    ? `${(item.usdAmountCents / 100).toFixed(2)} USD`
-                    : '(no cost)'}
+                  {item.kind === 'buzz'
+                    ? humaniseActivityAction(item.scope)
+                    : humaniseScopeInvocation(item.scope)}
                 </Text>
               </Table.Td>
               <Table.Td>
-                <ActivityStatusBadge status={item.status} />
+                {item.kind === 'buzz' ? (
+                  <Text size="xs">
+                    {item.usdAmountCents > 0
+                      ? `${(item.usdAmountCents / 100).toFixed(2)} USD`
+                      : '(no cost)'}
+                  </Text>
+                ) : (
+                  <Text
+                    size="xs"
+                    style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}
+                  >
+                    {item.endpoint}
+                  </Text>
+                )}
+              </Table.Td>
+              <Table.Td>
+                {item.kind === 'buzz' ? (
+                  <ActivityStatusBadge status={item.status} />
+                ) : (
+                  <ScopeStatusBadge statusCode={item.statusCode} />
+                )}
               </Table.Td>
             </Table.Tr>
           ))}
@@ -378,12 +470,215 @@ function ActivityPanel() {
             variant="default"
             size="xs"
             loading={isFetchingNextPage}
-            onClick={() => fetchNextPage()}
+            onClick={loadMore}
           >
             Load more
           </Button>
         </Center>
       )}
+    </Stack>
+  );
+}
+
+const SCOPE_ACTION_LABELS: Record<string, string> = {
+  'user:read:self': 'Read profile',
+  'buzz:read:self': 'Read Buzz balance',
+  'models:read:self': 'Read model',
+  'media:read:owned': 'Read media',
+  'block:settings:read': 'Read block settings',
+  'block:settings:write': 'Write block settings',
+  'ai:write:budgeted': 'Submit AI workflow',
+  'social:tip:self': 'Tip',
+};
+
+function humaniseScopeInvocation(scope: string): string {
+  return SCOPE_ACTION_LABELS[scope] ?? scope;
+}
+
+function ScopeStatusBadge({ statusCode }: { statusCode: number }) {
+  const color =
+    statusCode < 300 ? 'green' : statusCode < 400 ? 'blue' : statusCode < 500 ? 'orange' : 'red';
+  return (
+    <Badge size="sm" color={color} variant="light">
+      {statusCode}
+    </Badge>
+  );
+}
+
+type ModelInstallSurface = {
+  blockInstanceId: string;
+  installId: string;
+  modelId: number;
+  modelName: string;
+  modelVersionId: number | null;
+  slotId: string;
+  enabled: boolean;
+  pinnedVersion: string | null;
+  appBlockId: string;
+  appSlug: string;
+  appName: string;
+  currentVersion: string | null;
+  availableVersions: { version: string; approvedAt: Date | null }[];
+};
+
+const PIN_LATEST_VALUE = '__latest__';
+
+function ModelInstallRow({ install }: { install: ModelInstallSurface }) {
+  const utils = trpc.useUtils();
+  const pinMutation = trpc.blocks.setInstallPinnedVersion.useMutation({
+    onSuccess: async () => {
+      await utils.blocks.listMyModelInstalls.invalidate();
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Could not change version', error: new Error(e.message) }),
+  });
+  const uninstallMutation = trpc.blocks.uninstallFromModel.useMutation({
+    onSuccess: async () => {
+      await Promise.all([
+        utils.blocks.listMyModelInstalls.invalidate(),
+        utils.blocks.listMyScopeGrants.invalidate(),
+        utils.blocks.listForModel.invalidate({ modelId: install.modelId }),
+      ]);
+      showSuccessNotification({
+        title: 'Removed',
+        message: `Uninstalled ${install.appName} from ${install.modelName}.`,
+      });
+    },
+    onError: (e) =>
+      showErrorNotification({ title: 'Could not uninstall', error: new Error(e.message) }),
+  });
+
+  const versionOptions: { value: string; label: string }[] = [
+    {
+      value: PIN_LATEST_VALUE,
+      label: install.currentVersion
+        ? `Latest (${install.currentVersion})`
+        : 'Latest',
+    },
+    ...install.availableVersions.map((v) => ({
+      value: v.version,
+      label: v.version,
+    })),
+  ];
+
+  const onConfirmUninstall = () => {
+    openConfirmModal({
+      title: `Uninstall ${install.appName}?`,
+      children: (
+        <Stack gap="xs">
+          <Text size="sm">
+            This removes the install row entirely. The block will stop appearing on{' '}
+            <strong>{install.modelName}</strong>. Any platform default for the same slot will
+            become eligible again. The app's data and any other installs of it are untouched.
+          </Text>
+        </Stack>
+      ),
+      labels: { confirm: 'Uninstall', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        uninstallMutation.mutate({ blockInstanceId: install.blockInstanceId });
+      },
+    });
+  };
+
+  return (
+    <Card withBorder padding="sm" radius="md">
+      <Group justify="space-between" wrap="nowrap" gap="md" align="flex-start">
+        <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+          <Group gap="xs" wrap="nowrap">
+            <Text fw={600} className="truncate">
+              {install.appName}
+            </Text>
+            <Badge size="xs" variant="outline">
+              {install.appSlug}
+            </Badge>
+            {!install.enabled && (
+              <Badge size="xs" variant="light" color="gray">
+                Disabled
+              </Badge>
+            )}
+          </Group>
+          <Text size="xs" c="dimmed">
+            on{' '}
+            <Anchor component={Link} href={`/models/${install.modelId}`} size="xs">
+              {install.modelName}
+            </Anchor>{' '}
+            · slot <code>{install.slotId}</code>
+          </Text>
+        </Stack>
+
+        <Group gap="xs" wrap="nowrap" align="flex-start">
+          <Tooltip
+            label="Which manifest the host uses for this install. Latest tracks the most recent approved release; pinning a version freezes scopes + settings to that version's manifest."
+            multiline
+            w={280}
+            withArrow
+          >
+            <Select
+              size="xs"
+              w={170}
+              data={versionOptions}
+              value={install.pinnedVersion ?? PIN_LATEST_VALUE}
+              disabled={pinMutation.isPending || uninstallMutation.isPending}
+              onChange={(value) => {
+                if (value == null) return;
+                const next = value === PIN_LATEST_VALUE ? null : value;
+                if (next === install.pinnedVersion) return;
+                pinMutation.mutate({
+                  blockInstanceId: install.blockInstanceId,
+                  version: next,
+                });
+              }}
+              comboboxProps={{ withinPortal: true }}
+              aria-label={`Version for ${install.appName} on ${install.modelName}`}
+            />
+          </Tooltip>
+          <ActionIcon
+            variant="default"
+            color="red"
+            disabled={uninstallMutation.isPending}
+            onClick={onConfirmUninstall}
+            title="Uninstall"
+            aria-label={`Uninstall ${install.appName} from ${install.modelName}`}
+          >
+            <IconTrash size={16} />
+          </ActionIcon>
+        </Group>
+      </Group>
+    </Card>
+  );
+}
+
+function ModelInstallsPanel() {
+  const { data, isLoading } = trpc.blocks.listMyModelInstalls.useQuery();
+
+  if (isLoading) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  }
+  if (!data || data.length === 0) {
+    return (
+      <Center py="md">
+        <Stack align="center" gap="xs">
+          <IconBox size={28} opacity={0.5} />
+          <Text size="sm" c="dimmed">
+            You haven't installed any apps on a model yet.
+          </Text>
+          <Anchor component={Link} href="/apps" size="sm">
+            Browse the marketplace
+          </Anchor>
+        </Stack>
+      </Center>
+    );
+  }
+  return (
+    <Stack gap="sm">
+      {(data as ModelInstallSurface[]).map((install) => (
+        <ModelInstallRow key={install.blockInstanceId} install={install} />
+      ))}
     </Stack>
   );
 }
@@ -453,6 +748,9 @@ export default function InstalledAppsPage() {
               <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
                 Subscriptions
               </Tabs.Tab>
+              <Tabs.Tab value="model-installs" leftSection={<IconBox size={14} />}>
+                Model installs
+              </Tabs.Tab>
               <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
                 Apps & permissions
               </Tabs.Tab>
@@ -495,6 +793,16 @@ export default function InstalledAppsPage() {
               )}
             </Tabs.Panel>
 
+            <Tabs.Panel value="model-installs" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  Apps you've installed on a specific model. Pick which version's manifest the
+                  host uses, or uninstall to remove the block from that model's page.
+                </Text>
+                <ModelInstallsPanel />
+              </Stack>
+            </Tabs.Panel>
+
             <Tabs.Panel value="permissions" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
@@ -509,8 +817,8 @@ export default function InstalledAppsPage() {
             <Tabs.Panel value="activity" pt="md">
               <Stack gap="sm">
                 <Text size="sm" c="dimmed">
-                  Recent actions apps have taken on your behalf — for v0, this surfaces Buzz
-                  spends from app blocks.
+                  Recent actions apps have taken on your behalf — Buzz spends plus every
+                  scope-gated API call (read profile, read model, etc.).
                 </Text>
                 <ActivityPanel />
               </Stack>

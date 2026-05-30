@@ -586,6 +586,80 @@ export const blocksRouter = router({
     }),
 
   /**
+   * W5 v0.5 — every model_block_installs row the user owns, with
+   * available approved versions per app + the current pinned_version
+   * (NULL=latest). Powers the "Model installs" tab on /apps/installed
+   * and feeds the version selector + uninstall button.
+   */
+  listMyModelInstalls: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+      if (!ctx.user) return [];
+      const { listMyModelInstalls } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      return listMyModelInstalls(ctx.user.id);
+    }),
+
+  /**
+   * W5 v0.5 — set or clear the version pin on a single install. NULL
+   * version reverts to "latest" (host loads the AppBlock's current
+   * manifest); a semver string pins to that version's manifest from
+   * `app_block_publish_requests`. Service validates ownership +
+   * version existence; this proc is the thin tRPC wrapper.
+   */
+  setInstallPinnedVersion: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        blockInstanceId: z.string().min(1).max(64),
+        version: z.string().min(1).max(64).nullable(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const { setInstallPinnedVersion } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      return setInstallPinnedVersion({
+        userId: ctx.user!.id,
+        blockInstanceId: input.blockInstanceId,
+        version: input.version,
+      });
+    }),
+
+  /**
+   * W5 v0.5 — cursor-paginated feed of `block_scope_invocations` rows
+   * scoped to the current viewer. Optional `appBlockId` filter for a
+   * "show me what just this app did" drill-down. Cursor is the BigSerial
+   * row id as a string (JSON can't carry int64 losslessly).
+   */
+  listMyScopeInvocations: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+        cursor: z.string().max(64).optional(),
+        appBlockId: z.string().min(1).max(64).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [], nextCursor: null };
+      }
+      if (!ctx.user) return { items: [], nextCursor: null };
+      const { listMyScopeInvocations } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      return listMyScopeInvocations({
+        userId: ctx.user.id,
+        limit: input.limit,
+        cursor: input.cursor,
+        appBlockId: input.appBlockId,
+      });
+    }),
+
+  /**
    * Lists every user-subscription row (both scopes) for the current viewer.
    * Used by the management UI at /apps/installed. The app_block row is
    * denormalised onto each subscription so the UI can render block name,

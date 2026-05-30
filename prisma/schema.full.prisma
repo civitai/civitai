@@ -550,6 +550,7 @@ model User {
   blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
+  blockScopeInvocations      BlockScopeInvocation[]
 
   @@index([deletedAt])
 }
@@ -2238,6 +2239,7 @@ model AppBlock {
   userSubscriptions  BlockUserSubscription[]
   buzzAttributions   BlockBuzzAttribution[]
   publishRequests    AppBlockPublishRequest[]
+  scopeInvocations   BlockScopeInvocation[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
@@ -2308,6 +2310,11 @@ model ModelBlockInstall {
   blockInstanceId    String       @unique @map("block_instance_id")
   settings           Json         @default("{}")
   enabled            Boolean      @default(true)
+  // W5 v0.5 version pin. NULL = host loads the AppBlock's current approved
+  // manifest (existing behavior). A semver string = host loads THAT version's
+  // manifest from app_block_publish_requests instead. iframe.src is still
+  // the live image — multi-version hosting is W2 v1.
+  pinnedVersion      String?      @map("pinned_version")
   installedAt        DateTime     @default(now()) @map("installed_at") @db.Timestamptz(6)
   installedByUserId  Int?         @map("installed_by_user_id")
   installedBy        User?        @relation(fields: [installedByUserId], references: [id], onDelete: SetNull)
@@ -2432,6 +2439,32 @@ model BlockBuzzAttribution {
   @@index([appBlockId, attributedAt(sort: Desc)], map: "bba_app_block_dashboard_idx")
   @@index([paymentProvider, paymentTransactionId], map: "bba_payment_tx_idx")
   @@map("block_buzz_attribution")
+}
+
+/// W5 v0.5 audit log — one row per successful scope-gated API call from
+/// block-scope.middleware.ts. Surfaced on /apps/installed Activity tab,
+/// interleaved with BlockBuzzAttribution rows so the user sees paid and
+/// free actions on one timeline.
+///
+/// `blockInstanceId` is NOT an FK on purpose — synthetic ids (pdb_*,
+/// bus_pub_*, bus_view_*) have no model_block_installs row. Same
+/// pattern as BlockBuzzAttribution; resolve at read time via
+/// BlockRegistry.resolveBlockInstance.
+model BlockScopeInvocation {
+  id               BigInt   @id @default(autoincrement())
+  userId           Int      @map("user_id")
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId       String   @map("app_block_id")
+  appBlock         AppBlock @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  blockInstanceId  String   @map("block_instance_id")
+  scope            String
+  endpoint         String
+  statusCode       Int      @map("status_code") @db.SmallInt
+  invokedAt        DateTime @default(now()) @map("invoked_at") @db.Timestamptz(6)
+
+  @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
+  @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
+  @@map("block_scope_invocations")
 }
 
 model OauthConsent {

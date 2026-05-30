@@ -20,6 +20,7 @@ function fakeClaims(over: Partial<BlockTokenClaims>): BlockTokenClaims {
     jti: 'jti',
     blockId: 'blk',
     appId: 'app',
+    appBlockId: 'apb_test',
     blockInstanceId: 'bki_test',
     ctx: { modelId: 12345 },
     scopes: [],

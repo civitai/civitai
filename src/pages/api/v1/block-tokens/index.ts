@@ -451,6 +451,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     userId,
     blockId: block.blockId,
     appId: block.appId,
+    appBlockId: block.id,
     blockInstanceId,
     scopes: manifestScopes,
     ctx,

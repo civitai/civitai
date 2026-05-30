@@ -13,7 +13,8 @@
  * consent.
  */
 
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 
 export type ScopeGrantSurface = {
   appBlockId: string;
@@ -247,4 +248,339 @@ export async function listMyAppActivity({
   });
 
   return { items, nextCursor };
+}
+
+/* ============================================================================
+ * W5 v0.5 — per-install version pin + scope-invocation audit log
+ * ==========================================================================*/
+
+export type ModelInstallVersionInfo = {
+  version: string;
+  approvedAt: Date | null;
+};
+
+export type ModelInstallSurface = {
+  blockInstanceId: string;
+  installId: string;
+  modelId: number;
+  modelName: string;
+  modelVersionId: number | null;
+  slotId: string;
+  enabled: boolean;
+  pinnedVersion: string | null;
+  appBlockId: string;
+  appSlug: string;
+  appName: string;
+  /**
+   * AppBlock's manifest-declared current version. Equivalent to "latest"
+   * for the version dropdown. Null when the AppBlock predates the W2
+   * versioning columns (hackathon-era rows).
+   */
+  currentVersion: string | null;
+  /**
+   * Distinct approved versions for this app, newest first. The UI
+   * renders this as the "pin to a specific version" dropdown.
+   */
+  availableVersions: ModelInstallVersionInfo[];
+};
+
+/**
+ * Lists every model_block_installs row the current user owns (installed
+ * by them) with the data the /apps/installed Model installs tab needs:
+ * model name, app metadata, pinned version, and the list of approved
+ * versions to pick from.
+ *
+ * Approved versions are per-AppBlock, not per-install — so a separate
+ * query batches them keyed on appBlockId. Returned as denormalised data
+ * on each install row so the UI doesn't have to join client-side.
+ */
+export async function listMyModelInstalls(userId: number): Promise<ModelInstallSurface[]> {
+  type InstallRow = {
+    id: string;
+    blockInstanceId: string;
+    modelId: number;
+    modelVersionId: number | null;
+    slotId: string;
+    enabled: boolean;
+    pinnedVersion: string | null;
+    appBlockId: string;
+    model: { id: number; name: string } | null;
+    appBlock: {
+      id: string;
+      blockId: string;
+      manifest: unknown;
+      version: string | null;
+    } | null;
+  };
+  const installs = (await dbRead.modelBlockInstall.findMany({
+    where: { installedByUserId: userId },
+    orderBy: [{ installedAt: 'desc' }, { id: 'desc' }],
+    select: {
+      id: true,
+      blockInstanceId: true,
+      modelId: true,
+      modelVersionId: true,
+      slotId: true,
+      enabled: true,
+      pinnedVersion: true,
+      appBlockId: true,
+      model: { select: { id: true, name: true } },
+      appBlock: {
+        select: { id: true, blockId: true, manifest: true, version: true },
+      },
+    },
+  })) as InstallRow[];
+
+  if (installs.length === 0) return [];
+
+  // Batch-fetch distinct approved versions for the apps the user has
+  // installed. groupBy gives us (appBlockId, version, max(reviewedAt)) so
+  // we can sort newest-first inside each app.
+  const appBlockIds = Array.from(new Set(installs.map((i) => i.appBlockId)));
+  type VersionGroupRow = {
+    appBlockId: string | null;
+    version: string;
+    _max: { reviewedAt: Date | null };
+  };
+  const versionRows = (await dbRead.appBlockPublishRequest.groupBy({
+    by: ['appBlockId', 'version'],
+    where: {
+      appBlockId: { in: appBlockIds },
+      status: 'approved',
+    },
+    _max: { reviewedAt: true },
+  })) as unknown as VersionGroupRow[];
+
+  const versionsByApp = new Map<string, ModelInstallVersionInfo[]>();
+  for (const row of versionRows) {
+    if (!row.appBlockId) continue;
+    const list = versionsByApp.get(row.appBlockId) ?? [];
+    list.push({ version: row.version, approvedAt: row._max.reviewedAt });
+    versionsByApp.set(row.appBlockId, list);
+  }
+  for (const list of versionsByApp.values()) {
+    list.sort((a, b) => {
+      const at = a.approvedAt?.getTime() ?? 0;
+      const bt = b.approvedAt?.getTime() ?? 0;
+      return bt - at;
+    });
+  }
+
+  return installs.map<ModelInstallSurface>((row) => {
+    const manifest = (row.appBlock?.manifest ?? {}) as { name?: unknown };
+    const appName =
+      typeof manifest.name === 'string' && manifest.name.length > 0
+        ? manifest.name
+        : row.appBlock?.blockId ?? row.appBlockId;
+    return {
+      blockInstanceId: row.blockInstanceId,
+      installId: row.id,
+      modelId: row.modelId,
+      modelName: row.model?.name ?? `Model ${row.modelId}`,
+      modelVersionId: row.modelVersionId,
+      slotId: row.slotId,
+      enabled: row.enabled,
+      pinnedVersion: row.pinnedVersion,
+      appBlockId: row.appBlockId,
+      appSlug: row.appBlock?.blockId ?? row.appBlockId,
+      appName,
+      currentVersion: row.appBlock?.version ?? null,
+      availableVersions: versionsByApp.get(row.appBlockId) ?? [],
+    };
+  });
+}
+
+/**
+ * Persists the per-install version pin. Pass `version=null` to clear
+ * (revert to "latest" semantics — host loads the current AppBlock
+ * manifest). Pass a semver string to pin. Caller MUST validate that the
+ * version exists in approved publish requests for the install's
+ * AppBlock — service rejects unknown versions to keep the pin coherent.
+ */
+export async function setInstallPinnedVersion(opts: {
+  userId: number;
+  blockInstanceId: string;
+  version: string | null;
+}): Promise<{ ok: true }> {
+  const { userId, blockInstanceId, version } = opts;
+  // Pinning is a write on a row the user must own — installedByUserId is
+  // the only authoritative ownership column (the surrounding tRPC proc
+  // also asserts modelId ownership, but a defense-in-depth check at the
+  // service boundary keeps the API safe to call from non-tRPC paths).
+  const install = await dbRead.modelBlockInstall.findUnique({
+    where: { blockInstanceId },
+    select: { id: true, appBlockId: true, installedByUserId: true },
+  });
+  if (!install) throw new Error('install not found');
+  if (install.installedByUserId !== userId) {
+    throw new Error('not the install owner');
+  }
+
+  if (version !== null) {
+    const exists = await dbRead.appBlockPublishRequest.findFirst({
+      where: { appBlockId: install.appBlockId, version, status: 'approved' },
+      select: { id: true },
+    });
+    if (!exists) {
+      throw new Error(`version "${version}" is not an approved release of this app`);
+    }
+  }
+
+  await dbWrite.modelBlockInstall.update({
+    where: { blockInstanceId },
+    data: { pinnedVersion: version },
+  });
+  return { ok: true };
+}
+
+export type ScopeInvocationItem = {
+  /** String form of the BigSerial id — JSON-safe + stable cursor value. */
+  id: string;
+  createdAt: Date;
+  appBlockId: string;
+  appName: string;
+  appSlug: string;
+  blockInstanceId: string;
+  scope: string;
+  endpoint: string;
+  statusCode: number;
+};
+
+export type ScopeInvocationPage = {
+  items: ScopeInvocationItem[];
+  nextCursor: string | null;
+};
+
+const SCOPE_INVOCATION_MAX_LIMIT = 100;
+
+/**
+ * Cursor-paginated walk of `block_scope_invocations` filtered to the
+ * current viewer. Same shape as listMyAppActivity so the UI can
+ * interleave the two feeds without bespoke pagination glue. Cursor is
+ * the BigSerial `id` cast to string (JSON can't carry int64 losslessly).
+ */
+export async function listMyScopeInvocations(opts: {
+  userId: number;
+  appBlockId?: string;
+  limit?: number;
+  cursor?: string;
+}): Promise<ScopeInvocationPage> {
+  const cappedLimit = Math.min(Math.max(opts.limit ?? 25, 1), SCOPE_INVOCATION_MAX_LIMIT);
+  // Cursor is the string form of a BigInt id. Coerce defensively; an
+  // invalid cursor is treated as "start from the beginning" rather than
+  // throwing — a stale localStorage value can otherwise break the feed.
+  let cursorBigInt: bigint | null = null;
+  if (opts.cursor) {
+    try {
+      cursorBigInt = BigInt(opts.cursor);
+    } catch {
+      cursorBigInt = null;
+    }
+  }
+
+  type Row = {
+    id: bigint;
+    invokedAt: Date;
+    appBlockId: string;
+    blockInstanceId: string;
+    scope: string;
+    endpoint: string;
+    statusCode: number;
+    appBlock: { blockId: string; manifest: unknown } | null;
+  };
+  const rows = (await dbRead.blockScopeInvocation.findMany({
+    where: {
+      userId: opts.userId,
+      ...(opts.appBlockId ? { appBlockId: opts.appBlockId } : {}),
+    },
+    orderBy: [{ invokedAt: 'desc' }, { id: 'desc' }],
+    take: cappedLimit + 1,
+    ...(cursorBigInt != null ? { cursor: { id: cursorBigInt }, skip: 1 } : {}),
+    select: {
+      id: true,
+      invokedAt: true,
+      appBlockId: true,
+      blockInstanceId: true,
+      scope: true,
+      endpoint: true,
+      statusCode: true,
+      appBlock: { select: { blockId: true, manifest: true } },
+    },
+  })) as Row[];
+
+  const hasNext = rows.length > cappedLimit;
+  const visible = hasNext ? rows.slice(0, cappedLimit) : rows;
+  const nextCursor =
+    hasNext && visible.length > 0
+      ? visible[visible.length - 1]!.id.toString()
+      : null;
+
+  const items: ScopeInvocationItem[] = visible.map((r) => {
+    const manifest = (r.appBlock?.manifest ?? {}) as { name?: unknown };
+    const appName =
+      typeof manifest.name === 'string' && manifest.name.length > 0
+        ? manifest.name
+        : r.appBlock?.blockId ?? r.appBlockId;
+    return {
+      id: r.id.toString(),
+      createdAt: r.invokedAt,
+      appBlockId: r.appBlockId,
+      appName,
+      appSlug: r.appBlock?.blockId ?? r.appBlockId,
+      blockInstanceId: r.blockInstanceId,
+      scope: r.scope,
+      endpoint: r.endpoint,
+      statusCode: r.statusCode,
+    };
+  });
+
+  return { items, nextCursor };
+}
+
+/**
+ * Fire-and-forget INSERT into `block_scope_invocations`. Called from
+ * block-scope.middleware.ts on every successful scope-gated API call.
+ * Errors are logged + swallowed — the audit pipeline must NEVER affect
+ * the user-facing response, which has already shipped by the time this
+ * runs (registered on `res.on('finish')`).
+ */
+export async function recordScopeInvocation(opts: {
+  userId: number;
+  appBlockId: string;
+  blockInstanceId: string;
+  scope: string;
+  endpoint: string;
+  statusCode: number;
+}): Promise<void> {
+  try {
+    await dbWrite.blockScopeInvocation.create({
+      data: {
+        userId: opts.userId,
+        appBlockId: opts.appBlockId,
+        blockInstanceId: opts.blockInstanceId,
+        scope: opts.scope,
+        // Endpoint string is bounded by middleware-side normalisation but
+        // belt-and-braces clamp here so a runaway path can't blow the row.
+        endpoint: opts.endpoint.slice(0, 512),
+        statusCode: opts.statusCode,
+      },
+    });
+  } catch (err) {
+    // Don't let an audit-write failure crash the request lifecycle. Most
+    // common cause: app_block_id FK orphaned because the block was
+    // deleted between token issuance and this scope call.
+    logToAxiom(
+      {
+        name: 'block-scope-invocation-log-failed',
+        type: 'warn',
+        appBlockId: opts.appBlockId,
+        scope: opts.scope,
+        endpoint: opts.endpoint,
+        error: err instanceof Error ? err.message : String(err),
+      },
+      'civitai-prod'
+    ).catch(() => {
+      /* axiom unreachable — give up */
+    });
+  }
 }

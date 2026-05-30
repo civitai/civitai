@@ -133,6 +133,12 @@ export interface SignBlockTokenInput {
   userId: number | null; // null → anonymous viewer
   blockId: string;
   appId: string;
+  /**
+   * AppBlock.id (the `apb_<ulid>` row id), NOT the OauthClient.id in `appId`.
+   * Stamped into the JWT so block-scope.middleware.ts can write
+   * BlockScopeInvocation rows without an extra DB lookup per request.
+   */
+  appBlockId: string;
   blockInstanceId: string;
   scopes: string[];
   ctx: Record<string, unknown>;
@@ -178,6 +184,7 @@ export class BlockTokenService {
     const claims: Record<string, unknown> = {
       blockId: input.blockId,
       appId: input.appId,
+      appBlockId: input.appBlockId,
       blockInstanceId: input.blockInstanceId,
       ctx: input.ctx,
       scopes: input.scopes,
