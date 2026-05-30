@@ -12,6 +12,7 @@ import {
   type CustomImageResourceTrainingStep,
   type CustomTrainingStep,
 } from '~/server/services/training.service';
+import { withSignals } from '~/server/signals/wrapper';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { queueNewTrainingModerationWebhook } from '~/server/webhooks/training-moderation.webhooks';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -88,13 +89,15 @@ export default WebhookEndpoint(async (req, res) => {
               status: result.trainingStatus,
               fileMetadata: result.fileMetadata,
             };
-            await fetch(
-              `${env.SIGNALS_ENDPOINT}/users/${result.userId}/signals/${SignalMessages.TrainingUpdate}`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(bodyData),
-              }
+            await withSignals(() =>
+              fetch(
+                `${env.SIGNALS_ENDPOINT}/users/${result.userId}/signals/${SignalMessages.TrainingUpdate}`,
+                {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(bodyData),
+                }
+              )
             );
           } catch (e: unknown) {
             logWebhook({

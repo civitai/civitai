@@ -21,6 +21,7 @@ import { latestChat, singleChatSelect } from '~/server/selectors/chat.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 import { createMessage, maxUsersPerChat, upsertChat } from '~/server/services/chat.service';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
+import { withSignals } from '~/server/signals/wrapper';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -268,11 +269,13 @@ export const addUsersHandler = async ({
     });
 
     for (const cmId of usersToAdd) {
-      fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(insertedChat as ChatCreateChat),
-      }).catch();
+      withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${cmId}/signals/${SignalMessages.ChatNewRoom}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(insertedChat as ChatCreateChat),
+        })
+      ).catch(() => undefined);
     }
 
     // TODO return data?
@@ -379,11 +382,13 @@ export const modifyUserHandler = async ({
 
     if (!!status && status !== ChatMemberStatus.Invited) {
       // we want to await here to avoid race conditions
-      await fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
-        method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
-      });
+      await withSignals(() =>
+        fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
+          method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
+        })
+      );
 
       if (status !== ChatMemberStatus.Ignored) {
         await createMessage({
@@ -673,19 +678,21 @@ export const isTypingHandler = async ({
       }
     }
 
-    fetch(
-      `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatTypingStatus}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          chatId,
-          userId,
-          isTyping,
-          username: existingUser.user.username,
-        } as isTypingOutput),
-      }
-    ).catch();
+    withSignals(() =>
+      fetch(
+        `${env.SIGNALS_ENDPOINT}/groups/chat:${chatId}/signals/${SignalMessages.ChatTypingStatus}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            chatId,
+            userId,
+            isTyping,
+            username: existingUser.user.username,
+          } as isTypingOutput),
+        }
+      )
+    ).catch(() => undefined);
   } catch {
     // explicitly not reporting errors here, as it's just a transient signal
   }
