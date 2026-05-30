@@ -11,10 +11,20 @@ import {
   Loader,
   Stack,
   Switch,
+  Table,
+  Tabs,
   Text,
   Title,
+  Tooltip,
 } from '@mantine/core';
-import { IconPlugConnected, IconPlus, IconSettings, IconTrash } from '@tabler/icons-react';
+import {
+  IconHistory,
+  IconPlugConnected,
+  IconPlus,
+  IconSettings,
+  IconShieldLock,
+  IconTrash,
+} from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -25,7 +35,9 @@ import type {
   AvailableBlock,
   SubscriptionRecord,
 } from '~/server/schema/blocks/subscription.schema';
+import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -151,6 +163,231 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
+/**
+ * Surface where the user has the app installed in one short string.
+ */
+function buildSurfaceLine(surfaces: {
+  modelInstallCount: number;
+  subscriptionScopes: string[];
+}): string {
+  const parts: string[] = [];
+  if (surfaces.modelInstallCount > 0) {
+    parts.push(
+      `${surfaces.modelInstallCount} model install${surfaces.modelInstallCount === 1 ? '' : 's'}`
+    );
+  }
+  if (surfaces.subscriptionScopes.length > 0) {
+    parts.push(
+      `Subscriptions: ${surfaces.subscriptionScopes
+        .map((s) => (s === 'publisher_all_my_models' ? 'publisher' : 'viewer'))
+        .join(' / ')}`
+    );
+  } else if (surfaces.modelInstallCount === 0) {
+    parts.push('Subscriptions: none');
+  }
+  return parts.join(' · ');
+}
+
+function ScopeGrantsPanel() {
+  const { data: grants, isLoading } = trpc.blocks.listMyScopeGrants.useQuery();
+
+  if (isLoading) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  }
+  if (!grants || grants.length === 0) {
+    return <EmptyState label="No apps installed or subscribed yet." />;
+  }
+  return (
+    <Stack gap="md">
+      {grants.map((grant) => (
+        <Card key={grant.appBlockId} withBorder padding="sm" radius="md">
+          <Stack gap="xs">
+            <Group justify="space-between" wrap="nowrap">
+              <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
+                <Group gap="xs">
+                  <Text fw={600} className="truncate">
+                    {grant.name}
+                  </Text>
+                  <Badge size="xs" variant="outline">
+                    {grant.slug}
+                  </Badge>
+                </Group>
+                <Text size="xs" c="dimmed">
+                  {buildSurfaceLine(grant.surfaces)}
+                </Text>
+              </Stack>
+            </Group>
+            <Divider />
+            {grant.scopes.length === 0 ? (
+              <Text size="xs" c="dimmed" fs="italic">
+                This app doesn't claim any JWT scopes — it only consumes data from the host-bridge
+                postMessage protocol.
+              </Text>
+            ) : (
+              <Stack gap={4}>
+                {grant.scopes.map((scope) => {
+                  const desc = SCOPE_DESCRIPTIONS[scope];
+                  return (
+                    <Group key={scope} gap="xs" wrap="nowrap" align="flex-start">
+                      <Badge size="sm" variant="light">
+                        {scope}
+                      </Badge>
+                      {desc ? (
+                        <Text size="xs" c="dimmed">
+                          {desc}
+                        </Text>
+                      ) : (
+                        <Text size="xs" c="dimmed" fs="italic">
+                          (no description)
+                        </Text>
+                      )}
+                    </Group>
+                  );
+                })}
+              </Stack>
+            )}
+          </Stack>
+        </Card>
+      ))}
+    </Stack>
+  );
+}
+
+const ACTIVITY_STATUS_COLORS: Record<string, string> = {
+  pending: 'blue',
+  confirmed: 'green',
+  paid_out: 'green',
+  voided: 'red',
+};
+
+function ActivityStatusBadge({ status }: { status: string }) {
+  const color = ACTIVITY_STATUS_COLORS[status] ?? 'gray';
+  return (
+    <Badge size="sm" color={color} variant="light">
+      {status}
+    </Badge>
+  );
+}
+
+/**
+ * Format an activity scope + amount into a one-line "Action" cell. The
+ * v0 surface only has the subscription scope on the row — we humanise
+ * the well-known scopes and pass through anything unknown.
+ */
+function humaniseActivityAction(scope: string): string {
+  switch (scope) {
+    case 'per_model_install':
+      return 'Spent Buzz on a per-model install';
+    case 'publisher_all_my_models':
+      return 'Spent Buzz via my publisher subscription';
+    case 'viewer_personal':
+      return 'Spent Buzz via my personal subscription';
+    case 'platform_default':
+      return 'Spent Buzz via a civitai-promoted default';
+    default:
+      return scope;
+  }
+}
+
+function ActivityPanel() {
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
+    trpc.blocks.listMyAppActivity.useInfiniteQuery(
+      { limit: 25 },
+      {
+        getNextPageParam: (last) => last.nextCursor ?? undefined,
+      }
+    );
+  const items = useMemo(() => data?.pages.flatMap((p) => p.items) ?? [], [data]);
+
+  if (isLoading) {
+    return (
+      <Center py="xl">
+        <Loader />
+      </Center>
+    );
+  }
+  if (items.length === 0) {
+    return (
+      <Center py="md">
+        <Stack align="center" gap="xs">
+          <IconHistory size={28} opacity={0.5} />
+          <Text size="sm" c="dimmed">
+            Apps haven't taken any actions on your behalf yet.
+          </Text>
+          <Anchor component={Link} href="/apps" size="sm">
+            Browse the marketplace
+          </Anchor>
+        </Stack>
+      </Center>
+    );
+  }
+  return (
+    <Stack gap="sm">
+      <Table>
+        <Table.Thead>
+          <Table.Tr>
+            <Table.Th>When</Table.Th>
+            <Table.Th>App</Table.Th>
+            <Table.Th>Action</Table.Th>
+            <Table.Th>Amount</Table.Th>
+            <Table.Th>Status</Table.Th>
+          </Table.Tr>
+        </Table.Thead>
+        <Table.Tbody>
+          {items.map((item) => (
+            <Table.Tr key={item.id}>
+              <Table.Td>
+                <Tooltip label={item.createdAt.toString()}>
+                  <Text size="xs">{formatDate(item.createdAt, 'YYYY-MM-DD HH:mm')}</Text>
+                </Tooltip>
+              </Table.Td>
+              <Table.Td>
+                <Group gap={6} wrap="nowrap">
+                  <Text size="sm" fw={500} className="truncate">
+                    {item.appName}
+                  </Text>
+                  <Badge size="xs" variant="outline">
+                    {item.appSlug}
+                  </Badge>
+                </Group>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs">{humaniseActivityAction(item.scope)}</Text>
+              </Table.Td>
+              <Table.Td>
+                <Text size="xs">
+                  {item.usdAmountCents > 0
+                    ? `${(item.usdAmountCents / 100).toFixed(2)} USD`
+                    : '(no cost)'}
+                </Text>
+              </Table.Td>
+              <Table.Td>
+                <ActivityStatusBadge status={item.status} />
+              </Table.Td>
+            </Table.Tr>
+          ))}
+        </Table.Tbody>
+      </Table>
+      {hasNextPage && (
+        <Center>
+          <Button
+            variant="default"
+            size="xs"
+            loading={isFetchingNextPage}
+            onClick={() => fetchNextPage()}
+          >
+            Load more
+          </Button>
+        </Center>
+      )}
+    </Stack>
+  );
+}
+
 export default function InstalledAppsPage() {
   const features = useFeatureFlags();
   const { data: subs, isLoading } = trpc.blocks.listMySubscriptions.useQuery(undefined, {
@@ -211,39 +448,77 @@ export default function InstalledAppsPage() {
             </Button>
           </Group>
 
-          {isLoading ? (
-            <Center py="xl">
-              <Loader />
-            </Center>
-          ) : (
-            <Stack gap="lg">
-              <Stack gap="xs">
-                <Title order={4}>On models I own</Title>
-                <Divider />
-                {publisher.length === 0 ? (
-                  <EmptyState label="Nothing installed on your models yet." />
-                ) : (
-                  publisher.map((sub) => (
-                    <SubscriptionRow key={sub.id} sub={sub} onManage={handleManage} />
-                  ))
-                )}
-              </Stack>
+          <Tabs defaultValue="subscriptions" variant="outline">
+            <Tabs.List>
+              <Tabs.Tab value="subscriptions" leftSection={<IconPlugConnected size={14} />}>
+                Subscriptions
+              </Tabs.Tab>
+              <Tabs.Tab value="permissions" leftSection={<IconShieldLock size={14} />}>
+                Apps & permissions
+              </Tabs.Tab>
+              <Tabs.Tab value="activity" leftSection={<IconHistory size={14} />}>
+                Recent activity
+              </Tabs.Tab>
+            </Tabs.List>
 
-              <Stack gap="xs">
-                <Title order={4}>On model pages I view</Title>
-                <Divider />
-                {viewer.length === 0 ? (
-                  <EmptyState label="Nothing installed on pages you visit yet." />
-                ) : (
-                  viewer.map((sub) => (
-                    <SubscriptionRow key={sub.id} sub={sub} onManage={handleManage} />
-                  ))
-                )}
+            <Tabs.Panel value="subscriptions" pt="md">
+              {isLoading ? (
+                <Center py="xl">
+                  <Loader />
+                </Center>
+              ) : (
+                <Stack gap="lg">
+                  <Stack gap="xs">
+                    <Title order={4}>On models I own</Title>
+                    <Divider />
+                    {publisher.length === 0 ? (
+                      <EmptyState label="Nothing installed on your models yet." />
+                    ) : (
+                      publisher.map((sub) => (
+                        <SubscriptionRow key={sub.id} sub={sub} onManage={handleManage} />
+                      ))
+                    )}
+                  </Stack>
+
+                  <Stack gap="xs">
+                    <Title order={4}>On model pages I view</Title>
+                    <Divider />
+                    {viewer.length === 0 ? (
+                      <EmptyState label="Nothing installed on pages you visit yet." />
+                    ) : (
+                      viewer.map((sub) => (
+                        <SubscriptionRow key={sub.id} sub={sub} onManage={handleManage} />
+                      ))
+                    )}
+                  </Stack>
+                </Stack>
+              )}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="permissions" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  What each app you've installed can request, and where you have it. This is a
+                  reflection of the current state — to revoke access, remove the install or
+                  subscription on the Subscriptions tab.
+                </Text>
+                <ScopeGrantsPanel />
               </Stack>
-            </Stack>
-          )}
+            </Tabs.Panel>
+
+            <Tabs.Panel value="activity" pt="md">
+              <Stack gap="sm">
+                <Text size="sm" c="dimmed">
+                  Recent actions apps have taken on your behalf — for v0, this surfaces Buzz
+                  spends from app blocks.
+                </Text>
+                <ActivityPanel />
+              </Stack>
+            </Tabs.Panel>
+          </Tabs>
         </Stack>
       </Container>
     </>
   );
 }
+

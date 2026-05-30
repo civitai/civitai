@@ -537,6 +537,55 @@ export const blocksRouter = router({
     }),
 
   /**
+   * W5 v0 — reflection surface for /apps/installed. One row per app the
+   * current user has either installed on a model OR subscribed to. Counts
+   * + scope intersections derived from existing tables (no grant schema
+   * yet — that's W5 v1). See user-app-surface.service.ts for shape.
+   */
+  listMyScopeGrants: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .query(async ({ ctx }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) return [];
+      if (!ctx.user) return [];
+      const { listMyScopeGrants } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      return listMyScopeGrants(ctx.user.id);
+    }),
+
+  /**
+   * W5 v0 — chronological feed of `block_buzz_attribution` rows where the
+   * current user is the spender (NOT the app owner). Powers the activity
+   * panel on /apps/installed so users can audit what apps have spent
+   * Buzz on their behalf.
+   *
+   * Cursor pagination by id (createdAt desc, id desc tiebreak); cap 100
+   * to keep the payload bounded.
+   */
+  listMyAppActivity: guardedProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        limit: z.number().int().min(1).max(100).optional(),
+        cursor: z.string().max(64).optional(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      if ((ctx as { _appBlocksDisabled?: boolean })._appBlocksDisabled) {
+        return { items: [], nextCursor: null };
+      }
+      if (!ctx.user) return { items: [], nextCursor: null };
+      const { listMyAppActivity } = await import(
+        '~/server/services/blocks/user-app-surface.service'
+      );
+      return listMyAppActivity({
+        userId: ctx.user.id,
+        limit: input.limit,
+        cursor: input.cursor,
+      });
+    }),
+
+  /**
    * Lists every user-subscription row (both scopes) for the current viewer.
    * Used by the management UI at /apps/installed. The app_block row is
    * denormalised onto each subscription so the UI can render block name,

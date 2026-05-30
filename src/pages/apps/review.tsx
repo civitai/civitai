@@ -36,6 +36,10 @@ import { useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Meta } from '~/components/Meta/Meta';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import {
+  SCOPE_DESCRIPTIONS,
+  SLOT_DESCRIPTIONS,
+} from '~/server/services/blocks/scope-descriptions.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -1012,28 +1016,6 @@ const HANDLED_MANIFEST_KEYS = new Set([
   'iframe',
   'settings',
 ]);
-
-/** Short human description per known JWT scope. Mirrors the comments in
- * src/shared/constants/block-scope.constants.ts. Unknown scopes render
- * without a description but still surface in the chip list. */
-const SCOPE_DESCRIPTIONS: Record<string, string> = {
-  'user:read:self': "Read the viewer's username and account status",
-  'models:read:self': 'Read the model on the page where the block is mounted',
-  'media:read:owned': "Read the viewer's own uploaded media",
-  'buzz:read:self': "Read the viewer's Buzz balance",
-  'ai:write:budgeted': 'Submit generations with a per-call Buzz cap',
-  'social:tip:self': 'Post tips on behalf of the viewer',
-  'block:settings:read': "Read this block's per-install settings",
-  'block:settings:write': "Update this block's per-install settings",
-};
-
-/** Short description per known slot id. New slots ship via the
- * KNOWN_SLOT_IDS enum in blocks.router.ts; keep this map in sync. */
-const SLOT_DESCRIPTIONS: Record<string, string> = {
-  'model.sidebar_top': 'Top of the model page sidebar',
-  'model.below_images': 'Below the model page image gallery',
-  'model.actions_extra': 'Among the model page action buttons',
-};
 
 function ManifestView({ manifest }: { manifest: Record<string, unknown> }) {
   const otherKeys = useMemo(
