@@ -2385,7 +2385,7 @@ model BlockUserSubscription {
   /// NEW (kill_per_model_installs): preserves the bki_* id from the migrated
   /// install row so block_buzz_attribution, block_scope_invocations, and
   /// block_user_settings continue to resolve. NULL for blanket
-  /// subscriptions (which synthesise bus_pub_*/bus_view_* on read).
+  /// subscriptions (which synthesise bus_pub_* / bus_view_* on read).
   blockInstanceId    String?  @unique @map("block_instance_id")
   /// NEW (kill_per_model_installs): mirrors model_block_installs.installed
   /// _by_user_id. For migrated rows this equals user_id by construction;
