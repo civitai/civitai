@@ -143,6 +143,31 @@ export const serverSchema = z.object({
   NEWSLETTER_KEY: z.string().optional(),
   BUZZ_ENDPOINT: isProd ? z.url() : z.url().optional(),
   SIGNALS_ENDPOINT: isProd ? z.url() : z.url().optional(),
+  // Per-call signals timeout in ms. Calls wrapped via withSignals() fail
+  // fast with SignalsCallTimeoutError once exceeded, instead of hanging
+  // until Traefik's 30s router timeout fires. Default tuned for signals
+  // normal latency (higher than Meili due to Orleans grain init).
+  SIGNALS_CALL_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(5000),
+  // Per-pod cap on in-flight signals HTTP calls wrapped via withSignals().
+  // When saturated, additional calls fail fast with SignalsCallTimeoutError
+  // rather than queueing forever and pressuring the event loop.
+  SIGNALS_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+  // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
+  // If `SIGNALS_CIRCUIT_TRIP_THRESHOLD` SignalsCallTimeoutErrors accumulate
+  // within `SIGNALS_CIRCUIT_WINDOW_SECONDS`, the circuit OPENs and all calls
+  // fail at 0ms (no acquire, no setTimeout, no request) for
+  // `SIGNALS_CIRCUIT_COOLDOWN_SECONDS`, then transitions to HALF_OPEN for a
+  // single trial request. This is the load-shed mechanism that protects the
+  // event loop from accumulated wait time during signals chronic brownouts —
+  // the failure mode that drove the 2026-05-30 api-primary SIGKILL cascade
+  // (signals Traefik P99 pegged at 30s router timeout). Window is longer than
+  // Meili's (30→60s) because signals normal latency is higher.
+  // .int().min(1) on all three: a blank env value coerces to NaN under
+  // z.coerce.number(), which silently makes the >= comparison false →
+  // breaker disabled. Reject all three at boot.
+  SIGNALS_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().int().min(1).optional().default(10),
+  SIGNALS_CIRCUIT_WINDOW_SECONDS: z.coerce.number().int().min(1).optional().default(60),
+  SIGNALS_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().int().min(1).optional().default(30),
   CACHE_DNS: zc.booleanString,
   MINOR_FALLBACK_SYSTEM: zc.booleanString,
   CSAM_UPLOAD_KEY: z.string().default(''),
