@@ -12,7 +12,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconPlus, IconSearch } from '@tabler/icons-react';
+import { IconPlugConnected, IconPlus, IconSearch } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -114,10 +114,24 @@ export default function AppsPage() {
                 everywhere.
               </Text>
             </Stack>
-            {/* Submit-new link — only rendered for the civitai-team (mod-gated
-                tRPC mutation would already reject anyone else). v1 replaces
-                the gate with the W1 review queue. */}
-            <SubmitAppLink />
+            <Group gap="xs">
+              {/* Bridge back to /apps/installed so users who subscribe from
+                  the marketplace can find where to manage what they have.
+                  Always rendered — /apps/installed handles the anon →
+                  /login redirect itself. */}
+              <Button
+                component={Link}
+                href="/apps/installed"
+                leftSection={<IconPlugConnected size={16} />}
+                variant="default"
+              >
+                My installed apps
+              </Button>
+              {/* Submit-new link — only rendered for the civitai-team (mod-gated
+                  tRPC mutation would already reject anyone else). v1 replaces
+                  the gate with the W1 review queue. */}
+              <SubmitAppLink />
+            </Group>
           </Group>
 
           <Group gap="md" align="end">
