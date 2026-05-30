@@ -243,6 +243,81 @@ export async function triggerApply(args: TriggerApplyArgs): Promise<{ name: stri
   return { name: created.metadata.name };
 }
 
+// ---------- waitForApplyJob — poll until Succeeded / Failed / timeout ------
+
+export type ApplyJobOutcome = 'succeeded' | 'failed' | 'timeout';
+
+type JobStatusShape = {
+  status?: {
+    succeeded?: number;
+    failed?: number;
+    conditions?: Array<{ type?: string; status?: string; reason?: string; message?: string }>;
+  };
+};
+
+/**
+ * Poll the apply Job until it terminates or `timeoutMs` elapses. Returns
+ * 'succeeded' iff Kubernetes flips `.status.succeeded >= 1` AND no
+ * Failed condition. Returns 'failed' as soon as a Failed condition lands
+ * (BackoffLimitExceeded, DeadlineExceeded, etc.) so the caller can react
+ * without waiting for the full timeout. 'timeout' means we gave up — the
+ * Job may still finish later, but the caller's state machine has moved
+ * on.
+ *
+ * Used by the build-callback handler to defer the
+ * app_blocks.current_version_deployed_at write until the new Deployment
+ * is actually serving — closes gotcha #39's data-consistency gap.
+ */
+export async function waitForApplyJob(
+  jobName: string,
+  opts: { timeoutMs?: number; pollMs?: number } = {}
+): Promise<ApplyJobOutcome> {
+  const target = await getDp1Target();
+  const ns = env.APPS_KUBE_NAMESPACE;
+  const timeoutMs = opts.timeoutMs ?? 6 * 60 * 1000; // 6 min — fits the worst-case backoffLimit=2 + 180s rollout
+  const pollMs = opts.pollMs ?? 5_000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    let body: JobStatusShape | null = null;
+    try {
+      const res = await k8sFetch(target, `/apis/batch/v1/namespaces/${ns}/jobs/${jobName}`, {
+        method: 'GET',
+      });
+      // 404 = Job GC'd (ttlSecondsAfterFinished elapsed) or never created.
+      // Treat as a no-signal terminal — the caller should already have
+      // gotten triggerApply's name, so 404 here means we missed the window.
+      if (res.status === 404) return 'timeout';
+      body = await unwrap<JobStatusShape>(res);
+    } catch (err) {
+      // Transient k8s API hiccup — retry on the next poll tick.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[apps-pipeline] waitForApplyJob GET ${jobName} failed: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+    const status = body?.status;
+    if (status) {
+      // Succeeded: Kubernetes increments succeeded as Pods complete. With
+      // backoffLimit > 0 and parallelism unset (defaults to 1), a single
+      // success increments to 1 and the Job moves to Complete condition.
+      if ((status.succeeded ?? 0) >= 1) return 'succeeded';
+      // Failed: a terminal Failed condition (BackoffLimitExceeded /
+      // DeadlineExceeded) is the cleanest "give up" signal. Don't rely on
+      // .status.failed (which counts individual Pod attempts and can climb
+      // mid-retry without the Job being terminal).
+      const failed = status.conditions?.find(
+        (c) => c.type === 'Failed' && c.status === 'True'
+      );
+      if (failed) return 'failed';
+    }
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+  }
+  return 'timeout';
+}
+
 // ---------- apply-Job inner script (rendered into spec.containers[].args)
 
 /**

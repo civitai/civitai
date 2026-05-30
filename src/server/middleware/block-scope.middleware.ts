@@ -9,7 +9,6 @@ import {
   getBlockTokenVerificationKeys,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
-import { recordScopeInvocation } from '~/server/services/blocks/user-app-surface.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
 
 /**
@@ -70,29 +69,106 @@ function normalizeOrigin(raw: string): string | null {
   }
 }
 
-// Cached at module load — BLOCK_ALLOWED_ORIGINS is process-scoped env and
-// shouldn't be re-split on every request.
-let _allowedOriginsCache: string[] | null = null;
-function getAllowedOrigins(): string[] {
-  const cached = _allowedOriginsCache;
-  if (cached != null) return cached;
+// W11 quick win (2026-05-30): the allowlist is the UNION of
+//   (a) BLOCK_ALLOWED_ORIGINS env CSV (transition-shim — apps that pre-date
+//       OauthClient.allowedOrigins population can still be listed here).
+//   (b) every approved OauthClient row's allowedOrigins[] column — written
+//       by the W1 publish-request approve handler when a new app is born.
+//
+// In-memory cache with a 60s TTL handles the bulk of traffic without a
+// per-request DB hit; the refresh-on-miss path takes the hit at most once
+// per minute per pod. No Redis layer because (a) the set is small (one
+// entry per app), (b) the cost of going stale for 60s is bounded (a fresh
+// app waits a minute before its iframe can postMessage, and the env-CSV
+// can be used to skip the wait when needed).
+type OriginCacheEntry = { origins: Set<string>; expiresAt: number };
+const ORIGIN_CACHE_TTL_MS = 60_000;
+let _allowedOriginsCache: OriginCacheEntry | null = null;
+let _allowedOriginsInflight: Promise<Set<string>> | null = null;
+
+function envOrigins(): string[] {
   const raw = env.BLOCK_ALLOWED_ORIGINS ?? '';
-  const next: string[] = [];
+  const out: string[] = [];
   for (const part of raw.split(',')) {
     const trimmed = part.trim();
     if (!trimmed) continue;
     const norm = normalizeOrigin(trimmed);
-    if (norm) next.push(norm);
+    if (norm) out.push(norm);
   }
-  _allowedOriginsCache = next;
+  return out;
+}
+
+async function loadAllowedOrigins(): Promise<Set<string>> {
+  const next = new Set<string>(envOrigins());
+  try {
+    // Dynamic import so this module's load-time side effects don't drag
+    // the full Prisma client in. Middleware code paths that never reach
+    // a CORS preflight check (test harnesses, tooling) shouldn't need
+    // a configured DB to import this file.
+    const { dbRead } = await import('~/server/db/client');
+    const rows = (await dbRead.oauthClient.findMany({
+      // The isEmpty=false filter skips test clients that exist with no
+      // allowedOrigins populated yet. Postgres-specific but Prisma
+      // exposes it via the standard array filter shape.
+      where: { allowedOrigins: { isEmpty: false } },
+      select: { allowedOrigins: true },
+    })) as Array<{ allowedOrigins: string[] }>;
+    for (const row of rows) {
+      for (const o of row.allowedOrigins ?? []) {
+        const norm = normalizeOrigin(o);
+        if (norm) next.add(norm);
+      }
+    }
+  } catch (err) {
+    // DB unreachable shouldn't lock all blocks out — fall back to the env
+    // CSV alone. Log once per stale cache window so ops can see it.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[block-scope] OauthClient origin lookup failed; falling back to env-only set: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
   return next;
 }
 
-function originAllowed(origin: string | undefined): boolean {
+async function getAllowedOriginsAsync(): Promise<Set<string>> {
+  const now = Date.now();
+  const cached = _allowedOriginsCache;
+  if (cached && cached.expiresAt > now) return cached.origins;
+  // Single-flight: if a refresh is already in progress, await it rather
+  // than launching N parallel DB queries on a cold start under load.
+  if (_allowedOriginsInflight) return _allowedOriginsInflight;
+  _allowedOriginsInflight = loadAllowedOrigins()
+    .then((set) => {
+      _allowedOriginsCache = { origins: set, expiresAt: Date.now() + ORIGIN_CACHE_TTL_MS };
+      return set;
+    })
+    .finally(() => {
+      _allowedOriginsInflight = null;
+    });
+  return _allowedOriginsInflight;
+}
+
+/**
+ * Test-only: clear the in-memory cache so a unit test can swap the
+ * underlying OauthClient mock without waiting 60s. Not exported via the
+ * public surface (block-scope.middleware module export); reach via
+ * `(_internalsForTests as any).resetOriginCache()` if you need it.
+ */
+export const _internalsForTests = {
+  resetOriginCache(): void {
+    _allowedOriginsCache = null;
+    _allowedOriginsInflight = null;
+  },
+};
+
+async function originAllowed(origin: string | undefined): Promise<boolean> {
   if (!origin) return false;
   const norm = normalizeOrigin(origin);
   if (!norm) return false;
-  return getAllowedOrigins().includes(norm);
+  const set = await getAllowedOriginsAsync();
+  return set.has(norm);
 }
 
 // Bounded LRU of origins we've already warned about, so a flood of unique
@@ -110,18 +186,23 @@ function rememberWarnedOrigin(origin: string) {
 }
 
 /**
- * Sets block-CORS headers when the origin is in BLOCK_ALLOWED_ORIGINS.
+ * Sets block-CORS headers when the origin is in the allowlist (union of
+ * `BLOCK_ALLOWED_ORIGINS` env CSV + every approved OauthClient's
+ * `allowedOrigins[]` — W11 dynamic-lookup landed 2026-05-30).
  *
  * Returns true ONLY when we've fully handled the request (block-origin preflight).
  * In every other case — including OPTIONS from origins we don't recognize —
  * returns false so the caller falls through to the wrapped handler's own
  * CORS path. This preserves the pre-PR behavior of routes like
  * /api/v1/models/[id] (which set ACAO: * in PublicEndpoint) for browser
- * integrations doing CORS preflight from origins outside BLOCK_ALLOWED_ORIGINS.
+ * integrations doing CORS preflight from origins outside our allowlist.
  */
-function setBlockCors(req: NextApiRequest, res: NextApiResponse): 'handled' | 'fallthrough' {
+async function setBlockCors(
+  req: NextApiRequest,
+  res: NextApiResponse
+): Promise<'handled' | 'fallthrough'> {
   const origin = req.headers.origin;
-  const isAllowed = originAllowed(origin);
+  const isAllowed = await originAllowed(origin);
 
   if (isAllowed && origin) {
     // Echo the literal origin header back (browsers compare the value, not
@@ -142,13 +223,15 @@ function setBlockCors(req: NextApiRequest, res: NextApiResponse): 'handled' | 'f
   }
 
   if (origin && req.headers.authorization?.toLowerCase().startsWith('bearer ')) {
-    // A block-bearing call from an origin we don't recognize is almost always
-    // a BLOCK_ALLOWED_ORIGINS misconfiguration. Browsers won't surface this
-    // (the preflight just fails); log once per unique origin so ops can see it.
+    // A block-bearing call from an origin we don't recognize is almost
+    // always a missing OauthClient.allowedOrigins entry for the app (or a
+    // 60s-stale cache window right after approve, see ORIGIN_CACHE_TTL_MS).
+    // Browsers won't surface the failed preflight; log once per unique
+    // origin so ops can see it.
     if (rememberWarnedOrigin(origin)) {
       // eslint-disable-next-line no-console
       console.warn(
-        `[block-scope] rejected CORS preflight from origin "${origin}" — not in BLOCK_ALLOWED_ORIGINS`
+        `[block-scope] rejected CORS preflight from origin "${origin}" — not in OauthClient.allowedOrigins (cache may be stale up to 60s)`
       );
     }
   }
@@ -374,7 +457,7 @@ export function withBlockScope(
   opts: WithBlockScopeOpts
 ): NextApiHandler {
   return async (req, res) => {
-    const cors = setBlockCors(req, res);
+    const cors = await setBlockCors(req, res);
     if (cors === 'handled') return;
 
     const authHeader = req.headers.authorization ?? '';
@@ -505,18 +588,26 @@ export function withBlockScope(
     if (userIdForLog != null) {
       const endpointForLog = normalizeEndpoint(req.url ?? '');
       res.on('finish', () => {
-        void recordScopeInvocation({
-          userId: userIdForLog,
-          appBlockId: claims.appBlockId,
-          blockInstanceId: claims.blockInstanceId,
-          scope: opts.requiredScope,
-          endpoint: endpointForLog,
-          statusCode: res.statusCode,
-        }).catch(() => {
-          // Audit log is best-effort. A failed write must not surface to the
-          // client — the response already shipped. Errors are logged by the
-          // service helper itself.
-        });
+        // Dynamic import so this module doesn't eager-load
+        // user-app-surface.service (which transitively loads dbRead +
+        // Prisma client init). Test envs that import the middleware for
+        // pure routing checks shouldn't need a working DB.
+        void import('~/server/services/blocks/user-app-surface.service')
+          .then(({ recordScopeInvocation }) =>
+            recordScopeInvocation({
+              userId: userIdForLog,
+              appBlockId: claims.appBlockId,
+              blockInstanceId: claims.blockInstanceId,
+              scope: opts.requiredScope,
+              endpoint: endpointForLog,
+              statusCode: res.statusCode,
+            })
+          )
+          .catch(() => {
+            // Audit log is best-effort. A failed write must not surface
+            // to the client — the response already shipped. Errors are
+            // logged by the service helper itself.
+          });
       });
     }
 

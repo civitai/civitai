@@ -5,7 +5,7 @@ import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
-import { triggerApply } from '~/server/services/blocks/apps-pipeline.service';
+import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 
 /**
  * POST /api/internal/blocks/build-callback
@@ -144,8 +144,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     description: 'Applying to civitai-apps',
   });
 
+  let applyJob: { name: string };
   try {
-    await triggerApply({
+    applyJob = await triggerApply({
       slug: body.slug,
       sha: body.sha,
       appBlockId: body.appBlockId,
@@ -163,19 +164,81 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  // The Job runs asynchronously; we don't wait for rollout here. Once
-  // it completes, the per-app Deployment becomes Ready and starts
-  // serving. A v1 polish is a Job-watch sidecar that flips commit
-  // status to success/failure when the rollout actually settles — v0
-  // leaves the deploy status `pending` until kubectl rollout returns,
-  // accepting that the developer sees pending for the full window.
-  await dbWrite.appBlock.update({
-    where: { id: body.appBlockId },
-    data: { currentVersionDeployedAt: new Date() },
-  });
+  // gotcha #39 fix (2026-05-30): defer the
+  // `app_blocks.current_version_deployed_at` write until the apply Job
+  // actually succeeds. The previous shape wrote it the moment the Job
+  // was created — which meant a failed apply (smoke step / network
+  // policy / image perms) left the column saying "deployed at <now>"
+  // while the live Deployment was still on the previous image. Now the
+  // column reflects "what's actually serving" rather than "what built."
+  //
+  // We respond 200 to Tekton immediately (the build callback's job was
+  // to hand off to the apply chain — Tekton doesn't care about apply
+  // outcome) and let the async watch update the DB row + commit status
+  // in the background. Pod restart loses the watch handle, but the next
+  // build for the same slug will re-create the Job which re-runs the
+  // watch — the column self-heals on the next successful build.
+  res.status(200).json({ ok: true, applied: true, jobName: applyJob.name });
 
-  res.status(200).json({ ok: true, applied: true });
+  void watchApplyJobAndRecord({
+    appBlockId: body.appBlockId,
+    slug: body.slug,
+    sha: body.sha,
+    jobName: applyJob.name,
+  });
 });
+
+/**
+ * Fire-and-forget watcher: poll the apply Job until terminal, then
+ * update `app_blocks.current_version_deployed_at` (on success) + flip
+ * the Forgejo commit status. Errors are logged + swallowed; the user-
+ * facing response has already shipped.
+ */
+async function watchApplyJobAndRecord(args: {
+  appBlockId: string;
+  slug: string;
+  sha: string;
+  jobName: string;
+}): Promise<void> {
+  try {
+    const outcome = await waitForApplyJob(args.jobName);
+    if (outcome === 'succeeded') {
+      await dbWrite.appBlock.update({
+        where: { id: args.appBlockId },
+        data: { currentVersionDeployedAt: new Date() },
+      });
+      await safe(setCommitStatus, {
+        slug: args.slug,
+        sha: args.sha,
+        state: 'success',
+        context: 'civitai/deploy',
+        description: 'Deployed to civitai-apps',
+      });
+    } else {
+      // Failure or timeout — leave the existing currentVersionDeployedAt
+      // alone (it correctly reflects the LAST successful deploy, not the
+      // failed/in-flight one). Flip commit status so the dev sees red.
+      await safe(setCommitStatus, {
+        slug: args.slug,
+        sha: args.sha,
+        state: 'failure',
+        context: 'civitai/deploy',
+        description: outcome === 'timeout' ? 'Deploy timed out' : 'Deploy failed',
+      });
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[build-callback] apply Job ${args.jobName} ended ${outcome}; current_version_deployed_at not updated`
+      );
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error(
+      `[build-callback] watchApplyJob crashed for ${args.jobName}: ${
+        err instanceof Error ? err.message : String(err)
+      }`
+    );
+  }
+}
 
 // Wrap a side-effect with a try/catch that logs but doesn't bubble.
 async function safe<T extends (...args: any[]) => Promise<any>>(fn: T, ...args: Parameters<T>) {
