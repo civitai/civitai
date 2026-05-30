@@ -496,7 +496,13 @@ async function runWithLimiter<T>(
       ]);
     } finally {
       if (timer) clearTimeout(timer);
-      endTimer();
+      // EMERGENCY 2026-05-30: see signals wrapper — a metric-observation
+      // error must never propagate into the app request path.
+      try {
+        endTimer();
+      } catch {
+        // intentionally swallowed
+      }
       if (key === 'search' || key === 'metricsSearch') {
         recordCallOutcome(key, isTrial, failedForCircuit);
       }
