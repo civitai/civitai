@@ -80,6 +80,12 @@ export async function hSetWithTTL(
   value: string | number | Buffer,
   ttlMs: number
 ): Promise<void> {
+  // Guard against PEXPIRE/HPEXPIRE-as-delete: HPEXPIRE with 0 (or negative)
+  // ms REMOVES the field. A caller-side config bug (e.g. accidental negative
+  // TTL) would silently destroy the field this helper just wrote.
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error(`hSetWithTTL: ttlMs must be a positive finite number, got ${ttlMs}`);
+  }
   // HPEXPIRE arg order: key ms FIELDS numfields field
   // KEYS[1]=key  ARGV[1]=field  ARGV[2]=value  ARGV[3]=ttlMs
   const script = `
@@ -116,6 +122,10 @@ export async function hSetMultiWithTTL(
   fields: Record<string, string | number | Buffer>,
   ttlMs: number
 ): Promise<void> {
+  // See hSetWithTTL — HPEXPIRE with 0/negative ms removes the field.
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error(`hSetMultiWithTTL: ttlMs must be a positive finite number, got ${ttlMs}`);
+  }
   const entries = Object.entries(fields);
   if (entries.length === 0) return;
 
@@ -186,6 +196,11 @@ export async function zAddWithTTL(
   member: string,
   ttlMs: number
 ): Promise<void> {
+  // PEXPIRE with 0 (or negative) ms DELETES the key — would destroy the
+  // sorted set ZADD just wrote into. Guard against caller-side config bugs.
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error(`zAddWithTTL: ttlMs must be a positive finite number, got ${ttlMs}`);
+  }
   // KEYS[1]=key  ARGV[1]=score  ARGV[2]=member  ARGV[3]=ttlMs
   const script = `
     redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2])
