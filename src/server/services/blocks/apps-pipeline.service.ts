@@ -289,6 +289,10 @@ SMOKE_POD="smoke-\${SLUG}-$(printf '%s' "\${SHA}" | head -c 8)"
 echo "smoke test: creating pod \${SMOKE_POD} from \${IMAGE}"
 
 # Pod overrides:
+#   - imagePullSecrets ghcr-cred — block-app images are private ghcr repos;
+#     without this the smoke pod sits in ImagePullBackOff and the wait
+#     times out (2026-05-30 incident: first apply Job to run the smoke
+#     step failed exactly this way).
 #   - automountServiceAccountToken: false — the smoke pod doesn't need RBAC.
 #   - runAsNonRoot enforced (matches PodSecurity:restricted on civitai-apps);
 #     does NOT pin a specific UID, so any non-root image (nginx user 101,
@@ -296,7 +300,7 @@ echo "smoke test: creating pod \${SMOKE_POD} from \${IMAGE}"
 #   - capabilities drop ALL + seccompProfile RuntimeDefault for PSA.
 kubectl -n ${ns} run "\${SMOKE_POD}" --image="\${IMAGE}" --restart=Never \\
   --port=8080 --labels="civitai.com/role=smoke,civitai.com/app-slug=\${SLUG}" \\
-  --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"smoke","image":"'\${IMAGE}'","ports":[{"containerPort":8080}],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}'
+  --overrides='{"spec":{"imagePullSecrets":[{"name":"ghcr-cred"}],"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"smoke","image":"'\${IMAGE}'","ports":[{"containerPort":8080}],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}'
 
 # Always clean up the smoke pod, even if the script fails mid-way.
 cleanup() {
