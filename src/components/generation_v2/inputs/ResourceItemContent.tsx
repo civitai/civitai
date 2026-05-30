@@ -228,23 +228,42 @@ export function ResourceItemContent({
                 Epoch {epochDetails.epochNumber}
               </Badge>
             )}
-            {!!resource.licensingFee && resource.licensingFee > 0 && (
-              <HoverCard position="bottom" withArrow width={220}>
-                <HoverCard.Target>
-                  <CurrencyBadge
-                    unitAmount={resource.licensingFee}
-                    currency="BUZZ"
-                    size="xs"
-                    className="shrink-0 cursor-help"
-                  />
-                </HoverCard.Target>
-                <HoverCard.Dropdown>
-                  <Text size="sm">
-                    License fee charged per image when using this resource for generation.
-                  </Text>
-                </HoverCard.Dropdown>
-              </HoverCard>
-            )}
+            {(() => {
+              const inherited = resource.inheritedLicensingFee;
+              const feeAmount = inherited ? inherited.amount : resource.licensingFee ?? 0;
+              if (feeAmount <= 0) return null;
+              return (
+                <HoverCard position="bottom" withArrow width={220}>
+                  <HoverCard.Target>
+                    <CurrencyBadge
+                      unitAmount={feeAmount}
+                      currency="BUZZ"
+                      size="xs"
+                      className="shrink-0 cursor-help"
+                    />
+                  </HoverCard.Target>
+                  <HoverCard.Dropdown>
+                    <Text size="sm">
+                      {inherited ? (
+                        <>
+                          License fee inherited from base model{' '}
+                          <Anchor
+                            href={`/models/${inherited.recipientModelId}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            {inherited.recipientModelName}
+                          </Anchor>
+                          . Charged per image when using this resource for generation.
+                        </>
+                      ) : (
+                        'License fee charged per image when using this resource for generation.'
+                      )}
+                    </Text>
+                  </HoverCard.Dropdown>
+                </HoverCard>
+              );
+            })()}
             {isSfwOnly && (
               <HoverCard position="bottom" withArrow width={200}>
                 <HoverCard.Target>

@@ -45,6 +45,7 @@ import {
   updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
+import { bustBaseModelLicensingFeeCache } from '~/server/services/base-model-licensing-fee.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import {
@@ -393,13 +394,19 @@ export const upsertModelVersionHandler = async ({
       );
     }
 
+    const previousFeeState = input.id
+      ? await dbRead.modelVersion.findUnique({
+          where: { id: input.id },
+          select: {
+            licensingFee: true,
+            licensingFeeType: true,
+            licensingFeeSettlementCurrency: true,
+          },
+        })
+      : null;
+
     if (input.licensingFee != null && input.licensingFee > 0) {
-      const existing = input.id
-        ? await dbRead.modelVersion.findUnique({
-            where: { id: input.id },
-            select: { licensingFee: true, licensingFeeSettlementCurrency: true },
-          })
-        : null;
+      const existing = previousFeeState;
       const hadExistingFee = !!existing?.licensingFee && existing.licensingFee > 0;
       if (!ctx.features.licensingFee && !ctx.user.isModerator && !hadExistingFee) {
         throw throwBadRequestError('License fees are not enabled for your account.');
@@ -443,6 +450,28 @@ export const upsertModelVersionHandler = async ({
       trainingDetails: input.trainingDetails,
     });
     if (!version) throw throwNotFoundError(`No model version with id ${input.id as number}`);
+
+    // The base-model fee cache snapshots the recipient version's licensingFee.
+    // Bust narrowly: only when this version is referenced by a rule and one of
+    // the cached fee fields actually changed. New versions can't be recipients
+    // yet, so we skip the bust entirely for them.
+    if (input.id) {
+      const feeChanged =
+        (input.licensingFee !== undefined &&
+          input.licensingFee !== previousFeeState?.licensingFee) ||
+        (input.licensingFeeType !== undefined &&
+          input.licensingFeeType !== previousFeeState?.licensingFeeType) ||
+        (input.licensingFeeSettlementCurrency !== undefined &&
+          input.licensingFeeSettlementCurrency !==
+            previousFeeState?.licensingFeeSettlementCurrency);
+      if (feeChanged) {
+        const isRecipient = !!(await dbRead.baseModelLicensingFee.findFirst({
+          where: { modelVersionId: input.id },
+          select: { baseModel: true },
+        }));
+        if (isRecipient) await bustBaseModelLicensingFeeCache();
+      }
+    }
 
     // Just update early access deadline if updating the model version
     if (input.id)
@@ -518,6 +547,14 @@ export const upsertModelVersionHandler = async ({
 
 export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput }) => {
   try {
+    // FK ON DELETE CASCADE drops any BaseModelLicensingFee rows pointing at this
+    // version. The rule cache holds those by value, so bust if a rule referenced
+    // this version (checked before delete since the row is gone after).
+    const wasRecipient = !!(await dbRead.baseModelLicensingFee.findFirst({
+      where: { modelVersionId: input.id },
+      select: { baseModel: true },
+    }));
+
     const version = await deleteVersionById(input);
     if (!version) throw throwNotFoundError(`No model version with id ${input.id}`);
 
@@ -527,6 +564,7 @@ export const deleteModelVersionHandler = async ({ input }: { input: GetByIdInput
     });
 
     await dataForModelsCache.refresh(version.modelId);
+    if (wasRecipient) await bustBaseModelLicensingFeeCache();
 
     return version;
   } catch (error) {

@@ -26,6 +26,20 @@ export type GenerationResourceBase = {
   epochNumber?: number;
   /** Per-image license fee in Buzz set by the model version owner */
   licensingFee?: number | null;
+  /**
+   * Resolved license fee inherited from the version's base model (e.g. an
+   * Anima checkpoint derivative inherits Anima's fee). Null when the version
+   * itself is the recipient or no base-model rule matches; in those cases
+   * `licensingFee` is the source of truth.
+   */
+  inheritedLicensingFee?: {
+    amount: number;
+    type: string;
+    settlementCurrency: string;
+    recipientModelVersionId: number;
+    recipientModelId: number;
+    recipientModelName: string;
+  } | null;
   // settings
   clipSkip?: number;
   minStrength: number;
