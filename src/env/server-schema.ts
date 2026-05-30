@@ -120,6 +120,18 @@ export const serverSchema = z.object({
   // When saturated, additional calls fail fast with MeiliCallTimeoutError
   // rather than queueing forever and pressuring the event loop.
   MEILI_CALL_CONCURRENCY: z.coerce.number().optional().default(50),
+  // Per-backend circuit breaker (see src/server/meilisearch/client.ts). If
+  // `MEILI_CIRCUIT_TRIP_THRESHOLD` MeiliCallTimeoutErrors accumulate within
+  // `MEILI_CIRCUIT_WINDOW_SECONDS` on a backend, the circuit OPENs and all
+  // calls fail at 0ms (no acquire, no setTimeout, no request) for
+  // `MEILI_CIRCUIT_COOLDOWN_SECONDS`, then transitions to HALF_OPEN for a
+  // single trial request. This eliminates the ~125 worker-seconds of
+  // accumulated 2.5s waits per pod per cycle during chronic brownouts —
+  // the mechanism that bled the api-primary pool past kubelet TCP probe
+  // timeout on 2026-05-30.
+  MEILI_CIRCUIT_TRIP_THRESHOLD: z.coerce.number().optional().default(10),
+  MEILI_CIRCUIT_WINDOW_SECONDS: z.coerce.number().optional().default(30),
+  MEILI_CIRCUIT_COOLDOWN_SECONDS: z.coerce.number().optional().default(30),
   PODNAME: z.string().optional(),
   INTEGRATION_TOKEN: z.string().optional(),
   NEWSLETTER_ID: z.string().optional(),
