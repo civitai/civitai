@@ -381,7 +381,49 @@ const generatorSubmitSchema = z.object({
       // isValid on these rows is path-dependent (legacy/video: false,
       // v2: true) — see the doc-block above for the dashboard caveat.
       isRateLimited: z.boolean().optional(),
+      // Per-attempt UUID generated client-side immediately before this emit
+      // fires. Optional because the failure-path emits (RHF onError,
+      // graph.validate() reject, canGenerate cap) terminate without a job —
+      // there's nothing to link them to, and back-filling submitId on those
+      // sites is gold-plating. Required on the success-path emit (and only
+      // there) so a paired Generator_JobLinked can join the workflow.
+      submitId: z.string().optional(),
     }),
+});
+
+// Generator_JobLinked — fires on the success path right after
+// useGenerateFromGraph.mutateAsync() resolves with a workflow.id. Carries
+// the same submitId that the preceding Generator_Submit emitted, so the
+// funnel dashboard can compute true per-submit conversion via:
+//
+//   SELECT count() AS submits,
+//          countIf(linked.submitId IS NOT NULL) AS linked
+//   FROM (SELECT JSONExtractString(details,'submitId') AS submitId
+//         FROM default.actions WHERE type='Generator_Submit' AND ...) s
+//   LEFT JOIN (SELECT JSONExtractString(details,'submitId') AS submitId,
+//              JSONExtractString(details,'workflowId') AS workflowId
+//              FROM default.actions WHERE type='Generator_JobLinked' AND ...) linked
+//     ON linked.submitId = s.submitId
+//
+// And once orchestration.jobs has the workflowId column (civitai-orchestration
+// PR #229), the same workflowId joins back to actual job rows:
+//
+//   JOIN orchestration.jobs j ON j.workflowId = linked.workflowId
+//
+// Misses on this stage (Generator_Submit with isValid:true and no paired
+// Generator_JobLinked within ~10s) are real failures downstream of the
+// client: buzz-prompt cancel, insufficient-buzz, POI flag, mutate() reject.
+// Network races may also drop the link emit (~0.1% expected, acceptable).
+const generatorJobLinkedSchema = z.object({
+  type: z.literal('Generator_JobLinked'),
+  details: z.object({
+    // Same UUID emitted on the preceding Generator_Submit. Required.
+    submitId: z.string(),
+    // The orchestrator workflow id returned by useGenerateFromGraph.mutateAsync.
+    // Matches orchestration.jobs.workflowId once that column is populated
+    // (civitai-orchestration#229).
+    workflowId: z.string(),
+  }),
 });
 
 export type TrackActionInput = z.infer<typeof trackActionSchema>;
@@ -405,4 +447,5 @@ export const trackActionSchema = z.discriminatedUnion('type', [
   modelCreateClickSchema,
   imageRemixClickSchema,
   generatorSubmitSchema,
+  generatorJobLinkedSchema,
 ]);

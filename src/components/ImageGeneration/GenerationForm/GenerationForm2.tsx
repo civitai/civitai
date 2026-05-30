@@ -336,6 +336,13 @@ export function GenerationFormContent() {
     // panel. `hasRemixOfId` reflects the actual remixOfId being sent on
     // the request (passes the 0.75 similarity gate). `isValid=true` here;
     // the validation-fail counterpart fires from handleSubmitError below.
+    //
+    // submitId is a per-attempt UUID generated immediately before this
+    // emit and re-used on the paired Generator_JobLinked emit after
+    // mutateAsync resolves with a workflow.id. Lets the dashboard compute
+    // true per-submit conversion (Stage 2) instead of the userId + 5-min
+    // window heuristic. See track.schema.ts for the join recipe.
+    const submitId = crypto.randomUUID();
     try {
       const fromAction = useGenerationGraphStore.getState().lastEntryAction;
       const willSendRemixOfId = !!(remixSimilarity && remixSimilarity > 0.75 && remixOfId);
@@ -352,6 +359,7 @@ export function GenerationFormContent() {
           hasRemixOfId: willSendRemixOfId,
           formVersion: 'legacy',
           isValid: true,
+          submitId,
         },
       }).catch(() => undefined);
     } catch {
@@ -437,7 +445,7 @@ export function GenerationFormContent() {
       }
 
       const { buzzType: selectedBuzzType } = generationFormStore.getState();
-      await mutateAsync({
+      const workflow = await mutateAsync({
         input: graphInput,
         civitaiTip: tips.civitai,
         creatorTip: tips.creators,
@@ -456,7 +464,20 @@ export function GenerationFormContent() {
           buyBuzz({});
         } else
           setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
+        return undefined;
       });
+
+      // Generation funnel telemetry — link the preceding Generator_Submit to
+      // the resulting workflow. The dashboard joins on submitId; workflowId
+      // matches orchestration.jobs.workflowId once that column is populated
+      // (civitai-orchestration#229). Skipped on error paths (catch handler
+      // returns undefined) because no workflow row exists to link to.
+      if (workflow?.id) {
+        trackAction({
+          type: 'Generator_JobLinked',
+          details: { submitId, workflowId: workflow.id },
+        }).catch(() => undefined);
+      }
 
       if (hasEarlyAccess) {
         invalidateWhatIf();

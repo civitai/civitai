@@ -115,8 +115,10 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     storage: localStorage,
   });
 
-  // Use shared hook with optimistic cache updates for queryGeneratedImages
-  const { mutate, isPending: isLoading } = useGenerateFromGraph({
+  // Use shared hook with optimistic cache updates for queryGeneratedImages.
+  // mutateAsync (not mutate) so handleSubmit can await the workflow.id and
+  // emit Generator_JobLinked for the funnel dashboard's submit→job join.
+  const { mutateAsync, isPending: isLoading } = useGenerateFromGraph({
     onError: (error) => {
       if (error.message && error.message.startsWith('Your prompt was flagged')) {
         form.setError('prompt', { type: 'custom', message: error.message }, { shouldFocus: true });
@@ -136,6 +138,11 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
     if (isLoading || isLoadingDebounced) return;
     setError(undefined);
     const { cost = 0 } = getState();
+
+    // Per-attempt UUID re-used on the paired Generator_JobLinked emit after
+    // mutateAsync resolves. Only present on the success-path emit (isValid:true);
+    // fail-path emits leave it absent because no workflow row exists to link.
+    const submitId = crypto.randomUUID();
 
     // Generation funnel telemetry — clicked Generate (video form). We fire
     // once after the inner graph.validate() resolves so isValid reflects
@@ -161,6 +168,9 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
             fromAction,
             formVersion: 'video',
             isValid,
+            // Only attach submitId on the success path — fail emits have
+            // nothing downstream to link to.
+            ...(isValid ? { submitId } : {}),
           },
         }).catch(() => undefined);
       } catch {
@@ -211,12 +221,30 @@ export function VideoGenerationForm({ engine }: { engine: OrchestratorEngine2 })
       emitSubmit(true, model?.id);
 
       const { buzzType } = generationFormStore.getState();
+      // conditionalPerformTransaction takes `() => void` and does NOT await
+      // the callback (see buzz.utils.ts:87 — `onPerformTransaction();`
+      // discards the return). Wrap as a sync function that kicks off the
+      // async work and explicitly swallows any unhandled rejection so it
+      // can't bubble into the buzz-prompt wrapper's event-handler context.
       conditionalPerformTransaction(cost, () => {
-        mutate({
-          input: graphData,
-          tags: [WORKFLOW_TAGS.SOURCE.LEGACY],
-          ...(buzzType ? { buzzType } : {}),
-        });
+        void (async () => {
+          // mutateAsync (not mutate) so we can capture workflow.id and emit
+          // Generator_JobLinked for the funnel dashboard's submit→job join.
+          // Errors are still routed through the hook's onError handler; we
+          // swallow the rejection here so the link emit doesn't fire on
+          // failure paths (no workflow row to link to).
+          const workflow = await mutateAsync({
+            input: graphData,
+            tags: [WORKFLOW_TAGS.SOURCE.LEGACY],
+            ...(buzzType ? { buzzType } : {}),
+          }).catch(() => undefined);
+          if (workflow?.id) {
+            trackAction({
+              type: 'Generator_JobLinked',
+              details: { submitId, workflowId: workflow.id },
+            }).catch(() => undefined);
+          }
+        })().catch(() => undefined);
       });
     } catch (e: any) {
       // config.validate() threw — count as a failed submit attempt unless

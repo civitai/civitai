@@ -228,6 +228,13 @@ export const ActionType = [
   'Model_Create_Click',
   'Image_Remix_Click',
   'Generator_Submit',
+  // Fires after a successful useGenerateFromGraph.mutateAsync — carries the
+  // same submitId that the preceding Generator_Submit emitted plus the
+  // workflow.id returned by the trpc mutation. The ClickHouse enum16 ALTER
+  // adding this value MUST land before any client code that emits it (and
+  // the civitai-clickhouse-tracker needs a rollout-restart so its cached
+  // schema picks up the new value); otherwise CH silently drops the rows.
+  'Generator_JobLinked',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
