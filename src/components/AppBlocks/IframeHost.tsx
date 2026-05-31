@@ -1,5 +1,6 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
 import { IconApps, IconDots } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -867,23 +868,13 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // H-7: malformed manifest with empty iframe.src or invalid origin mounts
-  // an about:blank that sits on the skeleton for 10s before timing out.
-  // Short-circuit straight to the fatal fallback instead.
-  if (!iframeSrc || !expectedOrigin) {
-    return <BlockFallback reason="fatal_block_error" blockName={install.manifest.name} />;
-  }
-  if (status === 'timeout') {
-    return <BlockFallback reason="timeout" blockName={install.manifest.name} />;
-  }
-  if (status === 'fatal') {
-    return <BlockFallback reason="fatal_block_error" blockName={install.manifest.name} />;
-  }
-  if (status === 'no_token') {
-    return <BlockFallback reason="token_error" blockName={install.manifest.name} />;
-  }
-
-  return (
+  // FRAME-1: host trust frame wraps EVERY state — loading, ready, AND the
+  // error/timeout/fatal/no-token fallbacks. Rendered here (around the iframe,
+  // not inside it) so a block can't shed the "App block" chrome by never
+  // sending BLOCK_READY (→ timeout) or by sending BLOCK_ERROR{fatal}. The
+  // provenance label + "Manage apps" escape hatch stay present exactly when
+  // something is going wrong.
+  const framed = (children: ReactNode) => (
     <Box
       data-testid="app-block-frame"
       data-block-instance-id={install.blockInstanceId}
@@ -893,10 +884,29 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
         overflow: 'hidden',
       }}
     >
-      {/* Host-controlled chrome — outside the iframe, so the block can't
-          spoof or remove it. Always rendered (loading + ready) so the
-          "this is an app block" signal is present the whole time. */}
       <AppBlockChrome />
+      {children}
+    </Box>
+  );
+
+  // H-7: malformed manifest with empty iframe.src or invalid origin mounts
+  // an about:blank that sits on the skeleton for 10s before timing out.
+  // Short-circuit straight to the fatal fallback instead.
+  if (!iframeSrc || !expectedOrigin) {
+    return framed(<BlockFallback reason="fatal_block_error" blockName={install.manifest.name} />);
+  }
+  if (status === 'timeout') {
+    return framed(<BlockFallback reason="timeout" blockName={install.manifest.name} />);
+  }
+  if (status === 'fatal') {
+    return framed(<BlockFallback reason="fatal_block_error" blockName={install.manifest.name} />);
+  }
+  if (status === 'no_token') {
+    return framed(<BlockFallback reason="token_error" blockName={install.manifest.name} />);
+  }
+
+  return framed(
+    <>
       {status === 'loading' && (
         <BlockFallback
           reason="loading"
@@ -933,6 +943,6 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
           sendInit();
         }}
       />
-    </Box>
+    </>
   );
 }
