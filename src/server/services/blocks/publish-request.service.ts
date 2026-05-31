@@ -900,8 +900,6 @@ export async function approveRequest(
     typeof manifest.contentRating === 'string' ? manifest.contentRating : 'g';
   const manifestRenderMode =
     typeof manifest.renderMode === 'string' ? manifest.renderMode : 'iframe';
-  const manifestTrustTier =
-    typeof manifest.trustTier === 'string' ? manifest.trustTier : 'internal';
 
   // Determine first-vs-subsequent via the existing app_blocks row.
   // We don't rely on request.appBlockId being null because two requests
@@ -918,10 +916,25 @@ export async function approveRequest(
       id: true,
       appId: true,
       repoUrl: true,
+      trustTier: true,
       app: { select: { allowedScopes: true, allowedOrigins: true } },
     },
   });
   const isFirstVersion = !existingAppBlock;
+
+  // SECURITY: trust tier is moderator-controlled, NOT publisher-declared.
+  // A manifest must never be able to self-escalate to `internal`/`verified`
+  // (those tiers grant `allow-same-origin`, defeating the iframe sandbox).
+  // New apps are always `unverified`; an existing app keeps whatever tier
+  // is already on its row — raising it is a deliberate out-of-band
+  // moderator/DB action, never a manifest field. (Was: defaulted a missing
+  // manifest.trustTier to `internal`, the MOST privileged tier.)
+  // Normalise the manifest's trustTier to the resolved value so the
+  // validator below — which reads `manifest.trustTier` to gate the sandbox
+  // allowlist — validates against the tier we'll actually persist, instead
+  // of a self-declared one.
+  const resolvedTrustTier = existingAppBlock?.trustTier ?? 'unverified';
+  manifest.trustTier = resolvedTrustTier;
 
   // H-4 fix — run the same BlockManifestValidator the git-push webhook
   // runs, BEFORE any DB writes or the Forgejo commit. Without this:
@@ -1051,7 +1064,7 @@ export async function approveRequest(
           status: 'approved',
           contentRating: manifestContentRating,
           renderMode: manifestRenderMode,
-          trustTier: manifestTrustTier,
+          trustTier: resolvedTrustTier,
           approvedScopes: manifestScopes,
           repoUrl,
         },
@@ -1076,7 +1089,7 @@ export async function approveRequest(
           status: 'approved',
           contentRating: manifestContentRating,
           renderMode: manifestRenderMode,
-          trustTier: manifestTrustTier,
+          trustTier: resolvedTrustTier,
           approvedScopes: manifestScopes,
           repoUrl,
         },
@@ -1096,7 +1109,7 @@ export async function approveRequest(
         approvedScopes: manifestScopes,
         contentRating: manifestContentRating,
         renderMode: manifestRenderMode,
-        trustTier: manifestTrustTier,
+        trustTier: resolvedTrustTier,
       },
     });
   }
