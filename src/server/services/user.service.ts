@@ -565,6 +565,15 @@ export const updateUserById = async ({
     await deleteBasicDataForUser(id);
   }
 
+  if (
+    data.showNsfw !== undefined ||
+    data.blurNsfw !== undefined ||
+    data.browsingLevel !== undefined ||
+    data.autoplayGifs !== undefined
+  ) {
+    await userSettingsCache.bust([id]);
+  }
+
   if (data.email && user.paddleCustomerId) {
     // Update the email in Paddle
     await updatePaddleCustomerEmail({
@@ -2135,6 +2144,7 @@ export async function updateContentSettings({
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
     userUpdateCounter?.inc({ location: 'user.service:updateUserContentSettings' });
+    await userSettingsCache.bust([userId]);
   }
   if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);
