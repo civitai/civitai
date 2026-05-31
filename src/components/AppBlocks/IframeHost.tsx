@@ -522,6 +522,11 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
               blockInstanceId: install.blockInstanceId,
               scope,
               modelId: typeof modelCtx.modelId === 'number' ? modelCtx.modelId : undefined,
+              // FIN-1: carry the slot so the server can re-validate the
+              // instance via resolveBlockInstance (needs modelId + slotId).
+              // Client-supplied + untrusted — a wrong slot just fails to
+              // resolve server-side and the attribution is stripped.
+              slotId: typeof modelCtx.slotId === 'string' ? modelCtx.slotId : undefined,
             }
           : undefined;
         dialogStore.trigger<BuyBuzzModalProps>({

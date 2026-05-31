@@ -28,6 +28,17 @@ export const blockAttributionSchema = z.object({
   blockInstanceId: z.string().min(1).max(64),
   scope: blockAttributionScopeSchema,
   modelId: z.number().int().positive().optional(),
+  /**
+   * Slot the install surfaced in (e.g. `model.sidebar_top`). Carried so
+   * the server can re-validate the instance via
+   * `BlockRegistry.resolveBlockInstance`, which requires a (modelId,
+   * slotId) pair. Client-supplied and therefore UNTRUSTED — a forged slot
+   * simply fails to resolve and the whole attribution is stripped, so it
+   * cannot be used to mint earnings. Optional for backwards-compat with
+   * any in-flight client that predates the FIN-1 hardening; absent → the
+   * server can't re-validate → attribution stripped (fail-safe).
+   */
+  slotId: z.string().min(1).max(128).optional(),
 });
 export type BlockAttribution = z.infer<typeof blockAttributionSchema>;
 
@@ -44,6 +55,7 @@ export const ATTRIBUTION_METADATA_KEYS = {
   blockInstanceId: 'blockInstanceId',
   scope: 'blockScope',
   modelId: 'blockModelId',
+  slotId: 'blockSlotId',
 } as const;
 
 /**
@@ -86,6 +98,9 @@ export function encodeAttributionMetadata(
   if (attribution.modelId != null) {
     out[ATTRIBUTION_METADATA_KEYS.modelId] = String(attribution.modelId);
   }
+  if (attribution.slotId != null && attribution.slotId !== '') {
+    out[ATTRIBUTION_METADATA_KEYS.slotId] = attribution.slotId;
+  }
   return out;
 }
 
@@ -112,6 +127,11 @@ export function extractAttribution(
       metadata[ATTRIBUTION_METADATA_KEYS.modelId] != null &&
       metadata[ATTRIBUTION_METADATA_KEYS.modelId] !== ''
         ? Number(metadata[ATTRIBUTION_METADATA_KEYS.modelId])
+        : undefined,
+    slotId:
+      metadata[ATTRIBUTION_METADATA_KEYS.slotId] != null &&
+      metadata[ATTRIBUTION_METADATA_KEYS.slotId] !== ''
+        ? String(metadata[ATTRIBUTION_METADATA_KEYS.slotId])
         : undefined,
   };
   const parsed = blockAttributionSchema.safeParse(raw);

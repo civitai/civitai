@@ -168,6 +168,10 @@ const BuzzPurchasePaymentButton = ({
             blockInstanceId: attribution.blockInstanceId,
             blockScope: attribution.scope,
             ...(attribution.modelId != null ? { blockModelId: attribution.modelId } : {}),
+            // FIN-1: slot id lets the server re-validate the install. The
+            // server re-derives every block field from the resolved row;
+            // these are sent for resolution only, never trusted as-is.
+            ...(attribution.slotId != null ? { blockSlotId: attribution.slotId } : {}),
           }
         : {}),
     };

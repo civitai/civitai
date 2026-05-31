@@ -48,6 +48,9 @@ const buzzPurchaseMetadataSchema = z
     blockInstanceId: z.string().optional(),
     blockScope: z.string().optional(),
     blockModelId: z.coerce.number().int().positive().optional(),
+    // Slot id carried for FIN-1 server-side re-validation. Untrusted; the
+    // server re-derives every block field from the resolved install row.
+    blockSlotId: z.string().optional(),
   })
   .passthrough();
 
