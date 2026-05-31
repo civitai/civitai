@@ -1,5 +1,6 @@
 import type { JWT } from 'next-auth/jwt';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { hSetWithTTL } from '~/server/redis/atomic';
 import type { User } from '~/shared/utils/prisma/models';
 import { createLogger } from '~/utils/logging';
 import { clearSessionCache } from './session-cache';
@@ -11,9 +12,15 @@ export async function trackToken(tokenId: string, userId: number) {
   try {
     const key = `${REDIS_KEYS.SESSION.USER_TOKENS}:${userId}`;
 
-    // Use sysRedis which supports hExpire for individual field TTL
-    await sysRedis.hSet(key as any, tokenId, Date.now());
-    await sysRedis.hExpire(key as any, tokenId, DEFAULT_EXPIRATION);
+    // Atomic single-EVAL set+TTL — closes the race window where a process
+    // kill or sysRedis flap between the two awaits leaves a no-TTL field.
+    await hSetWithTTL(
+      sysRedis,
+      key,
+      tokenId,
+      Date.now(),
+      DEFAULT_EXPIRATION * 1000
+    );
 
     log(`Tracked token ${tokenId} for user ${userId}`);
   } catch (error) {
@@ -30,8 +37,17 @@ export async function invalidateToken(token: JWT) {
   //   .hExpire(REDIS_SYS_KEYS.SESSION.INVALID_TOKENS, token.id, DEFAULT_EXPIRATION)
   //   .exec();
 
-  await sysRedis.hSet(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, token.id, 'invalid');
-  await sysRedis.hExpire(REDIS_SYS_KEYS.SESSION.TOKEN_STATE, token.id, DEFAULT_EXPIRATION);
+  // Atomic single-EVAL set+TTL — closes the race window where a process kill
+  // or sysRedis flap between the two awaits leaves a no-TTL field. Important
+  // here because TOKEN_STATE='invalid' must reliably expire — if it sticks
+  // forever a re-issued tokenId could be permanently rejected.
+  await hSetWithTTL(
+    sysRedis,
+    REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
+    token.id,
+    'invalid',
+    DEFAULT_EXPIRATION * 1000
+  );
 
   // Remove from user's token hash
   if (!token.user) return;
