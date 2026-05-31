@@ -1,5 +1,8 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
+import { IconApps, IconDots } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
@@ -107,6 +110,57 @@ function storageErrorMessage(err: unknown): string {
  * Origin security: BLOCK_INIT is posted to `new URL(manifest.iframe.src).origin`
  * (explicit target, never "*"). Incoming messages from other origins are dropped.
  */
+/**
+ * Host-rendered trust frame around an app block. This lives in civitai-web
+ * (the parent document), NOT inside the block iframe — so a third-party
+ * block can't fake, restyle, or hide it. It's the user-facing safety
+ * signal that says "this is a sandboxed app block, not native Civitai UI":
+ * a thin top bar with the Civitai app-block badge plus a menu whose
+ * "Manage apps" item routes to /apps/installed. Rendering it here (vs in
+ * the sandboxed iframe) is the whole point — the trust boundary belongs to
+ * the host. (Roadmap W7.)
+ */
+function AppBlockChrome() {
+  return (
+    <Group
+      justify="space-between"
+      gap="xs"
+      px="xs"
+      py={4}
+      wrap="nowrap"
+      data-testid="app-block-chrome"
+      style={{
+        borderBottom: '1px solid var(--mantine-color-default-border)',
+        background: 'var(--mantine-color-default-hover)',
+      }}
+    >
+      <Group gap={6} wrap="nowrap">
+        <IconApps size={14} stroke={1.5} />
+        <Text size="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.04em' }}>
+          App block
+        </Text>
+      </Group>
+      <Menu position="bottom-end" shadow="md" width={180}>
+        <Menu.Target>
+          <ActionIcon variant="subtle" color="gray" size="sm" aria-label="App block menu">
+            <IconDots size={16} stroke={1.5} />
+          </ActionIcon>
+        </Menu.Target>
+        <Menu.Dropdown>
+          <Menu.Label>App block</Menu.Label>
+          <Menu.Item
+            component={Link}
+            href="/apps/installed"
+            leftSection={<IconApps size={14} stroke={1.5} />}
+          >
+            Manage apps
+          </Menu.Item>
+        </Menu.Dropdown>
+      </Menu>
+    </Group>
+  );
+}
+
 export function IframeHost({ install, context, token, expiresAt }: IframeHostProps) {
   // Treat the slot context as ModelSlotContext when the optional viewer/theme
   // fields are present; otherwise default conservatively. ModelSlotContext is
@@ -830,7 +884,19 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   }
 
   return (
-    <>
+    <Box
+      data-testid="app-block-frame"
+      data-block-instance-id={install.blockInstanceId}
+      style={{
+        border: '1px solid var(--mantine-color-default-border)',
+        borderRadius: 'var(--mantine-radius-md)',
+        overflow: 'hidden',
+      }}
+    >
+      {/* Host-controlled chrome — outside the iframe, so the block can't
+          spoof or remove it. Always rendered (loading + ready) so the
+          "this is an app block" signal is present the whole time. */}
+      <AppBlockChrome />
       {status === 'loading' && (
         <BlockFallback
           reason="loading"
@@ -867,6 +933,6 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
           sendInit();
         }}
       />
-    </>
+    </Box>
   );
 }
