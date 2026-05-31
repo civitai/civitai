@@ -529,6 +529,8 @@ export interface User {
   articleReactions?: ArticleReaction[];
   articles?: Article[];
   articleEngagements?: ArticleEngagement[];
+  articleRatingReviewsSubmitted?: ArticleRatingReview[];
+  articleRatingReviewsResolved?: ArticleRatingReview[];
   leaderboardResults?: LeaderboardResult[];
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
@@ -1461,6 +1463,24 @@ export interface ImageRatingRequest {
   weight: number;
 }
 
+export interface ArticleRatingReview {
+  id: number;
+  articleId: number;
+  article?: Article;
+  userId: number;
+  user?: User;
+  createdAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  resolver?: User | null;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: ReportStatus;
+}
+
 export interface CollectionMetric {
   collection?: Collection;
   collectionId: number;
@@ -2147,6 +2167,7 @@ export interface Article {
   associations?: ModelAssociations[];
   collectionItems?: CollectionItem[];
   rewardsBonusEvents?: RewardsBonusEvent[];
+  ratingReviews?: ArticleRatingReview[];
 }
 
 export interface PressMention {

@@ -54,6 +54,7 @@ const featureFlags = createFeatureFlags({
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
   articles: ['public'],
   articleCreate: ['public'],
+  articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
