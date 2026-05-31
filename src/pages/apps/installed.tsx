@@ -31,8 +31,8 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
-import { groupSubscriptionsByApp } from '~/pages/apps/groupSubscriptionsByApp';
-import type { GroupedApp } from '~/pages/apps/groupSubscriptionsByApp';
+import { groupSubscriptionsByApp } from '~/components/Apps/groupSubscriptionsByApp';
+import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   AvailableBlock,
