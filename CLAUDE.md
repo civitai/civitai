@@ -79,6 +79,24 @@ pnpm run release:major    # Major release (x.0.0)
 ```
 **IMPORTANT**: Never run release commands without explicit user approval. These commands bump the version, push tags, and rebase the release branch.
 
+## Server-Side Architecture Map
+
+`src/server/` holds the most-edited (and largest) code in the repo. Read the *specific* file before changing it — several are huge, so grep within them rather than reading end-to-end (`services/image.service.ts` is ~7.9K lines).
+
+- **tRPC API** — `trpc.ts` (root router + procedure helpers), `createContext.ts`, `middleware.trpc.ts`, `routers/` (~93 per-domain routers), `controllers/`, `schema/` (zod input contracts), `selectors/` (Prisma `select` fragments).
+- **Images** — `services/image.service.ts` (**~7.9K lines**; the hot feed path — `getInfiniteImages`, `getAllImages`, NSFW/own-content merge). API surface `src/pages/api/v1/images/index.ts`; index sync `search-index/images.search-index.ts`.
+- **Models** — `services/model.service.ts`, `search-index/models.search-index.ts`.
+- **Search (Meilisearch)** — `meilisearch/client.ts` (tags requests with `X-Search-Actor`), `meilisearch/cleanup.ts`, `search-index/base.search-index.ts` (shared sync engine).
+- **Redis / caching** — `redis/client.ts` (clients incl. sysRedis), `redis/caches.ts` (`createCachedObject` defs + TTLs, e.g. `imageMetaCache`, `tagIdsForImagesCache`), `utils/cache-helpers.ts`.
+- **Orchestrator (generation)** — `orchestrator/get-orchestrator-token.ts` (`getOrchestratorToken`), `services/orchestrator/orchestrator.service.ts`.
+- **Auth** — `auth/next-auth-options.ts`, `auth/session-user.ts`, `auth/token-refresh.ts`.
+- **Jobs (cron)** — `jobs/job.ts` (runner) + individual jobs `jobs/*.ts` (e.g. `entity-moderation.ts`, `search-index-sync.ts`).
+- **Metrics / analytics** — `metrics/*.metrics.ts` (ClickHouse-backed entity metrics), `clickhouse/`.
+- **DB** — `db/db-helpers.ts` (raw pg-pool config: `connectionTimeoutMillis`, labeled pool gauges), Prisma client; schema `prisma/schema.prisma`. **Migrations are applied manually — see the Database rule above.**
+- **Telemetry** — `src/instrumentation.node.ts` (OTEL: Prisma/Redis/HTTP auto-instrumentation + custom `withSpan()` from `utils/otel-helpers.ts`), `schema/track.schema.ts` (ClickHouse action/event tags), `prom/client.ts`.
+- **Health** — `src/pages/api/health.ts` runs sub-checks under `Promise.all`; a single slow check (e.g. `searchMetrics`) can exceed the kubelet probe budget. `HEALTHCHECK_TIMEOUT` env gates it.
+- **Other server domains** — `games/` (new-order/ratings), `webhooks/`, `paddle/` + `coinbase/` (payments), `notifications/`, `signals/`, `rewards/`; S3 helpers at `src/utils/s3-utils.ts`.
+
 ## Component Standards
 
 ### File Structure
