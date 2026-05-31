@@ -11,7 +11,6 @@ import {
   Loader,
   Select,
   Stack,
-  Switch,
   Table,
   Tabs,
   Text,
@@ -32,6 +31,8 @@ import { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { openAppSettingsModal } from '~/components/Apps/AppSettingsModal';
 import { Meta } from '~/components/Meta/Meta';
+import { groupSubscriptionsByApp } from '~/pages/apps/groupSubscriptionsByApp';
+import type { GroupedApp } from '~/pages/apps/groupSubscriptionsByApp';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
   AvailableBlock,
@@ -60,54 +61,27 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-interface SubscriptionRowProps {
-  sub: SubscriptionRecord;
-  onManage: (sub: SubscriptionRecord) => void;
-}
-
 const PIN_LATEST_VALUE = '__latest__';
 
+interface PinnedInstallRowProps {
+  sub: SubscriptionRecord;
+}
+
 /**
- * Renders a single subscription row. After the 2026-05-30 kill_per_model
- * _installs migration, this same component covers both shapes:
- *   - blanket subscription (slot_id IS NULL, target_model_ids = []) —
- *     "applies to all my models" / "applies to every page I view"
- *   - pinned subscription (slot_id non-NULL, target_model_ids contains
- *     a specific model id) — "applies to THIS one model"
+ * One compact line for a single pinned (per-model-install) subscription —
+ * slot_id non-NULL + target_model_ids non-empty. Carries the same controls
+ * the old SubscriptionRow gave pinned rows: the model link badge(s), the
+ * version Select (Latest + availableVersions), and the Uninstall action.
  *
- * The pinned shape gains the version Select + uninstall button that
- * used to live on the dead Per-model installs tab. Pinned subs are
- * removed via `blocks.uninstallFromModel` (using the row's preserved
- * blockInstanceId) so the rank-1 NOT EXISTS in listForModel's SQL stops
- * suppressing platform defaults for the same slot.
+ * Pinned subs are removed via `blocks.uninstallFromModel` (using the row's
+ * preserved blockInstanceId) so the rank-1 NOT EXISTS in listForModel's SQL
+ * stops suppressing platform defaults for the same slot. The original cache
+ * invalidations (listMySubscriptions, listMyScopeGrants, listForModel) are
+ * preserved verbatim.
  */
-function SubscriptionRow({ sub, onManage }: SubscriptionRowProps) {
+function PinnedInstallRow({ sub }: PinnedInstallRowProps) {
   const utils = trpc.useUtils();
   const manifest = sub.manifest;
-  const isPinned =
-    sub.slotId != null && Array.isArray(sub.targetModelIds) && sub.targetModelIds.length > 0;
-  const upsertMutation = trpc.blocks.upsertSubscription.useMutation({
-    onSuccess: async () => {
-      await utils.blocks.listMySubscriptions.invalidate();
-    },
-    onError: (e) =>
-      showErrorNotification({ title: 'Could not toggle', error: new Error(e.message) }),
-  });
-  const toggleMutation = trpc.blocks.toggleEnabled.useMutation({
-    onSuccess: async () => {
-      await utils.blocks.listMySubscriptions.invalidate();
-    },
-    onError: (e) =>
-      showErrorNotification({ title: 'Could not toggle', error: new Error(e.message) }),
-  });
-  const deleteMutation = trpc.blocks.deleteSubscription.useMutation({
-    onSuccess: async () => {
-      await utils.blocks.listMySubscriptions.invalidate();
-      showSuccessNotification({ title: 'Removed', message: 'Subscription removed.' });
-    },
-    onError: (e) =>
-      showErrorNotification({ title: 'Could not remove', error: new Error(e.message) }),
-  });
   const uninstallMutation = trpc.blocks.uninstallFromModel.useMutation({
     onSuccess: async () => {
       await Promise.all([
@@ -131,52 +105,18 @@ function SubscriptionRow({ sub, onManage }: SubscriptionRowProps) {
       showErrorNotification({ title: 'Could not change version', error: new Error(e.message) }),
   });
 
-  const filtersChips: string[] = [
-    ...((sub.targetModelTypes ?? []) as string[]),
-    ...((sub.targetBaseModels ?? []) as string[]),
+  const versionOptions: { value: string; label: string }[] = [
+    {
+      value: PIN_LATEST_VALUE,
+      label: sub.currentVersion ? `Latest (${sub.currentVersion})` : 'Latest',
+    },
+    ...sub.availableVersions.map((v) => ({ value: v.version, label: v.version })),
   ];
 
-  // Build the version Select options. Only meaningful for pinned subs
-  // (where the host loads a specific publish_request manifest); blanket
-  // subs always track latest because they don't pin to a slot.
-  const versionOptions: { value: string; label: string }[] = isPinned
-    ? [
-        {
-          value: PIN_LATEST_VALUE,
-          label: sub.currentVersion ? `Latest (${sub.currentVersion})` : 'Latest',
-        },
-        ...sub.availableVersions.map((v) => ({ value: v.version, label: v.version })),
-      ]
-    : [];
-
-  // Pinned-row toggle uses toggleEnabled (which writes to the pinned row
-  // directly, preserving the suppression of platform defaults). Blanket
-  // -row toggle uses upsertSubscription (which round-trips through the
-  // blanket-shape uniqueness path).
-  const onToggle = (next: boolean) => {
-    if (isPinned) {
-      toggleMutation.mutate({
-        blockInstanceId: sub.blockInstanceId!,
-        enabled: next,
-      });
-    } else {
-      upsertMutation.mutate({
-        appBlockId: sub.appBlockId,
-        scope: sub.scope,
-        targetModelTypes: sub.targetModelTypes,
-        targetBaseModels: sub.targetBaseModels,
-        settings: sub.settings as Record<string, unknown>,
-        enabled: next,
-      });
-    }
-  };
-
-  const pinnedTo = isPinned
-    ? sub.targetModelIds!.map((id) => ({
-        id,
-        name: sub.pinnedModelNames?.[id] ?? `Model ${id}`,
-      }))
-    : [];
+  const pinnedTo = (sub.targetModelIds ?? []).map((id) => ({
+    id,
+    name: sub.pinnedModelNames?.[id] ?? `Model ${id}`,
+  }));
 
   const onConfirmUninstall = () => {
     const targetName = pinnedTo[0]?.name ?? 'this model';
@@ -202,118 +142,162 @@ function SubscriptionRow({ sub, onManage }: SubscriptionRowProps) {
   };
 
   return (
-    <Card withBorder padding="sm" radius="md">
-      <Group justify="space-between" wrap="nowrap" gap="md" align="flex-start">
-        <Stack gap={2} style={{ minWidth: 0, flex: 1 }}>
-          <Group gap="xs" wrap="nowrap">
-            <Text fw={500} className="truncate">
-              {manifest.name ?? sub.blockId}
-            </Text>
-            <Badge size="xs" variant="light">
-              {isPinned
-                ? 'Pinned to one model'
-                : sub.scope === 'publisher_all_my_models'
-                ? 'On my models'
-                : 'On pages I view'}
-            </Badge>
-            {!sub.enabled && (
-              <Badge size="xs" variant="light" color="gray">
-                Disabled
-              </Badge>
-            )}
-          </Group>
-          {isPinned ? (
-            <Group gap={4} wrap="wrap">
-              <Text size="xs" c="dimmed">
-                Pinned to:
-              </Text>
-              {pinnedTo.map(({ id, name }) => (
-                <Badge
-                  key={id}
-                  size="xs"
-                  variant="outline"
-                  component={Link}
-                  href={`/models/${id}`}
-                  style={{ cursor: 'pointer' }}
-                >
-                  {name}
-                </Badge>
-              ))}
-              {sub.slotId ? (
-                <Text size="xs" c="dimmed">
-                  · slot <code>{sub.slotId}</code>
-                </Text>
-              ) : null}
-            </Group>
-          ) : filtersChips.length > 0 ? (
-            <Group gap={4}>
-              {filtersChips.map((c) => (
-                <Badge key={c} size="xs" variant="outline">
-                  {c}
-                </Badge>
-              ))}
-            </Group>
-          ) : (
-            <Text size="xs" c="dimmed">
-              Applies to all models
-            </Text>
-          )}
-        </Stack>
-        <Group gap="xs" wrap="nowrap" align="flex-start">
-          {isPinned && (
-            <Tooltip
-              label="Which manifest the host uses for this install. Latest tracks the most recent approved release; pinning a version freezes scopes + settings to that version's manifest."
-              multiline
-              w={280}
-              withArrow
-            >
-              <Select
-                size="xs"
-                w={170}
-                data={versionOptions}
-                value={sub.pinnedVersion ?? PIN_LATEST_VALUE}
-                disabled={pinVersionMutation.isPending}
-                onChange={(value) => {
-                  if (value == null) return;
-                  const next = value === PIN_LATEST_VALUE ? null : value;
-                  if (next === sub.pinnedVersion) return;
-                  pinVersionMutation.mutate({
-                    subscriptionId: sub.id,
-                    version: next,
-                  });
-                }}
-                comboboxProps={{ withinPortal: true }}
-                aria-label={`Version for ${manifest.name ?? sub.blockId}`}
-              />
-            </Tooltip>
-          )}
-          <Switch
-            checked={sub.enabled}
-            disabled={
-              upsertMutation.isLoading || toggleMutation.isLoading
-            }
-            onChange={(e) => onToggle(e.currentTarget.checked)}
-            label={sub.enabled ? 'Enabled' : 'Disabled'}
-          />
-          {!isPinned && (
-            <ActionIcon variant="default" onClick={() => onManage(sub)} title="Settings">
-              <IconSettings size={16} />
-            </ActionIcon>
-          )}
-          <ActionIcon
-            variant="default"
-            color="red"
-            disabled={deleteMutation.isLoading || uninstallMutation.isPending}
-            onClick={() => {
-              if (isPinned) onConfirmUninstall();
-              else deleteMutation.mutate({ subscriptionId: sub.id });
-            }}
-            title={isPinned ? 'Uninstall' : 'Remove'}
+    <Group justify="space-between" wrap="nowrap" gap="sm" align="center">
+      <Group gap={4} wrap="wrap" style={{ minWidth: 0, flex: 1 }}>
+        {pinnedTo.map(({ id, name }) => (
+          <Badge
+            key={id}
+            size="xs"
+            variant="outline"
+            component={Link}
+            href={`/models/${id}`}
+            style={{ cursor: 'pointer' }}
           >
-            <IconTrash size={16} />
-          </ActionIcon>
-        </Group>
+            {name}
+          </Badge>
+        ))}
+        {!sub.enabled && (
+          <Badge size="xs" variant="light" color="gray">
+            Disabled
+          </Badge>
+        )}
       </Group>
+      <Group gap="xs" wrap="nowrap" align="center">
+        <Tooltip
+          label="Which manifest the host uses for this install. Latest tracks the most recent approved release; pinning a version freezes scopes + settings to that version's manifest."
+          multiline
+          w={280}
+          withArrow
+        >
+          <Select
+            size="xs"
+            w={170}
+            data={versionOptions}
+            value={sub.pinnedVersion ?? PIN_LATEST_VALUE}
+            disabled={pinVersionMutation.isPending}
+            onChange={(value) => {
+              if (value == null) return;
+              const next = value === PIN_LATEST_VALUE ? null : value;
+              if (next === sub.pinnedVersion) return;
+              pinVersionMutation.mutate({
+                subscriptionId: sub.id,
+                version: next,
+              });
+            }}
+            comboboxProps={{ withinPortal: true }}
+            aria-label={`Version for ${manifest.name ?? sub.blockId} on ${
+              pinnedTo[0]?.name ?? 'model'
+            }`}
+          />
+        </Tooltip>
+        <ActionIcon
+          variant="default"
+          color="red"
+          disabled={uninstallMutation.isPending}
+          onClick={onConfirmUninstall}
+          title="Uninstall"
+        >
+          <IconTrash size={16} />
+        </ActionIcon>
+      </Group>
+    </Group>
+  );
+}
+
+interface InstalledAppCardProps {
+  app: GroupedApp;
+  onManage: (sub: SubscriptionRecord) => void;
+}
+
+/**
+ * One row per installed app. Collapses the two blanket "surfaces"
+ * (publisher / viewer) into a single card with a "Shows on" summary; pinned
+ * per-model installs are listed in a subsection below. Toggling which
+ * surfaces are active happens through the existing AppSettingsModal (the
+ * Manage button), which already supports both scopes.
+ */
+function InstalledAppCard({ app, onManage }: InstalledAppCardProps) {
+  const { blanketPublisher, blanketViewer, pinned } = app;
+  const name = app.manifest.name ?? app.blockId;
+  // Any blanket sub on the app is enough to seed the Manage modal — it
+  // re-scans all subs for the appBlockId internally.
+  const manageSeed = blanketPublisher ?? blanketViewer ?? pinned[0];
+  const hasBlanket = !!(blanketPublisher || blanketViewer);
+
+  return (
+    <Card withBorder padding="sm" radius="md">
+      <Stack gap="sm">
+        <Group justify="space-between" wrap="nowrap" gap="md" align="flex-start">
+          <Text fw={600} className="truncate" style={{ minWidth: 0, flex: 1 }}>
+            {name}
+          </Text>
+          {manageSeed && (
+            <Button
+              variant="default"
+              size="xs"
+              leftSection={<IconSettings size={14} />}
+              onClick={() => onManage(manageSeed)}
+            >
+              Manage
+            </Button>
+          )}
+        </Group>
+
+        <Group gap="xs" wrap="wrap" align="center">
+          <Text size="xs" c="dimmed">
+            Shows on:
+          </Text>
+          {hasBlanket ? (
+            <>
+              {blanketPublisher && (
+                <Tooltip label="Visible to anyone who views your models." withArrow>
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color={blanketPublisher.enabled ? undefined : 'gray'}
+                  >
+                    On my models
+                    {!blanketPublisher.enabled ? ' · Disabled' : ''}
+                  </Badge>
+                </Tooltip>
+              )}
+              {blanketViewer && (
+                <Tooltip
+                  label="Visible only to you, on every model page you open."
+                  withArrow
+                >
+                  <Badge
+                    size="sm"
+                    variant="light"
+                    color={blanketViewer.enabled ? undefined : 'gray'}
+                  >
+                    On every page I view
+                    {!blanketViewer.enabled ? ' · Disabled' : ''}
+                  </Badge>
+                </Tooltip>
+              )}
+            </>
+          ) : (
+            <Text size="xs" c="dimmed" fs="italic">
+              Not on a blanket surface — pinned to specific models below.
+            </Text>
+          )}
+        </Group>
+
+        {pinned.length > 0 && (
+          <>
+            <Divider />
+            <Stack gap="xs">
+              <Text size="xs" c="dimmed" fw={500}>
+                Pinned to specific models
+              </Text>
+              {pinned.map((sub) => (
+                <PinnedInstallRow key={sub.id} sub={sub} />
+              ))}
+            </Stack>
+          </>
+        )}
+      </Stack>
     </Card>
   );
 }
@@ -705,15 +689,10 @@ export default function InstalledAppsPage() {
     enabled: !!features.appBlocks,
   });
 
-  const { publisher, viewer } = useMemo(() => {
-    const pub: SubscriptionRecord[] = [];
-    const view: SubscriptionRecord[] = [];
-    for (const s of subs ?? []) {
-      if (s.scope === 'publisher_all_my_models') pub.push(s);
-      else view.push(s);
-    }
-    return { publisher: pub, viewer: view };
-  }, [subs]);
+  const groupedApps = useMemo(
+    () => groupSubscriptionsByApp(subs ?? []),
+    [subs]
+  );
 
   function handleManage(sub: SubscriptionRecord) {
     // Build an AvailableBlock-shaped object from the subscription's
@@ -777,35 +756,17 @@ export default function InstalledAppsPage() {
                 <Center py="xl">
                   <Loader />
                 </Center>
+              ) : groupedApps.length === 0 ? (
+                <EmptyState label="Nothing installed yet — browse the marketplace." />
               ) : (
-                <Stack gap="lg">
-                  <Stack gap="xs">
-                    <Title order={4}>On models I own</Title>
-                    <Text size="xs" c="dimmed">
-                      Includes blanket subscriptions covering every model you own AND apps
-                      pinned to a single specific model.
-                    </Text>
-                    <Divider />
-                    {publisher.length === 0 ? (
-                      <EmptyState label="Nothing installed on your models yet." />
-                    ) : (
-                      publisher.map((sub) => (
-                        <SubscriptionRow key={sub.id} sub={sub} onManage={handleManage} />
-                      ))
-                    )}
-                  </Stack>
-
-                  <Stack gap="xs">
-                    <Title order={4}>On model pages I view</Title>
-                    <Divider />
-                    {viewer.length === 0 ? (
-                      <EmptyState label="Nothing installed on pages you visit yet." />
-                    ) : (
-                      viewer.map((sub) => (
-                        <SubscriptionRow key={sub.id} sub={sub} onManage={handleManage} />
-                      ))
-                    )}
-                  </Stack>
+                <Stack gap="md">
+                  {groupedApps.map((app) => (
+                    <InstalledAppCard
+                      key={app.appBlockId}
+                      app={app}
+                      onManage={handleManage}
+                    />
+                  ))}
                 </Stack>
               )}
             </Tabs.Panel>
