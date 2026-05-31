@@ -116,6 +116,15 @@ export const serverSchema = z.object({
   // Traefik's 30s router timeout fires. Default tuned for the image feed
   // hot path (typical P99 ~700ms under healthy load).
   MEILI_CALL_TIMEOUT_MS: z.coerce.number().optional().default(2500),
+  // Server-side deadline for fetchDocumentsAbortable in ms. Distinct from
+  // MEILI_CALL_TIMEOUT_MS — that one wraps SDK calls via withMeili();
+  // this one is the local AbortController timer on the raw fetch path
+  // (image:meili:http span). Generous default (5_000) so healthy
+  // /documents/fetch calls complete cleanly; tunable down at runtime if
+  // the backend tightens up, or up if a brownout needs more headroom
+  // without a code redeploy. Defensive cap: prevents pods from holding
+  // event-loop slots for the Node default (~30s) when -new goes slow.
+  MEILI_FETCH_TIMEOUT_MS: z.coerce.number().optional().default(5000),
   // Per-pod cap on in-flight Meilisearch calls wrapped via withMeili().
   // When saturated, additional calls fail fast with MeiliCallTimeoutError
   // rather than queueing forever and pressuring the event loop.

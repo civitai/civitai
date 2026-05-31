@@ -30,6 +30,10 @@ vi.mock('~/env/server', () => ({
     MEILI_CIRCUIT_TRIP_THRESHOLD: 10,
     MEILI_CIRCUIT_WINDOW_SECONDS: 30,
     MEILI_CIRCUIT_COOLDOWN_SECONDS: 30,
+    // fetchDocumentsAbortable default deadline — set explicitly so tests
+    // that rely on the default match the production default (and to keep
+    // the test independent of the schema's z.default()).
+    MEILI_FETCH_TIMEOUT_MS: 5000,
   },
 }));
 

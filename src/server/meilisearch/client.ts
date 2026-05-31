@@ -71,12 +71,15 @@ export function getMetricsSearchClient(actor: string) {
  * brownout cannot pin event-loop slots long enough to flip /api/health past
  * the kubelet TCP-probe ceiling (the 2026-05-29 / 2026-05-31 cascade chain).
  *
+ * Sourced from MEILI_FETCH_TIMEOUT_MS (default 5_000) so ops can tune the
+ * deadline at runtime via the civitai-cfg ConfigMap without a code redeploy.
+ *
  * The structural fix for backend slowness lives elsewhere (feeds-proxy index
  * sharding, BitDex migration); this constant is the *defensive* cap that
  * keeps civitai-dp-prod-api pods from holding the event loop for 30 s when
  * upstream goes sideways.
  */
-export const FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS = 5_000;
+export const FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS = env.MEILI_FETCH_TIMEOUT_MS;
 
 /**
  * Sentinel error message thrown when the local fetchDocumentsAbortable
