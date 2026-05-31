@@ -90,3 +90,7 @@ export function newBlockUserSubscriptionId(): string {
 export function newBlockBuzzAttributionId(): string {
   return `bba_${newUlid()}`;
 }
+
+export function newBlockAttributionPayoutId(): string {
+  return `bba_payout_${newUlid()}`;
+}

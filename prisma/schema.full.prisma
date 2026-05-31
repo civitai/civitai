@@ -547,6 +547,7 @@ model User {
   blockUserSubscriptions     BlockUserSubscription[]
   blockBuzzAttributionsAsPurchaser BlockBuzzAttribution[]    @relation("BlockBuzzAttributionPurchaser")
   blockBuzzAttributionsAsAppOwner  BlockBuzzAttribution[]    @relation("BlockBuzzAttributionAppOwner")
+  blockAttributionPayouts          BlockAttributionPayout[]  @relation("BlockAttributionPayoutOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
@@ -2446,6 +2447,16 @@ model BlockBuzzAttribution {
 
   status                 String   @default("pending")
   voidedReason           String?  @map("voided_reason")
+  // 'velocity' (or future triggers) — set when the confirm-pending cron
+  // parks a row in status='held' for manual review instead of confirming
+  // it. NULL on every non-held row.
+  holdReason             String?  @map("hold_reason")
+  heldAt                 DateTime? @map("held_at") @db.Timestamptz(6)
+  // 'purchase' (the normal forward attribution) or 'clawback' (a negative
+  // carry-forward row written when a refund lands AFTER the original was
+  // paid out). Clawback rows carry negative app_owner_share_cents /
+  // usd_amount_cents so the payout aggregator nets them out automatically.
+  entryType              String   @default("purchase") @map("entry_type")
   attributedAt           DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
   confirmedAt            DateTime? @map("confirmed_at") @db.Timestamptz(6)
   voidedAt               DateTime? @map("voided_at") @db.Timestamptz(6)
@@ -2457,6 +2468,37 @@ model BlockBuzzAttribution {
   @@index([appBlockId, attributedAt(sort: Desc)], map: "bba_app_block_dashboard_idx")
   @@index([paymentProvider, paymentTransactionId], map: "bba_payment_tx_idx")
   @@map("block_buzz_attribution")
+}
+
+/// Idempotency ledger for publisher revenue-share payouts. One row per
+/// (app_owner_user_id, period_key) — a publisher is paid at most once per
+/// period. mintPayoutForOwner inserts here inside the same transaction
+/// that flips the contributing block_buzz_attribution rows to paid_out;
+/// the UNIQUE on (app_owner_user_id, period_key) is the no-double-pay
+/// guard (a racing/retried mint hits P2002 and no-ops).
+///
+/// This row records that the ledger was minted — it does NOT mean money
+/// moved. Actual disbursement (Tipalti / creator-program cash bank) is a
+/// separate, leadership-gated step that reads these rows.
+///
+/// Application-generated id (`bba_payout_<ulid>`).
+model BlockAttributionPayout {
+  id             String   @id
+  appOwnerUserId Int      @map("app_owner_user_id")
+  appOwner       User     @relation("BlockAttributionPayoutOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+  /// Caller-supplied period bucket, e.g. ISO week '2026-W22'. The
+  /// (owner, period) pair is the idempotency key.
+  periodKey      String   @map("period_key")
+  /// Net publisher share minted for this period (sum of contributing
+  /// confirmed rows' app_owner_share_cents, after clawbacks net out).
+  totalCents     Int      @map("total_cents")
+  /// Number of block_buzz_attribution rows flipped to paid_out by this mint.
+  rowCount       Int      @map("row_count")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([appOwnerUserId, periodKey], map: "block_attribution_payout_owner_period_uniq")
+  @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bap_owner_created_idx")
+  @@map("block_attribution_payout")
 }
 
 /// W5 v0.5 audit log — one row per successful scope-gated API call from

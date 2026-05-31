@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { blockBuzzAttributionWriteCounter } from '~/server/prom/client';
@@ -5,7 +6,10 @@ import {
   type BlockAttribution,
   type BlockAttributionScope,
 } from '~/server/schema/blocks/attribution.schema';
-import { newBlockBuzzAttributionId } from '~/server/utils/app-block-ids';
+import {
+  newBlockAttributionPayoutId,
+  newBlockBuzzAttributionId,
+} from '~/server/utils/app-block-ids';
 import { computeRateCardSplit, ACTIVE_RATE_CARD } from './rate-card';
 
 export type AttributionPaymentProvider = 'stripe' | 'paddle' | 'nowpayments';
@@ -231,14 +235,33 @@ export class AttributionAppMissingError extends Error {
   }
 }
 
+/** Synthetic payment_transaction_id suffix for clawback rows so they don't
+ * collide with the original purchase row's (payment_transaction_id,
+ * app_block_id) UNIQUE. A second refund webhook for the same payment hits
+ * P2002 on this synthetic key → we skip the duplicate clawback. */
+const CLAWBACK_TX_SUFFIX = ':clawback';
+
 /**
  * Void an attribution row in response to a refund or chargeback. Called
  * from the refund/dispute webhook handlers. Idempotent — voiding an
  * already-voided row is a no-op.
  *
- * If the row was already paid out, we void it anyway and rely on the
- * payout reconciliation job to claw back the publisher share from
- * their next payout. The payout-id stays on the row for audit.
+ * Refund handling depends on whether the money already left:
+ *   - pending / confirmed rows (never paid): just void. No clawback —
+ *     the publisher was never paid, so there's no debt to recover.
+ *   - paid_out rows: void the original AND write a NEGATIVE carry-forward
+ *     `entry_type='clawback'` row (status='confirmed', negative
+ *     app_owner_share_cents / usd_amount_cents). The payout aggregator
+ *     nets this debt out of the publisher's next period mint. The
+ *     original payout_id stays on the voided row for audit.
+ *
+ * Idempotency of the clawback: each clawback row reuses the original's
+ * (app_block_id) with a synthetic payment_transaction_id
+ * '<orig>:clawback', so the (payment_transaction_id, app_block_id) UNIQUE
+ * makes a second refund webhook a no-op (P2002 caught + skipped).
+ *
+ * Returns the count of rows voided (unchanged contract); clawback rows
+ * are counted separately in the log.
  */
 export async function voidAttributionsForPayment({
   paymentProvider,
@@ -249,6 +272,87 @@ export async function voidAttributionsForPayment({
   paymentTransactionId: string;
   reason: 'refund' | 'chargeback' | 'manual_review';
 }): Promise<number> {
+  // Snapshot the already-paid_out rows BEFORE voiding so we can mint
+  // their clawbacks. Only paid_out rows generate debt; pending/confirmed
+  // refunds need no clawback (money never left).
+  const paidOutRows = await dbWrite.blockBuzzAttribution.findMany({
+    where: {
+      paymentProvider,
+      paymentTransactionId,
+      status: 'paid_out',
+    },
+    select: {
+      appOwnerShareCents: true,
+      appOwnerUserId: true,
+      userId: true,
+      buzzType: true,
+      appId: true,
+      appBlockId: true,
+      blockInstanceId: true,
+      scope: true,
+      modelId: true,
+      rateCardVersion: true,
+    },
+  });
+
+  // Write the clawbacks BEFORE the void — the ordering is the crash-safety
+  // mechanism. This is deliberately NOT wrapped in a transaction: the
+  // per-row P2002 dedup below can't survive a Postgres transaction abort
+  // (the first constraint hit aborts the whole txn). If we voided first and
+  // the process died before writing the clawbacks, a retry would re-snapshot
+  // status='paid_out', find nothing (the rows are already 'voided'), and the
+  // debt would be lost forever — the publisher keeps the overpayment. Writing
+  // clawbacks first means a mid-flight crash leaves the originals still
+  // paid_out, so the retry re-snapshots them and safely re-runs both steps;
+  // already-written clawbacks no-op on the synthetic-key P2002.
+  let clawbackCount = 0;
+  for (const orig of paidOutRows) {
+    // A clawback is itself a block_buzz_attribution row → bba_ id.
+    const clawbackId = newBlockBuzzAttributionId();
+    try {
+      await dbWrite.blockBuzzAttribution.create({
+        data: {
+          id: clawbackId,
+          userId: orig.userId,
+          // buzz_amount has no meaning for a clawback; 0 keeps the
+          // purchase non-negativity CHECK satisfied (it's scoped to
+          // entry_type='purchase' but 0 is also valid for clawback).
+          buzzAmount: 0,
+          buzzType: orig.buzzType,
+          usdAmountCents: -orig.appOwnerShareCents,
+          paymentProvider,
+          // Synthetic tx id so the (tx, app_block) UNIQUE both avoids
+          // colliding with the original AND dedupes repeat refunds.
+          paymentTransactionId: `${paymentTransactionId}${CLAWBACK_TX_SUFFIX}`,
+          buzzTransactionId: null,
+          appId: orig.appId,
+          appBlockId: orig.appBlockId,
+          blockInstanceId: orig.blockInstanceId,
+          scope: orig.scope,
+          modelId: orig.modelId,
+          rateCardVersion: orig.rateCardVersion,
+          appOwnerShareCents: -orig.appOwnerShareCents,
+          platformShareCents: 0,
+          providerFeeCents: 0,
+          appOwnerUserId: orig.appOwnerUserId,
+          // Confirmed so it's immediately nettable by the payout
+          // aggregator. entry_type='clawback' marks it negative debt.
+          status: 'confirmed',
+          entryType: 'clawback',
+          voidedReason: null,
+          confirmedAt: new Date(),
+        },
+      });
+      clawbackCount += 1;
+    } catch (err) {
+      // Duplicate clawback (second refund webhook for the same payment)
+      // hits the synthetic-key UNIQUE → P2002. Skip, don't double-debit.
+      const code = (err as { code?: unknown })?.code;
+      if (code === 'P2002') continue;
+      throw err;
+    }
+  }
+
   const result = await dbWrite.blockBuzzAttribution.updateMany({
     where: {
       paymentProvider,
@@ -262,22 +366,129 @@ export async function voidAttributionsForPayment({
     },
   });
 
-  if (result.count > 0) {
+  if (result.count > 0 || clawbackCount > 0) {
     logToAxiom(
       {
         name: ATTRIBUTION_LOG_NAME,
         type: 'info',
-        message: `voided ${result.count} attribution row(s) for ${paymentTransactionId}`,
+        message:
+          `voided ${result.count} attribution row(s) for ${paymentTransactionId}` +
+          (clawbackCount > 0 ? ` + ${clawbackCount} clawback row(s)` : ''),
         paymentProvider,
         paymentTransactionId,
         reason,
         count: result.count,
+        clawbackCount,
       },
       'webhooks'
     ).catch(() => null);
   }
 
   return result.count;
+}
+
+export type MintPayoutResult =
+  | { minted: true; payoutId: string; totalCents: number; rowCount: number }
+  | { minted: false; alreadyPaid: true }
+  | { minted: false; carriedForwardCents: number; rowCount: number };
+
+/**
+ * Idempotently MINT a payout ledger entry for one publisher for one
+ * period, and flip the contributing confirmed rows to paid_out — all in
+ * a single transaction.
+ *
+ * IMPORTANT: this function moves NO money. It only writes the
+ * block_attribution_payout ledger row and updates row state. Actual
+ * disbursement (creator-program cash bank / Tipalti) is a separate,
+ * leadership-gated step that reads these ledger rows. The bulk-payout
+ * cron deliberately does NOT call this yet — see
+ * bulk-payout-block-attributions.ts. Do not add withdrawCash / Tipalti
+ * calls here.
+ *
+ * Idempotency: the (app_owner_user_id, period_key) UNIQUE on
+ * block_attribution_payout means a racing or retried mint hits P2002 and
+ * no-ops without re-flipping any rows.
+ *
+ * Carry-forward debt: clawback rows (entry_type='clawback',
+ * status='confirmed') carry a NEGATIVE app_owner_share_cents, so the
+ * aggregate net naturally subtracts them. If the net is <= 0 we mint
+ * nothing and flip nothing — the (negative) debt stays as confirmed rows
+ * and carries forward into the next period's aggregate.
+ */
+export async function mintPayoutForOwner({
+  appOwnerUserId,
+  periodKey,
+}: {
+  appOwnerUserId: number;
+  periodKey: string;
+}): Promise<MintPayoutResult> {
+  return dbWrite.$transaction(async (tx: Prisma.TransactionClient) => {
+    // 1. Aggregate this owner's payable rows. status='confirmed'
+    // naturally includes negative entry_type='clawback' rows, so the net
+    // already accounts for carry-forward debt.
+    const agg = await tx.blockBuzzAttribution.aggregate({
+      where: { appOwnerUserId, status: 'confirmed' },
+      _sum: { appOwnerShareCents: true },
+      _count: true,
+    });
+    const netCents = agg._sum.appOwnerShareCents ?? 0;
+    const rowCount = agg._count ?? 0;
+
+    // 2. Non-positive net → don't mint, don't flip. Debt carries forward.
+    if (netCents <= 0) {
+      return { minted: false, carriedForwardCents: netCents, rowCount };
+    }
+
+    // 3. Mint the ledger row. The (owner, period) UNIQUE guards against
+    // a double-pay; P2002 → idempotent no-op (do NOT flip rows again).
+    const payoutId = newBlockAttributionPayoutId();
+    try {
+      await tx.blockAttributionPayout.create({
+        data: {
+          id: payoutId,
+          appOwnerUserId,
+          periodKey,
+          totalCents: netCents,
+          rowCount,
+        },
+      });
+    } catch (err) {
+      const code = (err as { code?: unknown })?.code;
+      if (code === 'P2002') {
+        return { minted: false, alreadyPaid: true };
+      }
+      throw err;
+    }
+
+    // 4. Flip the contributing confirmed rows → paid_out, stamping the
+    // minted payout id. This also flips the negative clawback rows; their
+    // debt is now realized in this period's total and won't re-net next
+    // period.
+    const flipped = await tx.blockBuzzAttribution.updateMany({
+      where: { appOwnerUserId, status: 'confirmed' },
+      data: {
+        status: 'paid_out',
+        paidOutAt: new Date(),
+        payoutId,
+      },
+    });
+
+    logToAxiom(
+      {
+        name: ATTRIBUTION_LOG_NAME,
+        type: 'info',
+        message: `minted payout ${payoutId} for owner ${appOwnerUserId} (${periodKey})`,
+        payoutId,
+        appOwnerUserId,
+        periodKey,
+        totalCents: netCents,
+        rowCount: flipped.count,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    return { minted: true, payoutId, totalCents: netCents, rowCount: flipped.count };
+  });
 }
 
 /**

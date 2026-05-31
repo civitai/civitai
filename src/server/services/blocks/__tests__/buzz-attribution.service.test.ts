@@ -36,7 +36,15 @@ const { mockDbRead, mockDbWrite, mockLog } = vi.hoisted(() => ({
     blockBuzzAttribution: {
       create: vi.fn(),
       updateMany: vi.fn(),
+      findMany: vi.fn(),
+      aggregate: vi.fn(),
     },
+    blockAttributionPayout: {
+      create: vi.fn(),
+    },
+    // Interactive transaction: run the callback against the same mock
+    // (no real isolation needed in these unit tests).
+    $transaction: vi.fn((fn: (tx: unknown) => unknown) => fn(mockDbWrite)),
   },
   mockLog: vi.fn(),
 }));
@@ -54,6 +62,7 @@ vi.mock('~/server/logging/client', () => ({
 
 import {
   AttributionAppMissingError,
+  mintPayoutForOwner,
   recordAttribution,
   REFUND_WINDOWS_DAYS,
   voidAttributionsForPayment,
@@ -80,6 +89,12 @@ beforeEach(() => {
   mockDbRead.blockBuzzAttribution.findUnique.mockReset();
   mockDbWrite.blockBuzzAttribution.create.mockReset();
   mockDbWrite.blockBuzzAttribution.updateMany.mockReset();
+  mockDbWrite.blockBuzzAttribution.findMany.mockReset();
+  mockDbWrite.blockBuzzAttribution.aggregate.mockReset();
+  mockDbWrite.blockAttributionPayout.create.mockReset();
+  // findMany defaults to "no paid_out rows" so existing void tests that
+  // don't set it up exercise the no-clawback path.
+  mockDbWrite.blockBuzzAttribution.findMany.mockResolvedValue([]);
   mockLog.mockReset();
 
   mockDbRead.oauthClient.findUnique.mockResolvedValue({
@@ -90,6 +105,9 @@ beforeEach(() => {
   // selects a subset of columns; we return the same subset).
   mockDbWrite.blockBuzzAttribution.create.mockImplementation(
     async ({ data, select }: any) => {
+      // Clawback writes (voidAttributionsForPayment) pass no `select` —
+      // just echo the row back. recordAttribution passes a select subset.
+      if (!select) return { ...data };
       const result: any = {};
       for (const k of Object.keys(select)) result[k] = data[k] ?? null;
       return result;
@@ -120,13 +138,13 @@ describe('recordAttribution', () => {
     expect(dataArg.status).toBe('pending');
     expect(dataArg.voidedReason).toBeNull();
     expect(dataArg.providerFeeCents).toBe(50);
-    // net 950 * 20% = 190
-    expect(dataArg.appOwnerShareCents).toBe(190);
-    expect(dataArg.platformShareCents).toBe(760);
+    // net 950 * 15% (v2 per_model_install) = 142.5 → floor 142
+    expect(dataArg.appOwnerShareCents).toBe(142);
+    expect(dataArg.platformShareCents).toBe(808);
     expect(
       dataArg.providerFeeCents + dataArg.platformShareCents + dataArg.appOwnerShareCents
     ).toBe(1000);
-    expect(dataArg.rateCardVersion).toBe('v1');
+    expect(dataArg.rateCardVersion).toBe('v2');
     expect(dataArg.id).toMatch(/^bba_/);
   });
 
@@ -316,6 +334,242 @@ describe('voidAttributionsForPayment', () => {
     expect(count).toBe(0);
     const audit = mockLog.mock.calls.find((c) => c[0]?.message?.startsWith('voided'));
     expect(audit).toBeUndefined();
+  });
+
+  it('writes NO clawback row when only pending/confirmed rows are voided', async () => {
+    // No paid_out rows → findMany returns [] (default) → no clawback.
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 2 });
+    const count = await voidAttributionsForPayment({
+      paymentProvider: 'stripe',
+      paymentTransactionId: 'pi_pre_payout',
+      reason: 'refund',
+    });
+    expect(count).toBe(2);
+    expect(mockDbWrite.blockBuzzAttribution.create).not.toHaveBeenCalled();
+  });
+
+  it('writes exactly one negative clawback row when a paid_out row is voided', async () => {
+    mockDbWrite.blockBuzzAttribution.findMany.mockResolvedValueOnce([
+      {
+        appOwnerShareCents: 190,
+        appOwnerUserId: APP_OWNER_USER_ID,
+        userId: PURCHASER_ID,
+        buzzType: 'yellow',
+        appId: APP_ID,
+        appBlockId: APP_BLOCK_ID,
+        blockInstanceId: 'mbi_test123',
+        scope: 'per_model_install',
+        modelId: null,
+        rateCardVersion: 'v1',
+      },
+    ]);
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    const count = await voidAttributionsForPayment({
+      paymentProvider: 'stripe',
+      paymentTransactionId: 'pi_paid',
+      reason: 'refund',
+    });
+
+    expect(count).toBe(1);
+    expect(mockDbWrite.blockBuzzAttribution.create).toHaveBeenCalledOnce();
+    const clawback = mockDbWrite.blockBuzzAttribution.create.mock.calls[0][0].data;
+
+    expect(clawback.entryType).toBe('clawback');
+    expect(clawback.status).toBe('confirmed');
+    expect(clawback.appOwnerShareCents).toBe(-190);
+    expect(clawback.usdAmountCents).toBe(-190);
+    expect(clawback.platformShareCents).toBe(0);
+    expect(clawback.providerFeeCents).toBe(0);
+    expect(clawback.voidedReason).toBeNull();
+    expect(clawback.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+    expect(clawback.appBlockId).toBe(APP_BLOCK_ID);
+    // Synthetic tx id so it doesn't collide with the original UNIQUE.
+    expect(clawback.paymentTransactionId).toBe('pi_paid:clawback');
+    expect(clawback.id).toMatch(/^bba_/);
+
+    // Conservation: fee + platform + owner == usd (all on the clawback row).
+    expect(
+      clawback.providerFeeCents + clawback.platformShareCents + clawback.appOwnerShareCents
+    ).toBe(clawback.usdAmountCents);
+  });
+
+  it('dedupes a double-refund (P2002 on the synthetic clawback key) to one clawback', async () => {
+    mockDbWrite.blockBuzzAttribution.findMany.mockResolvedValueOnce([
+      {
+        appOwnerShareCents: 100,
+        appOwnerUserId: APP_OWNER_USER_ID,
+        userId: PURCHASER_ID,
+        buzzType: 'yellow',
+        appId: APP_ID,
+        appBlockId: APP_BLOCK_ID,
+        blockInstanceId: 'mbi_test123',
+        scope: 'per_model_install',
+        modelId: null,
+        rateCardVersion: 'v1',
+      },
+    ]);
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 0 });
+    // The clawback insert collides with the one written by the first refund.
+    mockDbWrite.blockBuzzAttribution.create.mockRejectedValueOnce(
+      new FakePrismaKnownError('Unique constraint failed', 'P2002')
+    );
+
+    // Should not throw — P2002 is swallowed.
+    const count = await voidAttributionsForPayment({
+      paymentProvider: 'stripe',
+      paymentTransactionId: 'pi_paid',
+      reason: 'refund',
+    });
+
+    expect(count).toBe(0);
+    // Attempted once; the duplicate was skipped rather than retried.
+    expect(mockDbWrite.blockBuzzAttribution.create).toHaveBeenCalledOnce();
+  });
+
+  it('mixed batch: clawbacks only the paid_out rows', async () => {
+    // findMany only ever returns paid_out rows; a confirmed row that gets
+    // voided is NOT in this list, so it gets no clawback.
+    mockDbWrite.blockBuzzAttribution.findMany.mockResolvedValueOnce([
+      {
+        appOwnerShareCents: 50,
+        appOwnerUserId: APP_OWNER_USER_ID,
+        userId: PURCHASER_ID,
+        buzzType: 'yellow',
+        appId: APP_ID,
+        appBlockId: 'apb_paid',
+        blockInstanceId: 'mbi_paid',
+        scope: 'viewer_personal',
+        modelId: null,
+        rateCardVersion: 'v2',
+      },
+    ]);
+    // 2 rows voided total (1 paid_out + 1 confirmed), but only 1 clawback.
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 2 });
+
+    const count = await voidAttributionsForPayment({
+      paymentProvider: 'stripe',
+      paymentTransactionId: 'pi_mixed',
+      reason: 'chargeback',
+    });
+
+    expect(count).toBe(2);
+    expect(mockDbWrite.blockBuzzAttribution.create).toHaveBeenCalledOnce();
+    const clawback = mockDbWrite.blockBuzzAttribution.create.mock.calls[0][0].data;
+    expect(clawback.appBlockId).toBe('apb_paid');
+    expect(clawback.appOwnerShareCents).toBe(-50);
+  });
+});
+
+describe('mintPayoutForOwner', () => {
+  const PERIOD = '2026-W22';
+
+  it('mints, writes the ledger, and flips rows when net is positive', async () => {
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: 1500 },
+      _count: 7,
+    });
+    mockDbWrite.blockAttributionPayout.create.mockResolvedValueOnce({});
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 7 });
+
+    const result = await mintPayoutForOwner({
+      appOwnerUserId: APP_OWNER_USER_ID,
+      periodKey: PERIOD,
+    });
+
+    expect(result).toMatchObject({
+      minted: true,
+      totalCents: 1500,
+      rowCount: 7,
+    });
+    if (result.minted) expect(result.payoutId).toMatch(/^bba_payout_/);
+
+    // Ledger row written with the right shape.
+    const ledger = mockDbWrite.blockAttributionPayout.create.mock.calls[0][0].data;
+    expect(ledger.appOwnerUserId).toBe(APP_OWNER_USER_ID);
+    expect(ledger.periodKey).toBe(PERIOD);
+    expect(ledger.totalCents).toBe(1500);
+    expect(ledger.rowCount).toBe(7);
+    expect(ledger.id).toMatch(/^bba_payout_/);
+
+    // Contributing confirmed rows flipped to paid_out with the payout id.
+    const flip = mockDbWrite.blockBuzzAttribution.updateMany.mock.calls[0][0];
+    expect(flip.where).toEqual({ appOwnerUserId: APP_OWNER_USER_ID, status: 'confirmed' });
+    expect(flip.data.status).toBe('paid_out');
+    expect(flip.data.payoutId).toBe(ledger.id);
+    expect(flip.data.paidOutAt).toBeInstanceOf(Date);
+  });
+
+  it('is idempotent on P2002 — no second flip, no throw', async () => {
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: 1500 },
+      _count: 7,
+    });
+    mockDbWrite.blockAttributionPayout.create.mockRejectedValueOnce(
+      new FakePrismaKnownError('Unique constraint failed', 'P2002')
+    );
+
+    const result = await mintPayoutForOwner({
+      appOwnerUserId: APP_OWNER_USER_ID,
+      periodKey: PERIOD,
+    });
+
+    expect(result).toEqual({ minted: false, alreadyPaid: true });
+    // The contributing rows were NOT flipped a second time.
+    expect(mockDbWrite.blockBuzzAttribution.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('carries forward (no mint, no flip) when net <= 0', async () => {
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: -200 },
+      _count: 3,
+    });
+
+    const result = await mintPayoutForOwner({
+      appOwnerUserId: APP_OWNER_USER_ID,
+      periodKey: PERIOD,
+    });
+
+    expect(result).toEqual({ minted: false, carriedForwardCents: -200, rowCount: 3 });
+    expect(mockDbWrite.blockAttributionPayout.create).not.toHaveBeenCalled();
+    expect(mockDbWrite.blockBuzzAttribution.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('carries forward when net is exactly zero', async () => {
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: 0 },
+      _count: 4,
+    });
+    const result = await mintPayoutForOwner({
+      appOwnerUserId: APP_OWNER_USER_ID,
+      periodKey: PERIOD,
+    });
+    expect(result).toEqual({ minted: false, carriedForwardCents: 0, rowCount: 4 });
+    expect(mockDbWrite.blockAttributionPayout.create).not.toHaveBeenCalled();
+  });
+
+  it('nets negative clawbacks against positives in the aggregate net', async () => {
+    // The aggregate sums confirmed rows; the service trusts the DB sum
+    // (positives + negative clawbacks). Here the net comes back at 800
+    // (e.g. 1000 positive - 200 clawback) and is minted as such.
+    mockDbWrite.blockBuzzAttribution.aggregate.mockResolvedValueOnce({
+      _sum: { appOwnerShareCents: 800 },
+      _count: 5,
+    });
+    mockDbWrite.blockAttributionPayout.create.mockResolvedValueOnce({});
+    mockDbWrite.blockBuzzAttribution.updateMany.mockResolvedValueOnce({ count: 5 });
+
+    const result = await mintPayoutForOwner({
+      appOwnerUserId: APP_OWNER_USER_ID,
+      periodKey: PERIOD,
+    });
+
+    expect(result).toMatchObject({ minted: true, totalCents: 800, rowCount: 5 });
+    const ledger = mockDbWrite.blockAttributionPayout.create.mock.calls[0][0].data;
+    expect(ledger.totalCents).toBe(800);
+    // The aggregate query only ever reads confirmed rows.
+    const aggWhere = mockDbWrite.blockBuzzAttribution.aggregate.mock.calls[0][0].where;
+    expect(aggWhere).toEqual({ appOwnerUserId: APP_OWNER_USER_ID, status: 'confirmed' });
   });
 });
 

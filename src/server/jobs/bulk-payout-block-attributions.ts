@@ -54,6 +54,22 @@ import { createJob } from './job';
  * dashboard so publishers know money is queued, even if the
  * disbursement is manually batched in the interim.
  *
+ * PAYOUT-1 safety substrate (2026-05-31): the idempotent mint + flip is
+ * now implemented in `mintPayoutForOwner` (buzz-attribution.service.ts).
+ * It writes the block_attribution_payout idempotency ledger and flips
+ * the contributing confirmed rows to paid_out — but moves NO money and
+ * is intentionally NOT wired here yet. Once disbursement (route A: the
+ * creator-program cash bank / Tipalti) and leadership sign-off land,
+ * wire this cron to call `mintPayoutForOwner({ appOwnerUserId, periodKey })`
+ * per publisher, then hand the returned (payoutId, totalCents) to the
+ * disbursement entry point.
+ *
+ * Clawback (route C) is also live: refund-after-payout now writes a
+ * negative carry-forward `entry_type='clawback'` row (see
+ * voidAttributionsForPayment), so mintPayoutForOwner's `status='confirmed'`
+ * aggregate nets the debt automatically — no separate reconciliation
+ * step. A net <= 0 carries forward (no mint, no flip).
+ *
  * See claudedocs/app-blocks-buzz-attribution-handoff-2026-05-25.md
  * §"Open questions" #2 + #4 for the original framing of the
  * decision matrix.
