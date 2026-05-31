@@ -400,6 +400,26 @@ export class BlockRegistry {
           AND bus.slot_id = ${slotId}
           AND ${modelId} = ANY(bus.target_model_ids)
           AND bus.block_instance_id IS NOT NULL
+          -- H2 fix: a pinned row carries its own type/base filters (empty by
+          -- default, but the schema allows them). Honour them here so a pin
+          -- whose own filters exclude this model neither renders (this rank)
+          -- nor suppresses the blanket/default (the matching NOT EXISTS
+          -- clauses below apply the identical predicate to the pin row).
+          AND (
+            array_length(bus.target_model_types, 1) IS NULL
+            OR (
+              ${modelType ?? null}::text IS NOT NULL
+              AND ${modelType ?? null}::text = ANY(bus.target_model_types)
+            )
+          )
+          AND (
+            array_length(bus.target_base_models, 1) IS NULL
+            OR EXISTS (
+              SELECT 1 FROM "ModelVersion" mv
+              WHERE mv."modelId" = ${modelId}
+                AND mv."baseModel" = ANY(bus.target_base_models)
+            )
+          )
 
         UNION ALL
 
@@ -452,11 +472,29 @@ export class BlockRegistry {
           AND NOT EXISTS (
             -- Pinned subscription (any user, any enabled value) on this
             -- (model, slot, app_block) is the publisher opt-out path.
+            -- H2 fix: only a pin that actually APPLIES to this model
+            -- (its own type/base filters pass) suppresses — otherwise a
+            -- non-applicable pin would blank the slot.
             SELECT 1 FROM block_user_subscriptions pin
             WHERE pin.scope = 'publisher_all_my_models'
               AND pin.slot_id = ${slotId}
               AND pin.app_block_id = ab.id
               AND ${modelId} = ANY(pin.target_model_ids)
+              AND (
+                array_length(pin.target_model_types, 1) IS NULL
+                OR (
+                  ${modelType ?? null}::text IS NOT NULL
+                  AND ${modelType ?? null}::text = ANY(pin.target_model_types)
+                )
+              )
+              AND (
+                array_length(pin.target_base_models, 1) IS NULL
+                OR EXISTS (
+                  SELECT 1 FROM "ModelVersion" mv2
+                  WHERE mv2."modelId" = ${modelId}
+                    AND mv2."baseModel" = ANY(pin.target_base_models)
+                )
+              )
           )
 
         UNION ALL
@@ -499,11 +537,28 @@ export class BlockRegistry {
             )
           )
           AND NOT EXISTS (
+            -- H2 fix: a non-applicable pin (own type/base filters exclude
+            -- this model) must not suppress the platform default.
             SELECT 1 FROM block_user_subscriptions pin
             WHERE pin.scope = 'publisher_all_my_models'
               AND pin.slot_id = ${slotId}
               AND pin.app_block_id = pdb.app_block_id
               AND ${modelId} = ANY(pin.target_model_ids)
+              AND (
+                array_length(pin.target_model_types, 1) IS NULL
+                OR (
+                  ${modelType ?? null}::text IS NOT NULL
+                  AND ${modelType ?? null}::text = ANY(pin.target_model_types)
+                )
+              )
+              AND (
+                array_length(pin.target_base_models, 1) IS NULL
+                OR EXISTS (
+                  SELECT 1 FROM "ModelVersion" mv3
+                  WHERE mv3."modelId" = ${modelId}
+                    AND mv3."baseModel" = ANY(pin.target_base_models)
+                )
+              )
           )
 
         UNION ALL
@@ -553,13 +608,29 @@ export class BlockRegistry {
             )
           )
           -- A pinned publisher subscription on (model, slot, app_block) is
-          -- rendering at rank 1; suppress.
+          -- rendering at rank 1; suppress. H2 fix: only when the pin
+          -- actually applies (its own type/base filters pass).
           AND NOT EXISTS (
             SELECT 1 FROM block_user_subscriptions pin
             WHERE pin.scope = 'publisher_all_my_models'
               AND pin.slot_id = ${slotId}
               AND pin.app_block_id = ab.id
               AND ${modelId} = ANY(pin.target_model_ids)
+              AND (
+                array_length(pin.target_model_types, 1) IS NULL
+                OR (
+                  ${modelType ?? null}::text IS NOT NULL
+                  AND ${modelType ?? null}::text = ANY(pin.target_model_types)
+                )
+              )
+              AND (
+                array_length(pin.target_base_models, 1) IS NULL
+                OR EXISTS (
+                  SELECT 1 FROM "ModelVersion" mv4
+                  WHERE mv4."modelId" = ${modelId}
+                    AND mv4."baseModel" = ANY(pin.target_base_models)
+                )
+              )
           )
           -- A blanket publisher subscription for the model owner that
           -- targets this same app_block? skip viewer to avoid duplicate.

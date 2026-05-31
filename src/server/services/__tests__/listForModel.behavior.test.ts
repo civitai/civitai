@@ -335,9 +335,11 @@ describe('listForModel precedence (locks current correct behavior)', () => {
 // currently reproduces, so the suite stays green while flagging the gap.
 // =============================================================================
 describe('listForModel suppressor-gap bugs (assert desired behavior)', () => {
-  // EXPOSES H2 — flip to it() once the rank-2/3 NOT EXISTS suppressors
-  // re-check the pinned row's own target_model_types/target_base_models.
-  it.fails(
+  // H2 FIXED 2026-05-31: the rank-1 SELECT + the rank-2/3/4 NOT EXISTS
+  // suppressors now re-check the pinned row's own target_model_types /
+  // target_base_models, so a non-applicable pin neither renders nor
+  // suppresses. (Was `it.fails` while the bug reproduced.)
+  it(
     'H2: a type-filtered pin that does NOT match this model must NOT suppress the blanket',
     async () => {
       await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
@@ -372,8 +374,8 @@ describe('listForModel suppressor-gap bugs (assert desired behavior)', () => {
     }
   );
 
-  // EXPOSES H2 — same gap, rank-3 platform default path.
-  it.fails(
+  // H2 FIXED 2026-05-31 — same fix covers the rank-3 platform default path.
+  it(
     'H2: a type-filtered pin that does NOT match this model must NOT suppress the platform default',
     async () => {
       await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
@@ -397,16 +399,16 @@ describe('listForModel suppressor-gap bugs (assert desired behavior)', () => {
     }
   );
 
-  // EXPOSES H2b — flip to it() once a pin dropped by the JS content-rating
-  // filter no longer leaves an empty slot (the SQL suppression must account
-  // for the rating that the JS filter ultimately applies).
-  //
-  // The H2b mechanism requires SAME-app pin + fallback, because the rank-3
-  // NOT EXISTS suppressor is keyed on app_block_id. A different-app fallback
-  // is never suppressed (verified separately, see the green test below), so it
-  // does NOT exercise H2b.
-  it.fails(
-    'H2b: a same-app pin dropped by the content-rating filter must not blank the slot — the platform default should still show',
+  // H2b RE-ANALYSED 2026-05-31: NOT a bug — corrected from an it.fails.
+  // The rank-2/3 NOT EXISTS suppressors are keyed on app_block_id, so a pin
+  // only ever suppresses its OWN app's blanket/default — which carries the
+  // SAME manifest + content rating. If the pin is dropped by the content-
+  // rating filter (the app is too mature for this model), the same-app
+  // fallback is equally over-rated and correctly absent too. An empty slot
+  // is the RIGHT outcome here: pinning must not bypass content rating. (A
+  // DIFFERENT, lower-rated app is never suppressed — see the control below.)
+  it(
+    'H2b: a same-app over-rated pin correctly yields an empty slot (pinning does not bypass content rating)',
     async () => {
       await seedModel(db, { id: MODEL_ID, ownerUserId: OWNER });
       // Single app block, x-rated. Both the pin and the platform default point
@@ -432,10 +434,10 @@ describe('listForModel suppressor-gap bugs (assert desired behavior)', () => {
       // dropped by the JS content-rating filter; rank-3 default (also x-rated
       // here, but the point is the suppression) was already removed in SQL.
       const rows = await listForModel({ modelNsfwLevel: 1 });
-      // DESIRED: slot is not blank. With the current code the slot blanks
-      // (pin dropped in JS, default suppressed in SQL) → this assertion fails
-      // today, which is what `it.fails` documents.
-      expect(rows.length).toBeGreaterThan(0);
+      // CORRECT: an x-rated app must not show on a pg model whether it's
+      // pinned or defaulted — both point at the same over-rated app_block,
+      // so the empty slot is the intended content-rating behavior, not a gap.
+      expect(rows).toEqual([]);
     }
   );
 
