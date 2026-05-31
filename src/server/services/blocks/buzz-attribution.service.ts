@@ -422,7 +422,7 @@ export async function mintPayoutForOwner({
   appOwnerUserId: number;
   periodKey: string;
 }): Promise<MintPayoutResult> {
-  return dbWrite.$transaction(async (tx: Prisma.TransactionClient) => {
+  return dbWrite.$transaction(async (tx: Prisma.TransactionClient): Promise<MintPayoutResult> => {
     // 1. Aggregate this owner's payable rows. status='confirmed'
     // naturally includes negative entry_type='clawback' rows, so the net
     // already accounts for carry-forward debt.
