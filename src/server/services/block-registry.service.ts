@@ -1942,12 +1942,13 @@ export class BlockRegistry {
         ab.app_id,
         oc.name AS app_name,
         ab.manifest,
-        -- Post kill_per_model_installs: install count is now the union of
-        -- (a) pinned subs — one per (user, app, slot, model) — and
-        -- (b) blanket subs — one per (user, app, scope). Both contribute
-        -- one to "how many people use this app". We simply count
-        -- block_user_subscription rows for this app.
-        (SELECT COUNT(*)::bigint FROM block_user_subscriptions bus
+        -- Post kill_per_model_installs: "install count" = how many distinct
+        -- USERS use this app, not how many subscription rows exist. A single
+        -- user can hold several rows for one app (a blanket publisher sub +
+        -- a blanket viewer sub + N pinned-to-specific-model subs); counting
+        -- rows let a pin-happy publisher inflate their own app's marketplace
+        -- ranking. COUNT(DISTINCT user_id) makes the number mean "users".
+        (SELECT COUNT(DISTINCT bus.user_id)::bigint FROM block_user_subscriptions bus
          WHERE bus.app_block_id = ab.id) AS install_count
       FROM app_blocks ab
       LEFT JOIN "OauthClient" oc ON oc.id = ab.app_id
