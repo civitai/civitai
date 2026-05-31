@@ -43,10 +43,12 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
 import {
+  FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
   MeiliCallTimeoutError,
   SEARCH_ACTOR_HEADER,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
+  meiliFetchTimeoutTotal,
   metricsSearchClient,
   withMeili,
   wrapMeilisearchClientWithLimiter,
@@ -3363,32 +3365,30 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     // Only runs on the first page (no cursor/entry/offset) to keep merge simple.
     const runUserOwnPass = !!input.meiliUserOwnPass && !!currentUserId && !entry && !offset;
 
-    // Use the abortable raw fetch when a signal is available so client
-    // disconnects (e.g. the feed's slow-fetch timeout) actually cancel the
-    // underlying Meili request. The meilisearch-js client on 0.33/0.34 doesn't
-    // expose signal on getDocuments.
+    // Always use the abortable raw fetch path. Two reasons:
+    //   1. Client disconnect: a caller-supplied `input.signal` still cancels
+    //      the underlying request as before.
+    //   2. Hard local deadline: fetchDocumentsAbortable() now races against a
+    //      5s default timer (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS). Before this,
+    //      the non-signal branch fell through to the SDK getDocuments, which
+    //      meilisearch-js 0.33/0.34 does NOT cancel — the only protection was
+    //      withMeili()'s 2.5s wrapper timer, with the orphan SDK promise still
+    //      running. Routing everything through fetchDocumentsAbortable gives
+    //      us one code path with a real abort, regardless of whether the
+    //      caller passed a signal.
     //
-    // The non-signal SDK path is the actual hot tRPC path
+    // This is the hot tRPC path
     // (image.getInfinite → getInfiniteImagesHandler → getAllImagesIndex →
     //  this prefilter). Verification on 2026-05-29 showed this is where the
     // 374-error/15min Meili bleed lives, NOT in getImagesFromFeedSearch.
-    // Wrap it under withMeili('metricsSearch', ...) so a backend brownout
-    // can't hang us past Traefik's 30s timeout. Narrowly scoped to the SDK
-    // call only — surrounding DB/CH work is intentionally outside.
     const [mainResult, userOwnHits] = await Promise.all([
       withSpan('image:meili:getDocuments', () =>
-        input.signal
-          ? fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
-              host: env.METRICS_SEARCH_HOST as string,
-              apiKey: env.METRICS_SEARCH_API_KEY,
-              signal: input.signal,
-              actor,
-            })
-          : withMeili('metricsSearch', () =>
-              (actor ? getMetricsSearchClient(actor) : metricsSearchClient)!
-                .index(METRICS_SEARCH_INDEX)
-                .getDocuments<ImageMetricsSearchIndexRecord>(request)
-            )
+        fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
+          host: env.METRICS_SEARCH_HOST as string,
+          apiKey: env.METRICS_SEARCH_API_KEY,
+          signal: input.signal,
+          actor,
+        })
       ),
       runUserOwnPass
         ? fetchMeiliUserOwnPass(input, nsfwLevelField, userId)
@@ -4253,7 +4253,9 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   };
 
   const actor = input.actor;
-  const actorClient = actor ? getMetricsSearchClient(actor) : metricsSearchClient;
+  // (No actorClient pinning needed here: the iteration loop now runs through
+  // fetchDocumentsAbortable, which propagates `actor` via the X-Search-Actor
+  // header on every request directly.)
 
   // User-own-pass mode: kick off the parallel user-scoped query up front. Only
   // on the first page (no offset) to keep the merge simple.
@@ -4273,25 +4275,51 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       request.limit = requestLimit;
       request.offset = currentOffset;
 
-      // See PreFilter path for why we fall back to raw fetch when a signal is
-      // provided. Non-signal SDK path is wrapped under withMeili('metricsSearch')
-      // for the same brownout-safety reason as PreFilter.
-      const { results } = input.signal
-        ? await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
-            METRICS_SEARCH_INDEX,
-            request,
-            {
-              host: env.METRICS_SEARCH_HOST as string,
-              apiKey: env.METRICS_SEARCH_API_KEY,
-              signal: input.signal,
-              actor,
-            }
-          )
-        : await withMeili('metricsSearch', () =>
-            actorClient!
-              .index(METRICS_SEARCH_INDEX)
-              .getDocuments<ImageMetricsSearchIndexRecord>(request)
-          );
+      // Always use the abortable raw fetch path so every iteration races
+      // against the same 5s hard deadline (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS).
+      // See PreFilter path for the rationale — meilisearch-js 0.33/0.34
+      // getDocuments() can't be cancelled, so signal-less requests used to
+      // hang the event loop on a slow backend.
+      //
+      // Graceful break-on-timeout: if a single iteration trips the local
+      // deadline, return whatever's already accumulated rather than failing
+      // the whole request. iteration 1 → empty page; iteration ≥ 2 → degraded
+      // (partial) page with nextCursor cleared further below. Downstream
+      // handles either shape fine; the alternative (throwing) would hand the
+      // user a 408 instead of a usable feed.
+      let results: ImageMetricsSearchIndexRecord[];
+      try {
+        const fetchResult = await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
+          METRICS_SEARCH_INDEX,
+          request,
+          {
+            host: env.METRICS_SEARCH_HOST as string,
+            apiKey: env.METRICS_SEARCH_API_KEY,
+            signal: input.signal,
+            actor,
+          }
+        );
+        results = fetchResult.results;
+      } catch (e) {
+        const err = e as Error & { name?: string; message?: string };
+        const isLocalTimeout =
+          err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+          (err?.name === 'AbortError' &&
+            (err as { cause?: { message?: string } })?.cause?.message ===
+              FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+        if (isLocalTimeout) {
+          meiliFetchTimeoutTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iteration),
+          });
+          // Fall out of the iteration loop with whatever's already in
+          // accumulatedHits. The nextCursor / merge logic below handles the
+          // partial / empty case (nextCursor cleared when mergedHits.length
+          // <= limit).
+          break;
+        }
+        throw e;
+      }
 
       // If no more results, break the loop
       if (results.length === 0) {
