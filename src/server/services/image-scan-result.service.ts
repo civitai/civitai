@@ -173,7 +173,25 @@ export async function processImageScanWorkflow({
   completedAt?: Date | string | null;
 }) {
   if (status !== 'succeeded') {
-    await markImageScanError({ workflowId, imageId });
+    const retryCount = await markImageScanError({ workflowId, imageId });
+    // This branch is otherwise silent: it flips the image to `Error` and burns a
+    // retry regardless of whether the workflow genuinely failed or merely timed
+    // out (`expired`). Log it so we can measure the status split and how often
+    // transient orchestrator failures eat an image's retry budget before deciding
+    // how to branch them. See docs/image-scan-reliability.md §5.1/§5.4.
+    logToAxiom(
+      {
+        name: 'image-scan-result',
+        type: 'warning',
+        message: `workflow not succeeded: ${status}`,
+        source: 'image-scan-result.service',
+        imageId,
+        workflowId,
+        status,
+        retryCount,
+      },
+      'webhooks'
+    ).catch(() => null);
     if (articleImageScanning) await fanOutArticleImageUpdates(imageId);
     return;
   }
@@ -396,14 +414,19 @@ async function blockImageFromRating({
   });
 }
 
+/**
+ * Flip an image to `Error` and increment its scan `retryCount`. Returns the new
+ * (post-increment) retryCount so callers can log it, or `null` when no row matched
+ * (e.g. the image was deleted between scan request and callback).
+ */
 async function markImageScanError({
   workflowId,
   imageId,
 }: {
   workflowId: string;
   imageId: number;
-}) {
-  await dbWrite.$executeRaw`
+}): Promise<number | null> {
+  const rows = await dbWrite.$queryRaw<{ retryCount: number | null }[]>`
     UPDATE "Image"
     SET
       "ingestion" = ${ImageIngestionStatus.Error}::"ImageIngestionStatus",
@@ -417,7 +440,9 @@ async function markImageScanError({
         ${JSON.stringify(workflowId)}::jsonb
       )
     WHERE id = ${imageId}
+    RETURNING ("scanJobs"->>'retryCount')::int as "retryCount"
   `;
+  return rows[0]?.retryCount ?? null;
 }
 
 // Image loading
