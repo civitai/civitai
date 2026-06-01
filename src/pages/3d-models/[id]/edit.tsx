@@ -7,7 +7,6 @@ import {
   Loader,
   Stack,
   Text,
-  Textarea,
   TextInput,
   Title,
 } from '@mantine/core';
@@ -21,6 +20,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -107,12 +107,19 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
   const trimmedName = name.trim();
   const canSave = trimmedName.length > 0 && !mutate.isLoading;
 
+  // RichTextEditor returns HTML. Empty content commonly serializes to `<p></p>`
+  // — strip tags and treat as null so the DB doesn't see noisy "empty" markup.
+  const normalizeDescription = (html: string): string | null => {
+    const stripped = html.replace(/<[^>]*>/g, '').trim();
+    return stripped.length === 0 ? null : html.trim();
+  };
+
   const handleSave = () => {
     if (!canSave) return;
     mutate.mutate({
       id: model3d.id,
       name: trimmedName,
-      description: description.trim() || null,
+      description: normalizeDescription(description),
       // Pass through existing licenseId — the upsert schema requires it but
       // editing name/description here shouldn't change licensing.
       licenseId: model3d.licenseId,
@@ -155,14 +162,21 @@ function Model3DEditPage({ id }: InferGetServerSidePropsType<typeof getServerSid
                 error={trimmedName.length === 0 ? 'Name cannot be empty' : undefined}
               />
 
-              <Textarea
+              <RichTextEditor
                 label="Description"
-                value={description}
-                onChange={(e) => setDescription(e.currentTarget.value)}
-                minRows={8}
-                autosize
-                maxRows={20}
                 placeholder="What's this model about? How was it generated? Any tips?"
+                value={description}
+                onChange={(value) => setDescription(value ?? '')}
+                includeControls={[
+                  'heading',
+                  'formatting',
+                  'list',
+                  'link',
+                  'media',
+                  'colors',
+                ]}
+                editorSize="xl"
+                stickyToolbar
               />
 
               <Group justify="flex-end" gap="sm">
