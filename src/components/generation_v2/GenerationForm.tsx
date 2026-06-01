@@ -119,6 +119,13 @@ import { PriorityInput } from './inputs/PriorityInput';
 import { OutputFormatInput } from './inputs/OutputFormatInput';
 import { ScaleFactorInput } from './inputs/ScaleFactorInput';
 import { UpscaleDimensionsInput } from './inputs/UpscaleDimensionsInput';
+import { PreprocessorExamples } from './inputs/PreprocessorExamples';
+import { MissingPreprocessorExamplesAlert } from './inputs/MissingPreprocessorExamplesAlert';
+import {
+  getGroupedPreprocessKindOptions,
+  getPreprocessKindExamples,
+  getPreprocessKindInfo,
+} from '~/shared/constants/controlnets.constants';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
@@ -693,6 +700,56 @@ export function GenerationForm() {
               )}
             />
 
+            {/* Preprocessor kind (img2img:preprocess) */}
+            <Controller
+              graph={graph}
+              name="preprocessKind"
+              render={({ value, meta, onChange }) => {
+                // Only offer kinds that have a valid example output image.
+                const available = meta.options
+                  .map((o: { value: string }) => o.value)
+                  .filter((v: string) => getPreprocessKindExamples(v).length > 0);
+                const groups = getGroupedPreprocessKindOptions(available);
+                // Flatten the grouped options into one ordered list so prev/next
+                // walks Edges → Depth → … in the same order the dropdown shows.
+                const ordered = groups.flatMap((g) => g.items.map((i) => i.value));
+                const cycle = (delta: number) => {
+                  if (!ordered.length) return;
+                  const i = ordered.indexOf(value as string);
+                  const next = ordered[(i + delta + ordered.length) % ordered.length];
+                  onChange(next as typeof value);
+                };
+                return (
+                  <div className="flex flex-col gap-2">
+                    <PreprocessorExamples
+                      examples={getPreprocessKindExamples(value)}
+                      description={getPreprocessKindInfo(value)?.description}
+                      onPrev={() => cycle(-1)}
+                      onNext={() => cycle(1)}
+                      header={
+                        <Select
+                          label="Preprocessor"
+                          description="Choose a control signal, or browse previews with the arrows below."
+                          data={groups}
+                          value={value}
+                          onChange={(v) => v && onChange(v as typeof value)}
+                          allowDeselect={false}
+                          searchable
+                          // Select the current value's text on focus so typing starts a
+                          // fresh search instead of appending to the selected label.
+                          onFocus={(e) => e.currentTarget.select()}
+                          comboboxProps={{ withinPortal: true }}
+                        />
+                      }
+                    />
+                    {/* Moderator-only: flags preprocessors missing examples
+                        (i.e. likely failing on the orchestrator). */}
+                    <MissingPreprocessorExamplesAlert />
+                  </div>
+                );
+              }}
+            />
+
             {/* Ready State Alert - Resources need downloading */}
             <ReadyAlert />
 
@@ -826,24 +883,6 @@ export function GenerationForm() {
               name="upscaleSelection"
               render={({ value, meta, onChange }) => (
                 <UpscaleDimensionsInput value={value} onChange={onChange} meta={meta} />
-              )}
-            />
-
-            {/* Preprocessor kind (img2img:preprocess) */}
-            <Controller
-              graph={graph}
-              name="preprocessKind"
-              render={({ value, meta, onChange }) => (
-                <Select
-                  label="Preprocessor"
-                  description="Choose which control signal to extract from the source image."
-                  data={meta.options}
-                  value={value}
-                  onChange={(v) => v && onChange(v as typeof value)}
-                  allowDeselect={false}
-                  searchable
-                  comboboxProps={{ withinPortal: true }}
-                />
               )}
             />
 
