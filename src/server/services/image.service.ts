@@ -45,10 +45,13 @@ import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
 import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
   MeiliCallTimeoutError,
+  MeilisearchFetchError,
   SEARCH_ACTOR_HEADER,
+  failfastReasonForStatus,
   fetchDocumentsAbortable,
   getMetricsSearchClient,
-  meiliFetchTimeoutTotal,
+  isFailfastStatus,
+  meiliFetchFailfastTotal,
   metricsSearchClient,
   withMeili,
   wrapMeilisearchClientWithLimiter,
@@ -4281,12 +4284,20 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       // getDocuments() can't be cancelled, so signal-less requests used to
       // hang the event loop on a slow backend.
       //
-      // Graceful break-on-timeout: if a single iteration trips the local
-      // deadline, return whatever's already accumulated rather than failing
-      // the whole request. iteration 1 → empty page; iteration ≥ 2 → degraded
-      // (partial) page with nextCursor cleared further below. Downstream
-      // handles either shape fine; the alternative (throwing) would hand the
-      // user a 408 instead of a usable feed.
+      // Graceful break-on-fast-fail: if a single iteration hits the local
+      // deadline OR the upstream signals unavailability (408/5xx), return
+      // whatever's already accumulated rather than failing the whole request.
+      // iteration 1 → empty page; iteration ≥ 2 → degraded (partial) page
+      // with nextCursor cleared further below. Downstream handles either
+      // shape fine; the alternative (throwing) would hand the user a 5xx
+      // instead of a usable feed, and clients would retry → load amplifies
+      // → cascade sustains.
+      //
+      // Status-code rationale:
+      //   - 408 (upstream-timeout)  → Meilisearch backend page-cache thrash
+      //   - 503 (upstream-overload) → civitai-feeds-proxy shed (MEILI_MAX_CONCURRENT)
+      //   - other 5xx               → upstream brownout / Traefik 504 / etc.
+      //   - 4xx-other (400/401/403) → real client error, MUST bubble up
       let results: ImageMetricsSearchIndexRecord[];
       try {
         const fetchResult = await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
@@ -4308,14 +4319,26 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             (err as { cause?: { message?: string } })?.cause?.message ===
               FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
         if (isLocalTimeout) {
-          meiliFetchTimeoutTotal.inc({
+          meiliFetchFailfastTotal.inc({
             route: 'getImagesFromSearchPostFilter',
             iteration: String(iteration),
+            reason: 'local-timeout',
           });
           // Fall out of the iteration loop with whatever's already in
           // accumulatedHits. The nextCursor / merge logic below handles the
           // partial / empty case (nextCursor cleared when mergedHits.length
           // <= limit).
+          break;
+        }
+        // Upstream-side fast-fail: 408 (proxy/backend timeout) or 5xx
+        // (overload / brownout / bad gateway). Same graceful-break shape
+        // as the local-timeout path; 4xx-other re-throws below.
+        if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iteration),
+            reason: failfastReasonForStatus(e.status),
+          });
           break;
         }
         throw e;
