@@ -39,6 +39,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 | `reports.mjs` | Report handling | list, set-status, bulk-status, update, appeals, appeal-details, resolve-appeal |
 | `generation.mjs` | Generation moderation | flagged-consumers, flagged-reasons, consumer-strikes, review-strikes, user-generations, restrictions, resolve-restriction, allowlist-add, debug-audit, todays-counts, suspicious-matches |
 | `content.mjs` | Content & training | models, flagged-models, resolve-flagged, model-versions, rescan-model, restore-model, toggle-cannot-promote, toggle-cannot-publish, articles, training-models, approve-training, deny-training, mod-rule |
+| `model3ds.mjs` | 3D Models moderation | list, get, files, unpublish, delete, restore, set-nsfw-level, toggle-tos, toggle-poi, toggle-minor, toggle-nsfw, toggle-unlisted |
 | `csam.mjs` | NCMEC/CSAM reporting | reports, stats, image-resources, create-report |
 
 ---
@@ -229,6 +230,51 @@ node .claude/skills/mod-actions/content.mjs resolve-flagged --ids 1,2,3 --dry-ru
 node .claude/skills/mod-actions/content.mjs training-models --limit 20
 node .claude/skills/mod-actions/content.mjs approve-training 456
 node .claude/skills/mod-actions/content.mjs rescan-model 789
+```
+
+---
+
+## model3ds.mjs — 3D Models Moderation
+
+```bash
+node .claude/skills/mod-actions/model3ds.mjs <command> [options]
+```
+
+| Command | R/W | Description |
+|---------|-----|-------------|
+| `list` | R | List Model3Ds (`--status`, `--username`, `--limit`, `--cursor`) |
+| `get <id>` | R | Get a Model3D by id |
+| `files <id>` | R | List files attached to a Model3D |
+| `unpublish <id>` | W | Set status -> Unpublished |
+| `delete <id>` | W | Soft-delete (status -> Deleted, sets deletedAt/deletedBy) |
+| `restore <id>` | W | Restore (Deleted -> Unpublished, Unpublished -> Published) |
+| `set-nsfw-level <id>` | W | Override nsfwLevel (`--level <n> [--lock]`) |
+| `toggle-tos <id>` | W | Toggle tosViolation (locks the field) |
+| `toggle-poi <id>` | W | Toggle poi (locks the field) |
+| `toggle-minor <id>` | W | Toggle minor (locks the field) |
+| `toggle-nsfw <id>` | W | Toggle nsfw (locks the field) |
+| `toggle-unlisted <id>` | W | Toggle unlisted (locks the field) |
+
+Strikes against a Model3D use the existing `strikes.mjs` (the strike system is entity-type-agnostic):
+
+```bash
+node .claude/skills/mod-actions/strikes.mjs create <userId> \
+  --entity-type Model3D --entity-id <model3dId> --reason TOSViolation --points 1
+```
+
+Common flags:
+- `--json` — raw JSON output
+- `--dry-run` — preview without making changes (write commands only)
+
+Examples:
+
+```bash
+node .claude/skills/mod-actions/model3ds.mjs list --status Draft --limit 100
+node .claude/skills/mod-actions/model3ds.mjs get 42
+node .claude/skills/mod-actions/model3ds.mjs unpublish 42
+node .claude/skills/mod-actions/model3ds.mjs set-nsfw-level 42 --level 16 --lock
+node .claude/skills/mod-actions/model3ds.mjs toggle-tos 42 --dry-run
+node .claude/skills/mod-actions/model3ds.mjs restore 42
 ```
 
 ---
