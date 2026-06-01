@@ -65,6 +65,51 @@ export function getMetricsSearchClient(actor: string) {
 }
 
 /**
+ * Default per-call timeout for fetchDocumentsAbortable when the caller does
+ * not pass a deadline-bound AbortSignal. Tuned to be generous enough that any
+ * healthy backend response lands well below it, but short enough that a
+ * brownout cannot pin event-loop slots long enough to flip /api/health past
+ * the kubelet TCP-probe ceiling (the 2026-05-29 / 2026-05-31 cascade chain).
+ *
+ * Sourced from MEILI_FETCH_TIMEOUT_MS (default 5_000) so ops can tune the
+ * deadline at runtime via the civitai-cfg ConfigMap without a code redeploy.
+ *
+ * The structural fix for backend slowness lives elsewhere (feeds-proxy index
+ * sharding, BitDex migration); this constant is the *defensive* cap that
+ * keeps civitai-dp-prod-api pods from holding the event loop for 30 s when
+ * upstream goes sideways.
+ */
+export const FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS = env.MEILI_FETCH_TIMEOUT_MS;
+
+/**
+ * Sentinel error message thrown when the local fetchDocumentsAbortable
+ * timer fires (i.e. neither the caller's signal nor the upstream produced a
+ * response within `timeoutMs`). Exported so the call-site catch in
+ * image.service.ts can recognise the timeout without string-matching from
+ * an inline literal.
+ */
+export const FETCH_DOCUMENTS_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
+
+/**
+ * Counter incremented every time the local fetchDocumentsAbortable timer
+ * fires. The `route` label identifies the caller (so we can separate the
+ * pre-filter cascade from the post-filter iteration cascade); `iteration`
+ * is meaningful for the post-filter loop and defaults to `"0"` everywhere
+ * else.
+ *
+ * Naming follows the prom-client wrapper's PROM_PREFIX convention — exposed
+ * to Prometheus as `civitai_app_meili_fetch_timeout_total`.
+ */
+export const meiliFetchTimeoutTotal = registerCounterWithLabels({
+  name: 'meili_fetch_timeout_total',
+  help:
+    'fetchDocumentsAbortable() local timer fired before the upstream Meili ' +
+    'backend responded — the defensive cap that prevents event-loop stalls ' +
+    'from cascading into kubelet SIGKILL on civitai-dp-prod-api',
+  labelNames: ['route', 'iteration'] as const,
+});
+
+/**
  * Fetch documents via a raw HTTP call that honors an AbortSignal. The
  * meilisearch-js client we're on (<=0.34) doesn't expose signal on
  * getDocuments, so we hit the /documents/fetch endpoint directly when a
@@ -74,56 +119,103 @@ export function getMetricsSearchClient(actor: string) {
  * backend brownout shares the same per-backend semaphore + circuit breaker
  * gate as the SDK path. The caller's AbortSignal remains the deadline (we
  * pass useTimeout=false to avoid a double race against the 2.5s timer).
+ *
+ * Hard local deadline:
+ * In addition to the optional caller signal, we always race against a local
+ * `timeoutMs` deadline (default FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS = 5_000).
+ * The two signals are combined with `AbortSignal.any()`; on abort, the
+ * underlying `fetch` rejects. When the local timer fires first, the abort
+ * reason is `Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE)` so callers can
+ * distinguish it from a true client disconnect and apply graceful fallback
+ * (partial-page result, empty page, etc.).
+ *
+ * Before this cap, callers without a signal had NO server-side deadline —
+ * fetch would wait the full Node default and stall the event loop, exactly
+ * the failure mode that bled api-primary pods to kubelet SIGKILL on
+ * 2026-05-29 / 2026-05-31.
  */
 export async function fetchDocumentsAbortable<T>(
   indexName: string,
   params: DocumentsQuery<T>,
-  options: { host: string; apiKey?: string; signal?: AbortSignal; actor?: string }
+  options: {
+    host: string;
+    apiKey?: string;
+    signal?: AbortSignal;
+    actor?: string;
+    timeoutMs?: number;
+  }
 ): Promise<ResourceResults<T[]>> {
-  const { host, apiKey, signal, actor } = options;
+  const {
+    host,
+    apiKey,
+    signal: callerSignal,
+    actor,
+    timeoutMs = FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS,
+  } = options;
   const url = `${host}/indexes/${indexName}/documents/fetch`;
   const urlAttr = safeUrl(url);
-  return runWithLimiter(
-    'metricsSearch',
-    'metricsSearch',
-    async () => {
-      const res = await withSpan(
-        'image:meili:http',
-        {
-          'http.method': 'POST',
-          'http.url': urlAttr,
-          'image.meili.index': indexName,
-        },
-        () =>
-          fetch(url, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-              ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
-            },
-            body: JSON.stringify(params),
-            signal,
-          })
-      );
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        throw new Error(`Meilisearch fetch failed (${res.status}): ${text}`);
-      }
-      return withSpan(
-        'image:meili:parse',
-        {
-          'http.url': urlAttr,
-          'http.status_code': res.status,
-          'image.meili.index': indexName,
-        },
-        async () => (await res.json()) as ResourceResults<T[]>
-      );
-    },
-    // Caller's AbortSignal is the deadline; skip the wrapper's 2.5s timer to
-    // avoid a double-timeout race. The circuit breaker still applies.
-    { useTimeout: false }
+
+  // Local deadline. `AbortSignal.any()` is the Node 20.3+ idiom for racing
+  // multiple cancellation sources without leaking listeners; both the caller
+  // disconnect and the local timer feed into the same composite signal that
+  // fetch ultimately listens to.
+  const localCtrl = new AbortController();
+  const localTimer = setTimeout(
+    () => localCtrl.abort(new Error(FETCH_DOCUMENTS_TIMEOUT_MESSAGE)),
+    timeoutMs
   );
+  // Don't keep the event loop alive solely for this timer.
+  localTimer.unref?.();
+  const signal: AbortSignal = callerSignal
+    ? AbortSignal.any([callerSignal, localCtrl.signal])
+    : localCtrl.signal;
+
+  try {
+    return await runWithLimiter(
+      'metricsSearch',
+      'metricsSearch',
+      async () => {
+        const res = await withSpan(
+          'image:meili:http',
+          {
+            'http.method': 'POST',
+            'http.url': urlAttr,
+            'image.meili.index': indexName,
+          },
+          () =>
+            fetch(url, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+                ...(actor ? { [SEARCH_ACTOR_HEADER]: actor } : {}),
+              },
+              body: JSON.stringify(params),
+              signal,
+            })
+        );
+        if (!res.ok) {
+          const text = await res.text().catch(() => '');
+          throw new Error(`Meilisearch fetch failed (${res.status}): ${text}`);
+        }
+        return withSpan(
+          'image:meili:parse',
+          {
+            'http.url': urlAttr,
+            'http.status_code': res.status,
+            'image.meili.index': indexName,
+          },
+          async () => (await res.json()) as ResourceResults<T[]>
+        );
+      },
+      // Caller's AbortSignal (composite, includes local deadline) is the
+      // deadline; skip the wrapper's 2.5s timer to avoid a double-timeout
+      // race. The circuit breaker still applies.
+      { useTimeout: false }
+    );
+  } finally {
+    clearTimeout(localTimer);
+  }
 }
 
 /**
