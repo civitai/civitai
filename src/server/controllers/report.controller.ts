@@ -243,6 +243,34 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
             },
           },
         },
+        model3d: {
+          select: {
+            model3d: {
+              select: {
+                id: true,
+                name: true,
+                nsfw: true,
+                tosViolation: true,
+                thumbnailImage: { select: { id: true, url: true, name: true } },
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
+        model3dReview: {
+          select: {
+            model3dReview: {
+              select: {
+                id: true,
+                model3dId: true,
+                rating: true,
+                nsfw: true,
+                tosViolation: true,
+                user: { select: simpleUserSelect },
+              },
+            },
+          },
+        },
       },
     });
     return {
@@ -261,6 +289,8 @@ export async function getReportsHandler({ input }: { input: GetReportsInput }) {
           bountyEntry: item.bountyEntry?.bountyEntry,
           chat: item.chat?.chat,
           comicProject: item.comicProject?.comicProject,
+          model3d: item.model3d?.model3d,
+          model3dReview: item.model3dReview?.model3dReview,
         };
       }),
       ...result,
