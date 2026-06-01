@@ -91,23 +91,105 @@ export const FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS = env.MEILI_FETCH_TIMEOUT_MS;
 export const FETCH_DOCUMENTS_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
 
 /**
- * Counter incremented every time the local fetchDocumentsAbortable timer
- * fires. The `route` label identifies the caller (so we can separate the
- * pre-filter cascade from the post-filter iteration cascade); `iteration`
- * is meaningful for the post-filter loop and defaults to `"0"` everywhere
- * else.
+ * Reason label values for `meiliFetchFailfastTotal`. Each value describes a
+ * distinct backend-side failure mode that callers downstream of
+ * fetchDocumentsAbortable choose to fast-fail / break out of an iteration
+ * loop on. Kept as a const-as union so call-sites get type-checked.
+ *
+ *  - `local-timeout`     — the local 5s deadline fired before the upstream
+ *                          responded (PR #2370 — the original behaviour;
+ *                          preserved for backward-compat dashboards)
+ *  - `upstream-overload` — upstream returned HTTP 503 (civitai-feeds-proxy
+ *                          shed because MEILI_MAX_CONCURRENT was hit)
+ *  - `upstream-timeout`  — upstream returned HTTP 408 (Meilisearch backend
+ *                          page-cache thrashing past its own timeout)
+ *  - `upstream-error`    — any other 5xx (bad gateway, gateway timeout from
+ *                          Traefik to feeds-proxy, etc.)
+ */
+export type MeiliFetchFailfastReason =
+  | 'local-timeout'
+  | 'upstream-overload'
+  | 'upstream-timeout'
+  | 'upstream-error';
+
+/**
+ * Map an HTTP status returned by the upstream Meili backend (or its proxy)
+ * onto the fail-fast reason label. Callers should ONLY pass a status they
+ * already decided is "fast-fail eligible" (408 or 5xx); 4xx-other (400 bad
+ * filter, 401/403 auth) should re-throw at the call site and never reach
+ * this helper.
+ */
+export function failfastReasonForStatus(status: number): MeiliFetchFailfastReason {
+  if (status === 408) return 'upstream-timeout';
+  if (status === 503) return 'upstream-overload';
+  return 'upstream-error';
+}
+
+/**
+ * Does `status` qualify for graceful-break treatment by post-filter / future
+ * iteration-loop callers? True for 408 (upstream-side timeout) and any 5xx
+ * (upstream unavailable). False for 4xx-other (real client error — must
+ * bubble up so we don't silently hide malformed-filter / auth bugs).
+ */
+export function isFailfastStatus(status: number): boolean {
+  return status === 408 || status >= 500;
+}
+
+/**
+ * Counter incremented every time fetchDocumentsAbortable() fast-fails — i.e.
+ * the local timer fired OR the upstream returned a status code that callers
+ * treat as "backend unavailable, break gracefully". The `route` label
+ * identifies the caller (so we can separate the pre-filter cascade from the
+ * post-filter iteration cascade); `iteration` is meaningful for the
+ * post-filter loop and defaults to `"0"` everywhere else; `reason` carries
+ * the failure-mode label (see `MeiliFetchFailfastReason`).
+ *
+ * Renamed from `meili_fetch_timeout_total` (PR #2370) → `meili_fetch_failfast_total`
+ * because the counter is no longer timeout-specific: it now captures every
+ * fail-fast disposition fetchDocumentsAbortable surfaces. Dashboards keyed
+ * on the old name will go empty for a few minutes during the transition;
+ * the panel update lands in a follow-up commit in the datapacket-talos
+ * repo.
  *
  * Naming follows the prom-client wrapper's PROM_PREFIX convention — exposed
- * to Prometheus as `civitai_app_meili_fetch_timeout_total`.
+ * to Prometheus as `civitai_app_meili_fetch_failfast_total`.
  */
-export const meiliFetchTimeoutTotal = registerCounterWithLabels({
-  name: 'meili_fetch_timeout_total',
+export const meiliFetchFailfastTotal = registerCounterWithLabels({
+  name: 'meili_fetch_failfast_total',
   help:
-    'fetchDocumentsAbortable() local timer fired before the upstream Meili ' +
-    'backend responded — the defensive cap that prevents event-loop stalls ' +
-    'from cascading into kubelet SIGKILL on civitai-dp-prod-api',
-  labelNames: ['route', 'iteration'] as const,
+    'fetchDocumentsAbortable() fast-fail events (local timer fired OR ' +
+    'upstream returned 408/5xx) — the defensive cap that prevents ' +
+    'event-loop stalls from cascading into kubelet SIGKILL on ' +
+    'civitai-dp-prod-api. `reason` distinguishes the failure mode.',
+  labelNames: ['route', 'iteration', 'reason'] as const,
 });
+
+/**
+ * Typed error thrown by fetchDocumentsAbortable() when the upstream Meili
+ * backend (or the civitai-feeds-proxy in front of it) returns a non-ok HTTP
+ * status code. Carries the status + response body verbatim so callers can
+ * pattern-match on `instanceof MeilisearchFetchError` + `.status` instead of
+ * string-matching the message.
+ *
+ * The 408 (upstream timeout) + 5xx (overload / bad gateway / unavailable)
+ * statuses are the ones that callers downstream of fetchDocumentsAbortable
+ * fast-fail on; 4xx other than 408 (400 malformed filter, 401/403 auth)
+ * indicate real client-side bugs and continue to propagate.
+ *
+ * Message format is intentionally preserved byte-for-byte from the prior
+ * bare-Error throw (`Meilisearch fetch failed (NNN): <body>`) — Loki
+ * queries / dashboards keyed on that prefix continue to match without
+ * change.
+ */
+export class MeilisearchFetchError extends Error {
+  readonly name = 'MeilisearchFetchError';
+  constructor(
+    public readonly status: number,
+    public readonly responseText: string
+  ) {
+    super(`Meilisearch fetch failed (${status}): ${responseText}`);
+  }
+}
 
 /**
  * Fetch documents via a raw HTTP call that honors an AbortSignal. The
@@ -196,7 +278,12 @@ export async function fetchDocumentsAbortable<T>(
         );
         if (!res.ok) {
           const text = await res.text().catch(() => '');
-          throw new Error(`Meilisearch fetch failed (${res.status}): ${text}`);
+          // Typed error so callers can `instanceof MeilisearchFetchError` and
+          // branch on `.status` (408/5xx → graceful break, 4xx-other → bubble)
+          // without string-matching the message. Message format unchanged so
+          // Loki/dashboard queries on `Meilisearch fetch failed (NNN):`
+          // continue to match.
+          throw new MeilisearchFetchError(res.status, text);
         }
         return withSpan(
           'image:meili:parse',

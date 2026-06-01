@@ -106,6 +106,23 @@ function makeDelayedFetch(delayMs: number, payload: unknown = { results: [] }) {
     });
 }
 
+/**
+ * Build a fetch-like function that immediately resolves with a non-ok HTTP
+ * response. fetchDocumentsAbortable's `if (!res.ok)` branch then throws a
+ * MeilisearchFetchError carrying the status + body. Used to verify that the
+ * post-filter catch shape branches correctly on 408/5xx (graceful break) vs
+ * 4xx-other (re-throw).
+ */
+function makeStatusFetch(status: number, body = '') {
+  return (_input: unknown, _init?: { signal?: AbortSignal }) =>
+    Promise.resolve({
+      ok: false,
+      status,
+      json: async () => ({}),
+      text: async () => body,
+    });
+}
+
 // ─── Tests ──────────────────────────────────────────────────────────────────
 
 describe('fetchDocumentsAbortable timeout safety net', () => {
@@ -186,7 +203,7 @@ describe('fetchDocumentsAbortable timeout safety net', () => {
     // getImagesFromSearchPostFilter catch block in image.service.ts. If
     // either side changes shape (e.g. the abort reason chain breaks) this
     // test catches it before prod sees the regression.
-    const { fetchDocumentsAbortable, FETCH_DOCUMENTS_TIMEOUT_MESSAGE, meiliFetchTimeoutTotal } =
+    const { fetchDocumentsAbortable, FETCH_DOCUMENTS_TIMEOUT_MESSAGE, meiliFetchFailfastTotal } =
       await import('~/server/meilisearch/client');
 
     global.fetch = makeDelayedFetch(5_000) as unknown as typeof fetch;
@@ -212,9 +229,10 @@ describe('fetchDocumentsAbortable timeout safety net', () => {
         err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
         (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
       if (isLocalTimeout) {
-        meiliFetchTimeoutTotal.inc({
+        meiliFetchFailfastTotal.inc({
           route: 'getImagesFromSearchPostFilter',
           iteration: String(iterationUnderTest),
+          reason: 'local-timeout',
         });
         brokeOut = true;
       } else {
@@ -226,6 +244,7 @@ describe('fetchDocumentsAbortable timeout safety net', () => {
     expect(incMock).toHaveBeenCalledWith({
       route: 'getImagesFromSearchPostFilter',
       iteration: '2',
+      reason: 'local-timeout',
     });
     expect(incMock).toHaveBeenCalledTimes(1);
   });
@@ -268,5 +287,304 @@ describe('fetchDocumentsAbortable timeout safety net', () => {
     if (err.name === 'AbortError' && err.cause?.message) {
       expect(err.cause.message).not.toBe('meili-fetch-timeout');
     }
+  });
+});
+
+// ─── Upstream-side fail-fast (PR follow-up to #2370) ────────────────────────
+//
+// The 5s local timer in #2370 caught the slow-fetch path, but post-deploy
+// telemetry showed the dominant failure mode is upstream returning 503
+// (civitai-feeds-proxy shed) or 408 (Meilisearch backend timeout). These
+// were re-throwing as bare Error from fetchDocumentsAbortable, so the
+// post-filter catch in image.service.ts didn't recognise them and the
+// 500 bubbled to clients → retry storm → cascade sustained.
+//
+// This block proves the new MeilisearchFetchError shape + the extended
+// post-filter catch handle the three upstream failure modes correctly,
+// AND that 4xx-other (e.g. 400 malformed filter) still re-throws.
+
+describe('fetchDocumentsAbortable upstream-side fail-fast', () => {
+  const originalFetch = global.fetch;
+
+  beforeEach(() => {
+    incMock.mockClear();
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it('throws MeilisearchFetchError on 503 with status + body preserved', async () => {
+    const { fetchDocumentsAbortable, MeilisearchFetchError } = await import(
+      '~/server/meilisearch/client'
+    );
+    global.fetch = makeStatusFetch(503, 'service overloaded') as unknown as typeof fetch;
+
+    let caught: unknown;
+    try {
+      await fetchDocumentsAbortable<unknown>(
+        'images',
+        { limit: 1 },
+        { host: 'http://meili-metrics.example', apiKey: 'test' }
+      );
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(MeilisearchFetchError);
+    const err = caught as InstanceType<typeof MeilisearchFetchError>;
+    expect(err.status).toBe(503);
+    expect(err.responseText).toBe('service overloaded');
+    // Message-format contract — Loki/dashboard queries depend on this prefix.
+    expect(err.message).toBe('Meilisearch fetch failed (503): service overloaded');
+  });
+
+  it('throws MeilisearchFetchError on 408 with status preserved', async () => {
+    const { fetchDocumentsAbortable, MeilisearchFetchError } = await import(
+      '~/server/meilisearch/client'
+    );
+    global.fetch = makeStatusFetch(408, '') as unknown as typeof fetch;
+
+    let caught: unknown;
+    try {
+      await fetchDocumentsAbortable<unknown>(
+        'images',
+        { limit: 1 },
+        { host: 'http://meili-metrics.example', apiKey: 'test' }
+      );
+    } catch (e) {
+      caught = e;
+    }
+
+    expect(caught).toBeInstanceOf(MeilisearchFetchError);
+    expect((caught as InstanceType<typeof MeilisearchFetchError>).status).toBe(408);
+  });
+
+  it('does NOT throw MeilisearchFetchError on a 2xx happy path', async () => {
+    const { fetchDocumentsAbortable } = await import('~/server/meilisearch/client');
+    const payload = { results: [{ id: 42 }] };
+    global.fetch = makeDelayedFetch(10, payload) as unknown as typeof fetch;
+
+    const result = await fetchDocumentsAbortable<{ id: number }>(
+      'images',
+      { limit: 1 },
+      { host: 'http://meili-metrics.example', apiKey: 'test' }
+    );
+
+    expect(result).toEqual(payload);
+  });
+
+  it('post-filter catch shape recognises 503 (upstream-overload) and breaks with the right reason label', async () => {
+    const {
+      fetchDocumentsAbortable,
+      MeilisearchFetchError,
+      isFailfastStatus,
+      failfastReasonForStatus,
+      meiliFetchFailfastTotal,
+      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+    } = await import('~/server/meilisearch/client');
+
+    global.fetch = makeStatusFetch(503, 'service overloaded') as unknown as typeof fetch;
+
+    const iterationUnderTest = 3;
+    let brokeOut = false;
+    let reThrew = false;
+    try {
+      await fetchDocumentsAbortable<unknown>(
+        'images',
+        { limit: 100, offset: 200 },
+        { host: 'http://meili-metrics.example', apiKey: 'test' }
+      );
+    } catch (e) {
+      // Mirror the call-site catch from getImagesFromSearchPostFilter.
+      const err = e as Error & { name?: string; cause?: { message?: string } };
+      const isLocalTimeout =
+        err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+        (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+      if (isLocalTimeout) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: String(iterationUnderTest),
+          reason: 'local-timeout',
+        });
+        brokeOut = true;
+      } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: String(iterationUnderTest),
+          reason: failfastReasonForStatus(e.status),
+        });
+        brokeOut = true;
+      } else {
+        reThrew = true;
+      }
+    }
+
+    expect(brokeOut).toBe(true);
+    expect(reThrew).toBe(false);
+    expect(incMock).toHaveBeenCalledWith({
+      route: 'getImagesFromSearchPostFilter',
+      iteration: '3',
+      reason: 'upstream-overload',
+    });
+    expect(incMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('post-filter catch shape recognises 408 (upstream-timeout)', async () => {
+    const {
+      fetchDocumentsAbortable,
+      MeilisearchFetchError,
+      isFailfastStatus,
+      failfastReasonForStatus,
+      meiliFetchFailfastTotal,
+      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+    } = await import('~/server/meilisearch/client');
+
+    global.fetch = makeStatusFetch(408, '') as unknown as typeof fetch;
+
+    let brokeOut = false;
+    try {
+      await fetchDocumentsAbortable<unknown>(
+        'images',
+        { limit: 100 },
+        { host: 'http://meili-metrics.example', apiKey: 'test' }
+      );
+    } catch (e) {
+      const err = e as Error & { name?: string; cause?: { message?: string } };
+      const isLocalTimeout =
+        err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+        (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+      if (isLocalTimeout) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: 'local-timeout',
+        });
+        brokeOut = true;
+      } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: failfastReasonForStatus(e.status),
+        });
+        brokeOut = true;
+      } else {
+        throw e;
+      }
+    }
+
+    expect(brokeOut).toBe(true);
+    expect(incMock).toHaveBeenCalledWith({
+      route: 'getImagesFromSearchPostFilter',
+      iteration: '1',
+      reason: 'upstream-timeout',
+    });
+  });
+
+  it('post-filter catch re-throws on 400 (malformed filter is a real bug, must bubble)', async () => {
+    const {
+      fetchDocumentsAbortable,
+      MeilisearchFetchError,
+      isFailfastStatus,
+      failfastReasonForStatus,
+      meiliFetchFailfastTotal,
+      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+    } = await import('~/server/meilisearch/client');
+
+    global.fetch = makeStatusFetch(
+      400,
+      '{"message":"Invalid filter","code":"invalid_search_filter"}'
+    ) as unknown as typeof fetch;
+
+    let brokeOut = false;
+    let reThrown: unknown;
+    try {
+      await fetchDocumentsAbortable<unknown>(
+        'images',
+        { limit: 100 },
+        { host: 'http://meili-metrics.example', apiKey: 'test' }
+      );
+    } catch (e) {
+      const err = e as Error & { name?: string; cause?: { message?: string } };
+      const isLocalTimeout =
+        err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+        (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+      if (isLocalTimeout) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: 'local-timeout',
+        });
+        brokeOut = true;
+      } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: failfastReasonForStatus(e.status),
+        });
+        brokeOut = true;
+      } else {
+        reThrown = e;
+      }
+    }
+
+    // 400 must NOT be swallowed — it indicates a real malformed-filter bug.
+    expect(brokeOut).toBe(false);
+    expect(reThrown).toBeInstanceOf(MeilisearchFetchError);
+    expect((reThrown as InstanceType<typeof MeilisearchFetchError>).status).toBe(400);
+    // The fail-fast counter MUST NOT have incremented on 4xx-other.
+    expect(incMock).not.toHaveBeenCalled();
+  });
+
+  it('post-filter catch shape recognises 502 (upstream-error — generic 5xx)', async () => {
+    const {
+      fetchDocumentsAbortable,
+      MeilisearchFetchError,
+      isFailfastStatus,
+      failfastReasonForStatus,
+      meiliFetchFailfastTotal,
+      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+    } = await import('~/server/meilisearch/client');
+
+    global.fetch = makeStatusFetch(502, 'Bad Gateway') as unknown as typeof fetch;
+
+    let brokeOut = false;
+    try {
+      await fetchDocumentsAbortable<unknown>(
+        'images',
+        { limit: 100 },
+        { host: 'http://meili-metrics.example', apiKey: 'test' }
+      );
+    } catch (e) {
+      const err = e as Error & { name?: string; cause?: { message?: string } };
+      const isLocalTimeout =
+        err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+        (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+      if (isLocalTimeout) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: 'local-timeout',
+        });
+        brokeOut = true;
+      } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: failfastReasonForStatus(e.status),
+        });
+        brokeOut = true;
+      } else {
+        throw e;
+      }
+    }
+
+    expect(brokeOut).toBe(true);
+    expect(incMock).toHaveBeenCalledWith({
+      route: 'getImagesFromSearchPostFilter',
+      iteration: '1',
+      reason: 'upstream-error',
+    });
   });
 });
