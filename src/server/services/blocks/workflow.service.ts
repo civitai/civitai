@@ -48,7 +48,15 @@ export function snapshotFromWorkflow(workflow: Workflow): BlockWorkflowSnapshot 
   }
   const total = workflow.cost?.total;
   return {
-    workflowId: workflow.id ?? '',
+    // A whatif/estimate workflow has no orchestrator id. The block SDK's
+    // inbound validator (isValidWorkflowSnapshot) DROPS any snapshot whose
+    // workflowId is an empty string, so an `''` here silently strands the
+    // ESTIMATE_RESULT reply until the 120s transport timeout (the block then
+    // falls back to a "≤ budget" cost). Emit a non-empty sentinel so estimate
+    // replies validate; the block treats estimate results as a cost quote only
+    // and never polls on this id (the request is correlated by requestId, not
+    // workflowId). Submit always carries a real id, so it is unaffected.
+    workflowId: workflow.id ?? 'whatif',
     status,
     ...(typeof total === 'number' ? { cost: { total } } : {}),
     ...(imageUrls.length > 0 ? { imageUrls } : {}),

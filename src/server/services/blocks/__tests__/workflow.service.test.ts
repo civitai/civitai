@@ -89,6 +89,15 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/ok.png']);
   });
 
+  it('emits a non-empty sentinel workflowId for whatif/estimate (no orchestrator id)', () => {
+    // The block SDK validator drops snapshots with an empty workflowId, which
+    // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55). A whatif
+    // workflow has no id, so the snapshot must carry a non-empty sentinel.
+    const snap = snapshotFromWorkflow(fakeWorkflow({ id: undefined }) as never);
+    expect(snap.workflowId).toBe('whatif');
+    expect(snap.workflowId.length).toBeGreaterThan(0);
+  });
+
   it('maps orchestrator-internal statuses (unassigned/preparing/scheduled) to pending', () => {
     for (const status of ['unassigned', 'preparing', 'scheduled'] as const) {
       const snap = snapshotFromWorkflow(fakeWorkflow({ status }) as never);
