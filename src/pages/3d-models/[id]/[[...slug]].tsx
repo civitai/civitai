@@ -44,7 +44,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
 import { MakesUsesRail } from '~/components/Model3D/MakesUses/MakesUsesRail';
-import type { Model3DEditModalProps } from '~/components/Model3D/Edit/Model3DEditModal';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -72,11 +71,6 @@ const Model3DViewer = dynamic(
 // Lazy-loaded review modal — only imported when the user clicks "Write a review".
 const Model3DReviewModal = dynamic<Model3DReviewModalProps>(
   () => import('~/components/Model3D/Reviews/Model3DReviewModal')
-);
-
-// Lazy-loaded edit modal — only imported when the owner/mod clicks "Edit".
-const Model3DEditModal = dynamic<Model3DEditModalProps>(
-  () => import('~/components/Model3D/Edit/Model3DEditModal')
 );
 
 const querySchema = z.object({
@@ -156,21 +150,6 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     });
   };
 
-  const openEditModal = () => {
-    if (!model3d) return;
-    dialogStore.trigger({
-      component: Model3DEditModal,
-      props: {
-        model3d: {
-          id: model3d.id,
-          name: model3d.name,
-          description: model3d.description ?? null,
-          licenseId: model3d.licenseId,
-        },
-      },
-    });
-  };
-
   if (isLoading) return <PageLoader />;
   if (!model3d) return <NotFound />;
 
@@ -237,10 +216,11 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             <Group gap={4} align="center" wrap="nowrap">
               {(isOwner || isModerator) && (
                 <Button
+                  component={Link}
+                  href={`/3d-models/${id}/edit`}
                   variant="default"
                   size="xs"
                   leftSection={<IconPencil size={14} />}
-                  onClick={openEditModal}
                 >
                   Edit
                 </Button>
@@ -290,61 +270,41 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             </Group>
           </Group>
 
-          {/* Body grid: main column + sidebar on desktop, stacked on mobile. */}
+          {/* Viewer pulled out of the grid so it sits full-width above on both
+              mobile and desktop. This lets us reorder the remaining columns so
+              that on mobile (single column) the sidebar (files / gen details /
+              creator / reviews) appears directly under the viewer, with the
+              main column content (description / makes-uses / comments) below. */}
+          <Card withBorder radius="md" p={0} className="overflow-hidden">
+            {primaryFile ? (
+              <Model3DViewer
+                // Use the resolved/presigned downloadUrl so the browser can
+                // actually fetch the GLB — the raw `url` may point at a
+                // bucket the public delivery worker doesn't authorize.
+                url={primaryFile.downloadUrl ?? primaryFile.url}
+                format={primaryFile.format}
+                sizeKB={primaryFile.sizeKB}
+              />
+            ) : (
+              <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
+                <Stack align="center" gap="xs" maw={420} ta="center">
+                  <IconCube size={48} stroke={1.5} />
+                  <Text fw={600}>No files yet</Text>
+                  <Text size="sm" c="dimmed">
+                    The 3D files for this model are still being processed.
+                  </Text>
+                </Stack>
+              </Box>
+            )}
+          </Card>
+
+          {/* Body grid: main column + sidebar on desktop, stacked on mobile.
+              Sidebar Col is FIRST in DOM order so on mobile (single column) it
+              renders directly under the viewer. On md+ the `order` prop swaps
+              the columns visually so the main column is on the left. */}
           <ContainerGrid2 gutter="xl">
-            {/* Main column — viewer, description, makes/uses, comments */}
-            <ContainerGrid2.Col span={{ base: 12, md: 8 }}>
-              <Stack gap="md">
-                {/* Viewer */}
-                <Card withBorder radius="md" p={0} className="overflow-hidden">
-                  {primaryFile ? (
-                    <Model3DViewer
-                      // Use the resolved/presigned downloadUrl so the browser can
-                      // actually fetch the GLB — the raw `url` may point at a
-                      // bucket the public delivery worker doesn't authorize.
-                      url={primaryFile.downloadUrl ?? primaryFile.url}
-                      format={primaryFile.format}
-                      sizeKB={primaryFile.sizeKB}
-                    />
-                  ) : (
-                    <Box className="flex min-h-[420px] items-center justify-center bg-dark-7 p-6">
-                      <Stack align="center" gap="xs" maw={420} ta="center">
-                        <IconCube size={48} stroke={1.5} />
-                        <Text fw={600}>No files yet</Text>
-                        <Text size="sm" c="dimmed">
-                          The 3D files for this model are still being processed.
-                        </Text>
-                      </Stack>
-                    </Box>
-                  )}
-                </Card>
-
-                {/* Description */}
-                {model3d.description && (
-                  <Card withBorder radius="md" p="md">
-                    <Stack gap="xs">
-                      <Title order={3}>About this model</Title>
-                      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                        {model3d.description}
-                      </Text>
-                    </Stack>
-                  </Card>
-                )}
-
-                {/* Makes & Uses */}
-                <MakesUsesRail model3dId={id} />
-
-                <Divider />
-
-                {/* Comments */}
-                <div id="comments">
-                  <Model3DComments model3dId={id} userId={model3d.user.id} />
-                </div>
-              </Stack>
-            </ContainerGrid2.Col>
-
             {/* Sidebar — files dropdown + generation details + creator + reviews preview */}
-            <ContainerGrid2.Col span={{ base: 12, md: 4 }}>
+            <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ base: 1, md: 2 }}>
               <Stack gap="md">
                 {/* Files dropdown + download */}
                 <Card withBorder radius="md" p="md">
@@ -505,6 +465,33 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     </Anchor>
                   </Stack>
                 </Card>
+              </Stack>
+            </ContainerGrid2.Col>
+
+            {/* Main column — description, makes/uses, comments */}
+            <ContainerGrid2.Col span={{ base: 12, md: 8 }} order={{ base: 2, md: 1 }}>
+              <Stack gap="md">
+                {/* Description */}
+                {model3d.description && (
+                  <Card withBorder radius="md" p="md">
+                    <Stack gap="xs">
+                      <Title order={3}>About this model</Title>
+                      <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                        {model3d.description}
+                      </Text>
+                    </Stack>
+                  </Card>
+                )}
+
+                {/* Makes & Uses */}
+                <MakesUsesRail model3dId={id} />
+
+                <Divider />
+
+                {/* Comments */}
+                <div id="comments">
+                  <Model3DComments model3dId={id} userId={model3d.user.id} />
+                </div>
               </Stack>
             </ContainerGrid2.Col>
           </ContainerGrid2>
