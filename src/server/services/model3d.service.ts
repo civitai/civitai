@@ -35,7 +35,6 @@ import type {
   UnpublishModel3DInput,
   UpsertModel3DInput,
 } from '~/server/schema/model3d.schema';
-import { userContentOverviewCache } from '~/server/redis/caches';
 
 type SessionUser = {
   id: number;
