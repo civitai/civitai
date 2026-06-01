@@ -78,6 +78,30 @@ export const deleteModel3DSchema = z.object({
   id: z.number().int().positive(),
 });
 
+// ---------------------------------------------------------------------------
+// Moderation
+// ---------------------------------------------------------------------------
+
+export type SetModel3DNsfwLevelInput = z.infer<typeof setModel3DNsfwLevelSchema>;
+export const setModel3DNsfwLevelSchema = z.object({
+  id: z.number().int().positive(),
+  nsfwLevel: z.number().int().min(0),
+  // When true, also append `'nsfwLevel'` to lockedProperties so the batch
+  // nsfwLevel recompute job skips this row.
+  lock: z.boolean().optional(),
+});
+
+export type ToggleModel3DFlagInput = z.infer<typeof toggleModel3DFlagSchema>;
+export const toggleModel3DFlagSchema = z.object({
+  id: z.number().int().positive(),
+  field: z.enum(['tosViolation', 'poi', 'minor', 'nsfw', 'unlisted']),
+});
+
+export type RestoreModel3DInput = z.infer<typeof restoreModel3DSchema>;
+export const restoreModel3DSchema = z.object({
+  id: z.number().int().positive(),
+});
+
 export type GetModel3DFilesInput = z.infer<typeof getModel3DFilesSchema>;
 export const getModel3DFilesSchema = z.object({
   id: z.number().int().positive(),

@@ -28,9 +28,13 @@ import type {
   GetModel3DReviewSummaryInput,
   GetModel3DsInfiniteInput,
   PublishModel3DInput,
+  RestoreModel3DInput,
+  SetModel3DNsfwLevelInput,
+  ToggleModel3DFlagInput,
   UnpublishModel3DInput,
   UpsertModel3DInput,
 } from '~/server/schema/model3d.schema';
+import { userContentOverviewCache } from '~/server/redis/caches';
 
 type SessionUser = {
   id: number;
@@ -442,6 +446,178 @@ export const deleteModel3D = async ({
       },
       select: { id: true, status: true, deletedAt: true, deletedBy: true },
     });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Moderation mutations (mod-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Mod override of the (otherwise thumbnail-derived) Model3D nsfwLevel. When
+ * `lock` is true we also append `'nsfwLevel'` to `lockedProperties` so the
+ * batch recompute (`updateModel3DNsfwLevels`) skips this row going forward.
+ *
+ * Denormalized `Model3DMetric.nsfwLevel` is updated in lockstep.
+ */
+export const setModel3DNsfwLevel = async ({
+  id,
+  nsfwLevel,
+  lock,
+  user,
+}: SetModel3DNsfwLevelInput & { user: SessionUser }) => {
+  if (!user.isModerator) throw throwAuthorizationError();
+
+  const existing = await dbWrite.model3D.findUnique({
+    where: { id },
+    select: { id: true, userId: true, lockedProperties: true },
+  });
+  if (!existing) throw throwNotFoundError(`No 3D model with id ${id}`);
+
+  const nextLocked = lock
+    ? Array.from(new Set([...(existing.lockedProperties ?? []), 'nsfwLevel']))
+    : existing.lockedProperties;
+
+  try {
+    const updated = await dbWrite.$transaction(async (tx) => {
+      const row = await tx.model3D.update({
+        where: { id },
+        data: { nsfwLevel, lockedProperties: nextLocked },
+        select: model3dDetailSelect,
+      });
+      // Keep the denormalized metric row in sync. The metric row may not exist
+      // for very new entities — upsert defensively.
+      await tx.model3DMetric.updateMany({
+        where: { model3dId: id },
+        data: { nsfwLevel },
+      });
+      return row;
+    });
+
+    await userContentOverviewCache.refresh(existing.userId);
+
+    return updated;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+const TOGGLEABLE_MODEL3D_FLAG_FIELDS = [
+  'tosViolation',
+  'poi',
+  'minor',
+  'nsfw',
+  'unlisted',
+] as const;
+type ToggleableModel3DFlagField = (typeof TOGGLEABLE_MODEL3D_FLAG_FIELDS)[number];
+
+/**
+ * Flip a single moderation flag on a Model3D. Auto-locks the flipped field by
+ * appending its name to `lockedProperties` so non-mod upserts can't override
+ * the decision (see R8 in the plan).
+ */
+export const toggleModel3DFlag = async ({
+  id,
+  field,
+  user,
+}: ToggleModel3DFlagInput & { user: SessionUser }) => {
+  if (!user.isModerator) throw throwAuthorizationError();
+  // Defensive — the zod enum already restricts this, but the cast below relies
+  // on it so re-validate.
+  if (!TOGGLEABLE_MODEL3D_FLAG_FIELDS.includes(field as ToggleableModel3DFlagField)) {
+    throw throwBadRequestError(`Field "${field}" is not toggleable`);
+  }
+
+  const existing = await dbWrite.model3D.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      userId: true,
+      lockedProperties: true,
+      tosViolation: true,
+      poi: true,
+      minor: true,
+      nsfw: true,
+      unlisted: true,
+    },
+  });
+  if (!existing) throw throwNotFoundError(`No 3D model with id ${id}`);
+
+  const currentValue = existing[field as ToggleableModel3DFlagField];
+  const nextValue = !currentValue;
+  const nextLocked = Array.from(new Set([...(existing.lockedProperties ?? []), field]));
+
+  try {
+    const updated = await dbWrite.model3D.update({
+      where: { id },
+      data: {
+        [field]: nextValue,
+        lockedProperties: nextLocked,
+      },
+      select: model3dDetailSelect,
+    });
+
+    await userContentOverviewCache.refresh(existing.userId);
+
+    return updated;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    throw throwDbError(error);
+  }
+};
+
+/**
+ * Mod-only restore. Only valid for `Deleted` → `Unpublished` (clears
+ * `deletedAt` + `deletedBy`) or `Unpublished` → `Published`. Drafts and
+ * already-Published rows are no-ops at the input layer — reject with 400.
+ */
+export const restoreModel3D = async ({ id, user }: RestoreModel3DInput & { user: SessionUser }) => {
+  if (!user.isModerator) throw throwAuthorizationError();
+
+  const existing = await dbWrite.model3D.findUnique({
+    where: { id },
+    select: { id: true, userId: true, status: true, deletedAt: true, thumbnailImageId: true },
+  });
+  if (!existing) throw throwNotFoundError(`No 3D model with id ${id}`);
+
+  const isDeleted = existing.status === Model3DStatus.Deleted;
+  const isUnpublished = existing.status === Model3DStatus.Unpublished;
+  if (!isDeleted && !isUnpublished) {
+    throw throwBadRequestError(
+      `Cannot restore a 3D model in status "${existing.status}". Only Deleted or Unpublished rows can be restored.`
+    );
+  }
+
+  // Two-step restore:
+  //   Deleted     → Unpublished (clear deletedAt/deletedBy)
+  //   Unpublished → Published
+  // Use the *Unchecked* variant so we can null the `deletedBy` scalar FK
+  // directly (the checked variant would require `deletedByUser: { disconnect }`).
+  const data: Prisma.Model3DUncheckedUpdateInput = isDeleted
+    ? {
+        status: Model3DStatus.Unpublished,
+        deletedAt: null,
+        deletedBy: null,
+      }
+    : {
+        status: Model3DStatus.Published,
+        publishedAt: new Date(),
+      };
+
+  try {
+    const updated = await dbWrite.model3D.update({
+      where: { id },
+      data,
+      select: model3dDetailSelect,
+    });
+
+    await userContentOverviewCache.refresh(existing.userId);
+
+    return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

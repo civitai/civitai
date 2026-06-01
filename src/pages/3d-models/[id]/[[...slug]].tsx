@@ -42,6 +42,7 @@ import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
+import { Model3DModBar } from '~/components/Model3D/Moderation/Model3DModBar';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
 import { MakesUsesRail } from '~/components/Model3D/MakesUses/MakesUsesRail';
 import type { Model3DReviewModalProps } from '~/components/Model3D/Reviews/Model3DReviewModal';
@@ -65,7 +66,14 @@ import { trpc } from '~/utils/trpc';
 // Dynamic, ssr-disabled import — three.js needs WebGL which only exists in the browser.
 const Model3DViewer = dynamic(
   () => import('~/components/Model3D/Viewer/Model3DViewer').then((m) => m.Model3DViewer),
-  { ssr: false, loading: () => <Center mih={420}><Loader /></Center> }
+  {
+    ssr: false,
+    loading: () => (
+      <Center mih={420}>
+        <Loader />
+      </Center>
+    ),
+  }
 );
 
 // Lazy-loaded review modal — only imported when the user clicks "Write a review".
@@ -114,8 +122,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     if (primaryFile && !selectedFormat) setSelectedFormat(primaryFile.format);
   }, [primaryFile, selectedFormat]);
 
-  const selectedFile =
-    files.find((f) => f.format === selectedFormat) ?? primaryFile ?? null;
+  const selectedFile = files.find((f) => f.format === selectedFormat) ?? primaryFile ?? null;
 
   const handleDownload = () => {
     if (!selectedFile?.downloadUrl) {
@@ -225,6 +232,21 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   Edit
                 </Button>
               )}
+              {isModerator && (
+                <Model3DModBar
+                  model3d={{
+                    id: model3d.id,
+                    status: model3d.status,
+                    nsfw: model3d.nsfw,
+                    tosViolation: model3d.tosViolation,
+                    poi: model3d.poi,
+                    minor: model3d.minor,
+                    unlisted: model3d.unlisted,
+                    nsfwLevel: model3d.nsfwLevel ?? 0,
+                    lockedProperties: model3d.lockedProperties ?? [],
+                  }}
+                />
+              )}
               <InteractiveTipBuzzButton
                 toUserId={model3d.user.id}
                 entityType="Model3D"
@@ -241,10 +263,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <Text size="sm">{abbreviateNumber(tippedAmountTotal)}</Text>
                 </IconBadge>
               </InteractiveTipBuzzButton>
-              <ShareButton
-                url={`/3d-models/${model3d.id}`}
-                title={model3d.name}
-              >
+              <ShareButton url={`/3d-models/${model3d.id}`} title={model3d.name}>
                 <LegacyActionIcon variant="subtle" color="gray" aria-label="Share">
                   <IconShare3 />
                 </LegacyActionIcon>
@@ -332,8 +351,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         </Button>
                         {selectedFile && (
                           <Text size="xs" c="dimmed" lineClamp={1}>
-                            {selectedFile.name} ·{' '}
-                            {(selectedFile.sizeKB / 1024).toFixed(2)} MB
+                            {selectedFile.name} · {(selectedFile.sizeKB / 1024).toFixed(2)} MB
                           </Text>
                         )}
                       </Stack>
@@ -373,15 +391,9 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
 
                     {reviewSummary && reviewSummary.ratingCount > 0 ? (
                       <Group gap="sm" align="center">
-                        <Rating
-                          value={reviewSummary.ratingAvg}
-                          fractions={2}
-                          readOnly
-                          size="sm"
-                        />
+                        <Rating value={reviewSummary.ratingAvg} fractions={2} readOnly size="sm" />
                         <Text size="xs" c="dimmed">
-                          {reviewSummary.ratingAvg.toFixed(2)} ·{' '}
-                          {reviewSummary.ratingCount}{' '}
+                          {reviewSummary.ratingAvg.toFixed(2)} · {reviewSummary.ratingCount}{' '}
                           {reviewSummary.ratingCount === 1 ? 'review' : 'reviews'}
                         </Text>
                       </Group>
@@ -394,10 +406,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                     {previewReviews.length > 0 && (
                       <Stack gap="sm">
                         {previewReviews.map((review) => (
-                          <Box
-                            key={review.id}
-                            className="rounded-md bg-gray-1 p-2 dark:bg-dark-6"
-                          >
+                          <Box key={review.id} className="rounded-md bg-gray-1 p-2 dark:bg-dark-6">
                             <Stack gap={4}>
                               <Group gap="xs" justify="space-between" wrap="nowrap">
                                 <UserAvatarSimple
