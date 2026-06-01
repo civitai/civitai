@@ -1,6 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import {
   getGetUrl,
@@ -374,7 +375,7 @@ export const publishModel3D = async ({
 
   try {
     const now = new Date();
-    return await dbWrite.model3D.update({
+    const updated = await dbWrite.model3D.update({
       where: { id: input.id },
       data: {
         status: Model3DStatus.Published,
@@ -382,6 +383,8 @@ export const publishModel3D = async ({
       },
       select: model3dDetailSelect,
     });
+    await userContentOverviewCache.refresh(existing.userId);
+    return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -405,11 +408,13 @@ export const unpublishModel3D = async ({
   if (existing.deletedAt) throw throwBadRequestError('Cannot unpublish a deleted 3D model');
 
   try {
-    return await dbWrite.model3D.update({
+    const updated = await dbWrite.model3D.update({
       where: { id: input.id },
       data: { status: Model3DStatus.Unpublished },
       select: model3dDetailSelect,
     });
+    await userContentOverviewCache.refresh(existing.userId);
+    return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
@@ -433,7 +438,7 @@ export const deleteModel3D = async ({
   if (existing.deletedAt) return existing; // idempotent
 
   try {
-    return await dbWrite.model3D.update({
+    const updated = await dbWrite.model3D.update({
       where: { id: input.id },
       data: {
         status: Model3DStatus.Deleted,
@@ -442,6 +447,8 @@ export const deleteModel3D = async ({
       },
       select: { id: true, status: true, deletedAt: true, deletedBy: true },
     });
+    await userContentOverviewCache.refresh(existing.userId);
+    return updated;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

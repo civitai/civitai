@@ -612,6 +612,52 @@ export const userPostCountPublicCache = createUserContentCountCache<UserPostCoun
   `
 );
 
+type UserModel3DCount = { id: number; model3dCount: number };
+export const userModel3DCountCache = createUserContentCountCache<UserModel3DCount>(
+  'model3dCount',
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "model3dCount"
+    FROM "Model3D"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND "deletedAt" IS NULL
+      AND availability != 'Private'
+    GROUP BY "userId"
+  `
+);
+export const userModel3DCountSfwCache = createUserContentCountCache<UserModel3DCount>(
+  'model3dCount:sfw',
+  async (userIds, fromWrite) => (fromWrite ? dbWrite : dbRead).$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "model3dCount"
+    FROM "Model3D"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND "deletedAt" IS NULL
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${sfwBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
+export const userModel3DCountPublicCache = createUserContentCountCache<UserModel3DCount>(
+  'model3dCount:public',
+  async (userIds) => dbRead.$queryRaw`
+    SELECT
+      "userId" as id,
+      COUNT(*)::INT as "model3dCount"
+    FROM "Model3D"
+    WHERE "userId" IN (${Prisma.join(userIds)})
+      AND "status" = 'Published'
+      AND "deletedAt" IS NULL
+      AND availability != 'Private'
+      AND ("nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0
+    GROUP BY "userId"
+  `
+);
+
 type UserImageVideoCount = { id: number; imageCount: number; videoCount: number };
 export const userImageVideoCountCache = createUserContentCountCache<UserImageVideoCount>(
   'imageVideoCount',
@@ -905,6 +951,7 @@ type UserContentOverview = {
   hasReceivedReviews: boolean;
   collectionCount: number;
   comicCount: number;
+  model3dCount: number;
 };
 
 function mergeOverviewResults(
@@ -917,7 +964,8 @@ function mergeOverviewResults(
   bountyEntryCounts: Record<string, UserBountyEntryCount>,
   collectionCounts: Record<string, UserCollectionCount>,
   reviewFlags: Record<string, UserHasReceivedReviews>,
-  comicCounts: Record<string, UserComicCount>
+  comicCounts: Record<string, UserComicCount>,
+  model3dCounts: Record<string, UserModel3DCount>
 ): Record<number, UserContentOverview> {
   return Object.fromEntries(
     ids.map((id) => [
@@ -934,6 +982,7 @@ function mergeOverviewResults(
         collectionCount: collectionCounts[id]?.collectionCount ?? 0,
         comicCount: comicCounts[id]?.comicCount ?? 0,
         hasReceivedReviews: reviewFlags[id]?.hasReceivedReviews ?? false,
+        model3dCount: model3dCounts[id]?.model3dCount ?? 0,
       },
     ])
   );
@@ -955,6 +1004,7 @@ export const getUserContentOverview = async (
     collectionCounts,
     reviewFlags,
     comicCounts,
+    model3dCounts,
   ] = await Promise.all([
     userModelCountCache.fetch(ids),
     userPostCountCache.fetch(ids),
@@ -965,6 +1015,7 @@ export const getUserContentOverview = async (
     userCollectionCountCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids),
     userComicCountCache.fetch(ids),
+    userModel3DCountCache.fetch(ids),
   ]);
 
   return mergeOverviewResults(
@@ -977,7 +1028,8 @@ export const getUserContentOverview = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
-    comicCounts
+    comicCounts,
+    model3dCounts
   );
 };
 
@@ -997,6 +1049,7 @@ export const getUserContentOverviewSfw = async (
     collectionCounts,
     reviewFlags,
     comicCounts,
+    model3dCounts,
   ] = await Promise.all([
     userModelCountSfwCache.fetch(ids),
     userPostCountSfwCache.fetch(ids),
@@ -1007,6 +1060,7 @@ export const getUserContentOverviewSfw = async (
     userCollectionCountSfwCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids), // not NSFW-filtered
     userComicCountSfwCache.fetch(ids),
+    userModel3DCountSfwCache.fetch(ids),
   ]);
 
   return mergeOverviewResults(
@@ -1019,7 +1073,8 @@ export const getUserContentOverviewSfw = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
-    comicCounts
+    comicCounts,
+    model3dCounts
   );
 };
 
@@ -1039,6 +1094,7 @@ export const getUserContentOverviewPublic = async (
     collectionCounts,
     reviewFlags,
     comicCounts,
+    model3dCounts,
   ] = await Promise.all([
     userModelCountPublicCache.fetch(ids),
     userPostCountPublicCache.fetch(ids),
@@ -1049,6 +1105,7 @@ export const getUserContentOverviewPublic = async (
     userCollectionCountPublicCache.fetch(ids),
     userHasReceivedReviewsCache.fetch(ids), // not NSFW-filtered
     userComicCountPublicCache.fetch(ids),
+    userModel3DCountPublicCache.fetch(ids),
   ]);
 
   return mergeOverviewResults(
@@ -1061,7 +1118,8 @@ export const getUserContentOverviewPublic = async (
     bountyEntryCounts,
     collectionCounts,
     reviewFlags,
-    comicCounts
+    comicCounts,
+    model3dCounts
   );
 };
 
@@ -1095,6 +1153,9 @@ export const userContentOverviewCache = {
       userComicCountCache.refresh(ids),
       userComicCountSfwCache.refresh(ids),
       userComicCountPublicCache.refresh(ids),
+      userModel3DCountCache.refresh(ids),
+      userModel3DCountSfwCache.refresh(ids),
+      userModel3DCountPublicCache.refresh(ids),
     ]);
   },
 };
