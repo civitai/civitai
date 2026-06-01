@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { ActionIcon, Box, Group, Menu, Text } from '@mantine/core';
+import { ActionIcon, Box, Group, Menu } from '@mantine/core';
 import { IconApps, IconDots } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
@@ -136,10 +136,10 @@ function AppBlockChrome() {
       }}
     >
       <Group gap={6} wrap="nowrap">
-        <IconApps size={14} stroke={1.5} />
-        <Text size="xs" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: '0.04em' }}>
-          App block
-        </Text>
+        {/* Icon only — the "App block" wordmark was dropped as redundant
+            (the icon + the frame itself already signal it). aria-label keeps
+            the provenance signal for screen readers. */}
+        <IconApps size={14} stroke={1.5} aria-label="App block" />
       </Group>
       <Menu position="bottom-end" shadow="md" width={180}>
         <Menu.Target>
