@@ -552,6 +552,11 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
  */
 export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<void> {
   if (!model3dIds.length) return;
+  // Honor `lockedProperties` — rows where a mod has manually locked the
+  // nsfwLevel (via `setModel3DNsfwLevel({ lock: true })`) must not be
+  // clobbered by the thumbnail-derived recompute. We filter at the CTE level
+  // so both the Model3D + Model3DMetric branches naturally exclude locked
+  // rows. (R8 in `docs/3d-models-followups.md`.)
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level AS (
       SELECT
@@ -560,6 +565,7 @@ export async function updateModel3DNsfwLevels(model3dIds: number[]): Promise<voi
       FROM "Model3D" m
       LEFT JOIN "Image" i ON i.id = m."thumbnailImageId"
       WHERE m.id IN (${Prisma.join(model3dIds)})
+        AND NOT ('nsfwLevel' = ANY(m."lockedProperties"))
     ), model_update AS (
       UPDATE "Model3D" m
       SET "nsfwLevel" = level."nsfwLevel"

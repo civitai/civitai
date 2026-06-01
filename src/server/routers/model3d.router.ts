@@ -23,6 +23,9 @@ import {
   deleteModel3DReviewSchema,
   createModel3DReportSchema,
   createModel3DReviewReportSchema,
+  setModel3DNsfwLevelSchema,
+  toggleModel3DFlagSchema,
+  restoreModel3DSchema,
 } from '~/server/schema/model3d.schema';
 import {
   upsertModel3D,
@@ -36,6 +39,9 @@ import {
   getModel3DFiles,
   getModel3DRelatedPosts,
   getModel3DReviewSummary,
+  setModel3DNsfwLevel,
+  toggleModel3DFlag,
+  restoreModel3D,
 } from '~/server/services/model3d.service';
 import {
   upsertModel3DReview,
@@ -67,6 +73,20 @@ const reviewsRouter = router({
     .use(isFlagProtected('model3dFeed'))
     .input(deleteModel3DReviewSchema)
     .mutation(({ input, ctx }) => deleteModel3DReview({ input, user: ctx.user })),
+});
+
+// Mod content-actioning endpoints (workstream O / plan §M2 Phase 3). NOT
+// flag-gated — mods always have access regardless of `model3dFeed` rollout.
+const moderationRouter = router({
+  setNsfwLevel: moderatorProcedure
+    .input(setModel3DNsfwLevelSchema)
+    .mutation(({ input, ctx }) => setModel3DNsfwLevel({ ...input, user: ctx.user })),
+  toggleFlag: moderatorProcedure
+    .input(toggleModel3DFlagSchema)
+    .mutation(({ input, ctx }) => toggleModel3DFlag({ ...input, user: ctx.user })),
+  restore: moderatorProcedure
+    .input(restoreModel3DSchema)
+    .mutation(({ input, ctx }) => restoreModel3D({ ...input, user: ctx.user })),
 });
 
 const reportsRouter = router({
@@ -134,4 +154,5 @@ export const model3dRouter = router({
   // Sub-routers
   reviews: reviewsRouter,
   reports: reportsRouter,
+  moderation: moderationRouter,
 });
