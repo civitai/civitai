@@ -1,4 +1,6 @@
 import { trpc } from '~/utils/trpc';
+import { computeSlotReservation } from './slotReservation';
+import type { SlotReservation } from './slotReservation';
 import type { BlockInstall, ModelSlotContext } from './types';
 
 // Narrow to the slot ids declared in ModelSlotContext so the tRPC input's
@@ -16,6 +18,18 @@ interface UseBlockSlotResult {
   installs: BlockInstall[];
   isLoading: boolean;
   error: Error | null;
+  /**
+   * Server-seeded reservation derived from the current install list. Drives
+   * the loading placeholder height in BlockSlotClient so the slot reserves
+   * the right space up-front instead of flashing 0px → full frame.
+   *
+   * With the model-page SSR prefetch in place, `query.data` is already
+   * populated on first client render (isLoading=false), so the reservation
+   * reflects real installs immediately. On a client-side refetch we keep the
+   * previous data (keepPreviousData) so the reservation — and thus the
+   * reserved height — stays stable across the refetch instead of collapsing.
+   */
+  reservation: SlotReservation;
 }
 
 /**
@@ -38,11 +52,17 @@ export function useBlockSlot({
     {
       staleTime: 60 * 1000,
       refetchOnWindowFocus: false,
+      // Keep the prior result visible across a refetch so the slot's reserved
+      // height doesn't collapse to 0 (re-introducing the layout shift) while
+      // the background refetch is in flight.
+      keepPreviousData: true,
     }
   );
+  const installs = Array.isArray(query.data) ? (query.data as BlockInstall[]) : [];
   return {
-    installs: Array.isArray(query.data) ? (query.data as BlockInstall[]) : [],
+    installs,
     isLoading: query.isLoading,
     error: query.error ? new Error(query.error.message) : null,
+    reservation: computeSlotReservation(installs),
   };
 }

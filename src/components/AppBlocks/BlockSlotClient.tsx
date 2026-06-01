@@ -30,7 +30,7 @@ function truncateLabel(label: string): string {
  * is that switching tabs re-runs BLOCK_INIT each time (no warm-pool yet).
  */
 export function BlockSlotClient({ slotId, context }: BlockSlotClientProps) {
-  const { installs, isLoading, error } = useBlockSlot({
+  const { installs, isLoading, error, reservation } = useBlockSlot({
     slotId,
     modelId: context.modelId,
     modelType: context.modelType,
@@ -50,7 +50,31 @@ export function BlockSlotClient({ slotId, context }: BlockSlotClientProps) {
   );
 
   if (error) return null; // fail-soft — never surface a block error as page-level
-  if (isLoading) return null;
+  if (isLoading) {
+    // CLS fix (Source A): the slot used to return null while the
+    // listForModel query was in flight, so the slot was 0px and then popped
+    // to full height once the frame mounted — shoving the sidebar content
+    // below it down. With the model-page SSR prefetch this branch rarely
+    // runs (data is already hydrated, isLoading=false), but for client-side
+    // navigation / a cold refetch we reserve the right height UP-FRONT when
+    // an install is expected.
+    //
+    // Zero-install no-regression: when the reservation is 0 (no install
+    // known, or only inline installs) we still return null so a zero-install
+    // model page reserves NOTHING — preserving the deliberate "no dead gap
+    // row in the sidebar Stack" behavior the original `return null` existed
+    // for.
+    if (reservation.reservedHeight > 0) {
+      return (
+        <div
+          data-app-block-reserve
+          data-block-slot={slotId}
+          style={{ minHeight: reservation.reservedHeight }}
+        />
+      );
+    }
+    return null;
+  }
   if (sortedInstalls.length === 0) return null;
 
   // 1-install path: render the BlockHost directly with no tab chrome so the

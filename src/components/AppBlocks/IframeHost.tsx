@@ -409,9 +409,10 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   useEffect(() => {
     const off = onMessage<unknown>('RESIZE_IFRAME', (raw) => {
       if (!raw || typeof raw !== 'object' || !('height' in raw)) return;
-      // M-7: only honor RESIZE_IFRAME once BLOCK_READY has landed. Iframe is
-      // display:none until ready so visual impact is nil today, but the
-      // contract drift will bite the next person who renames the gate.
+      // M-7: only honor RESIZE_IFRAME once BLOCK_READY has landed. The iframe
+      // is visible-but-non-interactive (pointerEvents:none) before ready and
+      // pinned at minHeight, so an early RESIZE would let a pre-ready block
+      // push the slot height around before the handshake completes.
       if (status !== 'ready') return;
       applyHeight((raw as { height?: unknown }).height);
     });
@@ -910,15 +911,19 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     return framed(<BlockFallback reason="token_error" blockName={install.manifest.name} />);
   }
 
+  // CLS fix (Source B): collapse the hidden→shown iframe swap. The iframe is
+  // rendered VISIBLE from the start, sized at `iframeHeight` (which starts at
+  // the manifest minHeight — same as the loading skeleton), with
+  // pointerEvents disabled until BLOCK_READY so a pre-ready block can't be
+  // interacted with. The loading skeleton is overlaid ON TOP of the iframe at
+  // the SAME minHeight (absolute-positioned), so there's exactly one
+  // minHeight-tall box while loading and zero height delta when the skeleton
+  // unmounts on ready. On READY the iframe grows from minHeight to the
+  // reported content height — one bounded change (minHeight → content), not a
+  // 0 → content jump.
+  const isReady = status === 'ready';
   return framed(
-    <>
-      {status === 'loading' && (
-        <BlockFallback
-          reason="loading"
-          blockName={install.manifest.name}
-          minHeight={install.manifest.iframe?.minHeight ?? 200}
-        />
-      )}
+    <div style={{ position: 'relative', width: '100%' }}>
       <iframe
         ref={iframeRef}
         src={iframeSrc}
@@ -932,12 +937,16 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
         title={install.manifest.name ?? install.blockId}
         data-testid="block-iframe"
         data-block-instance-id={install.blockInstanceId}
-        data-block-ready={status === 'ready' ? 'true' : 'false'}
+        data-block-ready={isReady ? 'true' : 'false'}
         style={{
-          display: status === 'ready' ? 'block' : 'none',
+          display: 'block',
           width: '100%',
           height: iframeHeight,
           border: 0,
+          // Block interaction until the block reports ready. Visual-only
+          // change — the iframe already occupies its minHeight reserve so
+          // there's no layout shift when it becomes interactive.
+          pointerEvents: isReady ? 'auto' : 'none',
         }}
         onLoad={() => {
           // H-1: setState (not ref) so the BLOCK_READY timeout effect
@@ -948,6 +957,15 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
           sendInit();
         }}
       />
-    </>
+      {status === 'loading' && (
+        <div style={{ position: 'absolute', inset: 0 }}>
+          <BlockFallback
+            reason="loading"
+            blockName={install.manifest.name}
+            minHeight={install.manifest.iframe?.minHeight ?? 200}
+          />
+        </div>
+      )}
+    </div>
   );
 }

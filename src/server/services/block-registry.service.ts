@@ -27,6 +27,19 @@ import type {
 const CACHE_TTL_SECONDS = 60;
 export const MAX_BLOCKS_PER_SLOT = 3;
 
+// Slot-reservation math lives in a client-safe module so the model-page SSR
+// path (BlockRegistry.getSlotReservation, below) and the client slot
+// (BlockSlotClient's loading placeholder) share one source of truth without
+// dragging server-only imports into the client bundle. Re-exported here for
+// callers that already import from this service.
+export {
+  CHROME_BAR_PX,
+  computeSlotReservation,
+  type SlotReservation,
+} from '~/components/AppBlocks/slotReservation';
+import { computeSlotReservation } from '~/components/AppBlocks/slotReservation';
+import type { SlotReservation } from '~/components/AppBlocks/slotReservation';
+
 export interface BlockInstallRecord {
   blockInstanceId: string;
   blockId: string;
@@ -820,6 +833,23 @@ export class BlockRegistry {
     }
 
     return hydrated;
+  }
+
+  /**
+   * Computes the server-seeded slot reservation for a (modelId, slotId) by
+   * running the SAME filter/eligibility path as {@link listForModel} and
+   * folding the result through {@link computeSlotReservation}. Used by the
+   * model page during SSR so the App Block slot reserves the correct height
+   * up-front (kills the 0px → full-height pop / layout shift).
+   *
+   * Reuses `listForModel` verbatim — so it inherits the 60s Redis cache for
+   * anon viewers, the kill-list filter, content-rating gating, and the
+   * indexed SQL path. No new query shape, no N+1: the reservation is just a
+   * cheap fold over the rows `listForModel` already produces.
+   */
+  static async getSlotReservation(opts: ListForModelOpts): Promise<SlotReservation> {
+    const installs = await BlockRegistry.listForModel(opts);
+    return computeSlotReservation(installs);
   }
 
   /**
