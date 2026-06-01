@@ -53,6 +53,24 @@ Wave 2 ran, several agents died mid-flight, recovered + merged what landed:
 | G (partial) | **partially merged** | Detail page rebuild + 4 components + review backend endpoints all done. **Remaining**: reviews page replacement + Post-from-Generation wiring (G2 spawned) |
 | H (partial) | **partially merged** | 2 flags + surface gating done. **Remaining**: thumbnail-driven mod affordance (H2 spawned) |
 
+## Phase 2 — Wave 3 — COMPLETE
+
+All seven workstreams from `docs/3d-models-followups.md` shipped:
+
+| Workstream | Commit | Notes |
+|------------|--------|-------|
+| N: report queue surface (M2-P1) | `d0b64cd67` | `getReportsHandler` selects model3d/model3dReview joins; `getReportLink` covers both. Existing /moderator/reports tabs now produce data. |
+| O: mod content endpoints + ModBar (M2-P3) | `57b53e242` | `model3d.moderation.{setNsfwLevel,toggleFlag,restore}`; `Model3DModBar` on detail page (mod-only); `updateModel3DNsfwLevels` honors `lockedProperties`. |
+| P: count plumbing (M1-P1) | `4a7e7a51d` | `userModel3DCount{,Sfw,Public}Cache` + `UserContentOverview.model3dCount`; refresh on publish/unpublish/delete. |
+| Q: centralized ReportModal (M2-P2) | `5751b9dc3` | ReportModal accepts Model3D + Model3DReview across NSFW/TOS/AdminAttention/Spam; detail-page report button wired; NSFW side-effect flips `Model3D.nsfw`. |
+| R: profile tab + nav (M1-P2..4) | `6e89a721f` | New `/user/[username]/3d-models` page + ProfileNavigation entry behind `model3dFeed`. ProfileLayout2 regex tightened for hyphenated subpages. |
+| S: appeals switch + strikes verify (M2-P4) | `505f4c5a0` | `createEntityAppealHandler` accepts `EntityType.Model3D`; detail page surfaces appeal CTA when isOwner sees Unpublished/Deleted. Strikes confirmed working as-is. |
+| T: mod-actions skill (M2-P5) | `5da10170e` | `.claude/skills/mod-actions/model3ds.mjs` + SKILL.md updates. 12 commands; strikes deferred to existing strikes.mjs. |
+
+**Agent reliability note**: Wave 2 agents (Q/R/S) and Wave 3 (T) were all blocked by Edit/Write denials in their isolated worktrees. Their research was solid and complete; landed inline based on their plans. Wave 1 agents (N/O/P) shipped cleanly via worktrees as intended.
+
+Plan source of truth: `docs/3d-models-followups.md` (rev 1; profile feed + moderation phases).
+
 ## Active agents — Wave 2.5 (continuation) — DONE
 
 | Workstream | Status | Notes |
