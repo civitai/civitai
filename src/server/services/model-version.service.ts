@@ -943,12 +943,14 @@ export const publishModelVersionById = async ({
         });
       }
 
-      // Only restore posts that were unpublished alongside this version. Without
-      // the `publishedAt IS NULL` guard, calling publish on an already-published
-      // version overwrites every attached post's publishedAt (and clears their
-      // prevPublishedAt metadata), letting an owner script repeated publish calls
-      // to keep bumping their old posts to the top of feeds. Mirrors the
-      // `WHERE "publishedAt" IS NOT NULL` guard in the unpublish path below.
+      // Restore posts that were unpublished alongside this version, and re-target
+      // posts that are still scheduled (future publishedAt) so a reschedule of the
+      // version also reschedules its attached posts. The `publishedAt <= NOW()`
+      // exclusion preserves the anti-bump guard for already-public posts —
+      // without it, calling publish on an already-published version would
+      // overwrite every attached post's publishedAt and let an owner repeatedly
+      // bump old posts to the top of feeds. Mirrors the `WHERE "publishedAt" IS
+      // NOT NULL` guard in the unpublish path below.
       await tx.$executeRaw`
         UPDATE "Post"
         SET
@@ -960,7 +962,7 @@ export const publishModelVersionById = async ({
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
-        AND "publishedAt" IS NULL
+        AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;
 
       if (!currentVersion.model.publishedAt) {
