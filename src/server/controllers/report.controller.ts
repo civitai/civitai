@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 
 import type { ProtectedContext } from '~/server/createContext';
+import { dbRead } from '~/server/db/client';
 import type {
   BulkUpdateReportStatusInput,
   CreateEntityAppealInput,
@@ -329,6 +330,14 @@ export async function createEntityAppealHandler({
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
 
+        break;
+      case EntityType.Model3D:
+        const m3d = await dbRead.model3D.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true },
+        });
+        if (!m3d) throw throwNotFoundError('3D model not found');
+        if (m3d.userId !== userId) throw throwAuthorizationError();
         break;
       default:
         throw throwDbCustomError('Entity type not supported for appeals');

@@ -17,6 +17,7 @@ import {
   Title,
 } from '@mantine/core';
 import {
+  IconAlertTriangle,
   IconBolt,
   IconCube,
   IconDownload,
@@ -41,6 +42,8 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DModBar } from '~/components/Model3D/Moderation/Model3DModBar';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
@@ -55,7 +58,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { Model3DStatus } from '~/shared/utils/prisma/enums';
+import { EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -191,6 +194,33 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         <LoadingOverlay visible={isRefetching} />
 
         <Stack gap="md">
+          {/* Mod-takedown appeal CTA — surfaces when the owner sees their own
+              Unpublished/Deleted Model3D. Mirrors the Image appeal pattern. */}
+          {isOwner && (isUnpublished || model3d.status === Model3DStatus.Deleted) && (
+            <AlertWithIcon
+              icon={<IconAlertTriangle />}
+              color="yellow"
+              iconColor="yellow"
+              title="Removed by moderators"
+              radius="md"
+            >
+              This 3D model has been {isUnpublished ? 'unpublished' : 'removed'} by our moderators.
+              We can make mistakes — if you believe this was done in error,{' '}
+              <Anchor
+                type="button"
+                onClick={() =>
+                  dialogStore.trigger({
+                    component: AppealDialog,
+                    props: { entityId: model3d.id, entityType: EntityType.Model3D },
+                  })
+                }
+              >
+                appeal this removal
+              </Anchor>
+              .
+            </AlertWithIcon>
+          )}
+
           {/* Header */}
           <Group justify="space-between" wrap="nowrap" align="flex-start">
             <Stack gap={4} style={{ flex: 1 }}>
