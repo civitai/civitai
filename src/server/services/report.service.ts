@@ -251,6 +251,12 @@ export const createReport = async ({
         case ReportEntity.Post:
           await tx.post.update({ where: { id }, data: { nsfw: true } });
           break;
+        case ReportEntity.Model3D:
+          // TODO(workstream-Q): wire Model3D tag-vote pipeline once Model3D
+          // rating-request infra exists. For now we just flip the nsfw flag
+          // mirror of Post.
+          await tx.model3D.update({ where: { id }, data: { nsfw: true } });
+          break;
       }
     }
 

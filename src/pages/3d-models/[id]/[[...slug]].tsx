@@ -44,6 +44,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
+import { openReportModal } from '~/components/Dialog/triggers/report';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DModBar } from '~/components/Model3D/Moderation/Model3DModBar';
 import { GenerationDetails } from '~/components/Model3D/GenerationDetails/GenerationDetails';
@@ -302,17 +304,12 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 variant="subtle"
                 color="gray"
                 aria-label="Report"
-                onClick={() => {
-                  // TODO(workstream-G): wire the existing ReportModal once it
-                  // accepts ReportEntity.Model3D (workstream C added the enum
-                  // entry; ReportModal still needs the model3d row + form).
-                  showErrorNotification({
-                    title: 'Reporting not yet wired',
-                    error: new Error(
-                      'Use trpc.model3d.reports.createForModel directly until the ReportModal accepts Model3D.'
-                    ),
-                  });
-                }}
+                onClick={() =>
+                  openReportModal({
+                    entityType: ReportEntity.Model3D,
+                    entityId: model3d.id,
+                  })
+                }
               >
                 <IconFlag />
               </LegacyActionIcon>

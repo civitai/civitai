@@ -1,3 +1,13 @@
+/**
+ * Direct-path report creation for Model3D / Model3DReview.
+ *
+ * NOTE: This bypasses the centralized `report.service.createReport` flow and
+ * therefore does NOT run the NSFW / TOS / CSAM side effects that
+ * `report.service` applies (Image hide, Post.nsfw=true, etc.). New UI callers
+ * should use `trpc.report.create` via `ReportModal` (workstream Q) so those
+ * side effects fire. Kept for programmatic / SDK callers that need to skip
+ * those effects intentionally.
+ */
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
