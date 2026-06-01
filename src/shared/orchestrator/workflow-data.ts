@@ -153,11 +153,30 @@ export class StepData {
   }
 
   get params(): Partial<NormalizedWorkflowMetadata['params']> {
-    // Merge step params over workflow params: enhancement steps carry source
-    // generation context (prompt, seed, source workflow key) that should win
-    // over the workflow-level form input (e.g. the upscale form). Workflow
-    // params with no step-level conflict come through harmlessly.
-    return { ...this.#workflow.metadata?.params, ...this.metadata.params };
+    const stepParams = this.metadata.params;
+    const wfParams = this.#workflow.metadata?.params;
+
+    // `step.metadata.params` is overloaded with two opposite meanings, told apart by the
+    // server-set `sourceLineage` flag (a per-step fact `formatStep` derives from the raw
+    // step's lineage marker):
+    //
+    // 1. sourceLineage === true (enhancement steps — upscale, remove-bg):
+    //    params is a COMPLETE, self-contained snapshot of the *source* generation. Use it
+    //    verbatim. Merging in workflow.metadata.params (the enhancement form input) would
+    //    leak fields the source doesn't override — e.g. `images:[sourceUrl]`, `upscaler`,
+    //    or the `img2img:upscale` workflow key — into a remix of the original, making the
+    //    remix behave like the enhancement workflow.
+    //
+    // 2. sourceLineage falsy (wildcard/snippet variants):
+    //    params is a partial DELTA (only the substituted `prompt`/`negativePrompt`). It
+    //    MUST merge over workflow.metadata.params, which holds the full template + settings
+    //    snapshot (steps, cfgScale, sampler, seed, resources, workflow key).
+    //
+    // Empty/absent step params (standard new-format gen) fall back to workflow params.
+    if (this.metadata.sourceLineage && stepParams && Object.keys(stepParams).length > 0) {
+      return stepParams;
+    }
+    return { ...wfParams, ...stepParams };
   }
   get resources(): NormalizedWorkflowMetadata['resources'] {
     if (this.metadata.resources?.length) return this.metadata.resources;

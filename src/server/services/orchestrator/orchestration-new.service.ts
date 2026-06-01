@@ -1514,6 +1514,20 @@ export interface NormalizedStepMetadata {
    */
   params?: Partial<GenerationGraphValues> & Record<string, unknown>;
   /**
+   * When true, `params` is a COMPLETE, self-contained snapshot — the source generation of
+   * an enhancement step (upscale, remove-bg). Consumers (StepData.params) must use it
+   * verbatim, NOT merge it over workflow.metadata.params, or the enhancement form's fields
+   * (`images`, `upscaler`, its `workflow` key) leak into a remix of the original.
+   *
+   * Falsy/undefined means `params` is either absent (standard new-format gen → fall back to
+   * workflow.metadata.params) or a partial DELTA (wildcard/snippet variants store only the
+   * substituted prompt fields → merge over workflow.metadata.params).
+   *
+   * Derived per-step in formatStep from the raw step's lineage marker (`'workflow' in
+   * step.metadata`, plus the legacy `transformations`/`source` formats).
+   */
+  sourceLineage?: boolean;
+  /**
    * Source generation resources (for steps with source lineage).
    * Undefined for standard generation steps (use workflow.metadata.resources instead).
    */
@@ -2033,6 +2047,13 @@ function formatStep(
   // via StepData.params. Running mapDataToGraphInput would double-resolve from
   // resources and inject a duplicate workflow key.
   const hasSourceLineage = 'workflow' in metadata;
+  // Whether the resolved step params are a COMPLETE source snapshot (enhancement step, or
+  // the legacy transformations/source formats) vs. a partial delta. Surfaced to the client
+  // as `metadata.sourceLineage` so StepData.params can pick verbatim-vs-merge.
+  const sourceLineage =
+    hasSourceLineage ||
+    (Array.isArray(transformations) && transformations.length > 0) ||
+    (metadata.source != null && typeof metadata.source === 'object');
   let finalParams: Record<string, unknown> | undefined;
   if (resolvedParams) {
     if (hasSourceLineage) {
@@ -2064,6 +2085,8 @@ function formatStep(
     metadata: {
       ...removeEmpty({
         params: finalParams,
+        // Only emit when params is a complete snapshot — absent (falsy → merge) otherwise.
+        sourceLineage: sourceLineage && finalParams ? true : undefined,
         remixOfId,
         // Pass both raw keys through. Client merges `output + images` for display
         // via `BlobData.outputMeta`; client's patch builder inspects `output`
