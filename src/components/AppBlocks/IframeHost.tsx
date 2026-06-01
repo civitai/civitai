@@ -436,6 +436,7 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   const submitWorkflowMutation = trpc.blocks.submitWorkflow.useMutation();
   const estimateWorkflowMutation = trpc.blocks.estimateWorkflow.useMutation();
   const pollWorkflowMutation = trpc.blocks.pollWorkflow.useMutation();
+  const cancelWorkflowMutation = trpc.blocks.cancelWorkflow.useMutation();
 
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; body?: unknown } | undefined>(
@@ -690,6 +691,40 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     );
     return off;
   }, [onMessage, send, token, pollWorkflowMutation]);
+
+  // CANCEL_WORKFLOW → blocks.cancelWorkflow (real server-side cancel on the
+  // orchestrator). Mirrors the POLL_WORKFLOW handler; ownership is enforced
+  // server-side by the viewer's orchestrator token. Echo back the canceled
+  // snapshot (or a failure snapshot) on the matching requestId.
+  useEffect(() => {
+    const off = onMessage<{ requestId?: unknown; workflowId?: unknown } | undefined>(
+      'CANCEL_WORKFLOW',
+      async (raw) => {
+        if (
+          !raw ||
+          typeof raw.requestId !== 'string' ||
+          typeof raw.workflowId !== 'string' ||
+          raw.workflowId.length === 0
+        ) {
+          return;
+        }
+        const requestId = raw.requestId;
+        try {
+          const { snapshot } = await cancelWorkflowMutation.mutateAsync({
+            blockToken: token,
+            workflowId: raw.workflowId,
+          });
+          send('WORKFLOW_CANCELED', { requestId, snapshot });
+        } catch (err) {
+          send('WORKFLOW_CANCELED', {
+            requestId,
+            snapshot: failureSnapshot(err),
+          });
+        }
+      }
+    );
+    return off;
+  }, [onMessage, send, token, cancelWorkflowMutation]);
 
   // App Blocks KV datastore (W4-v0). Five host-mediated handlers; the
   // iframe never sees the apps DB credentials. Every reply MUST come

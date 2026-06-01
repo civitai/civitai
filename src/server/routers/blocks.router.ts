@@ -44,7 +44,7 @@ import {
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
-import { getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { cancelWorkflow, getWorkflow, submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { createTextToImageStep } from '~/server/services/orchestrator/textToImage/textToImage';
 import { getUserById } from '~/server/services/user.service';
 import { guardedProcedure, middleware, publicProcedure, router } from '~/server/trpc';
@@ -832,6 +832,46 @@ export const blocksRouter = router({
         });
       }
       const token = await getOrchestratorToken(userId, ctx);
+      const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
+      return { snapshot: snapshotFromWorkflow(workflow) };
+    }),
+
+  /**
+   * Cancel a running workflow on the orchestrator (a real server-side stop).
+   *
+   * Mirrors pollWorkflow's auth + ownership model exactly: we cancel with the
+   * viewer's orchestrator token (`getOrchestratorToken`), so the orchestrator
+   * 403/404s for workflows the viewer doesn't own — that's the gate, no second
+   * client-side ownership check needed. After the cancel PATCH lands we re-read
+   * the workflow and return its (now-canceled) snapshot so the block can render
+   * the terminal state. Best-effort from the block's side: a workflow that
+   * already reached a terminal status may reject the cancel, which surfaces as
+   * the mutation throwing — the host echoes a failure snapshot and the block
+   * still clears its card.
+   */
+  cancelWorkflow: publicProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        blockToken: z.string().min(1),
+        workflowId: z.string().min(1).max(64),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const claims = await verifyBlockToken(input.blockToken);
+      if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
+      if (!claims.scopes.includes('ai:write:budgeted')) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
+      }
+      const userId = parseSubjectUserId(claims.sub);
+      if (userId == null) {
+        throw new TRPCError({
+          code: 'UNAUTHORIZED',
+          message: 'workflow cancel requires authenticated viewer',
+        });
+      }
+      const token = await getOrchestratorToken(userId, ctx);
+      await cancelWorkflow({ workflowId: input.workflowId, token });
       const workflow = await getWorkflow({ token, path: { workflowId: input.workflowId } });
       return { snapshot: snapshotFromWorkflow(workflow) };
     }),

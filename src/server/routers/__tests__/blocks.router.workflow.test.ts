@@ -18,6 +18,7 @@ const {
   mockGetOrchestratorToken,
   mockSubmitWorkflow,
   mockGetWorkflow,
+  mockCancelWorkflow,
   mockCreateTextToImageStep,
   mockAuditPromptServer,
   mockGetUserById,
@@ -34,6 +35,7 @@ const {
   mockGetOrchestratorToken: vi.fn(),
   mockSubmitWorkflow: vi.fn(),
   mockGetWorkflow: vi.fn(),
+  mockCancelWorkflow: vi.fn(),
   mockCreateTextToImageStep: vi.fn(),
   mockAuditPromptServer: vi.fn(),
   mockGetUserById: vi.fn(),
@@ -73,6 +75,7 @@ vi.mock('~/server/orchestrator/get-orchestrator-token', () => ({
 vi.mock('~/server/services/orchestrator/workflows', () => ({
   submitWorkflow: mockSubmitWorkflow,
   getWorkflow: mockGetWorkflow,
+  cancelWorkflow: mockCancelWorkflow,
 }));
 vi.mock('~/server/services/orchestrator/textToImage/textToImage', () => ({
   createTextToImageStep: mockCreateTextToImageStep,
@@ -219,6 +222,7 @@ beforeEach(() => {
     mockGetOrchestratorToken,
     mockSubmitWorkflow,
     mockGetWorkflow,
+    mockCancelWorkflow,
     mockCreateTextToImageStep,
     mockAuditPromptServer,
     mockGetUserById,
@@ -307,6 +311,57 @@ describe('blocks.pollWorkflow', () => {
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.pollWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+});
+
+describe('blocks.cancelWorkflow', () => {
+  it('cancels on the orchestrator then returns the canceled snapshot', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    mockCancelWorkflow.mockResolvedValue(undefined);
+    mockGetWorkflow.mockResolvedValue({
+      id: 'wf_1',
+      status: 'canceled',
+      cost: { total: 0 },
+      steps: [],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    const result = await caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' });
+    expect(result.snapshot.workflowId).toBe('wf_1');
+    expect(result.snapshot.status).toBe('canceled');
+    // Cancel hits the orchestrator with the VIEWER's token — that's the
+    // ownership gate (the orchestrator 403/404s for non-owned workflows).
+    expect(mockCancelWorkflow).toHaveBeenCalledWith({ workflowId: 'wf_1', token: 'orch_token' });
+    // Then re-reads the workflow to return the terminal snapshot.
+    expect(mockGetWorkflow).toHaveBeenCalledWith({
+      token: 'orch_token',
+      path: { workflowId: 'wf_1' },
+    });
+  });
+
+  it('rejects an invalid block token with UNAUTHORIZED and never calls cancel', async () => {
+    mockVerifyBlockToken.mockResolvedValue(null);
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects a token missing ai:write:budgeted scope with FORBIDDEN', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ scopes: ['models:read:self'] }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockCancelWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('rejects anon subjects with UNAUTHORIZED', async () => {
+    mockVerifyBlockToken.mockResolvedValue(validClaims({ sub: 'anon' }));
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   });
 });
