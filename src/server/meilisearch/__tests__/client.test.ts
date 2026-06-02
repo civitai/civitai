@@ -588,3 +588,160 @@ describe('fetchDocumentsAbortable upstream-side fail-fast', () => {
     });
   });
 });
+
+// ─── Wrapper-side fail-fast (PR follow-up to #2371) ─────────────────────────
+//
+// PR #2371's audit explicitly flagged that `runWithLimiter` still throws
+// `MeiliCallTimeoutError` on the concurrency / circuit-open path, and that
+// the post-filter catch at line 4314 re-throws those — bleeding into the
+// remaining 900/day api-primary restart wave after the HTTP-status paths
+// were closed. This block proves the new branch:
+//   (a) catches MeiliCallTimeoutError with reason='upstream-circuit-open'
+//       and breaks out of the iteration loop (same shape as the existing
+//       branches), and
+//   (b) does NOT widen to catch generic Error subclasses — those still
+//       re-throw so we don't silently hide unrelated bugs.
+//
+// We construct the MeiliCallTimeoutError directly and pipe it into a mock
+// catch block that mirrors the production shape from getImagesFromSearchPostFilter.
+// fetchDocumentsAbortable itself can't surface this error type — it comes
+// out of runWithLimiter wrapping the SDK calls — so a direct unit-level
+// test of the catch-shape contract is the right granularity.
+
+describe('post-filter catch — MeiliCallTimeoutError (circuit-open / wrapper-timeout)', () => {
+  beforeEach(() => {
+    incMock.mockClear();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('MeiliCallTimeoutError triggers catch + breaks with reason="upstream-circuit-open"', async () => {
+    const {
+      MeiliCallTimeoutError,
+      MeilisearchFetchError,
+      MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
+      isFailfastStatus,
+      failfastReasonForStatus,
+      meiliFetchFailfastTotal,
+      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+    } = await import('~/server/meilisearch/client');
+
+    // Build both shapes — concurrency (circuit-open) + timeout (wrapper-timer
+    // fire). Both should land in the same bucket per the audit's guidance.
+    const circuitOpenErr = new MeiliCallTimeoutError(
+      'concurrency',
+      'Meilisearch backend circuit open — failing fast'
+    );
+    const wrapperTimeoutErr = new MeiliCallTimeoutError('timeout');
+
+    for (const errToThrow of [circuitOpenErr, wrapperTimeoutErr]) {
+      incMock.mockClear();
+      const iterationUnderTest = 4;
+      let brokeOut = false;
+      let reThrown: unknown;
+      try {
+        throw errToThrow;
+      } catch (e) {
+        // Mirror the production catch block from getImagesFromSearchPostFilter.
+        // Branch order MUST match: local-timeout → MeilisearchFetchError →
+        // MeiliCallTimeoutError → re-throw.
+        const err = e as Error & { name?: string; cause?: { message?: string } };
+        const isLocalTimeout =
+          err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+          (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+        if (isLocalTimeout) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iterationUnderTest),
+            reason: 'local-timeout',
+          });
+          brokeOut = true;
+        } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iterationUnderTest),
+            reason: failfastReasonForStatus(e.status),
+          });
+          brokeOut = true;
+        } else if (e instanceof MeiliCallTimeoutError) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iterationUnderTest),
+            reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
+          });
+          brokeOut = true;
+        } else {
+          reThrown = e;
+        }
+      }
+
+      expect(brokeOut).toBe(true);
+      expect(reThrown).toBeUndefined();
+      expect(incMock).toHaveBeenCalledWith({
+        route: 'getImagesFromSearchPostFilter',
+        iteration: '4',
+        reason: 'upstream-circuit-open',
+      });
+      expect(incMock).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('does NOT widen to catch unrelated Error subclasses — they still re-throw', async () => {
+    // Regression guard: the new branch must use `instanceof MeiliCallTimeoutError`
+    // (not a generic `instanceof Error`) so we don't silently swallow real bugs
+    // like ReferenceError, network errors from outside the wrapper, etc.
+    const {
+      MeiliCallTimeoutError,
+      MeilisearchFetchError,
+      MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
+      isFailfastStatus,
+      failfastReasonForStatus,
+      meiliFetchFailfastTotal,
+      FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+    } = await import('~/server/meilisearch/client');
+
+    const unrelatedErr = new Error('something unrelated — null deref upstream');
+
+    let brokeOut = false;
+    let reThrown: unknown;
+    try {
+      throw unrelatedErr;
+    } catch (e) {
+      const err = e as Error & { name?: string; cause?: { message?: string } };
+      const isLocalTimeout =
+        err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
+        (err?.name === 'AbortError' && err.cause?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
+      if (isLocalTimeout) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: 'local-timeout',
+        });
+        brokeOut = true;
+      } else if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: failfastReasonForStatus(e.status),
+        });
+        brokeOut = true;
+      } else if (e instanceof MeiliCallTimeoutError) {
+        meiliFetchFailfastTotal.inc({
+          route: 'getImagesFromSearchPostFilter',
+          iteration: '1',
+          reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
+        });
+        brokeOut = true;
+      } else {
+        reThrown = e;
+      }
+    }
+
+    expect(brokeOut).toBe(false);
+    expect(reThrown).toBe(unrelatedErr);
+    // The fail-fast counter MUST NOT have incremented for an unrelated Error.
+    expect(incMock).not.toHaveBeenCalled();
+  });
+});

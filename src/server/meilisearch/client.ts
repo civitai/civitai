@@ -105,12 +105,34 @@ export const FETCH_DOCUMENTS_TIMEOUT_MESSAGE = 'meili-fetch-timeout';
  *                          page-cache thrashing past its own timeout)
  *  - `upstream-error`    — any other 5xx (bad gateway, gateway timeout from
  *                          Traefik to feeds-proxy, etc.)
+ *  - `upstream-circuit-open` — the per-backend wrapper said no before the
+ *                          request hit the network: either the circuit
+ *                          breaker is OPEN / HALF_OPEN-busy, or the wrapper's
+ *                          per-call timeout (MEILI_CALL_TIMEOUT_MS) fired on
+ *                          an SDK call that arrived at runWithLimiter (PR
+ *                          follow-up to #2371). Both surface as
+ *                          `MeiliCallTimeoutError`; we use a single bucket
+ *                          because operationally they signal the same thing
+ *                          — "upstream is unhealthy, stop iterating".
  */
 export type MeiliFetchFailfastReason =
   | 'local-timeout'
   | 'upstream-overload'
   | 'upstream-timeout'
-  | 'upstream-error';
+  | 'upstream-error'
+  | 'upstream-circuit-open';
+
+/**
+ * Reason constant for `MeiliCallTimeoutError`-driven fail-fast events. Lives
+ * here (alongside the existing reason helpers) so the post-filter catch site
+ * doesn't have to inline a string literal, mirroring the pattern PR #2371
+ * established for the HTTP-status branches (which use
+ * `failfastReasonForStatus`).
+ *
+ * Single bucket by design — see `MeiliFetchFailfastReason` JSDoc above.
+ */
+export const MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN: MeiliFetchFailfastReason =
+  'upstream-circuit-open';
 
 /**
  * Map an HTTP status returned by the upstream Meili backend (or its proxy)

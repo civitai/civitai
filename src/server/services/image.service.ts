@@ -44,6 +44,7 @@ import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan, withDetachedSpan } from '~/server/utils/otel-helpers';
 import {
   FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
+  MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
   MeiliCallTimeoutError,
   MeilisearchFetchError,
   SEARCH_ACTOR_HEADER,
@@ -4338,6 +4339,27 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
             route: 'getImagesFromSearchPostFilter',
             iteration: String(iteration),
             reason: failfastReasonForStatus(e.status),
+          });
+          break;
+        }
+        // Wrapper-side fail-fast: runWithLimiter said no before the request
+        // touched the network — either the per-backend circuit breaker is
+        // OPEN / HALF_OPEN-busy or the wrapper's MEILI_CALL_TIMEOUT_MS timer
+        // fired on an SDK call. Both surface as MeiliCallTimeoutError and
+        // both indicate the same operational signal: "upstream is unhealthy,
+        // stop iterating". Without this branch the error re-throws and the
+        // user gets a 5xx → retries → the 900/day api-primary restart wave
+        // that remained after PR #2371 closed the HTTP-status paths.
+        //
+        // Branch order matters: this comes AFTER the local-timeout and
+        // MeilisearchFetchError checks (which are sibling failure modes
+        // surfaced through fetchDocumentsAbortable) and BEFORE the generic
+        // re-throw, so unrelated Errors still bubble up unchanged.
+        if (e instanceof MeiliCallTimeoutError) {
+          meiliFetchFailfastTotal.inc({
+            route: 'getImagesFromSearchPostFilter',
+            iteration: String(iteration),
+            reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
           });
           break;
         }
