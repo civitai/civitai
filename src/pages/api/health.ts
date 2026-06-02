@@ -197,18 +197,23 @@ type CheckOutcome = 'success' | 'failure' | 'timeout';
 
 // Overall handler deadline. Every individual check is already bounded by
 // runCheckWithTimeout(HEALTHCHECK_TIMEOUT), but the handler also does two
-// sysRedis config reads (disabled + non-critical checks) and a Promise.all —
-// each separately raced at HEALTHCHECK_TIMEOUT. Run serially during a deploy
-// brownout (when sysRedis is itself slow) those legs can sum to ~3×
-// HEALTHCHECK_TIMEOUT and blow past the kubelet probe's 10s timeoutSeconds,
-// pulling the whole fleet from the LB (504/499) and tripping liveness
-// SIGKILL (Error/137). This deadline guarantees the HTTP response always
-// flushes well under the probe budget, regardless of whether any single
-// dependency client honors its AbortSignal during e.g. a TCP connect hang.
+// sysRedis config reads (disabled + non-critical checks) before the checks.
+// Each leg is separately raced at HEALTHCHECK_TIMEOUT, so if the deadline only
+// bounded the check phase a slow sysRedis config read could consume up to
+// HEALTHCHECK_TIMEOUT *before* the check deadline even started — summing to
+// ~3× HEALTHCHECK_TIMEOUT and blowing past the kubelet probe's 10s
+// timeoutSeconds, pulling the whole fleet from the LB (504/499) and tripping
+// liveness SIGKILL (Error/137).
 //
-// Sized as 2× HEALTHCHECK_TIMEOUT (config phase + check phase, now run as
-// parallel as possible) hard-capped at 8s so it stays comfortably under the
-// 10s probe even when HEALTHCHECK_TIMEOUT is raised in prod.
+// To close that, the deadline is started at the very top of the handler and
+// bounds the ENTIRE handler — both the config-fetch leg and the check leg race
+// against the same timer. This guarantees the HTTP response always flushes
+// well under the probe budget, regardless of whether any single dependency
+// client honors its AbortSignal during e.g. a TCP connect hang.
+//
+// Sized as 2× HEALTHCHECK_TIMEOUT as the TOTAL budget for config fetch + checks
+// combined, hard-capped at 8s so it stays comfortably under the 10s probe even
+// when HEALTHCHECK_TIMEOUT is raised in prod.
 function getOverallDeadlineMs() {
   return Math.min(env.HEALTHCHECK_TIMEOUT * 2, 8000);
 }
@@ -228,67 +233,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   };
   res.on('close', onClose);
 
-  // Fetch both config sets in parallel (each internally raced at
-  // HEALTHCHECK_TIMEOUT) so a slow sysRedis costs one timeout window, not two
-  // serial ones. nonCriticalChecks no longer gates on the check phase.
-  const [disabledChecks, nonCriticalChecks] = !isProd
-    ? [[] as CheckKey[], [] as CheckKey[]]
-    : await Promise.all([
-        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS),
-        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS),
-      ]);
-
-  // Check if already cancelled before starting the expensive health checks
-  if (signal.aborted) {
-    res.off('close', onClose);
-    return;
-  }
-
-  const activeChecks = Object.entries(checkFns).filter(
-    ([name]) => !disabledChecks.includes(name as CheckKey)
-  );
-
-  // Shared results map. Each check writes its own result as it resolves so
-  // that if the overall deadline fires before Promise.all settles, we can
-  // still report (and respond on) whatever has resolved, treating the rest as
-  // timed-out rather than hanging the response.
-  const results = {} as Record<CheckKey, boolean>;
-  // Tracks which checks have recorded their own metrics, so the deadline path
-  // can account for the not-yet-resolved ones exactly once (a slow check's
-  // own .then()/.catch() may still run after we've responded).
-  const settled = new Set<CheckKey>();
-  for (const [name] of activeChecks) results[name as CheckKey] = false;
-
-  const checksPromise = Promise.all(
-    activeChecks.map(([name, fn]) =>
-      runCheckWithTimeout(fn, signal, env.HEALTHCHECK_TIMEOUT)
-        .then(({ result, outcome, durationSeconds }) => {
-          if (settled.has(name as CheckKey)) return;
-          settled.add(name as CheckKey);
-          // Existing per-check counter — preserved for Grafana dashboard back-compat.
-          if (!result) counters[name as CheckKey]?.inc();
-          // New per-attempt outcome + duration metrics.
-          healthcheckAttemptsCounter.inc({ name, result: outcome });
-          healthcheckDurationHistogram.observe({ name }, durationSeconds);
-          results[name as CheckKey] = result;
-        })
-        .catch(() => {
-          if (settled.has(name as CheckKey)) return;
-          settled.add(name as CheckKey);
-          // Defensive: runCheckWithTimeout already swallows inner errors,
-          // but if anything escapes treat as a failure for the attempts counter.
-          healthcheckAttemptsCounter.inc({ name, result: 'failure' });
-          results[name as CheckKey] = false;
-        })
-    )
-  );
-
-  // Hard wall-clock ceiling on the whole check phase. If a check's underlying
-  // client ignores its AbortSignal (e.g. undici TCP connect hang) AND somehow
-  // outlives runCheckWithTimeout's own race, this guarantees the handler still
-  // proceeds. Any check that hasn't written a result by now stays `false`
-  // (its slot was seeded above) — i.e. it is counted as timed-out, so a
-  // genuinely-stuck critical dependency still drives a 500.
+  // Start the overall deadline at the TOP of the handler — before the
+  // config-fetch leg — so the timer bounds the WHOLE handler (config fetch +
+  // checks), not just the check phase. A slow/hung sysRedis config read can no
+  // longer consume the budget before checks even start.
   let deadlineTimedOut = false;
   let deadlineId: ReturnType<typeof setTimeout> | undefined;
   const overallDeadlineMs = getOverallDeadlineMs();
@@ -300,49 +248,131 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   });
 
   try {
+    // Fetch both config sets in parallel (each internally raced at
+    // HEALTHCHECK_TIMEOUT) so a slow sysRedis costs one timeout window, not two
+    // serial ones — and race the whole leg against the overall deadline so a
+    // hung config read can't burn the budget before checks run. If the deadline
+    // fires during the config fetch we degrade SAFELY: treat disabled and
+    // non-critical as empty, i.e. run ALL checks and suppress NOTHING. That is
+    // the conservative direction — a genuinely-stuck critical dependency still
+    // drives a 500 rather than being falsely suppressed; the only cost of a
+    // config-read stall is that we don't honor an operator's runtime
+    // disable/non-critical override for this one request.
+    let disabledChecks: CheckKey[] = [];
+    let nonCriticalChecks: CheckKey[] = [];
+    if (isProd) {
+      const configPromise = Promise.all([
+        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS),
+        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS),
+      ]).then(([disabled, nonCritical]) => {
+        disabledChecks = disabled;
+        nonCriticalChecks = nonCritical;
+      });
+      await Promise.race([configPromise, deadlinePromise]);
+    }
+
+    // Check if already cancelled before starting the expensive health checks
+    if (signal.aborted) {
+      res.off('close', onClose);
+      return;
+    }
+
+    // NOTE: if `deadlineTimedOut` is already true here the config fetch itself
+    // blew the budget. We still fall through to the check phase with empty
+    // config (run all / suppress nothing); the Promise.race below resolves
+    // immediately since the deadline already fired, and every check stays
+    // seeded `false` (counted as timed-out) so a stuck critical dependency
+    // still yields 500.
+
+    const activeChecks = Object.entries(checkFns).filter(
+      ([name]) => !disabledChecks.includes(name as CheckKey)
+    );
+
+    // Shared results map. Each check writes its own result as it resolves so
+    // that if the overall deadline fires before Promise.all settles, we can
+    // still report (and respond on) whatever has resolved, treating the rest as
+    // timed-out rather than hanging the response.
+    const results = {} as Record<CheckKey, boolean>;
+    // Tracks which checks have recorded their own metrics, so the deadline path
+    // can account for the not-yet-resolved ones exactly once (a slow check's
+    // own .then()/.catch() may still run after we've responded).
+    const settled = new Set<CheckKey>();
+    for (const [name] of activeChecks) results[name as CheckKey] = false;
+
+    const checksPromise = Promise.all(
+      activeChecks.map(([name, fn]) =>
+        runCheckWithTimeout(fn, signal, env.HEALTHCHECK_TIMEOUT)
+          .then(({ result, outcome, durationSeconds }) => {
+            if (settled.has(name as CheckKey)) return;
+            settled.add(name as CheckKey);
+            // Existing per-check counter — preserved for Grafana dashboard back-compat.
+            if (!result) counters[name as CheckKey]?.inc();
+            // New per-attempt outcome + duration metrics.
+            healthcheckAttemptsCounter.inc({ name, result: outcome });
+            healthcheckDurationHistogram.observe({ name }, durationSeconds);
+            results[name as CheckKey] = result;
+          })
+          .catch(() => {
+            if (settled.has(name as CheckKey)) return;
+            settled.add(name as CheckKey);
+            // Defensive: runCheckWithTimeout already swallows inner errors,
+            // but if anything escapes treat as a failure for the attempts counter.
+            healthcheckAttemptsCounter.inc({ name, result: 'failure' });
+            results[name as CheckKey] = false;
+          })
+      )
+    );
+
+    // Race the check phase against the SAME overall deadline started at the top
+    // of the handler. If a check's underlying client ignores its AbortSignal
+    // (e.g. undici TCP connect hang) AND somehow outlives runCheckWithTimeout's
+    // own race, this guarantees the handler still proceeds. Any check that
+    // hasn't written a result by now stays `false` (its slot was seeded above)
+    // — i.e. it is counted as timed-out, so a genuinely-stuck critical
+    // dependency still drives a 500.
     await Promise.race([checksPromise, deadlinePromise]);
+
+    // Clean up the close listener
+    res.off('close', onClose);
+
+    // If cancelled, don't send response (connection is already closed)
+    if (signal.aborted) {
+      return;
+    }
+
+    if (deadlineTimedOut) {
+      // Record the outcome for any checks that never resolved so the failure
+      // mode is visible in metrics rather than silently absorbed. `settled`
+      // ensures the check's own late callback can't also count it.
+      for (const [name] of activeChecks) {
+        if (settled.has(name as CheckKey)) continue;
+        settled.add(name as CheckKey);
+        healthcheckAttemptsCounter.inc({ name, result: 'timeout' });
+        counters[name as CheckKey]?.inc();
+      }
+      logError({
+        error: new Error(`Health check overall deadline (${overallDeadlineMs}ms) exceeded`),
+        name: 'overall-deadline',
+        details: { results },
+      });
+    }
+
+    const healthy = activeChecks.every(
+      ([name]) => nonCriticalChecks.includes(name as CheckKey) || results[name as CheckKey]
+    );
+    if (!healthy) counters.overall?.inc();
+
+    return res.status(healthy ? 200 : 500).json({
+      podname,
+      version: process.env.version,
+      healthy,
+      ...results,
+    });
   } finally {
-    // Clear the deadline timer if the checks won the race, so it can't keep
-    // the process from settling between requests.
+    // Clear the deadline timer regardless of how we exit so it can't keep the
+    // process from settling between requests.
     if (deadlineId !== undefined) clearTimeout(deadlineId);
   }
-
-  // Clean up the close listener
-  res.off('close', onClose);
-
-  // If cancelled, don't send response (connection is already closed)
-  if (signal.aborted) {
-    return;
-  }
-
-  if (deadlineTimedOut) {
-    // Record the outcome for any checks that never resolved so the failure
-    // mode is visible in metrics rather than silently absorbed. `settled`
-    // ensures the check's own late callback can't also count it.
-    for (const [name] of activeChecks) {
-      if (settled.has(name as CheckKey)) continue;
-      settled.add(name as CheckKey);
-      healthcheckAttemptsCounter.inc({ name, result: 'timeout' });
-      counters[name as CheckKey]?.inc();
-    }
-    logError({
-      error: new Error(`Health check overall deadline (${overallDeadlineMs}ms) exceeded`),
-      name: 'overall-deadline',
-      details: { results },
-    });
-  }
-
-  const healthy = activeChecks.every(
-    ([name]) => nonCriticalChecks.includes(name as CheckKey) || results[name as CheckKey]
-  );
-  if (!healthy) counters.overall?.inc();
-
-  return res.status(healthy ? 200 : 500).json({
-    podname,
-    version: process.env.version,
-    healthy,
-    ...results,
-  });
 });
 
 /**
