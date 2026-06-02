@@ -19,7 +19,7 @@
 
 import { env } from '~/env/server';
 
-const FORGEJO_ORG = 'civitai-apps';
+export const FORGEJO_ORG = 'civitai-apps';
 const FORGEJO_REVIEW_ORG = 'civitai-apps-review';
 
 /**

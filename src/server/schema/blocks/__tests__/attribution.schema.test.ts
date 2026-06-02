@@ -16,15 +16,27 @@ import {
 
 describe('deriveScopeFromInstanceId', () => {
   it.each([
-    ['mbi_01HZK', 'per_model_install'],
-    // bki_ is the legacy unique-column prefix for the same install row.
-    // Both resolve to per_model_install — see BlockRegistry.resolveBlockInstance.
-    ['bki_01HZK', 'per_model_install'],
+    // L-M2: post kill_per_model_installs, mbi_*/bki_* are per-model-PINNED
+    // block_user_subscriptions rows whose stored scope is
+    // publisher_all_my_models (resolveBlockInstance rejects any other scope
+    // for these prefixes). They share the publisher earnings bucket with the
+    // blanket bus_pub_* shape rather than the stale per_model_install bucket.
+    ['mbi_01HZK', 'publisher_all_my_models'],
+    ['bki_01HZK', 'publisher_all_my_models'],
     ['bus_pub_01HZK', 'publisher_all_my_models'],
     ['bus_view_01HZK', 'viewer_personal'],
     ['pdb_01HZK', 'platform_default'],
   ] as const)('maps %s to %s', (id, scope) => {
     expect(deriveScopeFromInstanceId(id)).toBe(scope);
+  });
+
+  it('no longer emits the stale per_model_install bucket for any live prefix (L-M2)', () => {
+    // The per_model_install scope remains a valid enum value (historical rows
+    // + rate-card key) but is no longer DERIVED for any current instance-id
+    // prefix — the table it named is gone.
+    for (const id of ['mbi_x', 'bki_x', 'bus_pub_x', 'bus_view_x', 'pdb_x']) {
+      expect(deriveScopeFromInstanceId(id)).not.toBe('per_model_install');
+    }
   });
 
   it('returns null for unknown prefixes (defensive — caller shouldn\'t attribute)', () => {

@@ -47,7 +47,14 @@ const LOG_NAME = 'block-attribution-validate';
  * derived from it rather than from the client-supplied `blockScope`.
  */
 const SOURCE_TO_SCOPE: Record<ResolvedBlockSource, BlockAttributionScope> = {
-  install: 'per_model_install',
+  // Post 2026-05-30 kill_per_model_installs: the resolver's `install` source
+  // is a per-model-PINNED block_user_subscriptions row (the old
+  // model_block_installs table is gone), so it shares the publisher earnings
+  // bucket with the blanket `publisher_subscription` shape rather than the
+  // stale `per_model_install` bucket. The V2 rate card pays both at the same
+  // publisher percentage, so this aligns reporting/buckets without changing
+  // any payout amount. (L-M2, kept in lockstep with deriveScopeFromInstanceId.)
+  install: 'publisher_all_my_models',
   publisher_subscription: 'publisher_all_my_models',
   viewer_subscription: 'viewer_personal',
   platform_default: 'platform_default',

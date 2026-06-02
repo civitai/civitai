@@ -6,8 +6,13 @@ import * as z from 'zod';
  * docs/features/app-blocks.md for the full precedence rules.
  */
 export const blockAttributionScopeSchema = z.enum([
-  'per_model_install',       // mbi_* — model_block_installs row
-  'publisher_all_my_models', // bus_pub_* — block_user_subscriptions (publisher scope)
+  // Retained for historical attribution rows + as a rate-card key. Since the
+  // 2026-05-30 kill_per_model_installs migration this is NO LONGER emitted for
+  // new attributions — the per-model-pinned shape is a block_user_subscriptions
+  // row whose stored scope is `publisher_all_my_models`, so mbi_*/bki_* now
+  // derive to publisher_all_my_models (see deriveScopeFromInstanceId).
+  'per_model_install',       // legacy — model_block_installs (table dropped)
+  'publisher_all_my_models', // bus_pub_* (blanket) + mbi_*/bki_* (per-model-pinned) — block_user_subscriptions
   'viewer_personal',         // bus_view_* — block_user_subscriptions (viewer scope)
   'platform_default',        // pdb_* — platform_default_blocks
 ]);
@@ -61,16 +66,25 @@ export const ATTRIBUTION_METADATA_KEYS = {
 /**
  * Derive the attribution scope from the blockInstanceId prefix. The
  * substrate uses prefixed ULIDs everywhere; this resolver is the only
- * code path that needs to map prefix → scope. Keep it in lockstep with
- * BlockRegistry.resolveBlockInstance — in particular, both `mbi_*`
- * (model_block_installs PK) and `bki_*` (legacy unique blockInstanceId
- * column on the same table) resolve to per_model_install.
+ * client-side code path that needs to map prefix → scope. Keep it in
+ * lockstep with the server's authoritative `SOURCE_TO_SCOPE` map in
+ * attribution-validator.service.ts (the server re-derives + overrides the
+ * client value, so a drift here only produces log noise — but the publisher
+ * earnings bucket is decided by SOURCE_TO_SCOPE, so they must agree).
+ *
+ * Post 2026-05-30 kill_per_model_installs: `mbi_*`/`bki_*` are NO LONGER
+ * per-model-install rows (that table is gone). They are per-model-PINNED
+ * `block_user_subscriptions` rows whose stored scope is
+ * `publisher_all_my_models` (resolveBlockInstance rejects any other scope
+ * for these prefixes), so they share the publisher earnings bucket with the
+ * blanket `bus_pub_*` shape instead of splitting into the stale
+ * `per_model_install` bucket.
  */
 export function deriveScopeFromInstanceId(
   blockInstanceId: string
 ): BlockAttributionScope | null {
   if (blockInstanceId.startsWith('mbi_') || blockInstanceId.startsWith('bki_')) {
-    return 'per_model_install';
+    return 'publisher_all_my_models';
   }
   if (blockInstanceId.startsWith('bus_pub_')) return 'publisher_all_my_models';
   if (blockInstanceId.startsWith('bus_view_')) return 'viewer_personal';

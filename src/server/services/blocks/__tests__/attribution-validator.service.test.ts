@@ -229,7 +229,11 @@ describe('validateBuzzPurchaseAttribution', () => {
 
   it('maps each resolver source onto the correct attribution scope', async () => {
     const cases: Array<[string, string]> = [
-      ['install', 'per_model_install'],
+      // L-M2: the resolver's `install` source is a per-model-PINNED publisher
+      // subscription post kill_per_model_installs, so it buckets as
+      // publisher_all_my_models (same publisher rate, one bucket) rather than
+      // the stale per_model_install.
+      ['install', 'publisher_all_my_models'],
       ['publisher_subscription', 'publisher_all_my_models'],
       ['viewer_subscription', 'viewer_personal'],
       ['platform_default', 'platform_default'],

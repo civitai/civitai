@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
+// Imported in setup-order so the test RSA env keys are in place before
+// block-token.service evaluates (same posture as block-token.service.test.ts).
+import '~/__tests__/setup';
+import { SignJWT } from 'jose';
 import {
   enforceContextBinding,
   parseSubjectUserId,
+  verifyBlockToken,
   type BlockTokenClaims,
 } from '../block-scope.middleware';
 import type { NextApiRequest } from 'next';
@@ -150,5 +155,62 @@ describe('isBlockJwt header decode (audit H-1.5 / strict)', () => {
     // → wrapped handler runs and sets 200.
     expect((res as { _status: number })._status).toBe(200);
     expect(wrappedHandler).toHaveBeenCalled();
+  });
+});
+
+describe('verifyBlockToken fail-closed shapes (L-VERIFY / L-M6)', () => {
+  async function importPrivateKey() {
+    const { importPKCS8 } = await import('jose');
+    const { env } = await import('~/env/server');
+    return importPKCS8(env.BLOCK_TOKEN_PRIVATE_KEY as string, 'RS256');
+  }
+
+  const baseClaims = {
+    blockId: 'b',
+    appId: 'a',
+    appBlockId: 'apb_a',
+    blockInstanceId: 'bki_a',
+    scopes: ['models:read:self'],
+    ctx: { modelId: 1 },
+  };
+
+  it('accepts a token minted by BlockTokenService (carries kid + typ:JWT)', async () => {
+    const { BlockTokenService } = await import('~/server/services/block-token.service');
+    const r = await BlockTokenService.sign({ userId: 1, ...baseClaims });
+    const claims = await verifyBlockToken(r.token);
+    expect(claims).not.toBeNull();
+    expect(claims?.blockInstanceId).toBe('bki_a');
+  });
+
+  it('rejects a validly-signed token that omits kid (no fan-out to all keys)', async () => {
+    // Same RSA key the service signs with, but the header carries no kid.
+    // The previous code fell open and tried every configured key; the fix
+    // fails closed (a kid-less token is not one we mint — the signer has
+    // stamped kid since the first App Blocks commit).
+    const key = await importPrivateKey();
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ ...baseClaims, sub: 'user:1' })
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT' }) // NO kid
+      .setIssuer('civitai')
+      .setAudience('civitai-app-block')
+      .setSubject('user:1')
+      .setIssuedAt(now)
+      .setExpirationTime(now + 600)
+      .sign(key);
+    expect(await verifyBlockToken(token)).toBeNull();
+  });
+
+  it('rejects a validly-signed token whose kid is unknown', async () => {
+    const key = await importPrivateKey();
+    const now = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({ ...baseClaims, sub: 'user:1' })
+      .setProtectedHeader({ alg: 'RS256', typ: 'JWT', kid: 'kid-that-is-not-configured' })
+      .setIssuer('civitai')
+      .setAudience('civitai-app-block')
+      .setSubject('user:1')
+      .setIssuedAt(now)
+      .setExpirationTime(now + 600)
+      .sign(key);
+    expect(await verifyBlockToken(token)).toBeNull();
   });
 });

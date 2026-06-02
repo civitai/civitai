@@ -23,6 +23,29 @@ const RATE_LIMIT_MAX_MESSAGES = 30;
 const DEDUP_WINDOW_MS = 5000;
 
 /**
+ * L-DEDUP: pull the replay-dedup key out of an incoming message. The SDK
+ * transport puts `requestId` inside `payload` (every host handler reads it
+ * off `data.payload`), NOT at the top level of the message. The previous
+ * implementation read `data.requestId` — always undefined — so the dedup
+ * never fired. Read it from `payload.requestId` first, falling back to the
+ * top-level shape for forward compatibility. Exported pure so the dedup key
+ * resolution is unit-testable without driving the postMessage harness.
+ */
+export function extractRequestId(data: {
+  requestId?: unknown;
+  payload?: unknown;
+}): string | undefined {
+  const fromPayload =
+    data.payload &&
+    typeof data.payload === 'object' &&
+    typeof (data.payload as { requestId?: unknown }).requestId === 'string'
+      ? (data.payload as { requestId: string }).requestId
+      : undefined;
+  if (fromPayload) return fromPayload;
+  return typeof data.requestId === 'string' ? data.requestId : undefined;
+}
+
+/**
  * Typed postMessage send/receive with security rails:
  *   - Drops messages from origins other than `expectedOrigin`
  *   - Deduplicates by `requestId` inside a 5-second window
@@ -54,8 +77,11 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
       const subscribers = handlersRef.current.get(data.type);
       if (!subscribers || subscribers.size === 0) return;
 
-      if (typeof data.requestId === 'string') {
-        const seenAt = seenRequestIdsRef.current.get(data.requestId);
+      // L-DEDUP: read the requestId from where the SDK actually puts it
+      // (inside `payload`), not the always-undefined top-level `requestId`.
+      const payloadRequestId = extractRequestId(data);
+      if (typeof payloadRequestId === 'string') {
+        const seenAt = seenRequestIdsRef.current.get(payloadRequestId);
         if (seenAt != null && now - seenAt < DEDUP_WINDOW_MS) {
           return;
         }
@@ -64,7 +90,7 @@ export function usePostMessage(opts: UsePostMessageOptions): UsePostMessageResul
           const oldestKey = seenRequestIdsRef.current.keys().next().value;
           if (oldestKey != null) seenRequestIdsRef.current.delete(oldestKey);
         }
-        seenRequestIdsRef.current.set(data.requestId, now);
+        seenRequestIdsRef.current.set(payloadRequestId, now);
         // GC stale entries
         for (const [k, v] of seenRequestIdsRef.current.entries()) {
           if (now - v >= DEDUP_WINDOW_MS) seenRequestIdsRef.current.delete(k);

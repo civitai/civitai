@@ -70,6 +70,18 @@ const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 const APB_RE = /^apb_[0-9A-HJKMNP-TV-Z]{26}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
 
+/**
+ * The canonical immutable image the pipeline pushes for a (slug, sha):
+ * `ghcr.io/civitai/app-block-<slug>:<sha>`. Bind the callback's accepted
+ * imageRef to its OWN slug/sha (L-CALLBACK) — a bare `app-block-` prefix
+ * check would let a signature-valid callback for slug A carry
+ * `app-block-<B>:<sha>` and deploy B's image onto A's row/Deployment, and
+ * would also accept a mutable `:latest` tag.
+ */
+export function expectedImageRef(slug: string, sha: string): string {
+  return `ghcr.io/civitai/app-block-${slug}:${sha}`;
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -108,8 +120,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     res.status(400).json({ error: 'Invalid appBlockId' });
     return;
   }
-  if (!body.imageRef || !body.imageRef.startsWith('ghcr.io/civitai/app-block-')) {
-    res.status(400).json({ error: 'Invalid imageRef' });
+  // Bind the accepted imageRef to THIS callback's own slug + sha (L-CALLBACK).
+  if (!body.imageRef || body.imageRef !== expectedImageRef(body.slug, body.sha)) {
+    res.status(400).json({ error: 'imageRef does not match slug/sha' });
     return;
   }
 

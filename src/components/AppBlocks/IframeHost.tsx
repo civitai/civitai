@@ -7,6 +7,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
 import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
+import { intersectSandbox } from './sandbox';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -41,32 +42,6 @@ const TOKEN_WAIT_TIMEOUT_MS = 15_000;
 const HARD_HEIGHT_CEILING = 8_000;
 
 type Status = 'loading' | 'ready' | 'timeout' | 'fatal' | 'no_token';
-
-// H-6: client-side allowlist intersection. The server validator already
-// gates sandbox tokens by trust tier, but a future server-side bypass or
-// stored-XSS in the manifest column would otherwise let dangerous tokens
-// reach the iframe attribute. This is the second wall.
-const ALLOWED_SANDBOX_TOKENS = new Set([
-  'allow-scripts',
-  'allow-forms',
-  'allow-popups',
-  'allow-modals',
-  'allow-pointer-lock',
-  'allow-downloads',
-]);
-
-// Auto-injected for trusted publishers. Unverified blocks still get an
-// opaque origin; verified/internal blocks need their real origin so the
-// host's explicit-targetOrigin postMessage + host-side origin allowlist
-// work as designed.
-const TRUSTED_TIERS: ReadonlySet<string> = new Set(['internal', 'verified']);
-
-function intersectSandbox(raw: string | undefined, trustTier: string): string {
-  const declared = (raw ?? '').split(/\s+/).filter((t) => ALLOWED_SANDBOX_TOKENS.has(t));
-  const tokens = new Set(declared.length > 0 ? declared : ['allow-scripts']);
-  if (TRUSTED_TIERS.has(trustTier)) tokens.add('allow-same-origin');
-  return Array.from(tokens).join(' ');
-}
 
 // Reduce a thrown tRPC error to a single short string the block can surface.
 // TRPCClientError exposes `.message` which is already the server message

@@ -10,6 +10,7 @@ import {
   type AppContext,
 } from '~/server/services/block-manifest-validator.service';
 import {
+  FORGEJO_ORG,
   getRawFile,
   setCommitStatus,
 } from '~/server/services/blocks/forgejo.service';
@@ -86,6 +87,30 @@ function verifyForgejoSignature(rawBody: Buffer, signatureHeader: unknown): bool
 
 const SLUG_RE = /^[a-z][a-z0-9-]{1,38}[a-z0-9]$/;
 
+/**
+ * Parse a Forgejo `repository.full_name` (`<org>/<slug>`) and assert the
+ * org is the canonical build-trigger org. Returns the slug only when the
+ * org matches; otherwise null. Pulled out as a pure function for unit
+ * testing the M-WEBHOOK org gate without driving the full webhook handler.
+ *
+ * The shared FORGEJO_WEBHOOK_SECRET authenticates the Forgejo *instance*,
+ * not a single repo/org — the same instance also serves the
+ * `civitai-apps-review` org (anonymous in-review browsing) and could serve
+ * others. Without this gate a signature-valid push to a same-slug repo in a
+ * different org would drive a build + auto-approve of the canonical row.
+ */
+export function parseExpectedRepo(
+  fullName: unknown,
+  expectedOrg: string
+): { slug: string } | null {
+  if (typeof fullName !== 'string' || !fullName.includes('/')) return null;
+  const [org, ...slugParts] = fullName.split('/');
+  if (org !== expectedOrg) return null;
+  const slug = slugParts.join('/');
+  if (!slug) return null;
+  return { slug };
+}
+
 export default withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Method not allowed' });
@@ -125,7 +150,18 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
-  const slug = payload.repository?.name;
+  // Verify the push came from the canonical build-trigger org and derive the
+  // slug from `repository.full_name` (`<org>/<slug>`) so org + slug are
+  // validated together — don't trust `repository.name` alone (M-WEBHOOK).
+  const expectedRepo = parseExpectedRepo(payload.repository?.full_name, FORGEJO_ORG);
+  if (!expectedRepo) {
+    res.status(403).json({
+      error: 'Unexpected or missing repository org',
+      fullName: payload.repository?.full_name ?? null,
+    });
+    return;
+  }
+  const slug = expectedRepo.slug;
   const sha = payload.after;
   if (!slug || !SLUG_RE.test(slug)) {
     res.status(400).json({ error: 'Invalid repo slug', slug });

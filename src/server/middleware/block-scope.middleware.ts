@@ -6,7 +6,6 @@ import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
-  getBlockTokenVerificationKeys,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
 import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
@@ -249,31 +248,39 @@ function isBlockJwt(token: string): boolean {
     // base64url decode without depending on Buffer typings
     const headerJson = Buffer.from(parts[0], 'base64url').toString('utf8');
     const header = JSON.parse(headerJson) as { alg?: string; typ?: string };
-    return header.alg === 'RS256' && (header.typ === 'JWT' || header.typ === undefined);
+    // L-VERIFY: require typ=JWT exactly. The signer (BlockTokenService.sign)
+    // has set `typ:'JWT'` since the first App Blocks commit, so accepting
+    // `typ:undefined` was an unnecessary fail-open that let a header omit the
+    // type discriminator. A token without it is not one we mint.
+    return header.alg === 'RS256' && header.typ === 'JWT';
   } catch {
     return false;
   }
 }
 
 export async function verifyBlockToken(token: string): Promise<BlockTokenClaims | null> {
-  // M-3: prefer kid-based selection. The header carries the signing key's
-  // kid; we look up that one key and verify once. Falls back to trying all
-  // configured keys if the kid is missing or doesn't match (e.g. a token
-  // minted before kid was added; or during a rotation seam where the
-  // header points at a key we haven't loaded yet).
+  // L-VERIFY: require a kid and verify against exactly that one key. The
+  // signer (BlockTokenService.sign) has stamped a `kid` (sha256 of the key
+  // modulus) on every block token since the first App Blocks commit
+  // (5bf6f05b6) — there was never a kid-less issuance era on this branch, and
+  // tokens live only 15m + are re-minted each render — so a missing/unknown
+  // kid is not a token we issued. The prior "no kid → try every configured
+  // key" fall-open let an attacker probe all keys with one forged header;
+  // pinning to the kid'd key removes that and is still rotation-safe (a new
+  // key is loaded into the by-kid map before tokens signed with it appear,
+  // and the old key stays in the map until its tokens expire).
   let keys: Iterable<unknown>;
   try {
     const header = decodeProtectedHeader(token);
     const kid = typeof header.kid === 'string' ? header.kid : null;
-    if (kid) {
-      const byKid = getBlockTokenVerificationKeysByKid();
-      const selected = byKid.get(kid);
-      keys = selected ? [selected] : getBlockTokenVerificationKeys();
-    } else {
-      keys = getBlockTokenVerificationKeys();
-    }
+    if (!kid) return null;
+    const byKid = getBlockTokenVerificationKeysByKid();
+    const selected = byKid.get(kid);
+    // Unknown kid → fail closed rather than fanning out to every key.
+    if (!selected) return null;
+    keys = [selected];
   } catch {
-    keys = getBlockTokenVerificationKeys();
+    return null;
   }
   const keyArr = Array.from(keys as Iterable<Parameters<typeof jwtVerify>[1]>);
   if (keyArr.length === 0) return null;
@@ -459,9 +466,16 @@ export function enforceContextBinding(
         }
         break;
       }
-      // No `default` — the unknown-scope reject above is the exhaustive
-      // gate. Adding a new known scope to BLOCK_SCOPE_TO_OAUTH_BIT without
-      // a case here means it is accepted with no extra binding.
+      default:
+        // Fail closed (L-M6). Reaching here means a scope passed the
+        // `isKnownBlockScope` gate above (it's in BLOCK_SCOPE_TO_OAUTH_BIT)
+        // but has no explicit binding case in this switch — i.e. someone
+        // added a scope to the constant without wiring its runtime binding.
+        // Rather than accept it with no contextual binding (the prior
+        // implicit fall-through), reject it. Every scope currently in
+        // BLOCK_SCOPE_TO_OAUTH_BIT has a case above, so this never fires for
+        // a valid token today; it only catches a future under-wired scope.
+        throw forbidden(`scope has no runtime binding: ${scope}`);
     }
   }
 }
