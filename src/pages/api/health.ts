@@ -268,11 +268,21 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       // HEALTHCHECK_TIMEOUT, but the 8s hard-cap on overallDeadlineMs decouples
       // that per-read ceiling from the total budget — if HEALTHCHECK_TIMEOUT is
       // raised toward/over 8s, one config read alone could otherwise consume the
-      // entire deadline. Cap each read at a third of the deadline so the
-      // majority of the budget is always reserved for the actual checks. The
-      // overall deadline still bounds the whole handler (config + checks share
-      // the same wall-clock timer); this only stops config from hogging it.
-      const configReadTimeout = Math.min(
+      // entire deadline. Reserve a third of the deadline for the config leg so
+      // the majority of the budget is always available for the actual checks.
+      // But never make this sub-budget TIGHTER than pre-PR `main`, whose config
+      // read was bound by the full HEALTHCHECK_TIMEOUT: take whichever is
+      // LARGER. At the schema default (1500) `max(1500, 1000) = 1500` = parity
+      // with main (no regression); at prod's 5000 `max(5000, 2666) = 5000`.
+      // This `maxTimeout` is only getHealthcheckConfig's OWN internal
+      // self-timeout — the REAL ceiling on the config leg is the shared
+      // `deadlinePromise` it races at `Promise.race([configPromise,
+      // deadlinePromise])` below, so even when configReadTimeout >=
+      // overallDeadlineMs the config leg's wall-clock is still capped at
+      // overallDeadlineMs (8s prod) and can never push the total handler past
+      // the overall deadline. If the deadline fires first we still degrade
+      // safely (empty arrays → run all / suppress nothing).
+      const configReadTimeout = Math.max(
         env.HEALTHCHECK_TIMEOUT,
         Math.floor(overallDeadlineMs / 3)
       );
