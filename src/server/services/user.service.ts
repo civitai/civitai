@@ -432,7 +432,6 @@ export async function setUserMuted({
     data: {
       muted,
       mutedAt: muted ? date : null,
-      muteConfirmedAt: muted ? date : null,
     },
     updateSource: muted ? 'retool:mute' : 'retool:unmute',
   });

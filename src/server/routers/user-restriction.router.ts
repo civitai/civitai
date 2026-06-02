@@ -117,10 +117,10 @@ export const userRestrictionRouter = router({
     });
 
     if (status === UserRestrictionStatus.Upheld) {
-      // Set mutedAt and muteConfirmedAt to confirm the restriction
+      // Set mutedAt to confirm the restriction (moderator review)
       await updateUserById({
         id: restriction.userId,
-        data: { mutedAt: new Date(), muteConfirmedAt: new Date() },
+        data: { mutedAt: new Date() },
         updateSource: 'moderator:generationRestrictionUpheld',
       });
       await refreshSession(restriction.userId);
