@@ -113,7 +113,7 @@ export const upsertBountyEntry = async ({
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
   if (description) await throwOnBlockedLinkDomain(description);
-  
+
   let imagesToIngest: { id: number; url: string }[] = [];
 
   const result = await dbWrite.$transaction(async (tx) => {

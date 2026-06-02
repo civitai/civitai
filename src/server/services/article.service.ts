@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
 import { truncate } from 'lodash-es';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import type { NsfwLevel } from '~/server/common/enums';
 import { ImageConnectionType, NotificationCategory } from '~/server/common/enums';
 import { ArticleSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -1690,14 +1691,19 @@ export async function linkArticleContentImages({
 
   if (imagesToIngest.length > 0) {
     // TODO.articleImageScan: remove the lowPriority flag
-    for (const img of imagesToIngest) {
+    const tasks = imagesToIngest.map((img) => () =>
       ingestImage({ image: img, lowPriority: true, userId }).catch((error) => {
-        handleLogError(error, 'article-image-ingestion', {
+        logToAxiom({
+          name: 'article-image-ingest',
+          type: 'error',
           articleId,
-          imageIds: [img.id],
-        });
-      });
-    }
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => {});
+      })
+    );
+    limitConcurrency(tasks, 5).catch(() => {});
   }
 
   return { orphanedImageIds };
