@@ -367,8 +367,10 @@ describe('redeemableCode.service', () => {
         await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
 
         // Verify period end is 3 months from currentPeriodStart (unitValue = 3, interval = month)
-        const periodStart = dayjs(createdSubscription.currentPeriodStart);
-        const periodEnd = dayjs(createdSubscription.currentPeriodEnd);
+        // Compare in UTC so the assertion is independent of the runner's local timezone /
+        // DST transitions (wrapping the dates in local-tz dayjs() makes diff() drift across DST).
+        const periodStart = dayjs.utc(createdSubscription.currentPeriodStart);
+        const periodEnd = dayjs.utc(createdSubscription.currentPeriodEnd);
         const monthsDiff = periodEnd.diff(periodStart, 'month');
         expect(monthsDiff).toBe(3);
       });

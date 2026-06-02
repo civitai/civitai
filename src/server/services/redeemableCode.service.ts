@@ -458,7 +458,8 @@ export async function consumeRedeemableCode({
                     prepaids: {}, // Clear legacy counter — tokens array is now the source of truth
                   },
                   status: 'active',
-                  currentPeriodEnd: dayjs(activeUserMembership.currentPeriodEnd)
+                  currentPeriodEnd: dayjs
+                    .utc(activeUserMembership.currentPeriodEnd)
                     .add(
                       consumedCode.unitValue,
                       consumedCode.price.interval as 'day' | 'month' | 'year'
@@ -468,7 +469,7 @@ export async function consumeRedeemableCode({
               });
             } else if (consumedTierOrder > membershipTierOrder) {
               // Upgrade to higher tier: first token unlocked, rest locked
-              const now = dayjs();
+              const now = dayjs.utc();
               const proratedDays =
                 dayjs(activeUserMembership.currentPeriodEnd).diff(now, 'days') -
                 existingTokens.filter(
@@ -537,7 +538,7 @@ export async function consumeRedeemableCode({
 
         if (!activeUserMembership) {
           // New user: first token unlocked (user must claim manually), rest locked
-          const now = dayjs();
+          const now = dayjs.utc();
           const buzzAmount = Number(consumedProductMetadata.monthlyBuzz ?? 5000);
           const newTokens = createPrepaidTokens({
             count: consumedCode.unitValue,
