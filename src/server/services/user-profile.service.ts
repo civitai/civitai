@@ -188,7 +188,7 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
-  await dbWrite.$transaction(
+  const { coverImage: updatedCoverImage } = await dbWrite.$transaction(
     async (tx) => {
       // const shouldUpdateCosmetics = badgeId !== undefined || nameplateId !== undefined;
       // const payloadCosmeticIds: number[] = [];
@@ -310,18 +310,22 @@ export const updateUserProfile = async ({
         },
       });
 
-      if (
-        updatedProfile.coverImage &&
-        updatedProfile.coverImage.ingestion === ImageIngestionStatus.Pending
-      ) {
-        await ingestImage({ image: updatedProfile.coverImage, tx });
-      }
+      return updatedProfile;
     },
     {
-      // Wait double of time because it might be a long transaction
       timeout: 15000,
     }
   );
+
+  // Ingest the cover image AFTER the transaction commits. ingestImage makes a
+  // blocking external HTTP call to the image scanner; keeping it inside the
+  // interactive transaction held the txn open past its 15s timeout whenever the
+  // scanner was slow ("Transaction already closed: a commit cannot be executed
+  // on an expired transaction"). Ingestion is a fire-and-forget scanner enqueue
+  // that only needs the committed Image row, not transactional atomicity.
+  if (updatedCoverImage && updatedCoverImage.ingestion === ImageIngestionStatus.Pending) {
+    await ingestImage({ image: updatedCoverImage });
+  }
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
 
