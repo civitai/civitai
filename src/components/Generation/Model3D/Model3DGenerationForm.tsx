@@ -1,44 +1,51 @@
 /**
  * Model3DGenerationForm
  *
- * The "3D Model" tab of the generation panel. Two sub-tabs:
- *   - text-to-3D (`process: 'textTo3D'`)
- *   - image-to-3D (`process: 'imageTo3D'`)
+ * The "3D Models" tab of the V2 generation panel (PolyGen / Meshy).
  *
- * Mirrors the shape of VideoGenerationForm / SoraFormInput conceptually:
- * react-hook-form bound to the shared Zod schema from workstream B
- * (`textTo3DSchema` / `imageTo3DSchema` discriminated on `process`), with
- * an inline cost preview powered by the orchestrator `whatif` query.
+ * Visually mirrors the standard V2 forms (Image / Video / Audio): inputs
+ * are flat-listed top-down with V2 primitives (PromptInput, SliderInput,
+ * ButtonGroupInput, Checkbox with description, AccordionLayout). The
+ * submit + cost preview render through the shared GenerationFooter slot
+ * so the sticky footer chrome (DailyBoost, status, terms) comes from
+ * GenerationLayout — matching every other workflow.
  *
- * On submit the form calls the `generate3D` tRPC mutation, which in turn
- * calls `submitPolyGenWorkflow` server-side. The Draft Model3D row is
- * created later by the workflow result handler (workstream B); workstream G
- * picks up "Post from Generation" once that flow is wired.
+ * RHF-backed (not data-graph-backed) because the PolyGen schema is a
+ * Zod discriminated union (`process: textTo3D | imageTo3D`) and the
+ * server contract is fixed (`trpc.orchestrator.generate3D`). We bind
+ * V2 visual primitives via react-hook-form `Controller`.
  */
 
-import { Button, Input, Notification, Text } from '@mantine/core';
-import { IconX } from '@tabler/icons-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useFormContext } from 'react-hook-form';
+import {
+  ActionIcon,
+  Button,
+  Checkbox,
+  Input,
+  Notification,
+  Stack,
+  Textarea,
+  Tooltip,
+} from '@mantine/core';
+import { IconAlertTriangle, IconRestore, IconX } from '@tabler/icons-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Controller, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
 
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useBuzzCurrencyConfig } from '~/components/Currency/useCurrencyConfig';
 import { GenForm } from '~/components/Generation/Form/GenForm';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
-import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { BuzzTypeSelector, useSelectedBuzzType } from '~/components/generation_v2/FormFooter';
+import { GenerationFooter } from '~/components/generation_v2/GenerationLayout';
+import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
+import type { ImageValue } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
+import { PromptInput } from '~/components/generation_v2/inputs/PromptInput';
+import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import {
-  InputCheckbox,
-  InputNumberSlider,
-  InputSegmentedControl,
-  InputTextArea,
-} from '~/libs/form';
+import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
   model3dGenerationSchema,
@@ -48,13 +55,13 @@ import {
   type Model3DGenerationSchema,
 } from '~/server/orchestrator/polygen/polygen.schema';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
-import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
 import { generationFormStore } from '~/store/generation-form.store';
 import { useDebouncer } from '~/utils/debouncer';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 const STORAGE_KEY = 'generation-form-model3d';
+const FORM_ID = 'generation-form-model3d';
 
 /**
  * Default values for the unified form. The discriminator (`process`) is
@@ -84,18 +91,36 @@ const defaultValues = {
   shouldTexture: true,
 };
 
-/**
- * The form's effective Zod schema is a `discriminatedUnion('process')` so
- * `prompt` is required only for `textTo3D` and `sourceImage` only for
- * `imageTo3D`. usePersistForm needs a single object schema to seed default
- * values; we pass the discriminated union and let it pick the right
- * variant at validate-time.
- */
 type Model3DFormValues = z.input<typeof model3dGenerationSchema>;
+
+// Picker option lists — built once.
+const processOptions = [
+  { label: 'Text to 3D', value: 'textTo3D' },
+  { label: 'Image to 3D', value: 'imageTo3D' },
+];
+const modeOptions = polygenTextModes.map((value) => ({
+  label: value === 'full' ? 'Full' : 'Preview',
+  value,
+}));
+const topologyOptions = polygenTopologies.map((value) => ({
+  label: value === 'quad' ? 'Quad' : 'Triangle',
+  value,
+}));
+const symmetryOptions = polygenSymmetryModes.map((value) => ({
+  label: value === 'off' ? 'Off' : value === 'on' ? 'On' : 'Auto',
+  value,
+}));
+const polycountPresets = [
+  { label: '5k', value: 5_000 },
+  { label: '30k', value: 30_000 },
+  { label: '100k', value: 100_000 },
+  { label: '300k', value: 300_000 },
+];
 
 export function Model3DGenerationForm() {
   const currentUser = useCurrentUser();
-  const [error, setError] = useState<string | undefined>();
+  const [submitError, setSubmitError] = useState<string | undefined>();
+  const [whatIfError, setWhatIfError] = useState<string | undefined>();
   const [isLoadingDebounced, setIsLoadingDebounced] = useState(false);
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -117,27 +142,39 @@ export function Model3DGenerationForm() {
   });
 
   const generate3D = trpc.orchestrator.generate3D.useMutation({
-    onError: (e) => setError(e.message),
+    onError: (e) => setSubmitError(e.message),
   });
 
   const process = form.watch('process');
+  const prompt = form.watch('prompt');
+  const sourceImage = form.watch('sourceImage');
 
-  function handleProcessChange(next: 'textTo3D' | 'imageTo3D') {
-    form.setValue('process', next, { shouldDirty: true, shouldValidate: false });
-  }
+  // Mirror V2's PriorityAlertSpace "missing field guidance" — friendly
+  // helper text in blue that tells the user what's still needed before
+  // they can submit. Not an error; clears as soon as the field is valid.
+  const missingFieldMessage = useMemo<string | undefined>(() => {
+    if (process === 'textTo3D' && !String(prompt ?? '').trim()) {
+      return 'Add a prompt to start generating.';
+    }
+    if (process === 'imageTo3D' && !sourceImage) {
+      return 'Upload a starting image to start generating.';
+    }
+    return undefined;
+  }, [process, prompt, sourceImage]);
 
   function handleReset() {
     form.reset(defaultValues, { keepDefaultValues: false });
-    setError(undefined);
+    setSubmitError(undefined);
+    setWhatIfError(undefined);
   }
 
   function handleSubmit(data: Model3DGenerationSchema) {
     if (generate3D.isPending || isLoadingDebounced) return;
     if (!currentUser) {
-      setError('You must be signed in to generate.');
+      setSubmitError('You must be signed in to generate.');
       return;
     }
-    setError(undefined);
+    setSubmitError(undefined);
     setIsLoadingDebounced(true);
 
     const { buzzType } = generationFormStore.getState();
@@ -158,134 +195,264 @@ export function Model3DGenerationForm() {
 
   return (
     <GenForm
+      id={FORM_ID}
       form={form as any}
       onSubmit={handleSubmit as any}
-      className="relative flex h-full flex-1 flex-col justify-between gap-2"
+      className="relative flex flex-1 flex-col gap-3"
     >
-      <div className="flex flex-col gap-3 px-2">
-        <div className="flex flex-col gap-0.5">
-          <Input.Label>Process</Input.Label>
-          <InputSegmentedControl
-            name="process"
-            data={[
-              { label: 'Text to 3D', value: 'textTo3D' },
-              { label: 'Image to 3D', value: 'imageTo3D' },
-            ]}
-            onChange={(v) => handleProcessChange(v as 'textTo3D' | 'imageTo3D')}
-          />
-        </div>
-
-        {process === 'imageTo3D' && (
-          <div className="flex flex-col gap-2">
-            <Input.Label required>Starting image</Input.Label>
-            <InputSourceImageUpload name="sourceImage" />
-            <InputCheckbox name="shouldTexture" label="Generate texture" />
-          </div>
-        )}
-
-        {process === 'textTo3D' && (
-          <>
-            <InputPrompt
-              required
-              name="prompt"
-              label="Prompt"
-              placeholder="A low-poly fantasy treasure chest..."
-              autosize
+      {/* Process picker — same look as V2 mode pickers */}
+      <Controller
+        name="process"
+        control={form.control}
+        render={({ field }) => (
+          <Input.Wrapper label="Process">
+            <ButtonGroupInput
+              value={field.value as string}
+              onChange={(v) => field.onChange(v)}
+              data={processOptions}
             />
-            <div className="flex flex-col gap-0.5">
-              <Input.Label>Mode</Input.Label>
-              <InputSegmentedControl
-                name="mode"
-                data={polygenTextModes.map((value) => ({
-                  label: value === 'full' ? 'Full' : 'Preview',
-                  value,
-                }))}
+          </Input.Wrapper>
+        )}
+      />
+
+      {/* Image-to-3D inputs */}
+      {process === 'imageTo3D' && (
+        <Stack gap="sm">
+          <Controller
+            name="sourceImage"
+            control={form.control}
+            render={({ field, fieldState }) => {
+              const current = field.value as ImageValue | undefined;
+              return (
+                <ImageUploadMultipleInput
+                  label="Starting image"
+                  description="The reference Meshy will use to build the 3D mesh"
+                  required
+                  max={1}
+                  aspect="square"
+                  imageLayout="wrap"
+                  value={current ? [current] : []}
+                  onChange={(v) => field.onChange(v[0] ?? undefined)}
+                  error={fieldState.error?.message}
+                />
+              );
+            }}
+          />
+          <Controller
+            name="shouldTexture"
+            control={form.control}
+            render={({ field }) => (
+              <Checkbox
+                label="Generate texture"
+                description="Apply automatic texture to the generated mesh"
+                checked={!!field.value}
+                onChange={(e) => field.onChange(e.currentTarget.checked)}
               />
-            </div>
-            <InputCheckbox
-              name="enablePromptExpansion"
-              label="Auto-expand prompt"
+            )}
+          />
+        </Stack>
+      )}
+
+      {/* Text-to-3D inputs */}
+      {process === 'textTo3D' && (
+        <>
+          <Controller
+            name="prompt"
+            control={form.control}
+            render={({ field, fieldState }) => (
+              <Input.Wrapper label="Prompt" required error={fieldState.error?.message}>
+                <PromptInput
+                  value={field.value as string}
+                  onChange={(v) => field.onChange(v)}
+                  placeholder="A low-poly fantasy treasure chest…"
+                  minRows={2}
+                  autosize
+                />
+              </Input.Wrapper>
+            )}
+          />
+          <Controller
+            name="mode"
+            control={form.control}
+            render={({ field }) => (
+              <Input.Wrapper
+                label="Mode"
+                description="Preview is faster and cheaper. Full produces the higher-quality mesh."
+              >
+                <ButtonGroupInput
+                  value={field.value as string}
+                  onChange={field.onChange}
+                  data={modeOptions}
+                />
+              </Input.Wrapper>
+            )}
+          />
+          <Controller
+            name="enablePromptExpansion"
+            control={form.control}
+            render={({ field }) => (
+              <Checkbox
+                label="Auto-expand prompt"
+                description="Let Meshy elaborate sparse prompts before generation"
+                checked={!!field.value}
+                onChange={(e) => field.onChange(e.currentTarget.checked)}
+              />
+            )}
+          />
+        </>
+      )}
+
+      {/* Shared Meshy controls */}
+      <Controller
+        name="targetPolycount"
+        control={form.control}
+        render={({ field }) => (
+          <SliderInput
+            label="Target polycount"
+            description="Final triangle count target. Higher = more detail, more cost."
+            value={field.value as number}
+            onChange={field.onChange}
+            min={100}
+            max={300_000}
+            step={100}
+            presets={polycountPresets}
+          />
+        )}
+      />
+
+      <Controller
+        name="topology"
+        control={form.control}
+        render={({ field }) => (
+          <Input.Wrapper label="Topology">
+            <ButtonGroupInput
+              value={field.value as string}
+              onChange={field.onChange}
+              data={topologyOptions}
             />
-          </>
+          </Input.Wrapper>
         )}
+      />
 
-        <InputNumberSlider
-          name="targetPolycount"
-          label="Target Polycount"
-          min={100}
-          max={300_000}
-          step={100}
+      <Controller
+        name="symmetryMode"
+        control={form.control}
+        render={({ field }) => (
+          <Input.Wrapper label="Symmetry">
+            <ButtonGroupInput
+              value={field.value as string}
+              onChange={field.onChange}
+              data={symmetryOptions}
+            />
+          </Input.Wrapper>
+        )}
+      />
+
+      {/* Advanced — collapsible to match V2 forms */}
+      <AccordionLayout
+        label="Advanced"
+        storeKey="generation-form-model3d-advanced"
+        defaultOpen={false}
+      >
+        <Controller
+          name="shouldRemesh"
+          control={form.control}
+          render={({ field }) => (
+            <Checkbox
+              label="Remesh"
+              description="Re-tessellate the mesh for cleaner topology"
+              checked={!!field.value}
+              onChange={(e) => field.onChange(e.currentTarget.checked)}
+            />
+          )}
         />
-
-        <div className="flex flex-col gap-0.5">
-          <Input.Label>Topology</Input.Label>
-          <InputSegmentedControl
-            name="topology"
-            data={polygenTopologies.map((value) => ({
-              label: value === 'quad' ? 'Quad' : 'Triangle',
-              value,
-            }))}
-          />
-        </div>
-
-        <div className="flex flex-col gap-0.5">
-          <Input.Label>Symmetry</Input.Label>
-          <InputSegmentedControl
-            name="symmetryMode"
-            data={polygenSymmetryModes.map((value) => ({
-              label: value === 'off' ? 'Off' : value === 'on' ? 'On' : 'Auto',
-              value,
-            }))}
-          />
-        </div>
-
-        <InputCheckbox name="shouldRemesh" label="Remesh" />
-        <InputCheckbox name="enablePbr" label="Enable PBR textures" />
-
-        <InputTextArea
+        <Controller
+          name="enablePbr"
+          control={form.control}
+          render={({ field }) => (
+            <Checkbox
+              label="Enable PBR textures"
+              description="Generate physically-based rendering textures (albedo, normal, roughness)"
+              checked={!!field.value}
+              onChange={(e) => field.onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
           name="texturePrompt"
-          label="Texture prompt"
-          placeholder="Describe the texture / material style..."
-          maxLength={600}
-          autosize
+          control={form.control}
+          render={({ field }) => (
+            <Textarea
+              label="Texture prompt"
+              description="Describe the material / style for the texture"
+              placeholder="Weathered oak with bronze fittings…"
+              value={(field.value as string) ?? ''}
+              onChange={(e) => field.onChange(e.currentTarget.value)}
+              autosize
+              minRows={2}
+              maxLength={600}
+            />
+          )}
         />
-
-        <InputCheckbox name="enableRigging" label="Enable rigging" />
-        <InputCheckbox name="enableAnimation" label="Enable animation" />
-
+        <Controller
+          name="enableRigging"
+          control={form.control}
+          render={({ field }) => (
+            <Checkbox
+              label="Enable rigging"
+              description="Add a skeleton to the mesh for animation"
+              checked={!!field.value}
+              onChange={(e) => field.onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
+        <Controller
+          name="enableAnimation"
+          control={form.control}
+          render={({ field }) => (
+            <Checkbox
+              label="Enable animation"
+              description="Generate idle animation for the rigged mesh"
+              checked={!!field.value}
+              onChange={(e) => field.onChange(e.currentTarget.checked)}
+            />
+          )}
+        />
         <InputSeed name="seed" label="Seed" />
-      </div>
+      </AccordionLayout>
 
-      <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
-        <DailyBoostRewardClaim />
-        {!error ? (
-          <Model3DCostPreview />
-        ) : (
-          <Notification
-            icon={<IconX size={18} />}
-            color="red"
-            onClose={() => setError(undefined)}
-            className="rounded-md bg-red-8/20"
-          >
-            {error}
-          </Notification>
-        )}
-        <div className="flex gap-2">
+      {/* Footer — rendered into the shared sticky chrome from GenerationLayout */}
+      <GenerationFooter>
+        <PriorityAlert
+          missingFieldMessage={missingFieldMessage}
+          whatIfError={whatIfError}
+          submitError={submitError}
+          onClearSubmitError={() => setSubmitError(undefined)}
+        />
+        <div className="flex h-[52px] items-stretch gap-2">
           <Model3DSubmitButton
             loading={generate3D.isPending || isLoadingDebounced}
-            setError={setError}
+            setWhatIfError={setWhatIfError}
           />
-          <Button onClick={handleReset} variant="default" className="h-auto px-3">
-            Reset
-          </Button>
+          <Tooltip label="Reset">
+            <ActionIcon
+              onClick={handleReset}
+              variant="default"
+              className="h-auto"
+              size="xl"
+              aria-label="Reset form"
+            >
+              <IconRestore size={16} />
+            </ActionIcon>
+          </Tooltip>
         </div>
-      </div>
+      </GenerationFooter>
     </GenForm>
   );
 }
 
 // =============================================================================
-// Cost preview (debounced whatif)
+// Cost preview (debounced whatif) + submit button
 // =============================================================================
 
 /**
@@ -295,12 +462,66 @@ export function Model3DGenerationForm() {
  */
 const WHATIF_EXCLUDE_KEYS = new Set(['prompt', 'texturePrompt', 'seed']);
 
+/**
+ * Mirrors V2 PriorityAlertSpace (FormFooter.tsx). Only one alert renders at
+ * a time, in priority order: missing-field guidance (blue, info), whatIf
+ * cost-estimate error (red, no close), submit error (red, dismissible).
+ */
+function PriorityAlert({
+  missingFieldMessage,
+  whatIfError,
+  submitError,
+  onClearSubmitError,
+}: {
+  missingFieldMessage?: string;
+  whatIfError?: string;
+  submitError?: string;
+  onClearSubmitError: () => void;
+}) {
+  let alert: ReactNode = null;
+  if (missingFieldMessage) {
+    alert = (
+      <Notification
+        icon={<IconAlertTriangle size={18} />}
+        color="blue"
+        className="whitespace-pre-wrap rounded-md bg-blue-8/20"
+        withCloseButton={false}
+      >
+        {missingFieldMessage}
+      </Notification>
+    );
+  } else if (whatIfError) {
+    alert = (
+      <Notification
+        icon={<IconX size={18} />}
+        color="red"
+        className="whitespace-pre-wrap rounded-md bg-red-8/20"
+        withCloseButton={false}
+      >
+        {whatIfError}
+      </Notification>
+    );
+  } else if (submitError) {
+    alert = (
+      <Notification
+        icon={<IconX size={18} />}
+        color="red"
+        onClose={onClearSubmitError}
+        className="whitespace-pre-wrap rounded-md bg-red-8/20"
+      >
+        {submitError}
+      </Notification>
+    );
+  }
+  return <>{alert}</>;
+}
+
 function Model3DSubmitButton({
   loading,
-  setError,
+  setWhatIfError,
 }: {
   loading: boolean;
-  setError: (e?: string) => void;
+  setWhatIfError: (e?: string) => void;
 }) {
   const { getValues, watch } = useFormContext<Model3DFormValues>();
   const status = useGenerationStatus();
@@ -315,8 +536,6 @@ function Model3DSubmitButton({
     function syncQuery() {
       debouncer(() => {
         const raw = getValues();
-        // Drop fields that don't influence cost so two cost-identical edits
-        // don't re-fire the network call.
         const filtered = Object.fromEntries(
           Object.entries(raw).filter(([k]) => !WHATIF_EXCLUDE_KEYS.has(k))
         );
@@ -347,8 +566,8 @@ function Model3DSubmitButton({
   });
 
   useEffect(() => {
-    setError(error?.message);
-  }, [error, setError]);
+    setWhatIfError(error?.message);
+  }, [error, setWhatIfError]);
 
   const cost = queryData?.cost?.total ?? 0;
 
@@ -359,7 +578,8 @@ function Model3DSubmitButton({
     <Button.Group className="flex-1">
       <GenerateButton
         type="submit"
-        className="flex-1"
+        form={FORM_ID}
+        className="h-full flex-1 px-2"
         color={color}
         disabled={!query || !status.available}
         loading={isFetching || loading}
@@ -368,18 +588,5 @@ function Model3DSubmitButton({
       </GenerateButton>
       <BuzzTypeSelector cost={cost} loading={isFetching} />
     </Button.Group>
-  );
-}
-
-function Model3DCostPreview() {
-  // Cheap inline placeholder; the real cost lives in `Model3DSubmitButton`'s
-  // `BuzzTypeSelector` (mirrors the existing image/video form footer).
-  // We keep this slot so the layout doesn't jump when an error notification
-  // appears in its place.
-  const data = useMemo(() => defaultWorkflowCost, []);
-  return (
-    <Text size="xs" c="dimmed" className="text-center">
-      Base cost preview: {numberWithCommas(data.base)} Buzz · Total updated on the Generate button.
-    </Text>
   );
 }
