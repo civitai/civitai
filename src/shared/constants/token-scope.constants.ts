@@ -123,7 +123,11 @@ export const TokenScopePresets = {
     TokenScope.BountiesWrite |
     TokenScope.CollectionsWrite |
     TokenScope.SocialWrite,
-  AIServices: TokenScope.AIServicesWrite | TokenScope.AIServicesRead | TokenScope.BuzzRead,
+  AIServices:
+    TokenScope.UserRead |
+    TokenScope.AIServicesWrite |
+    TokenScope.AIServicesRead |
+    TokenScope.BuzzRead,
   Full: TokenScope.Full,
 } as const;
 
