@@ -5649,9 +5649,6 @@ export const createEntityImages = async ({
       const tasks = batch.map((image) => () => createImageResources({ imageId: image.id, tx }));
       await limitConcurrency(tasks, 10);
     }
-
-    const tasks = batch.map((image) => () => ingestImage({ image, tx }));
-    await limitConcurrency(tasks, 10);
   }
 
   if (entityType && entityId) {
@@ -5926,6 +5923,13 @@ export const updateEntityImages = async ({
   );
 
   const links = [...newLinkedImages.map((i) => i.id)];
+  let imageRecords: {
+    id: number;
+    url: string;
+    type: MediaType;
+    width: number | null;
+    height: number | null;
+  }[] = [];
 
   if (newImages.length > 0) {
     await dbClient.image.createMany({
@@ -5937,7 +5941,7 @@ export const updateEntityImages = async ({
       })),
     });
 
-    const imageRecords = await dbClient.image.findMany({
+    imageRecords = await dbClient.image.findMany({
       select: { id: true, url: true, type: true, width: true, height: true },
       where: {
         url: { in: newImages.map((i) => i.url) },
@@ -5955,8 +5959,6 @@ export const updateEntityImages = async ({
       if (shouldAddImageResources) {
         await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
       }
-
-      await Promise.all(batch.map((image) => ingestImage({ image, tx })));
     }
   }
 
@@ -5970,6 +5972,8 @@ export const updateEntityImages = async ({
       })),
     });
   }
+
+  return imageRecords;
 };
 
 const imageReviewQueueJoinMap = {

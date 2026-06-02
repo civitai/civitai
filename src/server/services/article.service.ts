@@ -1564,11 +1564,12 @@ export async function linkArticleContentImages({
 }): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
 
-  const orphanedImageIds = await dbWrite.$transaction(async (tx) => {
+  const { orphanedImageIds, imagesToIngest } = await dbWrite.$transaction(async (tx) => {
     const imageUrls = contentImages.map((img) => img.url);
 
     // Track content image IDs for orphan detection
     let contentImageIds: number[] = [];
+    let imagesToIngest: { id: number; url: string; ingestion?: ImageIngestionStatus }[] = [];
 
     if (!cleanupOnly) {
       // Batch query: Get all existing images in one query
@@ -1631,18 +1632,7 @@ export async function linkArticleContentImages({
       const pendingExistingImages = existingImages.filter(
         (img) => img.ingestion === ImageIngestionStatus.Pending
       );
-      const imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
-      if (imagesToIngest.length > 0) {
-        // TODO.articleImageScan: remove the lowPriority flag
-        for (const img of imagesToIngest) {
-          await ingestImage({ image: img, lowPriority: true, userId, tx }).catch((error) => {
-            handleLogError(error, 'article-image-ingestion', {
-              articleId,
-              imageIds: newlyCreatedImages.map((i) => i.id),
-            });
-          });
-        }
-      }
+      imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
     } else {
       // In cleanupOnly mode, we still need to know which images are in the current content
       // so we can detect orphans. Query by URL to get their IDs.
@@ -1683,6 +1673,7 @@ export async function linkArticleContentImages({
     }
 
     // Find truly orphaned images (no connections to ANY entity)
+    let trulyOrphanedIds: number[] = [];
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: {
@@ -1691,11 +1682,23 @@ export async function linkArticleContentImages({
         },
         select: { id: true },
       });
-      return trulyOrphaned.map((img) => img.id);
+      trulyOrphanedIds = trulyOrphaned.map((img) => img.id);
     }
 
-    return [];
+    return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
   });
+
+  if (imagesToIngest.length > 0) {
+    // TODO.articleImageScan: remove the lowPriority flag
+    for (const img of imagesToIngest) {
+      ingestImage({ image: img, lowPriority: true, userId }).catch((error) => {
+        handleLogError(error, 'article-image-ingestion', {
+          articleId,
+          imageIds: [img.id],
+        });
+      });
+    }
+  }
 
   return { orphanedImageIds };
 }
