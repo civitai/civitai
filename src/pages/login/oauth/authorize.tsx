@@ -42,7 +42,9 @@ export default function OAuthAuthorizePage() {
   const [limitPeriod, setLimitPeriod] = useState<'day' | 'week' | 'month'>('day');
 
   const clientId = router.query.client_id as string;
-  const scope = parseInt(router.query.scope as string, 10) || 0;
+  // UserRead is a mandatory baseline granted on every authorization (the server
+  // forces it on regardless), so reflect it in the consent list and submission.
+  const scope = (parseInt(router.query.scope as string, 10) || 0) | TokenScope.UserRead;
   const redirectUri = router.query.redirect_uri as string;
   const state = router.query.state as string;
   const responseType = router.query.response_type as string;

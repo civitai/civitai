@@ -24,5 +24,8 @@ export default function handler(_req: NextApiRequest, res: NextApiResponse) {
     token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
     scopes_supported: Object.keys(tokenScopeLabels),
     subject_types_supported: ['public'],
+    // Claims returned by the userinfo endpoint. `email`/`email_verified` and
+    // the profile claims are released under the UserRead scope.
+    claims_supported: ['sub', 'name', 'preferred_username', 'picture', 'email', 'email_verified'],
   });
 }
