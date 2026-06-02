@@ -12,6 +12,7 @@ import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestImage } from '~/server/services/image.service';
+import { logToAxiom } from '~/server/logging/client';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import {
@@ -321,10 +322,25 @@ export const updateUserProfile = async ({
   // blocking external HTTP call to the image scanner; keeping it inside the
   // interactive transaction held the txn open past its 15s timeout whenever the
   // scanner was slow ("Transaction already closed: a commit cannot be executed
-  // on an expired transaction"). Ingestion is a fire-and-forget scanner enqueue
-  // that only needs the committed Image row, not transactional atomicity.
+  // on an expired transaction"). Ingestion only needs the committed Image row,
+  // not transactional atomicity with the profile write.
+  //
+  // Fire-and-forget on purpose: the profile is already saved, so a scanner
+  // outage must NOT bubble up as "error updating your profile" on a successful
+  // save. Recovery is guaranteed independently — the `trg_image_scan_queue`
+  // trigger enqueues an ImageScan JobQueue row on the Pending insert, which the
+  // `ingest-images` sweeper drains, so the cover image still gets scanned even
+  // if this inline enqueue fails.
   if (updatedCoverImage && updatedCoverImage.ingestion === ImageIngestionStatus.Pending) {
-    await ingestImage({ image: updatedCoverImage });
+    ingestImage({ image: updatedCoverImage }).catch((error) =>
+      logToAxiom({
+        name: 'user-profile-cover-ingest',
+        type: 'error',
+        userId,
+        imageId: updatedCoverImage.id,
+        message: error instanceof Error ? error.message : String(error),
+      })
+    );
   }
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
