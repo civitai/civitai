@@ -54,7 +54,7 @@ export interface GeneratedItemWorkflowGroup {
 
 export interface UseGeneratedItemWorkflowsOptions {
   /** Output type of the generated item */
-  outputType: 'image' | 'video' | 'audio';
+  outputType: 'image' | 'video' | 'audio' | 'model3d';
   /** Ecosystem key from the generated output (step.params.baseModel) */
   ecosystemKey?: string;
   /**
@@ -80,13 +80,19 @@ const categoryLabels: Record<WorkflowCategory, string> = {
   image: 'Image',
   video: 'Video',
   audio: 'Audio',
+  model3d: '3D Models',
 };
 
 /** Categories relevant per output type — which workflow categories can act on that output. */
-const categoryOrderByOutputType: Record<'image' | 'video' | 'audio', WorkflowCategory[]> = {
-  image: ['image', 'video'],
+const categoryOrderByOutputType: Record<
+  'image' | 'video' | 'audio' | 'model3d',
+  WorkflowCategory[]
+> = {
+  image: ['image', 'video', 'model3d'],
   video: ['video'],
   audio: ['audio'],
+  // No workflows act on a 3D model as input today; only ordering matters here.
+  model3d: ['model3d'],
 };
 
 // =============================================================================

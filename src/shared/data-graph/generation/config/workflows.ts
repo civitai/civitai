@@ -344,6 +344,42 @@ export const workflowConfigs: WorkflowConfigs = {
   },
 
   // ===========================================================================
+  // 3D Model Workflows (PolyGen / Meshy via Fal)
+  // ===========================================================================
+  //
+  // Both workflows route through the standalone `Model3DGenerationForm` as a
+  // self-contained workflow body (see GenerationForm.tsx — same dispatch as
+  // `img2meta` and `prompt:enhance`). The form's own submit calls
+  // `trpc.orchestrator.generate3D` directly, so the V2 FormFooter is not
+  // rendered for these workflows. Feature-flagged behind `model3dGenerator`.
+
+  txt2model3d: {
+    label: 'Create 3D Model',
+    modeLabel: 'Text to 3D',
+    description: 'Generate a 3D model from a text prompt (PolyGen via Meshy)',
+    category: 'model3d',
+    ecosystemIds: [ECO.PolyGen],
+    featureFlag: 'model3dGenerator',
+    isNew: true,
+    // noSubmit suppresses the unified V2 FormFooter and `whatIfFromGraph`
+    // for these workflows — the embedded Model3DGenerationForm has its own
+    // submit button + `generate3DWhatIf` cost preview, so neither belongs at
+    // the form-shell level. Same convention as `img2meta` / `prompt:enhance`.
+    noSubmit: true,
+  },
+
+  img2model3d: {
+    label: 'Image to 3D Model',
+    modeLabel: 'Image to 3D',
+    description: 'Generate a 3D model from a source image (PolyGen via Meshy)',
+    category: 'model3d',
+    ecosystemIds: [ECO.PolyGen],
+    featureFlag: 'model3dGenerator',
+    isNew: true,
+    noSubmit: true,
+  },
+
+  // ===========================================================================
   // Text Output Workflows (hidden from picker, triggered programmatically)
   // ===========================================================================
 
@@ -504,6 +540,7 @@ export const workflowCategories: { category: WorkflowCategory; label: string }[]
   { category: 'image', label: 'Image' },
   { category: 'video', label: 'Video' },
   { category: 'audio', label: 'Audio' },
+  { category: 'model3d', label: '3D Models' },
 ];
 
 /**
@@ -762,6 +799,10 @@ const NEW_FORM_ONLY = new Map<string, NewFormOnlyRule>([
 
   // Audio workflows - no legacy equivalent
   ['txt2music', true],
+
+  // 3D Model workflows - no legacy equivalent
+  ['txt2model3d', true],
+  ['img2model3d', true],
 ]);
 
 /**

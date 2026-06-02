@@ -258,10 +258,14 @@ export async function createEcosystemStepInput(
   data: EcosystemGraphOutput,
   handlerCtx: GenerationHandlerCtx
 ): Promise<StepInput[]> {
-  // Normalize seed - generate random if not provided
+  // Normalize seed - generate random if not provided.
+  // Some ecosystems (e.g. PolyGen / 3D models) don't expose a `seed` node and
+  // route their submission outside this dispatcher entirely, so the field is
+  // absent from their graph branch — read defensively.
+  const dataSeed = 'seed' in data ? (data as { seed?: number }).seed : undefined;
   const normalizedData = {
     ...data,
-    seed: data.seed ?? Math.floor(Math.random() * maxRandomSeed),
+    seed: dataSeed ?? Math.floor(Math.random() * maxRandomSeed),
   };
 
   const steps = await createEcosystemStep(normalizedData, handlerCtx);
@@ -452,6 +456,19 @@ async function createEcosystemStep(
 
     case 'Ace':
       return createAceAudioInput(normalizedData, handlerCtx);
+
+    // =========================================================================
+    // 3D Model Ecosystems — submitted via the dedicated `generate3D` mutation,
+    // NOT through this unified dispatcher. The standalone Model3DGenerationForm
+    // calls `submitPolyGenWorkflow` directly. This case exists so unintentional
+    // routing through `generateFromGraph` surfaces a precise error rather than
+    // the generic "Unknown ecosystem".
+    // =========================================================================
+
+    case 'PolyGen':
+      throw new Error(
+        'PolyGen workflows submit via trpc.orchestrator.generate3D, not generateFromGraph'
+      );
 
     default:
       throw new Error(`Unknown ecosystem: ${ecosystem}`);

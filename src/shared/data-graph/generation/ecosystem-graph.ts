@@ -63,6 +63,7 @@ import { krea2Graph } from './krea2-graph';
 import { seedanceGraph } from './seedance-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
+import { polyGenGraph } from './polygen-graph';
 
 // =============================================================================
 // Helper Functions
@@ -111,7 +112,11 @@ function getValidEcosystemForWorkflow(workflowId: string, currentValue?: string)
 // =============================================================================
 
 export const ecosystemGraph = new DataGraph<
-  { workflow: string; output: 'image' | 'video' | 'audio'; input: 'text' | 'image' | 'video' },
+  {
+    workflow: string;
+    output: 'image' | 'video' | 'audio' | 'model3d';
+    input: 'text' | 'image' | 'video';
+  },
   GenerationCtx
 >()
   // ecosystem depends on workflow to filter compatible ecosystems
@@ -130,7 +135,13 @@ export const ecosystemGraph = new DataGraph<
       // Default ecosystem by output type — fall through to first compatible if
       // the type-default is gated/incompatible, then to SDXL as ultimate fallback.
       const outputDefault =
-        ctx.output === 'audio' ? 'Ace' : ctx.output === 'video' ? 'Kling' : 'ZImageTurbo';
+        ctx.output === 'audio'
+          ? 'Ace'
+          : ctx.output === 'video'
+          ? 'Kling'
+          : ctx.output === 'model3d'
+          ? 'PolyGen'
+          : 'ZImageTurbo';
       const defaultValue = compatibleEcosystems.includes(outputDefault)
         ? outputDefault
         : compatibleEcosystems[0] ?? 'SDXL';
@@ -302,6 +313,9 @@ export const ecosystemGraph = new DataGraph<
     { values: ['HappyHorse'] as const, graph: happyHorseGraph },
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
+    // 3D Model ecosystems — graph is intentionally empty; the workflow body is
+    // the self-contained Model3DGenerationForm (see polygen-graph.ts).
+    { values: ['PolyGen'] as const, graph: polyGenGraph },
   ])
   // Enhanced compatibility mode - txt2img only, supported ecosystems, hidden for Flux Ultra
   .node(

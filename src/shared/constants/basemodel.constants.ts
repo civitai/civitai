@@ -181,6 +181,9 @@ export const ECO = {
   // Root ecosystems - Audio models
   AceAudio: 68,
 
+  // Root ecosystems - 3D Model providers
+  PolyGen: 71,
+
   // Utility ecosystems
   Upscaler: 66,
 
@@ -719,6 +722,14 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'ACE Audio',
     sortOrder: 300,
   },
+
+  // 3D Model ecosystems
+  {
+    id: ECO.PolyGen,
+    key: 'PolyGen',
+    displayName: 'PolyGen (Meshy)',
+    sortOrder: 301,
+  },
 ];
 
 export const ecosystemById = new Map(ecosystems.map((e) => [e.id, e]));
@@ -910,6 +921,11 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // AceAudio - checkpoint only (audio generation)
   { ecosystemId: ECO.AceAudio, supportType: 'generation', modelTypes: checkpointOnly },
+
+  // PolyGen - remote 3D generator (Meshy via Fal). No Civitai checkpoint/LoRA;
+  // entry exists so the unified generator picker can route 3D-Models workflows
+  // and the dev-time `getEcosystemSupport` audit in workflows.ts stays clean.
+  { ecosystemId: ECO.PolyGen, supportType: 'generation', modelTypes: [] },
 
   // Upscaler - upscaler models only
   { ecosystemId: ECO.Upscaler, supportType: 'generation', modelTypes: [ModelType.Upscaler] },
@@ -1773,6 +1789,7 @@ export const BM = {
   HappyHorse: 85,
   Lens: 88,
   Krea2: 89,
+  PolyGen: 90,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2921,6 +2938,19 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'audio',
     ecosystemId: ECO.AceAudio,
   },
+
+  // PolyGen (Meshy via Fal) — remote 3D model generator. Type='image' matches
+  // the Upscaler base-model convention for "no Civitai checkpoint" ecosystems
+  // (Prisma's MediaType enum has no 'model3d' variant). Hidden from the
+  // base-model picker — PolyGen exposes no Civitai resources.
+  {
+    id: BM.PolyGen,
+    name: 'PolyGen',
+    description: 'Meshy text-to-3D / image-to-3D generation (via Fal)',
+    type: 'image',
+    ecosystemId: ECO.PolyGen,
+    hidden: true,
+  },
 ];
 
 export const baseModelById = new Map(baseModelRecords.map((m) => [m.id, m]));
@@ -3607,8 +3637,8 @@ export interface GetEcosystemDisplayItemsOptions {
   compatibleEcosystems?: string[];
   /** Function to check if an ecosystem is compatible */
   isCompatible?: (ecosystemKey: string) => boolean;
-  /** Filter by output type (image/video/audio) */
-  outputType?: 'image' | 'video' | 'audio';
+  /** Filter by output type (image/video/audio/model3d) */
+  outputType?: 'image' | 'video' | 'audio' | 'model3d';
 }
 
 /**
@@ -3623,10 +3653,18 @@ export function getEcosystemDisplayItems(
   // Build set of supported ecosystems
   const supportedEcosystems = compatibleEcosystems ? new Set(compatibleEcosystems) : null;
 
-  // Get ecosystems valid for the current output type
-  const outputTypeEcosystems = outputType
-    ? new Set(getGenerationEcosystemsForMediaType(outputType))
-    : null;
+  // Get ecosystems valid for the current output type.
+  //
+  // `model3d` is intentionally split out: the Prisma `MediaType` enum only has
+  // image/video/audio variants (changing it would require a DB migration), and
+  // PolyGen's `BaseModelRecord` is registered with `type: 'image'` to satisfy
+  // that enum. We instead enumerate model3d ecosystems explicitly from the
+  // ecosystem registry — any ecosystem with a `model3d`-shaped key counts.
+  const outputTypeEcosystems = !outputType
+    ? null
+    : outputType === 'model3d'
+    ? new Set(ecosystems.filter((e) => e.id === ECO.PolyGen).map((e) => e.key))
+    : new Set(getGenerationEcosystemsForMediaType(outputType));
 
   const groupedEcosystemIds = new Set(ecosystemGroups.flatMap((g) => g.ecosystemIds));
   const result: EcosystemDisplayItem[] = [];
