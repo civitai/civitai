@@ -113,7 +113,7 @@ Response (standard OIDC UserInfo claims):
 }
 ```
 
-`email` and `email_verified` are released under the **UserRead** scope. UserRead is a mandatory baseline granted on **every** OAuth token — an app always needs to know whose account it's acting on — so the userinfo endpoint always works and `email` is always present (claims are omitted only when the underlying value is genuinely absent, e.g. an account with no verified email).
+`email` and `email_verified` are released under the **UserRead** scope. UserRead is a mandatory baseline granted on **every** OAuth token — an app always needs to know whose account it's acting on — so the userinfo endpoint always works and `email` is present whenever the account has an email on file (unverified emails are still returned, with `email_verified: false`). Note that **existing** tokens issued before this change keep their original scope until they refresh — their access tokens (1h TTL) and the next refresh pick up the `UserRead` baseline automatically.
 
 Or use it with any Civitai API/tRPC endpoint:
 
@@ -222,34 +222,34 @@ Scopes are represented as a bitmask integer. Combine scopes with bitwise OR.
 
 > **UserRead is always granted.** Every issued token includes the `UserRead` bit regardless of what you request — an app always needs to identify the user it's acting on. You don't need to add it explicitly, and it can't be omitted.
 
-| Scope              | Value        | Description                              |
-| ------------------ | ------------ | ---------------------------------------- |
-| UserRead           | 1            | Read profile & settings (always granted) |
-| UserWrite          | 2            | Update profile & settings                |
-| ModelsRead         | 4            | Browse & download models                 |
-| ModelsWrite        | 8            | Upload & edit models                     |
-| ModelsDelete       | 16           | Delete models                            |
-| MediaRead          | 32           | View images, videos & posts              |
-| MediaWrite         | 64           | Upload media & create posts              |
-| MediaDelete        | 128          | Delete media & posts                     |
-| ArticlesRead       | 256          | Read articles                            |
-| ArticlesWrite      | 512          | Create & edit articles                   |
-| ArticlesDelete     | 1024         | Delete articles                          |
-| BountiesRead       | 2048         | View bounties                            |
-| BountiesWrite      | 4096         | Create & manage bounties                 |
-| BountiesDelete     | 8192         | Delete bounties                          |
-| AIServicesRead     | 16384        | View generation & training history       |
-| AIServicesWrite    | 32768        | Generate, train & scan                   |
-| BuzzRead           | 65536        | View buzz balance & history              |
-| CollectionsRead    | 131072       | View collections                         |
-| CollectionsWrite   | 262144       | Manage collections                       |
-| SocialWrite        | 524288       | Follow, react, comment & review          |
-| SocialTip          | 1048576      | Tip other users                          |
-| NotificationsRead  | 2097152      | Read notifications                       |
-| NotificationsWrite | 4194304      | Manage notification preferences          |
-| VaultRead          | 8388608      | View vault                               |
-| VaultWrite         | 16777216     | Manage vault                             |
-| **Full**           | **33554431** | All permissions                          |
+| Scope              | Value        | Description                                     |
+| ------------------ | ------------ | ----------------------------------------------- |
+| UserRead           | 1            | Read profile, settings & email (always granted) |
+| UserWrite          | 2            | Update profile & settings                       |
+| ModelsRead         | 4            | Browse & download models                        |
+| ModelsWrite        | 8            | Upload & edit models                            |
+| ModelsDelete       | 16           | Delete models                                   |
+| MediaRead          | 32           | View images, videos & posts                     |
+| MediaWrite         | 64           | Upload media & create posts                     |
+| MediaDelete        | 128          | Delete media & posts                            |
+| ArticlesRead       | 256          | Read articles                                   |
+| ArticlesWrite      | 512          | Create & edit articles                          |
+| ArticlesDelete     | 1024         | Delete articles                                 |
+| BountiesRead       | 2048         | View bounties                                   |
+| BountiesWrite      | 4096         | Create & manage bounties                        |
+| BountiesDelete     | 8192         | Delete bounties                                 |
+| AIServicesRead     | 16384        | View generation & training history              |
+| AIServicesWrite    | 32768        | Generate, train & scan                          |
+| BuzzRead           | 65536        | View buzz balance & history                     |
+| CollectionsRead    | 131072       | View collections                                |
+| CollectionsWrite   | 262144       | Manage collections                              |
+| SocialWrite        | 524288       | Follow, react, comment & review                 |
+| SocialTip          | 1048576      | Tip other users                                 |
+| NotificationsRead  | 2097152      | Read notifications                              |
+| NotificationsWrite | 4194304      | Manage notification preferences                 |
+| VaultRead          | 8388608      | View vault                                      |
+| VaultWrite         | 16777216     | Manage vault                                    |
+| **Full**           | **33554431** | All permissions                                 |
 
 ### Common Scope Combinations
 
