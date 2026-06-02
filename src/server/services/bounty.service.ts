@@ -248,6 +248,7 @@ export const createBounty = async ({
           }
 
           const prefix = getBountyTransactionPrefix(bounty.id, userId);
+          // eslint-disable-next-line local-rules/no-io-in-transaction -- TODO(tx-io): Buzz charge inside the txn. Moving it out needs charge→tx→refund-on-failure compensation (a Postgres rollback can't undo an external Buzz charge); left for a domain-owner change.
           await createMultiAccountBuzzTransaction({
             fromAccountId: userId,
             fromAccountTypes: [buzzType],
