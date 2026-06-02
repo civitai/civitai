@@ -58,7 +58,7 @@ function EditAuctionBaseModal({
             <Button variant="default" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit" loading={updateMutation.isLoading}>
+            <Button type="submit" loading={updateMutation.isPending}>
               Save Changes
             </Button>
           </Group>

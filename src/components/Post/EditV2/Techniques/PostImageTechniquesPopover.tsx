@@ -41,7 +41,7 @@ export function ImageTechniquesPopover({
     [techniques, image, showSelected, value]
   );
 
-  const { mutate, isLoading } = trpc.image.addTechniques.useMutation();
+  const { mutate, isPending: isLoading } = trpc.image.addTechniques.useMutation();
   const handleAddTechniques = (multiple?: boolean) => {
     const ids = multiple ? imageIds : [image.id ?? 0];
     const payload = ids.reduce<{ imageId: number; techniqueId: number }[]>(

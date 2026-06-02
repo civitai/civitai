@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { MantineColor } from '@mantine/core';
 import {
   ActionIcon,
@@ -83,7 +84,7 @@ const BugReportButton = ({
     defaultValue: 0,
     getInitialValueInEffect: false,
   });
-  const { mutate, isLoading } = trpc.bug.report.useMutation({
+  const { mutate, isPending: isLoading } = trpc.bug.report.useMutation({
     onSuccess: (data) => {
       onReported(data.reportCount);
       setReportedAt(Date.now());
@@ -381,8 +382,8 @@ const CreateBug = ({
   setOpened: React.Dispatch<React.SetStateAction<boolean>>;
 }) => {
   const queryUtils = trpc.useUtils();
-  const { mutate, isLoading } = trpc.bug.create.useMutation();
-  const { mutate: update, isLoading: isLoadingUpdate } = trpc.bug.update.useMutation();
+  const { mutate, isPending: isLoading } = trpc.bug.create.useMutation();
+  const { mutate: update, isPending: isLoadingUpdate } = trpc.bug.update.useMutation();
 
   const form = useForm({
     schema,
@@ -564,7 +565,7 @@ export function Bugs() {
       { ...debouncedFilters },
       {
         getNextPageParam: (lastPage) => lastPage.nextCursor,
-        keepPreviousData: true,
+        placeholderData: keepPreviousData,
       }
     );
 
@@ -575,7 +576,7 @@ export function Bugs() {
   const bugIds = useMemo(() => (flatData ?? []).slice(0, 200).map((b) => b.id), [flatData]);
   const { data: reportStats } = trpc.bug.getReportStats.useQuery(
     { bugIds },
-    { enabled: canEdit && bugIds.length > 0, keepPreviousData: true, staleTime: 60_000 }
+    { enabled: canEdit && bugIds.length > 0, placeholderData: keepPreviousData, staleTime: 60_000 }
   );
 
   useEffect(() => {

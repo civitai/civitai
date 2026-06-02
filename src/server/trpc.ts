@@ -44,7 +44,7 @@ const t = initTRPC
     },
   });
 
-export const { router, middleware } = t;
+export const { router, middleware, createCallerFactory } = t;
 /**
  * Unprotected procedure
  **/
@@ -101,9 +101,10 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
   return result;
 });
 
-const applyDomainFeature = t.middleware((options) => {
+const applyDomainFeature = t.middleware(async (options) => {
   const { next, ctx } = options;
-  const input = (options.rawInput ?? {}) as { browsingLevel?: number };
+  // v11: `rawInput` became the async `getRawInput()`.
+  const input = ((await options.getRawInput()) ?? {}) as { browsingLevel?: number };
 
   // Verified search-engine crawlers (set by botDetectionMiddleware) are
   // treated as authorized only on mature-allowed domains. On the SFW site

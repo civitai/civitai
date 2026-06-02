@@ -1548,12 +1548,12 @@ function ProjectWorkspace() {
                         chapter.earlyAccessEndsAt != null &&
                         new Date(chapter.earlyAccessEndsAt) > new Date();
                       const isDeleting =
-                        deleteChapterMutation.isLoading &&
+                        deleteChapterMutation.isPending &&
                         deleteChapterMutation.variables?.chapterPosition === chapter.position;
                       const isUpdating =
-                        (updateChapterMutation.isLoading &&
+                        (updateChapterMutation.isPending &&
                           updateChapterMutation.variables?.chapterPosition === chapter.position) ||
-                        (updateChapterEaMutation.isLoading &&
+                        (updateChapterEaMutation.isPending &&
                           updateChapterEaMutation.variables?.chapterPosition === chapter.position);
                       const isBusy = isDeleting || isUpdating;
 
@@ -1754,10 +1754,10 @@ function ProjectWorkspace() {
                 <button
                   className={styles.chapterAddBtn}
                   onClick={() => createChapterMutation.mutate({ projectId })}
-                  disabled={createChapterMutation.isLoading}
+                  disabled={createChapterMutation.isPending}
                 >
-                  {createChapterMutation.isLoading ? <Loader size={14} /> : <IconPlus size={14} />}
-                  {createChapterMutation.isLoading ? 'Adding...' : 'Add Chapter'}
+                  {createChapterMutation.isPending ? <Loader size={14} /> : <IconPlus size={14} />}
+                  {createChapterMutation.isPending ? 'Adding...' : 'Add Chapter'}
                 </button>
 
                 {activeReferences.length > 0 && (
@@ -1788,10 +1788,10 @@ function ProjectWorkspace() {
                     activeChapter.earlyAccessEndsAt != null &&
                     new Date(activeChapter.earlyAccessEndsAt) > new Date();
                   const isPublishing =
-                    (publishChapterMutation.isLoading &&
+                    (publishChapterMutation.isPending &&
                       publishChapterMutation.variables?.chapterPosition ===
                         activeChapter.position) ||
-                    (unpublishChapterMutation.isLoading &&
+                    (unpublishChapterMutation.isPending &&
                       unpublishChapterMutation.variables?.chapterPosition ===
                         activeChapter.position);
                   const isDraft = activeChapter.status === ComicChapterStatus.Draft;
@@ -2119,15 +2119,15 @@ function ProjectWorkspace() {
         canDelete={project.chapters.length > 1}
         onSave={handleSaveChapterSettings}
         onDelete={handleDeleteChapter}
-        isSaving={updateChapterMutation.isLoading || updateChapterEaMutation.isLoading}
-        isDeleting={deleteChapterMutation.isLoading}
+        isSaving={updateChapterMutation.isPending || updateChapterEaMutation.isPending}
+        isDeleting={deleteChapterMutation.isPending}
       />
 
       <PublishModal
         opened={publishModalOpened}
         onClose={closePublishModal}
         onPublish={handleConfirmPublish}
-        isLoading={publishChapterMutation.isLoading}
+        isLoading={publishChapterMutation.isPending}
       />
 
       <ProjectSettingsModal
@@ -2147,7 +2147,7 @@ function ProjectWorkspace() {
           updateProjectMutation.mutate({ id: projectId, ...data, baseModel: data.baseModel as any })
         }
         onDeleteProject={() => deleteProjectMutation.mutate({ id: projectId })}
-        isSaving={updateProjectMutation.isLoading}
+        isSaving={updateProjectMutation.isPending}
       />
     </>
   );

@@ -656,9 +656,9 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
           </NavigateBack>
 
           <Button
-            loading={bountyEntryUpsertMutation.isLoading && !creating}
+            loading={bountyEntryUpsertMutation.isPending && !creating}
             disabled={
-              bountyEntryUpsertMutation.isLoading ||
+              bountyEntryUpsertMutation.isPending ||
               (!bountyEntry && !ownershipAcknowledgement) ||
               !features.canWrite
             }

@@ -325,7 +325,7 @@ function FocusedRun({
         </Container>
       </ScrollArea>
       <ActionFooter
-        disabled={upsertVerdict.isLoading}
+        disabled={upsertVerdict.isPending}
         onNo={() => submitAnswer(false)}
         onYes={() => submitAnswer(true)}
         onSkip={skip}

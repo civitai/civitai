@@ -1,3 +1,4 @@
+import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import type {
@@ -531,39 +532,39 @@ export const useMutateClub = () => {
 
   return {
     upsertClub: handleUpsertClub,
-    upserting: upsertClubMutation.isLoading,
+    upserting: upsertClubMutation.isPending,
     upsertClubTier: handleUpsertClubTier,
-    upsertingTier: upsertClubTierMutation.isLoading,
+    upsertingTier: upsertClubTierMutation.isPending,
     deleteClubTier: handleDeleteClubTier,
-    deletingTier: deleteClubTierMutation.isLoading,
+    deletingTier: deleteClubTierMutation.isPending,
     upsertClubResource: handleUpsertClubResource,
-    upsertingResource: upsertClubResourceMutation.isLoading,
+    upsertingResource: upsertClubResourceMutation.isPending,
     upsertClubPost: handleUpsertClubPost,
-    upsertingClubPost: upsertClubPostMutation.isLoading,
+    upsertingClubPost: upsertClubPostMutation.isPending,
     createClubMembership: handleCreateClubMembership,
-    creatingClubMembership: createClubMembershipMutation.isLoading,
+    creatingClubMembership: createClubMembershipMutation.isPending,
     updateClubMembership: handleUpdateClubMembership,
-    updatingClubMembership: updateClubMembershipMutation.isLoading,
+    updatingClubMembership: updateClubMembershipMutation.isPending,
     removeAndRefundMember: handleRemoveAndRefundMember,
-    removingAndRefundingMember: removeAndRefundMemberMutation.isLoading,
+    removingAndRefundingMember: removeAndRefundMemberMutation.isPending,
     updateResource: handleUpdateClubResource,
-    updatingResource: updateClubResourceMutation.isLoading,
+    updatingResource: updateClubResourceMutation.isPending,
     removeResource: handleRemoveClubResource,
-    removingResource: removeClubResourceMutation.isLoading,
+    removingResource: removeClubResourceMutation.isPending,
     cancelClubMembership: handleCancelClubMembership,
-    cancelingClubMembership: cancelClubMembershipMutation.isLoading,
+    cancelingClubMembership: cancelClubMembershipMutation.isPending,
     restoreClubMembership: handleRestoreClubMembership,
-    restoringClubMembership: restoreClubMembershipMutation.isLoading,
+    restoringClubMembership: restoreClubMembershipMutation.isPending,
     deleteClub: handleDeleteClub,
-    deletingClub: deleteClubMutation.isLoading,
+    deletingClub: deleteClubMutation.isPending,
     deleteClubPost: handleDeleteClubPost,
-    deletingClubPost: deleteClubPostMutation.isLoading,
+    deletingClubPost: deleteClubPostMutation.isPending,
     withdrawClubFunds: handleWithdrawClubFunds,
-    withdrawingClubFunds: withdrawClubFundsMutation.isLoading,
+    withdrawingClubFunds: withdrawClubFundsMutation.isPending,
     togglePauseBilling: handleTogglePauseBillingMutation,
-    togglingPauseBilling: togglePauseBillingMutation.isLoading,
+    togglingPauseBilling: togglePauseBillingMutation.isPending,
     depositClubFunds: handleDepositClubFunds,
-    depositingClubFunds: depositClubFundsMutation.isLoading,
+    depositingClubFunds: depositClubFundsMutation.isPending,
   };
 };
 
@@ -627,7 +628,7 @@ export const useQueryClubPosts = (
     },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
   const currentUser = useCurrentUser();
@@ -700,7 +701,7 @@ export const useQueryClubMembership = (
     {
       enabled: !!currentUser,
       getNextPageParam: (lastPage) => lastPage.nextCursor,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -724,7 +725,7 @@ export const useQueryClubResources = (
     },
     {
       enabled: !!currentUser,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -747,7 +748,7 @@ export const useQueryClubs = (
 ) => {
   const { data, ...rest } = trpc.club.getInfinite.useInfiniteQuery(filters, {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
-    ...options,
+    ...withPlaceholderData(options),
   });
   const currentUser = useCurrentUser();
 
@@ -788,7 +789,7 @@ export const useQueryClubAdminInvites = (
     },
     {
       enabled: !!currentUser,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 
@@ -933,16 +934,16 @@ export const useMutateClubAdmin = () => {
   return {
     // Invites
     upsertInvite: handleUpsertClubAdminInvite,
-    upsertingInvite: upsertClubAdminInvite.isLoading,
+    upsertingInvite: upsertClubAdminInvite.isPending,
     deleteInvite: handleDeleteClubAdminInvite,
-    deletingInvite: deleteClubAdminInvite.isLoading,
+    deletingInvite: deleteClubAdminInvite.isPending,
     acceptInvite: handleAcceptClubAdminInvite,
-    acceptingInvite: acceptClubAdminInvite.isLoading,
+    acceptingInvite: acceptClubAdminInvite.isPending,
     // Admins
     update: handleUpdateClubAdmin,
-    updating: updateClubAdmin.isLoading,
+    updating: updateClubAdmin.isPending,
     deleteAdmin: handleDeleteClubAdmin,
-    deletingAdmin: deleteClubAdminInvite.isLoading,
+    deletingAdmin: deleteClubAdminInvite.isPending,
   };
 };
 
@@ -959,7 +960,7 @@ export const useQueryClubAdmins = (
     },
     {
       enabled: !!currentUser,
-      ...options,
+      ...withPlaceholderData(options),
     }
   );
 

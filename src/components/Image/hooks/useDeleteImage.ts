@@ -15,7 +15,7 @@ export function useDeleteImage() {
         title: 'Delete image',
         message: 'Are you sure you want to delete this image?',
         labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
-        confirmProps: { color: 'red', loading: deleteImageMutation.isLoading },
+        confirmProps: { color: 'red', loading: deleteImageMutation.isPending },
         onConfirm: async () => await deleteImageMutation.mutateAsync({ id: imageId }),
       },
     });

@@ -438,7 +438,7 @@ export default function TrainingModerationFeedPage() {
                       size="xs"
                       color="blue"
                       onClick={handleSaveAnnouncement}
-                      loading={setAnnouncementMutation.isLoading}
+                      loading={setAnnouncementMutation.isPending}
                       disabled={!announcementDirty}
                     >
                       {announcementText.trim() ? 'Save Announcement' : 'Clear Announcement'}
@@ -702,7 +702,7 @@ export default function TrainingModerationFeedPage() {
                                   variant={modelMeta?.cannotPublish ? 'filled' : 'light'}
                                   color={modelMeta?.cannotPublish ? 'red' : 'gray'}
                                   onClick={() => handleToggleCannotPublish(model.id)}
-                                  loading={toggleCannotPublishMutation.isLoading}
+                                  loading={toggleCannotPublishMutation.isPending}
                                 >
                                   {modelMeta?.cannotPublish ? 'Allow Publish' : 'Block Publish'}
                                 </Button>

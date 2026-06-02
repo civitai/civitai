@@ -249,9 +249,9 @@ export default function ModeratorChallengesPage() {
   });
 
   const isActioning =
-    endAndPickWinnersMutation.isLoading ||
-    voidChallengeMutation.isLoading ||
-    deleteMutation.isLoading;
+    endAndPickWinnersMutation.isPending ||
+    voidChallengeMutation.isPending ||
+    deleteMutation.isPending;
 
   const challenges = data?.pages.flatMap((page) => page.items) ?? [];
 

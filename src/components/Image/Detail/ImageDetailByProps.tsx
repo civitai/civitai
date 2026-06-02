@@ -305,7 +305,7 @@ export function ImageDetailCarousel({
     height: image?.height ?? 1200,
     width: image?.width ?? 1200,
   });
-  const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
+  const isDeletingImage = !!useIsMutating({ mutationKey: getQueryKey(trpc.image.delete) });
 
   useDidUpdate(() => {
     if (!isDeletingImage) {

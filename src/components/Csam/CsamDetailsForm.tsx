@@ -56,7 +56,7 @@ export function CsamDetailsForm({
     defaultValues,
   });
 
-  const { mutate: createReport, isLoading } = trpc.csam.createReport.useMutation({
+  const { mutate: createReport, isPending: isLoading } = trpc.csam.createReport.useMutation({
     onSuccess: () => {
       closeModal('csam-confirm');
       onSuccess?.();

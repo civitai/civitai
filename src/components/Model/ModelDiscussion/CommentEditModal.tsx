@@ -24,7 +24,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
   const queryUtils = trpc.useUtils();
   const { data, isLoading, isFetching } = trpc.comment.getById.useQuery(
     { id: commentId ?? 0 },
-    { enabled: !!commentId, keepPreviousData: false }
+    { enabled: !!commentId, placeholderData: undefined }
   );
 
   const loadingComment = (isLoading || isFetching) && !!commentId;
@@ -76,7 +76,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialContent, removeValue, value]);
 
-  const mutating = saveCommentMutation.isLoading;
+  const mutating = saveCommentMutation.isPending;
 
   return (
     <Modal
@@ -102,7 +102,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
             <Button variant="default" onClick={handleClose}>
               Cancel
             </Button>
-            <Button type="submit" loading={saveCommentMutation.isLoading}>
+            <Button type="submit" loading={saveCommentMutation.isPending}>
               {!!commentId ? 'Save' : 'Comment'}
             </Button>
           </Group>

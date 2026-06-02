@@ -984,7 +984,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             </Stack>
           )}
         </Stack>
-        {children({ loading: upsertVersionMutation.isLoading, canSave })}
+        {children({ loading: upsertVersionMutation.isPending, canSave })}
       </Form>
     </>
   );

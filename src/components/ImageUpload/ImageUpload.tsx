@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { DragEndEvent, DragStartEvent, UniqueIdentifier } from '@dnd-kit/core';
 import {
   closestCenter,
@@ -615,12 +616,12 @@ function UploadedImage({
 //         categories: true,
 //         sort: TagSort.MostImages,
 //       },
-//       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+//       { gcTime: Infinity, staleTime: Infinity, placeholderData: keepPreviousData }
 //     );
 //   const { data: { items: tags } = { items: [] }, isLoading: loadingTags } =
 //     trpc.tag.getAll.useQuery(
 //       { limit: 0, entityType: [TagTarget.Image, TagTarget.Model], categories: false },
-//       { cacheTime: Infinity, staleTime: Infinity, keepPreviousData: true }
+//       { gcTime: Infinity, staleTime: Infinity, placeholderData: keepPreviousData }
 //     );
 
 //   useEffect(() => {

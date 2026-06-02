@@ -542,7 +542,7 @@ function CancelOrDeleteWorkflow({
   const [cancelling, setCancelling] = useState(false);
   const deleteMutation = useDeleteTextToImageRequest();
   const cancelMutation = useCancelTextToImageRequest();
-  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading || cancelling;
+  const cancellingDeleting = deleteMutation.isPending || cancelMutation.isPending || cancelling;
 
   const handleDeleteQueueItem = () => {
     deleteMutation.mutate({ workflowId });
@@ -778,7 +778,7 @@ function CanUpgradeBlock({
   );
   const refundedLabel = refundedBuzzLabels.length === 1 ? `${refundedBuzzLabels[0]} Buzz` : 'Buzz';
 
-  const { mutate, isLoading } = useUpdateWorkflow();
+  const { mutate, isPending: isLoading } = useUpdateWorkflow();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     accountTypes: ['yellow'],

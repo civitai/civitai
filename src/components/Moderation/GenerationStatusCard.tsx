@@ -98,7 +98,7 @@ export function GenerationStatusCard() {
               </Alert>
             )}
             <Group justify="flex-end">
-              <Button onClick={handleSave} loading={setStatus.isLoading} disabled={!dirty}>
+              <Button onClick={handleSave} loading={setStatus.isPending} disabled={!dirty}>
                 Save
               </Button>
             </Group>

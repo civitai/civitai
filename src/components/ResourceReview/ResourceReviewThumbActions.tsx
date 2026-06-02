@@ -68,7 +68,7 @@ export function ResourceReviewThumbActions({
 
   const isThumbsUp = userReview?.recommended === true;
   const isThumbsDown = userReview?.recommended === false;
-  const saving = createMutation.isLoading || updateMutation.isLoading || deleteMutation.isLoading;
+  const saving = createMutation.isPending || updateMutation.isPending || deleteMutation.isPending;
   const loading = loadingTotals || loadingUserReview || saving;
 
   return (

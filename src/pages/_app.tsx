@@ -240,7 +240,7 @@ function MyApp(props: CustomAppProps) {
         </ThirdPartyConsentProvider>
       </ThemeProvider>
 
-      {isDev && <ReactQueryDevtools position="bottom-right" />}
+      {isDev && <ReactQueryDevtools buttonPosition="bottom-right" />}
     </AppProvider>
   );
 }

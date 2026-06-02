@@ -107,7 +107,7 @@ export default function UserProfileEditModal() {
       trpc: { context: { skipBatch: true } },
     });
 
-  const { mutate, isLoading: isUpdating } = trpc.userProfile.update.useMutation({
+  const { mutate, isPending: isUpdating } = trpc.userProfile.update.useMutation({
     onSuccess: (data) => {
       if (currentUser) {
         utils.userProfile.get.setData({ username: currentUser.username }, data);
@@ -383,7 +383,7 @@ export default function UserProfileEditModal() {
     );
   }
 
-  const loading = isUpdating || updateUserMutation.isLoading;
+  const loading = isUpdating || updateUserMutation.isPending;
 
   const templateImage = profilePicture?.url ?? profileImage;
   const userWithCosmetics: UserWithCosmetics | null = user

@@ -355,7 +355,7 @@ function ReviewActions({
   };
 
   const status = updateCollectionItemsStatusMutation.variables?.status;
-  const loading = updateCollectionItemsStatusMutation.isLoading;
+  const loading = updateCollectionItemsStatusMutation.isPending;
 
   return (
     <div className="flex flex-col gap-4">
@@ -363,7 +363,7 @@ function ReviewActions({
         <Checkbox
           label="Realistic depiction of a minor"
           checked={acceptableMinor}
-          disabled={updateImageAcceptableMinorMutation.isLoading}
+          disabled={updateImageAcceptableMinorMutation.isPending}
           onChange={(e) => handleMinorChange(e.currentTarget.checked)}
         />
         <InfoPopover>

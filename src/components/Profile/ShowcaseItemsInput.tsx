@@ -1,3 +1,4 @@
+import { keepPreviousData } from '@tanstack/react-query';
 import type { InputWrapperProps } from '@mantine/core';
 import { Box, Button, Center, Input, Loader, Paper, Stack, Text } from '@mantine/core';
 import React, { useMemo, useState } from 'react';
@@ -51,7 +52,7 @@ export const ShowcaseItemsInput = ({
     },
     {
       enabled: sortedShowcaseItems.length > 0,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
       trpc: { context: { skipBatch: true } },
     }
   );

@@ -146,7 +146,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
   // Set no images initially, as this might be used by the entries and bounty page too.
   const { setImages, onSetImage } = useImageViewerCtx();
   const { toggle, engagements, toggling } = useBountyEngagement();
-  const isDeletingImage = !!useIsMutating(getQueryKey(trpc.image.delete));
+  const isDeletingImage = !!useIsMutating({ mutationKey: getQueryKey(trpc.image.delete) });
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const isOwnerOrMod = currentUser?.id === bounty?.user?.id || (currentUser?.isModerator ?? false);
@@ -403,7 +403,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
     !bounty.complete &&
     !benefactor?.awardedToId &&
     (bounty.mode !== BountyMode.Individual || isMainBenefactor(bounty, currentUser));
-  const { isLoading, mutate: addBenefactorUnitAmountMutation } =
+  const { isPending: isLoading, mutate: addBenefactorUnitAmountMutation } =
     trpc.bounty.addBenefactorUnitAmount.useMutation({
       onMutate: async ({ unitAmount }) => {
         await queryUtils.bounty.getById.cancel();
