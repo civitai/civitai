@@ -757,6 +757,60 @@ export const blocksRouter = router({
     }),
 
   /**
+   * A6 — re-consent. The host surfaces `needs_consent` (from the block-token
+   * response) with the scopes the app's approved manifest declares but the user
+   * hasn't granted; on user accept, this records the grant so the next minted
+   * token carries those scopes.
+   *
+   * The granted set is intersected server-side with the app's CURRENT approved
+   * manifest∩approvedScopes — the client can only consent to scopes the app
+   * actually declares + the mod approved (a malicious host can't grant itself
+   * scopes the manifest never asked for). Additive: prior grants persist.
+   */
+  grantScopes: moderatorProcedure
+    .use(enforceAppBlocksFlag)
+    .input(
+      z.object({
+        appBlockId: z.string().min(1).max(64),
+        scopes: z.array(z.string().min(1).max(64)).min(1).max(32),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      const block = await dbRead.appBlock.findUnique({
+        where: { id: input.appBlockId },
+        select: { status: true, manifest: true, approvedScopes: true, version: true },
+      });
+      if (!block) throw throwNotFoundError('App block not found');
+      if (block.status !== 'approved') {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'App block is not approved' });
+      }
+      // Ceiling = manifest.scopes ∩ approvedScopes. The user may only consent
+      // to scopes inside that ceiling; anything else is dropped.
+      const manifestScopes = Array.isArray((block.manifest as { scopes?: unknown }).scopes)
+        ? ((block.manifest as { scopes: unknown[] }).scopes.filter(
+            (s): s is string => typeof s === 'string'
+          ))
+        : [];
+      const approved = new Set(block.approvedScopes ?? []);
+      const ceiling = new Set(manifestScopes.filter((s) => approved.has(s)));
+      const toGrant = input.scopes.filter((s) => ceiling.has(s));
+      if (toGrant.length === 0) {
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: 'none of the requested scopes are within the app’s approved manifest',
+        });
+      }
+      const { recordScopeGrant } = await import('~/server/services/blocks/scope-grant.service');
+      await recordScopeGrant({
+        userId: ctx.user!.id,
+        appBlockId: input.appBlockId,
+        version: block.version ?? '',
+        scopes: toGrant,
+      });
+      return { ok: true, granted: toGrant };
+    }),
+
+  /**
    * W5 v0.5 — cursor-paginated feed of `block_scope_invocations` rows
    * scoped to the current viewer. Optional `appBlockId` filter for a
    * "show me what just this app did" drill-down. Cursor is the BigSerial

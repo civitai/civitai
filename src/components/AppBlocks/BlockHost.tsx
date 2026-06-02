@@ -1,3 +1,5 @@
+import { Stack } from '@mantine/core';
+import { BlockConsentPrompt } from './BlockConsentPrompt';
 import { BlockFallback } from './BlockFallback';
 import { IframeHost } from './IframeHost';
 import { useBlockToken } from './useBlockToken';
@@ -16,7 +18,10 @@ interface BlockHostProps {
  * so v2 can light it up without a structural refactor.
  */
 export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
-  const { token, expiresAt, error, pending } = useBlockToken(blockInstall, slotContext);
+  const { token, expiresAt, error, pending, needsConsent, missingScopes, refresh } = useBlockToken(
+    blockInstall,
+    slotContext
+  );
 
   if (error) {
     return <BlockFallback reason="token_error" blockName={blockInstall.manifest.name} />;
@@ -42,7 +47,7 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
     throw new Error('InlineHost is not enabled in v1');
   }
 
-  return (
+  const iframe = (
     <IframeHost
       install={blockInstall}
       context={slotContext}
@@ -50,4 +55,26 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
       expiresAt={expiresAt}
     />
   );
+
+  // A6: when the app's approved manifest declares scopes the viewer hasn't
+  // granted, render a re-consent prompt above the block. The block still
+  // renders with the granted subset; on grant we refresh the token so it
+  // picks up the newly-granted scopes.
+  if (needsConsent && missingScopes.length > 0) {
+    return (
+      <Stack gap="xs">
+        <BlockConsentPrompt
+          appBlockId={blockInstall.appBlockId}
+          blockName={blockInstall.manifest.name}
+          missingScopes={missingScopes}
+          onGranted={() => {
+            void refresh();
+          }}
+        />
+        {iframe}
+      </Stack>
+    );
+  }
+
+  return iframe;
 }

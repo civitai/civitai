@@ -15,6 +15,11 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 const { mockDbWrite, mockRedis, mockSession, mockTokenService, mockBlockRegistry } = vi.hoisted(() => {
   const dbWrite = {
     user: { findUnique: vi.fn() },
+    // A6: the per-user scope-grant ledger. getGrantedScopes reads this at mint
+    // time to intersect the signable scopes with what the viewer has granted.
+    appUserScopeGrant: {
+      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
+    },
   };
   const redis = {
     incrBy: vi.fn(async () => 1),
@@ -144,8 +149,19 @@ describe('POST /api/v1/block-tokens', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSession.value = null;
+    // mockReset (not just clearAllMocks) so a leaked mockResolvedValueOnce
+    // from a prior test (e.g. the 404-null case that 403s at the mod-gate
+    // before consuming its once-value) doesn't bleed into the next test.
+    mockBlockRegistry.resolveBlockInstance.mockReset();
     mockBlockRegistry.resolveBlockInstance.mockResolvedValue(RESOLVED_INSTALL);
     mockDbWrite.user.findUnique.mockResolvedValue({ deletedAt: null, bannedAt: null });
+    // A6: default to "user has granted everything the app declares" so the
+    // pre-A6 tests (which assert sign was called for the manifest scopes) keep
+    // passing. The consent-specific tests below override this per-case.
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['models:read:self', 'buzz:read:self', 'ai:write:budgeted'],
+      revokedAt: null,
+    });
     mockRedis.incrBy.mockResolvedValue(1);
     mockTokenService.checkRateLimit.mockResolvedValue(true);
   });
@@ -363,6 +379,103 @@ describe('POST /api/v1/block-tokens', () => {
     );
     expect(res._status).toBe(200);
     expect(mockTokenService.sign).toHaveBeenCalled();
+  });
+
+  // ==========================================================================
+  // A6 — per-user scope-grant consent. Scenario: approve v1 (scope A) → install
+  // (grant A) → approve v2 (scope A + B). A token minted for the existing
+  // install carries ONLY A until a grant for B exists; the response signals
+  // needs_consent for B. Granting B then mints A + B. A revoked grant withholds.
+  //
+  // These set isModerator (App Blocks is mod-only today — the mint path 403s
+  // non-mods before the consent gate). The resolver returns a v2 install
+  // (manifest A + B); the grant ledger is what gates which scopes sign.
+  // ==========================================================================
+  const V2_INSTALL = {
+    ...RESOLVED_INSTALL,
+    appBlock: {
+      ...RESOLVED_INSTALL.appBlock,
+      manifest: { scopes: ['models:read:self', 'buzz:read:self'] },
+      approvedScopes: ['models:read:self', 'buzz:read:self'],
+      app: { allowedScopes: 4 | 65536 /* ModelsRead | BuzzRead */ },
+    },
+  };
+
+  it('A6: existing install (granted A only) mints ONLY A + signals needs_consent for B', async () => {
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue(V2_INSTALL);
+    // The viewer granted scope A (models:read:self) at v1 install; never B.
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['models:read:self'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(200);
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
+    expect(signArgs.scopes).toEqual(['models:read:self']); // only A signed
+    const body = res._body as { needsConsent: boolean; missingScopes: string[] };
+    expect(body.needsConsent).toBe(true);
+    expect(body.missingScopes).toEqual(['buzz:read:self']); // B withheld
+  });
+
+  it('A6: after granting B, the token mints A + B with no needs_consent', async () => {
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue(V2_INSTALL);
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['models:read:self', 'buzz:read:self'],
+      revokedAt: null,
+    });
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(200);
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
+    expect(new Set(signArgs.scopes)).toEqual(new Set(['models:read:self', 'buzz:read:self']));
+    const body = res._body as { needsConsent: boolean; missingScopes: string[] };
+    expect(body.needsConsent).toBe(false);
+    expect(body.missingScopes).toEqual([]);
+  });
+
+  it('A6: a revoked grant withholds every consent-gated scope', async () => {
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue(V2_INSTALL);
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      grantedScopes: ['models:read:self', 'buzz:read:self'],
+      revokedAt: new Date(), // revoked → treated as empty
+    });
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(200);
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
+    expect(signArgs.scopes).toEqual([]); // all withheld
+    const body = res._body as { needsConsent: boolean; missingScopes: string[] };
+    expect(body.needsConsent).toBe(true);
+    expect(new Set(body.missingScopes)).toEqual(new Set(['models:read:self', 'buzz:read:self']));
+  });
+
+  it('A6: consent-exempt scopes (block:settings:*) sign even with no grant', async () => {
+    mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
+    mockBlockRegistry.resolveBlockInstance.mockResolvedValue({
+      ...RESOLVED_INSTALL,
+      appBlock: {
+        ...RESOLVED_INSTALL.appBlock,
+        manifest: { scopes: ['block:settings:read'] },
+        approvedScopes: ['block:settings:read'],
+        app: { allowedScopes: 4 },
+      },
+    });
+    mockDbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null); // no grant at all
+    const { default: handler } = await import('../index');
+    const res = makeRes();
+    await handler(makeReq({ origin: 'https://civitai.com', body: validBody() }), res);
+    expect(res._status).toBe(200);
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { scopes: string[] };
+    expect(signArgs.scopes).toEqual(['block:settings:read']);
+    const body = res._body as { needsConsent: boolean };
+    expect(body.needsConsent).toBe(false);
   });
 
   // Last in file: this test resets modules to swap out the env mock; vitest

@@ -8,12 +8,22 @@ interface UseBlockTokenResult {
   expiresAt: string | null;
   error: Error | null;
   pending: boolean;
+  /** A6: true when the app's approved manifest declares scopes the viewer has
+   *  not granted. The token still mints (with the granted subset); the host
+   *  should surface a re-consent prompt for `missingScopes`. */
+  needsConsent: boolean;
+  /** A6: the consent-gated scopes withheld from the current token. */
+  missingScopes: string[];
   refresh: () => Promise<void>;
 }
 
 interface TokenResponse {
   token: string;
   expiresAt: string;
+  /** A6: present from the server when the viewer's grant is short of the
+   *  app's approved manifest. Older responses omit these → treat as no-op. */
+  needsConsent?: boolean;
+  missingScopes?: string[];
 }
 
 const REFRESH_LEAD_MS = 2 * 60 * 1000; // refresh 2 minutes before expiry
@@ -47,6 +57,8 @@ export function useBlockToken(
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<boolean>(true);
+  const [needsConsent, setNeedsConsent] = useState<boolean>(false);
+  const [missingScopes, setMissingScopes] = useState<string[]>([]);
   // M4 (audit-10): peek the current token via a ref instead of running a
   // side-effect inside a state-updater. React 18 strict-mode calls updaters
   // twice in dev; a counter/increment side-effect there would silently
@@ -116,6 +128,8 @@ export function useBlockToken(
       tokenRef.current = data.token;
       setToken(data.token);
       setExpiresAt(data.expiresAt);
+      setNeedsConsent(data.needsConsent === true);
+      setMissingScopes(Array.isArray(data.missingScopes) ? data.missingScopes : []);
       setPending(false);
 
       const expiresAtMs = new Date(data.expiresAt).getTime();
@@ -183,5 +197,5 @@ export function useBlockToken(
     await requestToken();
   }, [requestToken]);
 
-  return { token, expiresAt, error, pending, refresh };
+  return { token, expiresAt, error, pending, needsConsent, missingScopes, refresh };
 }

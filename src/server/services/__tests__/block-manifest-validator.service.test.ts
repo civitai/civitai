@@ -93,6 +93,42 @@ describe('BlockManifestValidator', () => {
     expect(BlockManifestValidator.validate(verified, TokenScope.ModelsRead).valid).toBe(true);
   });
 
+  // M-POPUPS (audit medium): allow-popups is dropped from the unverified tier
+  // so an approved-but-unverified block can't window.open() a phishing URL
+  // from a visually-trusted .civit.ai subdomain. Still allowed for verified.
+  it('M-POPUPS: rejects allow-popups on the unverified tier', () => {
+    const unverified = {
+      ...VALID_MANIFEST,
+      trustTier: 'unverified',
+      iframe: { ...VALID_MANIFEST.iframe, sandbox: 'allow-scripts allow-popups' },
+    };
+    const result = BlockManifestValidator.validate(unverified, TokenScope.ModelsRead);
+    expect(result.valid).toBe(false);
+    if (!result.valid) {
+      expect(
+        result.errors.some(
+          (e) => e.includes('allow-popups') || e.includes('not allowed')
+        )
+      ).toBe(true);
+    }
+  });
+
+  it('M-POPUPS: still accepts allow-popups on the verified tier', () => {
+    const verified = {
+      ...VALID_MANIFEST,
+      trustTier: 'verified',
+      iframe: { ...VALID_MANIFEST.iframe, sandbox: 'allow-scripts allow-popups' },
+    };
+    // Pass the full AppContext (with allowedOrigins) — the H-8 origin gate
+    // otherwise rejects on "no allowedOrigins registered" before sandbox check.
+    expect(
+      BlockManifestValidator.validate(verified, {
+        allowedScopes: TokenScope.ModelsRead,
+        allowedOrigins: ['https://blocks.civitai.com'],
+      }).valid
+    ).toBe(true);
+  });
+
   it('rejects iframe heights outside the [40, 4000] envelope', () => {
     const tiny = {
       ...VALID_MANIFEST,

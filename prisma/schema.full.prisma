@@ -552,6 +552,7 @@ model User {
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
+  appUserScopeGrants         AppUserScopeGrant[]
 
   @@index([deletedAt])
 }
@@ -2238,6 +2239,7 @@ model AppBlock {
   buzzAttributions   BlockBuzzAttribution[]
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
+  userScopeGrants    AppUserScopeGrant[]
 
   @@unique([appId, blockId], map: "app_blocks_app_block_uniq")
   // W1 audit C-3 fix: enforce one app per slug at the DB layer. The
@@ -2526,6 +2528,38 @@ model BlockScopeInvocation {
   @@index([userId, invokedAt(sort: Desc), id(sort: Desc)], map: "bsi_user_invoked_idx")
   @@index([appBlockId, invokedAt(sort: Desc)], map: "bsi_app_block_invoked_idx")
   @@map("block_scope_invocations")
+}
+
+/// A6 (audit HIGH / design-gaps C2) — per-user scope-grant consent ledger.
+///
+/// One row per (user, app_block). `granted_scopes` is the set of block-scope
+/// strings the user has consented to for this app (same vocabulary as
+/// app_blocks.approved_scopes / manifest.scopes). Token issuance intersects the
+/// manifest/approved scope set with this row; any scope the app requests but
+/// the user has NOT granted is withheld from the minted token and surfaced as a
+/// `needs_consent` signal. Without this layer a version-bump that adds a scope
+/// silently escalated every existing install (the C2 gap A6 closes).
+///
+/// A grant is written at install / subscribe time (implicit first-consent) and
+/// extended on re-consent. `version` records the app version the grant was last
+/// taken against (informational). `revoked_at` (NULL = active) lets a future
+/// per-scope revoke flip the grant off without losing the audit row — a
+/// non-NULL revoked_at makes the mint path treat granted_scopes as empty.
+///
+/// Application-generated id (`augr_<ulid>`).
+model AppUserScopeGrant {
+  id             String    @id
+  userId         Int       @map("user_id")
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appBlockId     String    @map("app_block_id")
+  appBlock       AppBlock  @relation(fields: [appBlockId], references: [id], onDelete: Cascade)
+  version        String
+  grantedScopes  String[]  @default([]) @map("granted_scopes")
+  grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  @@unique([userId, appBlockId], map: "app_user_scope_grants_user_app_uniq")
+  @@map("app_user_scope_grants")
 }
 
 model OauthConsent {

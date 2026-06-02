@@ -39,6 +39,13 @@ const { mockDbRead, mockDbWrite, mockRedis, mockSysRedis } = vi.hoisted(() => {
       updateMany: vi.fn(async (..._a: unknown[]) => ({ count: 1 })),
       deleteMany: vi.fn(async (..._a: unknown[]) => ({ count: 0 })),
     },
+    // A6: installOnModel now writes an implicit-consent grant via
+    // recordInstallConsent → recordScopeGrant.
+    appUserScopeGrant: {
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      create: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
+      update: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({})),
+    },
   };
   const redis = {
     packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },

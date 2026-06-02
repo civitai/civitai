@@ -6,6 +6,7 @@ import { IconApps, IconDots } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BlockFallback } from './BlockFallback';
 import { failureSnapshot } from './failureSnapshot';
+import { resolveBuzzPurchaseRequest } from './openBuzzPurchaseGate';
 import { usePostMessage } from './usePostMessage';
 import type { BlockInitPayload, BlockInstall, ModelSlotContext, SlotContext } from './types';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -477,8 +478,14 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
     const off = onMessage<{ requestId?: unknown; suggestedAmount?: unknown } | undefined>(
       'OPEN_BUZZ_PURCHASE',
       (raw) => {
-        if (!raw || typeof raw.requestId !== 'string') return;
-        const requestId = raw.requestId;
+        // M-BUZZMODAL: gate on BLOCK_READY (+ payload validity). A block can
+        // post the instant the iframe loads — before the handshake, while it's
+        // still visible-but-non-interactive (pointerEvents:none). Summoning the
+        // money-spend modal pre-ready would let an untrusted block nag the user
+        // before any interaction. resolveBuzzPurchaseRequest returns null
+        // (silently dropped) when status !== 'ready' or the payload is bad.
+        const requestId = resolveBuzzPurchaseRequest(status, raw);
+        if (requestId == null || !raw) return; // !raw is implied by requestId != null; narrows for TS
         const rawAmount =
           typeof raw.suggestedAmount === 'number' && Number.isFinite(raw.suggestedAmount)
             ? raw.suggestedAmount
@@ -543,6 +550,7 @@ export function IframeHost({ install, context, token, expiresAt }: IframeHostPro
   }, [
     onMessage,
     send,
+    status,
     install.appId,
     install.appBlockId,
     install.blockInstanceId,

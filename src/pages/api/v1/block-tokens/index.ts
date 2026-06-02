@@ -24,6 +24,7 @@ import {
   isKnownBlockScope,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
+import { getGrantedScopes, partitionByConsent } from '~/server/services/blocks/scope-grant.service';
 
 /**
  * POST /api/v1/block-tokens
@@ -397,7 +398,32 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     });
     return;
   }
-  const manifestScopes = rawManifestScopes.filter(isKnownBlockScope);
+  const requestedScopes = rawManifestScopes.filter(isKnownBlockScope);
+
+  // A6 (audit HIGH / design-gaps C2): intersect the scopes about to be signed
+  // with the viewer's per-user grant for this (user, app_block). Any scope the
+  // app's approved manifest requests but the user has NOT granted is WITHHELD
+  // from the minted token and reported back to the host as `needs_consent` so
+  // it can surface a re-consent prompt. This is the per-user layer beneath the
+  // manifest/approved ceiling: a v2 that adds a scope no longer silently mints
+  // that scope for an existing install — the user must re-consent first.
+  //
+  // App Blocks is mod-only today, so userId is always present here (anon is
+  // rejected far above at the isModerator gate). The grant lookup is keyed on
+  // (userId, appBlockId); a missing grant row → empty set → every consent-gated
+  // scope is withheld (fail-closed). Publisher/ambient scopes (block:settings:*,
+  // apps:storage:*) are consent-exempt and always pass through — see
+  // partitionByConsent.
+  let manifestScopes = requestedScopes;
+  let needsConsent = false;
+  let missingScopes: string[] = [];
+  if (userId != null) {
+    const granted = await getGrantedScopes({ userId, appBlockId: block.id, db: 'write' });
+    const { signable, missing } = partitionByConsent(requestedScopes, granted);
+    manifestScopes = signable;
+    missingScopes = missing;
+    needsConsent = missing.length > 0;
+  }
 
   // Audit-9 #4: pre-reject anon callers requesting `:self` scopes here at
   // issuance, instead of letting them mint a token that enforceContextBinding
@@ -472,5 +498,16 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     buzzBudget,
   });
 
-  res.status(200).json({ token: result.token, expiresAt: result.expiresAt });
+  // A6: surface the consent signal alongside the token. The token carries only
+  // the granted subset; `needsConsent` + `missingScopes` tell the host to prompt
+  // the user to re-consent for the scopes the app's approved manifest declares
+  // but the user hasn't granted. The host renders the block with the granted
+  // scopes meanwhile (a block requesting only ungranted scopes still gets a
+  // valid token — it just can't use the withheld capabilities until consent).
+  res.status(200).json({
+    token: result.token,
+    expiresAt: result.expiresAt,
+    needsConsent,
+    missingScopes,
+  });
 });

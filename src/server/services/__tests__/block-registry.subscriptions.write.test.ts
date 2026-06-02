@@ -30,6 +30,13 @@ const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
       findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
       delete: vi.fn<(...args: any[]) => Promise<any>>(async () => undefined),
     },
+    // A6: upsertSubscription now writes an implicit-consent grant via
+    // recordInstallConsent → recordScopeGrant.
+    appUserScopeGrant: {
+      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
+      create: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
+      update: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
+    },
   };
   return { mockDbRead: dbRead, mockDbWrite: dbWrite };
 });

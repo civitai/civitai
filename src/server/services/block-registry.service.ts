@@ -884,6 +884,48 @@ export class BlockRegistry {
    * any auth-relevant lookup; 'read' is acceptable for display-only paths
    * (e.g. effective-checkpoint resolution).
    */
+  /**
+   * A6 — pinned-version manifest/scope resolution.
+   *
+   * When a subscription pins a version (`pinned_version` set), the host MUST
+   * use THAT version's manifest + approved-scope set, NOT the live AppBlock
+   * row. Before A6, `resolveBlockInstance` always returned the live row, so a
+   * v2 approve that added a scope silently took effect on every pinned install
+   * on the next render (the C2 escalation). This loads the approved
+   * `app_block_publish_requests` row for the pinned version and substitutes its
+   * manifest; `approvedScopes` is re-derived as that manifest's declared scopes
+   * (the moderator approved exactly the manifest's scopes for that version — see
+   * approveRequest, which writes `approvedScopes = manifestScopes`).
+   *
+   * Fail-safe: when `pinned_version` is set but no approved publish request
+   * exists for it (a version withdrawn/rejected after the pin), we FALL BACK to
+   * the live row rather than returning an empty scope set — the pin is
+   * informational and a missing pinned manifest shouldn't break a working
+   * install. The per-user grant gate at mint time is the authoritative scope
+   * ceiling regardless.
+   */
+  static async applyPinnedVersion(
+    live: { manifest: Record<string, unknown>; approvedScopes: string[] },
+    appBlockId: string,
+    pinnedVersion: string | null,
+    db: typeof dbRead | typeof dbWrite
+  ): Promise<{ manifest: Record<string, unknown>; approvedScopes: string[] }> {
+    if (!pinnedVersion) return live;
+    const pinned = await db.appBlockPublishRequest.findFirst({
+      where: { appBlockId, version: pinnedVersion, status: 'approved' },
+      orderBy: { reviewedAt: 'desc' },
+      select: { manifest: true },
+    });
+    if (!pinned) return live;
+    const manifest = (pinned.manifest ?? {}) as Record<string, unknown>;
+    const scopes = Array.isArray((manifest as { scopes?: unknown }).scopes)
+      ? ((manifest as { scopes: unknown[] }).scopes.filter(
+          (s): s is string => typeof s === 'string'
+        ))
+      : [];
+    return { manifest, approvedScopes: scopes };
+  }
+
   static async resolveBlockInstance(opts: {
     blockInstanceId: string;
     modelId: number;
@@ -911,6 +953,7 @@ export class BlockRegistry {
           enabled: true,
           settings: true,
           installedByUserId: true,
+          pinnedVersion: true,
           appBlock: {
             select: {
               id: true,
@@ -955,6 +998,15 @@ export class BlockRegistry {
         });
         if (!mv) return null;
       }
+      const pinnedInstall = await BlockRegistry.applyPinnedVersion(
+        {
+          manifest: (sub.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: sub.appBlock.approvedScopes ?? [],
+        },
+        sub.appBlock.id,
+        sub.pinnedVersion ?? null,
+        db
+      );
       return {
         source: 'install',
         modelId,
@@ -967,8 +1019,8 @@ export class BlockRegistry {
           blockId: sub.appBlock.blockId,
           appId: sub.appBlock.appId,
           status: sub.appBlock.status,
-          manifest: (sub.appBlock.manifest ?? {}) as Record<string, unknown>,
-          approvedScopes: sub.appBlock.approvedScopes ?? [],
+          manifest: pinnedInstall.manifest,
+          approvedScopes: pinnedInstall.approvedScopes,
           app: sub.appBlock.app ? { allowedScopes: sub.appBlock.app.allowedScopes } : null,
         },
       };
@@ -1064,6 +1116,7 @@ export class BlockRegistry {
           settings: true,
           targetModelTypes: true,
           targetBaseModels: true,
+          pinnedVersion: true,
           appBlock: {
             select: {
               id: true,
@@ -1121,6 +1174,15 @@ export class BlockRegistry {
         select: { id: true },
       });
       if (suppressor) return null;
+      const pinnedPub = await BlockRegistry.applyPinnedVersion(
+        {
+          manifest: (bus.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: bus.appBlock.approvedScopes ?? [],
+        },
+        bus.appBlock.id,
+        bus.pinnedVersion ?? null,
+        db
+      );
       return {
         source: 'publisher_subscription',
         modelId,
@@ -1135,8 +1197,8 @@ export class BlockRegistry {
           blockId: bus.appBlock.blockId,
           appId: bus.appBlock.appId,
           status: bus.appBlock.status,
-          manifest: (bus.appBlock.manifest ?? {}) as Record<string, unknown>,
-          approvedScopes: bus.appBlock.approvedScopes ?? [],
+          manifest: pinnedPub.manifest,
+          approvedScopes: pinnedPub.approvedScopes,
           app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
         },
       };
@@ -1160,6 +1222,7 @@ export class BlockRegistry {
           settings: true,
           targetModelTypes: true,
           targetBaseModels: true,
+          pinnedVersion: true,
           appBlock: {
             select: {
               id: true,
@@ -1229,6 +1292,15 @@ export class BlockRegistry {
         select: { appBlockId: true },
       });
       if (rank3) return null;
+      const pinnedView = await BlockRegistry.applyPinnedVersion(
+        {
+          manifest: (bus.appBlock.manifest ?? {}) as Record<string, unknown>,
+          approvedScopes: bus.appBlock.approvedScopes ?? [],
+        },
+        bus.appBlock.id,
+        bus.pinnedVersion ?? null,
+        db
+      );
       return {
         source: 'viewer_subscription',
         modelId,
@@ -1241,8 +1313,8 @@ export class BlockRegistry {
           blockId: bus.appBlock.blockId,
           appId: bus.appBlock.appId,
           status: bus.appBlock.status,
-          manifest: (bus.appBlock.manifest ?? {}) as Record<string, unknown>,
-          approvedScopes: bus.appBlock.approvedScopes ?? [],
+          manifest: pinnedView.manifest,
+          approvedScopes: pinnedView.approvedScopes,
           app: bus.appBlock.app ? { allowedScopes: bus.appBlock.app.allowedScopes } : null,
         },
       };
@@ -1266,6 +1338,7 @@ export class BlockRegistry {
         blockId: true,
         manifest: true,
         approvedScopes: true,
+        version: true,
       },
     });
     // throwNotFoundError/throwBadRequestError throw at runtime, but their
@@ -1372,8 +1445,60 @@ export class BlockRegistry {
       resultInstanceId = instanceId;
     }
 
+    // A6: implicit first-consent. Installing an app on your own model is the
+    // act of consent; record the user's grant of the app's currently-approved
+    // (consent-gated) scopes against the installed version so the token-mint
+    // path can mint them. Additive — a later version that adds a scope leaves
+    // this grant in place and the new scope falls into the needs_consent path
+    // until the user re-consents. recordScopeGrant has internal failure
+    // handling but is awaited so a grant write that fails surfaces (a missing
+    // grant would otherwise silently withhold every scope at mint).
+    await BlockRegistry.recordInstallConsent({
+      userId: installedByUserId,
+      appBlockId,
+      version: block.version ?? '',
+      manifest: (block.manifest ?? {}) as Record<string, unknown>,
+      approvedScopes: block.approvedScopes ?? [],
+    });
+
     await invalidateModelCache(modelId);
     return { blockInstanceId: resultInstanceId };
+  }
+
+  /**
+   * A6 — write the implicit first-consent grant for an install/subscribe. The
+   * granted set is the app's approved manifest scopes intersected with what's
+   * actually consent-gated (publisher/ambient scopes are exempt — see
+   * scope-grant.service). Dynamic import keeps the registry module's load-time
+   * graph small + matches the recordScopeInvocation pattern.
+   */
+  static async recordInstallConsent(opts: {
+    userId: number;
+    appBlockId: string;
+    version: string;
+    manifest: Record<string, unknown>;
+    approvedScopes: string[];
+  }): Promise<void> {
+    const { recordScopeGrant, consentGatedScopes } = await import(
+      './blocks/scope-grant.service'
+    );
+    // The app's effective scope set = manifest.scopes ∩ approvedScopes (the
+    // moderator-approved snapshot is the ceiling). Grant only the consent-
+    // gated subset of that — exempt scopes never need a grant.
+    const manifestScopes = Array.isArray((opts.manifest as { scopes?: unknown }).scopes)
+      ? ((opts.manifest as { scopes: unknown[] }).scopes.filter(
+          (s): s is string => typeof s === 'string'
+        ))
+      : [];
+    const approved = new Set(opts.approvedScopes ?? []);
+    const effective = manifestScopes.filter((s) => approved.has(s));
+    const toGrant = consentGatedScopes(effective);
+    await recordScopeGrant({
+      userId: opts.userId,
+      appBlockId: opts.appBlockId,
+      version: opts.version,
+      scopes: toGrant,
+    });
   }
 
   static async uninstallFromModel(opts: UninstallOpts): Promise<void> {
@@ -1854,7 +1979,15 @@ export class BlockRegistry {
   }): Promise<SubscriptionRecord> {
     const block = await dbWrite.appBlock.findUnique({
       where: { id: opts.appBlockId },
-      select: { id: true, blockId: true, appId: true, status: true, manifest: true, version: true },
+      select: {
+        id: true,
+        blockId: true,
+        appId: true,
+        status: true,
+        manifest: true,
+        version: true,
+        approvedScopes: true,
+      },
     });
     if (!block) throw throwNotFoundError('App block not found') as never;
     if (block.status !== 'approved') {
@@ -1955,6 +2088,19 @@ export class BlockRegistry {
         },
       })) as SubRow;
     }
+    // A6: implicit first-consent. Subscribing an app (blanket publisher- or
+    // viewer-scope) is the user's act of consent; record the grant of the
+    // app's currently-approved consent-gated scopes against the current
+    // version. Additive — a later version that adds a scope leaves this in
+    // place and the new scope routes through needs_consent at mint time.
+    await BlockRegistry.recordInstallConsent({
+      userId: opts.userId,
+      appBlockId: opts.appBlockId,
+      version: block.version ?? '',
+      manifest: (block.manifest ?? {}) as Record<string, unknown>,
+      approvedScopes: block.approvedScopes ?? [],
+    });
+
     // Subscription writes can affect what shows up on any model page the
     // user owns (publisher) or visits (viewer). The model-keyed cache
     // can't be safely invalidated by user id alone, so just-write semantics

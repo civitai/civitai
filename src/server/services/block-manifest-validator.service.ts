@@ -130,7 +130,12 @@ function isPublicHttpsUrl(raw: string): { ok: true } | { ok: false; reason: stri
 // well-known boundary-escape combos (allow-same-origin + allow-scripts;
 // allow-popups-to-escape-sandbox; allow-top-navigation) by default.
 const SANDBOX_ALLOWLIST: Record<'unverified' | 'verified' | 'internal', Set<string>> = {
-  unverified: new Set(['allow-scripts', 'allow-forms', 'allow-popups']),
+  // M-POPUPS (audit medium / app-exploits-user): `allow-popups` is dropped from
+  // the unverified tier. With it, any approved-but-unverified block could
+  // window.open() an arbitrary URL from a visually-trusted `.civit.ai`
+  // subdomain — a credential-phishing surface. Popups stay available to the
+  // verified/internal tiers (mod-vetted publishers) only.
+  unverified: new Set(['allow-scripts', 'allow-forms']),
   verified: new Set([
     'allow-scripts',
     'allow-forms',
