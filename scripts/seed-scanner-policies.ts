@@ -367,6 +367,117 @@ const EXPLICIT_CANDIDATE_H = `- x: Civitai Prompt Explicit
   - For this binary check, only use x or sec.`;
 
 // ============================================================================
+// ============================================================================
+// NANASHIANON FP-FEEDBACK CANDIDATES (2026-05-28/29)
+// ============================================================================
+// Source: ClickUp 868jv7x9d. NanashiAnon (1913851) — long-time tagging power
+// user — submitted concrete FP categories while x-guard was being shipped.
+// Each candidate below extends the currently-live policy with the specific
+// carve-out their feedback called out. Active toggle is off so a moderator
+// has to opt them in before they get scored.
+
+const CELEBRITY_NANASHIANON = `- x: Civitai Prompt Real Person or Celebrity
+  - Default to sec. The vast majority of named characters in prompts are fictional. Only fire x when the prompt unambiguously names a globally-famous real public figure, where a general audience would immediately recognize the name as a specific real living or historical person.
+  - Choose x ONLY when ALL of the following are true:
+    - The name is unambiguously real (e.g. Taylor Swift, Barack Obama, Cristiano Ronaldo, Beyoncé, Elon Musk, Marilyn Monroe).
+    - No fictional-context marker is present in the prompt (see fictional markers below).
+    - The named person is from the photographic era (post ~1840). Pre-photography historical figures (Cao Cao, Julius Caesar, Cleopatra, Genghis Khan, Joan of Arc, Leonardo da Vinci, Napoleon, etc.) are character interpretations rather than depictions of a real recognizable person — classify as sec.
+  - Fictional-context markers — if ANY of these appear anywhere in the prompt, classify as sec regardless of what names are also present:
+    - "[Name] from [anything]" pattern — the "from" indicates a source franchise, making the name a fictional character regardless of whether you recognize the franchise (e.g. "Pitt from Kid Icarus", "Cloud from Final Fantasy", "Asuka from Evangelion", "Cao Cao from Dynasty Warriors").
+    - Any reference to anime, manga, cartoon, video game, comic, manhwa, manhua, light novel, visual novel, JRPG, MMO, gacha, fantasy RPG.
+    - Style tags like "anime style", "anime screencap", "source_anime", "anime coloring", "cartoon style", "game CG", "pixel art".
+    - Franchise/game/title references — even ones you don't recognize. If the prompt mentions a title (Pokemon, Genshin, Final Fantasy, My Little Pony, Poppy Playtime, Kid Icarus, Zelda, Dynasty Warriors, Fate, Romance of the Three Kingdoms, etc.) treat character names as fictional.
+    - Character-feature tags typical of anime/game art: catgirl, dragon girl, monster girl, demon, elf, half-elf, succubus, magical girl, mecha, robot, android, AI persona.
+  - PRE-PHOTOGRAPHY HISTORICAL FIGURES — sec. Anyone who lived before the mid-19th century cannot be depicted from photographic reference; any prompt naming them is requesting a character interpretation, not a real-person likeness. Includes ancient figures (Cao Cao, Caesar, Cleopatra, Alexander, Genghis Khan, Confucius), medieval/Renaissance figures (Joan of Arc, Leonardo da Vinci, Henry VIII, Genghis Khan), early-modern figures (Napoleon, Mozart, Marie Antoinette, George Washington). Franchise-specific versions of these figures (Cao Cao from Dynasty Warriors, Caesar from Fate, etc.) are doubly sec.
+  - ARTIST-TAG CARVE-OUT — sec. Tag-based image models include style tags that look like person names but are illustrator/mangaka style markers. Common examples: toriyama akira, nomura tetsuya, amano yoshitaka, oda eiichirou, kojima ayami, kishimoto masashi, kubo tite, takeuchi naoko, yusuke murata, takehiko inoue. Surname-firstname pairs in lowercase with no surrounding context describing a real-person request are artist tags, not a call to depict that artist. Classify as sec.
+  - LoRA trigger words and opaque identifiers are sec. Single-word or compound capitalized identifiers (e.g. "MaiSchool", "Lewdlemage", "HelenSynthExl", "remmylevistrauss", "@mxrsu", "expressiveH") are LoRA activation tokens or artist refs, not real-person names. The model should never trigger Celebrity solely because a prompt contains a name-shaped LoRA trigger.
+  - Original characters, OCs, fan-fiction characters, fursonas, AI-generated personas are sec.
+  - First-name-only references (e.g. just "Sarah", "John") without a globally-famous-real-person context are sec.
+  - Names of fictional series protagonists, villains, supporting characters, side characters — sec.
+  - Example x: "Taylor Swift performing on stage" → x (real, globally famous, photographic-era)
+  - Example x: "Scarlett Johansson red carpet photo" → x (real celebrity)
+  - Example sec: "Cao Cao, three kingdoms, warrior" → sec (pre-photography historical figure)
+  - Example sec: "Cao Cao from Dynasty Warriors" → sec (franchise + pre-photography)
+  - Example sec: "1girl, toriyama akira style" → sec (artist tag)
+  - Example sec: "anime, nomura tetsuya, sword art" → sec (anime + artist tag)
+  - Example sec: "Pitt from Kid Icarus, masterpiece" → sec
+  - Example sec: "poppy_playtime, my little pony, catnap" → sec
+  - Example sec: "1girl, anime screencap, fukumaru koito" → sec
+  - Example sec: "MaiSchool, 1girl, solo" → sec
+  - Example sec: "Cloud Strife, Final Fantasy, sword" → sec
+  - For this binary check, only use x or sec.`;
+
+const YOUNG_OPTION_12 = `- x: Civitai Prompt Underage Subject
+  - First mentally categorize the requested subject into one of three buckets, then apply the rule for that bucket.
+  - CHILD bucket (under 13) — choose x. Triggered by: child, children, kid, kids, toddler, baby, infant, preschooler, kindergartner, elementary student, little girl, little boy, little child, loli, lolicon, shota, cub, young son, young daughter, young child, an explicit age under 13 (12yo, "ten years old", etc.), or family child-framing in sexual contexts (mom and son, father and daughter).
+  - TEEN bucket (13-17) — choose x. Triggered by: teen, teens, teenage, teenager, preteen, pre-teen, tween, middle schooler, high schooler, schoolgirl, schoolboy, school uniform paired with sexual content, or an explicit age between 13 and 17 (13yo, 14yo, 15yo, 16yo, 17yo, "fifteen years old", etc.).
+  - YOUNG-ADULT bucket (18+) — choose sec. This bucket includes: "young woman", "young man", "young female", "young lady", "young actor", "young model", "young athlete", "young professional", "young college girl", "young couple", "young adult".
+  - ADULT-ANCHOR OVERRIDE: If the positive prompt asserts an explicit adult age (18, 19, 20, 21+, "in her 20s", etc.) OR contains an adult-anchor term (adult, mature, MILF, GILF, elderly, voluptuous adult, mature female, old woman, old man, cougar), classify as sec.
+  - MINIGIRL / TINY-ADULT CARVE-OUT: "minigirl", "minigirls", "tiny adult", "miniature woman", "shrunken woman", "thumbelina", "tinkerbell", or characters explicitly described as impossibly tiny but with adult body proportions are sec UNLESS the prompt ALSO contains a CHILD-bucket term (child, kid, toddler, baby, loli, shota, etc.). Size alone on an adult-proportioned subject is not a youth signal — a thumb-sized woman with mature features and curves is an adult, not a child. Per NanashiAnon FP report.
+  - ANTHRO carve-out: anthropomorphic, furry, feral, or fictional non-human characters (anthro, furry, feral, dog girl, cat girl, kemono, monster girl, demi-human, slime girl, dragon girl, kemonomimi, fox girl, rabbit girl, wolf girl) are sec UNLESS the prompt also contains an explicit child-noun from the CHILD bucket.
+  - Foreign-language youth terms are youth signals: học sinh, девочка, 学生, 女子高生, 少女, ロリ, 여학생.
+  - Style alone (anime, cartoon, chibi, stylized) is NOT a youth signal.
+  - Adult body archetypes (petite, shortstack, small frame, cute face, slim, slender, hourglass, chibi proportions) are NOT youth signals.
+  - Size descriptors (tiny, small, shrunken) applied to non-bodies (objects, scenery, vehicles) are sec. Size descriptors applied to a body, paired with adult body proportions and no CHILD-bucket terms, also sec (see MINIGIRL carve-out above).
+  - 1girl, 1boy, 2girls, 2boys alone are not youth signals.
+  - When the bucket is genuinely unclear, prefer sec (YOUNG-ADULT).
+  - Parenthetical age tags inside franchise context are character-design markers, not asserted ages.
+  - For this binary check, only use x or sec.`;
+
+const SUGGESTIVE_NANASHIANON = `- x: Civitai Prompt Suggestive
+  - First mentally categorize the requested content into one of four buckets, then apply the rule for that bucket.
+  - SUGGESTIVE-FRAMING bucket — choose x. Triggered by: sensual posing, sexualized framing, sexual undertones, implied sex, intimate bedroom scenes with sexual intent, suggestive descriptors (sexy, sensual, erotic, alluring, seductive, provocative, teasing, sultry, lewd, slutty, horny), revealing or partial-coverage clothing depicted in a sexualized context (lingerie in bedroom, bikini in sexual pose, micro-skirt with upskirt focus, see-through clothing).
+  - EXPLICIT-OVERLAP bucket — choose x. Any prompt containing visible genitals, depicted sex acts, explicit sexual fluids, or unambiguous nudity in a sexual context.
+  - NON-SEXUAL-EXPOSURE bucket — choose sec. Swimwear, lingerie, partial clothing, or body exposure depicted WITHOUT sexual framing: beach scenes, athletic competition, modest fashion, swim training, gym workouts, sport, daily life with casual attire.
+  - NON-SEXUAL-OTHER bucket — choose sec. Medical, anatomical, biological, or surgical descriptions framed as educational/clinical. Standard portraiture, fashion photography. Business, professional, family, casual, or daily-life scenes. Artistic figure-study or life-drawing nudity without sexualized framing.
+  - SHIRTLESS-MALE override: Shirtless male torso depicted in a non-sexual context — athletic (boxing, swimming, martial arts), action (fight scene, hero pose), beach, sport, or daily-life — is sec. Shirtless males in clearly sexualized framing (sensual pose, sexual gaze paired with bare chest) still trigger SUGGESTIVE-FRAMING. Per NanashiAnon FP report.
+  - UNWORN-CLOTHING override: Lingerie, underwear, swimsuits depicted as objects with no person wearing them — discarded on the floor, displayed on a featureless mannequin, hanging in a closet — are sec. The clothing being suggestive in another context doesn't transfer to a still-life depiction. Per NanashiAnon FP report.
+  - PARTIAL-UNDERGARMENT-INCIDENTAL override: Visible bra straps, waistbands peeking above pants, knee-length bloomers peeking out from under a skirt or dress, and similar "undergarment incidentally visible underneath non-sexualized outerwear" cases are sec. The undergarment is layering detail, not the focus. Long bloomers under traditional/period dress are a particularly common false positive — explicitly sec. Per NanashiAnon FP report.
+  - BODY-SHAPE-ONLY override: Body-shape descriptors (curvy, hourglass, large breasts, thick thighs, toned, muscular, slim) on their own — without sexualized posing, sexualized framing, or revealing-in-sexual-context clothing — are NOT a SUGGESTIVE signal. Place in NON-SEXUAL-OTHER.
+  - ANTHRO-NO-SEXUAL override: Anthropomorphic, furry, or feral characters without depicted sex acts, visible genitals, sexual fluids, or sexualized posing are sec.
+  - NEGATIVE-PROMPT-ONLY override: Sexual or suggestive terms that appear ONLY in the negative prompt are avoidance signals — they don't count for this label.
+  - When the bucket is genuinely unclear, prefer sec.
+  - For this binary check, only use x or sec.`;
+
+const FAMILIAL_NANASHIANON = `- x: Civitai Prompt Familial Relation
+  - Choose x if the positive prompt explicitly identifies a family or blood relationship between two or more people in the prompt.
+  - Family-relation terms (whole-word, case-insensitive): mother, father, mom, dad, mommy, daddy, son, daughter, brother, sister, sibling, siblings, twin, twins, aunt, uncle, cousin, niece, nephew, grandmother, grandfather, grandma, grandpa, granddaughter, grandson, step-mom, stepmom, step-dad, stepdad, stepsister, stepbrother, step-sister, step-brother, step-daughter, stepdaughter, step-son, stepson, stepfamily, mother-in-law, father-in-law, sister-in-law, brother-in-law, parent, parents.
+  - The terms must describe a relationship BETWEEN people — e.g. "mom and son", "father and daughter", "two siblings", "stepmom seducing stepson". A single person tagged with a family role (e.g. "mommy aesthetic", "MILF", "DILF", "older sister character archetype") is sec because no second family member is paired.
+  - IDENTICAL-NOT-SIBLINGS override: "twins", "triplets", "identical [people]", "doppelganger(s)", "lookalike(s)" used alongside explicit non-sibling explainers are sec. Common non-familial reasons for identical appearance in fiction: clones, robots, androids, AI duplicates, shapeshifters, copy-self superpowers (Triplicate Girl, Dupli-Kate, Madoka clones), "identical strangers", contrived coincidence, mass-produced characters, fashion model coordinated outfits. If the prompt names any of those alongside "twins"/"triplets", visual similarity is incidental and not a family relationship — classify as sec. Per NanashiAnon FP report.
+  - Choose sec for "sister" / "brother" / "mother" / "father" used as endearment, friendship, religious, or character-archetype context: "sister of the convent", "brother in arms", "soul sister", "big sister type" (anime archetype), "father figure", "mommy" or "daddy" as standalone roleplay archetypes.
+  - Choose sec if no family-relation term is present.
+  - This label is PURELY about whether a family relationship is being depicted between people. Sexual content, BDSM, nudity, posing are IRRELEVANT to this decision.
+  - For this binary check, only use x or sec.`;
+
+const GORE_NANASHIANON = `- x: Civitai Prompt Gore
+  - Choose x when the prompt requests extreme graphic violence with anatomical detail: dismemberment in the act, mutilation, evisceration, decapitation in the act, exposed internal organs, severed limbs with active blood/anatomy, gore-spray, visible viscera, intestines, brain matter, or ultra-violent imagery depicting catastrophic bodily injury.
+  - Mild or stylized violence is sec: combat scenes, fistfights, scrapes, bruises, controlled blood splatter without anatomical exposure, action-movie violence without organ/viscera detail.
+  - Horror, action, or fantasy contexts without graphic anatomical injury are sec.
+  - Medical, surgical, anatomical study, or autopsy contexts framed as educational/clinical are sec.
+  - Special-effects makeup, costume, prosthetic, zombie cosmetic, or halloween-style imagery without depicted-real-injury framing is sec.
+  - Blood alone is not gore. A bloody sword, bloody clothing, or blood splatter without anatomical exposure is sec.
+  - "Bloody" used metaphorically (bloody mary cocktail, bloody mess as exasperation) is sec.
+  - AMPUTEE / PROSTHESIS carve-out: Amputees with a clean stump (healed, no active bleeding or exposed anatomy) and characters with a prosthetic limb, mechanical arm, peg leg, or hook hand are sec. Post-injury everyday depiction is not gore. Per NanashiAnon FP report.
+  - DULLAHAN carve-out: Characters depicted holding their own severed head (dullahan, headless horseman, classic Irish folklore) without depicted blood, viscera, or wound detail are sec. The headless-but-undamaged trope is a fantasy character design, not gore. Per NanashiAnon FP report.
+  - SKELETON / SKULL contexts — sec in BOTH of these cases:
+    - Animated skeleton characters: skeleton warrior, lich, undead enemy, animated bones. The skeleton IS the character. Not gore.
+    - Scenery skulls/bones: pile of bones in a desert, throne of skulls, ossuary, catacombs, skull as decoration, bone-arched gateway. Ambient scenery, not depicted injury.
+    Per NanashiAnon FP report.
+  - TAXIDERMY / ANIMAL-AS-FOOD carve-out: Taxidermied animals on display, a roast boar with the head intact at a feast, a whole-fish dinner where the fish is identifiable, hunting trophies — sec. The animal is not depicted in the act of being injured. Per NanashiAnon FP report (optional but listed).
+  - Example x: "decapitated body, severed head, exposed spine, blood pooling" → x
+  - Example x: "eviscerated corpse, intestines, organ detail" → x
+  - Example sec: "warrior with bloody sword, post-battle, dramatic" → sec
+  - Example sec: "horror scene, dark atmosphere, scary monster" → sec
+  - Example sec: "zombie cosmetic makeup, halloween costume" → sec
+  - Example sec: "war veteran with prosthetic arm, casual portrait" → sec (prosthesis)
+  - Example sec: "amputee swimmer, clean stump, athletic photo" → sec (clean stump)
+  - Example sec: "dullahan knight on horseback, holding own head" → sec (folklore, no wound detail)
+  - Example sec: "skeleton warrior in dungeon, sword raised" → sec (animated skeleton enemy)
+  - Example sec: "pile of skulls in a desert, fantasy scenery" → sec (scenery)
+  - Example sec: "roast boar at medieval feast, whole, head intact" → sec (food, not injury)
+  - For this binary check, only use x or sec.`;
+
+// ============================================================================
 // Extra candidate list (everything that isn't the live shipped policy).
 // ============================================================================
 
@@ -597,6 +708,53 @@ const EXTRA_PROMPT_CANDIDATES: ExtraCandidate[] = [
     notes:
       'Shape study: defaults to sec, requires explicit anatomy or named act for x. Inverted from "trigger when explicit".',
     policy: EXPLICIT_CANDIDATE_H,
+  },
+
+  // ----- NanashiAnon FP-feedback candidates (active candidates, not archived) -----
+  {
+    label: 'Celebrity',
+    name: 'NanashiAnon — pre-photography + artist-tag carve-outs',
+    threshold: 0.55,
+    archived: false,
+    notes:
+      'Live policy + (1) explicit pre-photography historical-figure exclusion (Cao Cao, Caesar, Napoleon, etc. — character interpretations, not real-person depictions, especially when paired with a franchise like Dynasty Warriors or Fate) and (2) artist-tag carve-out for lowercase Japanese-style illustrator/mangaka names (toriyama akira, nomura tetsuya, amano yoshitaka, oda eiichirou, kojima ayami) used as style tags rather than person depictions. From NanashiAnon FP report (ClickUp 868jv7x9d).',
+    policy: CELEBRITY_NANASHIANON,
+  },
+  {
+    label: 'Young',
+    name: 'Option 12 — minigirl / tiny-adult carve-out',
+    threshold: 0.4,
+    archived: false,
+    notes:
+      'Option 9 + explicit MINIGIRL carve-out. "Minigirl"/"tinkerbell"/"thumbelina" and similar impossibly-tiny but adult-proportioned characters are NOT youth signals; size alone on an adult-bodied subject is not a child. Excluded UNLESS the prompt also contains a CHILD-bucket term. From NanashiAnon FP report (ClickUp 868jv7x9d).',
+    policy: YOUNG_OPTION_12,
+  },
+  {
+    label: 'Suggestive',
+    name: 'NanashiAnon — incidental-exposure carve-outs',
+    threshold: 0.4,
+    archived: false,
+    notes:
+      'Live Option-9 framing + three new overrides: (1) SHIRTLESS-MALE in non-sexual contexts (athletic, fight scenes, beach) → sec, (2) UNWORN-CLOTHING (lingerie/underwear depicted as objects on the floor or featureless mannequin) → sec, (3) PARTIAL-UNDERGARMENT-INCIDENTAL (visible bra strap, waistband peeking, knee-length bloomers under skirt/dress) → sec when outerwear is non-sexualized. The bloomers-under-skirt case is called out as a particularly high-FP source. From NanashiAnon FP report (ClickUp 868jv7x9d).',
+    policy: SUGGESTIVE_NANASHIANON,
+  },
+  {
+    label: 'Familial',
+    name: 'NanashiAnon — identical-not-siblings override',
+    threshold: 0.5,
+    archived: false,
+    notes:
+      'Live policy + IDENTICAL-NOT-SIBLINGS override. "Twins"/"triplets" paired with explicit non-sibling explainers (clones, robots, shapeshifters, doppelgangers, Triplicate Girl / Dupli-Kate, "identical strangers", contrived coincidence) are sec — visual similarity from non-familial causes is not a family relationship. From NanashiAnon FP report (ClickUp 868jv7x9d).',
+    policy: FAMILIAL_NANASHIANON,
+  },
+  {
+    label: 'Gore',
+    name: 'NanashiAnon — non-bloody-anatomy carve-outs',
+    threshold: 0.5,
+    archived: false,
+    notes:
+      'Live policy + four explicit carve-outs: (1) AMPUTEE / PROSTHESIS (clean stump, prosthetic limb, peg leg, hook hand) → sec, (2) DULLAHAN-type characters (holding own head without blood/viscera) → sec, (3) SKELETON / SKULL in both contexts (animated enemy + scenery: pile of bones, throne of skulls) → sec, (4) TAXIDERMY / ANIMAL-AS-FOOD (whole boar at feast, whole fish dinner) → sec. From NanashiAnon FP report (ClickUp 868jv7x9d).',
+    policy: GORE_NANASHIANON,
   },
 ];
 

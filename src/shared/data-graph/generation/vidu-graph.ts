@@ -41,16 +41,15 @@ import {
 import type { AspectRatioOption } from './common';
 import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
 import { isWorkflowOrVariant } from './config/workflows';
+import { viduVersionIds } from './version-ids';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** Vidu model version IDs */
-export const viduVersionIds = {
-  q1: 2623839,
-  q3: 2741273,
-} as const;
+// viduVersionIds moved to ./version-ids (leaf module) to break the
+// graph <-> config/workflows import cycle; re-exported here for existing importers.
+export { viduVersionIds };
 
 /** Vidu version options for checkpoint selector */
 const viduVersionOptions = [

@@ -120,13 +120,17 @@ export async function submitWorkflow({
     console.log('------');
   }
 
-  const { data, error, response, ...res } = await clientSubmitWorkflow({
+  const result = await submitWorkflowWithRetry({
     client,
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
     query,
   });
 
-  if (!data) {
+  // Narrow on `result.data` (not a destructured copy) so this always-throwing
+  // guard both exposes `error`/`response` on the failure member here AND narrows
+  // `result.data` to defined for the `return` below.
+  if (!result.data) {
+    const { error, response } = result;
     const { messages } = (typeof error !== 'string' ? error.errors ?? {} : {}) as {
       messages?: string[];
     };
@@ -143,7 +147,7 @@ export async function submitWorkflow({
       console.log('----Workflow Error----');
       console.log({ token });
       console.dir({ error }, { depth: null });
-      console.dir({ res, data }, { depth: null });
+      console.dir({ result }, { depth: null });
       console.log('----Workflow Error Request Body----');
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
@@ -164,7 +168,78 @@ export async function submitWorkflow({
     }
   }
 
-  return data;
+  return result.data;
+}
+
+type SubmitOptions = Options<SubmitWorkflowData, false>;
+type ClientSubmitResult = Awaited<ReturnType<typeof clientSubmitWorkflow>>;
+
+export type SubmitWorkflowRetryOptions = {
+  /** Max total submit attempts (initial + retries). Default 3. */
+  maxAttempts?: number;
+  /** Base backoff in ms; delay before retry N = baseDelayMs * 3 ** (N - 1). Default 500. */
+  baseDelayMs?: number;
+  /** Invoked right before each backoff sleep — useful for logging/metrics. */
+  onRetry?: (info: { attempt: number; status?: number; delayMs: number }) => void;
+};
+
+/**
+ * Thin wrapper around the `@civitai/client` `submitWorkflow` that re-submits on
+ * transient infra failures (5xx responses, or a network error / no response) with
+ * bounded exponential backoff. 4xx responses are returned immediately — client
+ * errors won't recover. Returns the raw client result of the final attempt plus an
+ * `attempts` count; callers keep their own error handling/logging.
+ *
+ * It does NOT add an idempotency key. If the same workflow must not be duplicated
+ * when a 500 actually created it server-side, the CALLER must set `body.externalId`
+ * (the orchestrator dedupes on `(userId, externalId)`); the same body — and thus
+ * the same key — is reused across every retry here.
+ */
+export async function submitWorkflowWithRetry(
+  options: SubmitOptions,
+  { maxAttempts = 3, baseDelayMs = 500, onRetry }: SubmitWorkflowRetryOptions = {}
+): Promise<ClientSubmitResult & { attempts: number }> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let result: ClientSubmitResult | undefined;
+    try {
+      result = await clientSubmitWorkflow(options);
+    } catch (e) {
+      // Network failure / no response. Out of retries → surface it like a direct call would.
+      lastError = e;
+      if (attempt >= maxAttempts) throw e;
+      await submitWorkflowBackoff({ attempt, status: undefined, baseDelayMs, onRetry });
+      continue;
+    }
+
+    const status = result.response?.status;
+    const retryable = !result.data && (status == null || status >= 500);
+    if (!retryable || attempt >= maxAttempts) {
+      return Object.assign(result, { attempts: attempt });
+    }
+
+    await submitWorkflowBackoff({ attempt, status, baseDelayMs, onRetry });
+  }
+
+  // Only reachable if maxAttempts < 1 or every attempt threw without re-throwing above.
+  throw lastError ?? new Error('submitWorkflowWithRetry: no attempts were made');
+}
+
+async function submitWorkflowBackoff({
+  attempt,
+  status,
+  baseDelayMs,
+  onRetry,
+}: {
+  attempt: number;
+  status?: number;
+  baseDelayMs: number;
+  onRetry?: SubmitWorkflowRetryOptions['onRetry'];
+}) {
+  const delayMs = baseDelayMs * 3 ** (attempt - 1);
+  onRetry?.({ attempt, status, delayMs });
+  await new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
 export async function cancelWorkflow({

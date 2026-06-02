@@ -96,7 +96,7 @@ async function autoMuteIfScamAccount({
     const date = new Date();
     await updateUserById({
       id: userId,
-      data: { muted: true, mutedAt: date, muteConfirmedAt: date },
+      data: { muted: true, mutedAt: date },
       updateSource: 'entity-moderation:auto-mute-scam',
     });
     await invalidateSession(userId);
