@@ -182,9 +182,10 @@ export const upsertBountyEntry = async ({
   });
 
   // Count-cache refresh hits Redis — run after commit, off the txn budget.
-  // (result is BountyEntry | null — the txn returns null when the entry update
-  // finds nothing.)
-  if (result && result.userId) {
+  // Only on create (!id): updating an entry's description doesn't change the
+  // user's entry count, so the update path never refreshed it (and shouldn't).
+  // (result is BountyEntry | null — the txn returns null when an update finds nothing.)
+  if (!id && result?.userId) {
     await userBountyEntryCountCache.refresh(result.userId);
   }
 

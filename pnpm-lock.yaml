@@ -737,6 +737,9 @@ importers:
       eslint-plugin-import:
         specifier: ^2.26.0
         version: 2.32.0(@typescript-eslint/parser@5.62.0(eslint@8.22.0)(typescript@5.9.2))(eslint-import-resolver-typescript@3.10.1)(eslint@8.22.0)
+      eslint-plugin-local-rules:
+        specifier: ^3.0.2
+        version: 3.0.2
       eslint-plugin-prettier:
         specifier: ^4.2.1
         version: 4.2.5(eslint-config-prettier@8.10.2(eslint@8.22.0))(eslint@8.22.0)(prettier@2.8.8)
@@ -5725,6 +5728,9 @@ packages:
     engines: {node: '>=4.0'}
     peerDependencies:
       eslint: ^3 || ^4 || ^5 || ^6 || ^7 || ^8 || ^9
+
+  eslint-plugin-local-rules@3.0.2:
+    resolution: {integrity: sha512-IWME7GIYHXogTkFsToLdBCQVJ0U4kbSuVyDT+nKoR4UgtnVrrVeNWuAZkdEu1nxkvi9nsPccGehEEF6dgA28IQ==}
 
   eslint-plugin-prettier@4.2.5:
     resolution: {integrity: sha512-9Ni+xgemM2IWLq6aXEpP2+V/V30GeA/46Ar629vcMqVPodFFWC9skHu/D1phvuqtS8bJCFnNf01/qcmqYEwNfg==}
@@ -16081,6 +16087,8 @@ snapshots:
       object.fromentries: 2.0.8
       safe-regex-test: 1.1.0
       string.prototype.includes: 2.0.1
+
+  eslint-plugin-local-rules@3.0.2: {}
 
   eslint-plugin-prettier@4.2.5(eslint-config-prettier@8.10.2(eslint@8.22.0))(eslint@8.22.0)(prettier@2.8.8):
     dependencies:
