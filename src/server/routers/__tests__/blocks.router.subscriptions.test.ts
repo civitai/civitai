@@ -21,6 +21,7 @@ const {
   mockDeleteSubscription,
   mockIsAppBlocksEnabled,
   mockDbReadAppBlockFindUnique,
+  mockGetUserBuzzAccounts,
 } = vi.hoisted(() => ({
   mockListUserSubscriptions: vi.fn(),
   mockListAvailable: vi.fn(),
@@ -28,6 +29,7 @@ const {
   mockDeleteSubscription: vi.fn(async () => undefined),
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockDbReadAppBlockFindUnique: vi.fn(),
+  mockGetUserBuzzAccounts: vi.fn(async () => ({ yellow: 0, blue: 0, green: 0 })),
 }));
 
 vi.mock('~/server/services/block-registry.service', () => ({
@@ -76,6 +78,15 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(),
 }));
 vi.mock('~/server/services/user.service', () => ({ getUserById: vi.fn() }));
+// blocks.router imports getUserBuzzAccounts from buzz.service, which transitively
+// pulls in ~/server/redis/caches → orchestrator/models → resource-data.redis.
+// That last module reads `REDIS_KEYS.GENERATION.RESOURCE_DATA` at import time,
+// which throws under the trimmed redis-client mock above (no GENERATION key).
+// Mocking buzz.service at the boundary cuts that import chain — same approach the
+// sibling blocks.router.workflow.test.ts uses — so the suite can load.
+vi.mock('~/server/services/buzz.service', () => ({
+  getUserBuzzAccounts: mockGetUserBuzzAccounts,
+}));
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -227,10 +238,28 @@ describe('blocks.upsertSubscription (guarded)', () => {
     ).rejects.toBeInstanceOf(TRPCError);
   });
 
-  it('passes per-block-id-validated settings to the service for first-party blocks', async () => {
+  it('passes manifest-validated settings to the service (publisher-scoped field)', async () => {
+    // W3 v0: settings validation is manifest-driven (validateBlockSettings),
+    // not a hardcoded per-blockId map. The app must declare the field — here a
+    // publisher-scoped number with a [0,1000] range — for it to survive into the
+    // forwarded payload. A publisher_* scope writes the `publisher` side, so the
+    // field's scope must be `publisher`.
     mockDbReadAppBlockFindUnique.mockResolvedValue({
       blockId: 'generate-from-model',
       status: 'approved',
+      approvedScopes: ['ai:write:budgeted'],
+      manifest: {
+        settings: {
+          buzz_budget_per_gen: {
+            type: 'number',
+            scope: 'publisher',
+            label: 'Buzz budget per generation',
+            description: 'Max Buzz spent per generation',
+            min: 0,
+            max: 1000,
+          },
+        },
+      },
     });
     mockUpsertSubscription.mockResolvedValue({ id: 'bus_new' });
     const caller = blocksRouter.createCaller(authedCtx(42) as never);
@@ -254,10 +283,25 @@ describe('blocks.upsertSubscription (guarded)', () => {
     );
   });
 
-  it('rejects settings that violate per-block-id schema (out-of-range buzz budget)', async () => {
+  it('rejects settings that violate the manifest field range (out-of-range buzz budget)', async () => {
+    // viewer_personal writes the `viewer` side, so the manifest field must be
+    // viewer-scoped to apply. 99_999 exceeds the declared max → BAD_REQUEST.
     mockDbReadAppBlockFindUnique.mockResolvedValue({
       blockId: 'generate-from-model',
       status: 'approved',
+      approvedScopes: ['ai:write:budgeted'],
+      manifest: {
+        settings: {
+          buzz_budget_per_gen: {
+            type: 'number',
+            scope: 'viewer',
+            label: 'Buzz budget per generation',
+            description: 'Max Buzz spent per generation',
+            min: 0,
+            max: 1000,
+          },
+        },
+      },
     });
     const caller = blocksRouter.createCaller(authedCtx(42) as never);
     await expect(
