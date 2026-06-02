@@ -215,7 +215,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
   const benefactor = await dbWrite.$transaction(
     async (tx) => {
       // 1. Fetch entry details
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -238,7 +238,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       logData.bountyId = entry.bountyId;
 
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -249,7 +249,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 2. Validate entry has a user
       if (!entry.userId) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'error',
@@ -260,7 +260,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 3. Validate bounty is not already complete
       if (entry.bounty.complete) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'error',
@@ -270,7 +270,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }
 
       // 4. Fetch benefactor details
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -286,7 +286,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         },
       });
 
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -299,7 +299,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 5. Validate benefactor hasn't already awarded
       if (benefactor.awardedToId) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'error',
@@ -310,7 +310,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }
 
       // 6. Update benefactor with award
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -330,7 +330,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         },
       });
 
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -338,7 +338,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }).catch(() => null);
 
       // 7. Create buzz transaction
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -449,7 +449,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
                 entityType: 'Bounty',
               },
             });
-            await logToAxiom({
+            logToAxiom({
               ...logData,
               name: 'bounty-award',
               type: 'info',
@@ -465,7 +465,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       }
 
       // 8. Check if all benefactors have awarded (use tx context for consistency)
-      await logToAxiom({
+      logToAxiom({
         ...logData,
         name: 'bounty-award',
         type: 'info',
@@ -482,7 +482,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
 
       // 9. Mark bounty as complete only if ALL benefactors have awarded
       if (!unawardedBountyBenefactors) {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'info',
@@ -494,14 +494,14 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
           data: { complete: true },
         });
 
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'info',
           message: 'Bounty marked as complete',
         }).catch(() => null);
       } else {
-        await logToAxiom({
+        logToAxiom({
           ...logData,
           name: 'bounty-award',
           type: 'info',
