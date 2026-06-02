@@ -1,3 +1,17 @@
+// The custom `no-io-in-transaction` rule lives in ./eslint-local-rules.js and
+// is loaded via `eslint-plugin-local-rules`. It activates automatically once
+// that dev dependency is installed (`pnpm add -D eslint-plugin-local-rules`);
+// until then it is skipped so `next lint` keeps working without the dep (and
+// CI's `pnpm install --frozen-lockfile` is unaffected).
+const hasLocalRules = (() => {
+  try {
+    require.resolve('eslint-plugin-local-rules');
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -5,7 +19,7 @@ module.exports = {
     ecmaVersion: 'latest',
     sourceType: 'module',
   },
-  plugins: ['@typescript-eslint', 'prettier'],
+  plugins: ['@typescript-eslint', 'prettier', ...(hasLocalRules ? ['local-rules'] : [])],
   extends: [
     'next/core-web-vitals',
     'plugin:@typescript-eslint/recommended', // lightweight rules (no type info)
@@ -22,6 +36,11 @@ module.exports = {
   //   },
   // },
   rules: {
+    // Flags awaited external I/O inside a Prisma interactive $transaction
+    // callback (blows the txn timeout budget). No-op until
+    // eslint-plugin-local-rules is installed (see hasLocalRules above).
+    ...(hasLocalRules ? { 'local-rules/no-io-in-transaction': 'error' } : {}),
+
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 

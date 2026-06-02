@@ -400,12 +400,13 @@ export async function consumeRedeemableCode({
 
           if (!activeUserMembership) {
             // Log:
-            await logToAxiom({
+            // fire-and-forget: external Axiom POST must not block the txn budget
+            logToAxiom({
               message: `Redeemed code for user ${userId} but found no active membership, deleting old membership`,
               level: 'info',
               userId,
               code: consumedCode.code,
-            });
+            }).catch(() => undefined);
           }
 
           // Check provider compatibility for any remaining active membership

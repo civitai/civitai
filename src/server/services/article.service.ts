@@ -893,10 +893,11 @@ export const upsertArticle = async ({
           });
         }
 
-        await userArticleCountCache.refresh(article.userId);
-
         return article;
       });
+
+      // Count-cache refresh hits Redis — run after commit, off the txn budget.
+      await userArticleCountCache.refresh(result.userId);
 
       await preventReplicationLag('article', result.id);
       await preventReplicationLag('userArticles', userId);
@@ -1107,12 +1108,13 @@ export const upsertArticle = async ({
         });
       }
 
-      await userArticleCountCache.refresh(updated.userId);
-
       return updated;
     });
 
     if (!result) throw throwNotFoundError(`No article with id ${id}`);
+
+    // Count-cache refresh hits Redis — run after commit, off the txn budget.
+    await userArticleCountCache.refresh(result.userId);
 
     await preventReplicationLag('article', result.id);
     await preventReplicationLag('userArticles', result.userId);

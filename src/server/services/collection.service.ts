@@ -892,10 +892,12 @@ export const upsertCollection = async ({
 
       // No need to set randomId when changing to Contest mode - hash-based ordering is computed on-the-fly
 
-      await userCollectionCountCache.refresh(updated.userId);
-
       return updated;
     });
+
+    // Count-cache refresh hits Redis — run it after the txn commits so it can't
+    // add network latency to the interactive transaction's timeout budget.
+    await userCollectionCountCache.refresh(updated.userId);
 
     if (
       input.read === CollectionReadConfiguration.Public &&
