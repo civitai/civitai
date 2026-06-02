@@ -261,9 +261,24 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     let disabledChecks: CheckKey[] = [];
     let nonCriticalChecks: CheckKey[] = [];
     if (isProd) {
+      // Give the config-fetch leg its OWN bounded sub-budget so it can never
+      // structurally eat the whole overall deadline and leave the checks ~0ms
+      // (which would keep every check seeded `false` → a false 500 on a fully
+      // healthy pod). Each getHealthcheckConfig read is internally bounded by
+      // HEALTHCHECK_TIMEOUT, but the 8s hard-cap on overallDeadlineMs decouples
+      // that per-read ceiling from the total budget — if HEALTHCHECK_TIMEOUT is
+      // raised toward/over 8s, one config read alone could otherwise consume the
+      // entire deadline. Cap each read at a third of the deadline so the
+      // majority of the budget is always reserved for the actual checks. The
+      // overall deadline still bounds the whole handler (config + checks share
+      // the same wall-clock timer); this only stops config from hogging it.
+      const configReadTimeout = Math.min(
+        env.HEALTHCHECK_TIMEOUT,
+        Math.floor(overallDeadlineMs / 3)
+      );
       const configPromise = Promise.all([
-        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS),
-        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS),
+        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS, configReadTimeout),
+        getHealthcheckConfig(REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS, configReadTimeout),
       ]).then(([disabled, nonCritical]) => {
         disabledChecks = disabled;
         nonCriticalChecks = nonCritical;
@@ -349,6 +364,12 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         settled.add(name as CheckKey);
         healthcheckAttemptsCounter.inc({ name, result: 'timeout' });
         counters[name as CheckKey]?.inc();
+        // Also feed the duration histogram so these slow-brownout samples — the
+        // exact ones the dense 1-3.5s buckets exist to capture — aren't dropped,
+        // which would understate P95/P99 during an incident. The check outlived
+        // the overall deadline, so observe overallDeadlineMs as an at-least-
+        // this-slow lower bound. De-duped by the same `settled` guard.
+        healthcheckDurationHistogram.observe({ name }, overallDeadlineMs / 1000);
       }
       logError({
         error: new Error(`Health check overall deadline (${overallDeadlineMs}ms) exceeded`),
@@ -446,13 +467,20 @@ async function runCheckWithTimeout(
 }
 
 /**
- * Get healthcheck config from Redis with timeout
+ * Get healthcheck config from Redis with timeout.
+ *
+ * `maxTimeout` lets a caller tighten the per-read ceiling below the default
+ * HEALTHCHECK_TIMEOUT. The /api/health handler passes a sub-budget so the
+ * config-fetch leg can never structurally consume the whole overall deadline
+ * and starve the actual checks (which would seed every check `false` → false
+ * 500 on a healthy pod). Other callers omit it and keep the original behavior.
  */
-async function getHealthcheckConfig(key: string): Promise<CheckKey[]> {
+async function getHealthcheckConfig(key: string, maxTimeout?: number): Promise<CheckKey[]> {
+  const timeout = maxTimeout ?? env.HEALTHCHECK_TIMEOUT;
   try {
     const value = await Promise.race([
       sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, key),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), env.HEALTHCHECK_TIMEOUT)),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeout)),
     ]);
     return JSON.parse(value ?? '[]') as CheckKey[];
   } catch {
