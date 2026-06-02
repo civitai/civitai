@@ -230,7 +230,7 @@ export async function upsertCandidate(
     mode: input.mode,
     label: input.label,
     threshold: input.threshold,
-    status: input.status,
+    archived: input.archived,
     active: input.active,
     policy: input.policy,
     notes: input.notes,

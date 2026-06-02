@@ -11,13 +11,16 @@ import * as z from 'zod';
 export const scannerPolicyModeSchema = z.enum(['prompt', 'text']);
 export type ScannerPolicyMode = z.infer<typeof scannerPolicyModeSchema>;
 
-export const scannerPolicyStatusSchema = z.enum(['draft', 'ready', 'shipped', 'archived']);
-export type ScannerPolicyStatus = z.infer<typeof scannerPolicyStatusSchema>;
-
 /**
  * The full candidate as it lives in sysRedis. `id`, `policyHash`, and the
  * created/updated timestamps are server-assigned and never come from the
  * client.
+ *
+ * Two orthogonal flags drive UI placement and run inclusion:
+ *   - `archived`: the candidate is shelved. Removed from the main candidate
+ *     list and excluded from test runs.
+ *   - `active`: only meaningful when not archived. `true` means the candidate
+ *     will be scored in the next test run.
  */
 export const scannerPolicyCandidateSchema = z.object({
   id: z.string().min(1),
@@ -35,7 +38,7 @@ export const scannerPolicyCandidateSchema = z.object({
       'Label cannot contain `:` or leading/trailing whitespace'
     ),
   threshold: z.number().min(0).max(1),
-  status: scannerPolicyStatusSchema,
+  archived: z.boolean(),
   active: z.boolean(),
   policy: z.string().min(1).max(20_000),
   notes: z.string().max(5_000).optional(),
@@ -53,7 +56,7 @@ export const upsertCandidateInputSchema = z.object({
   mode: scannerPolicyModeSchema,
   label: scannerPolicyCandidateSchema.shape.label,
   threshold: z.number().min(0).max(1),
-  status: scannerPolicyStatusSchema,
+  archived: z.boolean().default(false),
   active: z.boolean().default(false),
   policy: z.string().min(1).max(20_000),
   notes: z.string().max(5_000).optional(),

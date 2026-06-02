@@ -181,96 +181,384 @@ export type ScoredResultRow = {
   runAt: string;
 };
 
-const RESULT_COLUMNS: Array<{ header: string; key: keyof ScoredResultRow; width: number }> = [
-  { header: 'contentHash', key: 'contentHash', width: 20 },
-  { header: 'candidateName', key: 'candidateName', width: 36 },
-  { header: 'candidateLabel', key: 'candidateLabel', width: 16 },
-  { header: 'candidateThreshold', key: 'candidateThreshold', width: 14 },
-  { header: 'policyHash', key: 'policyHash', width: 20 },
-  { header: 'score', key: 'score', width: 10 },
-  { header: 'triggered', key: 'triggered', width: 10 },
-  { header: 'expectedTrigger', key: 'expectedTrigger', width: 14 },
-  { header: 'correct', key: 'correct', width: 10 },
-  { header: 'verdictCategory', key: 'verdictCategory', width: 18 },
-  { header: 'errorMessage', key: 'errorMessage', width: 40 },
-  { header: 'runId', key: 'runId', width: 22 },
-  { header: 'runAt', key: 'runAt', width: 22 },
-  { header: 'candidatePolicy', key: 'candidatePolicy', width: 60 },
+const SUMMARY_SHEET = 'Summary';
+
+const SUMMARY_COLUMNS = [
+  { header: 'policyName', width: 36 },
+  { header: 'sheet', width: 24 },
+  { header: 'policyHash', width: 24 },
+  { header: 'label', width: 14 },
+  { header: 'threshold', width: 10 },
+  { header: 'testCases', width: 10 },
+  { header: 'tp', width: 6 },
+  { header: 'fp', width: 6 },
+  { header: 'tn', width: 6 },
+  { header: 'fn', width: 6 },
+  { header: 'recall', width: 10 },
+  { header: 'fpRate', width: 10 },
+  { header: 'accuracy', width: 10 },
+  { header: 'fpFixed', width: 9 },
+  { header: 'tpDropped', width: 10 },
+  { header: 'tpRecovered', width: 12 },
+  { header: 'tnNewlyFiring', width: 14 },
+  { header: 'errors', width: 8 },
+  { header: 'runId', width: 22 },
+  { header: 'runAt', width: 22 },
 ];
 
-/**
- * Merge per-row results into the workbook's `Results` sheet.
- *
- * Merge semantics:
- *   - Same (contentHash, policyHash) → row is overwritten
- *   - New (contentHash, policyHash) → appended
- *   - Existing rows whose policyHash isn't in the current `candidates` list
- *     are LEFT ALONE — they're historical evidence the mod wants to see.
- */
-export async function appendResultsToWorkbook(
-  workbook: ExcelJS.Workbook,
-  results: ScoredResultRow[]
-): Promise<Buffer> {
-  let sheet = workbook.getWorksheet(RESULTS_SHEET);
-  if (!sheet) {
-    sheet = workbook.addWorksheet(RESULTS_SHEET);
-    sheet.columns = RESULT_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
-    sheet.getRow(1).font = { bold: true };
-    sheet.views = [{ state: 'frozen', ySplit: 1 }];
-  } else {
-    // Sheet already exists — make sure columns are aligned (don't reorder
-    // existing data, just confirm key→column mapping). If columns is empty,
-    // populate from the headers we expect.
-    if (!sheet.columns || sheet.columns.length === 0) {
-      sheet.columns = RESULT_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
+const POLICY_HEADER_ROWS = 6; // metadata rows at top of each policy sheet
+const POLICY_DATA_HEADER_ROW = POLICY_HEADER_ROWS + 1;
+
+const POLICY_DATA_COLUMNS = [
+  { header: 'contentHash', width: 20 },
+  { header: 'score', width: 10 },
+  { header: 'triggered', width: 10 },
+  { header: 'expectedTrigger', width: 14 },
+  { header: 'correct', width: 10 },
+  { header: 'verdictCategory', width: 18 },
+  { header: 'errorMessage', width: 40 },
+];
+
+const ILLEGAL_SHEET_NAME_CHARS = /[:/\\?*[\]]/g;
+const MAX_SHEET_NAME_LEN = 31;
+
+type SummaryStats = {
+  policyName: string;
+  policyHash: string;
+  label: string;
+  threshold: number;
+  testCases: number;
+  tp: number;
+  fp: number;
+  tn: number;
+  fn: number;
+  errors: number;
+  fpFixed: number;
+  tpDropped: number;
+  tpRecovered: number;
+  tnNewlyFiring: number;
+  runId: string;
+  runAt: string;
+};
+
+function computeStatsForPolicy(rows: ScoredResultRow[]): Omit<
+  SummaryStats,
+  'policyName' | 'policyHash' | 'label' | 'threshold' | 'runId' | 'runAt'
+> {
+  let tp = 0;
+  let fp = 0;
+  let tn = 0;
+  let fn = 0;
+  let errors = 0;
+  let fpFixed = 0;
+  let tpDropped = 0;
+  let tpRecovered = 0;
+  let tnNewlyFiring = 0;
+  for (const r of rows) {
+    if (r.verdictCategory === 'error') {
+      errors++;
+      continue;
     }
+    if (r.expectedTrigger && r.triggered === true) tp++;
+    else if (r.expectedTrigger && r.triggered === false) fn++;
+    else if (!r.expectedTrigger && r.triggered === true) fp++;
+    else if (!r.expectedTrigger && r.triggered === false) tn++;
+    if (r.verdictCategory === 'fpFixed') fpFixed++;
+    else if (r.verdictCategory === 'tpDropped') tpDropped++;
+    else if (r.verdictCategory === 'tpRecovered') tpRecovered++;
+    else if (r.verdictCategory === 'tnNewlyFiring') tnNewlyFiring++;
+  }
+  return { testCases: rows.length, tp, fp, tn, fn, errors, fpFixed, tpDropped, tpRecovered, tnNewlyFiring };
+}
+
+function sanitizeSheetName(name: string, fallback: string): string {
+  const cleaned = name.replace(ILLEGAL_SHEET_NAME_CHARS, '').trim();
+  if (!cleaned) return fallback;
+  return cleaned.slice(0, MAX_SHEET_NAME_LEN);
+}
+
+/** Locate an existing per-policy sheet by its embedded hash (cell B2). */
+function findSheetByHash(workbook: ExcelJS.Workbook, policyHash: string): ExcelJS.Worksheet | null {
+  const reserved = new Set([INPUT_SHEET, META_SHEET, SUMMARY_SHEET, RESULTS_SHEET]);
+  let found: ExcelJS.Worksheet | null = null;
+  workbook.eachSheet((sheet) => {
+    if (found) return;
+    if (reserved.has(sheet.name)) return;
+    const v = sheet.getCell('B2').value;
+    if (typeof v === 'string' && v === policyHash) found = sheet;
+  });
+  return found;
+}
+
+function pickSheetName(
+  workbook: ExcelJS.Workbook,
+  policyName: string,
+  policyHash: string,
+  preserveSheet: ExcelJS.Worksheet | null
+): string {
+  // If we already have a sheet for this hash, reuse its name (no rename).
+  if (preserveSheet) return preserveSheet.name;
+
+  const base = sanitizeSheetName(policyName, `policy-${policyHash.slice(0, 8)}`);
+  // If the candidate name collides with an existing sheet, suffix with a hash.
+  const exists = (n: string) => !!workbook.getWorksheet(n);
+  if (!exists(base)) return base;
+  const suffix = `_${policyHash.slice(0, 6)}`;
+  const room = MAX_SHEET_NAME_LEN - suffix.length;
+  const trimmed = base.slice(0, room).trim();
+  return `${trimmed}${suffix}`;
+}
+
+function writePolicyDetailSheet(args: {
+  workbook: ExcelJS.Workbook;
+  policyName: string;
+  policyHash: string;
+  label: string;
+  threshold: number;
+  policyText: string;
+  runId: string;
+  runAt: string;
+  rows: ScoredResultRow[];
+}): string {
+  const existing = findSheetByHash(args.workbook, args.policyHash);
+  const sheetName = pickSheetName(args.workbook, args.policyName, args.policyHash, existing);
+
+  if (existing) args.workbook.removeWorksheet(existing.id);
+
+  const sheet = args.workbook.addWorksheet(sheetName);
+
+  // Header block — clearly identifies which policy this sheet belongs to.
+  sheet.getCell('A1').value = 'Policy';
+  sheet.getCell('A1').font = { bold: true };
+  sheet.getCell('B1').value = args.policyName;
+  sheet.getCell('A2').value = 'Hash';
+  sheet.getCell('A2').font = { bold: true };
+  sheet.getCell('B2').value = args.policyHash;
+  sheet.getCell('A3').value = 'Label';
+  sheet.getCell('A3').font = { bold: true };
+  sheet.getCell('B3').value = args.label;
+  sheet.getCell('A4').value = 'Threshold';
+  sheet.getCell('A4').font = { bold: true };
+  sheet.getCell('B4').value = args.threshold;
+  sheet.getCell('A5').value = 'Run';
+  sheet.getCell('A5').font = { bold: true };
+  sheet.getCell('B5').value = `${args.runId} @ ${args.runAt}`;
+  // Row 6 is intentionally left blank as a visual separator before the data table.
+
+  // Set column widths
+  for (let i = 0; i < POLICY_DATA_COLUMNS.length; i++) {
+    sheet.getColumn(i + 1).width = POLICY_DATA_COLUMNS[i].width;
   }
 
-  // Build a fast lookup: existing rowNumber by (contentHash, policyHash) so we
-  // can overwrite in place.
-  const headerRow = sheet.getRow(1);
+  // Data header row
+  const headerRow = sheet.getRow(POLICY_DATA_HEADER_ROW);
+  for (let i = 0; i < POLICY_DATA_COLUMNS.length; i++) {
+    headerRow.getCell(i + 1).value = POLICY_DATA_COLUMNS[i].header;
+  }
+  headerRow.font = { bold: true };
+
+  // Data rows
+  const sortedRows = [...args.rows].sort((a, b) => a.contentHash.localeCompare(b.contentHash));
+  for (let i = 0; i < sortedRows.length; i++) {
+    const r = sortedRows[i];
+    const row = sheet.getRow(POLICY_DATA_HEADER_ROW + 1 + i);
+    row.getCell(1).value = r.contentHash;
+    row.getCell(2).value = r.score;
+    row.getCell(3).value = r.triggered;
+    row.getCell(4).value = r.expectedTrigger;
+    row.getCell(5).value = r.correct;
+    row.getCell(6).value = r.verdictCategory;
+    row.getCell(7).value = r.errorMessage ?? null;
+  }
+
+  // Freeze the metadata header + the data header row.
+  sheet.views = [{ state: 'frozen', ySplit: POLICY_DATA_HEADER_ROW }];
+
+  return sheetName;
+}
+
+function upsertSummarySheet(
+  workbook: ExcelJS.Workbook,
+  newRows: Array<SummaryStats & { sheetName: string }>
+): void {
+  let sheet = workbook.getWorksheet(SUMMARY_SHEET);
+  if (!sheet) {
+    sheet = workbook.addWorksheet(SUMMARY_SHEET);
+    for (let i = 0; i < SUMMARY_COLUMNS.length; i++) {
+      sheet.getColumn(i + 1).width = SUMMARY_COLUMNS[i].width;
+    }
+    const header = sheet.getRow(1);
+    for (let i = 0; i < SUMMARY_COLUMNS.length; i++) {
+      header.getCell(i + 1).value = SUMMARY_COLUMNS[i].header;
+    }
+    header.font = { bold: true };
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+  }
+
+  // Build column index from current header row (tolerates added/removed columns).
   const colIndex: Record<string, number> = {};
+  const headerRow = sheet.getRow(1);
   for (let i = 1; i <= sheet.columnCount; i++) {
     const v = headerRow.getCell(i).value;
     if (typeof v === 'string') colIndex[v] = i;
   }
-  // Force-add any missing columns (e.g. workbook authored before a new field).
-  let nextCol = sheet.columnCount + 1;
-  for (const col of RESULT_COLUMNS) {
-    if (!colIndex[col.header]) {
-      sheet.getRow(1).getCell(nextCol).value = col.header;
-      sheet.getRow(1).getCell(nextCol).font = { bold: true };
-      const sheetCol = sheet.getColumn(nextCol);
-      sheetCol.key = col.key;
-      sheetCol.width = col.width;
-      colIndex[col.header] = nextCol;
-      nextCol++;
+
+  // Map existing rows by policyHash so we update in place.
+  const hashCol = colIndex.policyHash;
+  const existingByHash = new Map<string, number>();
+  if (hashCol) {
+    for (let i = 2; i <= sheet.rowCount; i++) {
+      const r = sheet.getRow(i);
+      if (!r.hasValues) continue;
+      const ph = String(r.getCell(hashCol).value ?? '');
+      if (ph) existingByHash.set(ph, i);
     }
   }
 
-  const existingByKey = new Map<string, number>();
-  for (let i = 2; i <= sheet.rowCount; i++) {
-    const row = sheet.getRow(i);
-    if (!row.hasValues) continue;
-    const ch = String(row.getCell(colIndex.contentHash).value ?? '');
-    const ph = String(row.getCell(colIndex.policyHash).value ?? '');
-    if (!ch || !ph) continue;
-    existingByKey.set(`${ch}|${ph}`, i);
-  }
-
-  for (const r of results) {
-    const key = `${r.contentHash}|${r.policyHash}`;
-    const targetRow = existingByKey.get(key) ?? sheet.rowCount + 1;
-    for (const col of RESULT_COLUMNS) {
-      const idx = colIndex[col.header];
-      if (!idx) continue;
-      const v = (r as unknown as Record<string, unknown>)[col.key];
-      sheet.getRow(targetRow).getCell(idx).value =
-        v === undefined ? null : (v as ExcelJS.CellValue);
+  for (const s of newRows) {
+    const targetRow = existingByHash.get(s.policyHash) ?? sheet.rowCount + 1;
+    const accuracy = s.testCases - s.errors > 0 ? (s.tp + s.tn) / (s.testCases - s.errors) : 0;
+    const recall = s.tp + s.fn > 0 ? s.tp / (s.tp + s.fn) : 0;
+    const fpRate = s.fp + s.tn > 0 ? s.fp / (s.fp + s.tn) : 0;
+    const values: Record<string, ExcelJS.CellValue> = {
+      policyName: s.policyName,
+      sheet: s.sheetName,
+      policyHash: s.policyHash,
+      label: s.label,
+      threshold: s.threshold,
+      testCases: s.testCases,
+      tp: s.tp,
+      fp: s.fp,
+      tn: s.tn,
+      fn: s.fn,
+      recall: Number(recall.toFixed(4)),
+      fpRate: Number(fpRate.toFixed(4)),
+      accuracy: Number(accuracy.toFixed(4)),
+      fpFixed: s.fpFixed,
+      tpDropped: s.tpDropped,
+      tpRecovered: s.tpRecovered,
+      tnNewlyFiring: s.tnNewlyFiring,
+      errors: s.errors,
+      runId: s.runId,
+      runAt: s.runAt,
+    };
+    for (const [k, v] of Object.entries(values)) {
+      const idx = colIndex[k];
+      if (idx) sheet.getRow(targetRow).getCell(idx).value = v;
     }
     sheet.getRow(targetRow).commit();
-    existingByKey.set(key, targetRow);
+    existingByHash.set(s.policyHash, targetRow);
   }
+}
+
+/**
+ * Write run results into the workbook as:
+ *   - Summary: one row per policyHash (re-running a hash updates its row;
+ *     new hashes append; historical hashes are left alone unless the
+ *     candidate is archived — see `archivedPolicyHashes`).
+ *   - One detail sheet per policy, headered with policy name / hash / label
+ *     / threshold / run, then a contentHash-keyed per-row results table.
+ *
+ * `archivedPolicyHashes` (optional): hashes of candidates the moderator has
+ * archived. Existing sheets and Summary rows for these hashes are removed
+ * from the workbook during the merge, and any incoming results for them are
+ * filtered out. This keeps an active workbook focused on the policies still
+ * under active consideration.
+ *
+ * The legacy single "Results" sheet (from earlier runs) is removed when this
+ * function fires so workbooks don't keep a stale view.
+ */
+export async function appendResultsToWorkbook(
+  workbook: ExcelJS.Workbook,
+  results: ScoredResultRow[],
+  archivedPolicyHashes: Set<string> = new Set()
+): Promise<Buffer> {
+  // Drop the legacy single-sheet view from previous runs, if present.
+  const legacy = workbook.getWorksheet(RESULTS_SHEET);
+  if (legacy) workbook.removeWorksheet(legacy.id);
+
+  // Prune existing per-policy sheets whose policyHash has been archived.
+  if (archivedPolicyHashes.size > 0) {
+    const sheetsToRemove: number[] = [];
+    const reserved = new Set([INPUT_SHEET, META_SHEET, SUMMARY_SHEET, RESULTS_SHEET]);
+    workbook.eachSheet((sheet) => {
+      if (reserved.has(sheet.name)) return;
+      const v = sheet.getCell('B2').value;
+      if (typeof v === 'string' && archivedPolicyHashes.has(v)) {
+        sheetsToRemove.push(sheet.id);
+      }
+    });
+    for (const id of sheetsToRemove) workbook.removeWorksheet(id);
+
+    // Prune Summary rows for archived hashes.
+    const summarySheet = workbook.getWorksheet(SUMMARY_SHEET);
+    if (summarySheet) {
+      const headerRow = summarySheet.getRow(1);
+      let hashCol = 0;
+      for (let i = 1; i <= summarySheet.columnCount; i++) {
+        if (headerRow.getCell(i).value === 'policyHash') {
+          hashCol = i;
+          break;
+        }
+      }
+      if (hashCol) {
+        // Walk bottom-up so row deletion doesn't shift indices we still need.
+        for (let i = summarySheet.rowCount; i >= 2; i--) {
+          const ph = String(summarySheet.getRow(i).getCell(hashCol).value ?? '');
+          if (ph && archivedPolicyHashes.has(ph)) {
+            summarySheet.spliceRows(i, 1);
+          }
+        }
+      }
+    }
+  }
+
+  // Filter the incoming results too — defensive in case an archived candidate
+  // somehow made it into the run (shouldn't, but cheap guard).
+  const liveResults =
+    archivedPolicyHashes.size > 0
+      ? results.filter((r) => !archivedPolicyHashes.has(r.policyHash))
+      : results;
+
+  // Group results by policyHash. Multiple rows in a run can share a hash
+  // (one per contentHash); we use the first row's metadata for the policy
+  // header (they're all the same for a given hash).
+  const byHash = new Map<string, ScoredResultRow[]>();
+  for (const r of liveResults) {
+    if (!byHash.has(r.policyHash)) byHash.set(r.policyHash, []);
+    byHash.get(r.policyHash)!.push(r);
+  }
+
+  const summaries: Array<SummaryStats & { sheetName: string }> = [];
+
+  for (const [policyHash, rows] of byHash.entries()) {
+    const first = rows[0];
+    const sheetName = writePolicyDetailSheet({
+      workbook,
+      policyName: first.candidateName,
+      policyHash,
+      label: first.candidateLabel,
+      threshold: first.candidateThreshold,
+      policyText: first.candidatePolicy,
+      runId: first.runId,
+      runAt: first.runAt,
+      rows,
+    });
+
+    const stats = computeStatsForPolicy(rows);
+    summaries.push({
+      ...stats,
+      policyName: first.candidateName,
+      policyHash,
+      label: first.candidateLabel,
+      threshold: first.candidateThreshold,
+      runId: first.runId,
+      runAt: first.runAt,
+      sheetName,
+    });
+  }
+
+  upsertSummarySheet(workbook, summaries);
 
   return Buffer.from(await workbook.xlsx.writeBuffer());
 }
@@ -313,7 +601,10 @@ export function pickBaselineCandidate(
   candidates: ScannerPolicyCandidate[]
 ): ScannerPolicyCandidate | null {
   if (candidates.length === 0) return null;
-  return candidates.find((c) => c.status === 'shipped') ?? candidates[0];
+  // Baseline is the first candidate in the run order (typically the live
+  // policy if seeded first, otherwise just whatever's first). The vsBaseline
+  // diff is meaningful only relative to that choice.
+  return candidates[0] ?? null;
 }
 
 export const SCANNER_POLICY_SHEETS = {

@@ -427,6 +427,14 @@ async function finalizeRun(runId: string): Promise<void> {
 
   const filledResults = allResults.filter(Boolean);
 
+  // Compute the set of policyHashes that have since been archived. Their
+  // existing data in the workbook gets pruned during the merge so the workbook
+  // stays focused on policies the moderator still considers in play.
+  const currentCandidates = await listCandidates({ mode: state.mode, label: state.label });
+  const archivedPolicyHashes = new Set(
+    currentCandidates.filter((c) => c.archived).map((c) => c.policyHash)
+  );
+
   // Pull the workbook from S3, append/merge the Results sheet, write back.
   const s3 = getS3Client();
   const obj = await s3.send(
@@ -434,7 +442,11 @@ async function finalizeRun(runId: string): Promise<void> {
   );
   const bytes = await streamToBuffer(obj.Body as NodeJS.ReadableStream);
   const parsed = await parseInputWorkbook(bytes);
-  const outBuffer = await appendResultsToWorkbook(parsed.workbook, filledResults);
+  const outBuffer = await appendResultsToWorkbook(
+    parsed.workbook,
+    filledResults,
+    archivedPolicyHashes
+  );
 
   await s3.send(
     new PutObjectCommand({

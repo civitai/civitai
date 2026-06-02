@@ -14,6 +14,7 @@
  * See docs/scanner-policies/PLAN.md for the full design.
  */
 import {
+  Accordion,
   ActionIcon,
   Alert,
   Anchor,
@@ -21,6 +22,7 @@ import {
   Box,
   Button,
   Card,
+  Code,
   Collapse,
   Group,
   Loader,
@@ -28,10 +30,10 @@ import {
   Progress,
   ScrollArea,
   SegmentedControl,
-  Select,
   Stack,
   Switch,
   Table,
+  Tabs,
   Text,
   TextInput,
   Textarea,
@@ -40,6 +42,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import {
+  IconArchive,
   IconChevronRight,
   IconDownload,
   IconPlayerPlayFilled,
@@ -47,6 +50,7 @@ import {
   IconPlus,
   IconTrash,
 } from '@tabler/icons-react';
+import type { MouseEvent } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
 import { useScannerPolicyTestSignal } from '~/components/Signals/ScannerPolicyTestSignal';
@@ -54,7 +58,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type {
   ScannerPolicyCandidate,
   ScannerPolicyMode,
-  ScannerPolicyStatus,
   ScannerPolicyTestProgressData,
 } from '~/server/schema/scanner-policies.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -71,17 +74,17 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const STATUS_COLOR: Record<ScannerPolicyStatus, string> = {
-  draft: 'gray',
-  ready: 'blue',
-  shipped: 'green',
-  archived: 'dark',
-};
-
 type RunState =
   | { phase: 'idle' }
   | { phase: 'starting'; datasetId: string }
-  | { phase: 'running'; runId: string; datasetId: string; processed: number; total: number; currentCandidate?: string }
+  | {
+      phase: 'running';
+      runId: string;
+      datasetId: string;
+      processed: number;
+      total: number;
+      currentCandidate?: string;
+    }
   | { phase: 'cancelling'; runId: string; datasetId: string; processed: number; total: number }
   | { phase: 'done'; runId: string; datasetId: string }
   | { phase: 'cancelled'; runId: string; datasetId?: string }
@@ -97,7 +100,6 @@ export default function ScannerPoliciesPage() {
   const [draftCandidate, setDraftCandidate] = useState<{
     name: string;
     threshold: number;
-    status: ScannerPolicyStatus;
     policy: string;
     notes: string;
   } | null>(null);
@@ -209,7 +211,10 @@ export default function ScannerPoliciesPage() {
             total: data.total,
           };
         }
-        if (data.phase === 'progress' && (prev.phase === 'running' || prev.phase === 'cancelling')) {
+        if (
+          data.phase === 'progress' &&
+          (prev.phase === 'running' || prev.phase === 'cancelling')
+        ) {
           return {
             phase: prev.phase,
             runId: data.runId,
@@ -264,8 +269,9 @@ export default function ScannerPoliciesPage() {
     setDraftCandidate({
       name: '',
       threshold: 0.5,
-      status: 'draft',
-      policy: `- x: Civitai ${mode === 'prompt' ? 'Prompt' : 'Text'} ${selectedLabel}\n  - ...\n  - For this binary check, only use x or sec.`,
+      policy: `- x: Civitai ${
+        mode === 'prompt' ? 'Prompt' : 'Text'
+      } ${selectedLabel}\n  - ...\n  - For this binary check, only use x or sec.`,
       notes: '',
     });
   };
@@ -275,7 +281,6 @@ export default function ScannerPoliciesPage() {
     setDraftCandidate({
       name: c.name,
       threshold: c.threshold,
-      status: c.status,
       policy: c.policy,
       notes: c.notes ?? '',
     });
@@ -289,7 +294,7 @@ export default function ScannerPoliciesPage() {
       mode,
       label: selectedLabel,
       threshold: draftCandidate.threshold,
-      status: draftCandidate.status,
+      archived: editingCandidate?.archived ?? false,
       active: editingCandidate?.active ?? false,
       policy: draftCandidate.policy,
       notes: draftCandidate.notes || undefined,
@@ -304,9 +309,11 @@ export default function ScannerPoliciesPage() {
       mode,
       label: name,
       threshold: 0.5,
-      status: 'draft',
+      archived: false,
       active: false,
-      policy: `- x: Civitai ${mode === 'prompt' ? 'Prompt' : 'Text'} ${name}\n  - ...\n  - For this binary check, only use x or sec.`,
+      policy: `- x: Civitai ${
+        mode === 'prompt' ? 'Prompt' : 'Text'
+      } ${name}\n  - ...\n  - For this binary check, only use x or sec.`,
     });
     setNewLabelName('');
     setSelectedLabel(name);
@@ -337,7 +344,66 @@ export default function ScannerPoliciesPage() {
     }
   };
 
-  const activeCount = candidates.filter((c) => c.active).length;
+  const activeCount = candidates.filter((c) => c.active && !c.archived).length;
+  const candidatesCount = candidates.filter((c) => !c.archived).length;
+  const archivedCount = candidates.filter((c) => c.archived).length;
+
+  const [candidateTab, setCandidateTab] = useState<'candidates' | 'archived'>('candidates');
+  useEffect(() => {
+    // If the current tab is empty, slide to whichever has content.
+    if (candidateTab === 'candidates' && candidatesCount === 0 && archivedCount > 0) {
+      setCandidateTab('archived');
+    }
+  }, [selectedLabel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sort: active first (so they cluster at the top), then alphabetical by name.
+  const sortCandidates = (list: ScannerPolicyCandidate[]) =>
+    [...list].sort(
+      (a, b) => Number(b.active) - Number(a.active) || a.name.localeCompare(b.name)
+    );
+
+  const candidatesInTab = sortCandidates(
+    candidates.filter((c) => (candidateTab === 'archived' ? c.archived : !c.archived))
+  );
+
+  const handleArchive = (c: ScannerPolicyCandidate) => {
+    upsertM.mutate({
+      id: c.id,
+      name: c.name,
+      mode: c.mode,
+      label: c.label,
+      threshold: c.threshold,
+      archived: true,
+      active: false,
+      policy: c.policy,
+      notes: c.notes,
+    });
+  };
+
+  const handleUnarchive = (c: ScannerPolicyCandidate) => {
+    upsertM.mutate({
+      id: c.id,
+      name: c.name,
+      mode: c.mode,
+      label: c.label,
+      threshold: c.threshold,
+      archived: false,
+      active: false,
+      policy: c.policy,
+      notes: c.notes,
+    });
+  };
+
+  const handleDeletePermanently = (c: ScannerPolicyCandidate) => {
+    if (
+      !window.confirm(
+        `Permanently delete "${c.name}"? Removes the candidate from sysRedis and can't be undone.`
+      )
+    ) {
+      return;
+    }
+    deleteCandidateM.mutate({ mode, label: c.label, id: c.id });
+  };
 
   const handleRun = (datasetId: string) => {
     if (activeCount === 0) {
@@ -550,18 +616,25 @@ export default function ScannerPoliciesPage() {
                       >
                         Add candidate
                       </Button>
-                      {candidates.length === 0 && (
-                        <Button
-                          size="xs"
-                          color="red"
-                          variant="subtle"
-                          leftSection={<IconTrash size={14} />}
-                          onClick={() => deleteLabelM.mutate({ mode, label: selectedLabel })}
-                          loading={deleteLabelM.isLoading}
-                        >
-                          Delete empty label
-                        </Button>
-                      )}
+                      {/* Only surface once we KNOW the label is empty — `isLoading`
+                          is true on the initial fetch (before any data), `isFetching` is
+                          true on any in-flight refetch (e.g. after switching labels).
+                          Hiding during both guards against accidentally clicking
+                          "Delete empty label" while candidates are still loading. */}
+                      {candidatesQ.isSuccess &&
+                        !candidatesQ.isFetching &&
+                        candidates.length === 0 && (
+                          <Button
+                            size="xs"
+                            color="red"
+                            variant="subtle"
+                            leftSection={<IconTrash size={14} />}
+                            onClick={() => deleteLabelM.mutate({ mode, label: selectedLabel })}
+                            loading={deleteLabelM.isLoading}
+                          >
+                            Delete empty label
+                          </Button>
+                        )}
                     </Group>
                   </Group>
 
@@ -570,116 +643,170 @@ export default function ScannerPoliciesPage() {
                   ) : candidates.length === 0 ? (
                     <Text c="dimmed">No candidates yet. Click "Add candidate" to start.</Text>
                   ) : (
-                    <Table withTableBorder withColumnBorders verticalSpacing="xs" fz="sm">
-                      <Table.Thead>
-                        <Table.Tr>
-                          <Table.Th style={{ width: 80 }}>Active</Table.Th>
-                          <Table.Th>Name</Table.Th>
-                          <Table.Th style={{ width: 90 }}>Status</Table.Th>
-                          <Table.Th style={{ width: 90 }}>Threshold</Table.Th>
-                          <Table.Th style={{ width: 60 }}></Table.Th>
-                        </Table.Tr>
-                      </Table.Thead>
-                      <Table.Tbody>
-                        {candidates.map((c) => (
-                          <Table.Tr key={c.id}>
-                            <Table.Td>
-                              <Switch
-                                checked={c.active}
-                                onChange={(e) =>
-                                  setActiveM.mutate({
-                                    mode,
-                                    label: selectedLabel,
-                                    id: c.id,
-                                    active: e.currentTarget.checked,
-                                  })
-                                }
-                              />
-                            </Table.Td>
-                            <Table.Td>
-                              <Anchor onClick={() => handleEditCandidate(c)} size="sm">
-                                {c.name}
-                              </Anchor>
-                              {c.notes && (
-                                <Text size="xs" c="dimmed" lineClamp={2} mt={2}>
-                                  {c.notes}
-                                </Text>
-                              )}
-                            </Table.Td>
-                            <Table.Td>
-                              <Select
-                                value={c.status}
-                                onChange={(v) => {
-                                  if (!v || v === c.status) return;
-                                  upsertM.mutate({
-                                    id: c.id,
-                                    name: c.name,
-                                    mode: c.mode,
-                                    label: c.label,
-                                    threshold: c.threshold,
-                                    status: v as ScannerPolicyStatus,
-                                    active: c.active,
-                                    policy: c.policy,
-                                    notes: c.notes,
-                                  });
-                                }}
-                                data={['draft', 'ready', 'shipped', 'archived']}
-                                size="xs"
-                                allowDeselect={false}
-                                styles={{
-                                  input: {
-                                    minHeight: 24,
-                                    height: 24,
-                                    fontSize: 11,
-                                    padding: '0 22px 0 8px',
-                                    color: `var(--mantine-color-${STATUS_COLOR[c.status]}-7)`,
-                                    fontWeight: 600,
-                                  },
-                                }}
-                              />
-                            </Table.Td>
-                            <Table.Td>
-                              <InlineThresholdCell
-                                candidate={c}
-                                onSave={(next) =>
-                                  upsertM.mutate({
-                                    id: c.id,
-                                    name: c.name,
-                                    mode: c.mode,
-                                    label: c.label,
-                                    threshold: next,
-                                    status: c.status,
-                                    active: c.active,
-                                    policy: c.policy,
-                                    notes: c.notes,
-                                  })
-                                }
-                              />
-                            </Table.Td>
-                            <Table.Td>
-                              <ActionIcon
-                                variant="subtle"
-                                color="red"
-                                onClick={() =>
-                                  deleteCandidateM.mutate({
-                                    mode,
-                                    label: selectedLabel,
-                                    id: c.id,
-                                  })
-                                }
-                                title="Delete candidate"
-                              >
-                                <IconTrash size={14} />
-                              </ActionIcon>
-                            </Table.Td>
-                          </Table.Tr>
-                        ))}
-                      </Table.Tbody>
-                    </Table>
+                    <Tabs
+                      value={candidateTab}
+                      onChange={(v) => setCandidateTab((v as typeof candidateTab) ?? 'candidates')}
+                      keepMounted={false}
+                    >
+                      <Tabs.List>
+                        <Tabs.Tab value="candidates">
+                          Candidates{' '}
+                          <Badge size="xs" variant="light" ml={6}>
+                            {candidatesCount}
+                          </Badge>
+                          {activeCount > 0 && (
+                            <Badge size="xs" variant="filled" color="blue" ml={4}>
+                              {activeCount} active
+                            </Badge>
+                          )}
+                        </Tabs.Tab>
+                        <Tabs.Tab value="archived">
+                          Archived{' '}
+                          <Badge size="xs" variant="light" color="gray" ml={6}>
+                            {archivedCount}
+                          </Badge>
+                        </Tabs.Tab>
+                      </Tabs.List>
+
+                      <Tabs.Panel value={candidateTab} pt="sm">
+                        {candidatesInTab.length === 0 ? (
+                          <Text size="sm" c="dimmed">
+                            No {candidateTab} candidates for this label.
+                          </Text>
+                        ) : (
+                          <Accordion
+                            multiple
+                            variant="separated"
+                            chevronPosition="right"
+                            styles={{
+                              item: {
+                                borderColor: 'var(--mantine-color-gray-3)',
+                              },
+                              control: { padding: '6px 12px' },
+                              content: { padding: '0 12px 12px' },
+                            }}
+                          >
+                            {candidatesInTab.map((c) => (
+                              <Accordion.Item key={c.id} value={c.id}>
+                                <Group gap="xs" wrap="nowrap" align="center" px="xs">
+                                  <Switch
+                                    checked={c.active}
+                                    disabled={c.archived}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onChange={(e) =>
+                                      setActiveM.mutate({
+                                        mode,
+                                        label: selectedLabel,
+                                        id: c.id,
+                                        active: e.currentTarget.checked,
+                                      })
+                                    }
+                                    aria-label={`Toggle ${c.name} active`}
+                                  />
+                                  <Box style={{ flex: 1, minWidth: 0 }}>
+                                    <Accordion.Control style={{ padding: '6px 8px' }}>
+                                      <Group gap="xs" wrap="nowrap">
+                                        <Text
+                                          fw={600}
+                                          size="sm"
+                                          style={{ flex: 1, minWidth: 0 }}
+                                          lineClamp={1}
+                                        >
+                                          {c.name}
+                                        </Text>
+                                        <Text size="xs" c="dimmed" w={60} ta="right">
+                                          thr {c.threshold}
+                                        </Text>
+                                      </Group>
+                                    </Accordion.Control>
+                                  </Box>
+                                  {candidateTab === 'archived' ? (
+                                    <>
+                                      <ActionIcon
+                                        variant="subtle"
+                                        onClick={(e: MouseEvent) => {
+                                          e.stopPropagation();
+                                          handleUnarchive(c);
+                                        }}
+                                        title="Restore (unarchive)"
+                                      >
+                                        <IconArchive size={14} />
+                                      </ActionIcon>
+                                      <ActionIcon
+                                        variant="subtle"
+                                        color="red"
+                                        onClick={(e: MouseEvent) => {
+                                          e.stopPropagation();
+                                          handleDeletePermanently(c);
+                                        }}
+                                        title="Delete permanently"
+                                      >
+                                        <IconTrash size={14} />
+                                      </ActionIcon>
+                                    </>
+                                  ) : (
+                                    <ActionIcon
+                                      variant="subtle"
+                                      onClick={(e: MouseEvent) => {
+                                        e.stopPropagation();
+                                        handleArchive(c);
+                                      }}
+                                      title="Archive"
+                                    >
+                                      <IconArchive size={14} />
+                                    </ActionIcon>
+                                  )}
+                                </Group>
+                                <Accordion.Panel>
+                                  <Stack gap="xs" pt="xs">
+                                    {c.notes && (
+                                      <Text size="sm">
+                                        <Text component="span" fw={600}>
+                                          Notes:{' '}
+                                        </Text>
+                                        {c.notes}
+                                      </Text>
+                                    )}
+                                    <Box>
+                                      <Text size="xs" c="dimmed" mb={4}>
+                                        Policy text ({c.policy.length} chars)
+                                      </Text>
+                                      <Code
+                                        block
+                                        style={{
+                                          maxHeight: 260,
+                                          overflow: 'auto',
+                                          fontSize: 11,
+                                          whiteSpace: 'pre-wrap',
+                                        }}
+                                      >
+                                        {c.policy}
+                                      </Code>
+                                    </Box>
+                                    <Group justify="flex-end">
+                                      <Button
+                                        size="xs"
+                                        variant="default"
+                                        onClick={() => handleEditCandidate(c)}
+                                      >
+                                        Open in editor
+                                      </Button>
+                                    </Group>
+                                  </Stack>
+                                </Accordion.Panel>
+                              </Accordion.Item>
+                            ))}
+                          </Accordion>
+                        )}
+                      </Tabs.Panel>
+                    </Tabs>
                   )}
 
                   {draftCandidate && (
-                    <Card withBorder bg="var(--mantine-color-gray-0)">
+                    <Card
+                      withBorder
+                      bg="light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6))"
+                    >
                       <Stack gap="sm">
                         <Group justify="space-between">
                           <Text fw={600}>
@@ -723,17 +850,6 @@ export default function ScannerPoliciesPage() {
                             step={0.05}
                             decimalScale={2}
                           />
-                          <Select
-                            label="Status"
-                            value={draftCandidate.status}
-                            onChange={(v) =>
-                              setDraftCandidate({
-                                ...draftCandidate,
-                                status: (v ?? 'draft') as ScannerPolicyStatus,
-                              })
-                            }
-                            data={['draft', 'ready', 'shipped', 'archived']}
-                          />
                         </Group>
                         <Textarea
                           label="Notes"
@@ -760,7 +876,9 @@ export default function ScannerPoliciesPage() {
                           autosize
                           minRows={10}
                           maxRows={30}
-                          styles={{ input: { fontFamily: 'ui-monospace, monospace', fontSize: 12 } }}
+                          styles={{
+                            input: { fontFamily: 'ui-monospace, monospace', fontSize: 12 },
+                          }}
                         />
                         <Group justify="flex-end">
                           <Button
@@ -804,8 +922,8 @@ export default function ScannerPoliciesPage() {
                   </Group>
                   <Text size="xs" c="dimmed" style={{ maxWidth: 480 }}>
                     Exports majority-voted moderator verdicts for ({mode}, {selectedLabel}),
-                    stratified across TP/FP/TN/FN. Each dataset's workbook lives in S3 — runs
-                    score active candidates against it and merge results into the same file.
+                    stratified across TP/FP/TN/FN. Each dataset's workbook lives in S3 — runs score
+                    active candidates against it and merge results into the same file.
                   </Text>
                 </Group>
 
@@ -890,7 +1008,7 @@ export default function ScannerPoliciesPage() {
                                       </Text>
                                     </Tooltip>
                                     <Text size="xs" c="dimmed">
-                                      {(d.lastRunCandidateIds?.length ?? 0)} candidate
+                                      {d.lastRunCandidateIds?.length ?? 0} candidate
                                       {(d.lastRunCandidateIds?.length ?? 0) === 1 ? '' : 's'}
                                     </Text>
                                   </Stack>
@@ -937,8 +1055,10 @@ export default function ScannerPoliciesPage() {
                                     loading={isThisRunning}
                                     disabled={
                                       activeCount === 0 ||
-                                      (runState.phase === 'running' && runState.datasetId !== d.id) ||
-                                      (runState.phase === 'cancelling' && runState.datasetId !== d.id)
+                                      (runState.phase === 'running' &&
+                                        runState.datasetId !== d.id) ||
+                                      (runState.phase === 'cancelling' &&
+                                        runState.datasetId !== d.id)
                                     }
                                   >
                                     Run tests
@@ -966,59 +1086,3 @@ export default function ScannerPoliciesPage() {
   );
 }
 
-/**
- * Inline threshold editor. Holds a local draft; commits via `onSave` only on
- * Enter or blur (NOT on every keystroke), and resets on Escape. The visible
- * value stays in sync with the persisted candidate after a save round-trips
- * through the listCandidates query.
- */
-function InlineThresholdCell({
-  candidate,
-  onSave,
-}: {
-  candidate: ScannerPolicyCandidate;
-  onSave: (next: number) => void;
-}) {
-  const [draft, setDraft] = useState<number | string>(candidate.threshold);
-  // Re-sync if the persisted value changes from under us (e.g. another tab edited it)
-  useEffect(() => {
-    setDraft(candidate.threshold);
-  }, [candidate.threshold]);
-
-  const commit = () => {
-    const next = typeof draft === 'number' ? draft : Number(draft);
-    if (!Number.isFinite(next) || next === candidate.threshold) {
-      setDraft(candidate.threshold);
-      return;
-    }
-    if (next < 0 || next > 1) {
-      setDraft(candidate.threshold);
-      return;
-    }
-    onSave(next);
-  };
-
-  return (
-    <NumberInput
-      value={draft}
-      onChange={setDraft}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          commit();
-          (e.currentTarget as HTMLInputElement).blur();
-        } else if (e.key === 'Escape') {
-          setDraft(candidate.threshold);
-          (e.currentTarget as HTMLInputElement).blur();
-        }
-      }}
-      min={0}
-      max={1}
-      step={0.05}
-      decimalScale={2}
-      size="xs"
-      hideControls
-      styles={{ input: { width: 64, fontSize: 12 } }}
-    />
-  );
-}
