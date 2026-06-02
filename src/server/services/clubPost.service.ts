@@ -9,7 +9,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { createEntityImages, getImagesForPosts, ingestImage } from '~/server/services/image.service';
+import {
+  createEntityImages,
+  getImagesForPosts,
+  enqueueImageIngestion,
+} from '~/server/services/image.service';
 import { userContributingClubs } from '~/server/services/club.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type { GetModelsWithImagesAndModelVersions } from './model.service';
@@ -51,12 +55,10 @@ export const getAllClubPosts = async <TSelect extends Prisma.ClubPostSelect>({
             },
           },
         } as const;
-        return dbRead.club
-          .findUniqueOrThrow(clubFindArgs)
-          .catch(() => {
-            dbReadFallbackCounter.inc({ entity: 'club', caller: 'getAllClubPosts' });
-            return dbWrite.club.findUniqueOrThrow(clubFindArgs);
-          });
+        return dbRead.club.findUniqueOrThrow(clubFindArgs).catch(() => {
+          dbReadFallbackCounter.inc({ entity: 'club', caller: 'getAllClubPosts' });
+          return dbWrite.club.findUniqueOrThrow(clubFindArgs);
+        });
       })()
     : undefined;
 
@@ -103,12 +105,10 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
       id,
     },
   } as const;
-  const post = await dbRead.clubPost
-    .findUniqueOrThrow(postFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'getClubPostById' });
-      return dbWrite.clubPost.findUniqueOrThrow(postFindArgs);
-    });
+  const post = await dbRead.clubPost.findUniqueOrThrow(postFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'getClubPostById' });
+    return dbWrite.clubPost.findUniqueOrThrow(postFindArgs);
+  });
 
   const clubWithMembership = userId
     ? await (async () => {
@@ -123,12 +123,10 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
             },
           },
         } as const;
-        return dbRead.club
-          .findUniqueOrThrow(clubMemberFindArgs)
-          .catch(() => {
-            dbReadFallbackCounter.inc({ entity: 'club', caller: 'getClubPostById' });
-            return dbWrite.club.findUniqueOrThrow(clubMemberFindArgs);
-          });
+        return dbRead.club.findUniqueOrThrow(clubMemberFindArgs).catch(() => {
+          dbReadFallbackCounter.inc({ entity: 'club', caller: 'getClubPostById' });
+          return dbWrite.club.findUniqueOrThrow(clubMemberFindArgs);
+        });
       })()
     : undefined;
 
@@ -149,12 +147,10 @@ export const getClubPostById = async <TSelect extends Prisma.ClubPostSelect>({
       id,
     },
   } as const;
-  return dbRead.clubPost
-    .findUniqueOrThrow(clubPostDetailFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'getClubPostById' });
-      return dbWrite.clubPost.findUniqueOrThrow(clubPostDetailFindArgs);
-    });
+  return dbRead.clubPost.findUniqueOrThrow(clubPostDetailFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'getClubPostById' });
+    return dbWrite.clubPost.findUniqueOrThrow(clubPostDetailFindArgs);
+  });
 };
 
 export const upsertClubPost = async ({
@@ -201,17 +197,11 @@ export const upsertClubPost = async ({
         })
       : [];
 
-  if (createdCoverImage) {
-    ingestImage({ image: createdCoverImage }).catch((error) => {
-      logToAxiom({
-        name: 'club-post-image-ingest',
-        type: 'error',
-        userId: userClub.userId,
-        imageId: createdCoverImage.id,
-        message: error instanceof Error ? error.message : String(error),
-      }).catch(() => {});
-    });
-  }
+  enqueueImageIngestion({
+    images: createdCoverImage ? [createdCoverImage] : [],
+    name: 'club-post-image-ingest',
+    userId: userClub.userId,
+  });
 
   if (input.id) {
     const post = await dbClient.clubPost.update({
@@ -251,12 +241,10 @@ export const deleteClubPost = async ({
   const deletePostFindArgs = {
     where: { id },
   } as const;
-  const post = await dbRead.clubPost
-    .findUniqueOrThrow(deletePostFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'deleteClubPost' });
-      return dbWrite.clubPost.findUniqueOrThrow(deletePostFindArgs);
-    });
+  const post = await dbRead.clubPost.findUniqueOrThrow(deletePostFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'clubPost', caller: 'deleteClubPost' });
+    return dbWrite.clubPost.findUniqueOrThrow(deletePostFindArgs);
+  });
 
   const [userClub] = await userContributingClubs({ userId, clubIds: [post.clubId] });
 

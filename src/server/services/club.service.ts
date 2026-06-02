@@ -28,7 +28,7 @@ import {
   entityOwnership,
   entityRequiresClub,
 } from '~/server/services/common.service';
-import { createEntityImages, ingestImage } from '~/server/services/image.service';
+import { createEntityImages, enqueueImageIngestion } from '~/server/services/image.service';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { getPagingData } from '~/server/utils/pagination-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -207,19 +207,11 @@ export const updateClub = async ({
     userId,
   });
 
-  if (createdImages.length > 0) {
-    for (const img of createdImages) {
-      ingestImage({ image: img }).catch((error) => {
-        logToAxiom({
-          name: 'club-image-ingest',
-          type: 'error',
-          userId,
-          imageId: img.id,
-          message: error instanceof Error ? error.message : String(error),
-        }).catch(() => {});
-      });
-    }
-  }
+  enqueueImageIngestion({
+    images: createdImages,
+    name: 'club-image-ingest',
+    userId,
+  });
 
   const club = await dbWrite.club.update({
     where: { id },
@@ -308,19 +300,11 @@ export const createClub = async ({
     userId,
   });
 
-  if (createdImages.length > 0) {
-    for (const img of createdImages) {
-      ingestImage({ image: img }).catch((error) => {
-        logToAxiom({
-          name: 'club-image-ingest',
-          type: 'error',
-          userId,
-          imageId: img.id,
-          message: error instanceof Error ? error.message : String(error),
-        }).catch(() => {});
-      });
-    }
-  }
+  enqueueImageIngestion({
+    images: createdImages,
+    name: 'club-image-ingest',
+    userId,
+  });
 
   const club = await dbWrite.club.create({
     data: {
@@ -383,17 +367,11 @@ export const upsertClubTier = async ({
       })
     : [];
 
-  if (imageRecord) {
-    ingestImage({ image: imageRecord }).catch((error) => {
-      logToAxiom({
-        name: 'club-tier-image-ingest',
-        type: 'error',
-        userId,
-        imageId: imageRecord.id,
-        message: error instanceof Error ? error.message : String(error),
-      }).catch(() => {});
-    });
-  }
+  enqueueImageIngestion({
+    images: imageRecord ? [imageRecord] : [],
+    name: 'club-tier-image-ingest',
+    userId,
+  });
 
   if (data.id) {
     const existingClubTier = await dbRead.clubTier.findUnique({
@@ -485,12 +463,10 @@ export const deleteClubTier = async ({
       },
     },
   };
-  const clubTier = await dbRead.clubTier
-    .findUniqueOrThrow(clubTierFindArgs)
-    .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'clubTier', caller: 'deleteClubTier' });
-      return dbWrite.clubTier.findUniqueOrThrow(clubTierFindArgs);
-    });
+  const clubTier = await dbRead.clubTier.findUniqueOrThrow(clubTierFindArgs).catch(() => {
+    dbReadFallbackCounter.inc({ entity: 'clubTier', caller: 'deleteClubTier' });
+    return dbWrite.clubTier.findUniqueOrThrow(clubTierFindArgs);
+  });
 
   const [userClub] = await userContributingClubs({ userId, clubIds: [clubTier.clubId] });
 

@@ -1005,6 +1005,35 @@ export const ingestImageBulk = async ({
   return false;
 };
 
+export function enqueueImageIngestion({
+  images,
+  name,
+  userId,
+  lowPriority,
+}: {
+  images: IngestImageInput[];
+  name: string;
+  userId?: number;
+  lowPriority?: boolean;
+}) {
+  if (!images.length) return;
+
+  const tasks = images.map(
+    (img) => () =>
+      ingestImage({ image: img, lowPriority, userId }).catch((error) => {
+        logToAxiom({
+          name,
+          type: 'error',
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
+      })
+  );
+
+  limitConcurrency(tasks, 5).catch(() => undefined);
+}
+
 // #region [new service methods]
 // export function applyUserPreferencesSql(
 //   AND: Prisma.Sql[],
