@@ -19,7 +19,8 @@ import {
   purchasableRewardDetailsModerator,
 } from '~/server/selectors/purchasableReward.selector';
 import { createMultiAccountBuzzTransaction } from '~/server/services/buzz.service';
-import { createEntityImages } from '~/server/services/image.service';
+import { logToAxiom } from '~/server/logging/client';
+import { createEntityImages, ingestImage } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
@@ -155,6 +156,18 @@ export const purchasableRewardUpsert = async ({
         images: [coverImage],
       })
     : [];
+
+  if (imageRecord) {
+    ingestImage({ image: imageRecord }).catch((error) => {
+      logToAxiom({
+        name: 'purchasable-reward-image-ingest',
+        type: 'error',
+        userId,
+        imageId: imageRecord.id,
+        message: error instanceof Error ? error.message : String(error),
+      }).catch(() => {});
+    });
+  }
 
   if (!input.id) {
     // Create:

@@ -16,6 +16,7 @@ import {
   createEntityImages,
   invalidateManyImageExistence,
   updateEntityImages,
+  ingestImage,
 } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead, dbWrite } from '../db/client';
@@ -112,7 +113,10 @@ export const upsertBountyEntry = async ({
   userId,
 }: UpsertBountyEntryInput & { userId: number }) => {
   if (description) await throwOnBlockedLinkDomain(description);
-  return dbWrite.$transaction(async (tx) => {
+
+  let imagesToIngest: { id: number; url: string }[] = [];
+
+  const result = await dbWrite.$transaction(async (tx) => {
     if (id) {
       const [awarded] = await getBountyEntryEarnedBuzz({ ids: [id] });
 
@@ -134,7 +138,7 @@ export const upsertBountyEntry = async ({
       }
 
       if (images) {
-        await updateEntityImages({
+        imagesToIngest = await updateEntityImages({
           images,
           tx,
           userId,
@@ -164,7 +168,7 @@ export const upsertBountyEntry = async ({
       }
 
       if (images) {
-        await createEntityImages({
+        imagesToIngest = await createEntityImages({
           images,
           tx,
           userId,
@@ -180,6 +184,22 @@ export const upsertBountyEntry = async ({
       return entry;
     }
   });
+
+  if (imagesToIngest.length > 0) {
+    for (const img of imagesToIngest) {
+      ingestImage({ image: img }).catch((error) => {
+        logToAxiom({
+          name: 'bounty-entry-image-ingest',
+          type: 'error',
+          userId,
+          imageId: img.id,
+          message: error instanceof Error ? error.message : String(error),
+        }).catch(() => {});
+      });
+    }
+  }
+
+  return result;
 };
 
 export const awardBountyEntry = async ({ id, userId }: { id: number; userId: number }) => {
