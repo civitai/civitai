@@ -82,6 +82,9 @@ const enforceAppBlocksFlag = middleware(async ({ next, type }) => {
  *
  * Factored into one helper so the check can't drift across the ~14 call sites.
  * Throws FORBIDDEN for a non-mod (or vanished) user.
+ *
+ * (Internal-only graduation gate — remove/relax at GA alongside the feature
+ * flag's `availability` widening.)
  */
 async function assertViewerIsModerator(userId: number): Promise<void> {
   const row = await getUserById({ id: userId, select: { id: true, isModerator: true } });
